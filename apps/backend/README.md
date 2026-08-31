@@ -536,6 +536,8 @@ Local URLs:
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
 | `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SENIOR_VAULT` | With active LP settlement | v1.2.0 Arbitrum Sepolia Senior Vault | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_JUNIOR_VAULT` | With active LP settlement | v1.2.0 Arbitrum Sepolia Junior Vault | Must match both the Settlement Monitor and HousePool binding |
 | `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
@@ -560,8 +562,13 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
-| `LP_SETTLEMENT_ENABLED` | No | `false` | Enables one health-checked, bounded LP settlement pass per eligible keeper poll |
-| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Minimum interval between LP settlement monitor cycles |
+| `LP_SETTLEMENT_MODE` | No | `off` | `off`, read/simulate-only `observe`, or durable `execute`; legacy `LP_SETTLEMENT_ENABLED=true` is rejected |
+| `LP_SETTLEMENT_PRIVATE_KEY` | With active LP settlement or preflight | - | Separately funded signer; must differ from order, liquidation, and oracle-updater keys |
+| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Exact interval between active LP settlement cycles; `observe` and `execute` reject any value other than `15` |
+| `LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS` | No | `4` | Maximum confirmed settlement transactions drained from a fresh observation cycle |
+| `LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS` | No | `60` | Age at which an unconfirmed durable transaction is replaced at the same nonce |
+| `LP_SETTLEMENT_MAX_REPLACEMENTS` | No | `3` | Maximum same-nonce fee replacements before the nonce lane requires manual review |
+| `LP_SETTLEMENT_MAX_TX_COST_WEI` | Execute mode | `0` | Hard maximum of transaction value plus gas-limit times max-fee; execute requires a positive observed-derived cap |
 | `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
 | `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
 | `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
@@ -811,12 +818,19 @@ PERPS_CRITICAL_PATH_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/p
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
+# Verify the LP settlement deployment, signer balance, monitor schema, and any
+# currently eligible settlement simulation without locks or database writes
+cabal run plether-keeper -- --lp-settlement-preflight
+
 # Discover and simulate liquidations once without submitting transactions
 cabal run plether-liquidation-worker -- --once --dry-run
 
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
+
+See [the LP settlement keeper runbook](../../docs/runbooks/lp-settlement-keeper.md)
+for the Sepolia activation, cost-cap, alarm, manual-review, and rollback procedure.
 
 The critical-path gate runs the real Perps history indexer and HTTP API against
 PostgreSQL and an in-process scripted chain. It covers delayed trace evidence,

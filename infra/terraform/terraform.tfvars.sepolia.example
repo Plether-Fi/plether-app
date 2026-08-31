@@ -10,6 +10,8 @@ perps_rpc_url                    = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KE
 # variable if the public endpoint's rate limit is insufficient.
 vault_history_rpc_url            = "https://arbitrum-sepolia.blockscout.com/api/eth-rpc"
 keeper_private_key               = "0xYOUR_KEEPER_PRIVATE_KEY"
+lp_settlement_private_key         = "" # Set a unique funded key before observe/execute.
+lp_settlement_signer_funding_confirmed = false # Set true only after funding and a successful keeper preflight.
 oracle_updater_private_key        = "0xYOUR_ORACLE_UPDATER_PRIVATE_KEY"
 liquidation_keeper_private_key   = "0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY"
 faucet_private_key             = "0xYOUR_FAUCET_PRIVATE_KEY"
@@ -84,9 +86,18 @@ perps_usdc                     = "0x1647e41f49ED6D688936092B5a291c4B28106343"
 perps_order_router             = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
 perps_order_lifecycle_book     = "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
 perps_house_pool               = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+perps_senior_vault             = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+perps_junior_vault             = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
 perps_settlement_monitor_lens  = "0xd251AC0BD90780c48F31F575152808315200664E"
-lp_settlement_enabled          = false
-lp_settlement_poll_seconds     = "15"
+# Keep off through the first deployment. Configure an operations SNS topic and
+# a separately funded signer before observe; execute additionally requires a
+# reviewed non-zero transaction-cost cap.
+lp_settlement_mode                        = "off"
+lp_settlement_poll_seconds                = "15"
+lp_settlement_max_drain_transactions      = 4
+lp_settlement_pending_replacement_seconds = 60
+lp_settlement_max_replacements            = 3
+lp_settlement_max_tx_cost_wei              = "0"
 perps_plether_oracle           = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
 perps_cfd_engine               = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 perps_cfd_engine_settlement_sidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"

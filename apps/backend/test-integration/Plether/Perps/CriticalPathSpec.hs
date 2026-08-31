@@ -39,6 +39,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -477,6 +478,12 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
+    , cfgVaultHistoryHousePoolAddress = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = rpcUrl
+    , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest
     , cfgRegistrationConfig = Nothing
@@ -489,8 +496,15 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 testCompetitionReleaseManifest :: CompetitionReleaseManifest

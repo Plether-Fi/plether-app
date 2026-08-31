@@ -9,6 +9,7 @@ import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -725,8 +726,15 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 liquidationReleaseManifest :: CompetitionReleaseManifest
@@ -772,11 +780,16 @@ receipt succeeded emitter eventAccount =
   TxReceipt
     { receiptTxHash = "0xabc"
     , receiptBlockNumber = 123
+    , receiptBlockHash = "0xblock"
+    , receiptTransactionIndex = 0
     , receiptSucceeded = succeeded
     , receiptLogs =
         [ RpcLog
             { rpcLogTxHash = "0xabc"
             , rpcLogBlockNumber = 123
+            , rpcLogBlockHash = "0xblock"
+            , rpcLogTransactionIndex = 0
+            , rpcLogIndex = 0
             , rpcLogAddress = emitter
             , rpcLogTopics = [positionLiquidatedTopic, encodeAddress eventAccount]
             , rpcLogData =
@@ -793,6 +806,8 @@ receiptWithLogs succeeded logs =
   TxReceipt
     { receiptTxHash = "0xbatch"
     , receiptBlockNumber = 124
+    , receiptBlockHash = "0xblock"
+    , receiptTransactionIndex = 0
     , receiptSucceeded = succeeded
     , receiptLogs = logs
     }
@@ -808,6 +823,9 @@ liquidationBatchItemLog index eventAccount result bounty selector =
   RpcLog
     { rpcLogTxHash = "0xbatch"
     , rpcLogBlockNumber = 124
+    , rpcLogBlockHash = "0xblock"
+    , rpcLogTransactionIndex = 0
+    , rpcLogIndex = index
     , rpcLogAddress = orderRouter
     , rpcLogTopics =
         [ liquidationBatchItemTopic
@@ -826,6 +844,9 @@ liquidationBatchStoppedLog nextIndex =
   RpcLog
     { rpcLogTxHash = "0xbatch"
     , rpcLogBlockNumber = 124
+    , rpcLogBlockHash = "0xblock"
+    , rpcLogTransactionIndex = 0
+    , rpcLogIndex = nextIndex
     , rpcLogAddress = orderRouter
     , rpcLogTopics = [liquidationBatchStoppedTopic, encodeUint256 nextIndex]
     , rpcLogData = BS.empty

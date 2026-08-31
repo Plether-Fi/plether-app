@@ -77,7 +77,10 @@ locals {
     { name = "PERPS_USDC", value = var.perps_usdc },
     { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
     { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+    { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
     { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
+    { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+    { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
     { name = "PERPS_SETTLEMENT_MONITOR_LENS", value = var.perps_settlement_monitor_lens },
     { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
     { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
@@ -86,8 +89,12 @@ locals {
     { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
     { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
     { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
-    { name = "LP_SETTLEMENT_ENABLED", value = tostring(var.lp_settlement_enabled) },
+    { name = "LP_SETTLEMENT_MODE", value = var.lp_settlement_mode },
     { name = "LP_SETTLEMENT_POLL_SECONDS", value = var.lp_settlement_poll_seconds },
+    { name = "LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS", value = tostring(var.lp_settlement_max_drain_transactions) },
+    { name = "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS", value = tostring(var.lp_settlement_pending_replacement_seconds) },
+    { name = "LP_SETTLEMENT_MAX_REPLACEMENTS", value = tostring(var.lp_settlement_max_replacements) },
+    { name = "LP_SETTLEMENT_MAX_TX_COST_WEI", value = var.lp_settlement_max_tx_cost_wei },
   ]
 
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
@@ -115,6 +122,15 @@ locals {
     {
       name      = "VAULT_HISTORY_RPC_URL"
       valueFrom = aws_ssm_parameter.vault_history_rpc_url[0].arn
+    }
+  ] : []
+
+  # Declassifying key presence exposes no secret material and lets defaults-off
+  # task definitions omit the signer env entirely, as required by Config.
+  lp_settlement_private_key_secret = nonsensitive(var.lp_settlement_private_key != "") ? [
+    {
+      name      = "LP_SETTLEMENT_PRIVATE_KEY"
+      valueFrom = aws_ssm_parameter.lp_settlement_private_key[0].arn
     }
   ] : []
 
@@ -512,7 +528,7 @@ resource "aws_ecs_task_definition" "keeper" {
 
     logConfiguration = local.posthog_log_configuration
 
-    secrets = [
+    secrets = concat([
       {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
@@ -525,7 +541,7 @@ resource "aws_ecs_task_definition" "keeper" {
         name      = "KEEPER_PRIVATE_KEY"
         valueFrom = aws_ssm_parameter.keeper_private_key.arn
       }
-    ]
+    ], local.lp_settlement_private_key_secret)
 
     environment = local.keeper_environment
   }, local.otel_log_router_container])
@@ -925,7 +941,7 @@ resource "aws_ecs_task_definition" "workers" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
@@ -938,7 +954,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "KEEPER_PRIVATE_KEY"
           valueFrom = aws_ssm_parameter.keeper_private_key.arn
         }
-      ]
+      ], local.lp_settlement_private_key_secret)
 
       environment = local.keeper_environment
     },

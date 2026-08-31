@@ -2,6 +2,7 @@ module Plether.Config
   ( Config (..)
   , AaConfig (..)
   , FaucetGuardConfig (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , Addresses (..)
@@ -16,6 +17,12 @@ module Plether.Config
   , parsePerpsCandleReadIntervals
   , parsePerpsCandleReadMode
   , parsePerpsCandleWriteMode
+  , parseLpSettlementMode
+  , resolveLpSettlementMode
+  , parseLpSettlementLimits
+  , validateLpSettlementChainId
+  , validateLpSettlementPrivateKeyConfig
+  , lpSettlementModeText
   , perpsCandleRollupReadEnabled
   , validatePerpsCandleModeCombination
   , validateInsightsCompetitionActivation
@@ -23,8 +30,9 @@ module Plether.Config
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
+import Data.Char (isHexDigit)
 import Data.List (intercalate, nub, sortBy)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -101,10 +109,76 @@ data Config = Config
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
   , cfgKeeperFeeBufferBps :: Integer
-  , cfgLpSettlementEnabled :: Bool
+  , cfgLpSettlementMode :: LpSettlementMode
+  , cfgLpSettlementPrivateKey :: Maybe Text
+  , cfgLpSettlementSeniorVault :: Text
+  , cfgLpSettlementJuniorVault :: Text
   , cfgLpSettlementPollSeconds :: Int
+  , cfgLpSettlementMaxDrainTransactions :: Int
+  , cfgLpSettlementPendingReplacementSeconds :: Int
+  , cfgLpSettlementMaxReplacements :: Int
+  , cfgLpSettlementMaxTxCostWei :: Integer
   }
-  deriving stock (Show)
+
+instance Show Config where
+  show cfg =
+    "Config {cfgChainId = "
+      <> show (cfgChainId cfg)
+      <> ", cfgPort = "
+      <> show (cfgPort cfg)
+      <> ", cfgDatabaseConfigured = "
+      <> show (isJust $ cfgDatabaseUrl cfg)
+      <> ", cfgPythApiKeyConfigured = "
+      <> show (isJust $ cfgPythApiKey cfg)
+      <> ", cfgPerpsChainId = "
+      <> show (cfgPerpsChainId cfg)
+      <> ", cfgPerpsOrderRouter = "
+      <> show (cfgPerpsOrderRouter cfg)
+      <> ", cfgPerpsHousePool = "
+      <> show (cfgPerpsHousePool cfg)
+      <> ", cfgPerpsSettlementMonitorLens = "
+      <> show (cfgPerpsSettlementMonitorLens cfg)
+      <> ", cfgFaucetPrivateKeyConfigured = "
+      <> show (isJust $ cfgFaucetPrivateKey cfg)
+      <> ", cfgKeeperPrivateKeyConfigured = "
+      <> show (isJust $ cfgKeeperPrivateKey cfg)
+      <> ", cfgLpSettlementMode = "
+      <> show (cfgLpSettlementMode cfg)
+      <> ", cfgLpSettlementPrivateKeyConfigured = "
+      <> show (isJust $ cfgLpSettlementPrivateKey cfg)
+      <> ", cfgLpSettlementSeniorVault = "
+      <> show (cfgLpSettlementSeniorVault cfg)
+      <> ", cfgLpSettlementJuniorVault = "
+      <> show (cfgLpSettlementJuniorVault cfg)
+      <> ", cfgLpSettlementPollSeconds = "
+      <> show (cfgLpSettlementPollSeconds cfg)
+      <> ", cfgLpSettlementMaxDrainTransactions = "
+      <> show (cfgLpSettlementMaxDrainTransactions cfg)
+      <> ", cfgLpSettlementPendingReplacementSeconds = "
+      <> show (cfgLpSettlementPendingReplacementSeconds cfg)
+      <> ", cfgLpSettlementMaxReplacements = "
+      <> show (cfgLpSettlementMaxReplacements cfg)
+      <> ", cfgLpSettlementMaxTxCostWei = "
+      <> show (cfgLpSettlementMaxTxCostWei cfg)
+      <> "}"
+
+data LpSettlementMode
+  = LpSettlementOff
+  | LpSettlementObserve
+  | LpSettlementExecute
+  deriving stock (Eq, Show)
+
+data LpSettlementSettings = LpSettlementSettings
+  { lpsMode :: LpSettlementMode
+  , lpsPrivateKey :: Maybe Text
+  , lpsSeniorVault :: Text
+  , lpsJuniorVault :: Text
+  , lpsPollSeconds :: Int
+  , lpsMaxDrainTransactions :: Int
+  , lpsPendingReplacementSeconds :: Int
+  , lpsMaxReplacements :: Int
+  , lpsMaxTxCostWei :: Integer
+  }
 
 data PerpsCandleWriteMode
   = PerpsCandleWritesOff
@@ -480,8 +554,24 @@ loadConfig = do
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
-      lpSettlementEnabledStr <- fromMaybe "false" <$> lookupEnv "LP_SETTLEMENT_ENABLED"
+      mLpSettlementMode <- lookupEnv "LP_SETTLEMENT_MODE"
+      mLpSettlementEnabled <- lookupEnv "LP_SETTLEMENT_ENABLED"
+      mLpSettlementPrivateKey <- lookupEnv "LP_SETTLEMENT_PRIVATE_KEY"
+      lpSettlementSeniorVault <-
+        fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+          <$> lookupEnv "PERPS_SENIOR_VAULT"
+      lpSettlementJuniorVault <-
+        fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+          <$> lookupEnv "PERPS_JUNIOR_VAULT"
       lpSettlementPollSecondsStr <- fromMaybe "15" <$> lookupEnv "LP_SETTLEMENT_POLL_SECONDS"
+      lpSettlementMaxDrainTransactionsStr <-
+        fromMaybe "4" <$> lookupEnv "LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS"
+      lpSettlementPendingReplacementSecondsStr <-
+        fromMaybe "60" <$> lookupEnv "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS"
+      lpSettlementMaxReplacementsStr <-
+        fromMaybe "3" <$> lookupEnv "LP_SETTLEMENT_MAX_REPLACEMENTS"
+      lpSettlementMaxTxCostWeiStr <-
+        fromMaybe "0" <$> lookupEnv "LP_SETTLEMENT_MAX_TX_COST_WEI"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -648,17 +738,49 @@ loadConfig = do
                   )
 
           lpSettlementConfig = do
-            enabled <-
-              maybe
-                (Left "LP_SETTLEMENT_ENABLED must be a boolean")
-                Right
-                (parseBoolStrict lpSettlementEnabledStr)
+            mode <- resolveLpSettlementMode mLpSettlementMode mLpSettlementEnabled
+            validateLpSettlementChainId mode perpsChainIdStr
             pollSeconds <-
               parseBoundedWholeNumber
                 "LP_SETTLEMENT_POLL_SECONDS"
                 1
                 3_600
                 lpSettlementPollSecondsStr
+            if mode /= LpSettlementOff && pollSeconds /= 15
+              then Left "LP_SETTLEMENT_POLL_SECONDS must be exactly 15 in observe or execute mode"
+              else Right ()
+            if mode /= LpSettlementOff
+              then do
+                _ <-
+                  parseBoundedWholeNumber
+                    "KEEPER_CONFIRMATIONS"
+                    1
+                    10_000
+                    keeperConfirmationsStr
+                Right ()
+              else Right ()
+            (maxDrainTransactions, pendingReplacementSeconds, maxReplacements, maxTxCostWei) <-
+              parseLpSettlementLimits
+                mode
+                lpSettlementMaxDrainTransactionsStr
+                lpSettlementPendingReplacementSecondsStr
+                lpSettlementMaxReplacementsStr
+                lpSettlementMaxTxCostWeiStr
+            privateKey <-
+              validateLpSettlementPrivateKeyConfig
+                mode
+                (nonBlankText mLpSettlementPrivateKey)
+                (nonBlankText mKeeperPrivateKey)
+            let active = mode /= LpSettlementOff
+                activeAddresses =
+                  [ ("PERPS_HOUSE_POOL", perpsHousePool)
+                  , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                  , ("PERPS_ORDER_ROUTER", perpsOrderRouter)
+                  , ("PERPS_CFD_ENGINE", perpsCfdEngine)
+                  , ("PERPS_SENIOR_VAULT", lpSettlementSeniorVault)
+                  , ("PERPS_JUNIOR_VAULT", lpSettlementJuniorVault)
+                  , ("PERPS_PLETHER_ORACLE", perpsPletherOracle)
+                  ]
             case
                 [ name
                 | (name, address) <-
@@ -673,7 +795,33 @@ loadConfig = do
                 | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
                     == "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151" ->
                     Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.0 monitor sidecar"
-                | otherwise -> Right (enabled, pollSeconds)
+                | active
+                , invalid : _ <-
+                    [ name
+                    | (name, address) <- activeAddresses
+                    , not $ isNonZeroCanonicalVaultAddress address
+                    ] ->
+                    Left $ invalid <> " must be a valid non-zero Ethereum address"
+                | active
+                , length (nub $ map (T.toLower . T.strip . T.pack . snd) activeAddresses)
+                    /= length activeAddresses ->
+                    Left
+                      "PERPS_HOUSE_POOL, PERPS_SETTLEMENT_MONITOR_LENS, PERPS_ORDER_ROUTER, \
+                      \PERPS_CFD_ENGINE, PERPS_SENIOR_VAULT, PERPS_JUNIOR_VAULT, and \
+                      \PERPS_PLETHER_ORACLE must be distinct"
+                | otherwise ->
+                    Right
+                      LpSettlementSettings
+                        { lpsMode = mode
+                        , lpsPrivateKey = privateKey
+                        , lpsSeniorVault = T.strip $ T.pack lpSettlementSeniorVault
+                        , lpsJuniorVault = T.strip $ T.pack lpSettlementJuniorVault
+                        , lpsPollSeconds = pollSeconds
+                        , lpsMaxDrainTransactions = maxDrainTransactions
+                        , lpsPendingReplacementSeconds = pendingReplacementSeconds
+                        , lpsMaxReplacements = maxReplacements
+                        , lpsMaxTxCostWei = maxTxCostWei
+                        }
 
           competitionConfig = do
             rules <-
@@ -740,7 +888,7 @@ loadConfig = do
                 , vaultHistoryConfirmations
                 , vaultHistoryRpcUrl
                 )
-          , Right (lpSettlementEnabled, lpSettlementPollSeconds)
+          , Right LpSettlementSettings {..}
           , Right (insightsCompetitionRules, resolvedRegistrationConfig)
           , Right resolvedFaucetGuardConfig
           ) -> do
@@ -822,8 +970,15 @@ loadConfig = do
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
-                , cfgLpSettlementEnabled = lpSettlementEnabled
-                , cfgLpSettlementPollSeconds = lpSettlementPollSeconds
+                , cfgLpSettlementMode = lpsMode
+                , cfgLpSettlementPrivateKey = lpsPrivateKey
+                , cfgLpSettlementSeniorVault = lpsSeniorVault
+                , cfgLpSettlementJuniorVault = lpsJuniorVault
+                , cfgLpSettlementPollSeconds = lpsPollSeconds
+                , cfgLpSettlementMaxDrainTransactions = lpsMaxDrainTransactions
+                , cfgLpSettlementPendingReplacementSeconds = lpsPendingReplacementSeconds
+                , cfgLpSettlementMaxReplacements = lpsMaxReplacements
+                , cfgLpSettlementMaxTxCostWei = lpsMaxTxCostWei
                 }
 
 firstEnv :: [String] -> IO (Maybe String)
@@ -862,6 +1017,56 @@ parseBoolStrict value =
     "no" -> Just False
     "off" -> Just False
     _ -> Nothing
+
+parseLpSettlementMode :: String -> Either String LpSettlementMode
+parseLpSettlementMode raw =
+  case T.toLower $ T.strip $ T.pack raw of
+    "off" -> Right LpSettlementOff
+    "observe" -> Right LpSettlementObserve
+    "execute" -> Right LpSettlementExecute
+    _ -> Left "LP_SETTLEMENT_MODE must be one of off, observe, or execute"
+
+-- | Resolve the explicit rollout mode and the retired boolean flag without
+-- ever interpreting the legacy switch as permission to execute transactions.
+resolveLpSettlementMode :: Maybe String -> Maybe String -> Either String LpSettlementMode
+resolveLpSettlementMode configuredMode legacyEnabled = do
+  mode <- maybe (Right LpSettlementOff) parseLpSettlementMode configuredMode
+  legacy <-
+    case legacyEnabled of
+      Nothing -> Right Nothing
+      Just raw ->
+        maybe
+          (Left "LP_SETTLEMENT_ENABLED must be a boolean when present")
+          (Right . Just)
+          (parseBoolStrict raw)
+  case legacy of
+    Just True ->
+      Left
+        "LP_SETTLEMENT_ENABLED=true is no longer supported; remove it and set \
+        \LP_SETTLEMENT_MODE explicitly"
+    Just False
+      | mode /= LpSettlementOff ->
+          Left
+            "LP_SETTLEMENT_ENABLED=false conflicts with an active LP_SETTLEMENT_MODE; \
+            \remove the legacy variable before enabling settlement"
+    _ -> Right mode
+
+lpSettlementModeText :: LpSettlementMode -> Text
+lpSettlementModeText = \case
+  LpSettlementOff -> "off"
+  LpSettlementObserve -> "observe"
+  LpSettlementExecute -> "execute"
+
+validateLpSettlementChainId :: LpSettlementMode -> String -> Either String ()
+validateLpSettlementChainId mode rawChainId
+  | mode == LpSettlementOff = Right ()
+  | otherwise =
+      case parseNonNegativeInteger "PERPS_CHAIN_ID" rawChainId of
+        Right 421_614 -> Right ()
+        _ ->
+          Left
+            "LP_SETTLEMENT_MODE observe and execute are supported only on \
+            \PERPS_CHAIN_ID=421614"
 
 parsePerpsCandleWriteMode :: String -> Either String PerpsCandleWriteMode
 parsePerpsCandleWriteMode raw =
@@ -924,6 +1129,66 @@ validatePerpsCandleModeCombination writeMode readMode readIntervals strictCovera
         "PERPS_CANDLE_STRICT_COVERAGE must be true when PERPS_CANDLE_READ_MODE is rollup"
   | otherwise = Right ()
 
+parseLpSettlementLimits
+  :: LpSettlementMode
+  -> String
+  -> String
+  -> String
+  -> String
+  -> Either String (Int, Int, Int, Integer)
+parseLpSettlementLimits mode maxDrainRaw replacementSecondsRaw maxReplacementsRaw maxTxCostRaw = do
+  maxDrainTransactions <-
+    parseBoundedWholeNumber
+      "LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS"
+      1
+      4
+      maxDrainRaw
+  pendingReplacementSeconds <-
+    parseBoundedWholeNumber
+      "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS"
+      60
+      3_600
+      replacementSecondsRaw
+  maxReplacements <-
+    parseBoundedWholeNumber
+      "LP_SETTLEMENT_MAX_REPLACEMENTS"
+      0
+      3
+      maxReplacementsRaw
+  maxTxCostWei <-
+    parseNonNegativeInteger
+      "LP_SETTLEMENT_MAX_TX_COST_WEI"
+      maxTxCostRaw
+  if mode == LpSettlementExecute && maxTxCostWei == 0
+    then Left "LP_SETTLEMENT_MAX_TX_COST_WEI must be positive in execute mode"
+    else
+      Right
+        ( maxDrainTransactions
+        , pendingReplacementSeconds
+        , maxReplacements
+        , maxTxCostWei
+        )
+
+-- | Validate the environment-level key contract. The keeper executable also
+-- derives the address before starting an active worker, which provides the
+-- final secp256k1 scalar validity check.
+validateLpSettlementPrivateKeyConfig
+  :: LpSettlementMode
+  -> Maybe Text
+  -> Maybe Text
+  -> Either String (Maybe Text)
+validateLpSettlementPrivateKeyConfig mode privateKey keeperPrivateKey
+  | Just key <- privateKey
+  , not $ isValidPrivateKeyShape key =
+      Left "LP_SETTLEMENT_PRIVATE_KEY must be a non-zero 32-byte hexadecimal private key"
+  | Just lpKey <- privateKey
+  , Just keeperKey <- keeperPrivateKey
+  , normalizePrivateKeyText lpKey == normalizePrivateKeyText keeperKey =
+      Left "LP_SETTLEMENT_PRIVATE_KEY must be distinct from KEEPER_PRIVATE_KEY"
+  | mode /= LpSettlementOff && privateKey == Nothing =
+      Left "LP_SETTLEMENT_PRIVATE_KEY is required when LP_SETTLEMENT_MODE is observe or execute"
+  | otherwise = Right privateKey
+
 parseBoundedWholeNumber :: String -> Int -> Int -> String -> Either String Int
 parseBoundedWholeNumber name lower upper raw =
   case readMaybe normalized of
@@ -957,6 +1222,26 @@ isCanonicalVaultAddress raw =
    in T.length address == 42
         && T.toLower (T.take 2 address) == "0x"
         && isValidAddress address
+
+isNonZeroCanonicalVaultAddress :: String -> Bool
+isNonZeroCanonicalVaultAddress raw =
+  isCanonicalVaultAddress raw
+    && T.toLower (T.strip $ T.pack raw)
+      /= "0x0000000000000000000000000000000000000000"
+
+normalizePrivateKeyText :: Text -> Text
+normalizePrivateKeyText value =
+  T.toLower $ fromMaybe stripped $ T.stripPrefix "0x" stripped
+  where
+    stripped = T.strip value
+
+isValidPrivateKeyShape :: Text -> Bool
+isValidPrivateKeyShape value =
+  T.length normalized == 64
+    && T.all isHexDigit normalized
+    && T.any (/= '0') normalized
+  where
+    normalized = normalizePrivateKeyText value
 
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =

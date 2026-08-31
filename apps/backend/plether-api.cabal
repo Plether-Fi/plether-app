@@ -282,6 +282,7 @@ test-suite plether-api-test
         Plether.Ethereum.Contracts.SettlementMonitorSpec
         Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
         Plether.Ethereum.Contracts.TrancheVaultSpec
+        Plether.Ethereum.RpcSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
@@ -335,13 +336,15 @@ test-suite plether-api-test
         text >= 2.0,
         base16-bytestring >= 1.0,
         time >= 1.12,
-        wai >= 3.2
+        wai >= 3.2,
+        warp >= 3.3
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
     default-language: GHC2021
     default-extensions:
         OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
 
 test-suite plether-api-integration-test
     import:           warnings
@@ -351,6 +354,8 @@ test-suite plether-api-integration-test
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
+        Plether.Keeper.LpSettlementDatabaseSpec
+        Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec
     build-depends:
