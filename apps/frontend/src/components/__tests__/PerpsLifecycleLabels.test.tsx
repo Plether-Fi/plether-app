@@ -2222,7 +2222,10 @@ describe('perps lifecycle labels', () => {
       terminalBlockNumberRaw: 190_002_346n,
       terminalBlockHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const,
       executionPriceRaw: 98_391_251n,
-      executionOraclePriceRaw: 98_391_482n,
+      executionMode: 'Live',
+      receiptHash: V2_RECEIPT_HASH,
+      vpiUsdcRaw: 182_822_887n,
+      executionEconomicsVersion: 2,
     }
     perpsTradingMocks.waitForPerpsOrderTerminal
       .mockResolvedValueOnce({
@@ -2233,11 +2236,9 @@ describe('perps lifecycle labels', () => {
         timedOut: false,
         order: {
           ...terminalOrder,
+          executionOraclePriceRaw: 98_391_482n,
           executionOracleFrozen: false,
           oracleDerivationVersion: 1,
-          vpiUsdcRaw: 182_822_887n,
-          receiptHash: V2_RECEIPT_HASH,
-          executionEconomicsVersion: 2,
         },
       })
     const onAccountRefresh = vi.fn()
@@ -2269,7 +2270,7 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const vpiRow = within(finalResult!).getByText('VPI').closest('div')
-    expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+    expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
