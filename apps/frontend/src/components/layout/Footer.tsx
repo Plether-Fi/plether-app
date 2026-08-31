@@ -19,7 +19,7 @@ export function Footer() {
             <a href="https://docs.plether.com" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Docs
             </a>
-            <a href="https://discord.gg/MDcUxNm6t" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
+            <a href="https://plether.com/discord" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Discord
             </a>
             <a
