@@ -10,6 +10,7 @@ module Plether.Handlers.PerpsHistory
   , perpsOrdersIndexedThroughBlock
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Data.Aeson (Value, object, (.=))
 import Data.Maybe (catMaybes)
@@ -22,6 +23,7 @@ import Plether.Database.Schema
   ( PerpsActivityRow (..)
   , PerpsIndexerStatusRow (..)
   , PerpsOrderRow (..)
+  , executionModeOracleFrozen
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
   , getPerpsMarketVolumeSince
@@ -217,7 +219,8 @@ orderRowToJson PerpsOrderRow {..} =
       , ("frozenCloseSpreadUsdc" .=) . show <$> porExecutionFrozenCloseSpreadUsdc
       , ("executionEconomicsVersion" .=) <$> porExecutionEconomicsVersion
       , ("executionOraclePrice" .=) . show <$> porExecutionOraclePrice
-      , ("executionOracleFrozen" .=) <$> porExecutionOracleFrozen
+      , ("executionOracleFrozen" .=) <$>
+          (porExecutionOracleFrozen <|> (porExecutionMode >>= executionModeOracleFrozen))
       , ("oracleMinPublishTime" .=) . show <$> porOracleMinPublishTime
       , ("oracleMaxPublishTime" .=) . show <$> porOracleMaxPublishTime
       , ("oracleDerivationVersion" .=) <$> porOracleDerivationVersion

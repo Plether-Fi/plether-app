@@ -63,7 +63,6 @@ describe('waitForPerpsOrderTerminal', () => {
           },
           executionPrice: '98391251',
           executionOraclePrice: '98391482',
-          executionOracleFrozen: false,
           oracleMinPublishTime: '1785437834',
           oracleMaxPublishTime: '1785437834',
           oracleDerivationVersion: 1,

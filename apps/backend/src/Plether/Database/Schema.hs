@@ -105,6 +105,7 @@ module Plether.Database.Schema
   , updatePerpsOrderLifecycleIdentity
   , updatePerpsOrderLifecycleReceipt
   , updatePerpsOrderLifecycleReceiptSql
+  , executionModeOracleFrozen
   , insertPerpsActivity
   , insertPerpsUsdcTransfer
   , perpsOrderBaseSelectSql
@@ -2794,6 +2795,7 @@ updatePerpsOrderLifecycleReceipt
   conn chainId orderRouter orderId account clientOrderId receiptHash terminalReason
   executionMode failedConstraint economics = do
   let normalizedAccount = T.toLower account
+      executionOracleFrozen = executionModeOracleFrozen executionMode
   affected <- execute conn
     updatePerpsOrderLifecycleReceiptSql
     ( normalizedAccount
@@ -2801,6 +2803,7 @@ updatePerpsOrderLifecycleReceipt
     , T.toLower receiptHash
     , terminalReason
     , executionMode
+    , executionOracleFrozen
     , failedConstraint
     , encode economics
     , chainId
@@ -2816,10 +2819,19 @@ updatePerpsOrderLifecycleReceiptSql =
   "UPDATE perps_orders SET \
   \account = COALESCE(perps_orders.account, ?), client_order_id = ?, \
   \receipt_hash = ?, terminal_reason = ?, pending_reason = NULL, \
-  \execution_mode = ?, failed_constraint = ?, receipt_economics = ?, \
+  \execution_mode = ?, execution_oracle_frozen = ?, \
+  \failed_constraint = ?, receipt_economics = ?, \
   \execution_economics_version = 2, updated_at = NOW() \
   \WHERE chain_id = ? AND order_router = ? AND order_id = ? \
   \AND (account IS NULL OR account = ?)"
+
+executionModeOracleFrozen :: Text -> Maybe Bool
+executionModeOracleFrozen mode =
+  case T.toLower mode of
+    "live" -> Just False
+    "fad" -> Just False
+    "frozen" -> Just True
+    _ -> Nothing
 
 upsertPerpsOrderTerminal
   :: Connection

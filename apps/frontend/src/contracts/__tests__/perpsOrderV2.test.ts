@@ -8,6 +8,7 @@ import { PERPS_SIDE } from '../perpsConstants'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
+  executionModeOracleFrozen,
   executionModeMask,
   generatePerpsClientOrderId,
   isPublicPerpsClientOrderId,
@@ -214,6 +215,15 @@ describe('bounded V2 execution protections', () => {
     expect(executionModeMask(PERPS_EXECUTION_MODE.FROZEN)).toBe(
       PERPS_EXECUTION_MODE_MASK.FROZEN
     )
+  })
+
+  it.each([
+    ['Live', false],
+    ['FAD', false],
+    ['Frozen', true],
+    ['Unknown', undefined],
+  ] as const)('derives oracle-frozen state from %s execution mode', (mode, expected) => {
+    expect(executionModeOracleFrozen(mode)).toBe(expected)
   })
 
   it('fails review on regime drift or leverage above the selected maximum', () => {

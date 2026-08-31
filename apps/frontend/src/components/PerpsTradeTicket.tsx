@@ -6,6 +6,7 @@ import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
+  executionModeOracleFrozen,
   PERPS_EXECUTION_MODE_LABELS,
   PERPS_FAILED_CONSTRAINT_LABELS,
   PERPS_LIFECYCLE_STATUS,
@@ -2028,6 +2029,8 @@ export function PerpsTradeTicket({
 
     if (order.status === 'Executed') {
       const indexedExecutionPrice = order.executionPriceRaw ?? order.activityPriceRaw
+      const indexedExecutionOracleFrozen =
+        order.executionOracleFrozen ?? executionModeOracleFrozen(order.executionMode)
       setFinalExecutionPrice((current) => (
         isSameTerminalOrder && indexedExecutionPrice === undefined
           ? current
@@ -2039,9 +2042,9 @@ export function PerpsTradeTicket({
           : order.executionOraclePriceRaw
       ))
       setFinalExecutionOracleFrozen((current) => (
-        isSameTerminalOrder && order.executionOracleFrozen === undefined
+        isSameTerminalOrder && indexedExecutionOracleFrozen === undefined
           ? current
-          : order.executionOracleFrozen
+          : indexedExecutionOracleFrozen
       ))
       setFinalVpiUsdc((current) => (
         isSameTerminalOrder && order.vpiUsdcRaw === undefined
