@@ -133,6 +133,18 @@ export interface PerpsExecutionProtectionSummary {
   executionBountyUsdc: bigint
 }
 
+export interface PerpsOrderReviewSummary {
+  requiredMarginUsdc: bigint
+  executionBountyUsdc: bigint
+  requiredFundingUsdc: bigint
+  availableFundingUsdc: bigint
+  worstPostLeverageBps: bigint
+  reviewedBlockNumber: bigint
+  reviewedBlockHash: Hex
+  reviewedPrice: bigint
+  currentAssessment: PerpsExecutionAssessment
+}
+
 export interface PerpsLifecycleOutcomeSnapshot {
   orderId: bigint
   account: Address
@@ -158,6 +170,8 @@ export interface PreparedPerpsOrderV2 {
   reviewedBlockHash: Hex
   reviewedPrice: bigint
   protection: PerpsExecutionProtectionSummary
+  /** Coherent-block economics used by the web review. Older persisted fixtures may omit it. */
+  reviewSummary?: PerpsOrderReviewSummary
 }
 
 /** JSON-safe immutable request persisted before any UserOperation signature. */

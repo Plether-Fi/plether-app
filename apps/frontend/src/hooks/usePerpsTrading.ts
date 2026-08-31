@@ -20,7 +20,11 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
-import { preparePerpsOrderV2 } from '../contracts/preparePerpsOrderV2'
+import {
+  findMaxOpenPerpsOrderV2,
+  preparePerpsOrderV2,
+  PerpsOrderFundingShortfallError,
+} from '../contracts/preparePerpsOrderV2'
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
   PERPS_LIFECYCLE_STATUS,
@@ -67,6 +71,14 @@ interface PrepareOrderInput {
   slippagePercent: number
   isClose: boolean
   selectedMaxLeverageBps: number
+}
+
+interface FindMaxOpenOrderInput {
+  direction: PerpsDirection
+  slippagePercent: number
+  selectedMaxLeverageBps: number
+  minimumSizeDelta?: bigint
+  maximumSizeDelta?: bigint
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -823,6 +835,38 @@ export function usePerpsTrading() {
         selectedMaxLeverageBps,
       })
     } catch (error) {
+      if (error instanceof PerpsOrderFundingShortfallError) throw error
+      const sponsorError = findSponsorRequestError(error)
+      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
+      throw new Error(getPerpsErrorMessage(error, 'commit'), { cause: error })
+    }
+  }, [address, publicClient, requireSponsoredExecution])
+
+  const findMaxOpenOrder = useCallback(async ({
+    direction,
+    slippagePercent,
+    selectedMaxLeverageBps,
+    minimumSizeDelta,
+    maximumSizeDelta,
+  }: FindMaxOpenOrderInput) => {
+    try {
+      if (!address) {
+        throw new Error(
+          'Confirm the Plether Trading Account before calculating a maximum order'
+        )
+      }
+      const sponsored = requireSponsoredExecution()
+      const client = requireClient(publicClient)
+      return await findMaxOpenPerpsOrderV2(client, sponsored.manifest, {
+        account: sponsored.accountAddress,
+        direction,
+        side: directionToPerpsSide(direction),
+        slippagePercent,
+        selectedMaxLeverageBps,
+        minimumSizeDelta,
+        maximumSizeDelta,
+      })
+    } catch (error) {
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
       throw new Error(getPerpsErrorMessage(error, 'commit'), { cause: error })
@@ -1134,6 +1178,7 @@ export function usePerpsTrading() {
     abandonDepositAuthorization,
     withdrawMargin,
     addPositionMargin,
+    findMaxOpenOrder,
     prepareOrder,
     commitOrder,
     settleTraderClaim,
