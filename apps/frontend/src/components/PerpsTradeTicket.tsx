@@ -253,6 +253,7 @@ interface PerpsTradeTicketProps {
   minOpenNotionalUsdc?: bigint
   minNewPositionNotionalUsdc?: bigint
   maintenanceMarginBps?: bigint
+  initialMarginBps?: bigint
   executionFeeBps?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
@@ -905,13 +906,35 @@ function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigi
   return (low / USDC_UNIT) * USDC_UNIT
 }
 
-function maxLeverageFromMaintenanceMargin(maintenanceMarginBps: bigint | undefined): number {
-  if (maintenanceMarginBps === undefined || maintenanceMarginBps <= 0n) return DEFAULT_MAX_LEVERAGE
+function leverageBoundaryFromMarginBps(marginBps: bigint | undefined): number | undefined {
+  if (marginBps === undefined || marginBps <= 0n) return undefined
 
-  const cap = Number(10_000n / maintenanceMarginBps)
-  if (!Number.isFinite(cap) || cap <= 0) return DEFAULT_MAX_LEVERAGE
+  const cap = Number(10_000n / marginBps)
+  if (!Number.isFinite(cap) || cap <= 0) return undefined
 
-  return Math.max(DEFAULT_MAX_LEVERAGE, cap)
+  return cap
+}
+
+function estimatedEntryMaxLeverage({
+  maintenanceMarginBps,
+  initialMarginBps,
+  executionFeeBps,
+}: {
+  maintenanceMarginBps: bigint | undefined
+  initialMarginBps: bigint | undefined
+  executionFeeBps: bigint | undefined
+}): number | undefined {
+  if (
+    maintenanceMarginBps === undefined ||
+    maintenanceMarginBps <= 0n ||
+    initialMarginBps === undefined ||
+    initialMarginBps <= 0n ||
+    executionFeeBps === undefined ||
+    executionFeeBps < 0n
+  ) return undefined
+
+  const entryMarginBps = initialMarginBps + executionFeeBps
+  return leverageBoundaryFromMarginBps(maxBigInt(maintenanceMarginBps, entryMarginBps))
 }
 
 function directionLabel(direction: Direction): string {
@@ -1755,6 +1778,7 @@ export function PerpsTradeTicket({
   minOpenNotionalUsdc,
   minNewPositionNotionalUsdc,
   maintenanceMarginBps,
+  initialMarginBps,
   executionFeeBps,
   marketPhase = 'open',
   marketCurrentDuration,
@@ -1892,8 +1916,16 @@ export function PerpsTradeTicket({
   const handledClosePositionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
-  const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
-  const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
+  const maintenanceBoundaryLeverage = leverageBoundaryFromMarginBps(maintenanceMarginBps)
+  const initialMarginBoundaryLeverage = leverageBoundaryFromMarginBps(initialMarginBps)
+  const simulatorEntryMaxLeverage = estimatedEntryMaxLeverage({
+    maintenanceMarginBps,
+    initialMarginBps,
+    executionFeeBps,
+  })
+  const simulatorMaxLeverage = simulatorEntryMaxLeverage ?? DEFAULT_MAX_LEVERAGE
+  const canEnableMarginCallSimulator = simulatorEntryMaxLeverage !== undefined &&
+    simulatorEntryMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = Math.min(leverage, maxLeverage)
   const normalizedAccountAddress = address?.toLowerCase()
@@ -2550,7 +2582,7 @@ export function PerpsTradeTicket({
   const defaultMaxLeverageMarginUsdc = contractNotionalUsdc > 0n
     ? contractNotionalUsdc / BigInt(DEFAULT_MAX_LEVERAGE)
     : 0n
-  const simulatorMaxLeverageMarginUsdc = contractNotionalUsdc > 0n && simulatorMaxLeverage > 0
+  const simulatorEntryCapMarginUsdc = contractNotionalUsdc > 0n && simulatorEntryMaxLeverage !== undefined
     ? contractNotionalUsdc / BigInt(simulatorMaxLeverage)
     : 0n
   const estimatedMaintenanceMarginUsdc = maintenanceMarginBps !== undefined && contractNotionalUsdc > 0n
@@ -4035,7 +4067,7 @@ export function PerpsTradeTicket({
                 Margin Call Simulator
               </label>
               <Tooltip
-                content="Maximum leverage mode"
+                content="Entry-aware high-leverage mode. The order preview can lower the usable maximum further."
                 position="top"
                 className={INFO_TOOLTIP_PANEL_CLASS_NAME}
                 docsLink={DOCS_LINKS.marginCallSimulator}
@@ -4958,9 +4990,9 @@ export function PerpsTradeTicket({
           <div className="border border-[#FFAB96]/40 bg-[#250917] p-4">
             <p className="text-sm leading-6 text-content-secondary">
               This mode removes the normal {formatLeverage(DEFAULT_MAX_LEVERAGE)} UI cap and lets the leverage control
-              reach the protocol maintenance-margin boundary. It is useful for testing margin-call behavior, but a position
-              opened near this cap can become invalid or liquidatable from a tiny adverse move, VPI, execution fees,
-              execution rewards, or carry.
+              reach an estimated entry cap. The cap uses the stricter of maintenance margin and initial margin plus the
+              execution fee; it does not treat the maintenance boundary as openable leverage. VPI, carry, execution rewards,
+              minimum-bounty rules, and rounding can lower the usable maximum further, so the order preview remains authoritative.
             </p>
             <p className="mt-3 text-sm leading-6 text-[#FFAB96]">
               The current maintenance margin can be temporary.
@@ -4977,11 +5009,30 @@ export function PerpsTradeTicket({
             <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Leverage rule</div>
             <div className="space-y-2">
               <AccountSummaryRow label="Normal max leverage" value={formatLeverage(DEFAULT_MAX_LEVERAGE)} />
-              <AccountSummaryRow label="Simulator max leverage" value={formatLeverage(simulatorMaxLeverage)} />
-              <AccountSummaryRow label="Maintenance margin" value={formatBpsPercent(maintenanceMarginBps)} />
               <AccountSummaryRow
-                label="Simulator max formula"
-                value={maintenanceMarginBps === undefined ? 'Unavailable' : `floor(10 000 / ${maintenanceMarginBps.toString()})`}
+                label="Maintenance boundary (not an entry cap)"
+                value={maintenanceBoundaryLeverage === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(maintenanceBoundaryLeverage)}
+              />
+              <AccountSummaryRow
+                label="Initial-margin boundary"
+                value={initialMarginBoundaryLeverage === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(initialMarginBoundaryLeverage)}
+              />
+              <AccountSummaryRow
+                label="Estimated simulator entry cap"
+                value={simulatorEntryMaxLeverage === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(simulatorEntryMaxLeverage)}
+              />
+              <AccountSummaryRow label="Maintenance margin" value={formatBpsPercent(maintenanceMarginBps)} />
+              <AccountSummaryRow label="Initial margin" value={formatBpsPercent(initialMarginBps)} />
+              <AccountSummaryRow label="Execution fee" value={formatBpsPercent(executionFeeBps)} />
+              <AccountSummaryRow
+                label="Estimated entry-cap formula"
+                value={
+                  maintenanceMarginBps === undefined ||
+                  initialMarginBps === undefined ||
+                  executionFeeBps === undefined
+                    ? PREVIEW_UNAVAILABLE_VALUE
+                    : `floor(10 000 / max(${maintenanceMarginBps.toString()}, ${initialMarginBps.toString()} + ${executionFeeBps.toString()}))`
+                }
               />
             </div>
           </div>
@@ -4994,7 +5045,12 @@ export function PerpsTradeTicket({
               <AccountSummaryRow label="Order exposure" value={formatUsdcRaw(orderDxyExposureUsdc)} />
               <AccountSummaryRow label="Position margin at selected leverage" value={formatUsdcRaw(marginUsdc)} />
               <AccountSummaryRow label={`Position margin at ${formatLeverage(DEFAULT_MAX_LEVERAGE)}`} value={formatUsdcRaw(defaultMaxLeverageMarginUsdc)} />
-              <AccountSummaryRow label={`Position margin at ${formatLeverage(simulatorMaxLeverage)}`} value={formatUsdcRaw(simulatorMaxLeverageMarginUsdc)} />
+              <AccountSummaryRow
+                label={simulatorEntryMaxLeverage === undefined
+                  ? 'Position margin at estimated entry cap'
+                  : `Position margin at estimated ${formatLeverage(simulatorEntryMaxLeverage)} entry cap`}
+                value={simulatorEntryMaxLeverage === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatUsdcRaw(simulatorEntryCapMarginUsdc)}
+              />
               <AccountSummaryRow
                 label="Estimated maintenance margin"
                 value={estimatedMaintenanceMarginUsdc === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatUsdcRaw(estimatedMaintenanceMarginUsdc)}
@@ -5004,8 +5060,8 @@ export function PerpsTradeTicket({
 
           {!canEnableMarginCallSimulator ? (
             <div className="border border-[#FFAB96]/40 bg-[#FF572D]/10 p-3 text-sm leading-5 text-[#FFAB96]">
-              The simulator cannot unlock additional leverage because the maintenance-margin setting is unavailable or already
-              implies a cap at or below {formatLeverage(DEFAULT_MAX_LEVERAGE)}.
+              The simulator cannot unlock additional leverage because its maintenance-margin, initial-margin, or execution-fee
+              setting is unavailable, or the estimated entry cap is at or below {formatLeverage(DEFAULT_MAX_LEVERAGE)}.
             </div>
           ) : null}
 

@@ -123,6 +123,7 @@ export const MarketAndAccountReadiness: Story = {
             walletUsdcRaw={5_000_000_000n}
             currentPosition={position}
             maintenanceMarginBps={100n}
+            initialMarginBps={200n}
             executionFeeBps={4n}
           />
         </div>
@@ -159,6 +160,7 @@ export const CloseOnlyReduceOnly: Story = {
             walletUsdcRaw={2_000n * USDC}
             currentPosition={position}
             maintenanceMarginBps={100n}
+            initialMarginBps={200n}
             executionFeeBps={4n}
             marketPhase="close-only"
             marketCurrentDuration="1d 8h"

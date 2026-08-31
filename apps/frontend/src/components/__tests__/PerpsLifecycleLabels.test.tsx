@@ -1463,7 +1463,9 @@ describe('perps lifecycle labels', () => {
     render(
       <PerpsTradeTicket
         initialOrderQuantity="1 000"
-        maintenanceMarginBps={100n}
+        maintenanceMarginBps={10n}
+        initialMarginBps={20n}
+        executionFeeBps={4n}
       />
     )
 
@@ -1476,16 +1478,21 @@ describe('perps lifecycle labels', () => {
 
     expect(simulatorCheckbox).not.toBeChecked()
     expect(screen.getByText('Enable Margin Call Simulator?')).toBeInTheDocument()
-    expect(screen.getByText('Simulator max leverage')).toBeInTheDocument()
+    expect(screen.getByText('Maintenance boundary (not an entry cap)')).toBeInTheDocument()
+    expect(screen.getByText('Initial-margin boundary')).toBeInTheDocument()
+    expect(screen.getByText('Estimated simulator entry cap')).toBeInTheDocument()
     expect(screen.getByText(/When the market closes, this setting may expire or become stricter/i)).toBeInTheDocument()
-    expect(screen.getAllByText('100x').length).toBeGreaterThan(0)
-    expect(screen.getByText('floor(10 000 / 100)')).toBeInTheDocument()
+    expect(screen.getByText('1000x')).toBeInTheDocument()
+    expect(screen.getByText('500x')).toBeInTheDocument()
+    expect(screen.getAllByText('416x').length).toBeGreaterThan(0)
+    expect(screen.getByText('floor(10 000 / max(10, 20 + 4))')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Enable Simulator' }))
 
     expect(simulatorCheckbox).toBeChecked()
     expect(screen.queryByText('Enable Margin Call Simulator?')).not.toBeInTheDocument()
-    expect(screen.getByText('100x')).toBeInTheDocument()
+    expect(screen.getByText('416x')).toBeInTheDocument()
+    expect(screen.getByLabelText('Leverage slider')).toHaveAttribute('max', '416')
   })
 
   it('opens the edit position margin modal from the leverage pencil', () => {

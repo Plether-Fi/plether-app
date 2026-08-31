@@ -262,7 +262,7 @@ function TicketFrame(args: React.ComponentProps<typeof PerpsTradeTicket>) {
   return (
     <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="ml-auto max-w-md">
-        <PerpsTradeTicket maintenanceMarginBps={100n} {...args} />
+        <PerpsTradeTicket maintenanceMarginBps={10n} initialMarginBps={20n} executionFeeBps={4n} {...args} />
       </div>
     </div>
   )
@@ -675,7 +675,9 @@ export const MarginCallSimulatorConfirmation: Story = {
     initialDirection: 'long',
     initialOrderQuantity: '10 000',
     initialLeverage: 33,
-    maintenanceMarginBps: 25n,
+    maintenanceMarginBps: 10n,
+    initialMarginBps: 20n,
+    executionFeeBps: 4n,
     marketPhase: 'open',
     marketCurrentDuration: '2h 18m',
   },

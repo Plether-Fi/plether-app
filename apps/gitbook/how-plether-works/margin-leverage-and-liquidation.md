@@ -392,7 +392,14 @@ A submitted voluntary close remains only an intention until it executes.
 
 ### Margin Call Simulator
 
-The advanced **Margin Call Simulator** removes the interface’s ordinary leverage limit and allows testing much closer to the protocol’s maintenance boundary.
+The advanced **Margin Call Simulator** removes the interface’s ordinary leverage limit and allows testing much closer to the protocol’s margin boundaries.
+
+The simulator’s displayed entry cap uses the stricter of:
+
+* the active maintenance-margin rate; and
+* the initial-margin rate plus the execution-fee rate.
+
+The interface displays the maintenance boundary separately for context. It is not presented as openable leverage.
 
 Despite its name, it does not create a margin call or grace period. Plether still uses full liquidation.
 
@@ -404,7 +411,7 @@ At extreme leverage, a position may become invalid or liquidatable because of:
 * carry;
 * the stricter market-close requirement.
 
-The simulator derives its upper range primarily from maintenance margin. Initial-margin requirements and transaction costs can still cause an order at the displayed extreme to fail.
+VPI, carry, execution rewards, minimum-bounty rules and rounding are order-dependent, so they can still reduce the usable leverage below the estimated entry cap. The live order preview remains authoritative.
 
 Treat this as a testing tool, not a risk-control feature.
 

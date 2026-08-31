@@ -68,6 +68,7 @@ describe('usePerpsMarket', () => {
               result: {
                 maxSkewRatio: 500_000_000_000_000_000n,
                 maintMarginBps: 500n,
+                initMarginBps: 750n,
                 fadMarginBps: 1_000n,
                 baseCarryBps: 25n,
                 minBountyUsdc: 100_000n,
@@ -135,6 +136,7 @@ describe('usePerpsMarket', () => {
     expect(result.current.raw.executionFeeBps).toBe(15n)
     expect(result.current.raw.minOpenNotionalUsdc).toBe(1_000_000n)
     expect(result.current.raw.maintenanceMarginBps).toBe(500n)
+    expect(result.current.raw.initialMarginBps).toBe(750n)
 
     act(() => {
       void result.current.refetchDynamic()

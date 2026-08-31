@@ -290,6 +290,7 @@ export function usePerpsMarket() {
     const bearOpenInterest = tupleValue(bearSide, 1, 'openInterest') as bigint | undefined
     const maxSkewRatio = tupleValue(riskParams, 1, 'maxSkewRatio') as bigint | undefined
     const maintMarginBps = tupleValue(riskParams, 2, 'maintMarginBps') as bigint | undefined
+    const initialMarginBps = tupleValue(riskParams, 3, 'initMarginBps') as bigint | undefined
     const fadMarginBps = tupleValue(riskParams, 4, 'fadMarginBps') as bigint | undefined
     const maintenanceMarginBps = fadWindow ? fadMarginBps : maintMarginBps
     const baseCarryBps = tupleValue(riskParams, 5, 'baseCarryBps') as bigint | undefined
@@ -362,6 +363,7 @@ export function usePerpsMarket() {
         shortOpenCapacityUsdc,
         maxSkewRatio,
         maintenanceMarginBps,
+        initialMarginBps,
         minOpenNotionalUsdc,
         minNewPositionNotionalUsdc: minNewPositionNotionalUsdc(minBountyUsdc, bountyBps),
         baseCarryBps,
