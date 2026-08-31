@@ -155,7 +155,15 @@ export interface PletherDxyDatafeedOptions {
   pollIntervalMs?: number
   oracleMark?: OracleMarkPoint
   onHistoryGap?: (intervalSeconds?: PerpsCandleIntervalSeconds) => void
+  onVolumeCoverageChange?: (update: PletherVolumeCoverageUpdate) => void
   useCandleApi?: boolean
+}
+
+export type PletherVolumeCoverageState = 'unknown' | 'available' | 'unavailable'
+
+export interface PletherVolumeCoverageUpdate {
+  intervalSeconds: PerpsCandleIntervalSeconds
+  state: PletherVolumeCoverageState
 }
 
 async function fetchBasketHistory(
@@ -599,6 +607,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly pollIntervalMs: number
   private readonly onHistoryGap:
     ((intervalSeconds?: PerpsCandleIntervalSeconds) => void) | undefined
+  private readonly onVolumeCoverageChange:
+    ((update: PletherVolumeCoverageUpdate) => void) | undefined
   private readonly useCandleApi: boolean
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
@@ -637,6 +647,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly primedCurrentCandles = new Map<TradingViewResolution, PrimedCurrentCandle>()
   private readonly candleIntervalsNeedingRevalidation = new Set<PerpsCandleIntervalSeconds>()
   private readonly pendingCandleHistoryResets = new Set<PerpsCandleIntervalSeconds>()
+  private readonly publishedVolumeCoverageStates = new Map<
+    PerpsCandleIntervalSeconds,
+    PletherVolumeCoverageState
+  >()
   private destroyed = false
 
   constructor(options: PletherDxyDatafeedOptions = {}) {
@@ -644,6 +658,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     this.pollIntervalMs = options.pollIntervalMs ?? PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS
     this.oracleMark = options.oracleMark
     this.onHistoryGap = options.onHistoryGap
+    this.onVolumeCoverageChange = options.onVolumeCoverageChange
     this.useCandleApi = options.useCandleApi ?? isPerpsCandleApiEnabled()
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
@@ -892,6 +907,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     let requestGeneration: number | undefined
     let requestIdentity: CandleDatasetIdentity | undefined
     let requestCoverageStart: number | undefined
+    let requestVolumeCoverageState: PletherVolumeCoverageState | undefined
     let forceRevalidate = this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
 
     while (
@@ -911,6 +927,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       }
       let page = await loadPage(forceRevalidate)
       this.validateCandlePage(page, intervalSeconds, cursor)
+      let pageVolumeCoverageState = this.volumeCoverageState(page, intervalSeconds)
       let pageIdentity = this.candleIdentity(page)
 
       if (requestIdentity === undefined) {
@@ -931,6 +948,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
             page = await loadPage(true)
             forceRevalidate = true
             this.validateCandlePage(page, intervalSeconds, cursor)
+            pageVolumeCoverageState = this.volumeCoverageState(page, intervalSeconds)
             pageIdentity = this.candleIdentity(page)
             if (!this.candleIdentitiesEqual(firstIdentity, pageIdentity)) {
               throw new Error('The Perps candle identity changed while history was loading')
@@ -955,6 +973,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
         forceRevalidate = true
         page = await loadPage(true)
         this.validateCandlePage(page, intervalSeconds, cursor)
+        pageVolumeCoverageState = this.volumeCoverageState(page, intervalSeconds)
         const revalidatedIdentity = this.candleIdentity(page)
         if (!this.candleIdentitiesEqual(pageIdentity, revalidatedIdentity)) {
           // A rejected mixed page is never authoritative for interval state.
@@ -970,6 +989,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       }
 
       requestCoverageStart ??= this.candleCoverageStart(page)
+      if (requestVolumeCoverageState === undefined) {
+        requestVolumeCoverageState = pageVolumeCoverageState
+      } else if (requestVolumeCoverageState !== pageVolumeCoverageState) {
+        this.prepareCandleRevalidation(intervalSeconds)
+        throw new Error('The Perps candle volume coverage changed while history was loading')
+      }
       if (requestGeneration === undefined) {
         requestGeneration = page.datasetGeneration
       } else if (requestGeneration !== page.datasetGeneration) {
@@ -1014,6 +1039,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       // Every page used by this response was checked against one generation.
       // A future older-page request still detects and repairs an old edge entry.
       this.candleIntervalsNeedingRevalidation.delete(intervalSeconds)
+      if (requestVolumeCoverageState !== undefined) {
+        this.publishVolumeCoverageState(intervalSeconds, requestVolumeCoverageState)
+      }
     }
     let primedCurrentBar: TradingViewBar | undefined
     if (currentCandleRequest) {
@@ -1024,11 +1052,16 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       if (currentResponse && requestGeneration !== undefined && requestIdentity !== undefined) {
         try {
           this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+          const currentVolumeCoverageState = this.volumeCoverageState(
+            currentResponse,
+            intervalSeconds
+          )
           const currentIdentity = this.candleIdentity(currentResponse)
           if (
             currentResponse.datasetGeneration === requestGeneration &&
             this.candleIdentitiesEqual(currentIdentity, requestIdentity)
           ) {
+            this.publishVolumeCoverageState(intervalSeconds, currentVolumeCoverageState)
             const currentBar = currentResponse.candle
               ? perpsBasketCandlesToTradingViewBars(
                   [currentResponse.candle],
@@ -1142,6 +1175,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
     )
     this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+    let currentVolumeCoverageState = this.volumeCoverageState(
+      currentResponse,
+      intervalSeconds
+    )
     let currentIdentity = this.candleIdentity(currentResponse)
     let didRevalidate = this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
     const knownIdentity = this.candleDatasetIdentities.get(intervalSeconds)
@@ -1151,6 +1188,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       currentResponse = await loadCurrent(true)
       didRevalidate = true
       this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+      currentVolumeCoverageState = this.volumeCoverageState(
+        currentResponse,
+        intervalSeconds
+      )
       currentIdentity = this.candleIdentity(currentResponse)
     }
     let identityChanged = this.observeCandleIdentity(intervalSeconds, currentIdentity)
@@ -1169,6 +1210,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       currentResponse = await loadCurrent(true)
       didRevalidate = true
       this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+      currentVolumeCoverageState = this.volumeCoverageState(
+        currentResponse,
+        intervalSeconds
+      )
       currentIdentity = this.candleIdentity(currentResponse)
       identityChanged = this.observeCandleIdentity(intervalSeconds, currentIdentity) ||
         identityChanged
@@ -1189,6 +1234,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       intervalSeconds,
       currentResponse.datasetGeneration
     )
+    this.candleIntervalsNeedingRevalidation.delete(intervalSeconds)
+    this.publishVolumeCoverageState(intervalSeconds, currentVolumeCoverageState)
     current.failureCount = 0
     current.nextPollAt = 0
     const candle = currentResponse.candle
@@ -1270,6 +1317,66 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     if (!response.coverageComplete) {
       throw new Error('The Perps candle API returned incomplete current coverage')
     }
+  }
+
+  private volumeCoverageState(
+    response: Pick<
+      PerpsBasketCandlePage | PerpsBasketCurrentCandle,
+      'volumeCoverageStart' | 'volumeCoverageEnd' |
+      'volumeFinalizedThrough' | 'volumeCoverageComplete'
+    >,
+    intervalSeconds: PerpsCandleIntervalSeconds
+  ): PletherVolumeCoverageState {
+    if (typeof response.volumeCoverageComplete !== 'boolean') {
+      throw new Error('The Perps candle API returned an invalid volume coverage state')
+    }
+
+    const bounds = [
+      response.volumeCoverageStart,
+      response.volumeCoverageEnd,
+      response.volumeFinalizedThrough,
+    ]
+    for (const bound of bounds) {
+      if (
+        bound !== null &&
+        (!Number.isSafeInteger(bound) || bound < 0 || bound % intervalSeconds !== 0)
+      ) {
+        throw new Error('The Perps candle API returned invalid volume coverage bounds')
+      }
+    }
+
+    if (!response.volumeCoverageComplete) {
+      if (bounds.some((bound) => bound !== null)) {
+        throw new Error('The Perps candle API returned populated unavailable volume bounds')
+      }
+      return 'unavailable'
+    }
+
+    const [coverageStart, coverageEnd, finalizedThrough] = bounds
+    if (
+      coverageStart === null ||
+      coverageEnd === null ||
+      finalizedThrough === null ||
+      coverageStart >= coverageEnd ||
+      finalizedThrough < coverageStart ||
+      finalizedThrough > coverageEnd
+    ) {
+      throw new Error('The Perps candle API returned incomplete volume coverage bounds')
+    }
+    return 'available'
+  }
+
+  private publishVolumeCoverageState(
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    state: PletherVolumeCoverageState
+  ): void {
+    if (
+      this.destroyed ||
+      this.publishedVolumeCoverageStates.get(intervalSeconds) === state
+    ) return
+
+    this.publishedVolumeCoverageStates.set(intervalSeconds, state)
+    this.onVolumeCoverageChange?.({ intervalSeconds, state })
   }
 
   private observeDatasetGeneration(

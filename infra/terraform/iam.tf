@@ -109,13 +109,19 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource = local.github_deploy_ecs_service_arns
       },
       {
-        Sid    = "EcsTaskDefinitions"
-        Effect = "Allow"
-        Action = [
-          "ecs:DeregisterTaskDefinition",
-          "ecs:TagResource",
-        ]
+        Sid      = "EcsTagTaskDefinitions"
+        Effect   = "Allow"
+        Action   = "ecs:TagResource"
         Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${var.environment}*"
+      },
+      {
+        # ECS does not support resource-level authorization for
+        # DeregisterTaskDefinition. Keep this separate from TagResource so
+        # tagging remains constrained to Plether task-definition families.
+        Sid      = "EcsDeregisterTaskDefinitions"
+        Effect   = "Allow"
+        Action   = "ecs:DeregisterTaskDefinition"
+        Resource = "*"
       },
       {
         Sid      = "EcsRegisterTaskDefinition"

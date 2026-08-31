@@ -2,6 +2,7 @@ import { act, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TradingViewAdvancedChart } from './TradingViewAdvancedChart'
+import type { PletherDxyDatafeedOptions } from './pletherDatafeed'
 import type {
   TradingViewChart,
   TradingViewCustomStatusDropDownContent,
@@ -16,6 +17,23 @@ import type {
   TradingViewWidgetOptions,
 } from './types'
 
+const datafeedHarness = vi.hoisted(() => ({
+  onVolumeCoverageChange: undefined as PletherDxyDatafeedOptions['onVolumeCoverageChange'],
+}))
+
+vi.mock('./pletherDatafeed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./pletherDatafeed')>()
+  return {
+    ...actual,
+    PletherDxyDatafeed: class extends actual.PletherDxyDatafeed {
+      constructor(options: PletherDxyDatafeedOptions = {}) {
+        super(options)
+        datafeedHarness.onVolumeCoverageChange = options.onVolumeCoverageChange
+      }
+    },
+  }
+})
+
 function deferred() {
   let resolve!: () => void
   let reject!: (error: Error) => void
@@ -27,12 +45,108 @@ function deferred() {
 }
 
 afterEach(() => {
+  datafeedHarness.onVolumeCoverageChange = undefined
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   delete window.TradingView
 })
 
+function installReadyFakeTradingView() {
+  let widgetOptions: TradingViewWidgetOptions | undefined
+  let resolution: TradingViewResolution = '1'
+  const subscription = {
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn(),
+  }
+  const statusAdapter: TradingViewCustomSymbolStatusAdapter = {
+    setVisible: vi.fn(() => statusAdapter),
+    setIcon: vi.fn(() => statusAdapter),
+    setColor: vi.fn(() => statusAdapter),
+    setTooltip: vi.fn(() => statusAdapter),
+    setDropDownContent: vi.fn(() => statusAdapter),
+  }
+  const chart: TradingViewChart = {
+    resetData: vi.fn(),
+    resolution: () => resolution,
+    symbol: () => 'PLETHER:PLDXY.P',
+    getVisibleRange: () => ({ from: 1_800_000_000, to: 1_800_432_000 }),
+    setResolution: vi.fn(async (nextResolution) => {
+      resolution = nextResolution
+      return true
+    }),
+    onIntervalChanged: () => subscription,
+    onVisibleRangeChanged: () => subscription,
+    createShape: vi.fn(async () => 'liquidation-line'),
+    removeEntity: vi.fn(),
+  }
+
+  class FakeWidget {
+    constructor(options: TradingViewWidgetOptions) {
+      widgetOptions = options
+      resolution = options.interval
+    }
+
+    chartReady = async () => {}
+    headerReady = async () => {}
+    activeChart = () => chart
+    customSymbolStatus = () => ({ symbol: () => statusAdapter, hideAll: vi.fn() })
+    remove = vi.fn()
+  }
+
+  window.TradingView = {
+    widget: FakeWidget as unknown as TradingViewNamespace['widget'],
+  }
+  return { widgetOptions: () => widgetOptions }
+}
+
 describe('TradingViewAdvancedChart', () => {
+  it('shows volume degradation only for the active interval and clears it after recovery', async () => {
+    vi.stubEnv('VITE_PERPS_CANDLE_API_ENABLED', 'true')
+    const fakeTradingView = installReadyFakeTradingView()
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const chart = (interval: '1m' | '5m') => (
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval={interval} />
+      </QueryClientProvider>
+    )
+    const view = render(chart('5m'))
+
+    await waitFor(() => {
+      expect(fakeTradingView.widgetOptions()).toBeDefined()
+      expect(datafeedHarness.onVolumeCoverageChange).toBeTypeOf('function')
+    })
+    expect(view.queryByText('Volume temporarily unavailable')).not.toBeInTheDocument()
+
+    act(() => {
+      datafeedHarness.onVolumeCoverageChange?.({
+        intervalSeconds: 60,
+        state: 'unavailable',
+      })
+    })
+    expect(view.queryByText('Volume temporarily unavailable')).not.toBeInTheDocument()
+
+    view.rerender(chart('1m'))
+    expect(view.getByText('Volume temporarily unavailable')).toBeInTheDocument()
+    expect(view.getByText(
+      '— Price data is still live. Volume is being indexed for this market.'
+    )).toBeInTheDocument()
+    expect(view.getByRole('region', { name: /interactive tradingview chart/i }))
+      .toBeInTheDocument()
+
+    act(() => {
+      datafeedHarness.onVolumeCoverageChange?.({
+        intervalSeconds: 60,
+        state: 'available',
+      })
+    })
+    expect(view.queryByText('Volume temporarily unavailable')).not.toBeInTheDocument()
+
+    view.unmount()
+    queryClient.clear()
+  })
+
   it('uses native controls and synchronizes their interval with the parent', async () => {
     const chartReady = deferred()
     const headerReady = deferred()
@@ -379,6 +493,7 @@ describe('TradingViewAdvancedChart', () => {
   })
 
   it('shows an explicit unavailable state when the licensed runtime cannot load', async () => {
+    vi.stubEnv('VITE_PERPS_CANDLE_API_ENABLED', 'true')
     vi.stubEnv('VITE_TRADINGVIEW_LIBRARY_PATH', '/missing-charting-library/')
     const append = vi.spyOn(document.head, 'append').mockImplementation(() => {})
 
@@ -400,6 +515,13 @@ describe('TradingViewAdvancedChart', () => {
     })
 
     expect(await view.findByText('TradingView chart unavailable')).toBeInTheDocument()
+    act(() => {
+      datafeedHarness.onVolumeCoverageChange?.({
+        intervalSeconds: 300,
+        state: 'unavailable',
+      })
+    })
+    expect(view.queryByText('Volume temporarily unavailable')).not.toBeInTheDocument()
     expect(view.queryByRole('img', { name: /price performance chart/i })).not.toBeInTheDocument()
 
     view.unmount()

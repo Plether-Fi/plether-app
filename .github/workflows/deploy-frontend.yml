@@ -148,6 +148,27 @@ jobs:
               .sponsorshipEnabled == true
             ' aa-status.json >/dev/null
 
+      - name: Require deployable Sepolia candle volume
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          CANDLE_API_ENABLED: ${{ vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false' }}
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          set -euo pipefail
+          case "${CANDLE_API_ENABLED,,}" in
+            true|1) ;;
+            *)
+              echo "Sepolia native candles are disabled; skipping the volume-coverage deployment gate."
+              exit 0
+              ;;
+          esac
+
+          test -n "$SEPOLIA_BACKEND_URL"
+          node scripts/validate-candle-volume-coverage.mjs \
+            --backend-url "$SEPOLIA_BACKEND_URL" \
+            --manifest dist/perps-aa-manifest.json
+
       - name: Configure testnet Pages bindings
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend

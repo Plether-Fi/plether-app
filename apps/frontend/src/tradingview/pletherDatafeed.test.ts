@@ -64,6 +64,13 @@ const CANDLE_IDENTITY = {
   volumeRouter: '0x1111111111111111111111111111111111111111',
 } as const
 
+const CURRENT_VOLUME_COVERAGE = {
+  volumeCoverageStart: 0,
+  volumeCoverageEnd: 64_800,
+  volumeFinalizedThrough: 64_800,
+  volumeCoverageComplete: true,
+} as const
+
 function rawCandle(
   timestamp: number,
   overrides: Partial<PerpsBasketCandle> = {}
@@ -91,6 +98,8 @@ function candlePage(
   candles: PerpsBasketCandle[],
   overrides: Partial<PerpsBasketCandlePage> = {}
 ): PerpsBasketCandlePage {
+  const intervalSeconds = overrides.intervalSeconds ?? 60
+  const defaultVolumeEnd = Math.ceil(64_800 / intervalSeconds) * intervalSeconds
   return {
     intervalSeconds: 60,
     cursor,
@@ -102,8 +111,8 @@ function candlePage(
     coverageComplete: true,
     finalizedThrough: 64_800,
     volumeCoverageStart: 0,
-    volumeCoverageEnd: 64_800,
-    volumeFinalizedThrough: 64_800,
+    volumeCoverageEnd: defaultVolumeEnd,
+    volumeFinalizedThrough: defaultVolumeEnd,
     volumeCoverageComplete: true,
     datasetGeneration: 7,
     candles,
@@ -115,6 +124,7 @@ function currentCandle(
   intervalSeconds: PerpsCandleIntervalSeconds = 60,
   overrides: Partial<PerpsBasketCurrentCandle> = {}
 ): PerpsBasketCurrentCandle {
+  const defaultVolumeEnd = Math.ceil(64_800 / intervalSeconds) * intervalSeconds
   return {
     intervalSeconds,
     ...CANDLE_IDENTITY,
@@ -123,8 +133,8 @@ function currentCandle(
     coverageComplete: true,
     finalizedThrough: 64_800,
     volumeCoverageStart: 0,
-    volumeCoverageEnd: 64_800,
-    volumeFinalizedThrough: 64_800,
+    volumeCoverageEnd: defaultVolumeEnd,
+    volumeFinalizedThrough: defaultVolumeEnd,
     volumeCoverageComplete: true,
     datasetGeneration: 7,
     candle: null,
@@ -176,6 +186,246 @@ describe('Plether TradingView datafeed', () => {
       low: 0.99,
       close: 1.01,
     }])
+  })
+
+  it('publishes accepted per-interval volume transitions and suppresses duplicates', async () => {
+    const onVolumeCoverageChange = vi.fn()
+    const pages = [
+      candlePage(90_000, [rawCandle(64_920, {
+        volumeUsdc: null,
+        tradeCount: null,
+        volumeComplete: false,
+      })], {
+        hasEarlier: false,
+        previousCursor: null,
+        volumeCoverageStart: null,
+        volumeCoverageEnd: null,
+        volumeFinalizedThrough: null,
+        volumeCoverageComplete: false,
+        datasetGeneration: 134_217_728,
+      }),
+      candlePage(90_000, [rawCandle(64_920)], {
+        hasEarlier: false,
+        previousCursor: null,
+        datasetGeneration: 134_217_731,
+      }),
+      candlePage(90_000, [rawCandle(64_920)], {
+        hasEarlier: false,
+        previousCursor: null,
+        datasetGeneration: 134_217_731,
+      }),
+    ]
+    const getCandlePage = vi.fn(async () => pages.shift() ?? pages[0])
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage }),
+      onVolumeCoverageChange,
+      useCandleApi: true,
+    })
+    const load = () => new Promise<TradingViewBar[]>((resolve, reject) => {
+      feed.getBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+        resolve,
+        reject
+      )
+    })
+
+    try {
+      await load()
+      await load()
+      await load()
+
+      expect(onVolumeCoverageChange.mock.calls).toEqual([
+        [{ intervalSeconds: 60, state: 'unavailable' }],
+        [{ intervalSeconds: 60, state: 'available' }],
+      ])
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('tracks volume coverage independently when the chart interval changes', async () => {
+    const onVolumeCoverageChange = vi.fn()
+    const getCandlePage = vi.fn(async (intervalSeconds: PerpsCandleIntervalSeconds, cursor: number) => (
+      intervalSeconds === 60
+        ? candlePage(cursor, [], {
+            hasEarlier: false,
+            previousCursor: null,
+            volumeCoverageStart: null,
+            volumeCoverageEnd: null,
+            volumeFinalizedThrough: null,
+            volumeCoverageComplete: false,
+            datasetGeneration: 134_217_728,
+          })
+        : candlePage(cursor, [], {
+            intervalSeconds,
+            hasEarlier: false,
+            previousCursor: null,
+            coverageEnd: 64_800,
+            finalizedThrough: 64_800,
+            volumeCoverageEnd: 64_800,
+            volumeFinalizedThrough: 64_800,
+            datasetGeneration: 134_217_731,
+          })
+    ))
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage }),
+      onVolumeCoverageChange,
+      useCandleApi: true,
+    })
+    const load = (resolution: '1' | '5') => new Promise<TradingViewBar[]>((resolve, reject) => {
+      feed.getBars(
+        {} as TradingViewSymbolInfo,
+        resolution,
+        { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+        resolve,
+        reject
+      )
+    })
+
+    try {
+      await load('1')
+      await load('5')
+
+      expect(onVolumeCoverageChange.mock.calls).toEqual([
+        [{ intervalSeconds: 60, state: 'unavailable' }],
+        [{ intervalSeconds: 300, state: 'available' }],
+      ])
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('publishes volume coverage from an accepted current-candle response', async () => {
+    const onVolumeCoverageChange = vi.fn()
+    const getCurrentCandle = vi.fn(async () => currentCandle(900, {
+      volumeCoverageStart: null,
+      volumeCoverageEnd: null,
+      volumeFinalizedThrough: null,
+      volumeCoverageComplete: false,
+      datasetGeneration: 134_217_728,
+    }))
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCurrentCandle }),
+      onVolumeCoverageChange,
+      pollIntervalMs: 60_000,
+      useCandleApi: true,
+    })
+
+    try {
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '15',
+        vi.fn(),
+        'volume-current',
+        vi.fn()
+      )
+      await vi.waitFor(() => {
+        expect(onVolumeCoverageChange).toHaveBeenCalledWith({
+          intervalSeconds: 900,
+          state: 'unavailable',
+        })
+      })
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('does not publish malformed, stale, or rejected mixed-identity volume metadata', async () => {
+    const onVolumeCoverageChange = vi.fn()
+    const responses = new Map<number, PerpsBasketCandlePage>([
+      [90_000, candlePage(90_000, [rawCandle(64_920, {
+        volumeUsdc: null,
+        tradeCount: null,
+        volumeComplete: false,
+      })], {
+        volumeCoverageStart: null,
+        volumeCoverageEnd: null,
+        volumeFinalizedThrough: null,
+        volumeCoverageComplete: false,
+        datasetGeneration: 134_217_728,
+      })],
+      [60_000, candlePage(60_000, [rawCandle(59_940)], {
+        hasEarlier: false,
+        previousCursor: null,
+        volumeRouter: '0x2222222222222222222222222222222222222222',
+        datasetGeneration: 134_217_731,
+      })],
+    ])
+    const mixedFeed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getCandlePage: async (_interval, cursor) => {
+          const response = responses.get(cursor)
+          if (!response) throw new Error(`Unexpected cursor ${cursor.toString()}`)
+          return response
+        },
+      }),
+      onVolumeCoverageChange,
+      useCandleApi: true,
+    })
+    const malformedFeed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getCandlePage: async (_interval, cursor) => candlePage(cursor, [], {
+          hasEarlier: false,
+          previousCursor: null,
+          volumeCoverageStart: null,
+          volumeCoverageEnd: null,
+          volumeFinalizedThrough: null,
+          volumeCoverageComplete: true,
+        }),
+      }),
+      onVolumeCoverageChange,
+      useCandleApi: true,
+    })
+    const load = (feed: PletherDxyDatafeed, countBack: number) => new Promise<void>((resolve) => {
+      feed.getBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        { from: 0, to: 65_000, countBack, firstDataRequest: false },
+        () => resolve(),
+        () => resolve()
+      )
+    })
+
+    try {
+      await load(mixedFeed, 2)
+      await load(malformedFeed, 1)
+      expect(onVolumeCoverageChange).not.toHaveBeenCalled()
+    } finally {
+      mixedFeed.destroy()
+      malformedFeed.destroy()
+    }
+
+    const staleUpdates = vi.fn()
+    let response = candlePage(90_000, [], {
+      hasEarlier: false,
+      previousCursor: null,
+      datasetGeneration: 134_217_731,
+    })
+    const staleFeed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage: async () => response }),
+      onVolumeCoverageChange: staleUpdates,
+      useCandleApi: true,
+    })
+    try {
+      await load(staleFeed, 1)
+      response = candlePage(90_000, [], {
+        hasEarlier: false,
+        previousCursor: null,
+        volumeCoverageStart: null,
+        volumeCoverageEnd: null,
+        volumeFinalizedThrough: null,
+        volumeCoverageComplete: false,
+        datasetGeneration: 134_217_728,
+      })
+      await load(staleFeed, 1)
+      expect(staleUpdates.mock.calls).toEqual([
+        [{ intervalSeconds: 60, state: 'available' }],
+      ])
+    } finally {
+      staleFeed.destroy()
+    }
   })
 
   it('walks fixed pages until countBack actual candles are collected across gaps', async () => {
@@ -910,6 +1160,7 @@ describe('Plether TradingView datafeed', () => {
     const getCurrentCandle = vi.fn(async () => ({
       intervalSeconds: 300 as const,
       ...CANDLE_IDENTITY,
+      ...CURRENT_VOLUME_COVERAGE,
       datasetGeneration: 7,
       coverageStart: 30_000,
       coverageEnd: 64_800,
@@ -972,6 +1223,7 @@ describe('Plether TradingView datafeed', () => {
         getCurrentCandle: async () => ({
           intervalSeconds: 60,
           ...currentIdentity,
+          ...CURRENT_VOLUME_COVERAGE,
           // A new identity has an independent generation sequence.
           datasetGeneration: currentIdentity === CANDLE_IDENTITY ? 7 : 1,
           coverageStart: 30_000,
@@ -1030,6 +1282,7 @@ describe('Plether TradingView datafeed', () => {
     const getCurrentCandle = vi.fn(async () => ({
       intervalSeconds: requestIndex++ === 0 ? 300 as const : 60 as const,
       ...CANDLE_IDENTITY,
+      ...CURRENT_VOLUME_COVERAGE,
       datasetGeneration: 7,
       coverageStart: 30_000,
       coverageEnd: 64_800,
@@ -1075,6 +1328,7 @@ describe('Plether TradingView datafeed', () => {
     const getCurrentCandle = vi.fn(async () => ({
       intervalSeconds: 60 as const,
       ...CANDLE_IDENTITY,
+      ...CURRENT_VOLUME_COVERAGE,
       datasetGeneration: requestIndex++ === 0 ? 0 : 7,
       coverageStart: 30_000,
       coverageEnd: 64_800,
@@ -1118,6 +1372,7 @@ describe('Plether TradingView datafeed', () => {
     const getCurrentCandle = vi.fn(async () => ({
       intervalSeconds: 60 as const,
       ...CANDLE_IDENTITY,
+      ...CURRENT_VOLUME_COVERAGE,
       datasetGeneration: 7,
       coverageStart: 30_000,
       coverageEnd: 64_800,
@@ -1171,6 +1426,7 @@ describe('Plether TradingView datafeed', () => {
         getCurrentCandle: async () => ({
           intervalSeconds: 300,
           ...CANDLE_IDENTITY,
+          ...CURRENT_VOLUME_COVERAGE,
           datasetGeneration: 7,
           coverageStart: 30_000,
           coverageEnd: 65_100,
