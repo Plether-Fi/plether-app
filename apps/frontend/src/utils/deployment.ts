@@ -15,7 +15,7 @@ function parseChainId(value: string | undefined): number {
 }
 
 export function isSepoliaDeployment(
-  hostname = window.location.hostname,
+  hostname = typeof window === 'undefined' ? '' : window.location.hostname,
   defaultChainId = parseChainId(import.meta.env.VITE_DEFAULT_CHAIN_ID as string | undefined)
 ): boolean {
   const normalized = hostname.toLowerCase()

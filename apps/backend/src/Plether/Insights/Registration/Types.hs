@@ -29,9 +29,10 @@ import Data.Aeson
   , object
   , withObject
   , (.:)
+  , (.:?)
   , (.=)
   )
-import Data.Aeson.Types (Parser)
+import Data.Aeson.Types (Parser, (.!=))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -307,6 +308,7 @@ instance FromJSON WalletVerifyRequest where
 data CompleteRegistrationRequest = CompleteRegistrationRequest
   { crrAcceptRules :: Bool
   , crrAcceptPrivacy :: Bool
+  , crrAcceptPromotionalEmail :: Bool
   , crrRulesVersion :: Text
   , crrPrivacyVersion :: Text
   }
@@ -316,6 +318,7 @@ instance FromJSON CompleteRegistrationRequest where
     CompleteRegistrationRequest
       <$> objectValue .: "acceptRules"
       <*> objectValue .: "acceptPrivacy"
+      <*> (objectValue .:? "acceptPromotionalEmail" .!= False)
       <*> (objectValue .: "rulesVersion" >>= boundedText "rulesVersion" 1 64)
       <*> (objectValue .: "privacyVersion" >>= boundedText "privacyVersion" 1 64)
 

@@ -975,6 +975,7 @@ finishRegistration pool perpsClient registrationConfig _config slug authenticate
                           (Db.rsrPrivacyVersion row)
                           (crrRulesVersion requestValue)
                           (crrPrivacyVersion requestValue)
+                          (crrAcceptPromotionalEmail requestValue)
                           owner
                           storedTradingAccount
                           (tapBlockNumber proof)

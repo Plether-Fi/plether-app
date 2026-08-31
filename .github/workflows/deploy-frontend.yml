@@ -110,14 +110,43 @@ jobs:
       - name: Validate testnet AA manifest
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
           test -s dist/perps-aa-manifest.json
           jq -e '
+            .version == "perps-aa-arbitrum-sepolia-20260830-v2" and
             .chainId == 421614 and
             .entryPointVersion == "0.8" and
             .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
+            .orderRouter == "0x97A901dE2B267c307E264FD5F71403F8072F73e7" and
+            .orderLifecycleBook == "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E" and
+            .policyEvaluator == "0xaa4703B190684b5A57b8a9aA432fA043B169D171" and
             .sponsorshipEnabled == true
           ' dist/perps-aa-manifest.json >/dev/null
+
+          test -n "$SEPOLIA_BACKEND_URL"
+          curl --fail --silent --show-error \
+            "$SEPOLIA_BACKEND_URL/api/aa/status" > aa-status.json
+          jq --exit-status \
+            --slurpfile manifest dist/perps-aa-manifest.json \
+            '
+              .manifestVersion == $manifest[0].version and
+              .chainId == $manifest[0].chainId and
+              .deploymentBlock == 302257125 and
+              .usdc == $manifest[0].usdc and
+              .orderRouter == $manifest[0].orderRouter and
+              .orderLifecycleBook == $manifest[0].orderLifecycleBook and
+              .cfdEngine == $manifest[0].cfdEngine and
+              .marginClearinghouse == $manifest[0].marginClearinghouse and
+              .housePool == "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" and
+              .policyEvaluator == $manifest[0].policyEvaluator and
+              .positionProtectionBook == "0xC009E2159146188b272420cF273B0fc12e5Fdfc8" and
+              .perpsPublicLens == "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A" and
+              .calldataPolicy == "bounded-v2" and
+              .bindingsVerified == true and
+              .sponsorshipEnabled == true
+            ' aa-status.json >/dev/null
 
       - name: Configure testnet Pages bindings
         if: env.TARGET_ENV == 'sepolia'
@@ -157,6 +186,19 @@ jobs:
           test -n "$AA_PROXY_ORIGIN_TOKEN"
           printf '%s\n' "$AA_PROXY_ORIGIN_TOKEN" |
             npx --yes wrangler@4.103.0 pages secret put AA_PROXY_ORIGIN_TOKEN \
+              --project-name=plether-testnet
+
+      - name: Configure testnet faucet proxy secret
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FAUCET_PROXY_ORIGIN_TOKEN: ${{ secrets.FAUCET_PROXY_ORIGIN_TOKEN }}
+        run: |
+          test -n "$FAUCET_PROXY_ORIGIN_TOKEN"
+          printf '%s\n' "$FAUCET_PROXY_ORIGIN_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put FAUCET_PROXY_ORIGIN_TOKEN \
               --project-name=plether-testnet
 
       - name: Deploy to Cloudflare Pages

@@ -29,7 +29,10 @@ test.describe('Smoke Tests', () => {
     await page.goto('/')
     await waitForPageLoad(page)
 
-    const connectButton = page.getByRole('button', { name: /connect wallet/i })
+    const connectButton = page.getByRole('button', {
+      name: 'Connect Wallet',
+      exact: true,
+    }).first()
     await expect(connectButton).toBeVisible()
   })
 

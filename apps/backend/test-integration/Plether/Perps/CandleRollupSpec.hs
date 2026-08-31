@@ -50,6 +50,7 @@ import Plether.Cache
   )
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (PerpsCandleReadsRollup)
   , PerpsCandleWriteMode (PerpsCandleWritesDual)
   )
@@ -83,6 +84,7 @@ import Plether.Database.Candles
   , CandlePage (..)
   , CandleRange (..)
   , RollupCoverage (..)
+  , PriceGapRecoveryResult (..)
   , RollupKind (..)
   , advanceBasketPriceCoverage
   , advanceMarketVolumeCoverage
@@ -104,6 +106,7 @@ import Plether.Database.Candles
   , lockBasketPriceDataset
   , markRollupCoverageIncomplete
   , recomputeBasketCandleHierarchy
+  , recoverBasketPriceCoverageGap
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
   , beginRollupMaintenance
@@ -1677,6 +1680,75 @@ candleRollupSpec databaseUrl =
             mapM (requirePriceCoverage connection) canonicalCandleIntervals
           repeated `shouldBe` invalidated
 
+    it "recovers only an exact price watermark gap backed by the stored signed state" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          let coverageStart = baseTime
+              coverageEnd = baseTime + 86_400
+              lastObservationTime = coverageEnd - 3_600
+              invalidatingPoll = coverageEnd + 301
+              recoveredThrough = coverageEnd + 3_600
+              initialGeneration = 17
+          changed <-
+            upsertBasketObservation connection $
+              BasketObservationInput
+                { boiSeriesId = testSeries
+                , boiObservationId = "closed-price-gap-last-signed"
+                , boiPublishTime = lastObservationTime
+                , boiBasketPrice = 100
+                , boiComponentPrices = componentPayload
+                , boiSource = "backend_hermes_latest"
+                , boiSourcePriority = 100
+                }
+          changed `shouldBe` True
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage
+              connection
+              interval
+              coverageStart
+              coverageEnd
+              coverageEnd
+              initialGeneration
+              True
+          advanceBasketPriceCoverage connection testSeries invalidatingPoll 120
+
+          recovery <-
+            withTransaction connection $
+              recoverBasketPriceCoverageGap
+                connection
+                testSeries
+                coverageEnd
+                recoveredThrough
+                lastObservationTime
+                100
+                componentPayload
+                120
+          recovery
+            `shouldBe`
+              PriceGapRecoveryResult
+                { pgrPreviousCoverageEnd = coverageEnd
+                , pgrRecoveredThrough = recoveredThrough
+                , pgrGeneration = initialGeneration + 2
+                }
+          forM_ canonicalCandleIntervals $ \interval -> do
+            coverage <- requirePriceCoverage connection interval
+            rcComplete coverage `shouldBe` True
+            rcGeneration coverage `shouldBe` initialGeneration + 2
+            rcLastError coverage `shouldBe` Nothing
+            rcCoverageEnd coverage `shouldBe` Just (alignDownForTest recoveredThrough interval)
+
+          recoverBasketPriceCoverageGap
+            connection
+            testSeries
+            coverageEnd
+            (recoveredThrough + 60)
+            lastObservationTime
+            100
+            componentPayload
+            120
+            `shouldThrow` anyException
+
     it "invalidates complete coarser coverage despite a minute repair marker" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
@@ -2818,6 +2890,7 @@ candleApiConfig databaseUrl =
     , cfgDatabaseUrl = Just databaseUrl
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 1
@@ -2835,6 +2908,7 @@ candleApiConfig databaseUrl =
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = testRouter
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
     , cfgPerpsCfdEngineLens = ""
     , cfgPerpsCfdEngineSettlementSidecar = ""
@@ -2844,10 +2918,17 @@ candleApiConfig databaseUrl =
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgVaultHistoryHousePoolAddress = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = ""
+    , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -2855,8 +2936,15 @@ candleApiConfig databaseUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2_000
     , cfgKeeperFeeBufferBps = 2_500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 candleReleaseManifest :: CompetitionReleaseManifest

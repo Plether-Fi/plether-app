@@ -72,7 +72,7 @@ const competition = {
     status: 'open',
     opensAt: '2026-08-28T10:00:00Z',
     closesAt: '2026-09-20T21:00:00Z',
-    minimumXAccountAgeDays: 90,
+    minimumXAccountAgeDays: 30,
     targetXHandle: 'plether_fi',
     rulesVersion: 'rules-v1',
     privacyVersion: 'privacy-v1',
@@ -118,7 +118,7 @@ describe('RegistrationPage', () => {
   it('accepts only the pinned X OAuth authorization endpoint and PKCE parameters', () => {
     const state = 'a'.repeat(43)
     const challenge = 'b'.repeat(43)
-    const validUrl = `https://x.com/i/oauth2/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Finsights.plether.com%2Fapi%2Finsights%2Fv1%2Fcompetitions%2Ftestnet-trading-2026-09%2Fregistrations%2Fx%2Fcallback&scope=users.read%20users.email%20follows.read&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`
+    const validUrl = `https://x.com/i/oauth2/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Finsights.plether.com%2Fapi%2Finsights%2Fv1%2Fcompetitions%2Ftestnet-trading-2026-09%2Fregistrations%2Fx%2Fcallback&scope=tweet.read%20users.read%20users.email%20follows.read&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`
     expect(safeXAuthorizationUrl(validUrl)).toBe(validUrl)
     expect(() => safeXAuthorizationUrl(validUrl.replace('https://x.com', 'https://evil.example'))).toThrow('invalid authorization')
     expect(() => safeXAuthorizationUrl(validUrl.replace('/i/oauth2/authorize', '/attacker'))).toThrow('invalid authorization')
@@ -295,7 +295,7 @@ describe('RegistrationPage', () => {
     expect(screen.getByText(/before the competition ends/i)).toBeInTheDocument()
   })
 
-  it('shows the review step and requires both versioned consents', () => {
+  it('shows the review step with separate required and optional email consents', () => {
     apiMocks.useRegistrationSession.mockReturnValue({
       data: {
         status: 'in_progress',
@@ -317,7 +317,54 @@ describe('RegistrationPage', () => {
     renderPage()
     expect(screen.getByRole('heading', { name: 'Review your entry' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Complete registration' })).toBeDisabled()
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+    expect(screen.getAllByRole('checkbox')).toHaveLength(3)
+    expect(screen.getByRole('checkbox', { name: /Plether Labs newsletters/i })).not.toBeChecked()
+  })
+
+  it('submits the optional promotional-email choice without making it required', async () => {
+    const registration = {
+      status: 'in_progress' as const,
+      csrfToken: 'csrf',
+      expiresAt: '2026-08-28T12:00:00Z',
+      steps: { xIdentity: 'verified' as const, xFollow: 'verified' as const, wallet: 'verified' as const, completed: false },
+      identity: { xHandle: 'alice', maskedEmail: 'a***@example.com' },
+      wallet: {
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        tradingAccount: '0x2222222222222222222222222222222222222222',
+      },
+      requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+    }
+    apiMocks.useRegistrationSession.mockReturnValue({
+      data: registration,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    apiMocks.completeRegistration.mockResolvedValue({
+      ...registration,
+      status: 'completed',
+      steps: { ...registration.steps, completed: true },
+    })
+
+    renderPage()
+    const completeButton = screen.getByRole('button', { name: 'Complete registration' })
+    const [rulesConsent, privacyConsent] = screen.getAllByRole('checkbox')
+    fireEvent.click(rulesConsent)
+    fireEvent.click(privacyConsent)
+    expect(completeButton).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Plether Labs newsletters/i }))
+    fireEvent.click(completeButton)
+
+    await waitFor(() => {
+      expect(apiMocks.completeRegistration).toHaveBeenCalledWith(
+        competition.slug,
+        'csrf',
+        'rules-v1',
+        'privacy-v1',
+        true,
+      )
+    })
   })
 
   it('does not discard wallet ownership when a legacy backend returns the retired account-state error', async () => {
@@ -347,7 +394,7 @@ describe('RegistrationPage', () => {
     renderPage()
     expect(screen.getByText(/clean starting state is checked at the competition baseline/i)).toBeInTheDocument()
     expect(screen.getByText('My X handle will be public.').tagName).toBe('LI')
-    expect(screen.getByText(/confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages/i)).toBeInTheDocument()
+    expect(screen.queryByText(/confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages/i)).not.toBeInTheDocument()
     expect(screen.getByText(/private owner-wallet-to-Trading-Account link is protected and retained indefinitely/i).tagName).toBe('LI')
     expect(screen.queryByText(/confirmed email is encrypted and retained indefinitely/i)).not.toBeInTheDocument()
     const consents = screen.getAllByRole('checkbox')

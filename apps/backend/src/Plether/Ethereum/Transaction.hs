@@ -3,6 +3,9 @@ module Plether.Ethereum.Transaction
   , SignedTransaction (..)
   , deriveAddress
   , signTransaction
+  , rawTransactionHash
+  , applyBpsBuffer
+  , sameNonceReplacementFees
   , normalizePrivateKey
   ) where
 
@@ -90,13 +93,44 @@ signTransaction privateKeyText tx = do
             s = bytesToInteger $ BS.drop 32 compactSig
             yParity = fromIntegral (recId `mod` 2) :: Integer
             raw = BS.cons 0x02 $ signedPayload tx yParity r s
-            txHash = "0x" <> TE.decodeUtf8 (B16.encode $ keccak256 raw)
+            txHash = rawTransactionHash raw
         Right
           SignedTransaction
             { signedRawTransaction = raw
             , signedTransactionHash = txHash
             , signedFrom = from
-            }
+          }
+
+-- | Deterministic EIP-2718 transaction identifier for already-signed bytes.
+-- This is available before broadcast so callers can persist intent first and
+-- verify that the node returns the locally derived hash.
+rawTransactionHash :: ByteString -> Text
+rawTransactionHash raw = "0x" <> TE.decodeUtf8 (B16.encode $ keccak256 raw)
+
+-- | Apply a basis-point buffer with ceiling division.
+applyBpsBuffer :: Integer -> Integer -> Integer
+applyBpsBuffer value bufferBps =
+  ((value * (10_000 + bufferBps)) + 9_999) `div` 10_000
+
+-- | Price a same-nonce EIP-1559 replacement. Both fee fields beat the prior
+-- transaction by at least 12.5%, while current buffered network quotes may
+-- require a larger bump. The max fee is always at least the priority fee.
+sameNonceReplacementFees
+  :: Integer -- ^ Current fee buffer in basis points.
+  -> Integer -- ^ Current gas-price quote.
+  -> Integer -- ^ Current priority-fee quote.
+  -> Integer -- ^ Previous max-priority fee.
+  -> Integer -- ^ Previous max fee.
+  -> (Integer, Integer)
+sameNonceReplacementFees feeBufferBps gasPrice priorityBase oldPriorityFee oldMaxFee =
+  (replacementPriorityFee, replacementMaxFee)
+ where
+  currentPriorityFee = applyBpsBuffer priorityBase feeBufferBps
+  currentMaxFee = max currentPriorityFee $ applyBpsBuffer (max gasPrice priorityBase) feeBufferBps
+  replacementPriorityFee = max currentPriorityFee $ applyBpsBuffer oldPriorityFee 1_250
+  replacementMaxFee =
+    max replacementPriorityFee $
+      max currentMaxFee (applyBpsBuffer oldMaxFee 1_250)
 
 normalizePrivateKey :: Text -> Text
 normalizePrivateKey value =

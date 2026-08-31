@@ -26,6 +26,7 @@ import Plether.AA.Pimlico
 import Plether.Config
   ( AaConfig (..)
   , Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -256,6 +257,14 @@ spec = do
       validate mismatchedDeposit `shouldSatisfy` isLeft
       validate [nonzero, depositCalls !! 1] `shouldSatisfy` isLeft
       validate [wrongAccount] `shouldSatisfy` isLeft
+
+    it "rejects invalid V2 client identities and unpinned execution modes" $ do
+      validate [orderCallWith (BS.replicate 32 0) 1] `shouldSatisfy` isLeft
+      validate
+        [orderCallWith (reservedClientPrefix <> BS.replicate 24 0) 1]
+        `shouldSatisfy` isLeft
+      validate [orderCallWith (BS.replicate 32 0x11) 7]
+        `shouldSatisfy` isLeft
   where
     validate = validateActionSequence testConfig sender owner
 
@@ -287,16 +296,35 @@ withdrawalCalls =
   ]
 
 orderCall :: SmartCall
-orderCall =
+orderCall = orderCallWith (BS.replicate 32 0x11) 1
+
+orderCallWith :: ByteString -> Integer -> SmartCall
+orderCallWith clientOrderId allowedExecutionModes =
   smartCall router $
     encodeCall
-      "commitOrder(uint8,uint256,uint256,uint256,bool)"
-      [ encodeUint256 0
+      "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+      [ clientOrderId
+      , encodeUint256 0
       , encodeUint256 100
       , encodeUint256 10
       , encodeUint256 1234
       , encodeUint256 0
+      , encodeUint256 2000000000
+      , encodeUint256 allowedExecutionModes
+      , BS.replicate 32 0x22
+      , encodeUint256 1
+      , encodeUint256 100
+      , encodeUint256 20
+      , encodeUint256 5
+      , encodeUint256 5
+      , encodeUint256 100
+      , encodeUint256 1
+      , encodeUint256 1
+      , encodeUint256 50000
       ]
+
+reservedClientPrefix :: ByteString
+reservedClientPrefix = BS.pack [0x50, 0x4c, 0x45, 0x54, 0x48, 0x45, 0x52, 0x21]
 
 addMarginCall :: SmartCall
 addMarginCall =
@@ -376,6 +404,7 @@ testConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
@@ -393,6 +422,7 @@ testConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = engine
     , cfgPerpsCfdEngineLens = zeroAddress
     , cfgPerpsCfdEngineSettlementSidecar = zeroAddress
@@ -412,6 +442,7 @@ testConfig =
     , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Just testAaConfig
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -419,8 +450,15 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 testReleaseManifest :: CompetitionReleaseManifest

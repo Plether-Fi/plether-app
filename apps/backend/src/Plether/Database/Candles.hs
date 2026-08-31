@@ -7,6 +7,7 @@ module Plether.Database.Candles
   , CandleRange (..)
   , CandleQuality (..)
   , RollupCoverage (..)
+  , PriceGapRecoveryResult (..)
   , RollupKind (..)
   , MarketVolumeRollupSnapshot (..)
   , canonicalCandleIntervals
@@ -21,6 +22,7 @@ module Plether.Database.Candles
   , lockBasketPriceDataset
   , lockMarketVolumeDataset
   , advanceBasketPriceCoverage
+  , recoverBasketPriceCoverageGap
   , advanceMarketVolumeCoverage
   , invalidateMarketVolumeFromBlock
   , getActiveBasketSeriesId
@@ -244,6 +246,13 @@ data RollupCoverage = RollupCoverage
   , rcLastError :: Maybe Text
   , rcMaintenanceFrom :: Maybe Integer
   , rcMaintenanceTo :: Maybe Integer
+  }
+  deriving stock (Eq, Show)
+
+data PriceGapRecoveryResult = PriceGapRecoveryResult
+  { pgrPreviousCoverageEnd :: Integer
+  , pgrRecoveredThrough :: Integer
+  , pgrGeneration :: Integer
   }
   deriving stock (Eq, Show)
 
@@ -1098,6 +1107,136 @@ advanceBasketPriceCoverage conn seriesId checkedThrough latenessSeconds = do
         \AND coverage.release_router = ''"
         (seriesId, seriesId)
       pure ()
+
+-- | Re-publish a price dataset disabled only by a missed source-watermark
+-- poll. The caller must first validate the external closed-market evidence.
+-- This database half then proves that the freshly signed state is byte-for-byte
+-- equal to the last canonical observation and that every interval still has
+-- the exact generation and terminal derived from the expected minute anchor.
+--
+-- Call inside a transaction. The price dataset advisory lock serializes this
+-- publication with the live basket writer; a single new generation invalidates
+-- every cached strict-coverage response.
+recoverBasketPriceCoverageGap
+  :: Connection
+  -> Text
+  -> Integer -- ^ expected minute coverage end
+  -> Integer -- ^ signed latest payload fetch time
+  -> Integer -- ^ signed latest minimum component publish time
+  -> Integer -- ^ signed basket price
+  -> Value -- ^ signed component metadata
+  -> Integer -- ^ configured finalization lateness
+  -> IO PriceGapRecoveryResult
+recoverBasketPriceCoverageGap
+  conn
+  seriesId
+  expectedCoverageEnd
+  checkedThrough
+  expectedObservationTime
+  expectedBasketPrice
+  expectedComponents
+  latenessSeconds = do
+    ensureCurrentBasketDefinition conn seriesId
+    lockBasketPriceDataset conn seriesId
+    unless (expectedCoverageEnd >= 0 && expectedCoverageEnd `mod` 60 == 0) $
+      fail "Closed price-gap recovery requires a minute-aligned expected coverage end"
+    unless (checkedThrough > expectedCoverageEnd) $
+      fail "Closed price-gap recovery must advance beyond the expected coverage end"
+
+    latestObservations <-
+      query
+        conn
+        "SELECT publish_time, basket_price, component_prices \
+        \FROM perps_basket_observations \
+        \WHERE series_id = ? AND publish_time < ? AND source_priority = 100 \
+        \ORDER BY publish_time DESC, source_priority DESC, observation_id DESC LIMIT 1"
+        (seriesId, expectedCoverageEnd) :: IO [(Integer, Integer, Value)]
+    case latestObservations of
+      [(publishTime, basketPrice, components)]
+        | publishTime == expectedObservationTime
+            && basketPrice == expectedBasketPrice
+            && components == expectedComponents -> pure ()
+        | otherwise ->
+            fail "Signed latest Pyth state does not match the last stored basket observation"
+      [] -> fail "Closed price-gap recovery found no stored basket observation before the gap"
+      _ -> fail "Closed price-gap recovery latest observation lookup was not unique"
+
+    coverageRows <-
+      query
+        conn
+        "SELECT interval_seconds, coverage_end, generation, complete, derivation_version, \
+        \ last_error, maintenance_from, maintenance_to \
+        \FROM perps_rollup_coverage \
+        \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = '' \
+        \ORDER BY interval_seconds FOR UPDATE"
+        (Only seriesId)
+        :: IO [(Integer, Maybe Integer, Integer, Bool, Text, Maybe Text, Maybe Integer, Maybe Integer)]
+    let intervals = map (\(interval, _, _, _, _, _, _, _) -> interval) coverageRows
+    unless (intervals == canonicalCandleIntervals) $
+      fail "Closed price-gap recovery requires every canonical coverage interval"
+    forM_ coverageRows $ \(interval, coverageEnd, _, complete, derivationVersion, lastError, maintenanceFrom, maintenanceTo) -> do
+      unless (coverageEnd == Just (alignDown expectedCoverageEnd interval)) $
+        fail "Closed price-gap recovery coverage terminals do not match the expected minute anchor"
+      unless
+        ( not complete
+            && derivationVersion == currentDerivationVersion
+            && lastError == Just "price_watermark_gap"
+            && maintenanceFrom == Nothing
+            && maintenanceTo == Nothing
+        ) $
+        fail "Closed price-gap recovery found coverage in an unexpected state"
+    let generations = Set.fromList $ map (\(_, _, generation, _, _, _, _, _) -> generation) coverageRows
+    generation <- case Set.toList generations of
+      [currentGeneration] -> do
+        assertGenerationCapacity conn PriceRollup (Just seriesId) Nothing Nothing
+        pure $ currentGeneration + 1
+      _ -> fail "Closed price-gap recovery requires one shared dataset generation"
+
+    restored <-
+      execute
+        conn
+        "UPDATE perps_rollup_coverage SET generation = ?, complete = TRUE, \
+        \ last_error = NULL, maintenance_from = NULL, maintenance_to = NULL, updated_at = NOW() \
+        \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = '' \
+        \AND complete = FALSE AND last_error = 'price_watermark_gap'"
+        (generation, seriesId)
+    unless (restored == fromIntegral (length canonicalCandleIntervals)) $
+      fail "Closed price-gap recovery could not atomically restore every coverage interval"
+
+    forM_ canonicalCandleIntervals $ \interval ->
+      advanceExistingCoverage
+        conn
+        PriceRollup
+        (Just seriesId)
+        Nothing
+        Nothing
+        interval
+        checkedThrough
+        (alignDown checkedThrough interval)
+        latenessSeconds
+
+    published <-
+      forM canonicalCandleIntervals $ \interval ->
+        getRollupCoverage conn PriceRollup (Just seriesId) Nothing Nothing interval
+    unless
+      ( all
+          (\case
+            Just coverage ->
+              rcComplete coverage
+                && rcGeneration coverage == generation
+                && rcLastError coverage == Nothing
+                && rcCoverageEnd coverage >= Just (alignDown checkedThrough $ rcIntervalSeconds coverage)
+            Nothing -> False
+          )
+          published
+      ) $
+      fail "Closed price-gap recovery did not publish complete advanced coverage"
+    pure
+      PriceGapRecoveryResult
+        { pgrPreviousCoverageEnd = expectedCoverageEnd
+        , pgrRecoveredThrough = checkedThrough
+        , pgrGeneration = generation
+        }
 
 recomputeMarketVolumeHierarchy :: Connection -> Integer -> Text -> Integer -> Integer -> IO ()
 recomputeMarketVolumeHierarchy conn chainId releaseRouter timestamp latenessSeconds =

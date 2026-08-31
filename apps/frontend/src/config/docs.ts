@@ -61,6 +61,10 @@ export const DOCS_LINKS = {
     href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#the-notional-used-for-margin`,
     title: 'The notional used for margin',
   },
+  orderExposure: {
+    href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#order-quantity`,
+    title: 'Order quantity and exposure',
+  },
   executionLimit: {
     href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#acceptable-price-protection`,
     title: 'Acceptable-price protection',

@@ -3,7 +3,7 @@ import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { perpsApi } from '../api'
+import { perpsApi, testnetFaucetErrorMessage } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
 import { openAppKit } from '../config/wagmi'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
@@ -271,7 +271,7 @@ export function TestnetWelcomeModal() {
     setIsSubmitting(false)
 
     if (Result.isError(result)) {
-      setSubmitError(result.error.message)
+      setSubmitError(testnetFaucetErrorMessage(result.error))
       return
     }
 

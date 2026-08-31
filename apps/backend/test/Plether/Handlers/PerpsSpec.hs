@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import Plether.Cache (SingleFlightSource (..))
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -1124,6 +1125,7 @@ rollupConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
@@ -1141,6 +1143,7 @@ rollupConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
     , cfgPerpsCfdEngineLens = ""
     , cfgPerpsCfdEngineSettlementSidecar = ""
@@ -1160,6 +1163,7 @@ rollupConfig =
     , cfgInsightsCompetitionReleaseManifest = rollupReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -1167,8 +1171,15 @@ rollupConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 rollupReleaseManifest :: CompetitionReleaseManifest

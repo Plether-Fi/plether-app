@@ -35,7 +35,7 @@ const USER_OPERATION_HASH = `0x${'aa'.repeat(32)}` as Hex
 const OTHER_USER_OPERATION_HASH = `0x${'cc'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'bb'.repeat(32)}` as Hex
 const INCLUDED_BLOCK_HASH = `0x${'dd'.repeat(32)}` as Hex
-const MANIFEST_VERSION = 'perps-aa-arbitrum-sepolia-v1'
+const MANIFEST_VERSION = 'perps-aa-arbitrum-sepolia-v2'
 const AUTHORIZATION_STORAGE_SUFFIX =
   `421614:${OWNER.toLowerCase()}:${ACCOUNT.toLowerCase()}:${TOKEN.toLowerCase()}`
 const LEGACY_AUTHORIZATION_KEY =

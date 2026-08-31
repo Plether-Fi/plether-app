@@ -56,7 +56,7 @@ spec = do
     it "projects indexed execution fee and signed VPI into wallet activity" $ do
       queryContains walletActivityQuerySql "a.data->>'executionFeeUsdc'"
       queryContains walletActivityQuerySql "a.data->>'vpiUsdc'"
-      queryContains insightsDataStatusQuerySql "perps-history-costs-v1:"
+      queryContains insightsDataStatusQuerySql "perps-history-costs-v2:finalized-abi3:"
 
     it "serializes execution fee and signed VPI as lossless decimal strings" $ do
       activityRowToJson

@@ -15,6 +15,7 @@ import Plether.Config (Config (..), PerpsCandleWriteMode (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Candles
   ( BasketObservationInput (..)
+  , PriceGapRecoveryResult (..)
   , RollupCoverage (..)
   , RollupKind (PriceRollup)
   , advanceBasketPriceCoverage
@@ -22,6 +23,7 @@ import Plether.Database.Candles
   , ensureCurrentBasketDefinition
   , getRollupCoverage
   , recomputeBasketCandleHierarchy
+  , recoverBasketPriceCoverageGap
   , upsertBasketObservation
   )
 import Plether.Database.Schema
@@ -57,8 +59,10 @@ import Plether.Pyth.Hermes
   , resolveHermesApiKey
   )
 import Plether.Pyth.History
-  ( BasketIngestorConfig (..)
+  ( BasketHistoryActivity (..)
+  , BasketIngestorConfig (..)
   , basketObservationId
+  , fetchBasketHistoryActivity
   , runBasketBackfill
   , startBasketHistoryIngestor
   )
@@ -69,6 +73,7 @@ import Plether.Pyth.RevealPayload
   , validatePublishTimes
   , validateRevealWindow
   )
+import Plether.Perps.ClosedPriceGap (validateClosedPriceGapEvidence)
 import Plether.Utils.Hex (hexToByteStringEither)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -78,12 +83,17 @@ data WorkerMode
   = RunOnce
   | LatestLoop
   | BackfillOnce
+  | RecoverClosedPriceGap
   deriving (Eq, Show)
 
 data WorkerArgs = WorkerArgs
   { waMode :: WorkerMode
   , waPollSeconds :: Int
   , waBackfillDays :: Maybe Int
+  , waExpectedCoverageEnd :: Maybe Integer
+  , waRecoverBefore :: Maybe Integer
+  , waRequestedBy :: Maybe T.Text
+  , waRequestReference :: Maybe T.Text
   }
   deriving (Show)
 
@@ -92,7 +102,18 @@ defaultPollSeconds = 5
 
 main :: IO ()
 main = do
-  args <- parseWorkerArgs <$> getArgs
+  rawArgs <- getArgs
+  case parseWorkerArgs rawArgs of
+    Left err -> do
+      logError
+        "basket_worker_arguments_invalid"
+        "Basket worker arguments are invalid"
+        [field "error" err]
+      exitFailure
+    Right args -> runWorker args
+
+runWorker :: WorkerArgs -> IO ()
+runWorker args = do
   eConfig <- loadConfig
   case eConfig of
     Left err -> do
@@ -149,6 +170,7 @@ main = do
                         pool
                         BasketIngestorConfig
                           { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                          , bicHistoryUrl = cfgPythHistoryUrl cfg
                           , bicApiKey = cfgPythApiKey cfg
                           , bicChainId = cfgPerpsChainId cfg
                           , bicBackfillDays = cfgPythBackfillDays cfg
@@ -164,6 +186,7 @@ main = do
                 let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
                 runBasketBackfill manager pool BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicHistoryUrl = cfgPythHistoryUrl cfg
                   , bicApiKey = cfgPythApiKey cfg
                   , bicChainId = cfgPerpsChainId cfg
                   , bicBackfillDays = backfillDays
@@ -173,6 +196,53 @@ main = do
                   , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
                   , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
+              RecoverClosedPriceGap ->
+                case
+                    ( waExpectedCoverageEnd args
+                    , waRecoverBefore args
+                    , waRequestedBy args
+                    , waRequestReference args
+                    )
+                  of
+                    (Just coverageEnd, Just recoverBefore, Just requestedBy, Just requestReference) -> do
+                      result <-
+                        runClosedPriceGapRecovery
+                          manager
+                          ethClient
+                          pool
+                          cfg
+                          coverageEnd
+                          recoverBefore
+                          requestedBy
+                          requestReference
+                      case result of
+                        Left err -> do
+                          logError
+                            "basket_price_gap_recovery_failed"
+                            "Closed-market basket price coverage recovery failed"
+                            [ field "expected_coverage_end" coverageEnd
+                            , field "recover_before" recoverBefore
+                            , field "requested_by" requestedBy
+                            , field "request_reference" requestReference
+                            , field "error" err
+                            ]
+                          exitFailure
+                        Right recovery ->
+                          logInfo
+                            "basket_price_gap_recovered"
+                            "Closed-market basket price coverage was safely republished"
+                            [ field "previous_coverage_end" $ pgrPreviousCoverageEnd recovery
+                            , field "recovered_through" $ pgrRecoveredThrough recovery
+                            , field "generation" $ pgrGeneration recovery
+                            , field "requested_by" requestedBy
+                            , field "request_reference" requestReference
+                            ]
+                    _ -> do
+                      logError
+                        "basket_worker_arguments_invalid"
+                        "Closed price-gap recovery arguments are incomplete"
+                        []
+                      exitFailure
 
 latestLoop :: Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
 latestLoop manager ethClient pool cfg pollSeconds = do
@@ -221,6 +291,126 @@ runLatestOnce manager ethClient pool cfg = do
   case result of
     Left err -> pure $ Left err
     Right update -> cacheBasketUpdate ethClient pool cfg Nothing update
+
+runClosedPriceGapRecovery
+  :: Manager
+  -> EthClient
+  -> DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> T.Text
+  -> T.Text
+  -> IO (Either T.Text PriceGapRecoveryResult)
+runClosedPriceGapRecovery manager ethClient pool cfg expectedCoverageEnd recoverBefore requestedBy requestReference
+  | cfgPerpsChainId cfg /= 421_614 =
+      pure $ Left "Closed price-gap recovery is restricted to Sepolia chain 421614"
+  | not $ candleWritesEnabled cfg =
+      pure $ Left "Closed price-gap recovery requires PERPS_CANDLE_WRITE_MODE=dual"
+  | otherwise = do
+      latestResult <- fetchLatestBasketUpdate manager cfg
+      case latestResult of
+        Left err -> pure $ Left $ "could not fetch latest signed Pyth evidence: " <> err
+        Right update -> do
+          signedResult <- verifyLatestRecoveryPayload ethClient cfg update
+          case signedResult of
+            Left err -> pure $ Left err
+            Right (minPublishTime, maxPublishTime, signedBasketPrice, signedComponents) -> do
+              historyResult <-
+                fetchBasketHistoryActivity
+                  manager
+                  (cfgPythHistoryUrl cfg)
+                  (cfgPythApiKey cfg)
+                  expectedCoverageEnd
+                  (hbuFetchedAt update)
+              case historyResult of
+                Left err -> pure $ Left $ "could not fetch Pyth closed-gap history evidence: " <> err
+                Right activity ->
+                  case
+                      validateClosedPriceGapEvidence
+                        expectedCoverageEnd
+                        (hbuFetchedAt update)
+                        recoverBefore
+                        maxPublishTime
+                        (map bhaTimestamps activity)
+                    of
+                      Left err -> pure $ Left err
+                      Right () -> do
+                        databaseResult <-
+                          try $
+                            withDb pool $ \conn ->
+                              withTransaction conn $
+                                recoverBasketPriceCoverageGap
+                                  conn
+                                  defaultBasketSeriesId
+                                  expectedCoverageEnd
+                                  (hbuFetchedAt update)
+                                  minPublishTime
+                                  signedBasketPrice
+                                  (toJSON signedComponents)
+                                  (cfgPerpsCandleLatenessSeconds cfg)
+                        case databaseResult of
+                          Left err ->
+                            pure $
+                              Left $
+                                "closed price-gap database publication failed: "
+                                  <> T.pack (displayException (err :: SomeException))
+                          Right recovery -> do
+                            logInfo
+                              "basket_price_gap_evidence_verified"
+                              "Verified signed and historical Pyth evidence for a closed-market coverage gap"
+                              [ field "expected_coverage_end" expectedCoverageEnd
+                              , field "checked_through" $ hbuFetchedAt update
+                              , field "recover_before" recoverBefore
+                              , field "min_publish_time" minPublishTime
+                              , field "max_publish_time" maxPublishTime
+                              , field "history_feed_count" $ length activity
+                              , field "history_update_count" $ sum $ map (length . bhaTimestamps) activity
+                              , field "history_feed_symbols" $ map bhaFeedSymbol activity
+                              , field "requested_by" requestedBy
+                              , field "request_reference" requestReference
+                              ]
+                            pure $ Right recovery
+
+verifyLatestRecoveryPayload
+  :: EthClient
+  -> Config
+  -> HermesBasketUpdate
+  -> IO (Either T.Text (Integer, Integer, Integer, [BasketComponentPrice]))
+verifyLatestRecoveryPayload ethClient cfg update
+  | not $ isLatestUpdate update = pure $ Left "Closed price-gap evidence is not a latest-source payload"
+  | otherwise =
+      case validateCachePublishTimes update of
+        Left err -> pure $ Left err
+        Right (minPublishTime, maxPublishTime) ->
+          case decodeAdmissionInputs update of
+            Left err -> pure $ Left err
+            Right (updateData, feedIds) -> do
+              admission <-
+                admitCachePayload
+                  ethClient
+                  cfg
+                  AdmitLatestPayload
+                  updateData
+                  feedIds
+                  minPublishTime
+                  maxPublishTime
+              case admission of
+                Left err ->
+                  pure $
+                    Left $
+                      "Pyth rejected latest recovery evidence on-chain: "
+                        <> T.pack (show err)
+                Right signedPoints ->
+                  pure $ do
+                    (signedBasketPrice, signedComponents) <-
+                      basketSnapshotFromSignedPrices update signedPoints
+                    pure
+                      ( minPublishTime
+                      , maxPublishTime
+                      , signedBasketPrice
+                      , signedComponents
+                      )
 
 backfillPendingOrderRevealPayloads :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
 backfillPendingOrderRevealPayloads manager ethClient pool cfg = do
@@ -608,21 +798,60 @@ mapLeft f result =
     Left err -> Left $ f err
     Right value -> Right value
 
-parseWorkerArgs :: [String] -> WorkerArgs
-parseWorkerArgs args =
-  WorkerArgs
-    { waMode =
-        if "--backfill-once" `elem` args
-          then BackfillOnce
-          else if "--latest-loop" `elem` args
-            then LatestLoop
-            else RunOnce
-    , waPollSeconds = readFlag "--poll-seconds" defaultPollSeconds args
-    , waBackfillDays =
-        case lookupFlag "--backfill-days" args of
-          Just value -> readMaybe value
-          Nothing -> Nothing
-    }
+parseWorkerArgs :: [String] -> Either T.Text WorkerArgs
+parseWorkerArgs args
+  | "--recover-closed-price-gap" `elem` args = parseRecoveryArgs args
+  | otherwise =
+      Right
+        WorkerArgs
+          { waMode =
+              if "--backfill-once" `elem` args
+                then BackfillOnce
+                else if "--latest-loop" `elem` args
+                  then LatestLoop
+                  else RunOnce
+          , waPollSeconds = readFlag "--poll-seconds" defaultPollSeconds args
+          , waBackfillDays =
+              case lookupFlag "--backfill-days" args of
+                Just value -> readMaybe value
+                Nothing -> Nothing
+          , waExpectedCoverageEnd = Nothing
+          , waRecoverBefore = Nothing
+          , waRequestedBy = Nothing
+          , waRequestReference = Nothing
+          }
+
+parseRecoveryArgs :: [String] -> Either T.Text WorkerArgs
+parseRecoveryArgs args = do
+  when
+    (length args /= 9 || any (`elem` args) ["--latest-loop", "--backfill-once"])
+    (Left "Closed price-gap recovery accepts exactly four named values and no other worker mode")
+  expectedCoverageEnd <- requireRecoveryInteger "--expected-coverage-end" args
+  recoverBefore <- requireRecoveryInteger "--recover-before" args
+  requestedBy <- requireRecoveryText "--requested-by" args
+  requestReference <- requireRecoveryText "--request-reference" args
+  pure
+    WorkerArgs
+      { waMode = RecoverClosedPriceGap
+      , waPollSeconds = defaultPollSeconds
+      , waBackfillDays = Nothing
+      , waExpectedCoverageEnd = Just expectedCoverageEnd
+      , waRecoverBefore = Just recoverBefore
+      , waRequestedBy = Just requestedBy
+      , waRequestReference = Just requestReference
+      }
+
+requireRecoveryInteger :: String -> [String] -> Either T.Text Integer
+requireRecoveryInteger name args =
+  case lookupFlag name args >>= readMaybe of
+    Just value | value >= 0 && value <= 4_102_444_800 -> Right value
+    _ -> Left $ T.pack name <> " must be a Unix timestamp from 0 through 4102444800"
+
+requireRecoveryText :: String -> [String] -> Either T.Text T.Text
+requireRecoveryText name args =
+  case T.strip . T.pack <$> lookupFlag name args of
+    Just value | not (T.null value) && T.length value <= 200 -> Right value
+    _ -> Left $ T.pack name <> " must be non-blank and at most 200 characters"
 
 readFlag :: (Read a) => String -> a -> [String] -> a
 readFlag name fallback args =

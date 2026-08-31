@@ -74,13 +74,15 @@ Where:
 
 The application handles this conversion when building the order.
 
-### 2. Enter the exposure
+### 2. Enter the order quantity
 
-Enter the target amount to add in the `plDXY Perp exposure` field. The amount is valued at the current displayed price. The application converts it into the contract quantity stored in the order:
+Enter the plDXY amount to add in the `Order quantity` field. Typed quantities must use `100 plDXY` increments; the interface asks you to correct an unsupported quantity instead of rounding it silently.
+
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission:
 
 ```
-Added contract quantity
-≈ selected plDXY Perp exposure ÷ Dpreview
+Order exposure
+= Order quantity × Dpreview
 ```
 
 For a new position, that quantity becomes the initial position. For an increase, it is added to the existing contract quantity:
@@ -91,7 +93,7 @@ Resulting contract quantity
 + added contract quantity
 ```
 
-The entered amount is an addition, not an intended final position size. Because displayed exposure is `contract quantity × current D`, the final execution exposure can differ from the selected amount when the price changes before execution.
+The entered Order quantity is an addition, not an intended final position size. It remains fixed after commitment, but displayed exposure is `contract quantity × current D`. Final execution exposure can therefore differ from previewed Order exposure when the price changes before execution.
 
 The execution price determines the added contract notional[^notional]:
 
@@ -206,7 +208,8 @@ The review uses current account, oracle and HousePool data. Its summary identifi
 The current `Commit Preview` shows:
 
 * plDXY Perp price
-* Selected plDXY Perp exposure
+* Order exposure, meaning the whole-lot Order quantity valued at the current displayed price
+* Order quantity in plDXY
 * Contract notional
 * Initial margin, meaning the margin submitted with this order
 * Maintenance margin
@@ -391,7 +394,7 @@ After execution, open the **Position** panel and review its current fields:
 * Unrealized PnL[^pnl]
 * Cost of carry
 
-The lifecycle window’s **Final Result** records target and execution exposure, contract notional, the execution fee, VPI, oracle confidence spread, execution reward and transaction links. **Order History** records the terminal order status. `Available to Trade` remains a separate trade-ticket value, and assigned position margin is available in `Edit Position Margin`.
+The lifecycle window’s **Final Result** records Order quantity, execution exposure, contract notional, the execution fee, VPI, oracle confidence spread, execution reward and transaction links. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. **Order History** records the terminal order status. `Available to Trade` remains a separate trade-ticket value, and assigned position margin is available in `Edit Position Margin`.
 
 The executed position is the current account record.
 

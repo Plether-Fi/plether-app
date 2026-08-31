@@ -46,17 +46,18 @@ async function waitForAnvil(): Promise<void> {
 
 beforeAll(async () => {
   if (!forkUrl) return
-  const latestHex = await rpc<string>(forkUrl, 'eth_blockNumber')
-  const latest = BigInt(latestHex)
-  const forkBlock = latest > 180n ? latest - 180n : latest
-  anvil = spawn('anvil', [
+  const forkBlock = process.env.VAULT_FORK_BLOCK_NUMBER
+  const anvilArguments = [
     '--fork-url', forkUrl,
-    '--fork-block-number', forkBlock.toString(),
     '--chain-id', String(arbitrumSepolia.id),
     '--host', '127.0.0.1',
     '--port', String(anvilPort),
     '--silent',
-  ])
+  ]
+  if (forkBlock) {
+    anvilArguments.push('--fork-block-number', forkBlock)
+  }
+  anvil = spawn('anvil', anvilArguments)
   anvil.stderr.on('data', (chunk) => process.stderr.write(chunk))
   await waitForAnvil()
 })

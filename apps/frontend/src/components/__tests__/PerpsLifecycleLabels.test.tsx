@@ -53,6 +53,10 @@ import {
   useSponsoredOperationStore,
 } from '../../perps-aa'
 
+const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
+const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
+const V2_RECEIPT_HASH = `0x${'34'.repeat(32)}` as `0x${string}`
+
 vi.mock('@reown/appkit/react', () => ({
   createAppKit: vi.fn(),
   useAppKit: () => ({
@@ -69,7 +73,9 @@ const perpsTradingMocks = vi.hoisted(() => ({
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
+  prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
+  readOrderLifecycleOutcome: vi.fn(),
   executeOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
   waitForPerpsOrderTerminal: vi.fn(),
@@ -101,7 +107,9 @@ vi.mock('../../hooks', () => ({
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
+    prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
+    readOrderLifecycleOutcome: perpsTradingMocks.readOrderLifecycleOutcome,
     executeOrder: perpsTradingMocks.executeOrder,
     cleanupExpiredOrder: perpsTradingMocks.cleanupExpiredOrder,
   }),
@@ -129,9 +137,47 @@ describe('perps lifecycle labels', () => {
     Object.values(perpsTradingMocks).forEach((mock) => {
       mock.mockReset()
     })
+    perpsTradingMocks.readOrderLifecycleOutcome.mockResolvedValue(undefined)
+    perpsTradingMocks.prepareOrder.mockResolvedValue({
+      account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      orderRouter: '0x1111111111111111111111111111111111111111',
+      orderLifecycleBook: '0x2222222222222222222222222222222222222222',
+      request: {
+        clientOrderId: `0x${'12'.repeat(32)}`,
+        side: 0,
+        sizeDelta: 100_000_000n,
+        marginDelta: 20_000_000n,
+        targetPrice: 100_100_000n,
+        isClose: false,
+        bounds: {
+          validUntil: 1_700_000_300n,
+          allowedExecutionModes: 1,
+          expectedConfigHash: `0x${'34'.repeat(32)}`,
+          maxExecutionBountyUsdc: 10_000n,
+          maxExecutionNotionalUsdc: 100_000_000n,
+          maxGrossAccountDebitUsdc: 120_010_000n,
+          maxActionChargeUsdc: 1_000_000n,
+          maxExplicitFeesUsdc: 1_000_000n,
+          maxPostPositionSize: 100_000_000n,
+          minPostSettlementBalanceUsdc: 800_000_000n,
+          minPostPositionEquityUsdc: 20_000_000n,
+          maxPostLeverageBps: 50_000,
+        },
+      },
+      executionBountyUsdc: 10_000n,
+      reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}`,
+      reviewedPrice: 100_000_000n,
+      protection: {
+        validUntil: 1_700_000_300n,
+        executionMode: 1,
+        executionBountyUsdc: 10_000n,
+      },
+    })
   })
 
-  function startDelayedSponsoredCommit() {
+  async function startDelayedSponsoredCommit() {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{
@@ -144,13 +190,15 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialReviewOpen
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n}
       />
     )
 
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
 
@@ -167,7 +215,7 @@ describe('perps lifecycle labels', () => {
 
   it('clears the delayed wallet warning when the signed operation starts submitting', async () => {
     vi.useFakeTimers()
-    const onStatus = startDelayedSponsoredCommit()
+    const onStatus = await startDelayedSponsoredCommit()
 
     act(() => onStatus('awaiting-signature'))
     expect(screen.getByText('Waiting for wallet confirmation')).toBeInTheDocument()
@@ -212,7 +260,7 @@ describe('perps lifecycle labels', () => {
 
   it('cancels the wallet warning timer when signing finishes before the threshold', async () => {
     vi.useFakeTimers()
-    const onStatus = startDelayedSponsoredCommit()
+    const onStatus = await startDelayedSponsoredCommit()
 
     act(() => onStatus('awaiting-signature'))
     await act(async () => {
@@ -247,7 +295,7 @@ describe('perps lifecycle labels', () => {
     const baseProps = {
       enableLiveTrading: true,
       initialReviewOpen: true,
-      initialSize: '100',
+      initialOrderQuantity: '100',
       oraclePriceRaw: 100_000_000n,
       oraclePublishTime: Math.floor(Date.now() / 1_000),
       availableToTradeRaw: 1_000_000_000n,
@@ -262,23 +310,34 @@ describe('perps lifecycle labels', () => {
       price: '1.0000',
       size: '100',
       status: 'Executed' as const,
+      account:
+        '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const,
+      clientOrderId: `0x${'12'.repeat(32)}` as `0x${string}`,
       commitTxHash:
         '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e' as const,
       revealTxHash:
         '0x77f23300000000000000000000000000000000000000000000000000000067d1' as const,
+      receiptHash:
+        '0x88f23300000000000000000000000000000000000000000000000000000067d1' as const,
       executionPriceRaw: 100_000_000n,
+      executionEconomicsVersion: 2,
     }
 
     const { rerender } = render(
       <PerpsTradeTicket {...baseProps} orderHistory={[]} />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onStatus?: (
         status: 'awaiting-signature' | 'confirming'
       ) => void
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -296,6 +355,8 @@ describe('perps lifecycle labels', () => {
 
     await act(async () => {
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash: terminalOrder.commitTxHash,
         orderId: terminalOrder.orderId,
       })
@@ -376,7 +437,7 @@ describe('perps lifecycle labels', () => {
     const baseProps = {
       enableLiveTrading: true,
       initialReviewOpen: true,
-      initialSize: '100',
+      initialOrderQuantity: '100',
       oraclePriceRaw: 100_000_000n,
       oraclePublishTime: Math.floor(Date.now() / 1_000),
       availableToTradeRaw: 1_000_000_000n,
@@ -390,6 +451,8 @@ describe('perps lifecycle labels', () => {
       price: '1.0000',
       size: '100',
       status: 'Committed' as const,
+      account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID,
       commitTxHash:
         '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e' as const,
     }
@@ -398,9 +461,14 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket {...baseProps} orderHistory={[]} />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -408,6 +476,8 @@ describe('perps lifecycle labels', () => {
 
     await act(async () => {
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash: indexedOrder.commitTxHash,
         orderId: indexedOrder.orderId,
       })
@@ -470,19 +540,24 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialReviewOpen
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n}
       />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onStatus?: (
         status: 'awaiting-signature' | 'confirming'
       ) => void
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -492,6 +567,8 @@ describe('perps lifecycle labels', () => {
       commitInput?.onStatus?.('awaiting-signature')
       commitInput?.onStatus?.('confirming')
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash:
           '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e',
         orderId: 9177n,
@@ -529,7 +606,7 @@ describe('perps lifecycle labels', () => {
           initialLifecycleState="executed"
           initialReviewOpen
           initialDirection="long"
-          initialSize="2 000"
+          initialOrderQuantity="2 000"
         />
         <PerpsAccountPanel
           isConnected
@@ -588,12 +665,12 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const finalResultQueries = within(finalResult!)
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Order quantity')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution plDXY Perp exposure')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution reward')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.')).toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
@@ -607,13 +684,87 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText(/Entry notional is the executed order size\. plDXY Perp exposure is current displayed exposure\./)).toBeInTheDocument()
   })
 
+  it('uses terminal post-position evidence instead of committed full-close intent', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialOrderQuantity="1 014.2"
+        initialOrderId={81n}
+        initialCommittedIsFullClose
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 81n,
+          time: '31 Aug, 00:15',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: (100n * 10n ** 18n).toString(),
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position reduced at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position closed at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Executed reduction exposure')).toBeInTheDocument()
+  })
+
+  it('uses zero terminal post-position evidence to identify an actual full close', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialOrderQuantity="1 014.2"
+        initialOrderId={82n}
+        initialCommittedIsFullClose={false}
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 82n,
+          time: '31 Aug, 00:16',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: '0',
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position closed at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position reduced at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Executed close exposure')).toBeInTheDocument()
+  })
+
   it('resets the review modal lifecycle when it closes', () => {
     render(
       <PerpsTradeTicket
         initialLifecycleState="executed"
         initialReviewOpen
         initialDirection="long"
-        initialSize="2 000"
+        initialOrderQuantity="2 000"
       />
     )
 
@@ -688,6 +839,10 @@ describe('perps lifecycle labels', () => {
             price: '1.0170',
             size: '1 999.67',
             status: 'Executed',
+            account: V2_ACCOUNT,
+            clientOrderId: V2_CLIENT_ORDER_ID,
+            receiptHash: V2_RECEIPT_HASH,
+            executionEconomicsVersion: 2,
             commitTxHash: '0x9d4b00000000000000000000000000000000f953',
             revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
           },
@@ -700,9 +855,12 @@ describe('perps lifecycle labels', () => {
             price: 'Not executed',
             size: 'Not executed',
             status: 'Failed: Slippage exceeded',
+            account: V2_ACCOUNT,
+            clientOrderId: `0x${'13'.repeat(32)}`,
+            receiptHash: `0x${'35'.repeat(32)}`,
             commitTxHash: '0x9d4b00000000000000000000000000000000f954',
             revealTxHash: '0x6c0d00000000000000000000000000000000b7d4',
-            failureReason: 'SlippageExceeded',
+            terminalReason: 'Slippage',
           },
         ]}
         tradeHistory={[
@@ -766,7 +924,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Liquidation reward 0.2')).toBeInTheDocument()
   })
 
-  it('fills current position and max with exact plDXY Perp exposure instead of rounded display value', () => {
+  it('fills current position and max with the exact plDXY order quantity', () => {
     render(
       <PerpsTradeTicket
         initialDirection="short"
@@ -774,7 +932,7 @@ describe('perps lifecycle labels', () => {
           exists: true,
           side: 0,
           direction: 'long',
-          size: 0n,
+          size: 1_500n * 10n ** 18n,
           entryPrice: 98300000n,
           marginUsdc: 300000000n,
           unrealizedPnlUsdc: 0n,
@@ -791,12 +949,12 @@ describe('perps lifecycle labels', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
 
-    expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+    expect(screen.getByRole('textbox')).toHaveValue('1 500')
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
 
-    expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+    expect(screen.getByRole('textbox')).toHaveValue('1 500')
   })
 
   it('shows resulting position leverage in the margin action modal', () => {
@@ -942,7 +1100,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="104"
+        initialOrderQuantity="100"
         oraclePriceRaw={98434897n}
         oraclePublishTime={1781267148}
         minOpenNotionalUsdc={100000000n}
@@ -950,7 +1108,7 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Minimum new position is 1 031.8 USDC.')).toBeInTheDocument()
+    expect(screen.getByText('Minimum new position is 1 117.22 USDC.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
@@ -961,7 +1119,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
         longOpenCapacityUsdc={0n}
@@ -984,7 +1142,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
         longOpenCapacityUsdc={0n}
@@ -1021,7 +1179,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="short"
-        initialSize="1 553.25"
+        initialOrderQuantity="1 553.25"
         oraclePriceRaw={98240000n}
         oraclePublishTime={1781118120}
         currentPosition={{
@@ -1071,7 +1229,7 @@ describe('perps lifecycle labels', () => {
         enableLiveTrading
         initialDirection="long"
         initialReduceOnly
-        initialSize="2 100"
+        initialOrderQuantity="2 100"
         oraclePriceRaw={98_300_000n}
         oraclePublishTime={1_784_705_538}
         currentPosition={{
@@ -1091,9 +1249,160 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Only 2 034 USDC plDXY Perp exposure is available to reduce at the latest plDXY Perp price.')).toBeInTheDocument()
+    expect(screen.getByText('Only 2 000 plDXY is available to reduce.')).toBeInTheDocument()
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Review Close' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+  })
+
+  it('keeps a near-max reduction partial until Max selects the exact full close', () => {
+    const positionSize = 5_000n * 10n ** 18n
+    const positionExposureUsdc = 5_071_000_000n
+
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="4900"
+        oraclePriceRaw={98_580_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: positionSize,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: positionExposureUsdc,
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('5 000')
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+  })
+
+  it('blocks a floored reduction below the partial minimum but exempts an exact full close', async () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 900n * 10n ** 18n,
+        remainingSize: 4_100n * 10n ** 18n,
+        remainingMargin: 800_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="1000"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 5_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: 5_071_000_000n,
+        }}
+      />
+    )
+
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Use Max to close the full position.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.queryByText(/Minimum partial reduction/)).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+    })
+  })
+
+  it('does not treat a sub-minimum projected residual behind a pending order as a guaranteed full close', () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 800n * 10n ** 18n,
+        remainingSize: 1_200n * 10n ** 18n,
+        remainingMargin: 400_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="0"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 2_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 400_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 20_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 1_971_600_000n,
+          entryNotionalUsdc: 1_971_600_000n,
+          dxyExposureUsdc: 2_028_400_000n,
+        }}
+        pendingOrders={[{
+          orderId: 77n,
+          side: 0,
+          direction: 'long',
+          sizeDelta: 1_200n * 10n ** 18n,
+          marginDeltaUsdc: 0n,
+          acceptablePrice: 98_580_000n,
+          isReduceOnly: true,
+          status: 1,
+        }]}
+        pendingOrderCount={1}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('800')
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Review Close' })).not.toBeInTheDocument()
   })
 
   it('allows a profitable full close with no free buying power when the close preview is valid', () => {
@@ -1115,7 +1424,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="short"
-        initialSize="3484552.941998"
+        initialOrderQuantity="3 389 329.5585835346486935"
         oraclePriceRaw={97_190_495n}
         oraclePublishTime={1_784_656_207}
         availableToTradeRaw={0n}
@@ -1144,7 +1453,7 @@ describe('perps lifecycle labels', () => {
   it('requires confirmation before enabling the margin call simulator', () => {
     render(
       <PerpsTradeTicket
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         maintenanceMarginBps={100n}
       />
     )
@@ -1333,17 +1642,19 @@ describe('perps lifecycle labels', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument()
     })
-    expect(screen.getByRole('textbox')).toHaveValue('2 034')
+    expect(screen.getByRole('textbox')).toHaveValue('2 000')
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh oracle price' }))
 
     await waitFor(() => {
-      expect(screen.getByRole('textbox')).toHaveValue('2 032')
+      expect(screen.getByRole('textbox')).toHaveValue('2 000')
     })
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
 
@@ -1530,9 +1841,13 @@ describe('perps lifecycle labels', () => {
         price: '0.9733',
         size: '1 000',
         status: 'Executed',
+        account: V2_ACCOUNT,
+        clientOrderId: V2_CLIENT_ORDER_ID,
+        receiptHash: V2_RECEIPT_HASH,
         commitTxHash: '0x46cb000000000000000000000000000000001cbb',
         revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
         executionPriceRaw: 97_330_315n,
+        executionEconomicsVersion: 2,
       },
     })
 
@@ -1541,7 +1856,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'long' as const,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       initialOrderId: 58n,
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -1587,12 +1902,15 @@ describe('perps lifecycle labels', () => {
         price: '0.9733',
         size: '1 000',
         status: 'Executed',
+        account: V2_ACCOUNT,
+        clientOrderId: V2_CLIENT_ORDER_ID,
+        receiptHash: V2_RECEIPT_HASH,
         commitTxHash: '0x46cb000000000000000000000000000000001cbb',
         revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
         executionPriceRaw: 97_330_315n,
         executionOracleFrozen: false,
         oracleDerivationVersion: 1,
-        executionEconomicsVersion: 1,
+        executionEconomicsVersion: 2,
       },
     })
 
@@ -1607,7 +1925,7 @@ describe('perps lifecycle labels', () => {
             initialLifecycleState="revealPending"
             initialReviewOpen
             initialDirection="long"
-            initialSize="1 000"
+            initialOrderQuantity="1 000"
             initialOrderId={59n}
             oraclePriceRaw={97_330_315n}
             oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -1662,7 +1980,7 @@ describe('perps lifecycle labels', () => {
         accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
         chainId: 421614,
         accountMode: 'simple',
-        manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+        manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
         action: 'place-order',
         lane: 'default',
         status: 'confirmed',
@@ -1725,22 +2043,25 @@ describe('perps lifecycle labels', () => {
       price: '1.0286',
       size: '1 000',
       status: 'Executed' as const,
+      account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const,
+      clientOrderId: `0x${'12'.repeat(32)}` as `0x${string}`,
       commitTxHash: '0x971c00000000000000000000000000000000eeab',
       revealTxHash: '0xec0c00000000000000000000000000000000d745',
+      receiptHash: `0x${'34'.repeat(32)}` as `0x${string}`,
       terminalBlockNumberRaw: 190_002_345n,
       executionPriceRaw: 97_138_163n,
       executionOraclePriceRaw: 97_330_315n,
-      executionOracleFrozen: false,
+      executionMode: 'Live',
       oracleDerivationVersion: 1,
       vpiUsdcRaw: 12_345_678n,
-      executionEconomicsVersion: 1,
+      executionEconomicsVersion: 2,
     }
     const baseProps = {
       enableLiveTrading: true,
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'long' as const,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       initialOrderId: 72n,
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -1894,12 +2215,17 @@ describe('perps lifecycle labels', () => {
       price: '0.9839',
       size: '100 000',
       status: 'Executed' as const,
+      account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID,
       commitTxHash: '0x54237f181c19e86acfd661fd217e219fd6570227dc5f0b9815589a9d278f6104' as const,
       revealTxHash: '0xebbbf75e5b32d516e9e0398d9a7b1647a1dcf434b385c0e90b123b815957eaed' as const,
       terminalBlockNumberRaw: 190_002_346n,
       terminalBlockHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const,
       executionPriceRaw: 98_391_251n,
-      executionOraclePriceRaw: 98_391_482n,
+      executionMode: 'Live',
+      receiptHash: V2_RECEIPT_HASH,
+      vpiUsdcRaw: 182_822_887n,
+      executionEconomicsVersion: 2,
     }
     perpsTradingMocks.waitForPerpsOrderTerminal
       .mockResolvedValueOnce({
@@ -1910,10 +2236,9 @@ describe('perps lifecycle labels', () => {
         timedOut: false,
         order: {
           ...terminalOrder,
+          executionOraclePriceRaw: 98_391_482n,
           executionOracleFrozen: false,
           oracleDerivationVersion: 1,
-          vpiUsdcRaw: 182_822_887n,
-          executionEconomicsVersion: 1,
         },
       })
     const onAccountRefresh = vi.fn()
@@ -1922,7 +2247,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'short' as const,
-      initialSize: '100 000',
+      initialOrderQuantity: '100 000',
       initialOrderId: 73n,
       oraclePriceRaw: 98_391_482n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -1945,7 +2270,7 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const vpiRow = within(finalResult!).getByText('VPI').closest('div')
-    expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+    expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
@@ -1970,7 +2295,7 @@ describe('perps lifecycle labels', () => {
           executionOracleFrozen: false,
           oracleDerivationVersion: 1,
           vpiUsdcRaw: undefined,
-          executionEconomicsVersion: 1,
+          executionEconomicsVersion: 2,
         }]}
       />
     )
@@ -1999,6 +2324,8 @@ describe('perps lifecycle labels', () => {
       price: '0.9839',
       size: '1 000',
       status: 'Executed' as const,
+      account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID,
       commitTxHash:
         '0x1111111111111111111111111111111111111111111111111111111111111111' as const,
       revealTxHash:
@@ -2013,7 +2340,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialOrderId: 74n,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       oraclePriceRaw: 98_391_482n,
       availableToTradeRaw: 2_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
@@ -2067,7 +2394,7 @@ describe('perps lifecycle labels', () => {
     ).toBe(callsAtDeadline)
   })
 
-  it('keeps waiting for keeper execution after the first terminal wait times out', async () => {
+  it('keeps waiting for indexed lifecycle finalization after the first wait times out', async () => {
     mockIsConnected = true
     perpsTradingMocks.waitForPerpsOrderTerminal
       .mockResolvedValueOnce({ timedOut: true, order: undefined })
@@ -2082,9 +2409,13 @@ describe('perps lifecycle labels', () => {
           price: '1.0286',
           size: '1 000',
           status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
           commitTxHash: '0x971c00000000000000000000000000000000eeab',
           revealTxHash: '0xec0c00000000000000000000000000000000d745',
           executionPriceRaw: 97_138_163n,
+          executionEconomicsVersion: 2,
         },
       })
 
@@ -2094,7 +2425,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="revealPending"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={72n}
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -2129,9 +2460,12 @@ describe('perps lifecycle labels', () => {
         price: '--',
         size: '--',
         status: 'Expired / Cleaned up',
+        account: V2_ACCOUNT,
+        clientOrderId: V2_CLIENT_ORDER_ID,
+        receiptHash: V2_RECEIPT_HASH,
         commitTxHash: '0x46cb000000000000000000000000000000001cbb',
         revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
-        failureReason: 'Expired',
+        terminalReason: 'Expired',
       },
     })
 
@@ -2141,7 +2475,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="revealPending"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={60n}
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -2160,10 +2494,53 @@ describe('perps lifecycle labels', () => {
       expect(screen.getByText('Order failed')).toBeInTheDocument()
     })
 
-    expect(screen.getByText(/The order expired before it could be revealed/i)).toBeInTheDocument()
+    expect(screen.getByText(/The order expired before execution/i)).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
+  })
+
+  it('shows a direct lifecycle constraint failure while indexed history is behind', async () => {
+    mockIsConnected = true
+    perpsTradingMocks.readOrderLifecycleOutcome.mockResolvedValue({
+      orderId: 12n,
+      account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID,
+      status: 3,
+      terminalReason: 8,
+      executionMode: 1,
+      terminalBlock: 11_604_786n,
+      terminalTime: 1_788_167_807n,
+      executionPrice: 98_750_341n,
+      failedConstraint: 2,
+      receiptHash: V2_RECEIPT_HASH,
+    })
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialDirection="long"
+        initialOrderQuantity="5 000"
+        initialOrderId={12n}
+        initialCommitTxHash="0xd184242bd9852d24639e40d83bf0fdb3b79e12e2adcf03c26fa51c62b7be285c"
+        oraclePriceRaw={98_750_339n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={15_000_000_000n}
+        orderHistory={[]}
+        ordersIndexedThroughBlockRaw={303_662_124n}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Order failed')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Execution violated an onchain financial bound/i))
+      .toBeInTheDocument()
+    expect(screen.getByText(/Failed constraint: Execution notional/i))
+      .toBeInTheDocument()
+    expect(screen.queryByText('Keeper processing')).not.toBeInTheDocument()
   })
 
   it('waits for indexed terminal order confirmation after manual finalization submits', async () => {
@@ -2179,9 +2556,13 @@ describe('perps lifecycle labels', () => {
         price: string
         size: string
         status: string
+        account: `0x${string}`
+        clientOrderId: `0x${string}`
         commitTxHash: `0x${string}`
+        receiptHash?: `0x${string}`
         revealTxHash?: `0x${string}`
         executionPriceRaw?: bigint
+        executionEconomicsVersion?: number
       }
     }) => void = () => {}
     perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
@@ -2200,7 +2581,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="selfExecuteAvailable"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={63n}
         initialCommitTxHash="0x46cb000000000000000000000000000000001cbb"
         oraclePriceRaw={97_330_315n}
@@ -2234,9 +2615,13 @@ describe('perps lifecycle labels', () => {
           price: '0.9733',
           size: '1 000',
           status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
           commitTxHash: '0x46cb000000000000000000000000000000001cbb',
           revealTxHash: '0x9e1f00000000000000000000000000000000cafe',
           executionPriceRaw: 97_330_315n,
+          executionEconomicsVersion: 2,
         },
       })
     })

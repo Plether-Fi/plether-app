@@ -896,6 +896,9 @@ describe('Vaults page', () => {
   })
 
   it('shows one specific deposit-closure reason and its reopening condition', () => {
+    // Keep the assertion inside the recurring weekend closure. An earlier
+    // countdown test enables fake timers for this file at a weekday instant.
+    vi.setSystemTime(new Date('2026-08-30T20:00:00Z'))
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
     mocks.readContractsData = liveReadFixture({

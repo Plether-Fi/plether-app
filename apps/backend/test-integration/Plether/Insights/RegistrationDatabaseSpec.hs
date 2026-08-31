@@ -170,6 +170,7 @@ registrationDatabaseSpec databaseUrl =
               account
             completeRegistration
               conn candidateSession privacyVersion (crRulesVersion rules) privacyVersion
+              False
               owner account
               completionBlock completionHash
               `shouldReturn` CompletionDuplicate
@@ -388,10 +389,16 @@ registrationDatabaseSpec databaseUrl =
 
           completeRegistration
             conn highSessionDigest privacyVersion (crRulesVersion rules) privacyVersion
+            True
             highOwnerWallet highTradingAccount completionBlock completionHash
             `shouldReturn` CompletionSucceeded
           completed <- getRegistrationSession conn highSessionDigest
           fmap rsrStatus completed `shouldBe` Just "completed"
+          promotionalConsent <- query conn
+            "SELECT promotional_email_consent, promotional_email_consent_at IS NOT NULL\
+            \ FROM insights_registration_applications WHERE registration_id=?::uuid"
+            (Only highApplicationId) :: IO [(Bool, Bool)]
+          promotionalConsent `shouldBe` [(True, True)]
 
           createRegistrationSession
             conn
@@ -451,6 +458,7 @@ completeWithRules :: Connection -> CompetitionRules -> IO CompletionResult
 completeWithRules conn rules =
   completeRegistration
     conn sessionDigest privacyVersion (crRulesVersion rules) privacyVersion
+    False
     ownerWallet tradingAccount
     completionBlock completionHash
 
@@ -463,6 +471,11 @@ assertTerminalFixture pool rules = withDb pool $ \conn -> do
     "SELECT COUNT(*) FROM insights_competition_participants WHERE competition_slug = ? AND trader_reference = ?"
     (slug, registrationId) :: IO [Only Integer]
   participants `shouldBe` [Only 1]
+  promotionalConsent <- query conn
+    "SELECT promotional_email_consent, promotional_email_consent_at IS NOT NULL\
+    \ FROM insights_registration_applications WHERE registration_id=?::uuid"
+    (Only registrationId) :: IO [(Bool, Bool)]
+  promotionalConsent `shouldBe` [(False, False)]
 
 withRegistrationDatabase :: Text -> (DbPool -> IO a) -> IO a
 withRegistrationDatabase databaseUrl action =

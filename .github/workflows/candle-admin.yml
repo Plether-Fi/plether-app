@@ -22,6 +22,7 @@ on:
           - status
           - verify
           - repair
+          - recover-closed-price-gap
           - replay
           - finalizer-probe
       scope:
@@ -35,11 +36,11 @@ on:
           - volume
           - all
       from_timestamp:
-        description: Optional inclusive Unix timestamp; required for repair
+        description: Optional inclusive Unix timestamp; required for repair and as the exact anchor for closed-price-gap recovery
         required: false
         type: string
       to_timestamp:
-        description: Optional exclusive Unix timestamp; required for repair
+        description: Optional exclusive Unix timestamp; required for repair and as the approved deadline for closed-price-gap recovery
         required: false
         type: string
       history_start_timestamp:
@@ -89,7 +90,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   TARGET_ENV: ${{ inputs.environment }}
   ECS_CONTAINER: ${{ inputs.action == 'replay' && 'plether-perps-indexer' || 'plether-api' }}
 
@@ -106,6 +107,7 @@ jobs:
       actions: read
       contents: read
       deployments: read
+      id-token: write
 
     steps:
       - name: Require protected administration environment
@@ -226,7 +228,7 @@ jobs:
                 exit 1
               fi
               ;;
-            estimate|migrate|set-history-target|status|replay|finalizer-probe)
+            estimate|migrate|set-history-target|status|recover-closed-price-gap|replay|finalizer-probe)
               if [ "$SCOPE" != "none" ]; then
                 echo "::error title=Unexpected scope::Use none for $ACTION."
                 exit 1
@@ -305,6 +307,22 @@ jobs:
             exit 1
           fi
 
+          if [ "$ACTION" = "recover-closed-price-gap" ]; then
+            if [ "$TARGET_ENV" != "sepolia" ] || \
+               [ "$CONFIRMATION" != "RUN RECOVER-CLOSED-PRICE-GAP ON SEPOLIA" ]; then
+              echo "::error title=Price-gap recovery is Sepolia-only::The recovery requires the exact confirmation phrase RUN RECOVER-CLOSED-PRICE-GAP ON SEPOLIA."
+              exit 1
+            fi
+            if [ -z "$FROM_TIMESTAMP" ] || [ -z "$TO_TIMESTAMP" ]; then
+              echo "::error title=Missing recovery bounds::Use from_timestamp for the exact published minute terminal and to_timestamp for the exclusive approved deadline."
+              exit 1
+            fi
+            if (( 10#$FROM_TIMESTAMP % 60 != 0 )); then
+              echo "::error title=Misaligned recovery anchor::The published coverage terminal must align to a UTC minute."
+              exit 1
+            fi
+          fi
+
           if [ "$ACTION" = "replay" ]; then
             if [ "$TARGET_ENV" != "sepolia" ] || \
                [ "$CONFIRMATION" != "RUN REPLAY ON SEPOLIA" ]; then
@@ -358,11 +376,12 @@ jobs:
           fi
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Require idle temporary task family
         env:
@@ -440,7 +459,7 @@ jobs:
 
       - name: Require stable dual-write workers
         id: writers
-        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'replay' || inputs.action == 'finalizer-probe'
+        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'recover-closed-price-gap' || inputs.action == 'replay' || inputs.action == 'finalizer-probe'
         env:
           ACTION: ${{ inputs.action }}
           AWS_PAGER: ''
@@ -2076,6 +2095,15 @@ jobs:
                     {name: "EXPECTED_DATABASE_HOST", value: $expected_database_host}
                   ]
                 }]}
+              elif $action == "recover-closed-price-gap" then
+                {containerOverrides: [{
+                  name: $container,
+                  command: ["plether-basket-worker", "--recover-closed-price-gap",
+                            "--expected-coverage-end", $from,
+                            "--recover-before", $to,
+                            "--requested-by", $history_requested_by,
+                            "--request-reference", $history_request_reference]
+                }]}
               else
                 {containerOverrides: [{
                   name: $container,
@@ -2764,10 +2792,12 @@ jobs:
       - name: Record immutable execution evidence
         env:
           ACTION: ${{ inputs.action }}
+          FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
+          TO_TIMESTAMP: ${{ inputs.to_timestamp }}
           BOUNDARY: ${{ inputs.boundary }}
           HISTORY_START_TIMESTAMP: ${{ inputs.history_start_timestamp }}
-          HISTORY_REQUESTED_BY: ${{ inputs.action == 'set-history-target' && github.actor || '' }}
-          HISTORY_REQUEST_REFERENCE: ${{ inputs.action == 'set-history-target' && format('github:{0}:run:{1}', github.repository, github.run_id) || '' }}
+          PROTECTED_REQUESTED_BY: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap') && github.actor || '' }}
+          PROTECTED_REQUEST_REFERENCE: ${{ (inputs.action == 'set-history-target' || inputs.action == 'recover-closed-price-gap') && format('github:{0}:run:{1}', github.repository, github.run_id) || '' }}
           SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
           TEMPORARY_TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
           TASK_ARN: ${{ steps.task.outputs.task_arn }}
@@ -2790,10 +2820,12 @@ jobs:
             printf -- '- Environment: `%s`\n' "$TARGET_ENV"
             printf -- '- Workflow SHA: `%s`\n' "$GITHUB_SHA"
             printf -- '- Workflow run: `%s/actions/runs/%s`\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf -- '- From timestamp: `%s`\n' "${FROM_TIMESTAMP:-not-applicable}"
+            printf -- '- To timestamp: `%s`\n' "${TO_TIMESTAMP:-not-applicable}"
             printf -- '- Boundary: `%s`\n' "${BOUNDARY:-not-applicable}"
             printf -- '- History start timestamp: `%s`\n' "${HISTORY_START_TIMESTAMP:-not-applicable}"
-            printf -- '- History target requested by: `%s`\n' "${HISTORY_REQUESTED_BY:-not-applicable}"
-            printf -- '- History target request reference: `%s`\n' "${HISTORY_REQUEST_REFERENCE:-not-applicable}"
+            printf -- '- Protected request by: `%s`\n' "${PROTECTED_REQUESTED_BY:-not-applicable}"
+            printf -- '- Protected request reference: `%s`\n' "${PROTECTED_REQUEST_REFERENCE:-not-applicable}"
             printf -- '- Finalizer topology: `%s`\n' "${FINALIZER_TOPOLOGY:-not-applicable}"
             printf -- '- Source task definition: `%s`\n' "$SOURCE_TASK_DEFINITION"
             printf -- '- Temporary task definition: `%s`\n' "$TEMPORARY_TASK_DEFINITION"

@@ -77,7 +77,7 @@ spec = do
           url `shouldSatisfy` T.isInfixOf ("state=" <> oauthState)
           url `shouldSatisfy` T.isInfixOf ("code_challenge=" <> pkceChallenge)
           url `shouldSatisfy` T.isInfixOf "code_challenge_method=S256"
-          url `shouldSatisfy` T.isInfixOf "scope=users.read%20users.email%20follows.read"
+          url `shouldSatisfy` T.isInfixOf "scope=tweet.read%20users.read%20users.email%20follows.read"
           url `shouldSatisfy` T.isInfixOf "redirect_uri=https%3A%2F%2Finsights.plether.com%2Fapi%2Finsights%2Fv1%2Fcompetitions%2Ftestnet-trading-2026-09%2Fregistrations%2Fx%2Fcallback"
 
     it "rejects cross-competition callbacks and empty state or challenge" $ do
@@ -206,7 +206,7 @@ testConfig =
     , rcSessionRateLimitPerMinute = 30
     , rcRulesVersion = "2026-09-v1"
     , rcPrivacyVersion = "2026-09-v1"
-    , rcMinimumXAccountAgeDays = 90
+    , rcMinimumXAccountAgeDays = 30
     }
 
 leftCode :: Either RegistrationError a -> Maybe RegistrationErrorCode

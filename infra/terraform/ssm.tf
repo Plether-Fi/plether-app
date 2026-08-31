@@ -41,6 +41,36 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   value = var.keeper_private_key
 }
 
+locals {
+  zero_private_key = "0000000000000000000000000000000000000000000000000000000000000000"
+
+  normalized_transaction_private_keys = {
+    keeper        = trimprefix(lower(trimspace(var.keeper_private_key)), "0x")
+    lp_settlement = trimprefix(lower(trimspace(var.lp_settlement_private_key)), "0x")
+    oracle        = trimprefix(lower(trimspace(var.oracle_updater_private_key)), "0x")
+    liquidation   = trimprefix(lower(trimspace(var.liquidation_keeper_private_key)), "0x")
+  }
+}
+
+resource "aws_ssm_parameter" "lp_settlement_private_key" {
+  count = nonsensitive(var.lp_settlement_private_key != "") ? 1 : 0
+
+  name  = "/plether/${var.environment}/lp-settlement-private-key"
+  type  = "SecureString"
+  value = var.lp_settlement_private_key
+
+  lifecycle {
+    precondition {
+      condition = (
+        local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.keeper
+        && local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.oracle
+        && local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.liquidation
+      )
+      error_message = "lp_settlement_private_key must be different from keeper_private_key, oracle_updater_private_key, and liquidation_keeper_private_key."
+    }
+  }
+}
+
 resource "aws_ssm_parameter" "oracle_updater_private_key" {
   name  = "/plether/${var.environment}/oracle-updater-private-key"
   type  = "SecureString"
@@ -49,11 +79,32 @@ resource "aws_ssm_parameter" "oracle_updater_private_key" {
   lifecycle {
     precondition {
       condition = (
-        var.keeper_private_key != var.liquidation_keeper_private_key
-        && var.oracle_updater_private_key != var.keeper_private_key
-        && var.oracle_updater_private_key != var.liquidation_keeper_private_key
+        local.normalized_transaction_private_keys.keeper != local.zero_private_key
+        && local.normalized_transaction_private_keys.oracle != local.zero_private_key
+        && local.normalized_transaction_private_keys.liquidation != local.zero_private_key
+        && (
+          local.normalized_transaction_private_keys.lp_settlement == ""
+          || local.normalized_transaction_private_keys.lp_settlement != local.zero_private_key
+        )
       )
-      error_message = "keeper_private_key, oracle_updater_private_key, and liquidation_keeper_private_key must all be different."
+      error_message = "Transaction signer private keys must not be the all-zero scalar."
+    }
+
+    precondition {
+      condition = (
+        local.normalized_transaction_private_keys.keeper != local.normalized_transaction_private_keys.liquidation
+        && local.normalized_transaction_private_keys.oracle != local.normalized_transaction_private_keys.keeper
+        && local.normalized_transaction_private_keys.oracle != local.normalized_transaction_private_keys.liquidation
+        && (
+          var.lp_settlement_private_key == ""
+          || (
+            local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.keeper
+            && local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.oracle
+            && local.normalized_transaction_private_keys.lp_settlement != local.normalized_transaction_private_keys.liquidation
+          )
+        )
+      )
+      error_message = "keeper_private_key, lp_settlement_private_key (when configured), oracle_updater_private_key, and liquidation_keeper_private_key must all be different."
     }
   }
 }
@@ -70,6 +121,14 @@ resource "aws_ssm_parameter" "faucet_private_key" {
   name  = "/plether/${var.environment}/faucet-private-key"
   type  = "SecureString"
   value = var.faucet_private_key
+}
+
+resource "aws_ssm_parameter" "faucet_proxy_origin_token" {
+  count = var.faucet_private_key != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/faucet-proxy-origin-token"
+  type  = "SecureString"
+  value = var.faucet_proxy_origin_token
 }
 
 resource "aws_ssm_parameter" "pimlico_api_key" {

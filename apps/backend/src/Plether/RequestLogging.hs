@@ -214,6 +214,7 @@ knownNormalizedRoutes :: [[Text]]
 knownNormalizedRoutes =
   [ ["api", "health"]
   , ["api", "testnet", "faucet"]
+  , ["api", "aa", "status"]
   , ["api", "aa", "pimlico"]
   , ["api", "protocol", "status"]
   , ["api", "protocol", "config"]

@@ -6,8 +6,11 @@ module Plether.Ethereum.Client
   , ethCall
   , ethCallAt
   , ethCallWithValue
+  , ethCallWithTransactionGas
   , ethCallAtBlock
   , ethBlockNumber
+  , parseRpcQuantity
+  , parseRpcData
   , CallParams (..)
   , BlockTag (..)
   , renderBlockTag
@@ -190,15 +193,39 @@ ethCall client params = ethCallAt client params Latest
 
 -- | Evaluate an @eth_call@ using an explicit JSON-RPC block tag.
 ethCallAt :: EthClient -> CallParams -> BlockTag -> IO (Either RpcError ByteString)
-ethCallAt client params blockTag = ethCallAtTag client params Nothing blockTag
+ethCallAt client params blockTag = ethCallAtTag client params Nothing Nothing Nothing blockTag
 
 ethCallWithValue :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
 ethCallWithValue client params value
   | value < 0 = pure $ Left $ RpcJsonError "eth_call value cannot be negative"
-  | otherwise = ethCallAtTag client params (Just value) Latest
+  | otherwise = ethCallAtTag client params Nothing (Just value) Nothing Latest
 
-ethCallAtTag :: EthClient -> CallParams -> Maybe Integer -> BlockTag -> IO (Either RpcError ByteString)
-ethCallAtTag client CallParams {..} maybeValue blockTag =
+-- | Evaluate an @eth_call@ with the same sender, value, and gas envelope that
+-- will be used for a transaction. Some V2 contracts return a typed
+-- "insufficient gas" result instead of reverting.
+ethCallWithTransactionGas
+  :: EthClient
+  -> CallParams
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError ByteString)
+ethCallWithTransactionGas client params fromAddr value gasLimit
+  | T.null (T.strip fromAddr) = pure $ Left $ RpcJsonError "eth_call from address cannot be empty"
+  | value < 0 = pure $ Left $ RpcJsonError "eth_call value cannot be negative"
+  | gasLimit <= 0 = pure $ Left $ RpcJsonError "eth_call gas must be positive"
+  | otherwise =
+      ethCallAtTag client params (Just fromAddr) (Just value) (Just gasLimit) Latest
+
+ethCallAtTag
+  :: EthClient
+  -> CallParams
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Integer
+  -> BlockTag
+  -> IO (Either RpcError ByteString)
+ethCallAtTag client CallParams {..} maybeFrom maybeValue maybeGas blockTag =
   case renderBlockTag blockTag of
     Left err -> pure $ Left err
     Right renderedBlockTag -> do
@@ -207,7 +234,9 @@ ethCallAtTag client CallParams {..} maybeValue blockTag =
               [ "to" .= callTo
               , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
               ]
+                <> maybe [] (\fromAddr -> ["from" .= fromAddr]) maybeFrom
                 <> maybe [] (\value -> ["value" .= ("0x" <> intToHex value)]) maybeValue
+                <> maybe [] (\gasLimit -> ["gas" .= ("0x" <> intToHex gasLimit)]) maybeGas
           params =
             Aeson.toJSON
               [ callObject
@@ -216,8 +245,8 @@ ethCallAtTag client CallParams {..} maybeValue blockTag =
       result <- rpcCall client "eth_call" params
       pure $ case result of
         Left err -> Left err
-        Right (String hex) -> Right $ decodeHex $ T.drop 2 hex
-        Right _ -> Left $ RpcJsonError "Expected hex string result"
+        Right (String hex) -> parseRpcData "eth_call result" True hex
+        Right _ -> Left $ RpcJsonError "Expected hex string from eth_call"
 
 -- | Evaluate an @eth_call@ against the state at an exact block number.
 ethCallAtBlock :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
@@ -228,10 +257,43 @@ ethBlockNumber client = do
   result <- rpcCall client "eth_blockNumber" (Aeson.toJSON ([] :: [Value]))
   pure $ case result of
     Left err -> Left err
-    Right (String hex) -> Right $ hexToInteger $ T.drop 2 hex
-    Right _ -> Left $ RpcJsonError "Expected hex string result"
+    Right (String hex) -> parseRpcQuantity "block number" hex
+    Right _ -> Left $ RpcJsonError "Expected hex string from block number"
 
-decodeHex :: Text -> ByteString
-decodeHex txt = case B16.decode (TE.encodeUtf8 $ T.toLower txt) of
-  Right bs -> bs
-  Left _ -> mempty
+-- | Decode a canonical Ethereum JSON-RPC quantity. Quantities require a
+-- lowercase @0x@ prefix, at least one hexadecimal digit, and no leading zero
+-- unless the value itself is zero.
+parseRpcQuantity :: Text -> Text -> Either RpcError Integer
+parseRpcQuantity label value = do
+  payload <- case T.stripPrefix "0x" value of
+    Just stripped -> Right stripped
+    Nothing -> Left $ RpcJsonError $ label <> " was not a 0x-prefixed hex quantity"
+  if T.null payload
+    then Left $ RpcJsonError $ label <> " had an empty hex quantity"
+    else Right ()
+  if T.all isHexDigit payload
+    then Right ()
+    else Left $ RpcJsonError $ label <> " contained non-hexadecimal characters"
+  if T.length payload > 1 && T.head payload == '0'
+    then Left $ RpcJsonError $ label <> " was not a canonical hex quantity"
+    else Right $ hexToInteger payload
+
+isHexDigit :: Char -> Bool
+isHexDigit char =
+  (char >= '0' && char <= '9')
+    || (char >= 'a' && char <= 'f')
+    || (char >= 'A' && char <= 'F')
+
+-- | Decode 0x-prefixed JSON-RPC data without silently converting malformed
+-- responses to empty bytes. Unlike quantities, byte data may be empty.
+parseRpcData :: Text -> Bool -> Text -> Either RpcError ByteString
+parseRpcData label allowEmpty value = do
+  payload <- case T.stripPrefix "0x" value of
+    Just stripped -> Right stripped
+    Nothing -> Left $ RpcJsonError $ label <> " was not 0x-prefixed hex data"
+  if not allowEmpty && T.null payload
+    then Left $ RpcJsonError $ label <> " was empty"
+    else Right ()
+  case B16.decode (TE.encodeUtf8 $ T.toLower payload) of
+    Right bytes -> Right bytes
+    Left _ -> Left $ RpcJsonError $ label <> " contained invalid hex data"

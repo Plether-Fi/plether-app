@@ -24,12 +24,13 @@ export function ProvisionalNotice() {
   )
 }
 
-export function Pnl({ value, className = '' }: { value: string | null | undefined; className?: string }) {
+export function Pnl({ value, className = '', usdcKind }: { value: string | null | undefined; className?: string; usdcKind?: 'real' | 'mock' }) {
   const positive = value != null && /^\+?[1-9]\d*$/.test(value)
   const negative = value?.startsWith('-') === true
+  const formatted = formatSignedUsdc(value)
   return (
     <span className={`tabular-nums ${positive ? 'text-positive' : negative ? 'text-brand-orange' : 'text-content-primary'} ${className}`}>
-      {formatSignedUsdc(value)}
+      {usdcKind ? formatted.replace(/ USDC$/, ` ${usdcKind} USDC`) : formatted}
     </span>
   )
 }

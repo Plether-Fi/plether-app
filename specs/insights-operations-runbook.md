@@ -115,7 +115,7 @@ Before provisioning the application:
 1. Fund the X developer account and confirm that its API credit balance covers
    the expected registrations plus retries.
 2. Configure OAuth 2.0 Authorization Code with PKCE and the scopes
-   `users.read users.email follows.read`.
+   `tweet.read users.read users.email follows.read`.
 3. Register this exact callback, without a query string or fragment:
 
    ```text
@@ -425,7 +425,12 @@ if normal restarts do not provide the required cleanup cadence. Completed
 application email data remains encrypted and available for competition
 integrity, duplicate prevention, and competition-relevant messages. Do not
 delete it without an approved retention-policy change and corresponding
-application support.
+application support. Promotional email is separately opt-in: use a completed
+registration email for product updates or promotions only when
+`promotional_email_consent` is true and its consent timestamp is present. A
+competition-relevant operational message does not imply promotional consent,
+and the mail provider's unsubscribe or suppression state always takes
+precedence over the original opt-in.
 
 Rotate the Pages-to-backend origin token without an outage:
 

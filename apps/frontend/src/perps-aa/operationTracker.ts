@@ -20,6 +20,7 @@ import {
   useSponsoredOperationStore,
 } from './operationStore'
 import type { ManagedUserOperation } from './runtimeContext'
+import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 
 export interface SponsoredOperationAnalyticsMetadata {
   accountMode?: string
@@ -39,6 +40,7 @@ export interface SponsoredOperationMetadata
   manifestVersion: string
   authorizationToken?: Address
   authorizationNonce?: Hex
+  orderRequestV2?: PersistedPerpsOrderRequestV2
   lane?: string
 }
 
@@ -157,6 +159,7 @@ export function beginSponsoredOperationTracking(
     accountMode: metadata.accountMode,
     manifestVersion: metadata.manifestVersion,
     action: metadata.action,
+    orderRequestV2: metadata.orderRequestV2,
     authorizationToken: metadata.authorizationToken,
     authorizationNonce: metadata.authorizationNonce,
     lane: metadata.lane,

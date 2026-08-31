@@ -30,6 +30,10 @@ spec = describe "Plether.RequestLogging" $ do
         (normalizeRouteSegments ["api", "perps", "orders", "12345", "reveal-payload"])
         `shouldBe` Foreground
 
+    it "keeps the bounded-V2 readiness route low-cardinality" $
+      normalizeRouteSegments ["api", "aa", "status"]
+        `shouldBe` "/api/aa/status"
+
     it "normalizes dynamic competition slugs and wallet addresses" $ do
       normalizeRouteSegments
         [ "api"

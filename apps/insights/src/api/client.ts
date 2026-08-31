@@ -317,13 +317,20 @@ export async function completeRegistration(
   csrfToken: string,
   rulesVersion: string,
   privacyVersion: string,
+  acceptPromotionalEmail: boolean,
 ): Promise<RegistrationSession> {
   const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
     `${registrationBase(slug)}/complete`,
     {
       method: 'POST',
       csrfToken,
-      body: { acceptRules: true, acceptPrivacy: true, rulesVersion, privacyVersion },
+      body: {
+        acceptRules: true,
+        acceptPrivacy: true,
+        acceptPromotionalEmail,
+        rulesVersion,
+        privacyVersion,
+      },
     },
   )
   return unwrapRegistration(response)

@@ -1,6 +1,6 @@
 export const PERPS_SIDE = {
-  BULL: 0,
-  BEAR: 1,
+  LONG: 0,
+  SHORT: 1,
 } as const
 
 export type PerpsSide = typeof PERPS_SIDE[keyof typeof PERPS_SIDE]
@@ -27,3 +27,9 @@ export const PERPS_DECIMALS = {
 
 export const PERPS_POSITION_SIZE_TO_USDC_SCALE =
   10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE + PERPS_DECIMALS.PRICE - PERPS_DECIMALS.USDC)
+
+// OrderRouter and CfdEngine require every open, increase, reduce, and close
+// size delta to use this canonical synthetic-token quantum. Live position
+// sizes are aligned too, so an exact full close remains executable.
+export const PERPS_POSITION_SIZE_QUANTUM =
+  100n * 10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE)

@@ -54,11 +54,12 @@ import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (renderSimpleQuery)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Insights.Registration.Types
-  ( RegistrationError
+  ( RegistrationError (..)
   , RegistrationErrorCode (..)
   , XIdentity (..)
   , registrationError
   )
+import Plether.Logging (field, logWarn)
 
 newtype XAccessToken = XAccessToken BS.ByteString
 
@@ -186,7 +187,7 @@ buildXAuthorizationUrl config competitionSlug state codeChallenge
                 [ ("response_type", "code")
                 , ("client_id", TE.encodeUtf8 $ rcXClientId config)
                 , ("redirect_uri", TE.encodeUtf8 $ rcXCallbackUrl config)
-                , ("scope", "users.read users.email follows.read")
+                , ("scope", "tweet.read users.read users.email follows.read")
                 , ("state", TE.encodeUtf8 state)
                 , ("code_challenge", TE.encodeUtf8 codeChallenge)
                 , ("code_challenge_method", "S256")
@@ -243,24 +244,26 @@ exchangeXAuthorizationCode manager config code verifier
             , requestBody = RequestBodyBS form
             }
       outcome <- performBounded manager prepared
-      pure $ do
-        (httpStatus, body) <- outcome
-        if httpStatus < 200 || httpStatus >= 300
-          then Left providerUnavailable
-          else do
-            tokenResponse <- either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
-            let grantedScopes = T.words $ xtrScope tokenResponse
-                requiredScopes = ["users.read", "users.email", "follows.read"]
-            if T.toCaseFold (xtrTokenType tokenResponse) /= "bearer"
-                || T.null (xtrAccessToken tokenResponse)
-                || T.length (xtrAccessToken tokenResponse) > 8192
-                || any (`notElem` grantedScopes) requiredScopes
-                || "offline.access" `elem` grantedScopes
-                || xtrRefreshToken tokenResponse /= Nothing
-                || maybe False (\seconds -> seconds <= 0 || seconds > 86_400) (xtrExpiresIn tokenResponse)
+      let result = do
+            (httpStatus, body) <- outcome
+            if httpStatus < 200 || httpStatus >= 300
               then Left providerUnavailable
-              else maybe (Left providerUnavailable) Right $
-                xAccessTokenFromBytes $ TE.encodeUtf8 $ xtrAccessToken tokenResponse
+              else do
+                tokenResponse <- either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
+                let grantedScopes = T.words $ xtrScope tokenResponse
+                    requiredScopes = ["tweet.read", "users.read", "users.email", "follows.read"]
+                if T.toCaseFold (xtrTokenType tokenResponse) /= "bearer"
+                    || T.null (xtrAccessToken tokenResponse)
+                    || T.length (xtrAccessToken tokenResponse) > 8192
+                    || any (`notElem` grantedScopes) requiredScopes
+                    || "offline.access" `elem` grantedScopes
+                    || xtrRefreshToken tokenResponse /= Nothing
+                    || maybe False (\seconds -> seconds <= 0 || seconds > 86_400) (xtrExpiresIn tokenResponse)
+                  then Left providerUnavailable
+                  else maybe (Left providerUnavailable) Right $
+                    xAccessTokenFromBytes $ TE.encodeUtf8 $ xtrAccessToken tokenResponse
+      logXProviderFailure "oauth_token" outcome result
+      pure result
 
 data XProfileResponse = XProfileResponse (Maybe XProfile) [Value]
 
@@ -293,11 +296,13 @@ fetchXIdentity manager token = do
   request <- parseRequest "https://api.x.com/2/users/me?user.fields=confirmed_email%2Ccreated_at%2Cusername"
   let prepared = bearerRequest token request
   outcome <- performBounded manager prepared
-  pure $ do
-    (httpStatus, body) <- outcome
-    if httpStatus < 200 || httpStatus >= 300
-      then Left providerUnavailable
-      else parseXIdentityResponse body
+  let result = do
+        (httpStatus, body) <- outcome
+        if httpStatus < 200 || httpStatus >= 300
+          then Left providerUnavailable
+          else parseXIdentityResponse body
+  logXProviderFailure "authenticated_user" outcome result
+  pure result
 
 parseXIdentityResponse :: BS.ByteString -> Either RegistrationError XIdentity
 parseXIdentityResponse body = do
@@ -358,11 +363,13 @@ verifyXFollow manager config sourceUserId token
           <> "?user.fields=connection_status"
       let prepared = bearerRequest token request
       outcome <- performBounded manager prepared
-      pure $ do
-        (httpStatus, body) <- outcome
-        if httpStatus < 200 || httpStatus >= 300
-          then Left providerUnavailable
-          else parseXFollowLookupResponse targetUserId body
+      let result = do
+            (httpStatus, body) <- outcome
+            if httpStatus < 200 || httpStatus >= 300
+              then Left providerUnavailable
+              else parseXFollowLookupResponse targetUserId body
+      logXProviderFailure "follow_lookup" outcome result
+      pure result
   where
     targetUserId = rcXTargetUserId config
 
@@ -485,6 +492,32 @@ validEmail value =
 
 providerUnavailable :: RegistrationError
 providerUnavailable = registrationError ProviderUnavailable "Identity provider is temporarily unavailable"
+
+-- OAuth credentials, response bodies, access tokens, and user data are
+-- deliberately excluded. These fields are sufficient to distinguish network,
+-- HTTP, and schema failures without exposing registration identities.
+logXProviderFailure
+  :: Text
+  -> Either RegistrationError (Int, BS.ByteString)
+  -> Either RegistrationError value
+  -> IO ()
+logXProviderFailure stage outcome result =
+  case result of
+    Left err | reCode err == ProviderUnavailable ->
+      logWarn
+        "registration_x_provider_failure"
+        "X registration provider request failed"
+        [ field "provider_stage" stage
+        , field "provider_failure_kind" $ case outcome of
+            Left _ -> ("transport_or_response_size" :: Text)
+            Right (httpStatus, _)
+              | httpStatus < 200 || httpStatus >= 300 -> "http_status"
+              | otherwise -> "response_validation"
+        , field "provider_http_status" $ case outcome of
+            Left _ -> Nothing @Int
+            Right (httpStatus, _) -> Just httpStatus
+        ]
+    _ -> pure ()
 
 validUuid :: Text -> Bool
 validUuid value =

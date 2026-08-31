@@ -5,6 +5,15 @@ import { zeroAddress } from 'viem'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import {
+  executionModeOracleFrozen,
+  PERPS_EXECUTION_MODE_LABELS,
+  PERPS_FAILED_CONSTRAINT_LABELS,
+  PERPS_LIFECYCLE_STATUS,
+  PERPS_TERMINAL_REASON_LABELS,
+  type PreparedPerpsOrderV2,
+  type PerpsLifecycleOutcomeSnapshot,
+} from '../contracts/perpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
@@ -18,15 +27,19 @@ import {
 } from '../perps-aa'
 import {
   directionToPerpsSide,
-  dxyExposureFromContractNotional,
   formatDisplayDxyPrice,
   formatPerpsNumber,
+  formatPerpsPositionSize,
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
   getPerpsTargetPrice,
+  notionalUsdcToQuantizedSizeDelta,
   notionalUsdcToSizeDelta,
   oraclePriceToDisplayDxyPrice,
+  parsePerpsPositionSize,
   parsePerpsUsdc,
+  quantizedDxyExposureFromContractNotional,
+  quantizePerpsPositionSize,
   sizeDeltaToNotionalUsdc,
   type PerpsBasketComponentPrice,
   type PerpsDirection,
@@ -52,7 +65,6 @@ import {
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsOpenRevertMessage,
-  getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { DOCS_LINKS } from '../config/docs'
@@ -167,7 +179,7 @@ interface PerpsTradeTicketProps {
   initialLifecycleState?: TradeLifecycleState
   initialReviewOpen?: boolean
   initialDirection?: Direction
-  initialSize?: string
+  initialOrderQuantity?: string
   initialReduceOnly?: boolean
   initialLeverage?: number
   initialMarginAction?: MarginAction
@@ -214,6 +226,8 @@ interface PerpsTradeTicketProps {
   closePreviewFixture?: ClosePreviewView
   /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
   validationErrorFixture?: string
+  /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
+  executionProtectionsFixture?: PreparedPerpsOrderV2
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -230,6 +244,7 @@ interface PerpsTradeTicketProps {
   orderHistory?: PerpsOrderHistoryRow[]
   ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
+  activePositionProtectionId?: bigint
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
   firstPendingOrderExpiryTime?: bigint
@@ -289,6 +304,7 @@ const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
 const COMPACT_PREVIEW_ROW_LABELS = new Set([
   'plDXY Perp price',
+  'Order exposure',
   'Required margin',
   'Max slippage',
   'Execution limit',
@@ -314,7 +330,11 @@ const FROZEN_CLOSE_SPREAD_TOOLTIP =
 const DIRECTION_TOOLTIP =
   'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls. The underlying FX basket moves in the opposite direction.'
 const CONTRACT_NOTIONAL_TOOLTIP =
-  'The protocol\'s accounting size, calculated using the raw basket price. It is different from your displayed plDXY Perp exposure and determines margin and fees.'
+  'The protocol\'s accounting size, calculated using the raw basket price. It is different from Order exposure and determines margin and fees.'
+const ORDER_EXPOSURE_TOOLTIP =
+  'The entered Order quantity valued at the current plDXY Perp price. A full close uses the exact remaining quantity.'
+const REQUIRED_MARGIN_TOOLTIP =
+  'Includes the collateral needed to keep the worst reviewed execution at or below your selected leverage after fees, charges, price movement, and protocol rounding.'
 const EXECUTION_LIMIT_TOOLTIP =
   'The worst oracle execution price you accept. It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.'
 const MAINTENANCE_MARGIN_TOOLTIP =
@@ -467,41 +487,117 @@ function isTerminalOrderFailureMessage(message: string): boolean {
 
 function failureReasonMessage(reason: string | undefined): string | undefined {
   if (!reason) return undefined
-  const code = {
-    Expired: 0,
-    CloseOnly: 1,
-    SlippageExceeded: 2,
-    EnginePanic: 3,
-    AccountLiquidated: 4,
-    EngineRevert: 5,
-  }[reason]
-
-  return code === undefined ? undefined : getPerpsOrderFailureMessage(code)
+  const messages: Record<string, string> = {
+    Expired: 'The order expired before execution. Review and create a fresh order.',
+    Slippage: 'Execution exceeded the reviewed target price.',
+    ConfigMismatch: 'Protocol configuration changed after review.',
+    'Config mismatch': 'Protocol configuration changed after review.',
+    ExecutionModeDisallowed: 'The market regime changed after review.',
+    'Mode disallowed': 'The market regime changed after review.',
+    RiskOff: 'The order was invalidated by protocol risk-off policy.',
+    'Risk off': 'The order was invalidated by protocol risk-off policy.',
+    PlannerRejected: 'The execution planner rejected the order.',
+    'Planner rejected': 'The execution planner rejected the order.',
+    ConstraintViolation: 'Execution violated an onchain financial bound.',
+    'Constraint violation': 'Execution violated an onchain financial bound.',
+    AccountLiquidated: 'The account was liquidated before this order executed.',
+    'Account liquidated': 'The account was liquidated before this order executed.',
+  }
+  return messages[reason]
 }
 
 function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
-  const detail = failureReasonMessage(order.failureReason)
+  const detail = failureReasonMessage(order.terminalReason)
     ?? `Terminal status: ${order.status}. Refresh order history for details.`
-  return `Order failed: ${detail}`
+  const failedConstraint = order.failedConstraint
+    ? ` Failed constraint: ${order.failedConstraint}.`
+    : ''
+  return `Order failed: ${detail}${failedConstraint}`
+}
+
+function lifecycleOutcomeHistoryRow(
+  outcome: PerpsLifecycleOutcomeSnapshot
+): PerpsOrderHistoryRow {
+  const executed = outcome.status === PERPS_LIFECYCLE_STATUS.EXECUTED
+  const terminalReason = executed
+    ? 'Executed'
+    : PERPS_TERMINAL_REASON_LABELS[outcome.terminalReason]
+      ?? `Unknown (${outcome.terminalReason.toString()})`
+  const failedConstraint = outcome.failedConstraint === 0
+    ? undefined
+    : PERPS_FAILED_CONSTRAINT_LABELS[outcome.failedConstraint]
+      ?? `Unknown (${outcome.failedConstraint.toString()})`
+
+  return {
+    orderId: outcome.orderId,
+    time: outcome.terminalTime === 0n
+      ? '--'
+      : new Date(Number(outcome.terminalTime) * 1_000).toLocaleString(),
+    market: 'plDXY Perp',
+    side: '--',
+    type: 'Order',
+    price: outcome.executionPrice === 0n
+      ? '--'
+      : formatDisplayDxyPrice(outcome.executionPrice),
+    size: '--',
+    status: executed ? 'Executed' : 'Failed',
+    account: outcome.account,
+    clientOrderId: outcome.clientOrderId,
+    receiptHash: outcome.receiptHash,
+    terminalBlockNumberRaw: outcome.terminalBlock,
+    terminalReason,
+    executionMode: PERPS_EXECUTION_MODE_LABELS[outcome.executionMode],
+    failedConstraint,
+    executionPriceRaw: outcome.executionPrice === 0n
+      ? undefined
+      : outcome.executionPrice,
+  }
 }
 
 function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
-  return order.status !== 'Executed'
-    || (
-      order.oracleDerivationVersion !== undefined
-      && order.executionEconomicsVersion !== undefined
-      && order.executionOracleFrozen !== undefined
-    )
+  if (order.status !== 'Executed') return true
+
+  const executionOracleFrozen =
+    order.executionOracleFrozen ?? executionModeOracleFrozen(order.executionMode)
+  const executionPrice = order.executionPriceRaw ?? order.activityPriceRaw
+  if (
+    order.receiptHash === undefined
+    || order.executionEconomicsVersion !== 2
+    || order.vpiUsdcRaw === undefined
+    || executionPrice === undefined
+    || executionOracleFrozen === undefined
+  ) {
+    return false
+  }
+
+  return executionOracleFrozen
+    ? order.frozenCloseSpreadUsdcRaw !== undefined
+    : order.executionOraclePriceRaw !== undefined
 }
 
 function terminalOrderKey(order: PerpsOrderHistoryRow): string {
   return [
     order.orderId.toString(),
     order.status,
-    order.commitTxHash.toLowerCase(),
+    order.clientOrderId.toLowerCase(),
+    order.commitTxHash?.toLowerCase() ?? '',
     order.revealTxHash?.toLowerCase() ?? '',
     order.terminalBlockNumberRaw?.toString() ?? '',
   ].join(':')
+}
+
+function orderMatchesCommittedIdentity(
+  order: PerpsOrderHistoryRow,
+  identity: {
+    account: string
+    clientOrderId: string
+    hash?: string
+    orderId: bigint
+  }
+): boolean {
+  if (order.orderId !== identity.orderId) return false
+  return order.account.toLowerCase() === identity.account.toLowerCase()
+    && order.clientOrderId.toLowerCase() === identity.clientOrderId.toLowerCase()
 }
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
@@ -533,6 +629,24 @@ function formatPreviewUsdcRaw(value: bigint | undefined): string {
 
 function formatUsdcRaw(value: bigint | undefined): ReactNode {
   return <TokenAmount amount={formatPreviewUsdcRaw(value)} />
+}
+
+function orderDetailRows(
+  orderDxyExposureUsdc: bigint | undefined,
+  orderSizeDelta: bigint | undefined
+): PreviewRow[] {
+  return [
+    {
+      label: 'Order exposure',
+      value: <TokenAmount amount={formatPerpsUsdc(orderDxyExposureUsdc)} />,
+      tooltip: ORDER_EXPOSURE_TOOLTIP,
+      tooltipDocsLink: DOCS_LINKS.orderExposure,
+    },
+    {
+      label: 'Order quantity',
+      value: <TokenAmount amount={formatPerpsPositionSize(orderSizeDelta, 0)} token="plDXY" />,
+    },
+  ]
 }
 
 function formatSignedUsdcNoPlus(value: bigint | undefined): ReactNode {
@@ -605,6 +719,17 @@ function historyOrderIsClose(order: PerpsOrderHistoryRow | undefined): boolean |
   if (order.type === 'Close') return true
   if (order.type === 'Open') return false
   return undefined
+}
+
+function historyPostPositionSize(order: PerpsOrderHistoryRow | undefined): bigint | undefined {
+  if (order?.status !== 'Executed') return undefined
+  const value = order.receiptEconomics?.postPositionSize
+  if (value === undefined) return undefined
+  try {
+    return BigInt(value)
+  } catch {
+    return undefined
+  }
 }
 
 function usdcRawToNumber(value: bigint | undefined): number {
@@ -1566,7 +1691,7 @@ export function PerpsTradeTicket({
   initialLifecycleState = 'preview',
   initialReviewOpen = false,
   initialDirection = 'long',
-  initialSize = '0',
+  initialOrderQuantity = '0',
   initialReduceOnly = false,
   initialLeverage = 5,
   initialMarginAction,
@@ -1603,6 +1728,7 @@ export function PerpsTradeTicket({
   openPreviewFixture,
   closePreviewFixture,
   validationErrorFixture,
+  executionProtectionsFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
   availableToTradeRaw,
@@ -1618,6 +1744,7 @@ export function PerpsTradeTicket({
   orderHistory = [],
   ordersIndexedThroughBlockRaw,
   pendingOrderCount,
+  activePositionProtectionId = 0n,
   maxPendingOrders,
   firstPendingOrderId,
   firstPendingOrderExpiryTime,
@@ -1642,7 +1769,9 @@ export function PerpsTradeTicket({
     fundTradingAccount,
     depositMargin,
     withdrawMargin,
+    prepareOrder,
     commitOrder,
+    readOrderLifecycleOutcome,
     executeOrder,
     cleanupExpiredOrder,
   } = usePerpsTrading()
@@ -1656,7 +1785,7 @@ export function PerpsTradeTicket({
   const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(
     initialMarginCallSimulatorConfirmationOpen
   )
-  const [size, setSize] = useState(initialSize)
+  const [orderQuantity, setOrderQuantity] = useState(initialOrderQuantity)
   const [isFullCloseIntent, setIsFullCloseIntent] = useState(false)
   const [leverage, setLeverage] = useState(initialLeverage)
   const [leverageInputValue, setLeverageInputValue] = useState(initialLeverage.toString())
@@ -1667,6 +1796,9 @@ export function PerpsTradeTicket({
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
+  const [preparedOrder, setPreparedOrder] = useState<PreparedPerpsOrderV2 | undefined>()
+  const [isExecutionProtectionsLoading, setIsExecutionProtectionsLoading] = useState(false)
+  const [executionProtectionsError, setExecutionProtectionsError] = useState<string | undefined>()
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
@@ -1681,6 +1813,7 @@ export function PerpsTradeTicket({
     useState<bigint | undefined>(initialFinalFrozenCloseSpreadUsdc)
   const [finalExecutionEconomicsVersion, setFinalExecutionEconomicsVersion] =
     useState<number | undefined>(initialFinalExecutionEconomicsVersion)
+  const [finalPostPositionSize, setFinalPostPositionSize] = useState<bigint | undefined>()
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>(initialFinalVpiUsdc)
   const [committedVpiUsdc, setCommittedVpiUsdc] = useState<bigint | undefined>(initialCommittedVpiUsdc)
   const [committedPositionVpiAccrued, setCommittedPositionVpiAccrued] = useState<bigint | undefined>(
@@ -1739,11 +1872,15 @@ export function PerpsTradeTicket({
   const commitAttemptIdRef = useRef(0)
   const includedCommitAttemptRef = useRef<number | undefined>(undefined)
   const includedCommitIdentityRef = useRef<{
-    hash: string
+    account: string
+    clientOrderId: string
+    hash?: string
     orderId: bigint
   } | undefined>(undefined)
   const deferredSafeConfirmationErrorRef = useRef<{
-    hash: string
+    account: string
+    clientOrderId: string
+    hash?: string
     message: string
     orderId: bigint
   } | undefined>(undefined)
@@ -1861,11 +1998,7 @@ export function PerpsTradeTicket({
     const includedIdentity = includedCommitIdentityRef.current
     if (
       includedIdentity !== undefined &&
-      (
-        order.orderId !== includedIdentity.orderId ||
-        order.commitTxHash.toLowerCase() !==
-          includedIdentity.hash.toLowerCase()
-      )
+      !orderMatchesCommittedIdentity(order, includedIdentity)
     ) {
       return false
     }
@@ -1912,6 +2045,8 @@ export function PerpsTradeTicket({
 
     if (order.status === 'Executed') {
       const indexedExecutionPrice = order.executionPriceRaw ?? order.activityPriceRaw
+      const indexedExecutionOracleFrozen =
+        order.executionOracleFrozen ?? executionModeOracleFrozen(order.executionMode)
       setFinalExecutionPrice((current) => (
         isSameTerminalOrder && indexedExecutionPrice === undefined
           ? current
@@ -1923,9 +2058,9 @@ export function PerpsTradeTicket({
           : order.executionOraclePriceRaw
       ))
       setFinalExecutionOracleFrozen((current) => (
-        isSameTerminalOrder && order.executionOracleFrozen === undefined
+        isSameTerminalOrder && indexedExecutionOracleFrozen === undefined
           ? current
-          : order.executionOracleFrozen
+          : indexedExecutionOracleFrozen
       ))
       setFinalVpiUsdc((current) => (
         isSameTerminalOrder && order.vpiUsdcRaw === undefined
@@ -1942,12 +2077,19 @@ export function PerpsTradeTicket({
           ? current
           : order.executionEconomicsVersion
       ))
+      const indexedPostPositionSize = historyPostPositionSize(order)
+      setFinalPostPositionSize((current) => (
+        isSameTerminalOrder && indexedPostPositionSize === undefined
+          ? current
+          : indexedPostPositionSize
+      ))
     } else if (!isSameTerminalOrder) {
       setFinalExecutionPrice(undefined)
       setFinalExecutionOraclePrice(undefined)
       setFinalExecutionOracleFrozen(undefined)
       setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
     }
 
@@ -2020,6 +2162,7 @@ export function PerpsTradeTicket({
     setFinalExecutionOracleFrozen(undefined)
     setFinalExecutionFrozenCloseSpreadUsdc(undefined)
     setFinalExecutionEconomicsVersion(undefined)
+    setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setFlowError(undefined)
     setKeeperRevealDeadlineMs(rewindStartedAt + KEEPER_REVEAL_GRACE_MS)
@@ -2035,9 +2178,7 @@ export function PerpsTradeTicket({
     if (
       deferredSafeConfirmationError?.orderId === orderId &&
       !orderHistory.some((row) =>
-        row.orderId === deferredSafeConfirmationError.orderId &&
-        row.commitTxHash.toLowerCase() ===
-          deferredSafeConfirmationError.hash.toLowerCase()
+        orderMatchesCommittedIdentity(row, deferredSafeConfirmationError)
       )
     ) {
       deferredSafeConfirmationErrorRef.current = undefined
@@ -2056,6 +2197,7 @@ export function PerpsTradeTicket({
       setFinalExecutionOracleFrozen(undefined)
       setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
       setFlowError(deferredSafeConfirmationError.message)
       setLifecycleState('failed')
@@ -2067,7 +2209,7 @@ export function PerpsTradeTicket({
       row.orderId === orderId &&
       (
         includedIdentity === undefined ||
-        row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+        orderMatchesCommittedIdentity(row, includedIdentity)
       )
     )
     if (indexedOrder && indexedOrder.status !== 'Committed') {
@@ -2092,6 +2234,47 @@ export function PerpsTradeTicket({
     orderId,
     ordersIndexedThroughBlockRaw,
     rewindHandledTerminalOrder,
+  ])
+
+  useEffect(() => {
+    if (
+      !enableLiveTrading ||
+      orderId === undefined ||
+      lifecycleState === 'executed' ||
+      lifecycleState === 'selfExecuteFailed' ||
+      lifecycleState === 'failed'
+    ) {
+      return undefined
+    }
+
+    let stopped = false
+    const activeOrderId = orderId
+    const pollLifecycleOutcome = async () => {
+      try {
+        const outcome = await readOrderLifecycleOutcome(activeOrderId)
+        if (!stopped && outcome !== undefined) {
+          applyTerminalOrder(lifecycleOutcomeHistoryRow(outcome))
+        }
+      } catch {
+        // The indexed wait remains available if the direct RPC read fails.
+      }
+    }
+
+    void pollLifecycleOutcome()
+    const interval = window.setInterval(() => {
+      void pollLifecycleOutcome()
+    }, ORDER_TERMINAL_RETRY_DELAY_MS)
+
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+  }, [
+    applyTerminalOrder,
+    enableLiveTrading,
+    lifecycleState,
+    orderId,
+    readOrderLifecycleOutcome,
   ])
 
   useEffect(() => {
@@ -2241,7 +2424,6 @@ export function PerpsTradeTicket({
     lifecycleState,
   ])
 
-  const dxyExposureNumber = parseAmount(size)
   const currentPositionSideValue = currentPosition?.exists ? currentPosition.direction : currentPositionSide
   const currentPositionRawNotional = currentPosition?.estimatedNotionalUsdc
     ?? parsePerpsUsdc(currentPositionAmount ?? (enableLiveTrading ? '0' : CURRENT_POSITION_AMOUNT))
@@ -2249,7 +2431,7 @@ export function PerpsTradeTicket({
   const currentPositionDisplayAmount = currentPosition?.exists
     ? formatPerpsUsdc(currentPositionDxyExposureRaw)
     : currentPositionAmount ?? (enableLiveTrading ? '0' : CURRENT_POSITION_AMOUNT)
-  const currentPositionInputAmount = currentPosition?.exists
+  const currentPositionExposureInputAmount = currentPosition?.exists
     ? formatPerpsUsdc(currentPositionDxyExposureRaw, 6)
     : currentPositionDisplayAmount
   const unrealizedPnlRaw = currentPosition?.exists ? currentPosition.unrealizedPnlUsdc : undefined
@@ -2258,8 +2440,8 @@ export function PerpsTradeTicket({
     : unrealizedPnlRaw > 0n ? 'positive' : 'negative'
   const availableToTradeDisplayAmount = availableToTradeAmount ?? (enableLiveTrading ? '0' : AVAILABLE_TO_TRADE_AMOUNT)
   const canUseAvailableToTrade = parseAmount(availableToTradeDisplayAmount) > 0
-  const hasCurrentPositionDisplayAmount = parseAmount(currentPositionInputAmount) > 0
-  const dxyExposureUsdc = parsePerpsUsdc(size)
+  const hasCurrentPositionDisplayAmount = parseAmount(currentPositionExposureInputAmount) > 0
+  const enteredOrderSizeRaw = parsePerpsPositionSize(orderQuantity)
   const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionDxyExposureRaw > 0n)
   const isOppositePositionDirection = hasCurrentPosition && currentPosition !== undefined && direction !== currentPosition.direction
   const isReducingCurrentPosition = hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
@@ -2275,22 +2457,13 @@ export function PerpsTradeTicket({
       ))
     : []
   const pendingCloseSizeRaw = pendingCloseOrders.reduce((total, order) => total + order.sizeDelta, 0n)
+  const hasPendingOrderDependencies = pendingOrders.length > 0 || (pendingOrderCount ?? 0) > 0
   const reservedCloseSizeRaw = currentPosition?.size === undefined
     ? 0n
     : minBigInt(pendingCloseSizeRaw, currentPosition.size)
   const availableCloseSizeRaw = currentPosition?.size === undefined || currentPosition.size <= reservedCloseSizeRaw
     ? 0n
     : currentPosition.size - reservedCloseSizeRaw
-  const availableCloseDxyExposureRaw = currentPosition?.size === undefined || currentPosition.size <= 0n
-    ? currentPositionDxyExposureRaw
-    : sizeDeltaToNotionalUsdc(
-        availableCloseSizeRaw,
-        oraclePriceToDisplayDxyPrice(oraclePriceRaw)
-      ) ?? 0n
-  const pendingCloseDxyExposureRaw = sizeDeltaToNotionalUsdc(
-    reservedCloseSizeRaw,
-    oraclePriceToDisplayDxyPrice(oraclePriceRaw)
-  ) ?? 0n
   const firstPendingCloseOrder = pendingCloseOrders
     .filter((order) => order.expiryTime !== undefined)
     .sort((a, b) => {
@@ -2320,41 +2493,55 @@ export function PerpsTradeTicket({
   const maxOpenNotionalRaw = selectedOpenCapacityUsdc === undefined
     ? maxNotionalFromFundingRaw
     : minBigInt(maxNotionalFromFundingRaw, selectedOpenCapacityUsdc)
-  const maxOpenDxyExposureRaw = dxyExposureFromContractNotional(maxOpenNotionalRaw, oraclePriceRaw) ?? maxOpenNotionalRaw
-  const maxDxyExposureForSizeInputRaw = isReducingCurrentPosition
-    ? availableCloseDxyExposureRaw
-    : maxOpenDxyExposureRaw
-  const maxDxyExposureDisplayAmount = formatPerpsUsdc(maxDxyExposureForSizeInputRaw)
-  const maxDxyExposureInputAmount = formatPerpsUsdc(maxDxyExposureForSizeInputRaw, 6)
-  const maxDxyExposureRaw = maxDxyExposureForSizeInputRaw
-  const canUseMaxNotional = maxDxyExposureRaw > 0n
-  const currentPositionFillAmount = isReducingCurrentPosition ? maxDxyExposureInputAmount : currentPositionInputAmount
-  const canUseCurrentPosition = isReducingCurrentPosition ? canUseMaxNotional : hasCurrentPositionDisplayAmount
-  const effectiveDxyExposureUsdc = isFullCloseIntent && isReducingCurrentPosition
-    ? availableCloseDxyExposureRaw
-    : dxyExposureUsdc
-  const sizeInputValue = isFullCloseIntent && isReducingCurrentPosition
-    ? maxDxyExposureInputAmount
-    : size
-
-  const orderSizeDelta = (() => {
-    if (effectiveDxyExposureUsdc <= 0n) return 0n
-    if (
-      isReducingCurrentPosition &&
-      currentPosition?.size !== undefined &&
-      currentPosition.size > 0n &&
-      availableCloseSizeRaw > 0n &&
-      maxDxyExposureRaw > 0n &&
-      (isFullCloseIntent || effectiveDxyExposureUsdc >= maxDxyExposureRaw)
-    ) {
-      return availableCloseSizeRaw
-    }
-
-    return dxyExposureToSizeDelta(effectiveDxyExposureUsdc, oraclePriceRaw) ?? 0n
-  })()
+  const maxOpenSizeRaw = oraclePriceRaw === undefined || oraclePriceRaw <= 0n
+    ? 0n
+    : notionalUsdcToQuantizedSizeDelta(maxOpenNotionalRaw, oraclePriceRaw, 'down')
+  const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
+  const maxOrderQuantityDisplayAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
+  const maxOrderQuantityInputAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
+  const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n
+  const fallbackCurrentPositionSizeRaw = quantizePerpsPositionSize(
+    dxyExposureToSizeDelta(parsePerpsUsdc(currentPositionExposureInputAmount), oraclePriceRaw) ?? 0n,
+    'down'
+  )
+  const currentPositionFillSizeRaw = currentPosition?.exists
+    ? isReducingCurrentPosition ? availableCloseSizeRaw : currentPosition.size
+    : fallbackCurrentPositionSizeRaw
+  const currentPositionFillQuantity = formatPerpsPositionSize(currentPositionFillSizeRaw, 0)
+  const canUseCurrentPosition = isReducingCurrentPosition
+    ? canUseMaxOrderQuantity
+    : hasCurrentPositionDisplayAmount && currentPositionFillSizeRaw > 0n
+  const availableToTradeFillSizeRaw = quantizePerpsPositionSize(
+    dxyExposureToSizeDelta(parsePerpsUsdc(availableToTradeDisplayAmount), oraclePriceRaw) ?? 0n,
+    'down'
+  )
+  const availableToTradeFillQuantity = formatPerpsPositionSize(availableToTradeFillSizeRaw, 0)
+  const effectiveOrderSizeRaw = isFullCloseIntent && isReducingCurrentPosition
+    ? availableCloseSizeRaw
+    : enteredOrderSizeRaw
+  const orderQuantityInputValue = isFullCloseIntent && isReducingCurrentPosition
+    ? maxOrderQuantityInputAmount
+    : orderQuantity
+  const orderSizeDelta = effectiveOrderSizeRaw
+  const calculationOraclePriceRaw = oraclePriceRaw ?? (
+    enableLiveTrading ? undefined : BigInt(Math.round(MOCK_PREVIEW_PRICE * 100_000_000))
+  )
+  const orderDxyExposureUsdc = orderSizeDelta > 0n
+    ? sizeDeltaToNotionalUsdc(
+        orderSizeDelta,
+        oraclePriceToDisplayDxyPrice(calculationOraclePriceRaw)
+      ) ?? 0n
+    : 0n
+  const isFullCloseOrder = isReducingCurrentPosition &&
+    !hasPendingOrderDependencies &&
+    currentPosition?.size !== undefined &&
+    currentPosition.size > 0n &&
+    orderSizeDelta === currentPosition.size
+  const isOrderQuantityAligned = isFullCloseOrder ||
+    quantizePerpsPositionSize(orderSizeDelta, 'down') === orderSizeDelta
   const contractNotionalUsdc = orderSizeDelta > 0n
-    ? sizeDeltaToNotionalUsdc(orderSizeDelta, oraclePriceRaw) ?? effectiveDxyExposureUsdc
-    : effectiveDxyExposureUsdc
+    ? sizeDeltaToNotionalUsdc(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
+    : 0n
   const contractNotionalNumber = usdcRawToNumber(contractNotionalUsdc)
   const marginNumber = isReducingCurrentPosition ? 0 : activeLeverage > 0 ? contractNotionalNumber / activeLeverage : 0
   const marginUsdc = isReducingCurrentPosition ? 0n : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
@@ -2396,11 +2583,7 @@ export function PerpsTradeTicket({
     : direction === 'long'
       ? previewPrice * 0.945
       : previewPrice * 1.055
-  const summaryDxyExposureUsdc = isReducingCurrentPosition &&
-    maxDxyExposureRaw > 0n &&
-    (isFullCloseIntent || effectiveDxyExposureUsdc >= maxDxyExposureRaw)
-    ? availableCloseDxyExposureRaw
-    : effectiveDxyExposureUsdc
+  const summaryDxyExposureUsdc = orderDxyExposureUsdc
   const orderSummary = buildOrderSummary({
     currentPositionSide: currentPositionSideValue,
     currentPositionDxyExposureUsdc: currentPositionDxyExposureRaw,
@@ -2419,18 +2602,23 @@ export function PerpsTradeTicket({
     ? openFundingRequirementUsdc - availableToTradeRaw
     : 0n
   const isCorrectChain = chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
-  const isZeroSize = effectiveDxyExposureUsdc <= 0n
+  const isZeroSize = orderSizeDelta <= 0n
+  const orderQuantityValidationError = !isZeroSize && !isOrderQuantityAligned
+    ? 'Order quantity must be a multiple of 100 plDXY.'
+    : undefined
   const previewPublishTime = BigInt(oraclePublishTime ?? 0)
   const hasTradePreviewInputs = enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
     orderSizeDelta > 0n &&
+    isOrderQuantityAligned &&
     oraclePriceRaw !== undefined &&
     oraclePriceRaw > 0n
   const shouldReadTradePreview = enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
     orderSizeDelta > 0n &&
+    isOrderQuantityAligned &&
     oraclePriceRaw !== undefined &&
     oraclePriceRaw > 0n &&
     (isReducingCurrentPosition || previewPublishTime > 0n)
@@ -2537,17 +2725,23 @@ export function PerpsTradeTicket({
   )
   const minOpenDxyExposureUsdc = minOpenNotionalUsdc === undefined
     ? undefined
-    : dxyExposureFromContractNotional(minOpenNotionalUsdc, oraclePriceRaw) ?? minOpenNotionalUsdc
+    : quantizedDxyExposureFromContractNotional(minOpenNotionalUsdc, oraclePriceRaw, 'up') ?? minOpenNotionalUsdc
   const minNewPositionDxyExposureUsdc = minNewPositionNotionalUsdc === undefined
     ? undefined
-    : dxyExposureFromContractNotional(minNewPositionNotionalUsdc, oraclePriceRaw) ?? minNewPositionNotionalUsdc
+    : quantizedDxyExposureFromContractNotional(minNewPositionNotionalUsdc, oraclePriceRaw, 'up') ?? minNewPositionNotionalUsdc
+  const minPartialCloseSizeRaw = minNewPositionNotionalUsdc === undefined || oraclePriceRaw === undefined || oraclePriceRaw <= 0n
+    ? undefined
+    : quantizePerpsPositionSize(
+        notionalUsdcToSizeDelta(minNewPositionNotionalUsdc, oraclePriceRaw),
+        'up'
+      )
   const isOpeningFromZero = !currentPosition?.exists && !isReducingCurrentPosition
   const effectiveMinOpenDxyExposureUsdc = isOpeningFromZero
     ? maxBigInt(minOpenDxyExposureUsdc ?? 0n, minNewPositionDxyExposureUsdc ?? 0n)
     : minOpenDxyExposureUsdc
   const selectedOpenDxyCapacityUsdc = selectedOpenCapacityUsdc === undefined
     ? undefined
-    : dxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw) ?? selectedOpenCapacityUsdc
+    : quantizedDxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw, 'down') ?? selectedOpenCapacityUsdc
   const oldestPendingOrderSecondsToExpiry = firstPendingOrderExpiryTime === undefined
     ? undefined
     : Number(firstPendingOrderExpiryTime) - nowSeconds
@@ -2564,12 +2758,27 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (activePositionProtectionId > 0n) {
+      return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
+    }
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
-    if (isZeroSize) return 'Enter an order size.'
+    if (isZeroSize) return 'Enter an order quantity.'
+    if (
+      isReducingCurrentPosition &&
+      currentPosition?.size !== undefined &&
+      currentPosition.size > 0n &&
+      availableCloseSizeRaw <= 0n &&
+      pendingCloseSizeRaw >= currentPosition.size
+    ) {
+      return isSponsoredAccountConfigured
+        ? `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Wait for keeper finalization or cleanup before submitting another reduce order.`
+        : `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
+    }
+    if (orderQuantityValidationError) return orderQuantityValidationError
     if (
       isOppositePositionDirection &&
-      currentPositionDxyExposureRaw > 0n &&
-      effectiveDxyExposureUsdc > currentPositionDxyExposureRaw + SUMMARY_CLOSE_DUST_USDC_RAW
+      currentPosition.size > 0n &&
+      orderSizeDelta > currentPosition.size
     ) {
       return 'One-step flips are not supported yet. Reduce or close the current position first, then open the other side.'
     }
@@ -2590,35 +2799,34 @@ export function PerpsTradeTicket({
       !isReducingCurrentPosition &&
       !isReduceOnly &&
       effectiveMinOpenDxyExposureUsdc !== undefined &&
-      effectiveDxyExposureUsdc < effectiveMinOpenDxyExposureUsdc
+      orderDxyExposureUsdc < effectiveMinOpenDxyExposureUsdc
     ) {
       const minimumLabel = isOpeningFromZero ? 'Minimum new position' : 'Minimum order size'
       return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC.`
     }
-    if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityUsdc !== undefined && effectiveDxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
+    if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityUsdc !== undefined && orderDxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
       return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
     if (
       isReducingCurrentPosition &&
-      currentPosition?.size !== undefined &&
-      currentPosition.size > 0n &&
-      availableCloseSizeRaw <= 0n &&
-      pendingCloseSizeRaw >= currentPosition.size
+      availableCloseSizeRaw > 0n &&
+      orderSizeDelta > availableCloseSizeRaw
     ) {
-      return isSponsoredAccountConfigured
-        ? `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Wait for keeper finalization or cleanup before submitting another reduce order.`
-        : `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
+      return pendingCloseSizeRaw > 0n
+        ? `Only ${formatPerpsPositionSize(availableCloseSizeRaw, 0)} plDXY is available to reduce because ${formatPerpsPositionSize(reservedCloseSizeRaw, 0)} plDXY is already reserved by pending close orders.`
+        : `Only ${formatPerpsPositionSize(availableCloseSizeRaw, 0)} plDXY is available to reduce.`
     }
     if (
       isReducingCurrentPosition &&
-      currentPositionDxyExposureRaw > 0n &&
-      availableCloseDxyExposureRaw > 0n &&
-      effectiveDxyExposureUsdc > availableCloseDxyExposureRaw + SUMMARY_CLOSE_DUST_USDC_RAW
+      minPartialCloseSizeRaw !== undefined &&
+      !isFullCloseOrder &&
+      orderSizeDelta < minPartialCloseSizeRaw
     ) {
-      return pendingCloseDxyExposureRaw > 0n
-        ? `Only ${formatPerpsUsdc(availableCloseDxyExposureRaw)} USDC plDXY Perp exposure is available to reduce because ${formatPerpsUsdc(pendingCloseDxyExposureRaw)} USDC is already reserved by pending close orders.`
-        : `Only ${formatPerpsUsdc(availableCloseDxyExposureRaw)} USDC plDXY Perp exposure is available to reduce at the latest plDXY Perp price.`
+      const minimumLabel = `Minimum partial reduction is ${formatPerpsUsdc(minNewPositionDxyExposureUsdc)} USDC.`
+      return hasPendingOrderDependencies
+        ? `${minimumLabel} Finalize or clean up earlier pending orders before closing a smaller projected remainder.`
+        : `${minimumLabel} Use Max to close the full position.`
     }
     if (
       pendingOrderCount !== undefined &&
@@ -2656,11 +2864,81 @@ export function PerpsTradeTicket({
     }
     return undefined
   })()
-  const displayedValidationError = enableLiveTrading
+  useEffect(() => {
+    if (
+      !enableLiveTrading ||
+      !isReviewOpen ||
+      lifecycleState !== 'preview' ||
+      liveValidationError ||
+      typeof prepareOrder !== 'function'
+    ) {
+      setPreparedOrder(undefined)
+      setIsExecutionProtectionsLoading(false)
+      setExecutionProtectionsError(undefined)
+      return
+    }
+
+    let cancelled = false
+    setPreparedOrder(undefined)
+    setIsExecutionProtectionsLoading(true)
+    setExecutionProtectionsError(undefined)
+    void prepareOrder({
+      direction: effectiveOrderDirection,
+      notionalUsdc: contractNotionalUsdc,
+      sizeDelta: orderSizeDelta,
+      marginUsdc,
+      oraclePrice: oraclePriceRaw ?? 0n,
+      slippagePercent: slippageNumber,
+      isClose: isReducingCurrentPosition,
+      selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+    }).then((prepared) => {
+      if (!cancelled) setPreparedOrder(prepared)
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setExecutionProtectionsError(
+          error instanceof Error
+            ? error.message
+            : 'Execution protections could not be prepared'
+        )
+      }
+    }).finally(() => {
+      if (!cancelled) setIsExecutionProtectionsLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeLeverage,
+    contractNotionalUsdc,
+    effectiveOrderDirection,
+    enableLiveTrading,
+    isReducingCurrentPosition,
+    isReviewOpen,
+    lifecycleState,
+    liveValidationError,
+    marginUsdc,
+    oraclePriceRaw,
+    orderSizeDelta,
+    prepareOrder,
+    slippageNumber,
+  ])
+  const reviewValidationError = enableLiveTrading
     ? liveValidationError
-    : validationErrorFixture
+    : orderQuantityValidationError
+  const displayedValidationError = reviewValidationError ?? (
+    enableLiveTrading ? undefined : validationErrorFixture
+  )
+  const displayedExecutionProtections = enableLiveTrading
+    ? preparedOrder
+    : executionProtectionsFixture
+  const shouldShowExecutionProtections = enableLiveTrading ||
+    displayedExecutionProtections !== undefined
   const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
-  const previewInitialMarginUsdc = openPreview?.marginDeltaUsdc ?? marginUsdc
+  const previewInitialMarginUsdc = !isReducingCurrentPosition &&
+    displayedExecutionProtections !== undefined
+    ? displayedExecutionProtections.request.marginDelta
+    : openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
   const previewExecutionFeeUsdc = isReducingCurrentPosition
     ? closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
@@ -2781,14 +3059,19 @@ export function PerpsTradeTicket({
           />
         ),
       },
-      { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
+      ...orderDetailRows(orderDxyExposureUsdc, orderSizeDelta),
       {
         label: 'Contract notional',
         value: formatUsdcRaw(previewContractNotionalUsdc),
         tooltip: CONTRACT_NOTIONAL_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.contractNotional,
       },
-      { label: 'Required margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
+      {
+        label: 'Required margin',
+        value: formatUsdcRaw(previewInitialMarginUsdc),
+        tooltip: REQUIRED_MARGIN_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.positionLeverage,
+      },
       {
         label: 'Maintenance margin',
         value: previewMaintenanceMarginValue,
@@ -2865,7 +3148,8 @@ export function PerpsTradeTicket({
       isReducingCurrentPosition,
       positionVpiBalanceRow,
       selectedOpenCapacityUsdc,
-      dxyExposureNumber,
+      orderDxyExposureUsdc,
+      orderSizeDelta,
       slippageNumber,
       adverseOracleConfidenceSpreadValue,
       adverseOracleConfidenceSpreadTooltip,
@@ -2875,8 +3159,8 @@ export function PerpsTradeTicket({
   )
   const sidePanelPreviewRows = useMemo(
     () => previewRows.filter((row) =>
+      row.label !== 'Order quantity' &&
       row.label !== 'Resulting leverage' &&
-      row.label !== 'plDXY Perp exposure' &&
       row.label !== 'Contract side capacity'
     ),
     [previewRows]
@@ -2896,7 +3180,13 @@ export function PerpsTradeTicket({
   const finalIsClose = committedIsClose
     ?? historyOrderIsClose(executedOrderHistoryRow)
     ?? isReducingCurrentPosition
-  const finalIsFullClose = finalIsClose && committedIsFullClose === true
+  const observedPostPositionSize = historyPostPositionSize(executedOrderHistoryRow)
+    ?? finalPostPositionSize
+  const finalIsFullClose = finalIsClose && (
+    observedPostPositionSize === undefined
+      ? committedIsFullClose === true
+      : observedPostPositionSize === 0n
+  )
   const displayCommitTx = commitTxHash ?? executedOrderHistoryRow?.commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
   const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
@@ -2940,6 +3230,21 @@ export function PerpsTradeTicket({
   const finalExecutedDxyExposureUsdc = finalExecutionPrice
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, oraclePriceToDisplayDxyPrice(finalExecutionPrice))
     : undefined
+  const displayedCommittedSizeDelta = committedSizeDelta ?? (
+    lifecycleState === 'preview' ? orderSizeDelta : undefined
+  )
+  const displayedCommittedDxyExposureUsdc = displayedCommittedSizeDelta === undefined
+    ? undefined
+    : displayedCommittedSizeDelta > 0n
+      ? sizeDeltaToNotionalUsdc(
+          displayedCommittedSizeDelta,
+          oraclePriceToDisplayDxyPrice(oraclePriceRaw)
+        ) ?? orderDxyExposureUsdc
+      : 0n
+  const committedOrderDetailRows = orderDetailRows(
+    displayedCommittedDxyExposureUsdc,
+    displayedCommittedSizeDelta
+  )
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
   const finalExecutionEconomicsComplete = finalExecutionEconomicsVersion !== undefined
   const finalVpiAction = formatTradeVpi(finalVpiUsdc, 'final')
@@ -2992,9 +3297,7 @@ export function PerpsTradeTicket({
       : finalIsClose
         ? `${directionLabel(oppositeDirection(direction))} position reduced at ${finalPriceDisplay} USDC`
         : `Trade executed at ${finalPriceDisplay} USDC`
-  const isReviewingFullClose = isReducingCurrentPosition &&
-    availableCloseDxyExposureRaw > 0n &&
-    (isFullCloseIntent || availableCloseDxyExposureRaw <= effectiveDxyExposureUsdc + SUMMARY_CLOSE_DUST_USDC_RAW)
+  const isReviewingFullClose = isFullCloseOrder
   const reviewCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
     : enableLiveTrading && !isCorrectChain
@@ -3009,7 +3312,7 @@ export function PerpsTradeTicket({
     isConnected &&
     isCorrectChain &&
     (Boolean(liveValidationError) || isTradePreviewPending)
-  ) || (!enableLiveTrading && Boolean(validationErrorFixture))
+  ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
   const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
@@ -3079,6 +3382,7 @@ export function PerpsTradeTicket({
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isMarginActionPending
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
+  const orderDxyExposureNumber = usdcRawToNumber(orderDxyExposureUsdc)
   const commonAnalyticsProperties = useMemo<PerpsAnalyticsProperties>(() => ({
     market_phase: marketPhase,
     lifecycle_state: lifecycleState,
@@ -3086,15 +3390,15 @@ export function PerpsTradeTicket({
     reduce_only: isReduceOnly,
     connected_state: perpsConnectedState(isConnected),
     chain_state: perpsChainState(isConnected, isCorrectChain),
-    size_bucket: perpsSizeBucket(dxyExposureNumber),
+    size_bucket: perpsSizeBucket(orderDxyExposureNumber),
   }), [
     direction,
-    dxyExposureNumber,
     isConnected,
     isCorrectChain,
     isReduceOnly,
     lifecycleState,
     marketPhase,
+    orderDxyExposureNumber,
   ])
 
   useEffect(() => {
@@ -3230,15 +3534,25 @@ export function PerpsTradeTicket({
       address,
       lifecycleState,
       liveValidationError,
+      reviewValidationError,
       direction,
       effectiveOrderDirection,
       isReducingCurrentPosition,
-      dxyExposureUsdc: effectiveDxyExposureUsdc,
+      orderQuantity: orderSizeDelta,
+      dxyExposureUsdc: orderDxyExposureUsdc,
       contractNotionalUsdc,
       marginUsdc,
       oraclePriceRaw,
       slippageNumber,
     })
+    if (reviewValidationError) {
+      debugPerpsCommit('ticket:blocked-by-validation', {
+        reviewValidationError,
+      })
+      trackPerpsValidationBlocked(validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
+      setFlowError(reviewValidationError)
+      return
+    }
     if (!enableLiveTrading) {
       debugPerpsCommit('ticket:mock-flow')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
@@ -3249,12 +3563,11 @@ export function PerpsTradeTicket({
       setLifecycleState('commitPending')
       return
     }
-    if (liveValidationError) {
-      debugPerpsCommit('ticket:blocked-by-validation', {
-        liveValidationError,
-      })
-      trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
-      setFlowError(liveValidationError)
+    if (!preparedOrder) {
+      setFlowError(
+        executionProtectionsError ??
+          'Wait for execution protections to finish before confirming.'
+      )
       return
     }
 
@@ -3271,9 +3584,12 @@ export function PerpsTradeTicket({
       setFinalExecutionOracleFrozen(undefined)
       setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
       const applyIncludedCommit = (result: {
-        hash: string
+        account: string
+        clientOrderId: string
+        hash?: string
         orderId: bigint
       }) => {
         if (commitAttemptIdRef.current !== commitAttemptId) return
@@ -3282,11 +3598,13 @@ export function PerpsTradeTicket({
         const inclusionChanged = previousIdentity !== undefined &&
           (
             previousIdentity.orderId !== result.orderId ||
-            previousIdentity.hash.toLowerCase() !== result.hash.toLowerCase()
+            previousIdentity.clientOrderId.toLowerCase() !==
+              result.clientOrderId.toLowerCase() ||
+            previousIdentity.account.toLowerCase() !== result.account.toLowerCase()
           )
         includedCommitIdentityRef.current = result
         deferredSafeConfirmationErrorRef.current = undefined
-        setCommitTxHash(result.hash)
+        if (result.hash) setCommitTxHash(result.hash)
         setOrderId(result.orderId)
         const isFirstInclusion =
           includedCommitAttemptRef.current !== commitAttemptId
@@ -3303,6 +3621,7 @@ export function PerpsTradeTicket({
             setFinalExecutionOracleFrozen(undefined)
             setFinalExecutionFrozenCloseSpreadUsdc(undefined)
             setFinalExecutionEconomicsVersion(undefined)
+            setFinalPostPositionSize(undefined)
             setFinalVpiUsdc(undefined)
             setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
             setKeeperRevealNowMs(Date.now())
@@ -3333,6 +3652,8 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
+        selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+        preparedOrder,
         onIncluded: (includedResult) => {
           debugPerpsCommit('ticket:commit-included', {
             hash: includedResult.hash,
@@ -3372,8 +3693,7 @@ export function PerpsTradeTicket({
       const hasIndexedOrderEvidence =
         includedIdentity !== undefined &&
         currentOrderHistory.some((row) =>
-          row.orderId === includedIdentity.orderId &&
-          row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+          orderMatchesCommittedIdentity(row, includedIdentity)
         )
       if (
         inclusionWasReported() &&
@@ -3407,6 +3727,7 @@ export function PerpsTradeTicket({
         setFinalExecutionOracleFrozen(undefined)
         setFinalExecutionFrozenCloseSpreadUsdc(undefined)
         setFinalExecutionEconomicsVersion(undefined)
+        setFinalPostPositionSize(undefined)
         setFinalVpiUsdc(undefined)
       }
       debugPerpsCommit('ticket:commit-error', {
@@ -3495,6 +3816,7 @@ export function PerpsTradeTicket({
     setFinalExecutionOracleFrozen(undefined)
     setFinalExecutionFrozenCloseSpreadUsdc(undefined)
     setFinalExecutionEconomicsVersion(undefined)
+    setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setCommittedSizeDelta(undefined)
     setCommittedSlippage(undefined)
@@ -3504,6 +3826,9 @@ export function PerpsTradeTicket({
     setCommittedVpiUsdc(undefined)
     setCommittedPositionVpiAccrued(undefined)
     setCommittedShowsPositionVpiBalance(false)
+    setPreparedOrder(undefined)
+    setIsExecutionProtectionsLoading(false)
+    setExecutionProtectionsError(undefined)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)
@@ -3515,7 +3840,7 @@ export function PerpsTradeTicket({
     const shouldResetSize = lifecycleState === 'executed'
     resetReviewLifecycle()
     if (shouldResetSize) {
-      setSize('0')
+      setOrderQuantity('0')
       setIsFullCloseIntent(false)
     }
     setIsReviewOpen(false)
@@ -3535,10 +3860,10 @@ export function PerpsTradeTicket({
     setDirection(currentPosition?.direction ?? currentPositionSide)
     setIsReduceOnly(true)
     setIsFullCloseIntent(true)
-    setSize(formatPerpsUsdc(availableCloseDxyExposureRaw, 6))
+    setOrderQuantity(formatPerpsPositionSize(availableCloseSizeRaw, 0))
     setIsReviewOpen(true)
   }, [
-    availableCloseDxyExposureRaw,
+    availableCloseSizeRaw,
     closePositionRequestId,
     currentPosition?.direction,
     currentPositionSide,
@@ -3601,7 +3926,7 @@ export function PerpsTradeTicket({
               if (canUseAvailableToTrade) {
                 trackPerpsButtonClicked('fill_available_to_trade', commonAnalyticsProperties)
                 setIsFullCloseIntent(false)
-                setSize(availableToTradeDisplayAmount)
+                setOrderQuantity(availableToTradeFillQuantity)
               }
             }}
           />
@@ -3613,7 +3938,7 @@ export function PerpsTradeTicket({
               if (canUseCurrentPosition) {
                 trackPerpsButtonClicked('fill_current_position', commonAnalyticsProperties)
                 setIsFullCloseIntent(isReducingCurrentPosition)
-                setSize(currentPositionFillAmount)
+                setOrderQuantity(currentPositionFillQuantity)
               }
             }}
           />
@@ -3621,32 +3946,32 @@ export function PerpsTradeTicket({
 
         <div>
           <Input
-            label="plDXY Perp exposure"
-            value={sizeInputValue}
+            label="Order quantity"
+            value={orderQuantityInputValue}
             onChange={(event) => {
               if (isNumericInput(event.target.value)) {
                 setIsFullCloseIntent(false)
-                setSize(event.target.value)
+                setOrderQuantity(event.target.value)
               }
             }}
-            rightElement={<TokenLabel token="USDC" />}
+            rightElement={<TokenLabel token="plDXY" />}
           />
           <div className="mt-1.5 flex justify-end">
             <button
               type="button"
               className="group cursor-pointer text-right text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-content-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
-              disabled={!canUseMaxNotional}
+              disabled={!canUseMaxOrderQuantity}
               onClick={() => {
-                if (canUseMaxNotional) {
-                  trackPerpsButtonClicked('fill_max_exposure', commonAnalyticsProperties)
+                if (canUseMaxOrderQuantity) {
+                  trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
                   setIsFullCloseIntent(isReducingCurrentPosition)
-                  setSize(maxDxyExposureInputAmount)
+                  setOrderQuantity(maxOrderQuantityInputAmount)
                 }
               }}
             >
               <span>Max: </span>
               <span className="group-hover:underline group-focus-visible:underline">
-                <TokenAmount amount={maxDxyExposureDisplayAmount} />
+                <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />
               </span>
             </button>
           </div>
@@ -3885,9 +4210,9 @@ export function PerpsTradeTicket({
               void switchToArbitrumSepolia()
               return
             }
-            if (liveValidationError) {
-              trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
-              setFlowError(liveValidationError)
+            if (displayedValidationError) {
+              trackPerpsValidationBlocked(validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
+              setFlowError(displayedValidationError)
               return
             }
             setIsReviewOpen(true)
@@ -3971,6 +4296,7 @@ export function PerpsTradeTicket({
         size="lg"
         analyticsId="trade_review"
         analyticsProperties={commonAnalyticsProperties}
+        initialFocus="dialog"
       >
         <div className="space-y-5">
           {lifecycleState === 'preview' ? (
@@ -3983,9 +4309,64 @@ export function PerpsTradeTicket({
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Commit Preview</div>
                 <PreviewRows rows={previewRows} />
                 <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                  plDXY Perp exposure is the size you choose. Contract notional is derived from the raw basket price for protocol accounting.
+                  Order quantity is what you enter. Order exposure values that quantity at the current displayed price. Contract notional uses the raw basket price for protocol accounting.
                 </p>
               </div>
+
+              {shouldShowExecutionProtections ? (
+                <details className="border border-brand-border/20 bg-app-bg p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-content-primary">
+                    Execution protections
+                  </summary>
+                  {enableLiveTrading && isExecutionProtectionsLoading ? (
+                    <p className="mt-3 text-sm text-content-secondary">
+                      Deriving protections from one coherent block…
+                    </p>
+                  ) : enableLiveTrading && executionProtectionsError ? (
+                    <p className="mt-3 text-sm text-brand-orange">
+                      {executionProtectionsError}
+                    </p>
+                  ) : displayedExecutionProtections ? (
+                    <div className="mt-3">
+                      <PreviewRows rows={[
+                        {
+                          label: 'Client order ID',
+                          value: `${displayedExecutionProtections.request.clientOrderId.slice(0, 10)}…${displayedExecutionProtections.request.clientOrderId.slice(-8)}`,
+                        },
+                        {
+                          label: 'Deadline',
+                          value: new Date(
+                            Number(displayedExecutionProtections.protection.validUntil) * 1_000
+                          ).toLocaleString(),
+                        },
+                        {
+                          label: 'Pinned regime',
+                          value: PERPS_EXECUTION_MODE_LABELS[
+                            displayedExecutionProtections.protection.executionMode
+                          ],
+                        },
+                        {
+                          label: 'Execution reward',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.executionBountyUsdc
+                          )} USDC`,
+                        },
+                        {
+                          label: 'Economic bounds',
+                          value: 'Relaxed for web trading',
+                        },
+                      ]} />
+                      <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
+                        The web ticket uses wide accounting bounds so normal price and rounding movement cannot invalidate the order. Your execution limit, deadline, pinned regime, and reviewed protocol configuration still apply.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-content-secondary">
+                      Protections will appear after the final review is ready.
+                    </p>
+                  )}
+                </details>
+              ) : null}
 
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="text-sm font-semibold text-content-primary">Delayed execution</div>
@@ -3994,9 +4375,9 @@ export function PerpsTradeTicket({
                 </div>
               </div>
 
-              {enableLiveTrading && liveValidationError ? (
+              {reviewValidationError ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
-                  {liveValidationError}
+                  {reviewValidationError}
                   {!isCorrectChain ? (
                     <>
                       <Button
@@ -4059,7 +4440,11 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   variant={direction === 'short' ? 'danger' : 'primary'}
-                  disabled={enableLiveTrading && Boolean(liveValidationError)}
+                  disabled={Boolean(reviewValidationError) || (enableLiveTrading && (
+                    isExecutionProtectionsLoading ||
+                    Boolean(executionProtectionsError) ||
+                    preparedOrder === undefined
+                  ))}
                   analyticsId="confirm_commit"
                   analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
@@ -4088,7 +4473,7 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
+                    ...committedOrderDetailRows,
                     { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
@@ -4119,7 +4504,7 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
+                    ...committedOrderDetailRows,
                     { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
@@ -4462,12 +4847,8 @@ export function PerpsTradeTicket({
                     },
                     { label: 'Final price', value: finalPriceDisplay },
                     {
-                      label: finalIsFullClose
-                        ? 'Requested close exposure'
-                        : finalIsClose
-                          ? 'Requested reduction exposure'
-                          : 'Target plDXY Perp exposure',
-                      value: formatUsdc(dxyExposureNumber),
+                      label: 'Order quantity',
+                      value: <TokenAmount amount={formatPerpsPositionSize(displayedCommittedSizeDelta, 0)} token="plDXY" />,
                     },
                     {
                       label: finalIsFullClose
@@ -4476,7 +4857,7 @@ export function PerpsTradeTicket({
                           ? 'Executed reduction exposure'
                           : 'Execution plDXY Perp exposure',
                       value: finalExecutedDxyExposureUsdc === undefined
-                        ? formatUsdc(dxyExposureNumber)
+                        ? <TokenAmount amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
@@ -4523,10 +4904,10 @@ export function PerpsTradeTicket({
                 />
                 <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
                   {finalIsFullClose
-                    ? 'Requested close exposure is the position exposure submitted for closure. Executed close exposure is the committed size valued with the displayed plDXY Perp price at finalization.'
+                    ? 'Executed close exposure is the committed Order quantity valued at the final displayed price.'
                     : finalIsClose
-                      ? 'Requested reduction exposure is what you submitted. Executed reduction exposure is the committed size valued with the displayed plDXY Perp price at finalization.'
-                      : 'Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.'}
+                      ? 'Executed reduction exposure is the committed Order quantity valued at the final displayed price.'
+                      : 'Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.'}
                 </p>
               </div>
               <Button
@@ -4621,7 +5002,8 @@ export function PerpsTradeTicket({
             <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Current order math</div>
             <div className="space-y-2">
               <AccountSummaryRow label="Selected leverage" value={formatLeverage(activeLeverage)} />
-              <AccountSummaryRow label="plDXY Perp exposure" value={formatUsdcRaw(effectiveDxyExposureUsdc)} />
+              <AccountSummaryRow label="Order exposure" value={formatUsdcRaw(orderDxyExposureUsdc)} />
+              <AccountSummaryRow label="Order quantity" value={`${formatPerpsPositionSize(orderSizeDelta, 0)} plDXY`} />
               <AccountSummaryRow label="Contract notional" value={formatUsdcRaw(contractNotionalUsdc)} />
               <AccountSummaryRow label="Position margin at selected leverage" value={formatUsdcRaw(marginUsdc)} />
               <AccountSummaryRow label={`Position margin at ${formatLeverage(DEFAULT_MAX_LEVERAGE)}`} value={formatUsdcRaw(defaultMaxLeverageMarginUsdc)} />

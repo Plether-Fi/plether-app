@@ -5,7 +5,6 @@ import { usePublicClient, useSignTypedData, useWriteContract } from 'wagmi'
 import {
   buildAddMarginAction,
   buildAuthorizedDepositAction,
-  buildPlaceOrderAction,
   buildReceiveWithAuthorizationTypedData,
   buildSettleTraderClaimAction,
   buildSmartAccountBalanceDepositAction,
@@ -16,10 +15,26 @@ import {
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
   PERPS_ORDER_ROUTER_ABI,
   PERPS_PUBLIC_LENS_ABI,
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { preparePerpsOrderV2 } from '../contracts/preparePerpsOrderV2'
+import {
+  PERPS_CLIENT_INTENT_RESOLUTION,
+  PERPS_LIFECYCLE_STATUS,
+  executionModeFromPinnedMask,
+  persistPerpsOrderRequestV2,
+  restorePerpsOrderRequestV2,
+  type PreparedPerpsOrderV2,
+  type PerpsExecutionMode,
+  type PerpsFailedConstraint,
+  type PerpsLifecycleStatus,
+  type PerpsLifecycleOutcomeSnapshot,
+  type PerpsOrderRequestV2,
+  type PerpsTerminalReason,
+} from '../contracts/perpsOrderV2'
 import {
   executeSponsoredPerpsAction,
   clearDepositAuthorization,
@@ -31,17 +46,19 @@ import {
   type ExecuteSponsoredPerpsActionResult,
   usePerpsAaRuntime,
   usePerpsIdentity,
+  useSponsoredOperationStore,
 } from '../perps-aa'
 import {
   directionToPerpsSide,
   formatPerpsUsdc,
-  getPerpsTargetPrice,
-  notionalUsdcToSizeDelta,
+  notionalUsdcToQuantizedSizeDelta,
+  quantizePerpsPositionSize,
   type PerpsDirection,
 } from '../utils/perps'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
+import { buildPlaceOrderV2Action } from '../perps-aa/orderActionV2'
 
-interface CommitOrderInput {
+interface PrepareOrderInput {
   direction: PerpsDirection
   notionalUsdc: bigint
   sizeDelta?: bigint
@@ -49,14 +66,22 @@ interface CommitOrderInput {
   oraclePrice: bigint
   slippagePercent: number
   isClose: boolean
+  selectedMaxLeverageBps: number
+}
+
+interface CommitOrderInput extends PrepareOrderInput {
+  preparedOrder: PreparedPerpsOrderV2
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: CommitOrderResult) => void
 }
 
-interface CommitOrderResult {
-  hash: Hex
+export interface CommitOrderResult {
+  account: Address
+  clientOrderId: Hex
+  hash?: Hex
   userOperationHash?: Hex
   orderId: bigint
+  replayed: boolean
 }
 
 interface ExecuteOrderResult {
@@ -66,15 +91,18 @@ interface ExecuteOrderResult {
 }
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
-  Object.values(PERPS_ARBITRUM_SEPOLIA).map((address) => address.toLowerCase())
+  Object.values(PERPS_ARBITRUM_SEPOLIA)
+    .map((address) => address.toLowerCase())
 )
 const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
   'allowance',
   'balanceOf',
   'getAccountLedgerSnapshot',
+  'getActivePositionProtection',
   'getFreeBuyingPowerUsdc',
   'getPendingOrderView',
   'getPendingOrders',
+  'pendingPolicy',
   'getPoolLiquidityView',
   'getPosition',
   'getProtocolStatus',
@@ -127,7 +155,7 @@ interface CleanupExpiredOrderResult {
 }
 
 type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
-type CommitOrderArgs = readonly [number, bigint, bigint, bigint, boolean]
+type CommitOrderArgs = readonly [PerpsOrderRequestV2]
 
 const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/
 
@@ -175,6 +203,8 @@ function commitOrderResult(
   expected: {
     accountAddress: Address
     orderRouter: Address
+    orderLifecycleBook: Address
+    clientOrderId: Hex
   }
 ): CommitOrderResult {
   const hash = requireIncludedTransactionHash(result)
@@ -201,11 +231,32 @@ function commitOrderResult(
       'Sponsored commit was included, but no unique matching OrderCommitted event was found. Refresh account state before retrying.'
     )
   }
+  const registered = parseEventLogs({
+    abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+    eventName: 'IntentRegistered',
+    logs: result.receipt.logs.filter((log) =>
+      isAddressEqual(log.address, expected.orderLifecycleBook)
+    ),
+  }).filter((event) =>
+    isAddressEqual(event.args.account, expected.accountAddress) &&
+    event.args.clientOrderId.toLowerCase() === expected.clientOrderId.toLowerCase()
+  )
+  if (
+    registered.length !== 1 ||
+    registered[0].args.orderId !== committed[0].args.orderId
+  ) {
+    throw new Error(
+      'Sponsored commit was included, but its matching IntentRegistered lifecycle evidence was not found. Refresh account state before retrying.'
+    )
+  }
 
   return {
+    account: expected.accountAddress,
+    clientOrderId: expected.clientOrderId,
     hash,
     userOperationHash: result.userOperationHash,
     orderId: committed[0].args.orderId,
+    replayed: false,
   }
 }
 
@@ -695,7 +746,7 @@ export function usePerpsTrading() {
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
-  const commitOrder = useCallback(async ({
+  const prepareOrder = useCallback(async ({
     direction,
     notionalUsdc,
     sizeDelta: sizeDeltaOverride,
@@ -703,6 +754,89 @@ export function usePerpsTrading() {
     oraclePrice,
     slippagePercent,
     isClose,
+    selectedMaxLeverageBps,
+  }: PrepareOrderInput): Promise<PreparedPerpsOrderV2> => {
+    try {
+      if (!address) {
+        throw new Error(
+          'Confirm the Plether Trading Account before reviewing an order'
+        )
+      }
+      if (notionalUsdc <= 0n) {
+        throw new Error('Order size must be greater than zero')
+      }
+      if (oraclePrice <= 0n) throw new Error('plDXY Perp price is not available')
+      const requestedSizeDelta = sizeDeltaOverride ?? notionalUsdcToQuantizedSizeDelta(
+        notionalUsdc,
+        oraclePrice
+      )
+      if (requestedSizeDelta <= 0n) throw new Error('Order size is too small')
+      if (quantizePerpsPositionSize(requestedSizeDelta, 'down') !== requestedSizeDelta) {
+        throw new Error('Order size must use 100 plDXY increments')
+      }
+      const sizeDelta = requestedSizeDelta
+      const sponsored = requireSponsoredExecution()
+      const activeOperation = useSponsoredOperationStore
+        .getState()
+        .getActiveOperation(sponsored.accountAddress)
+      if (activeOperation?.orderRequestV2 !== undefined) {
+        const request = restorePerpsOrderRequestV2(
+          activeOperation.orderRequestV2
+        )
+        if (
+          request.side !== directionToPerpsSide(direction) ||
+          request.sizeDelta !== sizeDelta ||
+          request.isClose !== isClose
+        ) {
+          throw new Error(
+            'A different immutable order is already awaiting recovery. Finish or cancel that sponsored operation before reviewing another order.'
+          )
+        }
+        return {
+          account: sponsored.accountAddress,
+          manifestVersion: activeOperation.manifestVersion,
+          orderRouter: sponsored.manifest.orderRouter,
+          orderLifecycleBook: sponsored.manifest.orderLifecycleBook,
+          request,
+          executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+          reviewedBlockNumber: 0n,
+          reviewedBlockHash: `0x${'0'.repeat(64)}`,
+          reviewedPrice: oraclePrice,
+          protection: {
+            validUntil: request.bounds.validUntil,
+            executionMode: executionModeFromPinnedMask(
+              request.bounds.allowedExecutionModes
+            ),
+            executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+          },
+        }
+      }
+      const client = requireClient(publicClient)
+      return await preparePerpsOrderV2(client, sponsored.manifest, {
+        account: sponsored.accountAddress,
+        direction,
+        side: directionToPerpsSide(direction),
+        sizeDelta,
+        marginDelta: isClose ? 0n : marginUsdc,
+        slippagePercent,
+        isClose,
+        selectedMaxLeverageBps,
+      })
+    } catch (error) {
+      const sponsorError = findSponsorRequestError(error)
+      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
+      throw new Error(getPerpsErrorMessage(error, 'commit'), { cause: error })
+    }
+  }, [address, publicClient, requireSponsoredExecution])
+
+  const commitOrder = useCallback(async ({
+    direction,
+    notionalUsdc,
+    sizeDelta: sizeDeltaOverride,
+    marginUsdc,
+    oraclePrice,
+    isClose,
+    preparedOrder,
     onStatus,
     onIncluded,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
@@ -721,7 +855,6 @@ export function usePerpsTrading() {
         sizeDeltaOverride,
         marginUsdc,
         oraclePrice,
-        slippagePercent,
         isClose,
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       })
@@ -731,23 +864,27 @@ export function usePerpsTrading() {
       if (notionalUsdc <= 0n) {
         throw new Error('Order size must be greater than zero')
       }
-      if (oraclePrice <= 0n) {
-        throw new Error('plDXY Perp price is not available')
-      }
-
       const side = directionToPerpsSide(direction)
-      const sizeDelta = sizeDeltaOverride ?? notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
+      const sizeDelta = sizeDeltaOverride ?? preparedOrder.request.sizeDelta
       if (sizeDelta <= 0n) {
         throw new Error('Order size is too small')
       }
-      const marginDelta = isClose ? 0n : marginUsdc
-      const targetPrice = getPerpsTargetPrice({
-        direction,
-        isClose,
-        oraclePrice,
-        slippagePercent,
-      })
-      const args = [side, sizeDelta, marginDelta, targetPrice, isClose] as const
+      if (quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
+        throw new Error('Order size must use 100 plDXY increments')
+      }
+      const request = preparedOrder.request
+      const marginDelta = request.marginDelta
+      if (
+        !isAddressEqual(preparedOrder.account, address) ||
+        request.side !== side ||
+        request.sizeDelta !== sizeDelta ||
+        request.isClose !== isClose
+      ) {
+        throw new Error(
+          'The trade changed after final review. Review fresh execution protections before signing.'
+        )
+      }
+      const args = [request] as const
       diagnosticArgs = args
       diagnosticSide = side
       diagnosticSizeDelta = sizeDelta
@@ -756,81 +893,90 @@ export function usePerpsTrading() {
         side,
         sizeDelta,
         marginDelta,
-        targetPrice,
+        targetPrice: request.targetPrice,
+        clientOrderId: request.clientOrderId,
+        validUntil: request.bounds.validUntil,
         isClose,
       })
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
-      const [pendingOrders, maxPendingOrders] = await Promise.all([
-        client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
-          abi: PERPS_PUBLIC_LENS_ABI,
-          functionName: 'getPendingOrders',
-          args: [address],
-        }),
-        client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-          abi: PERPS_ORDER_ROUTER_ABI,
-          functionName: 'maxPendingOrders',
-        }),
-      ])
-      const pendingOrderCount = readArrayLength(pendingOrders)
-      if (BigInt(pendingOrderCount) >= maxPendingOrders) {
+      const sponsored = requireSponsoredExecution()
+      if (
+        sponsored.manifest.version !== preparedOrder.manifestVersion ||
+        !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
+        !isAddressEqual(
+          sponsored.manifest.orderLifecycleBook,
+          preparedOrder.orderLifecycleBook
+        )
+      ) {
         throw new Error(
-          `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. Wait for an existing order to be finalized before committing a new order.`
+          'The reviewed deployment changed. Review the order again before signing.'
         )
       }
-      if (!isClose) {
-        const latestBlock = await client.getBlock({ blockTag: 'latest' })
-        const openRevertCode = await client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-          abi: PERPS_CFD_ENGINE_LENS_ABI,
-          functionName: 'previewOpenRevertCode',
-          args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
-        })
-        if (openRevertCode !== 0) {
-          throw new Error(getPerpsOpenRevertMessage(openRevertCode))
-        }
-      } else {
-        const closePreview = await client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-          abi: PERPS_CFD_ENGINE_LENS_ABI,
-          functionName: 'previewClose',
-          args: [address, sizeDelta, oraclePrice],
-        })
-        const isValidClose = readBoolean(closePreview, 'valid', 0)
-        if (isValidClose === false) {
-          throw new Error(getPerpsCloseInvalidReasonMessage(readNumber(closePreview, 'invalidReason', 1)))
-        }
+
+      const [resolution, resolvedOrderId] = await client.readContract({
+        address: preparedOrder.orderLifecycleBook,
+        abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+        functionName: 'resolveClientIntent',
+        args: [address, request],
+      })
+      if (resolution === PERPS_CLIENT_INTENT_RESOLUTION.CONFLICT) {
+        throw new Error(
+          'Order integrity error: this client order ID is already bound to a different immutable request.'
+        )
       }
+      if (resolution === PERPS_CLIENT_INTENT_RESOLUTION.EXACT_REPLAY) {
+        const intent = await client.readContract({
+          address: preparedOrder.orderLifecycleBook,
+          abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+          functionName: 'clientIntent',
+          args: [address, request.clientOrderId],
+        })
+        if (intent.orderId !== resolvedOrderId || resolvedOrderId === 0n) {
+          throw new Error(
+            'Order integrity error: lifecycle replay records are inconsistent.'
+          )
+        }
+        const replayedResult: CommitOrderResult = {
+          account: address,
+          clientOrderId: request.clientOrderId,
+          orderId: resolvedOrderId,
+          replayed: true,
+        }
+        onIncluded?.(replayedResult)
+        invalidatePerpsReads()
+        return replayedResult
+      }
+      if (resolution !== PERPS_CLIENT_INTENT_RESOLUTION.UNUSED) {
+        throw new Error('Order integrity error: unknown client-intent resolution')
+      }
+
       await client.simulateContract({
         account: address,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        address: sponsored.manifest.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'commitOrder',
         args,
       })
 
-      const sponsored = requireSponsoredExecution()
-      const action = buildPlaceOrderAction({
+      const action = buildPlaceOrderV2Action({
         account: sponsored.accountAddress,
         orderRouter: sponsored.manifest.orderRouter,
-        side: direction === 'long' ? 'BULL' : 'BEAR',
-        sizeDelta,
-        marginDelta,
-        targetPrice,
-        isClose,
+        request,
       })
       const expectedCommit = {
         accountAddress: sponsored.accountAddress,
         orderRouter: sponsored.manifest.orderRouter,
+        orderLifecycleBook: preparedOrder.orderLifecycleBook,
+        clientOrderId: request.clientOrderId,
       }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
+        orderRequestV2: persistPerpsOrderRequestV2(address, request),
         onStatus,
         onIncluded: (includedResult) => {
           const includedCommit = commitOrderResult(
@@ -895,6 +1041,40 @@ export function usePerpsTrading() {
     )
   }, [])
 
+  const readOrderLifecycleOutcome = useCallback(async (
+    orderId: bigint
+  ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
+    const client = requireClient(publicClient)
+    const sponsored = requireSponsoredExecution()
+    const outcome = await client.readContract({
+      address: sponsored.manifest.orderLifecycleBook,
+      abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+      functionName: 'outcome',
+      args: [orderId],
+    })
+    const status = outcome.status
+    if (
+      status !== PERPS_LIFECYCLE_STATUS.EXECUTED &&
+      status !== PERPS_LIFECYCLE_STATUS.FAILED
+    ) {
+      return undefined
+    }
+
+    return {
+      orderId,
+      account: outcome.account,
+      clientOrderId: outcome.clientOrderId,
+      status: status as PerpsLifecycleStatus,
+      terminalReason: outcome.reason as PerpsTerminalReason,
+      executionMode: outcome.executionMode as PerpsExecutionMode,
+      terminalBlock: outcome.terminalBlock,
+      terminalTime: outcome.terminalTime,
+      executionPrice: outcome.executionPrice,
+      failedConstraint: outcome.failedConstraint as PerpsFailedConstraint,
+      receiptHash: outcome.receiptHash,
+    }
+  }, [publicClient, requireSponsoredExecution])
+
   const cleanupExpiredOrder = useCallback(async (
     orderId: bigint
   ): Promise<CleanupExpiredOrderResult> => {
@@ -954,8 +1134,10 @@ export function usePerpsTrading() {
     abandonDepositAuthorization,
     withdrawMargin,
     addPositionMargin,
+    prepareOrder,
     commitOrder,
     settleTraderClaim,
+    readOrderLifecycleOutcome,
     executeOrder,
     cleanupExpiredOrder,
   }

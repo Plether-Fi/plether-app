@@ -1,7 +1,7 @@
 import { getAddress, isAddress, type Address } from 'viem'
 
-export const PERPS_AA_MANIFEST_V1_PATTERN =
-  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
+export const PERPS_AA_MANIFEST_V2_PATTERN =
+  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v2$/
 
 export const PERPS_ENTRY_POINT_V08 =
   getAddress('0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108')
@@ -29,13 +29,15 @@ export interface PerpsAaDeploymentManifest {
   marginClearinghouse: Address
   cfdEngine: Address
   orderRouter: Address
+  orderLifecycleBook: Address
+  policyEvaluator: Address
   userOperationExplorerUrlTemplate: string
   transactionExplorerUrlTemplate: string
   testnetFaucet: string | null
   sponsorshipEnabled: boolean
 }
 
-const MANIFEST_KEYS = [
+const MANIFEST_V2_KEYS = [
   'version',
   'chainId',
   'entryPoint',
@@ -52,6 +54,8 @@ const MANIFEST_KEYS = [
   'marginClearinghouse',
   'cfdEngine',
   'orderRouter',
+  'orderLifecycleBook',
+  'policyEvaluator',
   'userOperationExplorerUrlTemplate',
   'transactionExplorerUrlTemplate',
   'testnetFaucet',
@@ -81,10 +85,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function assertExactKeys(record: Record<string, unknown>): void {
-  const expected = new Set<string>(MANIFEST_KEYS)
+function assertExactKeys(
+  record: Record<string, unknown>,
+  keys: readonly string[]
+): void {
+  const expected = new Set<string>(keys)
   const unknownKeys = Object.keys(record).filter((key) => !expected.has(key))
-  const missingKeys = MANIFEST_KEYS.filter((key) => !(key in record))
+  const missingKeys = keys.filter((key) => !(key in record))
   const issues = [
     ...missingKeys.map((key) => `missing required field "${key}"`),
     ...unknownKeys.map((key) => `unknown field "${key}"`),
@@ -273,15 +280,14 @@ export function parsePerpsAaManifest(
       'manifest must be a JSON object',
     ])
   }
-  assertExactKeys(value)
-
   const version = parseNonEmptyString(value.version, 'version')
-  if (!PERPS_AA_MANIFEST_V1_PATTERN.test(version)) {
+  if (!PERPS_AA_MANIFEST_V2_PATTERN.test(version)) {
     invalid(
       'version',
-      'must identify a supported v1 manifest (perps-aa-<network>-v1)'
+      'must identify a bounded V2 manifest (perps-aa-<network>-v2)'
     )
   }
+  assertExactKeys(value, MANIFEST_V2_KEYS)
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
@@ -355,6 +361,14 @@ export function parsePerpsAaManifest(
     ),
     cfdEngine: parseAddress(value.cfdEngine, 'cfdEngine'),
     orderRouter: parseAddress(value.orderRouter, 'orderRouter'),
+    orderLifecycleBook: parseAddress(
+      value.orderLifecycleBook,
+      'orderLifecycleBook'
+    ),
+    policyEvaluator: parseAddress(
+      value.policyEvaluator,
+      'policyEvaluator'
+    ),
     userOperationExplorerUrlTemplate: parseUrlTemplate(
       value.userOperationExplorerUrlTemplate,
       'userOperationExplorerUrlTemplate',

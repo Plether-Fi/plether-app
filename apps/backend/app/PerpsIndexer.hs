@@ -19,9 +19,11 @@ import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
+  , applyPerpsAddressEnvironment
   , defaultPerpsAddresses
-  , perpsIndexerName
+  , perpsIndexerNameForRelease
   , runPerpsIndexer
+  , validatePerpsIndexerReleaseConfig
   )
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
@@ -87,96 +89,118 @@ runConfiguredIndexer
   -> [String]
   -> Config
   -> IO ()
-runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
-      let configuredAddresses =
-            defaultPerpsAddresses
-              { paUsdc = cfgPerpsUsdc cfg
-              , paOrderRouter = cfgPerpsOrderRouter cfg
-              , paCfdEngine = cfgPerpsCfdEngine cfg
-              , paCfdEngineLens = cfgPerpsCfdEngineLens cfg
-              , paCfdEngineSettlementSidecar = cfgPerpsCfdEngineSettlementSidecar cfg
-              , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
-              , paPletherOracle = cfgPerpsPletherOracle cfg
-              }
-          parsedArgs = parseWorkerArgs configuredAddresses envArgs cliArgs
-          args =
-            parsedArgs
-              { waMode =
-                  case invocation of
-                    IndexerOptions.PerpsIndexerLoop -> waMode parsedArgs
-                    IndexerOptions.PerpsIndexerReplay replayOptions -> PerpsIndexerReplay replayOptions
-              }
-       in case cfgDatabaseUrl cfg of
-        Nothing -> do
-          logError
-            "perps_indexer_database_missing"
-            "Perps indexer requires a database"
-            []
-          exitFailure
-        Just dbUrl -> do
-          manager <- newManager tlsManagerSettings
-          pool <- newDbPool dbUrl
-          case invocation of
-            IndexerOptions.PerpsIndexerLoop -> withDb pool ensurePerpsHistorySchema
-            IndexerOptions.PerpsIndexerReplay _ -> pure ()
-          let rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
-              startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
-              addresses = waAddresses args
-              releaseManifest =
-                (cfgInsightsCompetitionReleaseManifest cfg)
-                  { crmChainId = cfgPerpsChainId cfg
-                  , crmUsdc = paUsdc addresses
-                  , crmOrderRouter = paOrderRouter addresses
-                  , crmMarginClearinghouse = paMarginClearinghouse addresses
-                  , crmAccountLens = cfgPerpsAccountLens cfg
-                  , crmCfdEngine = paCfdEngine addresses
-                  , crmCfdEngineLens = paCfdEngineLens addresses
-                  , crmSettlementSidecar = paCfdEngineSettlementSidecar addresses
-                  , crmPletherOracle = paPletherOracle addresses
-                  , crmIndexerStartBlock = startBlock
-                  }
-              traceApiUrl = case waTraceApiUrl args of
-                Just value
-                  | T.null (T.strip value) -> Nothing
-                  | otherwise -> Just $ T.strip value
-                Nothing
-                  | cfgPerpsChainId cfg == 421614 ->
-                      Just "https://arbitrum-sepolia.blockscout.com/api/v2"
-                  | otherwise -> Nothing
-              indexerCfg =
-                PerpsIndexerConfig
-                  { picRpcUrls = rpcUrls
-                  , picTraceApiUrl = traceApiUrl
-                  , picChainId = cfgPerpsChainId cfg
-                  , picAddresses = waAddresses args
-                  , picStartBlock = startBlock
-                  , picConfirmations = waConfirmations args
-                  , picBatchSize = waBatchSize args
-                  , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
-                  , picIndexerName = perpsIndexerName
-                  , picMode = waMode args
-                  , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
-                  , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
-                  , picDeploymentEnvironment = deploymentEnvironment
-                  }
-          whenReleaseBound cfg releaseManifest $ \boundManifest ->
-            withDb pool $ \conn ->
-              validateCompetitionReleaseManifest
-                conn
-                (crSlug $ cfgInsightsCompetitionRules cfg)
-                boundManifest
-          logInfo
-            "perps_indexer_started"
-            "Perps history indexer started"
-            [ field "mode" $ show $ waMode args
-            , field "start_block" startBlock
-            , field "confirmations" $ waConfirmations args
-            , field "batch_size" $ waBatchSize args
-            , field "poll_seconds" $ waPollSeconds args
-            , field "rpc_provider_count" $ maybe 1 length $ waRpcUrls args
-            , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
-            ]
-          runPerpsIndexer manager pool indexerCfg
+runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
+  let configuredAddresses =
+        defaultPerpsAddresses
+          { paUsdc = cfgPerpsUsdc cfg
+          , paOrderRouter = cfgPerpsOrderRouter cfg
+          , paOrderLifecycleBook = cfgPerpsOrderLifecycleBook cfg
+          , paCfdEngine = cfgPerpsCfdEngine cfg
+          , paCfdEngineLens = cfgPerpsCfdEngineLens cfg
+          , paCfdEngineSettlementSidecar = cfgPerpsCfdEngineSettlementSidecar cfg
+          , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
+          , paPletherOracle = cfgPerpsPletherOracle cfg
+          }
+      parsedArgs = parseWorkerArgs configuredAddresses envArgs cliArgs
+      args =
+        parsedArgs
+          { waMode =
+              case invocation of
+                IndexerOptions.PerpsIndexerLoop -> waMode parsedArgs
+                IndexerOptions.PerpsIndexerReplay replayOptions -> PerpsIndexerReplay replayOptions
+          }
+      rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
+      startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
+      addresses = waAddresses args
+      releaseManifest =
+        (cfgInsightsCompetitionReleaseManifest cfg)
+          { crmChainId = cfgPerpsChainId cfg
+          , crmUsdc = paUsdc addresses
+          , crmOrderRouter = paOrderRouter addresses
+          , crmMarginClearinghouse = paMarginClearinghouse addresses
+          , crmAccountLens = cfgPerpsAccountLens cfg
+          , crmCfdEngine = paCfdEngine addresses
+          , crmCfdEngineLens = paCfdEngineLens addresses
+          , crmSettlementSidecar = paCfdEngineSettlementSidecar addresses
+          , crmPletherOracle = paPletherOracle addresses
+          , crmIndexerStartBlock = startBlock
+          }
+      traceApiUrl = case waTraceApiUrl args of
+        Just value
+          | T.null (T.strip value) -> Nothing
+          | otherwise -> Just $ T.strip value
+        Nothing
+          | cfgPerpsChainId cfg == 421614 ->
+              Just "https://arbitrum-sepolia.blockscout.com/api/v2"
+          | otherwise -> Nothing
+      indexerName =
+        perpsIndexerNameForRelease
+          (cfgPerpsChainId cfg)
+          (paOrderRouter addresses)
+          (paOrderLifecycleBook addresses)
+      indexerCfg =
+        PerpsIndexerConfig
+          { picRpcUrls = rpcUrls
+          , picTraceApiUrl = traceApiUrl
+          , picChainId = cfgPerpsChainId cfg
+          , picAddresses = addresses
+          , picStartBlock = startBlock
+          , picConfirmations = waConfirmations args
+          , picBatchSize = waBatchSize args
+          , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
+          , picIndexerName = indexerName
+          , picMode = waMode args
+          , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
+          , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+          , picDeploymentEnvironment = deploymentEnvironment
+          }
+
+  case validatePerpsIndexerReleaseConfig
+    (cfgPerpsChainId cfg)
+    addresses
+    (cfgPerpsHousePool cfg)
+    startBlock of
+    Left err -> do
+      logError
+        "perps_indexer_release_configuration_invalid"
+        "Perps indexer effective release configuration is invalid"
+        [field "error" err]
+      exitFailure
+    Right () -> pure ()
+
+  case cfgDatabaseUrl cfg of
+    Nothing -> do
+      logError
+        "perps_indexer_database_missing"
+        "Perps indexer requires a database"
+        []
+      exitFailure
+    Just dbUrl -> do
+      manager <- newManager tlsManagerSettings
+      pool <- newDbPool dbUrl
+      case invocation of
+        IndexerOptions.PerpsIndexerLoop -> withDb pool ensurePerpsHistorySchema
+        IndexerOptions.PerpsIndexerReplay _ -> pure ()
+      whenReleaseBound cfg releaseManifest $ \boundManifest ->
+        withDb pool $ \conn ->
+          validateCompetitionReleaseManifest
+            conn
+            (crSlug $ cfgInsightsCompetitionRules cfg)
+            boundManifest
+      logInfo
+        "perps_indexer_started"
+        "Perps history indexer started"
+        [ field "mode" $ show $ waMode args
+        , field "start_block" startBlock
+        , field "confirmations" $ waConfirmations args
+        , field "batch_size" $ waBatchSize args
+        , field "poll_seconds" $ waPollSeconds args
+        , field "indexer_name" indexerName
+        , field "order_lifecycle_book" $ paOrderLifecycleBook addresses
+        , field "rpc_provider_count" $ maybe 1 length $ waRpcUrls args
+        , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
+        ]
+      runPerpsIndexer manager pool indexerCfg
 
 whenReleaseBound
   :: Config
@@ -243,6 +267,7 @@ loadEnvArgs = do
     , "PERPS_INDEXER_POLL_SECONDS"
     , "PERPS_USDC"
     , "PERPS_ORDER_ROUTER"
+    , "PERPS_ORDER_LIFECYCLE_BOOK"
     , "PERPS_CFD_ENGINE"
     , "PERPS_CFD_ENGINE_LENS"
     , "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
@@ -274,19 +299,7 @@ parseWorkerArgs addressDefaults env args =
             (lookupFlag "--trace-api-url" args)
             (lookup "PERPS_INDEXER_TRACE_API_URL" env)
     , waAddresses =
-        addressDefaults
-          { paUsdc = T.pack $ fromMaybe (T.unpack $ paUsdc addressDefaults) (lookup "PERPS_USDC" env)
-          , paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
-          , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
-          , paCfdEngineLens = T.pack $ fromMaybe (T.unpack $ paCfdEngineLens addressDefaults) (lookup "PERPS_CFD_ENGINE_LENS" env)
-          , paCfdEngineSettlementSidecar =
-              T.pack $
-                fromMaybe
-                  (T.unpack $ paCfdEngineSettlementSidecar addressDefaults)
-                  (lookup "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR" env)
-          , paMarginClearinghouse = T.pack $ fromMaybe (T.unpack $ paMarginClearinghouse addressDefaults) (lookup "PERPS_MARGIN_CLEARINGHOUSE" env)
-          , paPletherOracle = T.pack $ fromMaybe (T.unpack $ paPletherOracle addressDefaults) (lookup "PERPS_PLETHER_ORACLE" env)
-          }
+        applyPerpsAddressEnvironment addressDefaults env
     }
   where
     readEnv name fallback = fromMaybe fallback (lookup name env >>= readMaybe)
