@@ -147,6 +147,27 @@ variable "keeper_private_key" {
   sensitive = true
 }
 
+variable "lp_settlement_private_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Dedicated private key used only for LP epoch settlement. Required outside off mode and kept separate from every other transaction worker."
+
+  validation {
+    condition = var.lp_settlement_private_key == "" || (
+      can(regex("^0x[0-9A-Fa-f]{64}$", var.lp_settlement_private_key))
+      && lower(var.lp_settlement_private_key) != "0x0000000000000000000000000000000000000000000000000000000000000000"
+    )
+    error_message = "lp_settlement_private_key must be empty or a non-zero, 0x-prefixed 32-byte hexadecimal private key."
+  }
+}
+
+variable "lp_settlement_signer_funding_confirmed" {
+  type        = bool
+  default     = false
+  description = "Operator attestation that the dedicated LP signer was funded and its balance verified with --lp-settlement-preflight; required for observe or execute."
+}
+
 variable "oracle_updater_private_key" {
   type        = string
   sensitive   = true
@@ -507,7 +528,7 @@ variable "api_hostname" {
 variable "operations_alarm_sns_topic_arn" {
   type        = string
   default     = ""
-  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet."
+  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet and whenever LP settlement is active."
 
   validation {
     condition = var.operations_alarm_sns_topic_arn == trimspace(var.operations_alarm_sns_topic_arn) && (
@@ -701,8 +722,39 @@ variable "perps_house_pool" {
   description = "HousePool bound to the configured v1.2.0 settlement monitor."
 
   validation {
-    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
-    error_message = "perps_house_pool must be a canonical Ethereum address."
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+      && lower(var.perps_house_pool) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_house_pool must be a non-zero canonical Ethereum address."
+  }
+}
+
+variable "perps_senior_vault" {
+  type        = string
+  default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+  description = "Senior TrancheVault bound to the configured HousePool settlement release."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_senior_vault))
+      && lower(var.perps_senior_vault) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_senior_vault must be a non-zero canonical Ethereum address."
+  }
+}
+
+variable "perps_junior_vault" {
+  type        = string
+  default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+  description = "Junior TrancheVault bound to the configured HousePool settlement release."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_junior_vault))
+      && lower(var.perps_junior_vault) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_junior_vault must be a non-zero canonical Ethereum address."
   }
 }
 
@@ -714,6 +766,7 @@ variable "perps_settlement_monitor_lens" {
   validation {
     condition = (
       can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+      && lower(var.perps_settlement_monitor_lens) != "0x0000000000000000000000000000000000000000"
       && lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
     )
     error_message = "perps_settlement_monitor_lens must be the facade, never the v1.2.0 monitor sidecar."
@@ -852,6 +905,11 @@ variable "keeper_max_batch_size" {
 variable "keeper_confirmations" {
   type    = string
   default = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.keeper_confirmations)) && try(tonumber(var.keeper_confirmations) <= 10000, false)
+    error_message = "keeper_confirmations must be a canonical whole number from 1 through 10000."
+  }
 }
 
 variable "keeper_gas_buffer_bps" {
@@ -864,24 +922,81 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
-variable "lp_settlement_enabled" {
-  type        = bool
-  default     = false
-  description = "Enables signer-backed hourly LP settlement after a successful dry-run and keeper funding check."
+variable "lp_settlement_mode" {
+  type        = string
+  default     = "off"
+  description = "LP epoch settlement mode: off disables monitoring, observe performs all read/simulation checks without broadcasting, and execute permits bounded transactions."
+
+  validation {
+    condition     = contains(["off", "observe", "execute"], var.lp_settlement_mode)
+    error_message = "lp_settlement_mode must be off, observe, or execute."
+  }
 }
 
 variable "lp_settlement_poll_seconds" {
   type        = string
   default     = "15"
-  description = "Minimum interval between LP settlement monitor cycles in the shared keeper process."
+  description = "Exact interval between LP settlement monitor cycles in the shared keeper process."
 
   validation {
-    condition = try(
-      can(regex("^[1-9][0-9]*$", var.lp_settlement_poll_seconds))
-      && tonumber(var.lp_settlement_poll_seconds) <= 3600,
-      false
+    condition     = var.lp_settlement_poll_seconds == "15"
+    error_message = "lp_settlement_poll_seconds must be exactly 15."
+  }
+}
+
+variable "lp_settlement_max_drain_transactions" {
+  type        = number
+  default     = 4
+  description = "Maximum LP settlement transactions confirmed successfully during one eligible drain cycle."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_max_drain_transactions) == var.lp_settlement_max_drain_transactions
+      && var.lp_settlement_max_drain_transactions >= 1
+      && var.lp_settlement_max_drain_transactions <= 4
     )
-    error_message = "lp_settlement_poll_seconds must be a whole number from 1 through 3600."
+    error_message = "lp_settlement_max_drain_transactions must be a whole number from 1 through 4."
+  }
+}
+
+variable "lp_settlement_pending_replacement_seconds" {
+  type        = number
+  default     = 60
+  description = "Age in seconds at which an unconfirmed LP settlement transaction becomes eligible for same-nonce replacement."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_pending_replacement_seconds) == var.lp_settlement_pending_replacement_seconds
+      && var.lp_settlement_pending_replacement_seconds >= 60
+      && var.lp_settlement_pending_replacement_seconds <= 3600
+    )
+    error_message = "lp_settlement_pending_replacement_seconds must be a whole number from 60 through 3600."
+  }
+}
+
+variable "lp_settlement_max_replacements" {
+  type        = number
+  default     = 3
+  description = "Maximum same-nonce fee-bump replacements allowed for one LP settlement transaction."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_max_replacements) == var.lp_settlement_max_replacements
+      && var.lp_settlement_max_replacements >= 0
+      && var.lp_settlement_max_replacements <= 3
+    )
+    error_message = "lp_settlement_max_replacements must be a whole number from 0 through 3."
+  }
+}
+
+variable "lp_settlement_max_tx_cost_wei" {
+  type        = string
+  default     = "0"
+  description = "Maximum total native-token cost accepted for one LP settlement transaction. Zero is allowed only in off or observe mode."
+
+  validation {
+    condition     = can(regex("^(0|[1-9][0-9]*)$", var.lp_settlement_max_tx_cost_wei))
+    error_message = "lp_settlement_max_tx_cost_wei must be a canonical non-negative whole-number string."
   }
 }
 

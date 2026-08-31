@@ -3,6 +3,7 @@ module Plether.Ethereum.Contracts.Perps
   , OrderExecutionResult (..)
   , OrderBatchResult (..)
   , OrderTerminalOutcome (..)
+  , LpEpochSettled (..)
   , LiquidationBatchResult (..)
   , LiquidationBatchItem (..)
   , PendingOrderView (..)
@@ -17,6 +18,10 @@ module Plether.Ethereum.Contracts.Perps
   , positionLiquidatedTopic
   , liquidationBatchItemTopic
   , liquidationBatchStoppedTopic
+  , lpEpochSettledTopic
+  , decodeLpEpochSettled
+  , requireSingleLpEpochSettled
+  , isNoLpEpochProgressRpcError
   , decodePerpsOrderEvent
   , decodePositionOpenedAccount
   , decodePositionLiquidatedAccount
@@ -88,7 +93,7 @@ import Plether.Ethereum.Client
   , ethCallAtBlock
   , ethCallWithValue
   )
-import Plether.Ethereum.Rpc (RpcLog (..))
+import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
 import Plether.Pyth.Basket (PythPricePoint (..))
 
 data PerpsOrderEvent
@@ -164,6 +169,23 @@ data OrderTerminalOutcome = OrderTerminalOutcome
   , otoExecutionPrice :: Integer
   , otoFailedConstraint :: Integer
   , otoReceiptHash :: ByteString
+  }
+  deriving stock (Show, Eq)
+
+data LpEpochSettled = LpEpochSettled
+  { lpesCutoffEpoch :: Integer
+  , lpesSeniorRedeemAssets :: Integer
+  , lpesJuniorRedeemAssets :: Integer
+  , lpesJuniorDepositAssets :: Integer
+  , lpesSeniorDepositAssets :: Integer
+  , lpesSeniorBacklog :: Bool
+  , lpesJuniorBacklog :: Bool
+  , lpesEntriesDeferred :: Bool
+  , lpesTxHash :: Text
+  , lpesBlockNumber :: Integer
+  , lpesBlockHash :: Text
+  , lpesTransactionIndex :: Integer
+  , lpesLogIndex :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -248,6 +270,116 @@ liquidationBatchItemTopic =
 
 liquidationBatchStoppedTopic :: ByteString
 liquidationBatchStoppedTopic = keccak256 $ TE.encodeUtf8 "LiquidationBatchStopped(uint256)"
+
+lpEpochSettledTopic :: ByteString
+lpEpochSettledTopic =
+  keccak256 $
+    TE.encodeUtf8 "LpEpochSettled(uint256,uint256,uint256,uint256,uint256,bool,bool,bool)"
+
+decodeLpEpochSettled :: RpcLog -> Either Text LpEpochSettled
+decodeLpEpochSettled RpcLog {..} = do
+  cutoffTopic <- case rpcLogTopics of
+    [topic, cutoff]
+      | topic == lpEpochSettledTopic && BS.length cutoff == 32 -> Right cutoff
+    _ -> Left "LpEpochSettled log must contain exactly its signature and indexed cutoff epoch"
+  if BS.length rpcLogData /= 7 * 32
+    then Left "LpEpochSettled log data must contain exactly seven ABI words"
+    else Right ()
+  seniorBacklog <- canonicalBoolWord "seniorBacklog" 4 rpcLogData
+  juniorBacklog <- canonicalBoolWord "juniorBacklog" 5 rpcLogData
+  entriesDeferred <- canonicalBoolWord "entriesDeferred" 6 rpcLogData
+  pure
+    LpEpochSettled
+      { lpesCutoffEpoch = decodeUint256 cutoffTopic
+      , lpesSeniorRedeemAssets = wordAt 0 rpcLogData
+      , lpesJuniorRedeemAssets = wordAt 1 rpcLogData
+      , lpesJuniorDepositAssets = wordAt 2 rpcLogData
+      , lpesSeniorDepositAssets = wordAt 3 rpcLogData
+      , lpesSeniorBacklog = seniorBacklog
+      , lpesJuniorBacklog = juniorBacklog
+      , lpesEntriesDeferred = entriesDeferred
+      , lpesTxHash = rpcLogTxHash
+      , lpesBlockNumber = rpcLogBlockNumber
+      , lpesBlockHash = rpcLogBlockHash
+      , lpesTransactionIndex = rpcLogTransactionIndex
+      , lpesLogIndex = rpcLogIndex
+      }
+
+requireSingleLpEpochSettled
+  :: Text
+  -> Integer
+  -> TxReceipt
+  -> Either Text LpEpochSettled
+requireSingleLpEpochSettled expectedHousePool expectedCutoffEpoch receipt = do
+  if receiptSucceeded receipt
+    then Right ()
+    else Left "LP settlement receipt reverted"
+  if isCanonicalHash (receiptTxHash receipt) && isCanonicalHash (receiptBlockHash receipt)
+    then Right ()
+    else Left "LP settlement receipt is missing a canonical transaction or block hash"
+  eventLog <- case matchingLogs of
+    [entry] -> Right entry
+    [] -> Left "LP settlement receipt did not contain LpEpochSettled from the configured HousePool"
+    _ -> Left "LP settlement receipt contained more than one LpEpochSettled from the configured HousePool"
+  event <- decodeLpEpochSettled eventLog
+  if lpesCutoffEpoch event /= expectedCutoffEpoch
+    then
+      Left $
+        "LpEpochSettled cutoff mismatch: expected "
+          <> T.pack (show expectedCutoffEpoch)
+          <> ", observed "
+          <> T.pack (show $ lpesCutoffEpoch event)
+    else Right ()
+  if normalizeHex (lpesTxHash event) /= normalizeHex (receiptTxHash receipt)
+    then Left "LpEpochSettled transaction hash did not match its receipt"
+    else Right ()
+  if lpesBlockNumber event /= receiptBlockNumber receipt
+      || normalizeHex (lpesBlockHash event) /= normalizeHex (receiptBlockHash receipt)
+    then Left "LpEpochSettled block identity did not match its receipt"
+    else Right ()
+  if lpesTransactionIndex event /= receiptTransactionIndex receipt
+    then Left "LpEpochSettled transaction index did not match its receipt"
+    else Right event
+ where
+  matchingLogs =
+    [ entry
+    | entry <- receiptLogs receipt
+    , normalizeHex (rpcLogAddress entry) == normalizeHex expectedHousePool
+    , case rpcLogTopics entry of
+        topic : _ -> topic == lpEpochSettledTopic
+        [] -> False
+    ]
+
+isNoLpEpochProgressRpcError :: RpcError -> Bool
+isNoLpEpochProgressRpcError = \case
+  RpcNodeError _ message maybeData -> any matches $ message : maybe [] pure maybeData
+  _ -> False
+ where
+  matches value =
+    let normalized = T.toLower value
+     in "86cca6b8" `T.isInfixOf` normalized
+          || "housepool__nolpepochprogress" `T.isInfixOf` normalized
+
+canonicalBoolWord :: Text -> Int -> ByteString -> Either Text Bool
+canonicalBoolWord label index bytes =
+  case wordAt index bytes of
+    0 -> Right False
+    1 -> Right True
+    _ -> Left $ "LpEpochSettled " <> label <> " was not a canonical ABI boolean"
+
+normalizeHex :: Text -> Text
+normalizeHex = T.toLower . T.strip
+
+isCanonicalHash :: Text -> Bool
+isCanonicalHash value =
+  let normalized = normalizeHex value
+      payload = T.drop 2 normalized
+   in T.length normalized == 66
+        && "0x" `T.isPrefixOf` normalized
+        && T.all isHexDigit payload
+ where
+  isHexDigit char =
+    (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')
 
 decodePerpsOrderEvent :: RpcLog -> Maybe PerpsOrderEvent
 decodePerpsOrderEvent RpcLog {..} =

@@ -4,9 +4,17 @@ module Plether.Keeper
   , FreshPendingOrder (..)
   , LifecycleRefreshAction (..)
   , runKeeper
+  , runKeeperWithCodeHashes
+  , auditLpSettlementStartup
+  , runLpSettlementPreflight
+  , processLpSettlementCycle
+  , processLpSettlementCycleWithCodeHashes
   , assessLpSettlementStatus
   , isLpSettlementObservationSafe
+  , isLpSettlementObservationConsistent
   , validateAtomicSettlementPayload
+  , validateLpSettlementCost
+  , lpSettlementRequiredBalance
   , isOrderPastValidUntil
   , isOrderRevealReady
   , isFrozenClosePayloadReady
@@ -20,46 +28,79 @@ module Plether.Keeper
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, displayException, try)
+import Control.Concurrent.Async (concurrently_)
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , bracket
+  , displayException
+  , fromException
+  , throwIO
+  , try
+  )
 import Control.Monad (foldM, forM_, unless, void, when)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as B16
 import Data.Bits ((.|.))
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
-import Data.Maybe (fromMaybe)
+import Data.List (sortOn)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Database.PostgreSQL.Simple (Connection)
-import Plether.Config (Config (..))
+import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
-  , LpSettlementAttemptRow (..)
+  , LpSettlementBroadcastInput (..)
+  , LpSettlementBroadcastRow (..)
+  , LpSettlementEventOutcome (..)
+  , LpSettlementObservationInput (..)
+  , LpSettlementReceiptInput (..)
+  , LpSettlementSignedIntent (..)
+  , LpSettlementTransactionRow (..)
   , PythUpdatePayloadRow (..)
+  , appendLpSettlementBroadcast
+  , clearLpSettlementReorgedReceiptEvidence
+  , getActiveLpSettlementTransaction
+  , getLatestSuccessfulLpSettlementAt
+  , getLpSettlementBroadcasts
+  , getLpSettlementObservationObservedBlock
+  , getLpSettlementTransactionFamily
   , getPendingPerpsKeeperOrders
   , getPerpsKeeperLastIndexedBlock
   , getLatestPythUpdatePayload
   , getLatestPythUpdatePayloadAtOrAfter
-  , getSubmittedLpSettlementAttempts
   , getPythUpdatePayloadForWindow
   , isHistoricalRevealPayload
   , markPerpsKeeperOrderExecuted
   , markPerpsKeeperOrderFailed
-  , markLpSettlementAttemptStatus
-  , markLpSettlementAttemptSubmitted
+  , markLpSettlementTransactionConfirming
+  , markLpSettlementTransactionManualReview
+  , markLpSettlementTransactionPending
+  , prepareLpSettlementTransaction
   , recordPerpsKeeperOrderAttempt
   , recordPerpsKeeperOrderError
   , recordPerpsKeeperOrderImmediateRetryError
   , reconcilePerpsKeeperOrderExecuted
   , reconcilePerpsKeeperOrderFailed
-  , recordLpSettlementObservation
+  , recordLpSettlementObservationV2
+  , recordLpSettlementReceipt
+  , recordLpSettlementReceiptForManualReview
+  , recordLpSettlementSupersededReceipt
+  , replaceLpSettlementTransaction
   , setPerpsKeeperLastIndexedBlock
   , tryPerpsKeeperLock
+  , tryLpSettlementKeeperLock
   , unlockPerpsKeeperLock
+  , unlockLpSettlementKeeperLock
   , upsertPerpsKeeperOrderCommitted
+  , verifyLpSettlementSchema
+  , verifyNoLegacySubmittedLpSettlementAttempts
   )
 import Plether.Ethereum.Client
   ( CallParams (..)
@@ -72,11 +113,17 @@ import qualified Plether.Ethereum.Contracts.Perps as Perps
 import qualified Plether.Ethereum.Contracts.SettlementMonitor as SettlementMonitor
 import Plether.Ethereum.Rpc
   ( TxReceipt (..)
+  , RpcBlock (..)
   , ethBlockTimestamp
+  , ethChainId
   , ethEstimateGas
+  , ethEstimateGasAtBlock
   , ethGasPrice
+  , ethGetBalance
+  , ethGetBlockByNumber
   , ethGetLogs
   , ethGetTransactionCount
+  , ethGetTransactionCountAtBlock
   , ethGetTransactionReceipt
   , ethLatestBlockTimestamp
   , ethMaxPriorityFeePerGas
@@ -85,11 +132,16 @@ import Plether.Ethereum.Rpc
 import Plether.Ethereum.Transaction
   ( SignedTransaction (..)
   , Tx1559 (..)
+  , applyBpsBuffer
   , deriveAddress
+  , rawTransactionHash
+  , sameNonceReplacementFees
   , signTransaction
   )
 import Plether.Logging
-  ( field
+  ( LogField
+  , field
+  , logError
   , logErrorEvery
   , logInfo
   , logInfoEvery
@@ -147,242 +199,1539 @@ data V2PreflightAction
   | V2PreflightReject Text
   deriving stock (Show, Eq)
 
+data LpPreparedWork = LpPreparedWork
+  { lpwObservation :: SettlementMonitor.SettlementObservation
+  , lpwObservedBlockHash :: Text
+  , lpwSignerAddress :: Text
+  , lpwSignerBalance :: Integer
+  , lpwTarget :: Text
+  , lpwValue :: Integer
+  , lpwCallData :: ByteString
+  , lpwTransaction :: Tx1559
+  }
+
+data LpReconcileOutcome
+  = LpReconciledSuccess
+  | LpReconciledSuperseded
+  | LpReconcilePending
+  | LpReconcileManualReview
+  deriving stock (Eq, Show)
+
 runKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
-runKeeper cfg pool client mode dryRun =
+runKeeper = runKeeperWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+
+runKeeperWithCodeHashes
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> DbPool
+  -> EthClient
+  -> KeeperMode
+  -> Bool
+  -> IO ()
+runKeeperWithCodeHashes codeHashes cfg pool client mode dryRun =
+  case mode of
+    KeeperOnce -> do
+      runOrderKeeper cfg pool client KeeperOnce dryRun
+      when lpSettlementActive $ runLpSettlementWorker codeHashes lpCfg pool client KeeperOnce
+    KeeperLoop
+      | lpSettlementActive ->
+          concurrently_
+            (runOrderKeeper cfg pool client KeeperLoop dryRun)
+            (runLpSettlementWorker codeHashes lpCfg pool client KeeperLoop)
+      | otherwise -> runOrderKeeper cfg pool client KeeperLoop dryRun
+ where
+  lpSettlementActive = cfgLpSettlementMode cfg /= LpSettlementOff
+  lpCfg
+    | dryRun && cfgLpSettlementMode cfg == LpSettlementExecute =
+        cfg {cfgLpSettlementMode = LpSettlementObserve}
+    | otherwise = cfg
+
+runOrderKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
+runOrderKeeper cfg pool client KeeperOnce dryRun =
+  runOrderKeeperSession cfg pool client KeeperOnce dryRun
+runOrderKeeper cfg pool client KeeperLoop dryRun = supervise
+ where
+  supervise = do
+    result <- trySynchronous $ runOrderKeeperSession cfg pool client KeeperLoop dryRun
+    case result of
+      Left (err :: SomeException) ->
+        logError
+          "order_keeper_worker_restarting"
+          "Order keeper worker session failed; its dedicated database connection and advisory lock will be reacquired"
+          [field "error" $ displayException err]
+      Right () ->
+        logWarn
+          "order_keeper_worker_stopped"
+          "Order keeper worker session stopped unexpectedly and will be restarted"
+          []
+    threadDelay (cfgKeeperPollSeconds cfg * 1_000_000)
+    supervise
+
+runOrderKeeperSession :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
+runOrderKeeperSession cfg pool client mode dryRun =
   withDb pool $ \conn ->
     bracket
       (tryPerpsKeeperLock conn)
       (\acquired -> when acquired $ unlockPerpsKeeperLock conn)
       $ \acquired ->
         if not acquired
-          then
-            logWarn
-              "keeper_lock_unavailable"
-              "Another keeper instance already holds the advisory lock"
-              []
+          then case mode of
+            KeeperOnce ->
+              logWarn
+                "keeper_lock_unavailable"
+                "Another keeper instance already holds the advisory lock"
+                []
+            KeeperLoop ->
+              fail "Another order keeper already holds the advisory lock"
           else do
-            when (cfgLpSettlementEnabled cfg || dryRun) $ do
-              bindingResult <-
-                SettlementMonitor.verifyBindings
-                  client
-                  (cfgPerpsSettlementMonitorLens cfg)
-                  (cfgPerpsOrderRouter cfg)
-                  (cfgPerpsHousePool cfg)
-              case bindingResult of
-                Left err -> fail $ T.unpack err
-                Right () ->
-                  logInfo
-                    "lp_settlement_monitor_bindings_verified"
-                    "Settlement Monitor facade bindings match the configured Router and HousePool"
-                    [ field "monitor" $ cfgPerpsSettlementMonitorLens cfg
-                    , field "order_router" $ cfgPerpsOrderRouter cfg
-                    , field "house_pool" $ cfgPerpsHousePool cfg
-                    ]
             logInfo
               "keeper_lock_acquired"
-              "Keeper acquired the advisory lock"
+              "Order keeper acquired its advisory lock"
               []
-            lpPollRef <- newIORef 0
             case mode of
-              KeeperOnce -> void $ runKeeperIteration cfg conn client dryRun lpPollRef
-              KeeperLoop -> loop conn lpPollRef
+              KeeperOnce -> void $ runKeeperIteration cfg conn client dryRun
+              KeeperLoop -> loop conn
   where
-    loop conn lpPollRef = do
-      continue <- runKeeperIteration cfg conn client dryRun lpPollRef
+    loop conn = do
+      continue <- runKeeperIteration cfg conn client dryRun
       when continue $ do
         threadDelay (cfgKeeperPollSeconds cfg * 1_000_000)
-        loop conn lpPollRef
+        loop conn
 
-runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IORef Integer -> IO Bool
-runKeeperIteration cfg conn client dryRun lpPollRef = do
-  result <- try $ do
-    indexNewLogs cfg conn client
-    processQueueHead cfg conn client dryRun
-    lpPollDue <- claimLpSettlementPoll cfg dryRun lpPollRef
-    when lpPollDue $ processLpSettlement cfg conn client dryRun
+runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IO Bool
+runKeeperIteration cfg conn client dryRun = do
+  indexNewLogs cfg conn client
+  processQueueHead cfg conn client dryRun
+  pure True
+
+runLpSettlementWorker
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> DbPool
+  -> EthClient
+  -> KeeperMode
+  -> IO ()
+runLpSettlementWorker codeHashes cfg pool client KeeperOnce =
+  runLpSettlementWorkerSession codeHashes cfg pool client KeeperOnce
+runLpSettlementWorker codeHashes cfg pool client KeeperLoop = supervise
+ where
+  supervise = do
+    result <- trySynchronous $ runLpSettlementWorkerSession codeHashes cfg pool client KeeperLoop
+    case result of
+      Left (err :: SomeException) ->
+        logError
+          "lp_settlement_worker_restarting"
+          "LP settlement worker session failed; its dedicated database connection and advisory lock will be reacquired"
+          [field "error" $ displayException err]
+      Right () ->
+        logWarn
+          "lp_settlement_worker_stopped"
+          "LP settlement worker session stopped unexpectedly and will be restarted"
+          []
+    threadDelay (cfgLpSettlementPollSeconds cfg * 1_000_000)
+    supervise
+
+runLpSettlementWorkerSession
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> DbPool
+  -> EthClient
+  -> KeeperMode
+  -> IO ()
+runLpSettlementWorkerSession codeHashes cfg pool client mode =
+  withDb pool $ \conn ->
+    bracket
+      (tryLpSettlementKeeperLock conn)
+      (\acquired -> when acquired $ unlockLpSettlementKeeperLock conn)
+      $ \acquired ->
+        if not acquired
+          then
+            fail "Another LP settlement worker already holds the advisory lock"
+          else do
+            logInfo
+              "lp_settlement_lock_acquired"
+              "LP settlement worker acquired its independent advisory lock"
+              []
+            case mode of
+              KeeperOnce -> void $ runLpSettlementIteration codeHashes cfg conn client
+              KeeperLoop -> lpLoop conn
+ where
+  lpLoop conn = do
+    continue <- runLpSettlementIteration codeHashes cfg conn client
+    when continue $ do
+      threadDelay (cfgLpSettlementPollSeconds cfg * 1_000_000)
+      lpLoop conn
+
+runLpSettlementIteration
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> IO Bool
+runLpSettlementIteration codeHashes cfg conn client = do
+  processLpSettlementCycleWithCodeHashes codeHashes cfg conn client
+  emitLpSettlementHeartbeat cfg conn client
+  pure True
+
+trySynchronous :: IO a -> IO (Either SomeException a)
+trySynchronous action = do
+  result <- try action
   case result of
-    Left (err :: SomeException) -> do
-      logErrorEvery
-        60
-        "keeper_iteration_failed"
-        "Keeper iteration failed"
-        [field "error" $ displayException err]
-      pure True
-    Right () -> pure True
+    Left err
+      | Just (_ :: SomeAsyncException) <- fromException err -> throwIO err
+    _ -> pure result
 
-claimLpSettlementPoll :: Config -> Bool -> IORef Integer -> IO Bool
-claimLpSettlementPoll cfg dryRun pollRef
-  | not (cfgLpSettlementEnabled cfg || dryRun) = pure False
-  | otherwise = do
-      now <- floor <$> getPOSIXTime
-      atomicModifyIORef' pollRef $ \lastPoll ->
-        if lastPoll == 0 || now - lastPoll >= fromIntegral (cfgLpSettlementPollSeconds cfg)
-          then (now, True)
-          else (lastPoll, False)
-
-processLpSettlement :: Config -> Connection -> EthClient -> Bool -> IO ()
-processLpSettlement cfg conn client dryRun = do
-  pendingSubmission <- reconcileLpSettlementAttempts cfg conn client
-  unless pendingSubmission $ do
-    epochResult <- SettlementMonitor.getCurrentEpoch client (cfgPerpsHousePool cfg)
-    case epochResult of
-      Left err ->
-        logWarnEvery
-          60
-          "lp_settlement_epoch_read_failed"
-          "LP settlement could not read the current HousePool epoch"
-          [field "error" $ rpcErrorText err]
-      Right currentEpoch -> do
-        statusResult <-
-          SettlementMonitor.getSettlementStatus
-            client
-            (cfgPerpsSettlementMonitorLens cfg)
-            currentEpoch
-        case statusResult of
-          Left err ->
-            logWarnEvery
-              60
-              "lp_settlement_status_failed"
-              "LP settlement status could not be read"
-              [ field "epoch" currentEpoch
-              , field "error" $ rpcErrorText err
+runLpSettlementPreflight :: Config -> DbPool -> EthClient -> IO ()
+runLpSettlementPreflight cfg pool client = do
+  startupResult <- verifyLpSettlementStartup cfg client
+  case startupResult of
+    Left err -> preflightFailure "startup" err
+    Right signerAddress -> do
+      signerBalanceResult <- rpcStep "LP settlement signer balance" $ ethGetBalance client signerAddress
+      signerBalance <- either (preflightFailure "signer_balance") pure signerBalanceResult
+      when (signerBalance <= 0) $
+        preflightFailure "signer_balance" "LP settlement signer has zero native-token balance"
+      withDb pool $ \conn -> do
+        verifyLpSettlementSchema conn >>= \case
+          Left err -> preflightFailure "database_schema" err
+          Right () -> pure ()
+        verifyNoLegacySubmittedLpSettlementAttempts
+          conn
+          (cfgPerpsChainId cfg)
+          >>= \case
+            Left err -> preflightFailure "legacy_pending_transaction" err
+            Right () -> pure ()
+        preparedResult <- prepareLpSettlementWork cfg conn client False
+        case preparedResult of
+          Left err -> preflightFailure "simulation" err
+          Right Nothing -> do
+            when
+              ( cfgLpSettlementMode cfg == LpSettlementExecute
+                  && signerBalance < lpSettlementRequiredBalance cfg
+              )
+              $ preflightFailure
+                "signer_reserve"
+                "LP settlement signer balance is below the configured drain-cycle reserve"
+            logInfo
+              "lp_settlement_preflight_no_ready_work"
+              "LP settlement preflight found no safe, ready matured work"
+              [ field "signer" signerAddress
+              , field "signer_balance_wei" signerBalance
               ]
-          Right status -> processLpSettlementStatus cfg conn client dryRun currentEpoch status
+          Right (Just work) -> do
+            let maximumCost = transactionMaximumCost $ lpwTransaction work
+                requiredExecuteReserve = lpSettlementRequiredBalance cfg
+            case cfgLpSettlementMode cfg of
+              LpSettlementExecute -> do
+                case validateLpTransactionAffordability cfg work of
+                  Left err -> preflightFailure "affordability" err
+                  Right () -> pure ()
+                when (lpwSignerBalance work < requiredExecuteReserve) $
+                  preflightFailure
+                    "signer_reserve"
+                    ( "LP settlement signer balance is below the configured drain-cycle reserve: balance="
+                        <> tshow (lpwSignerBalance work)
+                        <> ", required_balance="
+                        <> tshow requiredExecuteReserve
+                    )
+              mode ->
+                case
+                  validateLpSettlementCost
+                    mode
+                    (cfgLpSettlementMaxTxCostWei cfg)
+                    (lpwSignerBalance work)
+                    maximumCost
+                of
+                  Left err -> preflightFailure "affordability" err
+                  Right () -> pure ()
+            logInfo
+              "lp_settlement_preflight_would_submit"
+              "LP settlement preflight selected and simulated the exact canonical transaction"
+              (lpPreparedWorkLogFields work <> [field "maximum_transaction_cost_wei" maximumCost])
+ where
+  preflightFailure :: Text -> Text -> IO a
+  preflightFailure category err = do
+    logError
+      "lp_settlement_invariant_failure"
+      "LP settlement preflight failed closed"
+      [field "category" category, field "error" err]
+    fail $ T.unpack err
 
-processLpSettlementStatus
+-- | Verify the execution-critical deployment as soon as the process starts,
+-- while deliberately leaving the worker alive to reconcile an already signed
+-- nonce lane. Every operation that can create or resend work repeats the same
+-- checks and remains fail-closed.
+auditLpSettlementStartup :: Config -> EthClient -> IO ()
+auditLpSettlementStartup cfg client =
+  verifyLpSettlementStartup cfg client >>= \case
+    Left err -> logInvariantFailure "startup" err
+    Right signerAddress ->
+      logInfo
+        "lp_settlement_startup_audit_succeeded"
+        "LP settlement startup chain, bytecode, bindings, and signer audit succeeded"
+        [ field "mode" $ lpSettlementModeText $ cfgLpSettlementMode cfg
+        , field "signer" signerAddress
+        , field "monitor" $ cfgPerpsSettlementMonitorLens cfg
+        , field "house_pool" $ cfgPerpsHousePool cfg
+        ]
+
+verifyLpSettlementStartup
+  :: Config
+  -> EthClient
+  -> IO (Either Text Text)
+verifyLpSettlementStartup =
+  verifyLpSettlementStartupWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+
+verifyLpSettlementStartupWithCodeHashes
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> EthClient
+  -> IO (Either Text Text)
+verifyLpSettlementStartupWithCodeHashes codeHashes cfg client = runExceptT $ do
+  observedChainId <- ExceptT $ rpcStep "RPC chain id" $ ethChainId client
+  ExceptT $ pure $
+    unlessEither
+      (observedChainId == cfgPerpsChainId cfg)
+      ( "RPC chain id mismatch: expected "
+          <> tshow (cfgPerpsChainId cfg)
+          <> ", observed "
+          <> tshow observedChainId
+      )
+  ExceptT $
+    SettlementMonitor.verifySettlementDeployment
+      client
+      SettlementMonitor.SettlementDeployment
+        { SettlementMonitor.sdConfigSchemaVersion = SettlementMonitor.supportedConfigSchemaVersion
+        , SettlementMonitor.sdMonitor = cfgPerpsSettlementMonitorLens cfg
+        , SettlementMonitor.sdRouter = cfgPerpsOrderRouter cfg
+        , SettlementMonitor.sdEngine = cfgPerpsCfdEngine cfg
+        , SettlementMonitor.sdHousePool = cfgPerpsHousePool cfg
+        , SettlementMonitor.sdSeniorVault = cfgLpSettlementSeniorVault cfg
+        , SettlementMonitor.sdJuniorVault = cfgLpSettlementJuniorVault cfg
+        , SettlementMonitor.sdPletherOracle = cfgPerpsPletherOracle cfg
+        }
+      codeHashes
+  privateKey <- ExceptT $ pure $ maybe (Left "LP_SETTLEMENT_PRIVATE_KEY is not configured") Right $ cfgLpSettlementPrivateKey cfg
+  signerAddress <- ExceptT $ ioTextStep "LP settlement signer" $ deriveAddress privateKey
+  pure signerAddress
+
+rpcStep :: Text -> IO (Either RpcError a) -> IO (Either Text a)
+rpcStep label action = do
+  result <- action
+  pure $ either (Left . ((label <> ": ") <>) . rpcErrorText) Right result
+
+ioTextStep :: Text -> IO (Either Text a) -> IO (Either Text a)
+ioTextStep label action = do
+  result <- action
+  pure $ either (Left . ((label <> ": ") <>)) Right result
+
+unlessEither :: Bool -> Text -> Either Text ()
+unlessEither condition message = if condition then Right () else Left message
+
+prepareLpSettlementWork
   :: Config
   -> Connection
   -> EthClient
   -> Bool
-  -> Integer
-  -> SettlementMonitor.SettlementStatus
-  -> IO ()
-processLpSettlementStatus cfg conn client dryRun currentEpoch status
-  = case assessLpSettlementStatus status of
-    LpSettlementHeld ->
-      logWarnEvery
-        60
-        "lp_settlement_held"
-        "Governance has paused LP epoch settlement"
-        [ field "epoch" currentEpoch
-        , field "operational_blocker_mask" $ SettlementMonitor.ssOperationalBlockerMask status
-        ]
-    LpSettlementNoMaturedWork ->
-      logInfoEvery
-        300
-        "lp_settlement_no_matured_work"
-        "No matured LP settlement work is visible"
-        [field "epoch" currentEpoch]
-    LpSettlementDependenciesUnknown ->
-      logWarnEvery
-        60
-        "lp_settlement_dependency_unknown"
-        "LP settlement stopped because one or more dependencies are unknown"
-        [ field "epoch" currentEpoch
-        , field "execution_path_dependency_mask" $
-            SettlementMonitor.ssExecutionPathDependencyMask status
-        , field "dependency_failure_mask" $ SettlementMonitor.ssDependencyFailureMask status
-        ]
-    LpSettlementOperationallyBlocked ->
-      logWarnEvery
-        60
-        "lp_settlement_operationally_blocked"
-        "LP settlement is blocked by current protocol health or runtime gates"
-        [ field "epoch" currentEpoch
-        , field "operational_blocker_mask" $ SettlementMonitor.ssOperationalBlockerMask status
-        , field "warning_mask" $ SettlementMonitor.ssWarningMask status
-        ]
-    LpSettlementReady _ -> do
-      blockResult <- ethBlockNumber client
-      case blockResult of
-        Left err ->
-          logWarnEvery
-            60
-            "lp_settlement_block_read_failed"
-            "LP settlement could not pin an observation block"
-            [field "error" $ rpcErrorText err]
-        Right latestBlock -> do
-          let observedBlock = max 0 $ latestBlock - fromIntegral (cfgKeeperConfirmations cfg)
-          observationResult <-
-            SettlementMonitor.getSettlementObservationAtBlock
-              client
-              (cfgPerpsSettlementMonitorLens cfg)
-              currentEpoch
-              observedBlock
-          case observationResult of
-            Left err ->
-              logWarnEvery
-                60
-                "lp_settlement_observation_failed"
-                "The block-pinned LP settlement observation could not be read"
-                [ field "epoch" currentEpoch
-                , field "observed_block" observedBlock
-                , field "error" $ rpcErrorText err
-                ]
-            Right observation -> processLpObservation cfg conn client dryRun observation
-
-processLpObservation
-  :: Config
-  -> Connection
-  -> EthClient
-  -> Bool
-  -> SettlementMonitor.SettlementObservation
-  -> IO ()
-processLpObservation cfg conn client dryRun observation = do
+  -> IO (Either Text (Maybe LpPreparedWork))
+prepareLpSettlementWork cfg conn client persistObservation =
+  fmap normalizeResult $ runExceptT $ do
+  privateKey <- ExceptT $ pure $ maybe (Left "LP_SETTLEMENT_PRIVATE_KEY is not configured") Right $ cfgLpSettlementPrivateKey cfg
+  signerAddress <- ExceptT $ ioTextStep "LP settlement signer" $ deriveAddress privateKey
+  signerBalance <- ExceptT $ rpcStep "LP settlement signer balance" $ ethGetBalance client signerAddress
+  latestEpoch <- ExceptT $ rpcStep "latest HousePool epoch" $
+    SettlementMonitor.getCurrentEpoch client (cfgPerpsHousePool cfg)
+  latestStatus <- ExceptT $ rpcStep "latest settlement status" $
+    SettlementMonitor.getSettlementStatus
+      client
+      (cfgPerpsSettlementMonitorLens cfg)
+      latestEpoch
+  case assessLpSettlementStatus latestStatus of
+    LpSettlementReady _ -> pure ()
+    decision -> do
+      liftIO $ logLpSettlementDecision latestEpoch latestStatus decision
+      ExceptT $ pure $ Left "LP_SETTLEMENT_NOT_READY"
+  latestBlock <- ExceptT $ rpcStep "chain head" $ ethBlockNumber client
+  let observedBlock = max 0 $ latestBlock - fromIntegral (cfgKeeperConfirmations cfg)
+  pinnedBlockBefore <- ExceptT $ rpcStep "pinned block" $ ethGetBlockByNumber client observedBlock
+  ExceptT $ pure $
+    unlessEither
+      (rpcBlockNumber pinnedBlockBefore == observedBlock)
+      "Pinned block response does not match the requested block number"
+  pinnedEpoch <- ExceptT $ rpcStep "pinned HousePool epoch" $
+    SettlementMonitor.getCurrentEpochAtBlock client (cfgPerpsHousePool cfg) observedBlock
+  if pinnedEpoch /= latestEpoch
+    then do
+      liftIO $
+        logInfoEvery
+          15
+          "lp_settlement_epoch_confirmation_pending"
+          "LP settlement is waiting for the confirmed observation to cross the epoch boundary"
+          [field "latest_epoch" latestEpoch, field "pinned_epoch" pinnedEpoch, field "observed_block" observedBlock]
+      ExceptT $ pure $ Left "LP_SETTLEMENT_NOT_READY"
+    else pure ()
+  observation <- ExceptT $ rpcStep "pinned settlement observation" $
+    SettlementMonitor.getSettlementObservationAtBlock
+      client
+      (cfgPerpsSettlementMonitorLens cfg)
+      pinnedEpoch
+      observedBlock
+  ExceptT $ pure $
+    unlessEither
+      (isLpSettlementObservationConsistent pinnedEpoch observedBlock observation)
+      "Settlement observation epoch/block fields do not match the pinned request"
+  ExceptT $ pure $
+    unlessEither
+      (isLpSettlementObservationSafe observation)
+      "Settlement observation is incomplete, unhealthy, blocked, or uses an unsupported schema/path"
+  pinnedBlockAfterObservation <- ExceptT $ rpcStep "pinned block recheck" $ ethGetBlockByNumber client observedBlock
+  ExceptT $ pure $
+    unlessEither
+      (samePinnedBlock pinnedBlockBefore pinnedBlockAfterObservation)
+      "Pinned settlement observation was invalidated by a block reorganization"
   let status = SettlementMonitor.soStatus observation
-      digest = SettlementMonitor.soObservationDigest observation
       dependencyMask =
         SettlementMonitor.ssDependencyFailureMask status
           .|. SettlementMonitor.soHealthDependencyFailureMask observation
-      healthCritical = SettlementMonitor.soCriticalFaultMask observation
-      safeObservation = isLpSettlementObservationSafe observation
-  if not safeObservation
-    then
-      logWarnEvery
-        60
-        "lp_settlement_observation_unsafe"
-        "LP settlement stopped because the pinned observation was incomplete or unhealthy"
-        [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-        , field "observed_block" $ SettlementMonitor.ssObservedBlock status
-        , field "observation_complete" $ SettlementMonitor.soObservationComplete observation
-        , field "health_state" $ SettlementMonitor.soHealthState observation
-        , field "critical_fault_mask" healthCritical
-        , field "dependency_failure_mask" dependencyMask
-        , field "operational_blocker_mask" $ SettlementMonitor.ssOperationalBlockerMask status
-        ]
-    else do
-      recordLpSettlementObservation
+  liftIO $
+    logInfoEvery
+      60
+      "lp_settlement_ready_backlog"
+      "Safe, ready matured LP settlement work remains"
+      [ field "epoch" $ SettlementMonitor.ssSettlementCutoffEpoch status
+      , field "oldest_matured_head" $ SettlementMonitor.ssOldestMaturedHead status
+      , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
+      ]
+  when persistObservation $
+    ExceptT $
+      Right <$> recordLpSettlementObservationV2
         conn
-        (cfgPerpsChainId cfg)
-        (cfgPerpsSettlementMonitorLens cfg)
-        digest
-        (SettlementMonitor.ssCurrentEpoch status)
-        (SettlementMonitor.ssObservedBlock status)
-        (executionPathNumber $ SettlementMonitor.ssRequiredExecutionPath status)
-        (SettlementMonitor.ssOperationalBlockerMask status)
-        (SettlementMonitor.ssWarningMask status)
-        dependencyMask
-        healthCritical
-      transactionResult <- buildLpSettlementTransaction cfg conn client status
-      case transactionResult of
+        LpSettlementObservationInput
+          { lsoiChainId = cfgPerpsChainId cfg
+          , lsoiMonitorAddress = cfgPerpsSettlementMonitorLens cfg
+          , lsoiObservationDigest = SettlementMonitor.soObservationDigest observation
+          , lsoiEpoch = SettlementMonitor.ssSettlementCutoffEpoch status
+          , lsoiObservedBlock = SettlementMonitor.ssObservedBlock status
+          , lsoiObservedBlockHash = Just $ rpcBlockHash pinnedBlockAfterObservation
+          , lsoiExecutionPath = executionPathNumber $ SettlementMonitor.ssRequiredExecutionPath status
+          , lsoiOperationalBlockerMask = SettlementMonitor.ssOperationalBlockerMask status
+          , lsoiWarningMask = SettlementMonitor.ssWarningMask status
+          , lsoiDependencyFailureMask = dependencyMask
+          , lsoiCriticalFaultMask = SettlementMonitor.soCriticalFaultMask observation
+          , lsoiSchemaVersion = SettlementMonitor.soSchemaVersion observation
+          , lsoiHealthState = SettlementMonitor.soHealthState observation
+          , lsoiExecutionPathDependencyMask = SettlementMonitor.ssExecutionPathDependencyMask status
+          , lsoiStatusDependencyFailureMask = SettlementMonitor.ssDependencyFailureMask status
+          , lsoiHealthDependencyFailureMask = SettlementMonitor.soHealthDependencyFailureMask observation
+          , lsoiObservationComplete = SettlementMonitor.soObservationComplete observation
+          , lsoiHasMaturedWork = SettlementMonitor.ssHasMaturedWork status
+          , lsoiLpEpochSettlementPaused = SettlementMonitor.ssLpEpochSettlementPaused status
+          }
+  (target, value, callData) <- ExceptT $ buildLpSettlementTransaction cfg conn client status
+  estimatedGasResult <- liftIO $ ethEstimateGas client signerAddress target value callData
+  estimatedGas <-
+    case estimatedGasResult of
+      Right gas -> pure gas
+      Left simulationError -> do
+        superseded <- ExceptT $ Right <$> lpSettlementWasSuperseded cfg client simulationError
+        if superseded
+          then do
+            liftIO $
+              logInfo
+                "lp_settlement_benign_supersession"
+                "Another permissionless caller cleared the observed LP work before submission"
+                [ field "epoch" pinnedEpoch
+                , field "error" $ rpcErrorText simulationError
+                ]
+            ExceptT $ pure $ Left "LP_SETTLEMENT_NOT_READY"
+          else ExceptT $ pure $ Left $ "exact LP settlement simulation failed: " <> rpcErrorText simulationError
+  nonce <- ExceptT $ rpcStep "LP settlement pending nonce" $ ethGetTransactionCount client signerAddress
+  gasPrice <- ExceptT $ rpcStep "LP settlement gas price" $ ethGasPrice client
+  priorityResult <- ExceptT $ Right <$> ethMaxPriorityFeePerGas client
+  let priorityBase = fromRight gasPrice priorityResult
+      maxFeeBase = max gasPrice priorityBase
+      gasLimit = max 21_000 $ applyBpsBuffer estimatedGas (cfgKeeperGasBufferBps cfg)
+      maxPriorityFee = applyBpsBuffer priorityBase (cfgKeeperFeeBufferBps cfg)
+      maxFee = max maxPriorityFee $ applyBpsBuffer maxFeeBase (cfgKeeperFeeBufferBps cfg)
+      transaction =
+        Tx1559
+          { txChainId = cfgPerpsChainId cfg
+          , txNonce = nonce
+          , txMaxPriorityFeePerGas = maxPriorityFee
+          , txMaxFeePerGas = maxFee
+          , txGasLimit = gasLimit
+          , txTo = target
+          , txValue = value
+          , txData = callData
+          }
+  pinnedBlockBeforeSubmission <- ExceptT $ rpcStep "pinned block final recheck" $ ethGetBlockByNumber client observedBlock
+  ExceptT $ pure $
+    unlessEither
+      (samePinnedBlock pinnedBlockAfterObservation pinnedBlockBeforeSubmission)
+      "Pinned settlement observation was invalidated before transaction preparation completed"
+  let work =
+        LpPreparedWork
+          { lpwObservation = observation
+          , lpwObservedBlockHash = rpcBlockHash pinnedBlockBeforeSubmission
+          , lpwSignerAddress = signerAddress
+          , lpwSignerBalance = signerBalance
+          , lpwTarget = target
+          , lpwValue = value
+          , lpwCallData = callData
+          , lpwTransaction = transaction
+          }
+  pure $ Just work
+ where
+  -- Expected non-ready decisions are represented as an internal sentinel so
+  -- the ExceptT setup remains compact; callers turn it into 'Nothing'.
+  normalizeResult = \case
+    Left "LP_SETTLEMENT_NOT_READY" -> Right Nothing
+    other -> other
+
+  samePinnedBlock left right =
+    rpcBlockNumber left == rpcBlockNumber right
+      && normalizeHex (rpcBlockHash left) == normalizeHex (rpcBlockHash right)
+
+logLpSettlementDecision
+  :: Integer
+  -> SettlementMonitor.SettlementStatus
+  -> LpSettlementDecision
+  -> IO ()
+logLpSettlementDecision epoch status = \case
+  LpSettlementHeld ->
+    logWarnEvery 60 "lp_settlement_held" "Governance has paused LP epoch settlement" fields
+  LpSettlementNoMaturedWork ->
+    logInfoEvery 300 "lp_settlement_no_matured_work" "No matured LP settlement work is visible" fields
+  LpSettlementDependenciesUnknown ->
+    logWarnEvery 60 "lp_settlement_dependency_unknown" "LP settlement dependencies are incomplete" fields
+  LpSettlementOperationallyBlocked ->
+    logWarnEvery 60 "lp_settlement_operationally_blocked" "LP settlement is blocked by protocol health" fields
+  LpSettlementReady _ -> pure ()
+ where
+  fields =
+    [ field "epoch" epoch
+    , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
+    , field "operational_blocker_mask" $ SettlementMonitor.ssOperationalBlockerMask status
+    , field "dependency_failure_mask" $ SettlementMonitor.ssDependencyFailureMask status
+    ]
+
+lpSettlementWasSuperseded :: Config -> EthClient -> RpcError -> IO Bool
+lpSettlementWasSuperseded cfg client simulationError
+  | not $ Perps.isNoLpEpochProgressRpcError simulationError = pure False
+  | otherwise = lpSettlementWorkIsNowAbsent cfg client
+
+lpPreparedWorkLogFields :: LpPreparedWork -> [LogField]
+lpPreparedWorkLogFields work =
+  let observation = lpwObservation work
+      status = SettlementMonitor.soStatus observation
+      tx = lpwTransaction work
+   in [ field "epoch" $ SettlementMonitor.ssSettlementCutoffEpoch status
+      , field "observed_block" $ SettlementMonitor.ssObservedBlock status
+      , field "observation_digest" $ SettlementMonitor.soObservationDigest observation
+      , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
+      , field "signer" $ lpwSignerAddress work
+      , field "signer_balance_wei" $ lpwSignerBalance work
+      , field "target" $ lpwTarget work
+      , field "value_wei" $ lpwValue work
+      , field "nonce" $ txNonce tx
+      , field "gas_limit" $ txGasLimit tx
+      , field "max_priority_fee_per_gas_wei" $ txMaxPriorityFeePerGas tx
+      , field "max_fee_per_gas_wei" $ txMaxFeePerGas tx
+      ]
+
+transactionMaximumCost :: Tx1559 -> Integer
+transactionMaximumCost tx = txValue tx + txGasLimit tx * txMaxFeePerGas tx
+
+processLpSettlementCycle :: Config -> Connection -> EthClient -> IO ()
+processLpSettlementCycle =
+  processLpSettlementCycleWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+
+processLpSettlementCycleWithCodeHashes
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> IO ()
+processLpSettlementCycleWithCodeHashes codeHashes cfg conn client = do
+  active <- getActiveLpSettlementForConfiguredSigner cfg conn
+  case active of
+    Nothing -> beginNewWork 0
+    Just transaction ->
+      verifyLpSettlementRecoveryChain cfg client >>= \case
+        Left err -> logInvariantFailure "recovery_chain" err
+        Right () ->
+          reconcileLpSettlementTransaction codeHashes cfg conn client transaction >>= \case
+            LpReconciledSuccess -> beginNewWork 1
+            LpReconciledSuperseded -> beginNewWork 0
+            LpReconcilePending -> pure ()
+            LpReconcileManualReview -> pure ()
+ where
+  beginNewWork confirmedCount =
+    verifyLpSettlementNewWorkSafety codeHashes cfg conn client >>= \case
+      Left err -> logInvariantFailure "new_work_safety" err
+      Right signerAddress -> do
+        logInfoEvery
+          300
+          "lp_settlement_startup_verified"
+          "LP settlement chain, code, bindings, schema, legacy state, and signer were verified before preparing new work"
+          [ field "monitor" $ cfgPerpsSettlementMonitorLens cfg
+          , field "order_router" $ cfgPerpsOrderRouter cfg
+          , field "house_pool" $ cfgPerpsHousePool cfg
+          , field "senior_vault" $ cfgLpSettlementSeniorVault cfg
+          , field "junior_vault" $ cfgLpSettlementJuniorVault cfg
+          , field "plether_oracle" $ cfgPerpsPletherOracle cfg
+          , field "signer" signerAddress
+          , field "mode" $ lpSettlementModeText $ cfgLpSettlementMode cfg
+          ]
+        drainLpSettlementBacklog codeHashes cfg conn client confirmedCount
+
+verifyLpSettlementNewWorkSafety
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> IO (Either Text Text)
+verifyLpSettlementNewWorkSafety codeHashes cfg conn client = runExceptT $ do
+  ExceptT $ verifyLpSettlementSchema conn
+  ExceptT $
+    verifyNoLegacySubmittedLpSettlementAttempts
+      conn
+      (cfgPerpsChainId cfg)
+  ExceptT $ verifyLpSettlementStartupWithCodeHashes codeHashes cfg client
+
+verifyLpSettlementRecoveryChain :: Config -> EthClient -> IO (Either Text ())
+verifyLpSettlementRecoveryChain cfg client = do
+  observed <- rpcStep "RPC chain id" $ ethChainId client
+  pure $ do
+    observedChainId <- observed
+    unlessEither
+      (observedChainId == cfgPerpsChainId cfg)
+      ( "RPC chain id mismatch during durable reconciliation: expected "
+          <> tshow (cfgPerpsChainId cfg)
+          <> ", observed "
+          <> tshow observedChainId
+      )
+
+drainLpSettlementBacklog
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> Int
+  -> IO ()
+drainLpSettlementBacklog codeHashes cfg conn client confirmedCount
+  | confirmedCount >= cfgLpSettlementMaxDrainTransactions cfg =
+      logInfo
+        "lp_settlement_drain_cap_reached"
+        "LP settlement stopped at the configured per-cycle confirmed transaction cap"
+        [ field "confirmed_transaction_count" confirmedCount
+        , field "max_drain_transactions" $ cfgLpSettlementMaxDrainTransactions cfg
+        ]
+  | otherwise =
+      prepareLpSettlementWork cfg conn client True >>= \case
         Left err -> do
-          markLpSettlementAttemptStatus
-            conn
-            (cfgPerpsChainId cfg)
-            (cfgPerpsSettlementMonitorLens cfg)
-            digest
-            "blocked"
-            (Just err)
+          logInvariantFailure "observation_or_simulation" err
           logWarnEvery
             60
             "lp_settlement_transaction_unavailable"
             "LP settlement could not prepare its canonical transaction"
-            [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-            , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
-            , field "error" err
+            [field "error" err]
+        Right Nothing -> pure ()
+        Right (Just work) -> do
+          let maximumCost = transactionMaximumCost $ lpwTransaction work
+          logLpSignerBalance cfg (lpwSignerAddress work) (lpwSignerBalance work)
+          case cfgLpSettlementMode cfg of
+            LpSettlementOff -> pure ()
+            LpSettlementObserve ->
+              case
+                validateLpSettlementCost
+                  LpSettlementObserve
+                  (cfgLpSettlementMaxTxCostWei cfg)
+                  (lpwSignerBalance work)
+                  maximumCost
+              of
+                Left err -> do
+                  logWarnEvery
+                    60
+                    "lp_settlement_transaction_unaffordable"
+                    "LP settlement observe mode simulated work that fails its affordability gates"
+                    (lpPreparedWorkLogFields work <> [field "error" err])
+                  when (lpwSignerBalance work < maximumCost) $
+                    logLpLowBalance cfg (lpwSignerBalance work)
+                Right () ->
+                  logInfo
+                    "lp_settlement_observe_would_submit"
+                    "LP settlement observe mode selected, simulated, and passed affordability without signing or broadcasting"
+                    ( lpPreparedWorkLogFields work
+                        <> [field "maximum_transaction_cost_wei" maximumCost]
+                    )
+            LpSettlementExecute ->
+              case validateLpTransactionAffordability cfg work of
+                Left err -> do
+                  logWarnEvery
+                    60
+                    "lp_settlement_transaction_unaffordable"
+                    "LP settlement transaction exceeded its signer balance or configured cost cap"
+                    (lpPreparedWorkLogFields work <> [field "error" err])
+                  when (lpwSignerBalance work < maximumCost) $
+                    logLpLowBalance cfg (lpwSignerBalance work)
+                Right () -> do
+                  submitted <- persistAndBroadcastLpSettlement cfg conn client work
+                  waitForSubmittedLpSettlement codeHashes cfg conn client confirmedCount submitted
+
+validateLpTransactionAffordability :: Config -> LpPreparedWork -> Either Text ()
+validateLpTransactionAffordability cfg work =
+  validateLpSettlementCost
+    LpSettlementExecute
+    (cfgLpSettlementMaxTxCostWei cfg)
+    (lpwSignerBalance work)
+    (transactionMaximumCost $ lpwTransaction work)
+
+validateLpSettlementCost
+  :: LpSettlementMode
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Either Text ()
+validateLpSettlementCost mode configuredCap signerBalance maximumCost
+  | mode == LpSettlementExecute && configuredCap <= 0 =
+      Left "LP_SETTLEMENT_MAX_TX_COST_WEI must be positive in execute mode"
+  | configuredCap > 0 && maximumCost > configuredCap =
+      Left $
+        "transaction maximum cost "
+          <> tshow maximumCost
+          <> " wei exceeds configured cap "
+          <> tshow configuredCap
+          <> " wei"
+  | signerBalance < maximumCost =
+      Left $
+        "signer balance "
+          <> tshow signerBalance
+          <> " wei is below transaction maximum cost "
+          <> tshow maximumCost
+          <> " wei"
+  | otherwise = Right ()
+
+persistAndBroadcastLpSettlement
+  :: Config
+  -> Connection
+  -> EthClient
+  -> LpPreparedWork
+  -> IO LpSettlementTransactionRow
+persistAndBroadcastLpSettlement cfg conn client work = do
+  privateKey <- requireLpSettlementPrivateKey cfg
+  signedResult <- signTransaction privateKey (lpwTransaction work)
+  signed <- either (fail . T.unpack) pure signedResult
+  let observation = lpwObservation work
+      status = SettlementMonitor.soStatus observation
+      tx = lpwTransaction work
+  persisted <-
+    prepareLpSettlementTransaction
+      conn
+      LpSettlementSignedIntent
+        { lssiChainId = cfgPerpsChainId cfg
+        , lssiMonitorAddress = cfgPerpsSettlementMonitorLens cfg
+        , lssiObservationDigest = SettlementMonitor.soObservationDigest observation
+        , lssiEpoch = SettlementMonitor.ssSettlementCutoffEpoch status
+        , lssiSignerAddress = lpwSignerAddress work
+        , lssiNonce = txNonce tx
+        , lssiTargetAddress = txTo tx
+        , lssiValue = txValue tx
+        , lssiCalldata = txData tx
+        , lssiGasLimit = txGasLimit tx
+        , lssiMaxPriorityFeePerGas = txMaxPriorityFeePerGas tx
+        , lssiMaxFeePerGas = txMaxFeePerGas tx
+        , lssiSignedRawTransaction = signedRawTransaction signed
+        , lssiSignedTransactionHash = signedTransactionHash signed
+        }
+  broadcastLpSettlementTransaction conn client persisted
+  refreshed <- getActiveLpSettlementForConfiguredSigner cfg conn
+  case refreshed of
+    Just active -> pure active
+    Nothing -> pure persisted
+
+broadcastLpSettlementTransaction
+  :: Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO ()
+broadcastLpSettlementTransaction conn client transaction = do
+  sendResult <- ethSendRawTransaction client (lstrSignedRawTransaction transaction)
+  let signedHash = lstrSignedTransactionHash transaction
+      broadcastInput =
+        case sendResult of
+          Left err ->
+            LpSettlementBroadcastInput
+              { lsbiAttemptId = lstrId transaction
+              , lsbiOutcome = "ambiguous"
+              , lsbiReturnedTransactionHash = Nothing
+              , lsbiRpcError = Just $ rpcErrorText err
+              }
+          Right returnedHash ->
+            LpSettlementBroadcastInput
+              { lsbiAttemptId = lstrId transaction
+              , lsbiOutcome = "accepted"
+              , lsbiReturnedTransactionHash = Just returnedHash
+              , lsbiRpcError = Nothing
+              }
+  _ <- appendLpSettlementBroadcast conn broadcastInput
+  case sendResult of
+    Left err ->
+      logWarn
+        "lp_settlement_broadcast_uncertain"
+        "LP settlement broadcast response was uncertain; the persisted hash will be reconciled"
+        [ field "transaction_hash" signedHash
+        , field "nonce" $ lstrNonce transaction
+        , field "error" $ rpcErrorText err
+        ]
+    Right returnedHash
+      | normalizeHex returnedHash == normalizeHex signedHash ->
+          logInfo
+            "lp_settlement_broadcast"
+            "LP settlement transaction was broadcast from its durable signed intent"
+            [ field "transaction_hash" signedHash
+            , field "nonce" $ lstrNonce transaction
+            , field "replacement_count" $ lstrReplacementCount transaction
             ]
-        Right (target, value, callData) ->
-          executeLpSettlementTransaction cfg conn client dryRun observation target value callData
+      | otherwise ->
+          logInvariantFailure
+            "broadcast_hash_mismatch"
+            ("RPC returned " <> returnedHash <> " for signed transaction " <> signedHash)
+
+waitForSubmittedLpSettlement
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> Int
+  -> LpSettlementTransactionRow
+  -> IO ()
+waitForSubmittedLpSettlement codeHashes cfg conn client confirmedCount submitted = do
+  startedAt <- getCurrentTime
+  go startedAt submitted
+ where
+  go startedAt transaction = do
+    outcome <- reconcileLpSettlementTransaction codeHashes cfg conn client transaction
+    case outcome of
+      LpReconciledSuccess -> drainLpSettlementBacklog codeHashes cfg conn client (confirmedCount + 1)
+      LpReconciledSuperseded -> pure ()
+      LpReconcileManualReview -> pure ()
+      LpReconcilePending -> do
+        now <- getCurrentTime
+        if diffUTCTime now startedAt >= 120
+          then logLpPendingStuck cfg transaction
+          else do
+            emitLpSettlementHeartbeat cfg conn client
+            threadDelay 2_000_000
+            getActiveLpSettlementForConfiguredSigner cfg conn
+              >>= \case
+                Nothing -> pure ()
+                Just active -> go startedAt active
+
+reconcileLpSettlementTransaction
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO LpReconcileOutcome
+reconcileLpSettlementTransaction codeHashes cfg conn client transaction = do
+  if lstrStatus transaction == "manual_review"
+    then do
+      logLpPendingStuck cfg transaction
+      reconcileLpTransactionFamily codeHashes cfg conn client transaction
+    else
+      if lstrChainId transaction /= cfgPerpsChainId cfg
+        then
+          enterManualReviewAndReconcile
+            "chain_mismatch"
+            "persisted LP transaction chain does not match PERPS_CHAIN_ID"
+        else
+          if normalizeHex (lstrMonitorAddress transaction)
+              /= normalizeHex (cfgPerpsSettlementMonitorLens cfg)
+            then
+              enterManualReviewAndReconcile
+                "monitor_mismatch"
+                "persisted active LP transaction monitor does not match PERPS_SETTLEMENT_MONITOR_LENS"
+            else do
+              privateKey <- requireLpSettlementPrivateKey cfg
+              deriveAddress privateKey >>= \case
+                Left err -> enterManualReviewAndReconcile "signer_derivation" err
+                Right configuredSigner
+                  | normalizeHex (lstrSignerAddress transaction) /= normalizeHex configuredSigner ->
+                      enterManualReviewAndReconcile
+                        "signer_mismatch"
+                        "persisted LP signer does not match LP_SETTLEMENT_PRIVATE_KEY"
+                  | normalizeHex (rawTransactionHash $ lstrSignedRawTransaction transaction)
+                      /= normalizeHex (lstrSignedTransactionHash transaction) ->
+                      enterManualReviewAndReconcile
+                        "signed_intent_hash"
+                        "persisted LP raw transaction hash does not match its signed hash"
+                  | otherwise ->
+                      reconcileLpTransactionFamily codeHashes cfg conn client transaction
+ where
+  enterManualReviewAndReconcile category err = do
+    markLpSettlementTransactionManualReview conn (lstrId transaction) err
+    logInvariantFailure category err
+    reconcileLpTransactionFamily codeHashes cfg conn client transaction
+
+reconcileLpTransactionFamily
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO LpReconcileOutcome
+reconcileLpTransactionFamily codeHashes cfg conn client active = do
+  family <- getLpSettlementTransactionFamily conn (lstrId active)
+  let currentActive =
+        fromMaybe active $
+          listToMaybe [row | row <- family, lstrId row == lstrId active]
+  receiptResults <-
+    traverse
+      (\row -> fmap ((,) row) <$> ethGetTransactionReceipt client (lstrSignedTransactionHash row))
+      family
+  forM_
+    [ row
+    | Right (row, Nothing) <- receiptResults
+    , isJust (lstrReceiptTransactionHash row)
+    , lstrStatus row `elem` ["confirming", "manual_review", "replaced"]
+    ]
+    (clearLpSettlementReorgedReceiptEvidence conn . lstrId)
+  case [err | Left err <- receiptResults] of
+    RpcJsonError err : _ -> do
+      let message = "invalid LP settlement receipt response: " <> err
+      markLpSettlementTransactionManualReview conn (lstrId active) message
+      logInvariantFailure "receipt_shape" message
+      pure LpReconcileManualReview
+    err : _ -> do
+      logWarnEvery
+        60
+        "lp_settlement_reconciliation_failed"
+        "LP settlement transaction-family receipt lookup failed; the nonce lane remains active"
+        [ field "transaction_hash" $ lstrSignedTransactionHash active
+        , field "error" $ rpcErrorText err
+        ]
+      pure LpReconcilePending
+    [] ->
+      case [(row, receipt) | Right (row, Just receipt) <- receiptResults] of
+        [] -> reconcileMissingLpReceipt codeHashes cfg conn client currentActive
+        [(row, receipt)] -> reconcilePresentLpReceipt cfg conn client row receipt
+        _ -> do
+          let err = "multiple same-nonce LP transaction hashes returned receipts"
+          markLpSettlementTransactionManualReview conn (lstrId active) err
+          logInvariantFailure "same_nonce_receipts" err
+          pure LpReconcileManualReview
+
+reconcilePresentLpReceipt
+  :: Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> TxReceipt
+  -> IO LpReconcileOutcome
+reconcilePresentLpReceipt cfg conn client transaction receipt
+  | normalizeHex (receiptTxHash receipt) /= normalizeHex (lstrSignedTransactionHash transaction) =
+      enterFamilyManualReview
+        "receipt_transaction_hash"
+        "LP settlement receipt transaction hash differs from the persisted signed intent"
+  | otherwise = do
+  headResult <- ethBlockNumber client
+  case headResult of
+    Left err -> do
+      logWarnEvery
+        60
+        "lp_settlement_confirmation_head_failed"
+        "LP settlement receipt was found, but confirmation depth could not be determined"
+        [ field "transaction_hash" $ receiptTxHash receipt
+        , field "error" $ rpcErrorText err
+        ]
+      pure LpReconcilePending
+    Right latestBlock -> do
+      let confirmationDepth = max 0 $ latestBlock - receiptBlockNumber receipt
+          requiredDepth = fromIntegral $ cfgKeeperConfirmations cfg
+          confirmationDepthInt = fromInteger confirmationDepth
+      if confirmationDepth < requiredDepth
+        then do
+          case lstrStatus transaction of
+            "replaced" -> pure ()
+            "manual_review" ->
+              recordLpSettlementReceiptForManualReview
+                conn
+                (lpSettlementReceiptWithoutEvent transaction receipt confirmationDepthInt)
+                (fromMaybe "LP settlement transaction requires manual review" $ lstrLastError transaction)
+            _ ->
+              markLpSettlementTransactionConfirming
+                conn
+                (lstrId transaction)
+                (receiptTxHash receipt)
+                (receiptBlockNumber receipt)
+                (receiptBlockHash receipt)
+                (receiptSucceeded receipt)
+                confirmationDepthInt
+          logInfoEvery
+            15
+            "lp_settlement_confirmation_pending"
+            "LP settlement receipt is waiting for the configured confirmation depth"
+            [ field "transaction_hash" $ receiptTxHash receipt
+            , field "confirmation_depth" confirmationDepth
+            , field "required_confirmation_depth" requiredDepth
+            ]
+          pure LpReconcilePending
+        else
+          ethGetBlockByNumber client (receiptBlockNumber receipt) >>= \case
+            Left err -> do
+              logWarnEvery
+                60
+                "lp_settlement_receipt_block_failed"
+                "LP settlement receipt block could not be checked for canonicality"
+                [ field "transaction_hash" $ receiptTxHash receipt
+                , field "block_number" $ receiptBlockNumber receipt
+                , field "error" $ rpcErrorText err
+                ]
+              pure LpReconcilePending
+            Right canonicalBlock
+              | normalizeHex (rpcBlockHash canonicalBlock) /= normalizeHex (receiptBlockHash receipt) -> do
+                  when
+                    (lstrStatus transaction `elem` ["confirming", "manual_review", "replaced"])
+                    $ clearLpSettlementReorgedReceiptEvidence conn (lstrId transaction)
+                  logWarn
+                    "lp_settlement_receipt_reorged"
+                    "LP settlement receipt disappeared from the canonical chain; its nonce lane remains active"
+                    [ field "transaction_hash" $ receiptTxHash receipt
+                    , field "receipt_block_hash" $ receiptBlockHash receipt
+                    , field "canonical_block_hash" $ rpcBlockHash canonicalBlock
+                    ]
+                  pure LpReconcilePending
+              | receiptSucceeded receipt ->
+                  case
+                    Perps.requireSingleLpEpochSettled
+                      (cfgPerpsHousePool cfg)
+                      (lstrEpoch transaction)
+                      receipt
+                  of
+                    Left err -> do
+                      recordLpSettlementReceiptForManualReview
+                        conn
+                        (lpSettlementReceiptWithoutEvent transaction receipt confirmationDepthInt)
+                        err
+                      enterFamilyManualReview "settlement_event" err
+                    Right event -> do
+                      recordLpSettlementReceipt
+                        conn
+                        LpSettlementReceiptInput
+                          { lsriAttemptId = lstrId transaction
+                          , lsriTransactionHash = receiptTxHash receipt
+                          , lsriBlockNumber = receiptBlockNumber receipt
+                          , lsriBlockHash = receiptBlockHash receipt
+                          , lsriSucceeded = True
+                          , lsriConfirmationDepth = confirmationDepthInt
+                          , lsriEventOutcome = Just $ lpSettlementEventOutcome event
+                          }
+                      logInfo
+                        "lp_settlement_confirmed"
+                        "LP epoch settlement was confirmed with exactly one valid HousePool event"
+                        [ field "transaction_hash" $ receiptTxHash receipt
+                        , field "block_number" $ receiptBlockNumber receipt
+                        , field "confirmation_depth" confirmationDepth
+                        , field "cutoff_epoch" $ Perps.lpesCutoffEpoch event
+                        , field "senior_redeem_assets" $ Perps.lpesSeniorRedeemAssets event
+                        , field "junior_redeem_assets" $ Perps.lpesJuniorRedeemAssets event
+                        , field "junior_deposit_assets" $ Perps.lpesJuniorDepositAssets event
+                        , field "senior_deposit_assets" $ Perps.lpesSeniorDepositAssets event
+                        , field "senior_backlog" $ Perps.lpesSeniorBacklog event
+                        , field "junior_backlog" $ Perps.lpesJuniorBacklog event
+                        , field "entries_deferred" $ Perps.lpesEntriesDeferred event
+                        ]
+                      pure LpReconciledSuccess
+              | otherwise -> do
+                  competingSettlement <-
+                    hasCompetingLpSettlementEvidence cfg conn client transaction receipt
+                  if competingSettlement
+                    then do
+                      recordLpSettlementSupersededReceipt
+                        conn
+                        (lpSettlementReceiptWithoutEvent transaction receipt confirmationDepthInt)
+                        "a prior canonical permissionless transaction settled the observed cutoff"
+                      logInfo
+                        "lp_settlement_benign_supersession"
+                        "The LP transaction reverted after another permissionless caller cleared the work"
+                        [ field "transaction_hash" $ receiptTxHash receipt
+                        , field "cutoff_epoch" $ lstrEpoch transaction
+                        ]
+                      pure LpReconciledSuperseded
+                    else
+                      let err =
+                            "LP settlement transaction reverted without a prior canonical competing LpEpochSettled event for its cutoff"
+                       in do
+                            recordLpSettlementReceiptForManualReview
+                              conn
+                              (lpSettlementReceiptWithoutEvent transaction receipt confirmationDepthInt)
+                              err
+                            enterFamilyManualReview "unexpected_revert" err
+ where
+  enterFamilyManualReview category err = do
+    active <- getActiveLpSettlementForConfiguredSigner cfg conn
+    case active of
+      Just activeTransaction ->
+        markLpSettlementTransactionManualReview conn (lstrId activeTransaction) err
+      Nothing -> pure ()
+    logInvariantFailure category err
+    pure LpReconcileManualReview
+
+lpSettlementEventOutcome :: Perps.LpEpochSettled -> LpSettlementEventOutcome
+lpSettlementEventOutcome event =
+  LpSettlementEventOutcome
+    { lseoLogIndex = Perps.lpesLogIndex event
+    , lseoCutoffEpoch = Perps.lpesCutoffEpoch event
+    , lseoSeniorRedeemAssets = Perps.lpesSeniorRedeemAssets event
+    , lseoJuniorRedeemAssets = Perps.lpesJuniorRedeemAssets event
+    , lseoJuniorDepositAssets = Perps.lpesJuniorDepositAssets event
+    , lseoSeniorDepositAssets = Perps.lpesSeniorDepositAssets event
+    , lseoSeniorBacklog = Perps.lpesSeniorBacklog event
+    , lseoJuniorBacklog = Perps.lpesJuniorBacklog event
+    , lseoEntriesDeferred = Perps.lpesEntriesDeferred event
+    }
+
+lpSettlementReceiptWithoutEvent
+  :: LpSettlementTransactionRow
+  -> TxReceipt
+  -> Int
+  -> LpSettlementReceiptInput
+lpSettlementReceiptWithoutEvent transaction receipt confirmationDepth =
+  LpSettlementReceiptInput
+    { lsriAttemptId = lstrId transaction
+    , lsriTransactionHash = receiptTxHash receipt
+    , lsriBlockNumber = receiptBlockNumber receipt
+    , lsriBlockHash = receiptBlockHash receipt
+    , lsriSucceeded = receiptSucceeded receipt
+    , lsriConfirmationDepth = confirmationDepth
+    , lsriEventOutcome = Nothing
+    }
+
+hasCompetingLpSettlementEvidence
+  :: Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> TxReceipt
+  -> IO Bool
+hasCompetingLpSettlementEvidence cfg conn client transaction receipt = do
+  observedBlock <- getLpSettlementObservationObservedBlock conn (lstrId transaction)
+  case observedBlock of
+    Nothing -> pure False
+    Just fromBlock
+      | receiptBlockNumber receipt < fromBlock -> pure False
+      | otherwise ->
+          ethGetLogs
+            client
+            (cfgPerpsHousePool cfg)
+            [Perps.lpEpochSettledTopic]
+            fromBlock
+            (receiptBlockNumber receipt)
+            >>= \case
+              Left err -> do
+                logWarn
+                  "lp_settlement_competing_event_lookup_failed"
+                  "A reverted LP transaction could not be matched to canonical competing settlement evidence"
+                  [ field "transaction_hash" $ receiptTxHash receipt
+                  , field "error" $ rpcErrorText err
+                  ]
+                pure False
+              Right logs ->
+                case traverse Perps.decodeLpEpochSettled logs of
+                  Left err -> do
+                    logInvariantFailure "competing_settlement_event" err
+                    pure False
+                  Right events ->
+                    let qualifyingEvents = filter (isQualifyingCompetitor fromBlock) events
+                     in if null qualifyingEvents
+                          then pure False
+                          else
+                            ethEstimateGasAtBlock
+                              client
+                              (lstrSignerAddress transaction)
+                              (lstrTargetAddress transaction)
+                              (lstrValue transaction)
+                              (lstrCalldata transaction)
+                              (receiptBlockNumber receipt)
+                              >>= \case
+                                Left replayError
+                                  | Perps.isNoLpEpochProgressRpcError replayError -> pure True
+                                  | otherwise -> do
+                                      logWarn
+                                        "lp_settlement_supersession_replay_failed"
+                                        "Competing settlement evidence existed, but exact post-block replay did not prove the no-progress revert"
+                                        [ field "transaction_hash" $ receiptTxHash receipt
+                                        , field "error" $ rpcErrorText replayError
+                                        ]
+                                      pure False
+                                Right _ -> pure False
+ where
+  isQualifyingCompetitor fromBlock event =
+    Perps.lpesCutoffEpoch event == lstrEpoch transaction
+      && normalizeHex (Perps.lpesTxHash event)
+        /= normalizeHex (receiptTxHash receipt)
+      && not (Perps.lpesSeniorBacklog event)
+      && not (Perps.lpesJuniorBacklog event)
+      && not (Perps.lpesEntriesDeferred event)
+      && Perps.lpesBlockNumber event > fromBlock
+      && ( Perps.lpesBlockNumber event < receiptBlockNumber receipt
+            || ( Perps.lpesBlockNumber event == receiptBlockNumber receipt
+                  && Perps.lpesTransactionIndex event
+                    < receiptTransactionIndex receipt
+               )
+         )
+
+lpSettlementWorkIsNowAbsent :: Config -> EthClient -> IO Bool
+lpSettlementWorkIsNowAbsent cfg client = do
+  epochResult <- SettlementMonitor.getCurrentEpoch client (cfgPerpsHousePool cfg)
+  case epochResult of
+    Left _ -> pure False
+    Right epoch ->
+      SettlementMonitor.getSettlementStatus
+        client
+        (cfgPerpsSettlementMonitorLens cfg)
+        epoch
+        >>= \case
+          Right status -> pure $ assessLpSettlementStatus status == LpSettlementNoMaturedWork
+          Left _ -> pure False
+
+reconcileMissingLpReceipt
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO LpReconcileOutcome
+reconcileMissingLpReceipt codeHashes cfg conn client transaction = do
+  case lstrStatus transaction of
+    "confirming" -> markLpSettlementTransactionPending conn (lstrId transaction)
+    _ -> pure ()
+  latestResult <- ethBlockNumber client
+  confirmedNonceResult <-
+    case latestResult of
+      Left err -> pure $ Left err
+      Right latestBlock ->
+        ethGetTransactionCountAtBlock
+          client
+          (lstrSignerAddress transaction)
+          (max 0 $ latestBlock - fromIntegral (cfgKeeperConfirmations cfg))
+  case confirmedNonceResult of
+    Right confirmedNonce
+      | confirmedNonce > lstrNonce transaction -> do
+          let err =
+                "LP signer nonce "
+                  <> tshow (lstrNonce transaction)
+                  <> " was consumed without a verifiable persisted receipt"
+          markLpSettlementTransactionManualReview conn (lstrId transaction) err
+          logInvariantFailure "nonce_consumed" err
+          pure LpReconcileManualReview
+    Left err -> do
+      logWarnEvery
+        60
+        "lp_settlement_nonce_reconciliation_failed"
+        "LP settlement confirmed nonce could not be read"
+        [ field "transaction_hash" $ lstrSignedTransactionHash transaction
+        , field "error" $ rpcErrorText err
+        ]
+      pure LpReconcilePending
+    _
+      | lstrStatus transaction == "manual_review" -> do
+          logLpPendingStuck cfg transaction
+          pure LpReconcileManualReview
+      | cfgLpSettlementMode cfg /= LpSettlementExecute -> pure LpReconcilePending
+      | otherwise -> reconcileStaleLpTransaction codeHashes cfg conn client transaction
+
+reconcileStaleLpTransaction
+  :: SettlementMonitor.SettlementCodeHashes
+  -> Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO LpReconcileOutcome
+reconcileStaleLpTransaction codeHashes cfg conn client transaction = do
+  now <- getCurrentTime
+  broadcasts <- getLpSettlementBroadcasts conn (lstrId transaction)
+  family <- getLpSettlementTransactionFamily conn (lstrId transaction)
+  let transactionAge = ageSeconds now $ lstrCreatedAt transaction
+      laneAge =
+        maximum $
+          transactionAge : map (ageSeconds now . lstrCreatedAt) family
+      lastBroadcastAge =
+        maybe transactionAge (ageSeconds now . lsbrBroadcastAt) $
+          listToMaybe $ reverse $ sortOn lsbrBroadcastSequence broadcasts
+      replacementDue = transactionAge >= cfgLpSettlementPendingReplacementSeconds cfg
+      rebroadcastDue = lastBroadcastAge >= 30
+      atReplacementCap = lstrReplacementCount transaction >= cfgLpSettlementMaxReplacements cfg
+  when (laneAge >= 120 || atReplacementCap) $ logLpPendingStuckAt cfg transaction laneAge
+  if replacementDue && atReplacementCap
+    then do
+      let err = "LP settlement transaction remained unconfirmed after reaching the replacement cap"
+      markLpSettlementTransactionManualReview conn (lstrId transaction) err
+      logInvariantFailure "replacement_cap" err
+      pure LpReconcileManualReview
+    else
+      if replacementDue || rebroadcastDue
+        then
+          verifyLpSettlementNewWorkSafety codeHashes cfg conn client >>= \case
+            Left err -> do
+              logInvariantFailure
+                "recovery_send_safety"
+                ("recovery broadcast/replacement was blocked: " <> err)
+              pure LpReconcilePending
+            Right _
+              | replacementDue ->
+                  replaceStaleLpSettlementTransaction cfg conn client transaction
+              | persistedLpTransactionMaximumCost transaction > cfgLpSettlementMaxTxCostWei cfg -> do
+                  let err = "persisted LP settlement transaction exceeds the current LP_SETTLEMENT_MAX_TX_COST_WEI"
+                  markLpSettlementTransactionManualReview conn (lstrId transaction) err
+                  logInvariantFailure "rebroadcast_cost_cap" err
+                  pure LpReconcileManualReview
+              | otherwise -> do
+                  broadcastLpSettlementTransaction conn client transaction
+                  pure LpReconcilePending
+        else pure LpReconcilePending
+
+replaceStaleLpSettlementTransaction
+  :: Config
+  -> Connection
+  -> EthClient
+  -> LpSettlementTransactionRow
+  -> IO LpReconcileOutcome
+replaceStaleLpSettlementTransaction cfg conn client transaction = do
+  gasPriceResult <- ethGasPrice client
+  priorityResult <- ethMaxPriorityFeePerGas client
+  case gasPriceResult of
+    Left err -> do
+      logWarnEvery
+        60
+        "lp_settlement_replacement_fee_failed"
+        "LP settlement replacement fee quote failed"
+        [field "error" $ rpcErrorText err]
+      pure LpReconcilePending
+    Right gasPrice -> do
+      let priorityBase = fromRight gasPrice priorityResult
+          (replacementPriorityFee, replacementMaxFee) =
+            sameNonceReplacementFees
+              (cfgKeeperFeeBufferBps cfg)
+              gasPrice
+              priorityBase
+              (lstrMaxPriorityFeePerGas transaction)
+              (lstrMaxFeePerGas transaction)
+          replacementTx =
+            Tx1559
+              { txChainId = lstrChainId transaction
+              , txNonce = lstrNonce transaction
+              , txMaxPriorityFeePerGas = replacementPriorityFee
+              , txMaxFeePerGas = replacementMaxFee
+              , txGasLimit = lstrGasLimit transaction
+              , txTo = lstrTargetAddress transaction
+              , txValue = lstrValue transaction
+              , txData = lstrCalldata transaction
+              }
+          maximumCost = transactionMaximumCost replacementTx
+      balanceResult <- ethGetBalance client (lstrSignerAddress transaction)
+      case balanceResult of
+        Left err -> do
+          logWarnEvery
+            60
+            "lp_settlement_replacement_balance_failed"
+            "LP settlement replacement signer balance could not be read"
+            [field "error" $ rpcErrorText err]
+          pure LpReconcilePending
+        Right balance
+          | maximumCost > cfgLpSettlementMaxTxCostWei cfg -> do
+              let err = "same-nonce replacement would exceed LP_SETTLEMENT_MAX_TX_COST_WEI"
+              markLpSettlementTransactionManualReview conn (lstrId transaction) err
+              logInvariantFailure "replacement_cost_cap" err
+              pure LpReconcileManualReview
+          | balance < maximumCost -> do
+              logLpLowBalance cfg balance
+              pure LpReconcilePending
+          | otherwise -> do
+              privateKey <- requireLpSettlementPrivateKey cfg
+              signTransaction privateKey replacementTx >>= \case
+                Left err -> do
+                  markLpSettlementTransactionManualReview conn (lstrId transaction) err
+                  logInvariantFailure "replacement_signing" err
+                  pure LpReconcileManualReview
+                Right signed -> do
+                  replacement <-
+                    replaceLpSettlementTransaction
+                      conn
+                      (lstrId transaction)
+                      replacementPriorityFee
+                      replacementMaxFee
+                      (signedRawTransaction signed)
+                      (signedTransactionHash signed)
+                  broadcastLpSettlementTransaction conn client replacement
+                  logWarn
+                    "lp_settlement_transaction_replaced"
+                    "LP settlement replaced a stale transaction at the same nonce"
+                    [ field "previous_transaction_hash" $ lstrSignedTransactionHash transaction
+                    , field "transaction_hash" $ lstrSignedTransactionHash replacement
+                    , field "nonce" $ lstrNonce replacement
+                    , field "replacement_count" $ lstrReplacementCount replacement
+                    , field "maximum_transaction_cost_wei" maximumCost
+                    ]
+                  pure LpReconcilePending
+
+ageSeconds :: UTCTime -> UTCTime -> Int
+ageSeconds now thenTime = max 0 $ floor $ diffUTCTime now thenTime
+
+persistedLpTransactionMaximumCost :: LpSettlementTransactionRow -> Integer
+persistedLpTransactionMaximumCost transaction =
+  lstrValue transaction
+    + lstrGasLimit transaction * lstrMaxFeePerGas transaction
+
+emitLpSettlementHeartbeat :: Config -> Connection -> EthClient -> IO ()
+emitLpSettlementHeartbeat cfg conn client = do
+  now <- getCurrentTime
+  active <- getActiveLpSettlementForConfiguredSigner cfg conn
+  activeFamily <-
+    maybe (pure []) (getLpSettlementTransactionFamily conn . lstrId) active
+  lastSuccess <-
+    getLatestSuccessfulLpSettlementAt
+      conn
+      (cfgPerpsChainId cfg)
+      (cfgPerpsSettlementMonitorLens cfg)
+  epochResult <- SettlementMonitor.getCurrentEpoch client (cfgPerpsHousePool cfg)
+  statusResult <-
+    case epochResult of
+      Left err -> pure $ Left err
+      Right epoch ->
+        SettlementMonitor.getSettlementStatus
+          client
+          (cfgPerpsSettlementMonitorLens cfg)
+          epoch
+  signerResult <- lpSettlementSignerAndBalance cfg client
+  let epoch = either (const Nothing) Just epochResult
+      status = either (const Nothing) Just statusResult
+      decision = maybe "unavailable" (lpSettlementDecisionText . assessLpSettlementStatus) status
+      executionPath = maybe "unavailable" (T.pack . show . SettlementMonitor.ssRequiredExecutionPath) status
+      oldestHead = status >>= SettlementMonitor.ssOldestMaturedHead
+      signerBalance = either (const Nothing) (Just . snd) signerResult
+      pendingAge =
+        case active of
+          Nothing -> Nothing
+          Just transaction ->
+            Just $
+              maximum $
+                ageSeconds now (lstrCreatedAt transaction)
+                  : map (ageSeconds now . lstrCreatedAt) activeFamily
+  logInfoEvery
+    60
+    "lp_settlement_heartbeat"
+    "LP settlement worker heartbeat"
+    [ field "mode" $ lpSettlementModeText $ cfgLpSettlementMode cfg
+    , field "epoch" epoch
+    , field "oldest_matured_head" oldestHead
+    , field "decision" decision
+    , field "execution_path" executionPath
+    , field "signer_balance_wei" signerBalance
+    , field "pending_transaction_age_seconds" pendingAge
+    , field "last_successful_settlement_at" lastSuccess
+    ]
+  forM_ active $ \transaction ->
+    when
+      ( ageSeconds now (lstrCreatedAt transaction) >= 120
+          || lstrReplacementCount transaction >= cfgLpSettlementMaxReplacements cfg
+      )
+      $ logLpPendingStuckAt cfg transaction $ fromMaybe 0 pendingAge
+  forM_ signerBalance $ logLpLowBalance cfg
+
+lpSettlementSignerAndBalance
+  :: Config
+  -> EthClient
+  -> IO (Either Text (Text, Integer))
+lpSettlementSignerAndBalance cfg client = runExceptT $ do
+  privateKey <- ExceptT $ pure $ maybe (Left "LP_SETTLEMENT_PRIVATE_KEY is not configured") Right $ cfgLpSettlementPrivateKey cfg
+  signer <- ExceptT $ ioTextStep "LP settlement signer" $ deriveAddress privateKey
+  balance <- ExceptT $ rpcStep "LP settlement signer balance" $ ethGetBalance client signer
+  pure (signer, balance)
+
+lpSettlementDecisionText :: LpSettlementDecision -> Text
+lpSettlementDecisionText = \case
+  LpSettlementHeld -> "held"
+  LpSettlementNoMaturedWork -> "no_matured_work"
+  LpSettlementDependenciesUnknown -> "dependencies_unknown"
+  LpSettlementOperationallyBlocked -> "operationally_blocked"
+  LpSettlementReady SettlementMonitor.CachedMark -> "ready_cached_mark"
+  LpSettlementReady SettlementMonitor.AtomicOracleRefresh -> "ready_atomic_oracle_refresh"
+  LpSettlementReady _ -> "ready_unsupported_path"
+
+logLpSignerBalance :: Config -> Text -> Integer -> IO ()
+logLpSignerBalance cfg _signer balance = logLpLowBalance cfg balance
+
+logLpLowBalance :: Config -> Integer -> IO ()
+logLpLowBalance cfg balance =
+  when (requiredBalance > 0 && balance < requiredBalance) $
+    logWarnEvery
+      60
+      "lp_settlement_low_balance"
+      "LP settlement signer balance is below twice the four-transaction cost budget"
+      [ field "signer_balance_wei" balance
+      , field "required_balance_wei" requiredBalance
+      , field "max_tx_cost_wei" $ cfgLpSettlementMaxTxCostWei cfg
+      ]
+ where
+  requiredBalance = lpSettlementRequiredBalance cfg
+
+lpSettlementRequiredBalance :: Config -> Integer
+lpSettlementRequiredBalance cfg =
+  8 * cfgLpSettlementMaxTxCostWei cfg
+
+logLpPendingStuck :: Config -> LpSettlementTransactionRow -> IO ()
+logLpPendingStuck cfg transaction = do
+  now <- getCurrentTime
+  logLpPendingStuckAt cfg transaction $ ageSeconds now $ lstrCreatedAt transaction
+
+logLpPendingStuckAt :: Config -> LpSettlementTransactionRow -> Int -> IO ()
+logLpPendingStuckAt cfg transaction pendingAge =
+  logWarnEvery
+    60
+    "lp_settlement_pending_stuck"
+    "LP settlement transaction exceeded the pending SLO or reached its replacement cap"
+    [ field "transaction_hash" $ lstrSignedTransactionHash transaction
+    , field "nonce" $ lstrNonce transaction
+    , field "pending_age_seconds" pendingAge
+    , field "replacement_count" $ lstrReplacementCount transaction
+    , field "max_replacements" $ cfgLpSettlementMaxReplacements cfg
+    ]
+
+logInvariantFailure :: Text -> Text -> IO ()
+logInvariantFailure category err =
+  logError
+    "lp_settlement_invariant_failure"
+    "LP settlement failed closed on an invariant"
+    [field "category" category, field "error" err]
+
+requireLpSettlementPrivateKey :: Config -> IO Text
+requireLpSettlementPrivateKey cfg =
+  maybe
+    (fail "LP_SETTLEMENT_PRIVATE_KEY is not configured")
+    pure
+    (cfgLpSettlementPrivateKey cfg)
+
+getActiveLpSettlementForConfiguredSigner
+  :: Config
+  -> Connection
+  -> IO (Maybe LpSettlementTransactionRow)
+getActiveLpSettlementForConfiguredSigner cfg conn = do
+  privateKey <- requireLpSettlementPrivateKey cfg
+  signerAddress <- deriveAddress privateKey >>= either (fail . T.unpack) pure
+  getActiveLpSettlementTransaction
+    conn
+    (cfgPerpsChainId cfg)
+    (cfgPerpsSettlementMonitorLens cfg)
+    signerAddress
+
+normalizeHex :: Text -> Text
+normalizeHex = T.toLower . T.strip
+
+tshow :: (Show a) => a -> Text
+tshow = T.pack . show
 
 buildLpSettlementTransaction
   :: Config
@@ -447,7 +1796,8 @@ assessLpSettlementStatus status
 
 isLpSettlementObservationSafe :: SettlementMonitor.SettlementObservation -> Bool
 isLpSettlementObservationSafe observation =
-  SettlementMonitor.soObservationComplete observation
+  SettlementMonitor.soSchemaVersion observation == SettlementMonitor.supportedObservationSchemaVersion
+    && SettlementMonitor.soObservationComplete observation
     && SettlementMonitor.soHealthState observation == 1
     && SettlementMonitor.soCriticalFaultMask observation == 0
     && SettlementMonitor.soHealthDependencyFailureMask observation == 0
@@ -458,6 +1808,18 @@ isLpSettlementObservationSafe observation =
     && not (SettlementMonitor.ssLpEpochSettlementPaused status)
     && SettlementMonitor.ssRequiredExecutionPath status
       `elem` [SettlementMonitor.CachedMark, SettlementMonitor.AtomicOracleRefresh]
+ where
+  status = SettlementMonitor.soStatus observation
+
+isLpSettlementObservationConsistent
+  :: Integer
+  -> Integer
+  -> SettlementMonitor.SettlementObservation
+  -> Bool
+isLpSettlementObservationConsistent expectedEpoch expectedBlock observation =
+  SettlementMonitor.ssCurrentEpoch status == expectedEpoch
+    && SettlementMonitor.ssSettlementCutoffEpoch status == expectedEpoch
+    && SettlementMonitor.ssObservedBlock status == expectedBlock
  where
   status = SettlementMonitor.soStatus observation
 
@@ -472,185 +1834,6 @@ validateAtomicSettlementPayload minimumPublishTime publishTimes updateData
   | any (< minimumPublishTime) publishTimes =
       Left "the latest Pyth payload predates the minimum atomic publish time"
   | otherwise = Right ()
-
-executeLpSettlementTransaction
-  :: Config
-  -> Connection
-  -> EthClient
-  -> Bool
-  -> SettlementMonitor.SettlementObservation
-  -> Text
-  -> Integer
-  -> ByteString
-  -> IO ()
-executeLpSettlementTransaction cfg conn client dryRun observation target value callData = do
-  let digest = SettlementMonitor.soObservationDigest observation
-      status = SettlementMonitor.soStatus observation
-  simulation <- simulateKeeperTransaction cfg client target value callData
-  case simulation of
-    Left err -> do
-      markLpSettlementAttemptStatus
-        conn
-        (cfgPerpsChainId cfg)
-        (cfgPerpsSettlementMonitorLens cfg)
-        digest
-        "simulation_failed"
-        (Just err)
-      logWarnEvery
-        60
-        "lp_settlement_simulation_failed"
-        "The exact LP settlement transaction failed simulation"
-        [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-        , field "target" target
-        , field "value_wei" value
-        , field "error" err
-        ]
-    Right estimatedGas ->
-      if dryRun
-        then do
-          markLpSettlementAttemptStatus
-            conn
-            (cfgPerpsChainId cfg)
-            (cfgPerpsSettlementMonitorLens cfg)
-            digest
-            "dry_run"
-            Nothing
-          logInfo
-            "lp_settlement_dry_run_complete"
-            "LP settlement dry-run completed all reads, payload selection, fee quoting, and simulation"
-            [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-            , field "observed_block" $ SettlementMonitor.ssObservedBlock status
-            , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
-            , field "target" target
-            , field "value_wei" value
-            , field "estimated_gas" estimatedGas
-            , field "observation_digest" digest
-            ]
-        else do
-          result <-
-            submitKeeperTransactionTo cfg client target value callData Nothing $ \txHash -> do
-              markLpSettlementAttemptSubmitted
-                conn
-                (cfgPerpsChainId cfg)
-                (cfgPerpsSettlementMonitorLens cfg)
-                digest
-                txHash
-              logInfo
-                "lp_settlement_broadcast"
-                "LP settlement transaction was broadcast"
-                [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-                , field "transaction_hash" txHash
-                , field "observation_digest" digest
-                ]
-          case result of
-            Left (wasBroadcast, err) -> do
-              unless wasBroadcast $
-                markLpSettlementAttemptStatus
-                  conn
-                  (cfgPerpsChainId cfg)
-                  (cfgPerpsSettlementMonitorLens cfg)
-                  digest
-                  "failed"
-                  (Just err)
-              logWarnEvery
-                60
-                "lp_settlement_submission_failed"
-                "LP settlement was not confirmed"
-                [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-                , field "broadcast" wasBroadcast
-                , field "error" err
-                ]
-            Right receipt -> do
-              let terminalStatus = if receiptSucceeded receipt then "success" else "reverted"
-              markLpSettlementAttemptStatus
-                conn
-                (cfgPerpsChainId cfg)
-                (cfgPerpsSettlementMonitorLens cfg)
-                digest
-                terminalStatus
-                (if receiptSucceeded receipt then Nothing else Just "settlement transaction reverted")
-              logInfo
-                "lp_settlement_receipt"
-                "LP settlement transaction reached a terminal receipt"
-                [ field "epoch" $ SettlementMonitor.ssCurrentEpoch status
-                , field "transaction_hash" $ receiptTxHash receipt
-                , field "block_number" $ receiptBlockNumber receipt
-                , field "succeeded" $ receiptSucceeded receipt
-                ]
-              logRemainingLpBacklog cfg client
-
-reconcileLpSettlementAttempts :: Config -> Connection -> EthClient -> IO Bool
-reconcileLpSettlementAttempts cfg conn client = do
-  submitted <-
-    getSubmittedLpSettlementAttempts
-      conn
-      (cfgPerpsChainId cfg)
-      (cfgPerpsSettlementMonitorLens cfg)
-  pendingFlags <- traverse reconcile submitted
-  pure $ or pendingFlags
- where
-  reconcile row =
-    case lsarTransactionHash row of
-      Nothing -> do
-        markLpSettlementAttemptStatus
-          conn
-          (cfgPerpsChainId cfg)
-          (cfgPerpsSettlementMonitorLens cfg)
-          (lsarObservationDigest row)
-          "failed"
-          (Just "submitted settlement attempt has no transaction hash")
-        pure False
-      Just txHash -> do
-        receiptResult <- ethGetTransactionReceipt client txHash
-        case receiptResult of
-          Left err -> do
-            logWarnEvery
-              60
-              "lp_settlement_reconciliation_failed"
-              "A submitted LP settlement receipt could not be reconciled"
-              [ field "transaction_hash" txHash
-              , field "error" $ rpcErrorText err
-              ]
-            pure True
-          Right Nothing -> pure True
-          Right (Just receipt) -> do
-            markLpSettlementAttemptStatus
-              conn
-              (cfgPerpsChainId cfg)
-              (cfgPerpsSettlementMonitorLens cfg)
-              (lsarObservationDigest row)
-              (if receiptSucceeded receipt then "success" else "reverted")
-              (if receiptSucceeded receipt then Nothing else Just "settlement transaction reverted")
-            logInfo
-              "lp_settlement_reconciled"
-              "A previously submitted LP settlement reached a terminal receipt"
-              [ field "transaction_hash" txHash
-              , field "succeeded" $ receiptSucceeded receipt
-              , field "block_number" $ receiptBlockNumber receipt
-              ]
-            pure False
-
-logRemainingLpBacklog :: Config -> EthClient -> IO ()
-logRemainingLpBacklog cfg client = do
-  epochResult <- SettlementMonitor.getCurrentEpoch client (cfgPerpsHousePool cfg)
-  case epochResult of
-    Left _ -> pure ()
-    Right epoch -> do
-      statusResult <-
-        SettlementMonitor.getSettlementStatus
-          client
-          (cfgPerpsSettlementMonitorLens cfg)
-          epoch
-      case statusResult of
-        Right status | SettlementMonitor.ssHasMaturedWork status ->
-          logInfoEvery
-            15
-            "lp_settlement_backlog_remaining"
-            "Matured LP work remains and will be handled on a later poll"
-            [ field "epoch" epoch
-            , field "execution_path" $ show $ SettlementMonitor.ssRequiredExecutionPath status
-            ]
-        _ -> pure ()
 
 executionPathNumber :: SettlementMonitor.ExecutionPath -> Integer
 executionPathNumber = \case
@@ -1356,23 +2539,6 @@ assessBatchOrderPreflight result
       V2PreflightDefer $
         "batch made no terminal progress and stopped with reason "
           <> T.pack (show $ Perps.obrStopReason result)
-
-simulateKeeperTransaction
-  :: Config
-  -> EthClient
-  -> Text
-  -> Integer
-  -> ByteString
-  -> IO (Either Text Integer)
-simulateKeeperTransaction cfg client target value callData =
-  case cfgKeeperPrivateKey cfg of
-    Nothing -> pure $ Left "KEEPER_PRIVATE_KEY is not configured"
-    Just privateKey ->
-      deriveAddress privateKey >>= \case
-        Left err -> pure $ Left err
-        Right fromAddr -> do
-          gasResult <- ethEstimateGas client fromAddr target value callData
-          pure $ either (Left . rpcErrorText) Right gasResult
 
 submitKeeperTransactionTo
   :: Config

@@ -1,6 +1,10 @@
 module Plether.KeeperSpec (spec) where
 
+import Control.Monad (filterM)
 import qualified Data.ByteString as BS
+import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
+import Plether.Config (LpSettlementMode (..))
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
   , isAdmittedPythPayloadSource
@@ -17,6 +21,7 @@ import Plether.Keeper
   , assessLpSettlementStatus
   , assessSingleOrderPreflight
   , isFrozenClosePayloadReady
+  , isLpSettlementObservationConsistent
   , isLpSettlementObservationSafe
   , isOrderPastValidUntil
   , isOrderRevealReady
@@ -24,17 +29,39 @@ import Plether.Keeper
   , nextV2GasLimit
   , selectBatchCandidates
   , validateAtomicSettlementPayload
+  , validateLpSettlementCost
   )
 import qualified Plether.Ethereum.Contracts.Perps as Perps
 import Plether.Ethereum.Contracts.SettlementMonitor
   ( ExecutionPath (..)
   , SettlementObservation (..)
   , SettlementStatus (..)
+  , supportedObservationSchemaVersion
   )
+import System.Directory (doesFileExist)
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  keeperSource <- runIO loadKeeperSource
+  let normalizedKeeperSource = T.unwords $ T.words keeperSource
+
+  describe "LP epoch settlement call graph" $ do
+    it "wires cached settlement only to HousePool with zero value" $ do
+      normalizedKeeperSource
+        `shouldSatisfy` T.isInfixOf
+          "( cfgPerpsHousePool cfg , 0 , Perps.settleLpEpochPoolCall"
+
+    it "wires atomic settlement only to Router with the exact quoted Pyth fee" $ do
+      normalizedKeeperSource
+        `shouldSatisfy` T.isInfixOf
+          "( cfgPerpsOrderRouter cfg , exactFee , Perps.settleLpEpochRouterCall updateData )"
+
+    it "does not invoke any user claim or refund path" $ do
+      let foldedSource = T.toCaseFold keeperSource
+      foldedSource `shouldNotSatisfy` T.isInfixOf "claim"
+      foldedSource `shouldNotSatisfy` T.isInfixOf "refund"
+
   describe "LP epoch settlement gating" $ do
     it "distinguishes no-work, held, dependency-unknown, and executable paths" $ do
       assessLpSettlementStatus (settlementStatus CachedMark) `shouldBe` LpSettlementReady CachedMark
@@ -46,19 +73,78 @@ spec = do
         `shouldBe` LpSettlementHeld
       assessLpSettlementStatus ((settlementStatus CachedMark) {ssDependencyFailureMask = 1})
         `shouldBe` LpSettlementDependenciesUnknown
+      assessLpSettlementStatus ((settlementStatus CachedMark) {ssExecutionPathDependencyMask = 1})
+        `shouldBe` LpSettlementDependenciesUnknown
       assessLpSettlementStatus ((settlementStatus CachedMark) {ssOperationalBlockerMask = 1})
         `shouldBe` LpSettlementOperationallyBlocked
+      assessLpSettlementStatus (settlementStatus UnknownPath)
+        `shouldBe` LpSettlementDependenciesUnknown
+      assessLpSettlementStatus (settlementStatus NoMaturedWork)
+        `shouldBe` LpSettlementNoMaturedWork
 
     it "requires a complete, healthy, dependency-free pinned observation" $ do
       isLpSettlementObservationSafe (settlementObservation CachedMark) `shouldBe` True
+      isLpSettlementObservationSafe (settlementObservation AtomicOracleRefresh) `shouldBe` True
+      isLpSettlementObservationSafe
+        ((settlementObservation CachedMark) {soSchemaVersion = 2})
+        `shouldBe` False
       isLpSettlementObservationSafe
         ((settlementObservation CachedMark) {soObservationComplete = False})
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        ((settlementObservation CachedMark) {soHealthState = 0})
         `shouldBe` False
       isLpSettlementObservationSafe
         ((settlementObservation CachedMark) {soCriticalFaultMask = 1})
         `shouldBe` False
       isLpSettlementObservationSafe
         ((settlementObservation CachedMark) {soHealthDependencyFailureMask = 1})
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        (withSettlementStatus (\status -> status {ssDependencyFailureMask = 1}) $ settlementObservation CachedMark)
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        (withSettlementStatus (\status -> status {ssExecutionPathDependencyMask = 1}) $ settlementObservation CachedMark)
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        (withSettlementStatus (\status -> status {ssOperationalBlockerMask = 1}) $ settlementObservation CachedMark)
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        (withSettlementStatus (\status -> status {ssLpEpochSettlementPaused = True}) $ settlementObservation CachedMark)
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        (withSettlementStatus (\status -> status {ssHasMaturedWork = False}) $ settlementObservation CachedMark)
+        `shouldBe` False
+      isLpSettlementObservationSafe (settlementObservation UnknownPath) `shouldBe` False
+      isLpSettlementObservationSafe (settlementObservation NoMaturedWork) `shouldBe` False
+
+    it "keeps a frozen-oracle warning-only cached observation executable" $ do
+      let frozenOracleObservation =
+            withSettlementStatus
+              (\status -> status {ssWarningMask = 1})
+              (settlementObservation CachedMark)
+      assessLpSettlementStatus (soStatus frozenOracleObservation)
+        `shouldBe` LpSettlementReady CachedMark
+      isLpSettlementObservationSafe frozenOracleObservation `shouldBe` True
+
+    it "pins the observation to the exact epoch, cutoff, and confirmed block" $ do
+      let observation = settlementObservation CachedMark
+      isLpSettlementObservationConsistent 500_000 302_300_000 observation
+        `shouldBe` True
+      isLpSettlementObservationConsistent
+        500_000
+        302_300_000
+        (withSettlementStatus (\status -> status {ssCurrentEpoch = 500_001}) observation)
+        `shouldBe` False
+      isLpSettlementObservationConsistent
+        500_000
+        302_300_000
+        (withSettlementStatus (\status -> status {ssSettlementCutoffEpoch = 499_999}) observation)
+        `shouldBe` False
+      isLpSettlementObservationConsistent
+        500_000
+        302_300_000
+        (withSettlementStatus (\status -> status {ssObservedBlock = 302_299_999}) observation)
         `shouldBe` False
 
     it "accepts only a fresh exact six-feed atomic payload" $ do
@@ -69,6 +155,17 @@ spec = do
         `shouldBe` Left "the latest Pyth payload predates the minimum atomic publish time"
       validateAtomicSettlementPayload 100 (replicate 5 100) (replicate 5 $ BS.singleton 1)
         `shouldBe` Left "the latest Pyth payload does not contain exactly six feeds"
+
+    it "applies signer-balance and configured transaction-cost limits in both active modes" $ do
+      validateLpSettlementCost LpSettlementObserve 0 1_000 1_000 `shouldBe` Right ()
+      validateLpSettlementCost LpSettlementObserve 999 1_000 1_000
+        `shouldSatisfy` isLeft
+      validateLpSettlementCost LpSettlementExecute 0 1_000 1_000
+        `shouldSatisfy` isLeft
+      validateLpSettlementCost LpSettlementExecute 1_000 999 1_000
+        `shouldSatisfy` isLeft
+      validateLpSettlementCost LpSettlementExecute 1_000 1_000 1_000
+        `shouldBe` Right ()
 
   describe "isOrderPastValidUntil" $ do
     it "does not expire at the immutable deadline boundary" $ do
@@ -278,7 +375,17 @@ settlementStatus path =
   SettlementStatus
     { ssObservedBlock = 302_300_000
     , ssCurrentEpoch = 500_000
+    , ssSettlementCutoffEpoch = 500_000
     , ssMinimumAtomicPublishTime = 1_800_000_000
+    , ssSeniorMaturedDepositHeadEpoch = Nothing
+    , ssSeniorMaturedDepositHeadAssets = 0
+    , ssSeniorMaturedRedeemHeadEpoch = Just 499_999
+    , ssSeniorMaturedRedeemHeadShares = 1
+    , ssJuniorMaturedDepositHeadEpoch = Nothing
+    , ssJuniorMaturedDepositHeadAssets = 0
+    , ssJuniorMaturedRedeemHeadEpoch = Nothing
+    , ssJuniorMaturedRedeemHeadShares = 0
+    , ssOldestMaturedHead = Just 499_999
     , ssRequiredExecutionPath = path
     , ssCachedMarkPrice = 100_000_000
     , ssCachedMarkTime = 1_799_999_999
@@ -293,7 +400,7 @@ settlementStatus path =
 settlementObservation :: ExecutionPath -> SettlementObservation
 settlementObservation path =
   SettlementObservation
-    { soSchemaVersion = 1
+    { soSchemaVersion = supportedObservationSchemaVersion
     , soStatus = settlementStatus path
     , soHealthState = 1
     , soCriticalFaultMask = 0
@@ -301,3 +408,25 @@ settlementObservation path =
     , soObservationDigest = "0x1234"
     , soObservationComplete = True
     }
+
+withSettlementStatus
+  :: (SettlementStatus -> SettlementStatus)
+  -> SettlementObservation
+  -> SettlementObservation
+withSettlementStatus update observation =
+  observation {soStatus = update $ soStatus observation}
+
+loadKeeperSource :: IO T.Text
+loadKeeperSource = do
+  let candidates =
+        [ "src/Plether/Keeper.hs"
+        , "apps/backend/src/Plether/Keeper.hs"
+        ]
+  existing <- filterM doesFileExist candidates
+  case existing of
+    path : _ -> TIO.readFile path
+    [] -> fail "could not locate Plether/Keeper.hs for call-graph invariant tests"
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft (Right _) = False

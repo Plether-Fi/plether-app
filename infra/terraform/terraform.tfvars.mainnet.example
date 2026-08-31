@@ -8,6 +8,8 @@ posthog_otlp_host     = "eu.i.posthog.com"
 rpc_url                        = "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
 perps_rpc_url                  = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
 keeper_private_key             = "0xYOUR_KEEPER_PRIVATE_KEY"
+lp_settlement_private_key       = ""
+lp_settlement_signer_funding_confirmed = false
 oracle_updater_private_key     = "0xYOUR_ORACLE_UPDATER_PRIVATE_KEY"
 liquidation_keeper_private_key = "0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY"
 enable_aa_sponsorship          = false # Perps managed sponsorship is Sepolia-only.
@@ -21,6 +23,9 @@ cors_origins        = "*"
 indexer_start_block = "24427188"
 perps_chain_id      = "421614"
 perps_indexer_start_block = "273137426"
+# LP settlement is Sepolia-only. Terraform rejects observe or execute here
+# until a reviewed production vault release replaces the testnet manifest.
+lp_settlement_mode = "off"
 consolidate_workers = true
 # At least one consolidated worker is required before enabling candle dual
 # writes; it owns both the basket source watermark and Perps volume indexer.

@@ -1,12 +1,23 @@
 module Plether.Ethereum.Contracts.PerpsSpec (spec) where
 
+import Data.Aeson (Value (..), decode, encode, object, (.=))
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import qualified Data.ByteString.Lazy as LBS
+import Data.Foldable (toList)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Network.HTTP.Types (status200)
+import Network.Wai (Application, responseLBS, strictRequestBody)
+import Network.Wai.Handler.Warp (testWithApplication)
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeInt256, encodeUint256)
 import Plether.Ethereum.Contracts.Perps
-import Plether.Ethereum.Rpc (RpcLog (..))
+import Plether.Ethereum.Client (EthClient, RpcError (..), newClient)
+import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
 import Plether.Pyth.Basket (PythPricePoint (..))
 import Test.Hspec
 
@@ -158,6 +169,33 @@ spec = do
       word call 7 `shouldBe` 1
       BS.take 1 (bytesAtWord call 8) `shouldBe` BS.pack [0x99]
 
+    it "encodes the exact cached HousePool LP settlement calldata" $ do
+      settleLpEpochPoolCall 123_456_789 1_700_000_000
+        `shouldEncodeTo` "0x4c9bffad00000000000000000000000000000000000000000000000000000000075bcd15000000000000000000000000000000000000000000000000000000006553f100"
+
+    it "encodes the exact six-feed atomic Router LP settlement calldata" $ do
+      let sixFeedUpdateData =
+            [ BS.pack [0x01]
+            , BS.pack [0x02, 0x03]
+            , BS.pack [0x03, 0x04, 0x05]
+            , BS.pack [0x04, 0x05, 0x06, 0x07]
+            , BS.pack [0x05, 0x06, 0x07, 0x08, 0x09]
+            , BS.pack [0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b]
+            ]
+      settleLpEpochRouterCall sixFeedUpdateData
+        `shouldEncodeTo` "0x0ad6dd2e0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000010100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000202030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003030405000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040405060700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000505060708090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006060708090a0b0000000000000000000000000000000000000000000000000000"
+
+    it "quotes the exact fee for the same admitted six-feed payload" $ do
+      let exactFee = 987_654
+          oracle = "0x7777777777777777777777777777777777777777"
+          sixFeedUpdateData = map BS.singleton [1 .. 6]
+      captured <- newIORef Nothing
+      withUpdateFeeRpc exactFee captured $ \client ->
+        getUpdateFee client oracle sixFeedUpdateData `shouldReturn` Right exactFee
+      capturedRequest <- readIORef captured
+      capturedRequest
+        `shouldBe` Just (oracle, bytesHexText $ getUpdateFeeCall sixFeedUpdateData)
+
     it "encodes positions(address)" $ do
       positionsCall "0x1111111111111111111111111111111111111111"
         `shouldEncodeTo` "0x55f575100000000000000000000000001111111111111111111111111111111111111111"
@@ -308,6 +346,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xabc"
               , rpcLogBlockNumber = 123
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics =
                   [ orderCommittedTopic
@@ -331,6 +372,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xdef"
               , rpcLogBlockNumber = 124
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics = [orderExecutedTopic, encodeUint256 42]
               , rpcLogData = encodeUint256 123456
@@ -349,6 +393,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0x456"
               , rpcLogBlockNumber = 125
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics = [orderFailedTopic, encodeUint256 42]
               , rpcLogData = encodeUint256 3
@@ -444,6 +491,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xabc"
               , rpcLogBlockNumber = 123
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xengine"
               , rpcLogTopics = [topic, encodeAddress account]
               , rpcLogData = ""
@@ -460,6 +510,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xbatch"
               , rpcLogBlockNumber = 126
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics =
                   [ liquidationBatchItemTopic
@@ -487,6 +540,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xbatch"
               , rpcLogBlockNumber = 126
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics = [liquidationBatchStoppedTopic, encodeUint256 4]
               , rpcLogData = BS.empty
@@ -495,6 +551,9 @@ spec = do
             RpcLog
               { rpcLogTxHash = "0xbatch"
               , rpcLogBlockNumber = 126
+              , rpcLogBlockHash = "0xblock"
+              , rpcLogTransactionIndex = 0
+              , rpcLogIndex = 0
               , rpcLogAddress = "0xrouter"
               , rpcLogTopics =
                   [ liquidationBatchItemTopic
@@ -505,6 +564,72 @@ spec = do
               }
       decodeLiquidationBatchStoppedIndex stopLog `shouldBe` Just 4
       decodeLiquidationBatchItem invalidItem `shouldBe` Nothing
+
+  describe "LpEpochSettled decoding" $ do
+    it "decodes and validates exactly one HousePool event with durable identity" $ do
+      let event = lpSettlementLog 500_000 [10, 20, 30, 40, 1, 0, 1]
+          receipt = lpSettlementReceipt [event]
+      lpEpochSettledTopic
+        `shouldBe` unsafeHex "cb683c928926f0e5d3426cec6288d011a54cc04072165b80b20be7b3ce9784a4"
+      requireSingleLpEpochSettled housePool 500_000 receipt
+        `shouldBe` Right
+          LpEpochSettled
+            { lpesCutoffEpoch = 500_000
+            , lpesSeniorRedeemAssets = 10
+            , lpesJuniorRedeemAssets = 20
+            , lpesJuniorDepositAssets = 30
+            , lpesSeniorDepositAssets = 40
+            , lpesSeniorBacklog = True
+            , lpesJuniorBacklog = False
+            , lpesEntriesDeferred = True
+            , lpesTxHash = settlementTxHash
+            , lpesBlockNumber = 123
+            , lpesBlockHash = settlementBlockHash
+            , lpesTransactionIndex = 3
+            , lpesLogIndex = 7
+            }
+
+    it "preserves a partial Senior withdrawal as funded assets plus FIFO backlog" $ do
+      let event = lpSettlementLog 500_000 [10, 0, 0, 0, 1, 0, 0]
+      case requireSingleLpEpochSettled housePool 500_000 (lpSettlementReceipt [event]) of
+        Left err -> expectationFailure $ T.unpack err
+        Right decoded -> do
+          lpesSeniorRedeemAssets decoded `shouldBe` 10
+          lpesSeniorBacklog decoded `shouldBe` True
+          lpesJuniorBacklog decoded `shouldBe` False
+
+    it "preserves frozen-oracle deposit deferral without inventing deposited assets" $ do
+      let event = lpSettlementLog 500_000 [10, 20, 0, 0, 0, 0, 1]
+      case requireSingleLpEpochSettled housePool 500_000 (lpSettlementReceipt [event]) of
+        Left err -> expectationFailure $ T.unpack err
+        Right decoded -> do
+          lpesJuniorDepositAssets decoded `shouldBe` 0
+          lpesSeniorDepositAssets decoded `shouldBe` 0
+          lpesEntriesDeferred decoded `shouldBe` True
+
+    it "rejects duplicate, wrong-cutoff, malformed, and non-canonical events" $ do
+      let valid = lpSettlementLog 500_000 [10, 20, 30, 40, 0, 0, 0]
+          nonCanonical = lpSettlementLog 500_000 [10, 20, 30, 40, 2, 0, 0]
+          truncated = valid {rpcLogData = BS.take (6 * 32) $ rpcLogData valid}
+          wrongTransactionIndex = valid {rpcLogTransactionIndex = 4}
+      requireSingleLpEpochSettled housePool 499_999 (lpSettlementReceipt [valid])
+        `shouldSatisfy` isDecodeError
+      requireSingleLpEpochSettled housePool 500_000 (lpSettlementReceipt [valid, valid])
+        `shouldSatisfy` isDecodeError
+      requireSingleLpEpochSettled housePool 500_000 (lpSettlementReceipt [wrongTransactionIndex])
+        `shouldSatisfy` isDecodeError
+      decodeLpEpochSettled nonCanonical `shouldSatisfy` isDecodeError
+      decodeLpEpochSettled truncated `shouldSatisfy` isDecodeError
+
+    it "recognizes no-progress supersession from message or nested RPC data" $ do
+      isNoLpEpochProgressRpcError
+        (RpcNodeError 3 "execution reverted: HousePool__NoLpEpochProgress()" Nothing)
+        `shouldBe` True
+      isNoLpEpochProgressRpcError
+        (RpcNodeError (-32000) "execution reverted" (Just "{\"data\":\"0x86cca6b8\"}"))
+        `shouldBe` True
+      isNoLpEpochProgressRpcError (RpcNodeError 3 "execution reverted" (Just "0xdeadbeef"))
+        `shouldBe` False
 
   describe "orderFailureReasonText" $ do
     it "decodes current router failure reason enum values" $ do
@@ -553,11 +678,90 @@ isDecodeError value =
     Left _ -> True
     Right _ -> False
 
+housePool :: Text
+housePool = "0x1111111111111111111111111111111111111111"
+
+settlementTxHash :: Text
+settlementTxHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+settlementBlockHash :: Text
+settlementBlockHash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+lpSettlementLog :: Integer -> [Integer] -> RpcLog
+lpSettlementLog cutoff values =
+  RpcLog
+    { rpcLogTxHash = settlementTxHash
+    , rpcLogBlockNumber = 123
+    , rpcLogBlockHash = settlementBlockHash
+    , rpcLogTransactionIndex = 3
+    , rpcLogIndex = 7
+    , rpcLogAddress = housePool
+    , rpcLogTopics = [lpEpochSettledTopic, encodeUint256 cutoff]
+    , rpcLogData = mconcat $ map encodeUint256 values
+    }
+
+lpSettlementReceipt :: [RpcLog] -> TxReceipt
+lpSettlementReceipt logs =
+  TxReceipt
+    { receiptTxHash = settlementTxHash
+    , receiptBlockNumber = 123
+    , receiptBlockHash = settlementBlockHash
+    , receiptTransactionIndex = 3
+    , receiptSucceeded = True
+    , receiptLogs = logs
+    }
+
+unsafeHex :: BS.ByteString -> BS.ByteString
+unsafeHex encoded =
+  case B16.decode encoded of
+    Right bytes -> bytes
+    Left _ -> BS.empty
+
 expectRight :: Show a => Either a b -> IO b
 expectRight value =
   case value of
     Left err -> expectationFailure ("unexpected Left: " <> show err) >> fail "unreachable"
     Right result -> pure result
+
+withUpdateFeeRpc
+  :: Integer
+  -> IORef (Maybe (Text, Text))
+  -> (EthClient -> IO a)
+  -> IO a
+withUpdateFeeRpc exactFee captured action =
+  testWithApplication (pure $ updateFeeRpcApplication exactFee captured) $ \port -> do
+    client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+    action client
+
+updateFeeRpcApplication :: Integer -> IORef (Maybe (Text, Text)) -> Application
+updateFeeRpcApplication exactFee captured request respond = do
+  body <- strictRequestBody request
+  writeIORef captured $ rpcCallTargetAndData body
+  respond $
+    responseLBS
+      status200
+      [("Content-Type", "application/json")]
+      ( encode $
+          object
+            [ "jsonrpc" .= ("2.0" :: Text)
+            , "id" .= (1 :: Integer)
+            , "result" .= bytesHexText (encodeUint256 exactFee)
+            ]
+      )
+
+rpcCallTargetAndData :: LBS.ByteString -> Maybe (Text, Text)
+rpcCallTargetAndData body = do
+  Object request <- decode body
+  Array params <- KeyMap.lookup (Key.fromText "params") request
+  Object call <- case toList params of
+    value : _ -> Just value
+    [] -> Nothing
+  String target <- KeyMap.lookup (Key.fromText "to") call
+  String calldata <- KeyMap.lookup (Key.fromText "data") call
+  pure (T.toLower target, calldata)
+
+bytesHexText :: BS.ByteString -> Text
+bytesHexText = ("0x" <>) . TE.decodeUtf8 . B16.encode
 
 encodePriceFeeds :: [BS.ByteString] -> BS.ByteString
 encodePriceFeeds feedIds =
