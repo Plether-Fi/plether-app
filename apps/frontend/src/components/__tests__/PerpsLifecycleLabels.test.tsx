@@ -2051,7 +2051,7 @@ describe('perps lifecycle labels', () => {
       terminalBlockNumberRaw: 190_002_345n,
       executionPriceRaw: 97_138_163n,
       executionOraclePriceRaw: 97_330_315n,
-      executionOracleFrozen: false,
+      executionMode: 'Live',
       oracleDerivationVersion: 1,
       vpiUsdcRaw: 12_345_678n,
       executionEconomicsVersion: 2,

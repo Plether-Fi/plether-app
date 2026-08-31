@@ -15,6 +15,7 @@ import Plether.Insights.Competition
 import Plether.Database.Schema
   ( PerpsIndexerStatusRow (..)
   , PerpsOrderRow (..)
+  , executionModeOracleFrozen
   , pendingPerpsExecutionEvidenceSql
   , perpsExecutionEvidenceLaneLimits
   , perpsOrderBaseSelectSql
@@ -47,6 +48,13 @@ spec = do
     it "hydrates and verifies the account from a standalone lifecycle finalization" $ do
       queryContains updatePerpsOrderLifecycleReceiptSql "account = COALESCE(perps_orders.account, ?)"
       queryContains updatePerpsOrderLifecycleReceiptSql "AND (account IS NULL OR account = ?)"
+
+    it "persists canonical oracle-frozen state from the lifecycle execution mode" $ do
+      executionModeOracleFrozen "Live" `shouldBe` Just False
+      executionModeOracleFrozen "FAD" `shouldBe` Just False
+      executionModeOracleFrozen "Frozen" `shouldBe` Just True
+      executionModeOracleFrozen "Unknown(0)" `shouldBe` Nothing
+      queryContains updatePerpsOrderLifecycleReceiptSql "execution_oracle_frozen = ?"
 
     it "reserves two recent evidence slots and three fair-backlog slots" $ do
       perpsExecutionEvidenceLaneLimits 5 `shouldBe` (2, 3)
@@ -151,7 +159,7 @@ executedOrderRow =
     , porExecutionFrozenCloseSpreadUsdc = Just 0
     , porExecutionEconomicsVersion = Just 2
     , porExecutionOraclePrice = Just 98_391_482
-    , porExecutionOracleFrozen = Just False
+    , porExecutionOracleFrozen = Nothing
     , porOracleMinPublishTime = Just 1_785_437_834
     , porOracleMaxPublishTime = Just 1_785_437_834
     , porOracleDerivationVersion = Just 1

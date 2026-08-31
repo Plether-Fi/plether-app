@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
+import { executionModeOracleFrozen } from '../contracts/perpsOrderV2'
 import { usePerpsIdentity } from '../perps-aa'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
@@ -313,7 +314,7 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     executionOraclePriceRaw,
     executionOracleFrozen: typeof row.executionOracleFrozen === 'boolean'
       ? row.executionOracleFrozen
-      : undefined,
+      : executionModeOracleFrozen(row.executionMode),
     oracleMinPublishTimeRaw,
     oracleMaxPublishTimeRaw,
     oracleDerivationVersion: row.oracleDerivationVersion,

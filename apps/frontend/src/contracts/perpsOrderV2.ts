@@ -477,6 +477,18 @@ export const PERPS_EXECUTION_MODE_LABELS: Record<number, string> = {
   [PERPS_EXECUTION_MODE.FROZEN]: 'Frozen',
 }
 
+export function executionModeOracleFrozen(mode: string | undefined): boolean | undefined {
+  switch (mode) {
+    case 'Live':
+    case 'FAD':
+      return false
+    case 'Frozen':
+      return true
+    default:
+      return undefined
+  }
+}
+
 export const PERPS_FAILED_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   [PERPS_FAILED_CONSTRAINT.EXECUTION_BOUNTY]: 'Execution bounty',
   [PERPS_FAILED_CONSTRAINT.EXECUTION_NOTIONAL]: 'Execution notional',
