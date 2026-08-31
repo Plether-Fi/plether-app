@@ -606,6 +606,32 @@ lpSettlementDatabaseSpec databaseUrl =
               "ALTER TABLE perps_lp_settlement_transactions ALTER COLUMN replacement_count SET DEFAULT 0"
         verifyLpSettlementSchema conn `shouldReturnRight` ()
 
+    it "rejects an exact duplicate constraint definition" $
+      withLpSettlementDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        (do
+          void $ execute_ conn
+            "ALTER TABLE perps_lp_settlement_transactions \
+            \ADD CONSTRAINT test_lp_duplicate_epoch_check CHECK (epoch >= 0)"
+          verifyLpSettlementSchema conn >>= (`shouldSatisfy` isLeft)
+          ) `finally` do
+            void $ execute_ conn
+              "ALTER TABLE perps_lp_settlement_transactions \
+              \DROP CONSTRAINT IF EXISTS test_lp_duplicate_epoch_check"
+        verifyLpSettlementSchema conn `shouldReturnRight` ()
+
+    it "rejects an extra unvalidated constraint" $
+      withLpSettlementDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        (do
+          void $ execute_ conn
+            "ALTER TABLE perps_lp_settlement_transactions \
+            \ADD CONSTRAINT test_lp_unvalidated_blocker CHECK (FALSE) NOT VALID"
+          verifyLpSettlementSchema conn >>= (`shouldSatisfy` isLeft)
+          ) `finally` do
+            void $ execute_ conn
+              "ALTER TABLE perps_lp_settlement_transactions \
+              \DROP CONSTRAINT IF EXISTS test_lp_unvalidated_blocker"
+        verifyLpSettlementSchema conn `shouldReturnRight` ()
+
     it "rejects a trigger whose function body no longer enforces append-only history" $
       withLpSettlementDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         (do

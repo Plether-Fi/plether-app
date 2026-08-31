@@ -1560,15 +1560,18 @@ verifyLpSettlementSchema conn = do
     \WHERE n.nspname = current_schema() AND k.convalidated \
     \AND c.relname IN ('perps_lp_settlement_observations', 'perps_lp_settlement_transactions', 'perps_lp_settlement_broadcasts')"
     :: IO [(Text, Text, Text)]
+  -- Preserve multiplicity and include unvalidated constraints so restrictive
+  -- drift cannot hide. The canonical digest is defined in C byte order so it
+  -- is also stable across databases initialized with different collations.
   constraintSetFingerprintRows <- query_ conn
-    "WITH definitions AS (SELECT DISTINCT c.relname::text AS table_name, k.contype::text AS constraint_type, \
+    "WITH definitions AS (SELECT c.relname::text AS table_name, k.contype::text AS constraint_type, \
     \regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\\\s+', ' ', 'g') AS definition \
     \FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid \
     \JOIN pg_namespace n ON n.oid = c.relnamespace \
-    \WHERE n.nspname = current_schema() AND k.convalidated \
+    \WHERE n.nspname = current_schema() \
     \AND c.relname IN ('perps_lp_settlement_observations', 'perps_lp_settlement_transactions', 'perps_lp_settlement_broadcasts')) \
     \SELECT encode(sha256(convert_to(string_agg(table_name || chr(31) || constraint_type || chr(31) || definition, \
-    \chr(30) ORDER BY table_name, constraint_type, definition), 'UTF8')), 'hex')::text FROM definitions"
+    \chr(30) ORDER BY table_name COLLATE \"C\", constraint_type COLLATE \"C\", definition COLLATE \"C\"), 'UTF8')), 'hex')::text FROM definitions"
     :: IO [Only (Maybe Text)]
   let observationsTable = "perps_lp_settlement_observations"
       transactionsTable = "perps_lp_settlement_transactions"
