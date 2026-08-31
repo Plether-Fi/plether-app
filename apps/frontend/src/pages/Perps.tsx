@@ -309,6 +309,7 @@ export function Perps() {
             minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
             minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
             maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
+            initialMarginBps={perpsMarket.raw.initialMarginBps}
             executionFeeBps={perpsMarket.raw.executionFeeBps}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}

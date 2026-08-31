@@ -197,6 +197,7 @@ function RegimePanel({ regime }: TradingRegimeStoryProps) {
           longOpenCapacityUsdc={250_000n * USDC}
           shortOpenCapacityUsdc={250_000n * USDC}
           maintenanceMarginBps={100n}
+          initialMarginBps={200n}
           executionFeeBps={4n}
           marketPhase={config.marketPhase}
           marketCurrentDuration={config.marketCurrentDuration}
