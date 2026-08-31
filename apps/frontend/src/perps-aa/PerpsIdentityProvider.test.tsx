@@ -224,6 +224,82 @@ describe('PerpsIdentityProvider', () => {
     )
   })
 
+  it('migrates the previous V1 identity record to the reviewed V2 manifest', async () => {
+    const previousIdentity = {
+      schemaVersion: 2,
+      chainId: 421614,
+      ownerAddress,
+      accountAddress,
+      accountMode: 'simple',
+      entryPoint: PERPS_ENTRY_POINT_V08,
+      entryPointVersion: '0.8',
+      factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      accountVersion: 'permissionless-simple-v0.8',
+      accountIndex: '0',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-20260826-v1',
+    }
+    globalThis.localStorage.setItem(
+      `plether_perps_identity_v2:421614:${ownerAddress.toLowerCase()}`,
+      JSON.stringify(previousIdentity)
+    )
+    const fetchManifest = vi.fn(async () => new Response(
+      JSON.stringify(validManifest()),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    ))
+    const accountAddressResolver: PerpsAccountAddressResolver = vi.fn(
+      async () => ({
+        accountAddress,
+        accountVersion: 'permissionless-simple-v0.8',
+        accountIndex: '0',
+        entryPoint: PERPS_ENTRY_POINT_V08,
+        entryPointVersion: '0.8',
+        factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      })
+    )
+
+    function wrapper({ children }: { children: ReactNode }) {
+      return (
+        <PerpsIdentityProvider
+          ownerAddress={ownerAddress}
+          chainId={421614}
+          manifestUrl="/perps-aa-manifest.json"
+          accountAddressResolver={accountAddressResolver}
+          fetch={fetchManifest}
+        >
+          {children}
+        </PerpsIdentityProvider>
+      )
+    }
+
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(result.current).toMatchObject({
+      accountAddress,
+      sponsorshipEnabled: true,
+      identity: {
+        manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      },
+    })
+    expect(
+      readPersistedPerpsIdentity(
+        globalThis.localStorage,
+        421614,
+        ownerAddress
+      )
+    ).toMatchObject({
+      status: 'found',
+      identity: {
+        manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      },
+    })
+  })
+
   it('retains the verified identity while a background refresh is in flight', async () => {
     let resolveRefresh: ((response: Response) => void) | undefined
     const refreshResponse = new Promise<Response>((resolve) => {

@@ -328,6 +328,8 @@ const CONTRACT_NOTIONAL_TOOLTIP =
   'The protocol\'s accounting size, calculated using the raw basket price. It is different from Order exposure and determines margin and fees.'
 const ORDER_EXPOSURE_TOOLTIP =
   'The entered Order quantity valued at the current plDXY Perp price. A full close uses the exact remaining quantity.'
+const REQUIRED_MARGIN_TOOLTIP =
+  'Includes the collateral needed to keep the worst reviewed execution at or below your selected leverage after fees, charges, price movement, and protocol rounding.'
 const EXECUTION_LIMIT_TOOLTIP =
   'The worst oracle execution price you accept. It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.'
 const MAINTENANCE_MARGIN_TOOLTIP =
@@ -2826,7 +2828,10 @@ export function PerpsTradeTicket({
   const shouldShowExecutionProtections = enableLiveTrading ||
     displayedExecutionProtections !== undefined
   const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
-  const previewInitialMarginUsdc = openPreview?.marginDeltaUsdc ?? marginUsdc
+  const previewInitialMarginUsdc = !isReducingCurrentPosition &&
+    displayedExecutionProtections !== undefined
+    ? displayedExecutionProtections.request.marginDelta
+    : openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
   const previewExecutionFeeUsdc = isReducingCurrentPosition
     ? closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
@@ -2954,7 +2959,12 @@ export function PerpsTradeTicket({
         tooltip: CONTRACT_NOTIONAL_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.contractNotional,
       },
-      { label: 'Required margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
+      {
+        label: 'Required margin',
+        value: formatUsdcRaw(previewInitialMarginUsdc),
+        tooltip: REQUIRED_MARGIN_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.positionLeverage,
+      },
       {
         label: 'Maintenance margin',
         value: previewMaintenanceMarginValue,

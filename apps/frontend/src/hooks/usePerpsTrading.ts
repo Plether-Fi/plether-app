@@ -780,8 +780,8 @@ export function usePerpsTrading() {
         if (
           request.side !== directionToPerpsSide(direction) ||
           request.sizeDelta !== sizeDelta ||
-          request.marginDelta !== (isClose ? 0n : marginUsdc) ||
-          request.isClose !== isClose
+          request.isClose !== isClose ||
+          request.bounds.maxPostLeverageBps > selectedMaxLeverageBps
         ) {
           throw new Error(
             'A different immutable order is already awaiting recovery. Finish or cancel that sponsored operation before reviewing another order.'
@@ -840,6 +840,7 @@ export function usePerpsTrading() {
     marginUsdc,
     oraclePrice,
     isClose,
+    selectedMaxLeverageBps,
     preparedOrder,
     onStatus,
     onIncluded,
@@ -876,14 +877,14 @@ export function usePerpsTrading() {
       if (quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
         throw new Error('Order size must use 100 plDXY increments')
       }
-      const marginDelta = isClose ? 0n : marginUsdc
       const request = preparedOrder.request
+      const marginDelta = request.marginDelta
       if (
         !isAddressEqual(preparedOrder.account, address) ||
         request.side !== side ||
         request.sizeDelta !== sizeDelta ||
-        request.marginDelta !== marginDelta ||
-        request.isClose !== isClose
+        request.isClose !== isClose ||
+        request.bounds.maxPostLeverageBps > selectedMaxLeverageBps
       ) {
         throw new Error(
           'The trade changed after final review. Review fresh execution protections before signing.'

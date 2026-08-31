@@ -67,6 +67,38 @@ describe('Perps identity persistence', () => {
     ).toMatchObject({ status: 'invalid' })
   })
 
+  it('reads a structurally valid V1 identity for V2 continuity migration', () => {
+    const storage = memoryStorage()
+    const identity = {
+      ...sponsoredIdentity(),
+      manifestVersion: 'perps-aa-arbitrum-sepolia-20260826-v1',
+    }
+    storage.setItem(
+      perpsIdentityStorageKey(identity.chainId, ownerAddress),
+      JSON.stringify(identity)
+    )
+
+    expect(
+      readPersistedPerpsIdentity(storage, identity.chainId, ownerAddress)
+    ).toEqual({ status: 'found', identity })
+  })
+
+  it('still rejects an identity from an unrecognized manifest generation', () => {
+    const storage = memoryStorage()
+    const identity = {
+      ...sponsoredIdentity(),
+      manifestVersion: 'perps-aa-arbitrum-sepolia-20260826-v3',
+    }
+    storage.setItem(
+      perpsIdentityStorageKey(identity.chainId, ownerAddress),
+      JSON.stringify(identity)
+    )
+
+    expect(
+      readPersistedPerpsIdentity(storage, identity.chainId, ownerAddress)
+    ).toMatchObject({ status: 'invalid' })
+  })
+
   it('detects account-version continuity changes', () => {
     const comparison = comparePerpsIdentities(
       sponsoredIdentity('account-v1'),

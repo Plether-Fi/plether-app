@@ -178,6 +178,7 @@ export interface PersistedPerpsOrderRequestV2 {
 
 const UINT256_MAX = (1n << 256n) - 1n
 const UINT32_MAX = 0xffff_ffff
+const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
 const ZERO_CLIENT_ORDER_ID = `0x${'0'.repeat(64)}`
 
 export function isPublicPerpsClientOrderId(clientOrderId: Hex): boolean {
@@ -243,6 +244,66 @@ function minimum(values: bigint[]): bigint {
     (result, value) => value < result ? value : result,
     values[0]
   )
+}
+
+function divideCeil(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) throw new Error('Leverage denominator must be positive')
+  return numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n
+}
+
+export function deriveAdditionalPerpsMarginForLeverage(input: {
+  selectedMaxLeverageBps: number
+  marginDelta: bigint
+  assessments: PerpsExecutionAssessment[]
+  prices: bigint[]
+  capPrice: bigint
+}): bigint {
+  if (
+    !Number.isInteger(input.selectedMaxLeverageBps) ||
+    input.selectedMaxLeverageBps <= 0
+  ) {
+    throw new Error('Selected maximum leverage is invalid')
+  }
+  if (
+    input.assessments.length === 0 ||
+    input.assessments.length !== input.prices.length
+  ) {
+    throw new Error('Leverage margin requires one price per assessment')
+  }
+  if (input.capPrice <= 0n || input.prices.some((price) => price <= 0n)) {
+    throw new Error('Leverage margin requires positive assessment prices')
+  }
+  if (input.marginDelta < 0n) {
+    throw new Error('Leverage margin requires a nonnegative margin delta')
+  }
+
+  const leverageBps = BigInt(input.selectedMaxLeverageBps)
+  return maximum(input.assessments.map((assessment, index) => {
+    if (assessment.actionChargeCollectedUsdc < assessment.carryUsdc) {
+      throw new Error('Policy assessment action charges are inconsistent')
+    }
+    const assessmentPrice = input.prices[index] > input.capPrice
+      ? input.capPrice
+      : input.prices[index]
+    const postNotionalUsdc =
+      assessment.postPositionSize * assessmentPrice /
+      POSITION_SIZE_TO_USDC_SCALE
+    const requiredEquityUsdc = divideCeil(
+      postNotionalUsdc * 10_000n,
+      leverageBps
+    )
+    const equityDeficit = assessment.postPositionEquityUsdc < requiredEquityUsdc
+      ? requiredEquityUsdc - assessment.postPositionEquityUsdc
+      : 0n
+    if (equityDeficit === 0n) return 0n
+
+    const positiveTradeCostUsdc =
+      assessment.actionChargeCollectedUsdc - assessment.carryUsdc
+    const marginAbsorbedBeforeLocking = positiveTradeCostUsdc > input.marginDelta
+      ? positiveTradeCostUsdc - input.marginDelta
+      : 0n
+    return equityDeficit + marginAbsorbedBeforeLocking
+  }))
 }
 
 export function derivePerpsExecutionBounds(input: {
