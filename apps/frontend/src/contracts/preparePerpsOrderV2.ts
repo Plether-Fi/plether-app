@@ -15,6 +15,7 @@ import {
   derivePerpsExecutionBounds,
   generatePerpsClientOrderId,
   permissivePerpsExecutionBounds,
+  relaxedWebPerpsExecutionBounds,
   type PerpsExecutionAssessment,
   type PreparedPerpsOrderV2,
   type PerpsOrderRequestV2,
@@ -284,12 +285,22 @@ export async function preparePerpsOrderV2(
     }
   }
 
-  const bounds = derivePerpsExecutionBounds({
+  // Keep coherent-block assessment and leverage validation for review and
+  // margin preparation. The normal web ticket intentionally does not turn
+  // those point-in-time values into brittle agent-grade execution bounds.
+  derivePerpsExecutionBounds({
     validUntil,
     expectedConfigHash,
     executionBountyUsdc,
     selectedMaxLeverageBps: input.selectedMaxLeverageBps,
     assessments,
+  })
+  const executionMode = assessments[0].mode
+  const bounds = relaxedWebPerpsExecutionBounds({
+    validUntil,
+    expectedConfigHash,
+    executionBountyUsdc,
+    executionMode,
   })
   const request: PerpsOrderRequestV2 = {
     clientOrderId: input.clientOrderId ?? generatePerpsClientOrderId(),
@@ -328,7 +339,6 @@ export async function preparePerpsOrderV2(
     blockNumber,
   })
 
-  const executionMode = assessments[0].mode
   return {
     account: input.account,
     manifestVersion: manifest.version,
@@ -343,12 +353,6 @@ export async function preparePerpsOrderV2(
       validUntil,
       executionMode,
       executionBountyUsdc,
-      maxGrossAccountDebitUsdc: bounds.maxGrossAccountDebitUsdc,
-      maxActionChargeUsdc: bounds.maxActionChargeUsdc,
-      maxExplicitFeesUsdc: bounds.maxExplicitFeesUsdc,
-      maxPostLeverageBps: bounds.maxPostLeverageBps,
-      minPostSettlementBalanceUsdc: bounds.minPostSettlementBalanceUsdc,
-      minPostPositionEquityUsdc: bounds.minPostPositionEquityUsdc,
     },
   }
 }

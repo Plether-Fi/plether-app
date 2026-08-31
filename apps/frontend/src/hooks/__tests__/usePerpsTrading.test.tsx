@@ -211,12 +211,6 @@ function preparedOrder(): PreparedPerpsOrderV2 {
       validUntil: request.bounds.validUntil,
       executionMode: 1,
       executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
-      maxGrossAccountDebitUsdc: request.bounds.maxGrossAccountDebitUsdc,
-      maxActionChargeUsdc: request.bounds.maxActionChargeUsdc,
-      maxExplicitFeesUsdc: request.bounds.maxExplicitFeesUsdc,
-      maxPostLeverageBps: request.bounds.maxPostLeverageBps,
-      minPostSettlementBalanceUsdc: request.bounds.minPostSettlementBalanceUsdc,
-      minPostPositionEquityUsdc: request.bounds.minPostPositionEquityUsdc,
     },
   }
 }
@@ -353,6 +347,37 @@ describe('usePerpsTrading', () => {
       .rejects.toThrow('Expired-order cleanup is keeper-operated')
   })
 
+  it('reads terminal constraint evidence directly from the lifecycle book', async () => {
+    mocks.identityReady = true
+    mocks.readContract.mockResolvedValueOnce({
+      account: ACCOUNT,
+      clientOrderId: CLIENT_ORDER_ID,
+      status: 3,
+      reason: 8,
+      executionMode: 1,
+      terminalBlock: 11_604_786n,
+      terminalTime: 1_788_167_807n,
+      executionPrice: 98_750_341n,
+      failedConstraint: 2,
+      receiptHash: `0x${'46'.repeat(32)}`,
+    })
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
+      orderId: 12n,
+      account: ACCOUNT,
+      clientOrderId: CLIENT_ORDER_ID,
+      status: 3,
+      terminalReason: 8,
+      executionMode: 1,
+      terminalBlock: 11_604_786n,
+      terminalTime: 1_788_167_807n,
+      executionPrice: 98_750_341n,
+      failedConstraint: 2,
+      receiptHash: `0x${'46'.repeat(32)}`,
+    })
+  })
+
   it('forwards managed sponsored operation status changes', async () => {
     mocks.identityReady = true
     const onStatus = vi.fn()
@@ -417,8 +442,6 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const reviewed = preparedOrder()
     reviewed.request.marginDelta = 201_500_000n
-    reviewed.request.bounds.maxPostLeverageBps = 49_999
-    reviewed.protection.maxPostLeverageBps = 49_999
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
@@ -436,21 +459,18 @@ describe('usePerpsTrading', () => {
     )
   })
 
-  it('rejects a reviewed request above the currently selected leverage', async () => {
+  it('accepts the relaxed web leverage bound after leverage was reviewed', async () => {
     mocks.identityReady = true
     const reviewed = preparedOrder()
-    reviewed.request.bounds.maxPostLeverageBps = 50_001
-    reviewed.protection.maxPostLeverageBps = 50_001
+    reviewed.request.bounds.maxPostLeverageBps = 0xffff_ffff
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.commitOrder({
       ...commitInput(),
       preparedOrder: reviewed,
-    })).rejects.toThrow(
-      'The trade changed after final review. Review fresh execution protections before signing.'
-    )
-    expect(mocks.simulateContract).not.toHaveBeenCalled()
+    })).resolves.toMatchObject({ orderId: 42n })
+    expect(mocks.simulateContract).toHaveBeenCalledOnce()
   })
 
   it('rejects an OrderCommitted log that belongs to another account', async () => {

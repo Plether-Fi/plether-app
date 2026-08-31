@@ -15,6 +15,7 @@ import {
   PERPS_EXECUTION_MODE,
   PERPS_EXECUTION_MODE_MASK,
   persistPerpsOrderRequestV2,
+  relaxedWebPerpsExecutionBounds,
   restorePerpsOrderRequestV2,
   type PerpsExecutionAssessment,
   type PerpsOrderRequestV2,
@@ -99,6 +100,31 @@ describe('bounded V2 order identity', () => {
 })
 
 describe('bounded V2 execution protections', () => {
+  it('keeps web accounting bounds wide while pinning lifecycle protections', () => {
+    const bounds = relaxedWebPerpsExecutionBounds({
+      validUntil: 2_000_000_000n,
+      expectedConfigHash: CONFIG_HASH,
+      executionBountyUsdc: 200_000n,
+      executionMode: PERPS_EXECUTION_MODE.LIVE,
+    })
+    const uint256Max = (1n << 256n) - 1n
+
+    expect(bounds).toEqual({
+      validUntil: 2_000_000_000n,
+      allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
+      expectedConfigHash: CONFIG_HASH,
+      maxExecutionBountyUsdc: 200_000n,
+      maxExecutionNotionalUsdc: uint256Max,
+      maxGrossAccountDebitUsdc: uint256Max,
+      maxActionChargeUsdc: uint256Max,
+      maxExplicitFeesUsdc: uint256Max,
+      maxPostPositionSize: uint256Max,
+      minPostSettlementBalanceUsdc: 0n,
+      minPostPositionEquityUsdc: 0n,
+      maxPostLeverageBps: 0xffff_ffff,
+    })
+  })
+
   it('derives the exact extra margin needed to preserve selected leverage', () => {
     const positionSize = 50n * 10n ** 20n
     const prices = [100_000_000n, 100_100_000n]

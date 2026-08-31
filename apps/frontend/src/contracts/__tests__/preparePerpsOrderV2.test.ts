@@ -112,6 +112,15 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     })
 
     expect(prepared.request.marginDelta).toBe(1_001_500_000n)
+    expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBe(
+      (1n << 256n) - 1n
+    )
+    // Order 12 exceeded its point-in-time assessment by just 0.0001 USDC.
+    // The normal web request must not convert that movement into a terminal
+    // ExecutionNotional constraint failure.
+    expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBeGreaterThan(
+      4_937_517_050n
+    )
     expect(assessedMargins).toEqual([
       1_000_000_000n,
       1_000_000_000n,

@@ -23,11 +23,17 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { preparePerpsOrderV2 } from '../contracts/preparePerpsOrderV2'
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
+  PERPS_LIFECYCLE_STATUS,
   executionModeFromPinnedMask,
   persistPerpsOrderRequestV2,
   restorePerpsOrderRequestV2,
   type PreparedPerpsOrderV2,
+  type PerpsExecutionMode,
+  type PerpsFailedConstraint,
+  type PerpsLifecycleStatus,
+  type PerpsLifecycleOutcomeSnapshot,
   type PerpsOrderRequestV2,
+  type PerpsTerminalReason,
 } from '../contracts/perpsOrderV2'
 import {
   executeSponsoredPerpsAction,
@@ -780,8 +786,7 @@ export function usePerpsTrading() {
         if (
           request.side !== directionToPerpsSide(direction) ||
           request.sizeDelta !== sizeDelta ||
-          request.isClose !== isClose ||
-          request.bounds.maxPostLeverageBps > selectedMaxLeverageBps
+          request.isClose !== isClose
         ) {
           throw new Error(
             'A different immutable order is already awaiting recovery. Finish or cancel that sponsored operation before reviewing another order.'
@@ -803,15 +808,6 @@ export function usePerpsTrading() {
               request.bounds.allowedExecutionModes
             ),
             executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
-            maxGrossAccountDebitUsdc:
-              request.bounds.maxGrossAccountDebitUsdc,
-            maxActionChargeUsdc: request.bounds.maxActionChargeUsdc,
-            maxExplicitFeesUsdc: request.bounds.maxExplicitFeesUsdc,
-            maxPostLeverageBps: request.bounds.maxPostLeverageBps,
-            minPostSettlementBalanceUsdc:
-              request.bounds.minPostSettlementBalanceUsdc,
-            minPostPositionEquityUsdc:
-              request.bounds.minPostPositionEquityUsdc,
           },
         }
       }
@@ -840,7 +836,6 @@ export function usePerpsTrading() {
     marginUsdc,
     oraclePrice,
     isClose,
-    selectedMaxLeverageBps,
     preparedOrder,
     onStatus,
     onIncluded,
@@ -883,8 +878,7 @@ export function usePerpsTrading() {
         !isAddressEqual(preparedOrder.account, address) ||
         request.side !== side ||
         request.sizeDelta !== sizeDelta ||
-        request.isClose !== isClose ||
-        request.bounds.maxPostLeverageBps > selectedMaxLeverageBps
+        request.isClose !== isClose
       ) {
         throw new Error(
           'The trade changed after final review. Review fresh execution protections before signing.'
@@ -1047,6 +1041,40 @@ export function usePerpsTrading() {
     )
   }, [])
 
+  const readOrderLifecycleOutcome = useCallback(async (
+    orderId: bigint
+  ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
+    const client = requireClient(publicClient)
+    const sponsored = requireSponsoredExecution()
+    const outcome = await client.readContract({
+      address: sponsored.manifest.orderLifecycleBook,
+      abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+      functionName: 'outcome',
+      args: [orderId],
+    })
+    const status = outcome.status
+    if (
+      status !== PERPS_LIFECYCLE_STATUS.EXECUTED &&
+      status !== PERPS_LIFECYCLE_STATUS.FAILED
+    ) {
+      return undefined
+    }
+
+    return {
+      orderId,
+      account: outcome.account,
+      clientOrderId: outcome.clientOrderId,
+      status: status as PerpsLifecycleStatus,
+      terminalReason: outcome.reason as PerpsTerminalReason,
+      executionMode: outcome.executionMode as PerpsExecutionMode,
+      terminalBlock: outcome.terminalBlock,
+      terminalTime: outcome.terminalTime,
+      executionPrice: outcome.executionPrice,
+      failedConstraint: outcome.failedConstraint as PerpsFailedConstraint,
+      receiptHash: outcome.receiptHash,
+    }
+  }, [publicClient, requireSponsoredExecution])
+
   const cleanupExpiredOrder = useCallback(async (
     orderId: bigint
   ): Promise<CleanupExpiredOrderResult> => {
@@ -1109,6 +1137,7 @@ export function usePerpsTrading() {
     prepareOrder,
     commitOrder,
     settleTraderClaim,
+    readOrderLifecycleOutcome,
     executeOrder,
     cleanupExpiredOrder,
   }

@@ -180,12 +180,6 @@ describe('Perps analytics', () => {
         validUntil: 1_700_000_300n,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
-        maxGrossAccountDebitUsdc: 120_010_000n,
-        maxActionChargeUsdc: 1_000_000n,
-        maxExplicitFeesUsdc: 1_000_000n,
-        maxPostLeverageBps: 50_000,
-        minPostSettlementBalanceUsdc: 800_000_000n,
-        minPostPositionEquityUsdc: 20_000_000n,
       },
     })
   })
