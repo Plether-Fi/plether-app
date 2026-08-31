@@ -5,11 +5,11 @@ export function SepoliaNoticeBar() {
 
   return (
     <div className="flex min-h-11 flex-col items-stretch justify-center gap-2 bg-brand-yellow px-3 py-2 text-center text-xs font-medium text-[#250917] sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2.5 sm:text-sm">
-      <span className="sm:hidden">
-        Arbitrum Sepolia testnet · Mock funds only
-      </span>
-      <span className="hidden sm:inline">
-        You are on Arbitrum Sepolia testnet. Try trading with mock funds.{' '}
+      <span>
+        <span className="block sm:hidden">Arbitrum Sepolia testnet · Mock funds only</span>
+        <span className="hidden sm:inline">
+          You are on Arbitrum Sepolia testnet. Try trading with mock funds.{' '}
+        </span>
         <strong className="font-bold">
           Registration for the September trading competition is now open 🎉
         </strong>.{' '}
