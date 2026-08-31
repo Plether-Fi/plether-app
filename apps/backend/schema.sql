@@ -1122,6 +1122,8 @@ CREATE TABLE IF NOT EXISTS insights_registration_applications (
     wallet_verified_at TIMESTAMPTZ,
     rules_version TEXT,
     privacy_version TEXT,
+    promotional_email_consent BOOLEAN NOT NULL DEFAULT FALSE,
+    promotional_email_consent_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1155,6 +1157,9 @@ CREATE TABLE IF NOT EXISTS insights_registration_applications (
         octet_length(turnstile_token_digest) = 32
         AND (email_digest IS NULL OR octet_length(email_digest) = 32)
         AND (x_user_id_digest IS NULL OR octet_length(x_user_id_digest) = 32)
+    ),
+    CONSTRAINT insights_registration_applications_promotional_email_consent_check CHECK (
+        promotional_email_consent = (promotional_email_consent_at IS NOT NULL)
     ),
     CHECK (
         status <> 'completed'

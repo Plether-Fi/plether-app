@@ -260,6 +260,7 @@ const server = createServer(async (request, response) => {
       if (
         payload.acceptRules !== true
         || payload.acceptPrivacy !== true
+        || typeof payload.acceptPromotionalEmail !== 'boolean'
         || payload.rulesVersion !== '2026-09-13'
         || payload.privacyVersion !== '2026-09-13'
       ) {
