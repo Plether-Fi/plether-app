@@ -75,6 +75,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   addPositionMargin: vi.fn(),
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
+  readOrderLifecycleOutcome: vi.fn(),
   executeOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
   waitForPerpsOrderTerminal: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock('../../hooks', () => ({
     addPositionMargin: perpsTradingMocks.addPositionMargin,
     prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
+    readOrderLifecycleOutcome: perpsTradingMocks.readOrderLifecycleOutcome,
     executeOrder: perpsTradingMocks.executeOrder,
     cleanupExpiredOrder: perpsTradingMocks.cleanupExpiredOrder,
   }),
@@ -135,6 +137,7 @@ describe('perps lifecycle labels', () => {
     Object.values(perpsTradingMocks).forEach((mock) => {
       mock.mockReset()
     })
+    perpsTradingMocks.readOrderLifecycleOutcome.mockResolvedValue(undefined)
     perpsTradingMocks.prepareOrder.mockResolvedValue({
       account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
       manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
@@ -170,12 +173,6 @@ describe('perps lifecycle labels', () => {
         validUntil: 1_700_000_300n,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
-        maxGrossAccountDebitUsdc: 120_010_000n,
-        maxActionChargeUsdc: 1_000_000n,
-        maxExplicitFeesUsdc: 1_000_000n,
-        maxPostLeverageBps: 50_000,
-        minPostSettlementBalanceUsdc: 800_000_000n,
-        minPostPositionEquityUsdc: 20_000_000n,
       },
     })
   })
@@ -2500,6 +2497,49 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
+  })
+
+  it('shows a direct lifecycle constraint failure while indexed history is behind', async () => {
+    mockIsConnected = true
+    perpsTradingMocks.readOrderLifecycleOutcome.mockResolvedValue({
+      orderId: 12n,
+      account: V2_ACCOUNT,
+      clientOrderId: V2_CLIENT_ORDER_ID,
+      status: 3,
+      terminalReason: 8,
+      executionMode: 1,
+      terminalBlock: 11_604_786n,
+      terminalTime: 1_788_167_807n,
+      executionPrice: 98_750_341n,
+      failedConstraint: 2,
+      receiptHash: V2_RECEIPT_HASH,
+    })
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialDirection="long"
+        initialOrderQuantity="5 000"
+        initialOrderId={12n}
+        initialCommitTxHash="0xd184242bd9852d24639e40d83bf0fdb3b79e12e2adcf03c26fa51c62b7be285c"
+        oraclePriceRaw={98_750_339n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={15_000_000_000n}
+        orderHistory={[]}
+        ordersIndexedThroughBlockRaw={303_662_124n}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Order failed')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Execution violated an onchain financial bound/i))
+      .toBeInTheDocument()
+    expect(screen.getByText(/Failed constraint: Execution notional/i))
+      .toBeInTheDocument()
+    expect(screen.queryByText('Keeper processing')).not.toBeInTheDocument()
   })
 
   it('waits for indexed terminal order confirmation after manual finalization submits', async () => {

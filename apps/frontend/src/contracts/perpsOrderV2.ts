@@ -131,12 +131,20 @@ export interface PerpsExecutionProtectionSummary {
   validUntil: bigint
   executionMode: PerpsExecutionMode
   executionBountyUsdc: bigint
-  maxGrossAccountDebitUsdc: bigint
-  maxActionChargeUsdc: bigint
-  maxExplicitFeesUsdc: bigint
-  maxPostLeverageBps: number
-  minPostSettlementBalanceUsdc: bigint
-  minPostPositionEquityUsdc: bigint
+}
+
+export interface PerpsLifecycleOutcomeSnapshot {
+  orderId: bigint
+  account: Address
+  clientOrderId: Hex
+  status: PerpsLifecycleStatus
+  terminalReason: PerpsTerminalReason
+  executionMode: PerpsExecutionMode
+  terminalBlock: bigint
+  terminalTime: bigint
+  executionPrice: bigint
+  failedConstraint: PerpsFailedConstraint
+  receiptHash: Hex
 }
 
 export interface PreparedPerpsOrderV2 {
@@ -221,6 +229,33 @@ export function permissivePerpsExecutionBounds(input: {
   return {
     validUntil: input.validUntil,
     allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.ALL,
+    expectedConfigHash: input.expectedConfigHash,
+    maxExecutionBountyUsdc: input.executionBountyUsdc,
+    maxExecutionNotionalUsdc: UINT256_MAX,
+    maxGrossAccountDebitUsdc: UINT256_MAX,
+    maxActionChargeUsdc: UINT256_MAX,
+    maxExplicitFeesUsdc: UINT256_MAX,
+    maxPostPositionSize: UINT256_MAX,
+    minPostSettlementBalanceUsdc: 0n,
+    minPostPositionEquityUsdc: 0n,
+    maxPostLeverageBps: UINT32_MAX,
+  }
+}
+
+/**
+ * Web tickets use the V2 lifecycle identity, deadline, configuration and
+ * single-regime pinning, while leaving agent-grade accounting constraints
+ * deliberately wide. Price protection remains enforced by targetPrice.
+ */
+export function relaxedWebPerpsExecutionBounds(input: {
+  validUntil: bigint
+  expectedConfigHash: Hex
+  executionBountyUsdc: bigint
+  executionMode: PerpsExecutionMode
+}): PerpsExecutionBounds {
+  return {
+    validUntil: input.validUntil,
+    allowedExecutionModes: executionModeMask(input.executionMode),
     expectedConfigHash: input.expectedConfigHash,
     maxExecutionBountyUsdc: input.executionBountyUsdc,
     maxExecutionNotionalUsdc: UINT256_MAX,
@@ -425,7 +460,7 @@ export function restorePerpsOrderRequestV2(
   }
 }
 
-export const PERPS_TERMINAL_REASON_LABELS: Record<number, string> = {
+export const PERPS_TERMINAL_REASON_LABELS: Partial<Record<number, string>> = {
   [PERPS_TERMINAL_REASON.EXPIRED]: 'Expired',
   [PERPS_TERMINAL_REASON.SLIPPAGE]: 'Slippage',
   [PERPS_TERMINAL_REASON.CONFIG_MISMATCH]: 'Config mismatch',
@@ -440,4 +475,16 @@ export const PERPS_EXECUTION_MODE_LABELS: Record<number, string> = {
   [PERPS_EXECUTION_MODE.LIVE]: 'Live',
   [PERPS_EXECUTION_MODE.FAD]: 'FAD',
   [PERPS_EXECUTION_MODE.FROZEN]: 'Frozen',
+}
+
+export const PERPS_FAILED_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
+  [PERPS_FAILED_CONSTRAINT.EXECUTION_BOUNTY]: 'Execution bounty',
+  [PERPS_FAILED_CONSTRAINT.EXECUTION_NOTIONAL]: 'Execution notional',
+  [PERPS_FAILED_CONSTRAINT.GROSS_ACCOUNT_DEBIT]: 'Gross account debit',
+  [PERPS_FAILED_CONSTRAINT.ACTION_CHARGE]: 'Action charge',
+  [PERPS_FAILED_CONSTRAINT.EXPLICIT_FEES]: 'Explicit fees',
+  [PERPS_FAILED_CONSTRAINT.POST_POSITION_SIZE]: 'Post-position size',
+  [PERPS_FAILED_CONSTRAINT.POST_SETTLEMENT_BALANCE]: 'Post-settlement balance',
+  [PERPS_FAILED_CONSTRAINT.POST_POSITION_EQUITY]: 'Post-position equity',
+  [PERPS_FAILED_CONSTRAINT.POST_LEVERAGE]: 'Post leverage',
 }

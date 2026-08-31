@@ -148,12 +148,6 @@ const executionProtectionsFixture = {
     validUntil: 1_788_000_300n,
     executionMode: PERPS_EXECUTION_MODE.LIVE,
     executionBountyUsdc: 250_000n,
-    maxGrossAccountDebitUsdc: 396_236_400n,
-    maxActionChargeUsdc: 1_400_000n,
-    maxExplicitFeesUsdc: 786_400n,
-    maxPostLeverageBps: 50_000,
-    minPostSettlementBalanceUsdc: 9_857_013_600n,
-    minPostPositionEquityUsdc: 391_013_600n,
   },
 } satisfies PreparedPerpsOrderV2
 

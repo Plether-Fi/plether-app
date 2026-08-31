@@ -7,7 +7,11 @@ import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   PERPS_EXECUTION_MODE_LABELS,
+  PERPS_FAILED_CONSTRAINT_LABELS,
+  PERPS_LIFECYCLE_STATUS,
+  PERPS_TERMINAL_REASON_LABELS,
   type PreparedPerpsOrderV2,
+  type PerpsLifecycleOutcomeSnapshot,
 } from '../contracts/perpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
@@ -493,8 +497,8 @@ function failureReasonMessage(reason: string | undefined): string | undefined {
     'Risk off': 'The order was invalidated by protocol risk-off policy.',
     PlannerRejected: 'The execution planner rejected the order.',
     'Planner rejected': 'The execution planner rejected the order.',
-    ConstraintViolation: 'Execution would violate the reviewed financial bounds.',
-    'Constraint violation': 'Execution would violate the reviewed financial bounds.',
+    ConstraintViolation: 'Execution violated an onchain financial bound.',
+    'Constraint violation': 'Execution violated an onchain financial bound.',
     AccountLiquidated: 'The account was liquidated before this order executed.',
     'Account liquidated': 'The account was liquidated before this order executed.',
   }
@@ -504,7 +508,49 @@ function failureReasonMessage(reason: string | undefined): string | undefined {
 function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
   const detail = failureReasonMessage(order.terminalReason)
     ?? `Terminal status: ${order.status}. Refresh order history for details.`
-  return `Order failed: ${detail}`
+  const failedConstraint = order.failedConstraint
+    ? ` Failed constraint: ${order.failedConstraint}.`
+    : ''
+  return `Order failed: ${detail}${failedConstraint}`
+}
+
+function lifecycleOutcomeHistoryRow(
+  outcome: PerpsLifecycleOutcomeSnapshot
+): PerpsOrderHistoryRow {
+  const executed = outcome.status === PERPS_LIFECYCLE_STATUS.EXECUTED
+  const terminalReason = executed
+    ? 'Executed'
+    : PERPS_TERMINAL_REASON_LABELS[outcome.terminalReason]
+      ?? `Unknown (${outcome.terminalReason.toString()})`
+  const failedConstraint = outcome.failedConstraint === 0
+    ? undefined
+    : PERPS_FAILED_CONSTRAINT_LABELS[outcome.failedConstraint]
+      ?? `Unknown (${outcome.failedConstraint.toString()})`
+
+  return {
+    orderId: outcome.orderId,
+    time: outcome.terminalTime === 0n
+      ? '--'
+      : new Date(Number(outcome.terminalTime) * 1_000).toLocaleString(),
+    market: 'plDXY Perp',
+    side: '--',
+    type: 'Order',
+    price: outcome.executionPrice === 0n
+      ? '--'
+      : formatDisplayDxyPrice(outcome.executionPrice),
+    size: '--',
+    status: executed ? 'Executed' : 'Failed',
+    account: outcome.account,
+    clientOrderId: outcome.clientOrderId,
+    receiptHash: outcome.receiptHash,
+    terminalBlockNumberRaw: outcome.terminalBlock,
+    terminalReason,
+    executionMode: PERPS_EXECUTION_MODE_LABELS[outcome.executionMode],
+    failedConstraint,
+    executionPriceRaw: outcome.executionPrice === 0n
+      ? undefined
+      : outcome.executionPrice,
+  }
 }
 
 function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
@@ -1708,6 +1754,7 @@ export function PerpsTradeTicket({
     withdrawMargin,
     prepareOrder,
     commitOrder,
+    readOrderLifecycleOutcome,
     executeOrder,
     cleanupExpiredOrder,
   } = usePerpsTrading()
@@ -2168,6 +2215,47 @@ export function PerpsTradeTicket({
     orderId,
     ordersIndexedThroughBlockRaw,
     rewindHandledTerminalOrder,
+  ])
+
+  useEffect(() => {
+    if (
+      !enableLiveTrading ||
+      orderId === undefined ||
+      lifecycleState === 'executed' ||
+      lifecycleState === 'selfExecuteFailed' ||
+      lifecycleState === 'failed'
+    ) {
+      return undefined
+    }
+
+    let stopped = false
+    const activeOrderId = orderId
+    const pollLifecycleOutcome = async () => {
+      try {
+        const outcome = await readOrderLifecycleOutcome(activeOrderId)
+        if (!stopped && outcome !== undefined) {
+          applyTerminalOrder(lifecycleOutcomeHistoryRow(outcome))
+        }
+      } catch {
+        // The indexed wait remains available if the direct RPC read fails.
+      }
+    }
+
+    void pollLifecycleOutcome()
+    const interval = window.setInterval(() => {
+      void pollLifecycleOutcome()
+    }, ORDER_TERMINAL_RETRY_DELAY_MS)
+
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+  }, [
+    applyTerminalOrder,
+    enableLiveTrading,
+    lifecycleState,
+    orderId,
+    readOrderLifecycleOutcome,
   ])
 
   useEffect(() => {
@@ -4239,42 +4327,19 @@ export function PerpsTradeTicket({
                           ],
                         },
                         {
-                          label: 'Maximum account debit',
+                          label: 'Execution reward',
                           value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.maxGrossAccountDebitUsdc
+                            displayedExecutionProtections.protection.executionBountyUsdc
                           )} USDC`,
                         },
                         {
-                          label: 'Maximum action charge',
-                          value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.maxActionChargeUsdc
-                          )} USDC`,
-                        },
-                        {
-                          label: 'Maximum explicit fees',
-                          value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.maxExplicitFeesUsdc
-                          )} USDC`,
-                        },
-                        {
-                          label: 'Maximum leverage',
-                          value: `${(
-                            displayedExecutionProtections.protection.maxPostLeverageBps / 10_000
-                          ).toFixed(2)}x`,
-                        },
-                        {
-                          label: 'Minimum settlement balance',
-                          value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.minPostSettlementBalanceUsdc
-                          )} USDC`,
-                        },
-                        {
-                          label: 'Minimum position equity',
-                          value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.minPostPositionEquityUsdc
-                          )} USDC`,
+                          label: 'Economic bounds',
+                          value: 'Relaxed for web trading',
                         },
                       ]} />
+                      <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
+                        The web ticket uses wide accounting bounds so normal price and rounding movement cannot invalidate the order. Your execution limit, deadline, pinned regime, and reviewed protocol configuration still apply.
+                      </p>
                     </div>
                   ) : (
                     <p className="mt-3 text-sm text-content-secondary">
