@@ -1,6 +1,7 @@
 module Plether.Insights.Registration.ProviderSpec (spec) where
 
 import qualified Data.ByteString as BS
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import qualified Data.Text as T
@@ -143,6 +144,184 @@ spec = do
         `shouldBe` Just ProviderUnavailable
       leftCode (parseXFollowLookupResponse targetXUserId "not-json")
         `shouldBe` Just ProviderUnavailable
+
+    it "classifies privacy-safe response validation reasons without retaining provider content" $ do
+      parseXFollowLookupResponseDetailed targetXUserId "not-json"
+        `shouldBe` XFollowLookupInvalid XFollowInvalidJson
+      parseXFollowLookupResponseDetailed targetXUserId "[]"
+        `shouldBe` XFollowLookupInvalid XFollowResponseNotObject
+      parseXFollowLookupResponseDetailed targetXUserId "{\"errors\":{}}"
+        `shouldBe` XFollowLookupInvalid XFollowErrorsInvalid
+      parseXFollowLookupResponseDetailed
+        targetXUserId
+        "{\"data\":{\"id\":\"1234567890123456789\",\"connection_status\":[\"following\"]},\"errors\":[{\"detail\":\"sensitive provider detail\"}]}"
+        `shouldBe` XFollowLookupInvalid XFollowErrorsPresent
+      parseXFollowLookupResponseDetailed targetXUserId "{}"
+        `shouldBe` XFollowLookupInvalid XFollowDataMissing
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":[] }"
+        `shouldBe` XFollowLookupInvalid XFollowDataInvalid
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":{\"connection_status\":[]}}"
+        `shouldBe` XFollowLookupInvalid XFollowTargetIdMissing
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":{\"id\":1,\"connection_status\":[]}}"
+        `shouldBe` XFollowLookupInvalid XFollowTargetIdInvalid
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":{\"id\":\"999\",\"connection_status\":[]}}"
+        `shouldBe` XFollowLookupInvalid XFollowTargetMismatch
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":{\"id\":\"1234567890123456789\"}}"
+        `shouldBe` XFollowLookupInvalid XFollowConnectionStatusMissing
+      parseXFollowLookupResponseDetailed targetXUserId "{\"data\":{\"id\":\"1234567890123456789\",\"connection_status\":null}}"
+        `shouldBe` XFollowLookupInvalid XFollowConnectionStatusInvalid
+
+  describe "X follow provider retry" $ do
+    it "classifies HTTP status retry and identity-reset behavior at the response boundary" $ do
+      mapM_
+        (\(httpStatus, retryable, resetIdentity) ->
+          attemptFailureFlags
+            (classifyXFollowResponse targetXUserId httpStatus [] "ignored")
+            `shouldBe` Just (retryable, resetIdentity)
+        )
+        [ (401, False, True)
+        , (403, False, False)
+        , (408, True, False)
+        , (429, False, False)
+        , (500, True, False)
+        ]
+
+    it "classifies a partial HTTP-200 response as retryable without invalidating identity" $ do
+      attemptFailureFlags
+        ( classifyXFollowResponse
+            targetXUserId
+            200
+            [("x-transaction-id", "safe-request-id")]
+            "{\"data\":{\"id\":\"1234567890123456789\"}}"
+        )
+        `shouldBe` Just (True, False)
+
+    it "retries one response-validation failure and preserves the verified identity when the retry succeeds" $ do
+      calls <- newIORef
+        [ XFollowAttemptProviderFailed $ responseValidationFailure XFollowConnectionStatusMissing
+        , XFollowAttemptVerified
+        ]
+      events <- newIORef []
+      result <- runXFollowVerificationWith
+        (pure ())
+        (\eventName attemptNumber _ -> modifyIORef' events (<> [(eventName, attemptNumber)]))
+        (nextAttempt calls)
+      result `shouldBe` Right ()
+      readIORef calls `shouldReturn` []
+      readIORef events `shouldReturn` [("registration_x_provider_retry", 1)]
+
+    it "stops after one retry and preserves identity for repeated transient failures" $ do
+      calls <- newIORef
+        [ XFollowAttemptProviderFailed $ responseValidationFailure XFollowErrorsPresent
+        , XFollowAttemptProviderFailed $ responseValidationFailure XFollowDataMissing
+        , XFollowAttemptVerified
+        ]
+      events <- newIORef []
+      result <- runXFollowVerificationWith
+        (pure ())
+        (\eventName attemptNumber _ -> modifyIORef' events (<> [(eventName, attemptNumber)]))
+        (nextAttempt calls)
+      leftVerificationReset result `shouldBe` Just False
+      leftVerificationCode result `shouldBe` Just ProviderUnavailable
+      readIORef calls `shouldReturn` [XFollowAttemptVerified]
+      readIORef events
+        `shouldReturn`
+          [ ("registration_x_provider_retry", 1)
+          , ("registration_x_provider_failure", 2)
+          ]
+
+    it "does not retry a definite bearer rejection and requests X reauthorization" $ do
+      calls <- newIORef
+        [ XFollowAttemptProviderFailed
+            XFollowProviderFailure
+              { xfpfKind = "http_status"
+              , xfpfHttpStatus = Just 401
+              , xfpfValidationReason = Nothing
+              , xfpfRequestId = Just "safe-request-id"
+              , xfpfRetryable = False
+              , xfpfInvalidatesIdentity = True
+              }
+        , XFollowAttemptVerified
+        ]
+      result <- runXFollowVerificationWith (pure ()) (\_ _ _ -> pure ()) $ nextAttempt calls
+      leftVerificationReset result `shouldBe` Just True
+      readIORef calls `shouldReturn` [XFollowAttemptVerified]
+
+    it "keeps retry and cleanup decisions deterministic when structured logging fails" $ do
+      retryCalls <- newIORef
+        [ XFollowAttemptProviderFailed $ responseValidationFailure XFollowDataMissing
+        , XFollowAttemptVerified
+        ]
+      retryResult <- runXFollowVerificationWith
+        (pure ())
+        (\_ _ _ -> ioError $ userError "closed log handle")
+        (nextAttempt retryCalls)
+      retryResult `shouldBe` Right ()
+      readIORef retryCalls `shouldReturn` []
+
+      rejectionCalls <- newIORef
+        [ XFollowAttemptProviderFailed
+            XFollowProviderFailure
+              { xfpfKind = "http_status"
+              , xfpfHttpStatus = Just 401
+              , xfpfValidationReason = Nothing
+              , xfpfRequestId = Nothing
+              , xfpfRetryable = False
+              , xfpfInvalidatesIdentity = True
+              }
+        ]
+      rejectionResult <- runXFollowVerificationWith
+        (pure ())
+        (\_ _ _ -> ioError $ userError "closed log handle")
+        (nextAttempt rejectionCalls)
+      leftVerificationReset rejectionResult `shouldBe` Just True
+
+    it "accepts bounded provider request identifiers and rejects unsafe values" $ do
+      providerRequestIdFromHeaders [("x-transaction-id", "abc-123_DEF.9")]
+        `shouldBe` Just "abc-123_DEF.9"
+      providerRequestIdFromHeaders [("x-request-id", "fallback:123")]
+        `shouldBe` Just "fallback:123"
+      providerRequestIdFromHeaders [("x-transaction-id", "unsafe/request")]
+        `shouldBe` Nothing
+      providerRequestIdFromHeaders
+        [ ("x-transaction-id", "unsafe/request")
+        , ("x-request-id", "safe-fallback")
+        ]
+        `shouldBe` Just "safe-fallback"
+
+nextAttempt :: IORef [XFollowAttemptResult] -> IO XFollowAttemptResult
+nextAttempt attempts = atomicModifyIORef' attempts takeNext
+  where
+    takeNext [] = error "test exhausted X follow attempts"
+    takeNext (attempt : remaining) = (remaining, attempt)
+
+responseValidationFailure :: XFollowValidationReason -> XFollowProviderFailure
+responseValidationFailure validationReason =
+  XFollowProviderFailure
+    { xfpfKind = "response_validation"
+    , xfpfHttpStatus = Just 200
+    , xfpfValidationReason = Just validationReason
+    , xfpfRequestId = Just "safe-request-id"
+    , xfpfRetryable = True
+    , xfpfInvalidatesIdentity = False
+    }
+
+leftVerificationReset :: Either XFollowVerificationFailure () -> Maybe Bool
+leftVerificationReset result = case result of
+  Left failure -> Just $ xfvfResetIdentity failure
+  Right () -> Nothing
+
+leftVerificationCode :: Either XFollowVerificationFailure () -> Maybe RegistrationErrorCode
+leftVerificationCode result = case result of
+  Left failure -> Just $ reCode $ xfvfError failure
+  Right () -> Nothing
+
+attemptFailureFlags :: XFollowAttemptResult -> Maybe (Bool, Bool)
+attemptFailureFlags result = case result of
+  XFollowAttemptProviderFailed failure ->
+    Just (xfpfRetryable failure, xfpfInvalidatesIdentity failure)
+  XFollowAttemptVerified -> Nothing
+  XFollowAttemptNotConfirmed -> Nothing
 
 turnstileNow :: UTCTime
 turnstileNow = UTCTime (fromGregorian 2026 9 1) (secondsToDiffTime 300)
