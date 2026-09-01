@@ -52,6 +52,7 @@ import Plether.LiquidationWorker
   , checkLiveSignerBalance
   , decodeCachedPythPayload
   , decodeCachedLiquidationComponents
+  , decodeLiquidationRiskGlobals
   , decodePythStoredPriceResults
   , freshLiquidationRiskInputsFromCache
   , isExpectedLiquidationSimulationRevert
@@ -62,8 +63,10 @@ import Plether.LiquidationWorker
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
+  , liquidationRiskCalls
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
+  , liquidationTransactionGasLimit
   , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
@@ -106,6 +109,31 @@ spec = do
       withEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" "999" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcExecutionBatchSize workerCfg `shouldBe` 256
+
+  describe "liquidation risk Multicall" $ do
+    it "calls the current basket confidence-ratio getter" $ do
+      workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+      let calls = liquidationRiskCalls workerCfg
+      length calls `shouldBe` 11
+      let confidenceCall = calls !! 6
+      Multicall.callTarget confidenceCall `shouldBe` lwcPletherOracle workerCfg
+      Multicall.callAllowFailure confidenceCall `shouldBe` True
+      Multicall.callCalldata confidenceCall
+        `shouldBe` encodeCall "basketMaxConfidenceRatioBps()" []
+      Multicall.callCalldata confidenceCall
+        `shouldNotBe` encodeCall "pythMaxConfidenceRatioBps()" []
+
+    it "decodes the current oracle getter result in the existing call layout" $ do
+      decodeLiquidationRiskGlobals liquidationRiskResults
+        `shouldBe` Right exactRiskGlobals
+
+    it "names the current getter when its subcall fails" $ do
+      let failedResults =
+            take 6 liquidationRiskResults
+              <> [Multicall.CallResult False BS.empty]
+              <> drop 7 liquidationRiskResults
+      decodeLiquidationRiskGlobals failedResults
+        `shouldBe` Left "basketMaxConfidenceRatioBps() subcall failed"
 
   describe "liquidation snapshot batching" $ do
     it "builds ordered, allow-failure account-lens calls" $ do
@@ -536,6 +564,16 @@ spec = do
     it "uses current buffered network fees when they are higher" $ do
       sameNonceReplacementFees 2_500 200 5 10 100 `shouldBe` (12, 250)
 
+  describe "liquidationTransactionGasLimit" $ do
+    it "floors the observed early-stop estimate high enough to enter item zero" $ do
+      liquidationTransactionGasLimit 2_000 893_365 `shouldBe` 5_000_000
+
+    it "preserves a buffered estimate above the liquidation floor" $ do
+      liquidationTransactionGasLimit 2_000 5_000_000 `shouldBe` 6_000_000
+
+    it "raises persisted under-gassed replacements without buffering them again" $ do
+      liquidationTransactionGasLimit 0 1_072_038 `shouldBe` 5_000_000
+
   describe "checkLiveSignerBalance" $ do
     it "does not evaluate the balance request in dry-run mode" $ do
       called <- newIORef False
@@ -944,6 +982,34 @@ exactRiskGlobals =
     , lrgBlockTimestamp = 110
     , lrgLastMarkTime = 100
     }
+
+liquidationRiskResults :: [Multicall.CallResult]
+liquidationRiskResults =
+  map
+    (Multicall.CallResult True)
+    [ mconcat $
+        map
+          encodeUint256
+          [ 0
+          , 0
+          , 100
+          , 0
+          , 200
+          , 0
+          , 0
+          , 0
+          ]
+    , encodeUint256 200_000_000
+    , encodeUint256 2_000
+    , encodeAddress pythContract
+    , encodeUint256 0
+    , encodeUint256 10
+    , encodeUint256 10
+    , encodeUint256 20
+    , encodeUint256 0
+    , encodeUint256 100
+    , encodeUint256 110
+    ]
 
 emptyAccountSnapshot :: AccountLedgerSnapshot
 emptyAccountSnapshot =
