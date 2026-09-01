@@ -474,7 +474,7 @@ ledgerToEquity AccountLedgerSnapshot {..} =
   EquitySnapshot
     { esHasOpenPosition = alsHasPosition
     , esSignedNetEquityUsdc = alsNetEquityUsdc
-    , esTerminalReachableUsdc = alsTerminalReachableUsdc
+    , esTerminalReachableUsdc = alsLiquidationReachableSettlementUsdc
     , esTraderClaimsUsdc = alsTraderClaimBalanceUsdc
     }
 
@@ -493,7 +493,8 @@ snapshotToJson AccountLedgerSnapshot {..} =
     , "traderClaimBalanceUsdc" .= show alsTraderClaimBalanceUsdc
     , "pendingOrderCount" .= show alsPendingOrderCount
     , "closeReachableUsdc" .= show alsCloseReachableUsdc
-    , "terminalReachableUsdc" .= show alsTerminalReachableUsdc
+    , "liquidationReachableSettlementUsdc" .= show alsLiquidationReachableSettlementUsdc
+    , "terminalPriceCollectibleCapUsdc" .= show alsTerminalPriceCollectibleCapUsdc
     , "accountEquityUsdc" .= show alsAccountEquityUsdc
     , "freeBuyingPowerUsdc" .= show alsFreeBuyingPowerUsdc
     , "hasPosition" .= alsHasPosition

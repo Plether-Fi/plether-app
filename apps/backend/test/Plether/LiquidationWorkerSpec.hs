@@ -960,7 +960,8 @@ emptyAccountSnapshot =
     , alsTraderClaimBalanceUsdc = 0
     , alsPendingOrderCount = 0
     , alsCloseReachableUsdc = 0
-    , alsTerminalReachableUsdc = 0
+    , alsLiquidationReachableSettlementUsdc = 0
+    , alsTerminalPriceCollectibleCapUsdc = 0
     , alsAccountEquityUsdc = 0
     , alsFreeBuyingPowerUsdc = 0
     , alsHasPosition = False
@@ -988,7 +989,8 @@ encodedAccountSnapshot AccountLedgerSnapshot {..} =
     , encodeUint256 alsTraderClaimBalanceUsdc
     , encodeUint256 alsPendingOrderCount
     , encodeUint256 alsCloseReachableUsdc
-    , encodeUint256 alsTerminalReachableUsdc
+    , encodeUint256 alsLiquidationReachableSettlementUsdc
+    , encodeUint256 alsTerminalPriceCollectibleCapUsdc
     , encodeUint256 alsAccountEquityUsdc
     , encodeUint256 alsFreeBuyingPowerUsdc
     , encodeUint256 $ if alsHasPosition then 1 else 0
