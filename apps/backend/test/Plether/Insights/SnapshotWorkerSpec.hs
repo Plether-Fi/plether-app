@@ -46,6 +46,10 @@ spec = do
             `shouldBe` Just (String "-25")
           KeyMap.lookup (Key.fromString "netEquityUsdc") fields
             `shouldBe` Just (String "975")
+          KeyMap.lookup (Key.fromString "liquidationReachableSettlementUsdc") fields
+            `shouldBe` Just (String "900")
+          KeyMap.lookup (Key.fromString "terminalPriceCollectibleCapUsdc") fields
+            `shouldBe` Just (String "900")
         _ -> expectationFailure "expected a JSON object"
 
   describe "snapshot Multicall configuration" $ do
@@ -110,7 +114,7 @@ spec = do
     it "rejects malformed account snapshot bytes" $
       decodeSnapshotResults 1 [Multicall.CallResult True BS.empty]
         `shouldBe` Left
-          "Multicall account snapshot subcall 0 returned malformed data: Expected 736 bytes for AccountLedgerSnapshot, received 0"
+          "Multicall account snapshot subcall 0 returned malformed data: Expected 768 bytes for AccountLedgerSnapshot, received 0"
 
 fetchBlock :: Integer -> IO (Either String RpcBlock)
 fetchBlock = pure . Right . block
@@ -138,7 +142,8 @@ sampleSnapshot =
     , alsTraderClaimBalanceUsdc = 10
     , alsPendingOrderCount = 0
     , alsCloseReachableUsdc = 900
-    , alsTerminalReachableUsdc = 900
+    , alsLiquidationReachableSettlementUsdc = 900
+    , alsTerminalPriceCollectibleCapUsdc = 900
     , alsAccountEquityUsdc = 975
     , alsFreeBuyingPowerUsdc = 875
     , alsHasPosition = True
@@ -154,7 +159,7 @@ sampleSnapshot =
 encodedSnapshot :: Integer -> BS.ByteString
 encodedSnapshot settlementBalance =
   encodeUint256 settlementBalance
-    <> BS.replicate (22 * 32) 0
+    <> BS.replicate (23 * 32) 0
 
 isLeft :: Either a b -> Bool
 isLeft value = case value of

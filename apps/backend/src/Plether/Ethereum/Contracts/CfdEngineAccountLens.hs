@@ -43,7 +43,8 @@ data AccountLedgerSnapshot = AccountLedgerSnapshot
   , alsTraderClaimBalanceUsdc :: Integer
   , alsPendingOrderCount :: Integer
   , alsCloseReachableUsdc :: Integer
-  , alsTerminalReachableUsdc :: Integer
+  , alsLiquidationReachableSettlementUsdc :: Integer
+  , alsTerminalPriceCollectibleCapUsdc :: Integer
   , alsAccountEquityUsdc :: Integer
   , alsFreeBuyingPowerUsdc :: Integer
   , alsHasPosition :: Bool
@@ -107,17 +108,18 @@ decodeAccountLedgerSnapshot bytes
           , alsTraderClaimBalanceUsdc = uintAt 9
           , alsPendingOrderCount = uintAt 10
           , alsCloseReachableUsdc = uintAt 11
-          , alsTerminalReachableUsdc = uintAt 12
-          , alsAccountEquityUsdc = uintAt 13
-          , alsFreeBuyingPowerUsdc = uintAt 14
-          , alsHasPosition = boolAt 15
-          , alsSide = uintAt 16
-          , alsSize = uintAt 17
-          , alsMargin = uintAt 18
-          , alsEntryPrice = uintAt 19
-          , alsUnrealizedPnlUsdc = intAt 20
-          , alsNetEquityUsdc = intAt 21
-          , alsLiquidatable = boolAt 22
+          , alsLiquidationReachableSettlementUsdc = uintAt 12
+          , alsTerminalPriceCollectibleCapUsdc = uintAt 13
+          , alsAccountEquityUsdc = uintAt 14
+          , alsFreeBuyingPowerUsdc = uintAt 15
+          , alsHasPosition = boolAt 16
+          , alsSide = uintAt 17
+          , alsSize = uintAt 18
+          , alsMargin = uintAt 19
+          , alsEntryPrice = uintAt 20
+          , alsUnrealizedPnlUsdc = intAt 21
+          , alsNetEquityUsdc = intAt 22
+          , alsLiquidatable = boolAt 23
           }
   where
     uintAt = decodeUint256 . wordAt bytes
@@ -128,7 +130,7 @@ encodedSnapshotLength :: Int
 encodedSnapshotLength = snapshotWordCount * abiWordLength
 
 snapshotWordCount :: Int
-snapshotWordCount = 23
+snapshotWordCount = 24
 
 abiWordLength :: Int
 abiWordLength = 32
