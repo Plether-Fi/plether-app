@@ -6,6 +6,7 @@ import Plether.Perps.Release
   ( perpsV2DeploymentBlock
   , perpsV2OrderLifecycleBook
   , perpsV2OrderRouter
+  , perpsV2VolumeHistoryStartTimestamp
   , validatePerpsV2ReleaseConfig
   )
 import Plether.Perps.HistoryIndexer
@@ -39,6 +40,9 @@ spec =
   describe "bounded V2 release configuration" $ do
     it "accepts only the pinned Sepolia graph and deployment boundary" $
       validReleaseConfig `shouldSatisfy` isRight
+
+    it "pins the first whole minute after the deployment block for volume history" $
+      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1787759880
 
     it "rejects a missing LifecycleBook" $
       validatePerpsV2ReleaseConfig
