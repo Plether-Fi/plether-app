@@ -12,7 +12,8 @@ import qualified Network.Wai as Wai
 import Plether.AA.Pimlico (OwnedTradingAccountFailure (..))
 import qualified Plether.Database.Insights.Registration as Db
 import Plether.Handlers.InsightsRegistration
-  ( canonicalBlockLookupParams
+  ( XFollowFailureDisposition (..)
+  , canonicalBlockLookupParams
   , completionResultDecision
   , csrfTokenFromRequest
   , maximumRegistrationBodyBytes
@@ -24,16 +25,28 @@ import Plether.Handlers.InsightsRegistration
   , validateJsonRequest
   , validateOrigin
   , xAccountAgeEligible
+  , xFollowFailureDisposition
   )
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
+import Plether.Insights.Registration.Provider (XFollowVerificationFailure (..))
 import Plether.Insights.Registration.Types
   ( RegistrationError (..)
   , RegistrationErrorCode (..)
+  , registrationError
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "X follow failure state preservation" $ do
+    it "releases retryable attempts but resets definitively invalid credentials" $ do
+      xFollowFailureDisposition
+        (XFollowVerificationFailure (registrationError ProviderUnavailable "retryable") False)
+        `shouldBe` ReleaseXFollowAttempt
+      xFollowFailureDisposition
+        (XFollowVerificationFailure (registrationError ProviderUnavailable "invalid credential") True)
+        `shouldBe` ResetXIdentity
+
   describe "registration JSON request boundaries" $ do
     it "accepts only JSON media types without any Content-Encoding" $ do
       validateJsonRequest (jsonRequest "application/json" Nothing $ Wai.KnownLength 2)
