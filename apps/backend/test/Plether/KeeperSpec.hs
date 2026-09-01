@@ -148,13 +148,17 @@ spec = do
         `shouldBe` False
 
     it "accepts only a fresh exact six-feed atomic payload" $ do
-      let sixUpdates = replicate 6 $ BS.singleton 1
-      validateAtomicSettlementPayload 100 (replicate 6 100) sixUpdates
+      let combinedUpdate = [BS.singleton 1]
+      validateAtomicSettlementPayload 100 (replicate 6 100) combinedUpdate
         `shouldBe` Right ()
-      validateAtomicSettlementPayload 100 (replicate 6 99) sixUpdates
+      validateAtomicSettlementPayload 100 (replicate 6 99) combinedUpdate
         `shouldBe` Left "the latest Pyth payload predates the minimum atomic publish time"
-      validateAtomicSettlementPayload 100 (replicate 5 100) (replicate 5 $ BS.singleton 1)
-        `shouldBe` Left "the latest Pyth payload does not contain exactly six feeds"
+      validateAtomicSettlementPayload 100 (replicate 5 100) combinedUpdate
+        `shouldBe` Left "the latest admitted Pyth payload does not contain exactly six feed publish times"
+      validateAtomicSettlementPayload 100 (replicate 6 100) []
+        `shouldBe` Left "the latest admitted Pyth payload does not contain non-empty binary update data"
+      validateAtomicSettlementPayload 100 (replicate 6 100) [BS.empty]
+        `shouldBe` Left "the latest admitted Pyth payload does not contain non-empty binary update data"
 
     it "applies signer-balance and configured transaction-cost limits in both active modes" $ do
       validateLpSettlementCost LpSettlementObserve 0 1_000 1_000 `shouldBe` Right ()
