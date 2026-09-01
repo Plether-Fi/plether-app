@@ -123,6 +123,7 @@ block :: Integer -> RpcBlock
 block number =
   RpcBlock
     { rpcBlockNumber = number
+    , rpcBlockL1Number = Nothing
     , rpcBlockHash = "0xhash"
     , rpcBlockTimestamp = number * 10
     }

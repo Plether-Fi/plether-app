@@ -835,7 +835,7 @@ settlementStatusBytes :: Bool -> BS.ByteString
 settlementStatusBytes hasMaturedWork =
   setWords
     109
-    [ (1, pinnedBlockNumber)
+    [ (1, monitorObservedBlock)
     , (4, fixtureEpoch)
     , (5, fixtureEpoch)
     , (11, cachedMarkTime)
@@ -853,7 +853,7 @@ settlementObservationBytes hasMaturedWork =
     setWords
       194
       [ (0, supportedObservationSchemaVersion)
-      , (2, pinnedBlockNumber)
+      , (2, monitorObservedBlock)
       , (5, fixtureEpoch)
       , (6, fixtureEpoch)
       , (12, cachedMarkTime)
@@ -959,6 +959,7 @@ blockValue :: Integer -> Text -> Value
 blockValue number hash =
   object
     [ "number" .= quantity number
+    , "l1BlockNumber" .= quantity (monitorObservedBlock + number - pinnedBlockNumber)
     , "hash" .= hash
     , "timestamp" .= ("0x6553f100" :: Text)
     ]
@@ -1276,11 +1277,12 @@ releaseManifest =
     , crmIndexerStartBlock = 0
     }
 
-fixtureChainId, fixtureEpoch, chainHead, pinnedBlockNumber, cachedMark, cachedMarkTime :: Integer
+fixtureChainId, fixtureEpoch, chainHead, pinnedBlockNumber, monitorObservedBlock, cachedMark, cachedMarkTime :: Integer
 fixtureChainId = 421614
 fixtureEpoch = 500_000
 chainHead = 1_000
 pinnedBlockNumber = chainHead - 1
+monitorObservedBlock = 400
 cachedMark = 100_000_000
 cachedMarkTime = 1_800_000_000
 

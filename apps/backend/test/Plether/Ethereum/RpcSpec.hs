@@ -195,7 +195,15 @@ spec =
     it "accepts the requested block only when its decoded number matches" $
       withRpcClient $ \client ->
         ethGetBlockByNumber client 123
-          `shouldReturn` Right (RpcBlock 123 blockHash 1_800_000_000)
+          `shouldReturn` Right (RpcBlock 123 Nothing blockHash 1_800_000_000)
+
+    it "retains Arbitrum's L1 block identity when the RPC block includes it" $
+      withRpcResult
+        "eth_getBlockByNumber"
+        (setObjectField "l1BlockNumber" (String "0xb138c5") $ blockValue 123)
+        $ \client ->
+          ethGetBlockByNumber client 123
+            `shouldReturn` Right (RpcBlock 123 (Just 11_614_405) blockHash 1_800_000_000)
 
     it "rejects mismatched or malformed block identities and quantities" $
       mapM_
@@ -209,6 +217,8 @@ spec =
         , ("non-canonical response number", setObjectField "number" (String "0x07b") $ blockValue 123)
         , ("short response hash", setObjectField "hash" (String "0x12") $ blockValue 123)
         , ("invalid response timestamp", setObjectField "timestamp" (String "0xgg") $ blockValue 123)
+        , ("invalid L1 block number", setObjectField "l1BlockNumber" (String "0xgg") $ blockValue 123)
+        , ("non-string L1 block number", setObjectField "l1BlockNumber" (Number 1) $ blockValue 123)
         ]
 
 withRpcClient :: (EthClient -> IO a) -> IO a

@@ -487,6 +487,7 @@ snapshotRowBlock :: VaultPerformanceSnapshotRow -> RpcBlock
 snapshotRowBlock row =
   RpcBlock
     { rpcBlockNumber = vpsBlockNumber row
+    , rpcBlockL1Number = Nothing
     , rpcBlockHash = vpsBlockHash row
     , rpcBlockTimestamp = vpsBlockTimestamp row
     }

@@ -48,6 +48,9 @@ data RpcLog = RpcLog
 
 data RpcBlock = RpcBlock
   { rpcBlockNumber :: Integer
+  -- Arbitrum includes the L1 block visible to Solidity's @block.number@.
+  -- Standard Ethereum RPC responses omit this optional extension.
+  , rpcBlockL1Number :: Maybe Integer
   , rpcBlockHash :: Text
   , rpcBlockTimestamp :: Integer
   }
@@ -228,6 +231,7 @@ getBlock client blockTag expectedNumber = do
       blockHash <- parseHash "block hash" blockHashText
       timestampHex <- requiredString "block timestamp" "timestamp" obj
       timestamp <- parseRpcQuantity "block timestamp" timestampHex
+      l1BlockNumber <- optionalQuantity "block L1 number" "l1BlockNumber" obj
       case expectedNumber of
         Just requested
           | number /= requested ->
@@ -241,6 +245,7 @@ getBlock client blockTag expectedNumber = do
       pure $
         RpcBlock
           { rpcBlockNumber = number
+          , rpcBlockL1Number = l1BlockNumber
           , rpcBlockHash = blockHash
           , rpcBlockTimestamp = timestamp
           }
@@ -336,6 +341,14 @@ requiredString label key obj =
     Just (String value) -> Right value
     Just _ -> Left $ RpcJsonError $ "Expected " <> label <> " to be a string"
     Nothing -> Left $ RpcJsonError $ "Missing " <> label
+
+optionalQuantity :: Text -> Text -> KM.KeyMap Value -> Either RpcError (Maybe Integer)
+optionalQuantity label key obj =
+  case KM.lookup (Key.fromText key) obj of
+    Nothing -> Right Nothing
+    Just Null -> Right Nothing
+    Just (String value) -> Just <$> parseRpcQuantity label value
+    Just _ -> Left $ RpcJsonError $ "Expected " <> label <> " to be a string or null"
 
 requiredArray :: Text -> Text -> KM.KeyMap Value -> Either RpcError (V.Vector Value)
 requiredArray label key obj =
