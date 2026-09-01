@@ -558,6 +558,10 @@ prepareLpSettlementWork cfg conn client persistObservation =
     unlessEither
       (rpcBlockNumber pinnedBlockBefore == observedBlock)
       "Pinned block response does not match the requested block number"
+  -- Arbitrum's Solidity block.number is the L1 block number, while the RPC
+  -- block tag and hash identify the L2 block. Compare the facade observation
+  -- against the former, but retain the latter as the durable audit identity.
+  let monitorObservedBlock = fromMaybe observedBlock $ rpcBlockL1Number pinnedBlockBefore
   pinnedEpoch <- ExceptT $ rpcStep "pinned HousePool epoch" $
     SettlementMonitor.getCurrentEpochAtBlock client (cfgPerpsHousePool cfg) observedBlock
   if pinnedEpoch /= latestEpoch
@@ -578,7 +582,7 @@ prepareLpSettlementWork cfg conn client persistObservation =
       observedBlock
   ExceptT $ pure $
     unlessEither
-      (isLpSettlementObservationConsistent pinnedEpoch observedBlock observation)
+      (isLpSettlementObservationConsistent pinnedEpoch monitorObservedBlock observation)
       "Settlement observation epoch/block fields do not match the pinned request"
   ExceptT $ pure $
     unlessEither
@@ -611,7 +615,7 @@ prepareLpSettlementWork cfg conn client persistObservation =
           , lsoiMonitorAddress = cfgPerpsSettlementMonitorLens cfg
           , lsoiObservationDigest = SettlementMonitor.soObservationDigest observation
           , lsoiEpoch = SettlementMonitor.ssSettlementCutoffEpoch status
-          , lsoiObservedBlock = SettlementMonitor.ssObservedBlock status
+          , lsoiObservedBlock = observedBlock
           , lsoiObservedBlockHash = Just $ rpcBlockHash pinnedBlockAfterObservation
           , lsoiExecutionPath = executionPathNumber $ SettlementMonitor.ssRequiredExecutionPath status
           , lsoiOperationalBlockerMask = SettlementMonitor.ssOperationalBlockerMask status
