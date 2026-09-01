@@ -1900,6 +1900,51 @@ candleRollupSpec databaseUrl =
           `shouldContain`
             ("\"from_timestamp\":" <> show perpsV2VolumeHistoryStartTimestamp)
 
+    it "uses the pinned Sepolia deployment minute without a release epoch row" $
+      withCandleDatabase databaseUrl $ \pool -> do
+        let firstEventTimestamp = perpsV2VolumeHistoryStartTimestamp + 2 * 86_400 + 5
+            requestedTo = firstEventTimestamp - 5 + 60
+        withDb pool $ \connection -> do
+          insertPerpsEvent
+            connection
+            421614
+            perpsV2OrderRouter
+            "0x3333333333333333333333333333333333333333"
+            "PositionOpened"
+            ("0x" <> Text.replicate 64 "e")
+            (perpsV2DeploymentBlock + 50)
+            ("0x" <> Text.replicate 64 "f")
+            0
+            0
+            firstEventTimestamp
+            Nothing
+            Nothing
+            Nothing
+            (object ["integrationTest" .= True])
+          setPerpsIndexerState
+            connection
+            421614
+            pinnedVolumeIndexerName
+            perpsV2OrderRouter
+            perpsV2DeploymentBlock
+            (perpsV2DeploymentBlock + 100)
+            (Just $ "0x" <> Text.replicate 64 "d")
+
+        (exitCode, stdout, stderr) <-
+          runCandleAdminWithRelease
+            databaseUrl
+            421614
+            perpsV2OrderRouter
+            [ "estimate"
+            , "--from", show perpsV2VolumeHistoryStartTimestamp
+            , "--to", show requestedTo
+            ]
+        exitCode `shouldBe` ExitSuccess
+        stderr `shouldBe` ""
+        stdout
+          `shouldContain`
+            ("\"from_timestamp\":" <> show perpsV2VolumeHistoryStartTimestamp)
+
     it "uses the exact writer lock and releases it with a read-only transaction" $
       withCandleAdminDatabase databaseUrl $ \pool -> do
         holderReady <- newEmptyMVar

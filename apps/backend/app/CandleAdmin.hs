@@ -2073,17 +2073,15 @@ sourceBounds conn runtime kind = do
             "WITH pinned_release AS ( \
         \ SELECT ?::BIGINT AS first_timestamp, ?::BIGINT AS deployment_block), \
         \release_candidate AS ( \
-        \ SELECT CASE \
-        \   WHEN pinned.first_timestamp IS NOT NULL \
-        \   THEN pinned.first_timestamp \
-        \   ELSE ((epoch.activation_timestamp + 59) / 60) * 60 END AS first_timestamp, \
-        \ CASE \
-        \   WHEN pinned.first_timestamp IS NOT NULL \
-        \   THEN pinned.deployment_block \
-        \   ELSE epoch.activation_block END AS proof_block, \
-        \ epoch.chain_id, epoch.release_router \
+        \ SELECT pinned.first_timestamp, pinned.deployment_block AS proof_block, \
+        \   ?::BIGINT AS chain_id, ?::TEXT AS release_router \
+        \ FROM pinned_release pinned WHERE pinned.first_timestamp IS NOT NULL \
+        \ UNION ALL \
+        \ SELECT ((epoch.activation_timestamp + 59) / 60) * 60 AS first_timestamp, \
+        \   epoch.activation_block AS proof_block, epoch.chain_id, epoch.release_router \
         \ FROM perps_market_release_epochs epoch CROSS JOIN pinned_release pinned \
-        \ WHERE epoch.market_id = ? AND epoch.chain_id = ? AND epoch.release_router = ?), \
+        \ WHERE pinned.first_timestamp IS NULL AND epoch.market_id = ? \
+        \   AND epoch.chain_id = ? AND epoch.release_router = ?), \
         \certified_release AS ( \
         \ SELECT candidate.first_timestamp \
         \ FROM release_candidate candidate \
@@ -2114,6 +2112,8 @@ sourceBounds conn runtime kind = do
         \LEFT JOIN certified_release ON TRUE"
             ( pinnedDeploymentStart
             , perpsV2DeploymentBlock
+            , arChainId runtime
+            , arReleaseRouter runtime
             , defaultCandleMarketId
             , arChainId runtime
             , arReleaseRouter runtime
