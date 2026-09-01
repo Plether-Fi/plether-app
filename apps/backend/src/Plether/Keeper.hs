@@ -43,6 +43,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Bits ((.|.))
 import Data.List (sortOn)
@@ -1833,8 +1834,10 @@ validateAtomicSettlementPayload
   -> [ByteString]
   -> Either Text ()
 validateAtomicSettlementPayload minimumPublishTime publishTimes updateData
-  | length publishTimes /= 6 || length updateData /= 6 =
-      Left "the latest Pyth payload does not contain exactly six feeds"
+  | length publishTimes /= 6 =
+      Left "the latest admitted Pyth payload does not contain exactly six feed publish times"
+  | null updateData || any BS.null updateData =
+      Left "the latest admitted Pyth payload does not contain non-empty binary update data"
   | any (< minimumPublishTime) publishTimes =
       Left "the latest Pyth payload predates the minimum atomic publish time"
   | otherwise = Right ()
