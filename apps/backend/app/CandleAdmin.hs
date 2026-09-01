@@ -2075,13 +2075,11 @@ sourceBounds conn runtime kind = do
         \release_candidate AS ( \
         \ SELECT CASE \
         \   WHEN pinned.first_timestamp IS NOT NULL \
-        \     AND epoch.deployment_block = pinned.deployment_block \
         \   THEN pinned.first_timestamp \
         \   ELSE ((epoch.activation_timestamp + 59) / 60) * 60 END AS first_timestamp, \
         \ CASE \
         \   WHEN pinned.first_timestamp IS NOT NULL \
-        \     AND epoch.deployment_block = pinned.deployment_block \
-        \   THEN epoch.deployment_block \
+        \   THEN pinned.deployment_block \
         \   ELSE epoch.activation_block END AS proof_block, \
         \ epoch.chain_id, epoch.release_router \
         \ FROM perps_market_release_epochs epoch CROSS JOIN pinned_release pinned \

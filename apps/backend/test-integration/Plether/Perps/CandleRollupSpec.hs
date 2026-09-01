@@ -1860,9 +1860,10 @@ candleRollupSpec databaseUrl =
         certifiedStdout
           `shouldContain` ("\"from_timestamp\":" <> show activationMinute)
 
-    it "uses the pinned Sepolia deployment minute when activation was recorded later" $
+    it "uses the pinned Sepolia deployment minute despite later epoch metadata" $
       withCandleDatabase databaseUrl $ \pool -> do
-        let activationBlock = perpsV2DeploymentBlock + 100
+        let recordedDeploymentBlock = perpsV2DeploymentBlock + 50
+            activationBlock = perpsV2DeploymentBlock + 100
             activationTimestamp = perpsV2VolumeHistoryStartTimestamp + 2 * 86_400 + 17
             firstEventTimestamp = activationTimestamp + 2 * 86_400 + 5
             requestedTo = firstEventTimestamp - 5 + 60
@@ -1870,7 +1871,7 @@ candleRollupSpec databaseUrl =
           pool
           421614
           perpsV2OrderRouter
-          perpsV2DeploymentBlock
+          recordedDeploymentBlock
           activationBlock
           activationTimestamp
           firstEventTimestamp
