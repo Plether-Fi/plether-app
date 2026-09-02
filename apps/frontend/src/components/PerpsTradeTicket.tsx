@@ -3221,19 +3221,6 @@ export function PerpsTradeTicket({
           : REQUIRED_MARGIN_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.positionLeverage,
       },
-      ...(enableLiveTrading && isReviewOpen && activeReviewSummary !== undefined
-        ? [{
-            label: 'Total funding required',
-            value: formatUsdcRaw(activeReviewSummary.requiredFundingUsdc),
-            tooltip: 'Required protected margin plus the execution reward reserved for finalization.',
-            tooltipDocsLink: DOCS_LINKS.executionReward,
-          }, {
-            label: 'Available account funding',
-            value: formatUsdcRaw(activeReviewSummary.availableFundingUsdc),
-            tooltip: 'Free buying power available to fund this order at the reviewed block.',
-            tooltipDocsLink: DOCS_LINKS.positionLeverage,
-          } satisfies PreviewRow]
-        : []),
       {
         label: 'Maintenance margin',
         value: previewMaintenanceMarginValue,
@@ -3288,7 +3275,6 @@ export function PerpsTradeTicket({
       },
     ],
     [
-      activeReviewSummary,
       enableLiveTrading,
       executionLimit,
       isExecutionProtectionsLoading,
@@ -4599,12 +4585,6 @@ export function PerpsTradeTicket({
                           value: PERPS_EXECUTION_MODE_LABELS[
                             displayedExecutionProtections.protection.executionMode
                           ],
-                        },
-                        {
-                          label: 'Execution reward',
-                          value: `${formatPerpsUsdc(
-                            displayedExecutionProtections.protection.executionBountyUsdc
-                          )} USDC`,
                         },
                         {
                           label: 'Economic bounds',
