@@ -69,6 +69,7 @@ describe('tranche vault ABI', () => {
       'getPendingTrancheState',
       'maxSeniorExposureUsdc',
       'maxSeniorShareBps',
+      'seniorRateBps',
       'getSeniorDepositCapacity',
       'reservedSeniorDepositAssetsUsdc',
       'areSeniorDepositReservationsWithinLimits',

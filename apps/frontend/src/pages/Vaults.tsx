@@ -165,6 +165,7 @@ interface PoolSnapshot {
   juniorPoolWithdrawCapUsdc?: bigint
   maxSeniorExposureUsdc?: bigint
   maxSeniorShareBps?: bigint
+  seniorRateBps?: bigint
   seniorDepositCapacityUsdc?: bigint
   reservedSeniorDepositAssetsUsdc?: bigint
   seniorReservationsWithinLimits?: boolean
@@ -654,6 +655,12 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         abi: TRANCHE_VAULT_READ_ABI,
         functionName: 'DEPOSIT_COOLDOWN',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'seniorRateBps',
+      },
     ],
     query: {
       refetchInterval: 60_000,
@@ -699,6 +706,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const seniorWithdrawalCooldown = asBigInt(readResult(results, 34))
     const juniorLastDepositTime = asBigInt(readResult(results, 35))
     const juniorWithdrawalCooldown = asBigInt(readResult(results, 36))
+    const seniorRateBps = asBigInt(readResult(results, 37))
     const totalAssetsUsdc = poolView?.totalAssetsUsdc
     const freeUsdc = poolView?.freeUsdc
     const withdrawalReservedUsdc = poolView?.withdrawalReservedUsdc
@@ -810,6 +818,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         juniorPoolWithdrawCapUsdc,
         maxSeniorExposureUsdc,
         maxSeniorShareBps,
+        seniorRateBps,
         seniorDepositCapacityUsdc,
         reservedSeniorDepositAssetsUsdc,
         seniorReservationsWithinLimits,
@@ -2509,6 +2518,12 @@ export function OverviewTab({
             {tranche.id === 'senior' ? (
               <>
                 <DetailRow
+                  label="Target nominal APR"
+                  value={pool.seniorRateBps === undefined
+                    ? 'Unavailable'
+                    : `${(Number(pool.seniorRateBps) / 100).toFixed(2)}%`}
+                />
+                <DetailRow
                   label="Remaining Senior capacity"
                   value={formatVaultLimit(pool.seniorDepositCapacityUsdc)}
                 />
@@ -3245,6 +3260,7 @@ export function ActivityTab({
                 : request.refundableAssets > 0n
                   ? request.refundableAssets
                   : request.claimableAssets
+              const hasProcessedDeposit = request.claimableShares > 0n || request.refundableAssets > 0n
 
               return (
                 <article key={String(request.requestId)} className="space-y-4 p-5">
@@ -3262,13 +3278,15 @@ export function ActivityTab({
 
                   <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
                     <RequestMetric
-                      label="Expected processing"
+                      label={hasProcessedDeposit ? 'Eligible since' : 'Expected processing'}
                       value={settlementLabel(request.targetTimestamp)}
                     />
-                    <RequestMetric
+                    {!hasProcessedDeposit ? (
+                      <RequestMetric
                         label="Estimated shares"
-                      value={formatPositionShares(request.pendingSharesEstimate, tranche.token)}
-                    />
+                        value={formatPositionShares(request.pendingSharesEstimate, tranche.token)}
+                      />
+                    ) : null}
                     {request.claimableShares > 0n ? (
                       <RequestMetric
                         label="Shares ready for wallet"
@@ -3396,6 +3414,7 @@ export function ActivityTab({
                 : request.claimableShares > 0n
                   ? request.claimableShares
                   : request.refundableShares
+              const hasProcessedWithdrawal = request.claimableAssets > 0n || request.refundableShares > 0n
 
               return (
                 <article key={String(request.requestId)} className="space-y-4 p-5">
@@ -3415,13 +3434,15 @@ export function ActivityTab({
 
                   <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
                     <RequestMetric
-                      label="Expected processing"
+                      label={hasProcessedWithdrawal ? 'Eligible since' : 'Expected processing'}
                       value={settlementLabel(request.targetTimestamp)}
                     />
-                    <RequestMetric
-                      label="Estimated USDC"
-                      value={formatFullUsd(request.pendingAssetsEstimate)}
-                    />
+                    {!hasProcessedWithdrawal ? (
+                      <RequestMetric
+                        label="Estimated USDC"
+                        value={formatFullUsd(request.pendingAssetsEstimate)}
+                      />
+                    ) : null}
                     {request.claimableAssets > 0n ? (
                       <RequestMetric
                         label="USDC ready for wallet"
