@@ -52,6 +52,7 @@ const snapshot = {
     juniorPoolWithdrawCapUsdc: 26_666_666_666_666n,
     maxSeniorExposureUsdc: usdc(100_000_000),
     maxSeniorShareBps: 7_500n,
+    seniorRateBps: 800n,
     seniorDepositCapacityUsdc: usdc(25_000_000),
     reservedSeniorDepositAssetsUsdc: usdc(5_000_000),
     seniorReservationsWithinLimits: true,

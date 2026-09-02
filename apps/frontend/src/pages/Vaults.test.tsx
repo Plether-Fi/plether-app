@@ -228,6 +228,7 @@ function liveReadFixture({
   seniorMaxRequestRedeem = seniorUserShares,
   seniorLastDepositTime = 0,
   seniorWithdrawalCooldown = 3_600,
+  seniorRateBps = 800,
   juniorLastDepositTime = 0,
   juniorWithdrawalCooldown = 3_600,
   walletUsdc = 1_000,
@@ -248,6 +249,7 @@ function liveReadFixture({
   seniorMaxRequestRedeem?: number
   seniorLastDepositTime?: number
   seniorWithdrawalCooldown?: number
+  seniorRateBps?: number
   juniorLastDepositTime?: number
   juniorWithdrawalCooldown?: number
   walletUsdc?: number
@@ -329,6 +331,7 @@ function liveReadFixture({
     success(BigInt(seniorWithdrawalCooldown)),
     success(BigInt(juniorLastDepositTime)),
     success(BigInt(juniorWithdrawalCooldown)),
+    success(BigInt(seniorRateBps)),
   ]
 }
 
@@ -642,7 +645,7 @@ describe('Vaults page', () => {
       }
     }
     expect(readConfig.query.refetchInterval).toBe(60_000)
-    expect(readConfig.contracts).toHaveLength(37)
+    expect(readConfig.contracts).toHaveLength(38)
     expect(readConfig.contracts.every(({ chainId }) => chainId === 421614)).toBe(true)
     expect(readConfig.contracts.map(({ functionName }) => functionName)).toEqual([
       'getPoolLiquidityView',
@@ -682,6 +685,7 @@ describe('Vaults page', () => {
       'DEPOSIT_COOLDOWN',
       'lastDepositTime',
       'DEPOSIT_COOLDOWN',
+      'seniorRateBps',
     ])
     expect((readConfig.contracts[16] as { args?: bigint[] }).args).toEqual([10n ** 27n])
     expect((readConfig.contracts[17] as { args?: bigint[] }).args).toEqual([10n ** 27n])
@@ -859,6 +863,15 @@ describe('Vaults page', () => {
     expect(screen.queryByText(/paid by minting shares/i)).not.toBeInTheDocument()
   })
 
+  it('shows the live Senior nominal APR from HousePool', () => {
+    mocks.readContractsData = liveReadFixture({ seniorRateBps: 825 })
+
+    renderVaults('/vaults/senior')
+
+    expect(screen.getByText('Target nominal APR')).toBeInTheDocument()
+    expect(screen.getByText('8.25%')).toBeInTheDocument()
+  })
+
   it('surfaces a settlement hold without disabling new requests or existing request actions', () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
@@ -959,6 +972,10 @@ describe('Vaults page', () => {
     }]
     const { unmount } = renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+    const pendingDepositSection = screen.getByRole('heading', { name: 'Pending deposits' }).closest('section')
+    expect(within(pendingDepositSection!).getByText('Expected processing')).toBeInTheDocument()
+    expect(within(pendingDepositSection!).getByText('Estimated shares')).toBeInTheDocument()
+    expect(within(pendingDepositSection!).queryByText('Eligible since')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel deposit' }))
     expect(mocks.vaultCancelPendingDeposit).not.toHaveBeenCalled()
     const cancelDepositFlow = screen.getByRole('dialog', { name: 'Cancel deposit flow' })
@@ -980,6 +997,9 @@ describe('Vaults page', () => {
     }]
     const claimView = renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+    const claimDepositSection = screen.getByRole('heading', { name: 'Pending deposits' }).closest('section')
+    expect(within(claimDepositSection!).getByText('Eligible since')).toBeInTheDocument()
+    expect(within(claimDepositSection!).queryByText('Estimated shares')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Finalize/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Move shares to wallet' }))
     expect(mocks.vaultClaimDepositShares).not.toHaveBeenCalled()
@@ -1005,6 +1025,9 @@ describe('Vaults page', () => {
     }]
     renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+    const claimWithdrawalSection = screen.getByRole('heading', { name: 'Pending withdrawals' }).closest('section')
+    expect(within(claimWithdrawalSection!).getByText('Eligible since')).toBeInTheDocument()
+    expect(within(claimWithdrawalSection!).queryByText('Estimated USDC')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Move USDC to wallet' }))
     expect(mocks.vaultClaimRedeem).not.toHaveBeenCalled()
     const claimWithdrawalFlow = screen.getByRole('dialog', { name: 'Move USDC flow' })
@@ -1029,6 +1052,9 @@ describe('Vaults page', () => {
 
     const recoveryView = renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+    const recoverDepositSection = screen.getByRole('heading', { name: 'Pending deposits' }).closest('section')
+    expect(within(recoverDepositSection!).getByText('Eligible since')).toBeInTheDocument()
+    expect(within(recoverDepositSection!).queryByText('Estimated shares')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Return USDC to wallet' }))
     expect(mocks.vaultCancelPendingDeposit).not.toHaveBeenCalled()
     const recoverFlow = screen.getByRole('dialog', { name: 'Return USDC flow' })
@@ -1073,6 +1099,9 @@ describe('Vaults page', () => {
 
     renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+    const reclaimWithdrawalSection = screen.getByRole('heading', { name: 'Pending withdrawals' }).closest('section')
+    expect(within(reclaimWithdrawalSection!).getByText('Eligible since')).toBeInTheDocument()
+    expect(within(reclaimWithdrawalSection!).queryByText('Estimated USDC')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Return shares to wallet' }))
     expect(mocks.vaultClaimRedeemRefund).not.toHaveBeenCalled()
     const reclaimFlow = screen.getByRole('dialog', { name: 'Return shares flow' })

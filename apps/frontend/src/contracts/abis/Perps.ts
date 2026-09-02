@@ -1229,6 +1229,13 @@ export const PERPS_HOUSE_POOL_ABI = [
   },
   {
     type: 'function',
+    name: 'seniorRateBps',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'rateBps', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'getSeniorDepositCapacity',
     stateMutability: 'view',
     inputs: [],
