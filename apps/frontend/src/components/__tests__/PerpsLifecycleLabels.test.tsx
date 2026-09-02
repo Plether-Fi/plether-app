@@ -838,6 +838,37 @@ describe('perps lifecycle labels', () => {
       .toHaveAttribute('aria-expanded', 'true')
   })
 
+  it('does not repeat the execution reward in execution protections', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialReviewOpen
+        initialOrderQuantity="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={1_000_000_000n}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Estimated execution reward')).toBeInTheDocument()
+    const protections = within(dialog).getByText('Execution protections').closest('details')
+    expect(protections).not.toBeNull()
+    expect(within(protections!).getByText('Pinned regime')).toBeInTheDocument()
+    expect(within(protections!).queryByText('Execution reward')).not.toBeInTheDocument()
+  })
+
   it('renders order and transaction history tabs from live rows', () => {
     render(
       <PerpsAccountPanel
@@ -1095,8 +1126,8 @@ describe('perps lifecycle labels', () => {
       expect(within(dialog).getByText(/Deposit 9.99 USDC more or reduce the order/)).toBeInTheDocument()
     })
     expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDC')
-    expect(within(dialog).getByText('Total funding required').closest('div')).toHaveTextContent('30.0USDC')
-    expect(within(dialog).getByText('Available account funding').closest('div')).toHaveTextContent('20.0USDC')
+    expect(within(dialog).queryByText('Total funding required')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Available account funding')).not.toBeInTheDocument()
     expect(within(dialog).getByText('Resulting leverage').closest('div')).toHaveTextContent('5x')
     expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
   })
