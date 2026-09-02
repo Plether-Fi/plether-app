@@ -10,6 +10,7 @@ module Plether.Ethereum.Rpc
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
   , ethGetBalance
+  , ethGetBalanceAtCanonicalBlock
   , ethChainId
   , ethGetCode
   , ethGasPrice
@@ -31,7 +32,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
-import Plether.Ethereum.Client (EthClient, RpcError (..), parseRpcQuantity, rpcCall)
+import Plether.Ethereum.Client
+  ( CanonicalBlockRef
+  , EthClient
+  , RpcError (..)
+  , parseRpcQuantity
+  , renderCanonicalBlockIdentifier
+  , rpcCall
+  )
 import Plether.Utils.Hex (intToHex)
 
 data RpcLog = RpcLog
@@ -122,6 +130,22 @@ ethGetTransactionCountAtBlock client address blockNumber = do
 ethGetBalance :: EthClient -> Text -> IO (Either RpcError Integer)
 ethGetBalance client address = do
   result <- rpcCall client "eth_getBalance" (toJsonArray [String address, String "latest"])
+  pure $ hexIntegerResult result "eth_getBalance"
+
+-- | Read a native balance from the same canonical block-hash anchor used by
+-- evidence-bearing contract reads. There is intentionally no numeric/latest
+-- fallback: an unsupported archive or EIP-1898 read is reported unavailable.
+ethGetBalanceAtCanonicalBlock
+  :: EthClient
+  -> Text
+  -> CanonicalBlockRef
+  -> IO (Either RpcError Integer)
+ethGetBalanceAtCanonicalBlock client address blockRef = do
+  result <-
+    rpcCall
+      client
+      "eth_getBalance"
+      (toJsonArray [String address, renderCanonicalBlockIdentifier blockRef])
   pure $ hexIntegerResult result "eth_getBalance"
 
 ethChainId :: EthClient -> IO (Either RpcError Integer)

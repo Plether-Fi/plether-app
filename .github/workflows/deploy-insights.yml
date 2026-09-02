@@ -63,14 +63,165 @@ jobs:
         env:
           SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
-          RESPONSE=$(curl --fail --silent --show-error \
+          STATUS_RESPONSE=$(curl --fail --silent --show-error \
             --retry 3 \
             --retry-all-errors \
             --max-time 15 \
             "$SEPOLIA_BACKEND_URL/api/insights/v1/status")
 
-          echo "$RESPONSE" | jq --exit-status \
+          echo "$STATUS_RESPONSE" | jq --exit-status \
             '.data.competition.scoringVersion and .data.status' >/dev/null
+
+          CURRENT_RELEASE_RESPONSE=$(curl --fail --silent --show-error \
+            --retry 3 \
+            --retry-all-errors \
+            --max-time 15 \
+            "$SEPOLIA_BACKEND_URL/api/insights/v1/protocol/releases/current")
+
+          echo "$CURRENT_RELEASE_RESPONSE" | jq --exit-status '
+            def decimal_string:
+              type == "string" and test("^(0|[1-9][0-9]*)$");
+            def positive_decimal_string:
+              type == "string" and test("^[1-9][0-9]*$");
+            def nonnegative_integer:
+              type == "number" and floor == . and . >= 0;
+            def address:
+              type == "string" and test("^0x[0-9a-fA-F]{40}$");
+            def availability:
+              type == "array" and all(.[];
+                type == "object"
+                and (.field | type == "string" and length > 0)
+                and (.reason | type == "string" and length > 0)
+              );
+
+            .data as $data
+            | .meta as $meta
+            | type == "object"
+              and ($data | type == "object")
+              and ($meta | type == "object")
+              and ($data.releaseId | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
+              and ($data.chainId | positive_decimal_string)
+              and ($data.explorerEnabled | type == "boolean")
+              and ($data.calculationVersion | type == "string" and length > 0)
+              and ($data.evidence | type == "object")
+              and ($data.availability | availability)
+              and ($data.confirmedBlock | type == "object")
+              and ($data.confirmedBlock.number | decimal_string)
+              and ($data.confirmedBlock.hash | type == "string")
+              and ($data.confirmedBlock.timestamp | nonnegative_integer)
+              and (
+                $data.indexerTimestamp == null
+                or ($data.indexerTimestamp | nonnegative_integer)
+              )
+              and ($data.release | type == "object")
+              and ($data.release.releaseId == $data.releaseId)
+              and ($data.release.name | type == "string" and length > 0)
+              and ($data.release.chainId | nonnegative_integer and . > 0)
+              and (($data.release.chainId | tostring) == $data.chainId)
+              and ($data.release.deploymentBlock | decimal_string)
+              and ($data.release.calculationVersion == $data.calculationVersion)
+              and ($data.release.contracts | type == "object")
+              and (
+                [
+                  "usdc",
+                  "orderRouter",
+                  "orderRouterAdmin",
+                  "cfdEngine",
+                  "cfdEngineAdmin",
+                  "marginClearinghouse",
+                  "publicLens",
+                  "accountLens",
+                  "housePool",
+                  "seniorVault",
+                  "juniorVault",
+                  "pletherOracle"
+                ]
+                | all(.[]; $data.release.contracts[.] | address)
+              )
+              and ($meta.cached | type == "boolean")
+              and ($meta.chainId == $data.release.chainId)
+              and ($meta.blockNumber | nonnegative_integer)
+              and ($meta.blockNumber == ($data.confirmedBlock.number | tonumber))
+          ' >/dev/null
+
+          EXPLORER_ENABLED=$(echo "$CURRENT_RELEASE_RESPONSE" | jq --raw-output '.data.explorerEnabled')
+
+          if [ "$EXPLORER_ENABLED" = "true" ]; then
+            RELEASE_ID=$(echo "$CURRENT_RELEASE_RESPONSE" | jq --raw-output '.data.releaseId')
+            CHAIN_ID=$(echo "$CURRENT_RELEASE_RESPONSE" | jq --raw-output '.data.chainId')
+            CALCULATION_VERSION=$(echo "$CURRENT_RELEASE_RESPONSE" | jq --raw-output '.data.calculationVersion')
+
+            OVERVIEW_RESPONSE=$(curl --fail --silent --show-error \
+              --retry 3 \
+              --retry-all-errors \
+              --max-time 15 \
+              "$SEPOLIA_BACKEND_URL/api/insights/v1/protocol/releases/$RELEASE_ID/overview")
+
+            echo "$OVERVIEW_RESPONSE" | jq --exit-status \
+              --arg release_id "$RELEASE_ID" \
+              --arg chain_id "$CHAIN_ID" \
+              --arg calculation_version "$CALCULATION_VERSION" '
+                def positive_decimal_string:
+                  type == "string" and test("^[1-9][0-9]*$");
+                def nonnegative_decimal_string:
+                  type == "string" and test("^(0|[1-9][0-9]*)$");
+                def nonnegative_integer:
+                  type == "number" and floor == . and . >= 0;
+                def positive_integer:
+                  type == "number" and floor == . and . > 0;
+                def block_hash:
+                  type == "string" and test("^0x[0-9a-fA-F]{64}$");
+                def availability:
+                  type == "array" and all(.[];
+                    type == "object"
+                    and (.field | type == "string" and length > 0)
+                    and (.reason | type == "string" and length > 0)
+                  );
+
+                .data as $data
+                | .meta as $meta
+                | type == "object"
+                  and ($data | type == "object")
+                  and ($meta | type == "object")
+                  and ($data.releaseId == $release_id)
+                  and ($data.chainId == $chain_id)
+                  and ($data.chainId | positive_decimal_string)
+                  and ($data.calculationVersion == $calculation_version)
+                  and ($data.evidence | type == "object")
+                  and ($data.availability | availability)
+                  and ($data.confirmedBlock | type == "object")
+                  and ($data.confirmedBlock.number | positive_decimal_string)
+                  and ($data.confirmedBlock.hash | block_hash)
+                  and ($data.confirmedBlock.timestamp | positive_integer)
+                  and ($data.indexerTimestamp | positive_integer)
+                  and ($data.overview | type == "object")
+                  and ($data.overview.counts | type == "object")
+                  and (
+                    $data.overview.housePool == null
+                    or ($data.overview.housePool | type == "object")
+                  )
+                  and (
+                    $data.overview.protocolStatus == null
+                    or ($data.overview.protocolStatus | type == "object")
+                  )
+                  and ($data.overview.anomalies | type == "array")
+                  and ($data.overview.anomalyEvaluation == "complete"
+                    or $data.overview.anomalyEvaluation == "partial")
+                  and ($data.overview.indexerLagBlocks | nonnegative_decimal_string)
+                  and (($data.overview.indexerLagBlocks | tonumber) <= 20)
+                  and ($meta.cached | type == "boolean")
+                  and (($meta.chainId | tostring) == $chain_id)
+                  and ($meta.blockNumber | nonnegative_integer)
+                  and ($meta.blockNumber == ($data.confirmedBlock.number | tonumber))
+              ' >/dev/null
+
+            # This proves the public API shape and freshness only. Event-count parity
+            # remains a separate audited rollout prerequisite because this endpoint
+            # does not expose enough evidence to establish parity.
+            echo "Protocol Explorer overview is fresh and internally consistent."
+          else
+            echo "Protocol Explorer is disabled; the feature flag remains the rollout gate."
+          fi
 
       - name: Validate registration frontend configuration
         env:

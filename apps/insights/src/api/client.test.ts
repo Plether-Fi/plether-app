@@ -4,9 +4,23 @@ import {
   createRegistrationSession,
   createXAuthorization,
   getCurrentCompetition,
+  getCurrentProtocolRelease,
+  getHousePool,
+  getKeeper,
+  getKeepers,
   getLeaderboard,
+  getParameterChanges,
+  getParameters,
+  getProtocolOrder,
+  getProtocolOverview,
+  getProtocolTransaction,
+  getProtocolTransactions,
+  getProtocolWallet,
+  getProtocolWallets,
   getRegistrationSession,
   getStatus,
+  getTranche,
+  getTrancheHistory,
   getWallet,
   InsightsApiError,
 } from './client'
@@ -187,6 +201,276 @@ describe('Insights API client', () => {
   it('exposes typed API errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'not_found', message: 'Missing' } }), { status: 404 })))
     await expect(getCurrentCompetition()).rejects.toMatchObject<Partial<InsightsApiError>>({ status: 404, code: 'not_found', message: 'Missing' })
+  })
+
+  it('uses every release-scoped protocol route and encodes path segments', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(new Response(JSON.stringify({}), { status: 200 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getCurrentProtocolRelease()
+    await getProtocolOverview('release / 1')
+    await getProtocolTransaction('release / 1', '0xhash/value')
+    await getProtocolOrder('release / 1', 'order / 9')
+    await getHousePool('release / 1')
+    await getTranche('release / 1', 'senior / one')
+    await getTrancheHistory('release / 1', 'junior / one')
+    await getKeepers('release / 1', '24h')
+    await getKeeper('release / 1', '0xkeeper/value', '30d')
+    await getProtocolWallets('release / 1', { window: '24h' })
+    await getProtocolWallet('release / 1', '0xwallet/value', { window: '30d' })
+    await getParameters('release / 1')
+    await getParameterChanges('release / 1', 75)
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/insights/v1/protocol/releases/current',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/overview',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/transactions/0xhash%2Fvalue',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/orders/order%20%2F%209',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/house-pool',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/tranches/senior%20%2F%20one',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/tranches/junior%20%2F%20one/history?limit=500',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/keepers?window=24h&limit=100',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/keepers/0xkeeper%2Fvalue?window=30d&limit=100',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/wallets?window=24h&limit=100',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/wallets/0xwallet%2Fvalue?window=30d&limit=100',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/parameters',
+      '/api/insights/v1/protocol/releases/release%20%2F%201/parameter-changes?limit=75',
+    ])
+  })
+
+  it('forwards opaque cursors for tranche, keeper, and parameter-change pages', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(new Response(JSON.stringify({}), { status: 200 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getTrancheHistory('release-1', 'senior', {
+      limit: 25,
+      cursor: 'pc2 tranche/cursor',
+    })
+    await getKeeper('release-1', '0xkeeper', {
+      window: '24h',
+      limit: 40,
+      cursor: 'pc2 keeper/cursor',
+    })
+    await getKeepers('release-1', {
+      window: '30d',
+      limit: 20,
+      cursor: 'pc2 keepers/cursor',
+    })
+    await getProtocolWallets('release-1', {
+      window: '24h',
+      limit: 20,
+      cursor: 'pc2 wallets/cursor',
+    })
+    await getProtocolWallet('release-1', '0xwallet', {
+      window: '30d',
+      limit: 40,
+      cursor: 'pc2 wallet/cursor',
+    })
+    await getParameterChanges('release-1', {
+      limit: 75,
+      cursor: 'pc2 governance/cursor',
+    })
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/insights/v1/protocol/releases/release-1/tranches/senior/history?limit=25&cursor=pc2+tranche%2Fcursor',
+      '/api/insights/v1/protocol/releases/release-1/keepers/0xkeeper?window=24h&limit=40&cursor=pc2+keeper%2Fcursor',
+      '/api/insights/v1/protocol/releases/release-1/keepers?window=30d&limit=20&cursor=pc2+keepers%2Fcursor',
+      '/api/insights/v1/protocol/releases/release-1/wallets?window=24h&limit=20&cursor=pc2+wallets%2Fcursor',
+      '/api/insights/v1/protocol/releases/release-1/wallets/0xwallet?window=30d&limit=40&cursor=pc2+wallet%2Fcursor',
+      '/api/insights/v1/protocol/releases/release-1/parameter-changes?limit=75&cursor=pc2+governance%2Fcursor',
+    ])
+  })
+
+  it('normalizes operational wallet liveness telemetry without inventing unavailable identities', async () => {
+    const address = '0x1111111111111111111111111111111111111111'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      releaseId: 'release-1',
+      chainId: '421614',
+      confirmedBlock: {
+        number: '123',
+        hash: `0x${'1'.repeat(64)}`,
+        timestamp: 1_785_000_000,
+      },
+      indexerTimestamp: 1_785_000_010,
+      calculationVersion: 'protocol-transparency-v1',
+      evidence: { wallets: { level: 'mixed' } },
+      availability: [{
+        field: 'wallets.oracleUpdater',
+        reason: 'oracle_updater_identity_not_published_by_current_release',
+      }],
+      wallets: {
+        window: '24h',
+        windowStart: 1_784_913_600,
+        windowEnd: 1_785_000_000,
+        definition: 'Public release-scoped operational wallets.',
+        wallets: [{
+          address,
+          roles: ['governance_executor'],
+          roleSources: [{ role: 'governance_executor', source: 'release_manifest' }],
+          status: 'critical',
+          nativeBalanceWei: '9000000000000000',
+          observedGasCostWei: '3000000000000000',
+          observedTransactionNativeValueWei: '1000000000000000',
+          observedActionCount: '3',
+          observedTransactionCount: '2',
+          medianObservedSuccessfulActionNativeOutlayWei: '1000000000000000',
+          estimatedActionsRemaining: '9',
+          runwayFormula: {
+            formulaIdentifier: 'native_balance_div_median_outlay_v1',
+            calculationVersion: 'protocol-transparency-v1',
+            expression: 'balance / median outlay',
+            sampleCount: '2',
+          },
+          lastActivityTimestamp: 1_784_999_900,
+          evidence: { level: 'derived' },
+          availability: [],
+        }],
+        nextCursor: null,
+        units: { nativeBalanceWei: 'wei' },
+      },
+    })))
+
+    const response = await getProtocolWallets('release-1', { window: '24h' })
+    expect(response.wallets).toMatchObject({
+      window: '24h',
+      windowStart: 1_784_913_600,
+      oracleUpdaterIdentityAvailable: null,
+      items: [{
+        address,
+        roles: ['governance_executor'],
+        status: 'critical',
+        nativeBalanceWei: '9000000000000000',
+        observedGasCostWei: '3000000000000000',
+        observedTransactionNativeValueWei: '1000000000000000',
+        observedTransactionCount: '2',
+        estimatedTransactionsAtObservedGrossSpend: '9',
+        medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei: '1000000000000000',
+        runwayFormula: {
+          formulaIdentifier: 'native_balance_div_median_outlay_v1',
+          sampleCount: '2',
+        },
+      }],
+    })
+    expect(response.availability).toContainEqual({
+      field: 'wallets.oracleUpdater',
+      reason: 'oracle_updater_identity_not_published_by_current_release',
+    })
+  })
+
+  it('flattens operational wallet detail while preserving raw action and receipt evidence', async () => {
+    const address = '0x1111111111111111111111111111111111111111'
+    const transactionHash = `0x${'a'.repeat(64)}`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      releaseId: 'release-1',
+      chainId: '421614',
+      confirmedBlock: {
+        number: '123',
+        hash: `0x${'1'.repeat(64)}`,
+        timestamp: 1_785_000_000,
+      },
+      indexerTimestamp: 1_785_000_010,
+      calculationVersion: 'protocol-transparency-v1',
+      evidence: { wallet: 'mixed_exact_and_derived' },
+      availability: [],
+      wallet: {
+        address,
+        roles: ['oracle_updater'],
+        roleSources: [{ role: 'oracle_updater', source: 'release_manifest_public_registry' }],
+        status: 'warning',
+        balances: { nativeBalanceWei: '90000000000000000' },
+        activitySummary: {
+          observedActionCount: '4',
+          observedTransactionCount: '3',
+          observedGasCostWei: '3000000000000000',
+          observedTransactionNativeValueWei: '1000000000000000',
+          lastActivityTimestamp: 1_784_999_900,
+        },
+        runway: {
+          estimatedTransactionsAtObservedGrossSpend: '90',
+          medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei: '1000000000000000',
+          formulaIdentifier: 'operational_wallet.available_native_gross_spend.v1',
+          calculationVersion: 'operational-wallet-gross-spend-v1',
+          estimateKind: 'conservative_observed_gross_spend_diagnostic',
+          expression: 'floor(balance / median gross spend)',
+          sampleCount: '3',
+        },
+        actions: [{
+          actionId: 'action-1',
+          transactionHash,
+          timestamp: 1_784_999_900,
+          actionType: 'mark_update',
+          outcome: 'success',
+          gasCostWei: '900000000000000',
+          transactionNativeValueWei: null,
+          evidence: { level: 'partial' },
+          transactionEvidence: { level: 'exact_receipt' },
+          availability: [],
+          transactionAvailability: [{
+            field: 'transaction.nativeValueWei',
+            reason: 'transaction_native_value_unavailable',
+          }],
+        }],
+        nextCursor: null,
+        evidence: { runway: { level: 'derived' } },
+        availability: [],
+      },
+    })))
+
+    const response = await getProtocolWallet('release-1', address, { window: '7d' })
+    expect(response.wallet).toMatchObject({
+      address,
+      roles: ['oracle_updater'],
+      nativeBalanceWei: '90000000000000000',
+      observedActionCount: '4',
+      observedTransactionCount: '3',
+      estimatedTransactionsAtObservedGrossSpend: '90',
+      lastActivityTimestamp: 1_784_999_900,
+      lastActivityTransactionHash: transactionHash,
+      activity: [{
+        activityId: 'action-1',
+        transactionHash,
+        gasCostWei: '900000000000000',
+        nativeValueWei: null,
+        evidence: {
+          action: { level: 'partial' },
+          transaction: { level: 'exact_receipt' },
+        },
+        availability: [{
+          field: 'transaction.nativeValueWei',
+          reason: 'transaction_native_value_unavailable',
+        }],
+      }],
+    })
+  })
+
+  it('encodes transaction filters and forwards pagination', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getProtocolTransactions('release-1', {
+      actionType: 'order execution',
+      outcome: 'success',
+      address: '0xparticipant',
+      account: '0xaccount',
+      keeper: '0xkeeper',
+      contract: '0xcontract',
+      transactionHash: '0xhash',
+      from: '2026-07-01',
+      to: '2026-07-31',
+      limit: 25,
+      cursor: 'v1.block/log',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/insights/v1/protocol/releases/release-1/transactions?limit=25&actionType=order+execution&outcome=success&address=0xparticipant&account=0xaccount&keeper=0xkeeper&contract=0xcontract&transactionHash=0xhash&from=2026-07-01&to=2026-07-31&cursor=v1.block%2Flog',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    )
   })
 
   it('keeps raw basket accounting for notionals while displaying the plDXY price', async () => {

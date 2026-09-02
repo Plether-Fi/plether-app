@@ -12,19 +12,36 @@ module Plether.Perps.HistoryIndexer
   , runPerpsIndexer
   , perpsEventTopics
   , parsePerpsLog
+  , parsePerpsLogForAddresses
   , parseUsdcTransfer
   , transferTopic
   , RpcLog (..)
   , BlockInfo (..)
+  , TransactionIdentity (..)
+  , TransactionInfo (..)
+  , bindTransactionInfoToLog
+  , transactionInfoFromRpcResults
   , ParsedPerpsLog (..)
+  , ProtocolLogClassification (..)
+  , classifyProtocolLog
+  , classifyProtocolLogForAddresses
+  , snapshotContractAddress
+  , snapshotCallData
+  , snapshotEthCallParams
+  , snapshotReadFromRpcResult
+  , accountSnapshotTargets
+  , orderFailReasonName
+  , terminalStatus
+  , findNewestCommonCheckpoint
+  , cursorBlockMatchesCanonical
+  , canAdvanceCompletenessCursor
+  , checkpointBlockNumbers
   , TradeCosts (..)
   , validateRpcLogBlockHash
   , decodeOpenTradeCosts
   , decodeCloseTradeCosts
   , decodeReplayTradeCosts
   , replayPreviewCallData
-  , orderFailReasonName
-  , terminalStatus
   , isMarketVolumeActivity
   , canCertifyIndexedRange
   , validateIndexedBoundary
@@ -37,6 +54,7 @@ module Plether.Perps.HistoryIndexer
   , validateReplayStateUnchanged
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (forM, forM_, forever, unless, when)
@@ -44,18 +62,22 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import Data.Aeson.Types (Pair)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.Char (isHexDigit)
 import Data.Foldable (toList)
+import Data.Function (on)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (sortOn)
+import Data.List (find, nubBy, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, isJust)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Ord (Down (..))
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Network.HTTP.Client
@@ -69,6 +91,16 @@ import Network.HTTP.Client
   )
 import Plether.Config (PerpsCandleWriteMode (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.Protocol
+  ( deleteProtocolBlockCheckpointsFromBlock
+  , deleteProtocolLedgerFromBlock
+  , getProtocolBlockCheckpointsDescending
+  , getProtocolIndexerCursor
+  , insertProtocolLedgerEntry
+  , setProtocolIndexerCursor
+  , upsertProtocolBlockCheckpoints
+  , upsertProtocolStateSnapshot
+  )
 import Plether.Database.Insights (invalidateCompetitionSnapshotsForReleaseRebuild)
 import Plether.Database.Candles
   ( RollupCoverage (..)
@@ -115,6 +147,41 @@ import Plether.Ethereum.Client (EthClient (..), RpcError)
 import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
+import Plether.Protocol.Governance
+  ( DecodedGovernanceField (..)
+  , DecodedGovernanceEvent (..)
+  , GovernanceCategory (..)
+  , GovernanceCategoryDefinition (..)
+  , GovernanceContractRole (..)
+  , GovernanceDecodeError (..)
+  , GovernanceDecodedValue (..)
+  , GovernanceEventDefinition (..)
+  , GovernanceField (..)
+  , GovernanceFieldType (..)
+  , GovernanceLifecycle (..)
+  , GovernanceRoleEventDefinition (..)
+  , decodeGovernanceEvent
+  , governanceCategoryDefinitions
+  , governanceContractRoleKey
+  , governanceRoleEvents
+  )
+import Plether.Protocol.Snapshots
+  ( SnapshotArgument (..)
+  , SnapshotBuildContext (..)
+  , SnapshotCallPlan (..)
+  , SnapshotContract (..)
+  , SnapshotDocument (..)
+  , SnapshotPlan (..)
+  , SnapshotRead (..)
+  , SnapshotSourceBlock (..)
+  , SnapshotUnavailable (..)
+  , buildSnapshot
+  , accountLedgerSnapshotPlan
+  , globalSnapshotPlans
+  , snapshotAvailabilityToJson
+  , snapshotDocumentToJson
+  )
+import Plether.Utils.Address (isValidAddress)
 import Plether.Perps.IndexerOptions (ReplayOptions (..), validateReplayOptions)
 import Plether.Perps.Release (validatePerpsV2ReleaseConfig)
 import Plether.Perps.ExecutionOracle
@@ -134,12 +201,19 @@ import System.Timeout (timeout)
 data PerpsAddresses = PerpsAddresses
   { paUsdc :: Text
   , paOrderRouter :: Text
+  , paOrderRouterAdmin :: Text
   , paOrderLifecycleBook :: Maybe Text
   , paCfdEngine :: Text
+  , paCfdEngineAdmin :: Text
   , paCfdEngineLens :: Text
   , paCfdEngineSettlementSidecar :: Text
   , paMarginClearinghouse :: Text
   , paPletherOracle :: Text
+  , paAccountLens :: Text
+  , paPublicLens :: Text
+  , paHousePool :: Text
+  , paSeniorVault :: Text
+  , paJuniorVault :: Text
   }
   deriving stock (Show, Eq)
 
@@ -148,12 +222,19 @@ defaultPerpsAddresses =
   PerpsAddresses
     { paUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , paOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , paOrderRouterAdmin = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
     , paOrderLifecycleBook = Just "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
     , paCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+    , paCfdEngineAdmin = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
     , paCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , paCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
     , paMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
     , paPletherOracle = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
+    , paAccountLens = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+    , paPublicLens = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+    , paHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , paSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , paJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     }
 
 perpsIndexerName :: Text
@@ -183,11 +264,15 @@ applyPerpsAddressEnvironment addressDefaults env =
   addressDefaults
     { paUsdc = addressOverride "PERPS_USDC" $ paUsdc addressDefaults
     , paOrderRouter = addressOverride "PERPS_ORDER_ROUTER" $ paOrderRouter addressDefaults
+    , paOrderRouterAdmin =
+        addressOverride "PERPS_ORDER_ROUTER_ADMIN" $ paOrderRouterAdmin addressDefaults
     , paOrderLifecycleBook =
         case lookup "PERPS_ORDER_LIFECYCLE_BOOK" env of
           Nothing -> paOrderLifecycleBook addressDefaults
           Just value -> Just $ T.pack value
     , paCfdEngine = addressOverride "PERPS_CFD_ENGINE" $ paCfdEngine addressDefaults
+    , paCfdEngineAdmin =
+        addressOverride "PERPS_CFD_ENGINE_ADMIN" $ paCfdEngineAdmin addressDefaults
     , paCfdEngineLens = addressOverride "PERPS_CFD_ENGINE_LENS" $ paCfdEngineLens addressDefaults
     , paCfdEngineSettlementSidecar =
         addressOverride
@@ -198,6 +283,11 @@ applyPerpsAddressEnvironment addressDefaults env =
           "PERPS_MARGIN_CLEARINGHOUSE"
           (paMarginClearinghouse addressDefaults)
     , paPletherOracle = addressOverride "PERPS_PLETHER_ORACLE" $ paPletherOracle addressDefaults
+    , paAccountLens = addressOverride "PERPS_ACCOUNT_LENS" $ paAccountLens addressDefaults
+    , paPublicLens = addressOverride "PERPS_PUBLIC_LENS" $ paPublicLens addressDefaults
+    , paHousePool = addressOverride "PERPS_HOUSE_POOL" $ paHousePool addressDefaults
+    , paSeniorVault = addressOverride "PERPS_SENIOR_VAULT" $ paSeniorVault addressDefaults
+    , paJuniorVault = addressOverride "PERPS_JUNIOR_VAULT" $ paJuniorVault addressDefaults
     }
  where
   addressOverride name fallback =
@@ -233,6 +323,8 @@ data PerpsIndexerConfig = PerpsIndexerConfig
   { picRpcUrls :: [Text]
   , picTraceApiUrl :: Maybe Text
   , picChainId :: Integer
+  , picReleaseId :: Text
+  , picCalculationVersion :: Text
   , picAddresses :: PerpsAddresses
   , picStartBlock :: Integer
   , picConfirmations :: Integer
@@ -265,12 +357,45 @@ data BlockInfo = BlockInfo
   }
   deriving stock (Show, Eq)
 
+-- | The fields that bind a transaction or receipt response to one canonical
+-- block. They are kept separate from the transaction facts so unbound RPC
+-- payloads can never be mistaken for exact ledger evidence.
+data TransactionIdentity = TransactionIdentity
+  { txiHash :: Text
+  , txiBlockNumber :: Integer
+  , txiBlockHash :: Text
+  , txiTransactionIndex :: Integer
+  }
+  deriving stock (Show, Eq)
+
 data TransactionInfo = TransactionInfo
-  { tiHash :: Text
-  , tiFrom :: Text
-  , tiTo :: Text
-  , tiBlockHash :: Text
-  , tiInput :: ByteString
+  { tiFrom :: Maybe Text
+  , tiTo :: Maybe Text
+  , tiSelector :: Maybe Text
+  , tiInput :: Maybe Text
+  , tiNativeValue :: Maybe Integer
+  , tiStatus :: Text
+  , tiGasUsed :: Maybe Integer
+  , tiEffectiveGasPrice :: Maybe Integer
+  , tiTransactionIdentity :: Maybe TransactionIdentity
+  , tiReceiptIdentity :: Maybe TransactionIdentity
+  , tiReceiptLogs :: Maybe [RpcLog]
+  , tiAvailability :: [Value]
+  , tiTransactionAvailable :: Bool
+  , tiReceiptAvailable :: Bool
+  , tiEvidence :: Value
+  }
+  deriving stock (Show, Eq)
+
+-- | Minimal canonical transaction facts used by bounded replay and optional
+-- execution-evidence enrichment. Protocol ledger ingestion uses the richer
+-- 'TransactionInfo' above so missing receipt fields remain explicit.
+data ExecutionTransactionInfo = ExecutionTransactionInfo
+  { etiHash :: Text
+  , etiFrom :: Text
+  , etiTo :: Text
+  , etiBlockHash :: Text
+  , etiInput :: ByteString
   }
   deriving stock (Show, Eq)
 
@@ -283,6 +408,19 @@ data ParsedPerpsLog
   | ParsedPositionActivity Text Text Int (Maybe Integer) (Maybe Integer) (Maybe Integer) (Maybe Integer) Value
   | ParsedMarginActivity Text Text Integer Value
   | ParsedUsdcTransfer Text Text Integer Value
+  deriving stock (Show, Eq)
+
+-- | Release-wide events that can be decoded without relying on a
+-- deployment-specific ABI. Any log not matching one of these signatures is
+-- still retained in the immutable ledger as an explicit unclassified event.
+data ProtocolLogClassification = ProtocolLogClassification
+  { plcEventName :: Text
+  , plcActionType :: Text
+  , plcAccount :: Maybe Text
+  , plcPayload :: Value
+  , plcDecoded :: Bool
+  , plcAvailability :: [Value]
+  }
   deriving stock (Show, Eq)
 
 data TradeCosts = TradeCosts
@@ -335,6 +473,138 @@ depositTopic = keccak256Text "Deposit(address,address,uint256)"
 
 withdrawTopic :: ByteString
 withdrawTopic = keccak256Text "Withdraw(address,address,uint256)"
+
+erc4626DepositTopic :: ByteString
+erc4626DepositTopic = keccak256Text "Deposit(address,address,uint256,uint256)"
+
+erc4626WithdrawTopic :: ByteString
+erc4626WithdrawTopic = keccak256Text "Withdraw(address,address,address,uint256,uint256)"
+
+-- | The Solidity event signature alone does not prove that the remaining log
+-- shape matches the deployed ABI. Keep these shapes next to the topics so
+-- every current-release decoder rejects truncated and extended payloads,
+-- non-canonical indexed words, and narrow integers with dirty high bits.
+data StaticLogShape = StaticLogShape
+  { slsTopicCount :: Int
+  , slsDataWordCount :: Int
+  , slsIndexedAddresses :: [Int]
+  , slsIndexedUintWidths :: [(Int, Int)]
+  , slsDataUintWidths :: [(Int, Int)]
+  }
+
+orderCommittedShape :: StaticLogShape
+orderCommittedShape =
+  StaticLogShape
+    { slsTopicCount = 3
+    , slsDataWordCount = 1
+    , slsIndexedAddresses = [2]
+    , slsIndexedUintWidths = [(1, 64)]
+    , slsDataUintWidths = [(0, 8)]
+    }
+
+intentRegisteredShape :: StaticLogShape
+intentRegisteredShape =
+  StaticLogShape
+    { slsTopicCount = 4
+    , slsDataWordCount = 20
+    , slsIndexedAddresses = [2]
+    , slsIndexedUintWidths = [(1, 64)]
+    , slsDataUintWidths = [(3, 8), (7, 1), (8, 64), (9, 8), (19, 32)]
+    }
+
+orderFinalizedShape :: StaticLogShape
+orderFinalizedShape =
+  StaticLogShape
+    { slsTopicCount = 4
+    , slsDataWordCount = 46
+    , slsIndexedAddresses = [2]
+    , slsIndexedUintWidths = [(1, 64)]
+    , slsDataUintWidths =
+        [ (1, 64)
+        , (2, 64)
+        , (3, 64)
+        , (9, 8)
+        , (10, 8)
+        , (11, 8)
+        , (13, 8)
+        , (17, 64)
+        , (18, 1)
+        , (21, 8)
+        , (23, 8)
+        , (24, 8)
+        , (25, 8)
+        ]
+    }
+
+orderExecutedShape :: StaticLogShape
+orderExecutedShape =
+  StaticLogShape
+    { slsTopicCount = 2
+    , slsDataWordCount = 1
+    , slsIndexedAddresses = []
+    , slsIndexedUintWidths = [(1, 64)]
+    , slsDataUintWidths = []
+    }
+
+orderFailedShape :: StaticLogShape
+orderFailedShape =
+  StaticLogShape
+    { slsTopicCount = 2
+    , slsDataWordCount = 1
+    , slsIndexedAddresses = []
+    , slsIndexedUintWidths = [(1, 64)]
+    , slsDataUintWidths = [(0, 8)]
+    }
+
+positionShape :: StaticLogShape
+positionShape =
+  StaticLogShape
+    { slsTopicCount = 2
+    , slsDataWordCount = 4
+    , slsIndexedAddresses = [1]
+    , slsIndexedUintWidths = []
+    , slsDataUintWidths = [(0, 8)]
+    }
+
+singleAccountAmountShape :: StaticLogShape
+singleAccountAmountShape =
+  StaticLogShape
+    { slsTopicCount = 2
+    , slsDataWordCount = 1
+    , slsIndexedAddresses = [1]
+    , slsIndexedUintWidths = []
+    , slsDataUintWidths = []
+    }
+
+marginTransferShape :: StaticLogShape
+marginTransferShape =
+  StaticLogShape
+    { slsTopicCount = 3
+    , slsDataWordCount = 1
+    , slsIndexedAddresses = [1, 2]
+    , slsIndexedUintWidths = []
+    , slsDataUintWidths = []
+    }
+
+erc4626DepositShape :: StaticLogShape
+erc4626DepositShape =
+  StaticLogShape
+    { slsTopicCount = 3
+    , slsDataWordCount = 2
+    , slsIndexedAddresses = [1, 2]
+    , slsIndexedUintWidths = []
+    , slsDataUintWidths = []
+    }
+
+erc4626WithdrawShape :: StaticLogShape
+erc4626WithdrawShape =
+  StaticLogShape
+    { slsTopicCount = 4
+    , slsDataWordCount = 2
+    , slsIndexedAddresses = [1, 2, 3]
+    , slsIndexedUintWidths = []
+    , slsDataUintWidths = []
+    }
 
 transferTopic :: ByteString
 transferTopic = keccak256Text "Transfer(address,address,uint256)"
@@ -594,12 +864,12 @@ runBoundedReplay manager pool cfg replayOptions = do
         (parseConfiguredLog cfg logEntry)
     txInfo <-
       requireRpc "eth_getTransactionByHash(replay)" $
-        getReplayTransactionInfo manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+        getReplayExecutionTransactionInfo manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
     unless
-      (normalizeHex (tiHash txInfo) == normalizeHex (rlTxHash logEntry))
+      (normalizeHex (etiHash txInfo) == normalizeHex (rlTxHash logEntry))
       (fail "Replay transaction hash does not match its canonical log")
     unless
-      (normalizeHex (tiBlockHash txInfo) == normalizeHex (rlBlockHash logEntry))
+      (normalizeHex (etiBlockHash txInfo) == normalizeHex (rlBlockHash logEntry))
       (fail "Replay transaction block hash does not match its canonical log")
     tradeCosts <- case parsed of
       ParsedPositionActivity kind _ _ _ _ _ _ _
@@ -612,7 +882,7 @@ runBoundedReplay manager pool cfg replayOptions = do
         { prlLog = logEntry
         , prlBlockInfo = blockInfo
         , prlParsed = parsed
-        , prlTransactionFrom = tiFrom txInfo
+        , prlTransactionFrom = etiFrom txInfo
         , prlTradeCosts = tradeCosts
         }
   let affectedOrderIds =
@@ -821,160 +1091,624 @@ validateReplayStateUnchanged cursorBefore cursorAfter coverageBefore coverageAft
 runOneRange :: Manager -> DbPool -> PerpsIndexerConfig -> Maybe Integer -> Maybe Integer -> IO Bool
 runOneRange manager pool cfg explicitFrom explicitTo = do
   reqIdRef <- newIORef 1
-  currentBlock <- requireRpc "eth_blockNumber" $ getCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
+  currentBlock <-
+    requireRpc "eth_blockNumber" $
+      getCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
   let safeBlock = max 0 (currentBlock - picConfirmations cfg)
   (storedLastBlock, storedLastHash) <- withDb pool $ \conn ->
-    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
+    getProtocolIndexerCursor conn (picReleaseId cfg) (picIndexerName cfg)
   verifyCursor manager pool cfg reqIdRef storedLastBlock storedLastHash
   (lastBlock, _) <- withDb pool $ \conn ->
-    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-  let startBlock = fromMaybe (max (picStartBlock cfg) (lastBlock + 1)) explicitFrom
+    getProtocolIndexerCursor conn (picReleaseId cfg) (picIndexerName cfg)
+  let startBlock =
+        fromMaybe
+          (max (picStartBlock cfg) (lastBlock + 1))
+          explicitFrom
       cappedToBlock = maybe safeBlock (min safeBlock) explicitTo
       endBlock = min cappedToBlock (startBlock + picBatchSize cfg - 1)
   if startBlock > endBlock
     then pure False
     else do
-      logs <- requireRpc "eth_getLogs" $
-        getLogs manager (picRpcUrls cfg) reqIdRef cfg startBlock endBlock
-      forM_ logs $ \logEntry -> do
+      -- Resolve both boundaries plus every event block before the first write.
+      -- This preserves exact log/block identity while retaining checkpoints for
+      -- empty ranges and efficient common-ancestor recovery.
+      rangeEndInfo <-
+        requireRpc "eth_getBlockByNumber(range-end-before)" $
+          getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+      logs <-
+        requireRpc "eth_getLogs" $
+          getLogs manager (picRpcUrls cfg) reqIdRef cfg startBlock endBlock
+      forM_ logs $ \logEntry ->
         either (fail . T.unpack) pure $
-          validateReplayLogScope startBlock endBlock (perpsAddresses cfg) logEntry
-        either (fail . T.unpack) pure $ validateReplayLogAbi logEntry
-        unless (maybe False (const True) $ parseConfiguredLog cfg logEntry) $
-          fail "Allowlisted release log could not be decoded for its configured contract"
+          validateReplayLogScope
+            startBlock
+            endBlock
+            (perpsAddresses cfg)
+            logEntry
       let orderedLogs =
             sortOn
-              (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry))
+              (\logEntry ->
+                ( rlBlockNumber logEntry
+                , rlTxIndex logEntry
+                , rlLogIndex logEntry
+                )
+              )
               logs
-          logBlockNumbers =
-            Map.keys $
-              Map.fromList
-                [ (rlBlockNumber logEntry, ())
-                | logEntry <- orderedLogs
-                ]
-      -- Resolve and validate the complete range before the first database
-      -- write. Reading the end block on both sides of the per-block lookups
-      -- detects a provider/fork switch during this snapshot.
-      endInfoBefore <- requireRpc "eth_getBlockByNumber" $
-        getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
-      blockInfos <- forM logBlockNumbers $ \blockNumber -> do
-        blockInfo <- requireRpc "eth_getBlockByNumber" $
-          getBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+          blockNumbers =
+            checkpointBlockNumbers
+              startBlock
+              endBlock
+              (map rlBlockNumber orderedLogs)
+          txHashesByKey =
+            Map.fromList
+              [ (normalizeHex $ rlTxHash logEntry, rlTxHash logEntry)
+              | logEntry <- orderedLogs
+              ]
+      blockPairs <- forM blockNumbers $ \blockNumber -> do
+        blockInfo <-
+          if blockNumber == endBlock
+            then pure rangeEndInfo
+            else
+              requireRpc "eth_getBlockByNumber(log-or-checkpoint)" $
+                getBlockByNumber
+                  manager
+                  (picRpcUrls cfg)
+                  reqIdRef
+                  blockNumber
         pure (blockNumber, blockInfo)
-      let blockInfoByNumber = Map.fromList blockInfos
-      validatedLogs <- forM orderedLogs $ \logEntry ->
-        case Map.lookup (rlBlockNumber logEntry) blockInfoByNumber of
-          Nothing ->
-            fail $
-              "Missing canonical block metadata for log block "
-                <> show (rlBlockNumber logEntry)
-          Just blockInfo ->
-            case validateRpcLogBlockHash logEntry blockInfo of
-              Left err -> fail $ T.unpack err
-              Right () -> pure (logEntry, blockInfo)
-      endInfo <- requireRpc "eth_getBlockByNumber" $
-        getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+      let blockInfoByNumber = Map.fromList blockPairs
+      forM_ orderedLogs $ \logEntry -> do
+        blockInfo <-
+          maybe
+            (fail "Missing canonical block metadata for monitored log block")
+            pure
+            (Map.lookup (rlBlockNumber logEntry) blockInfoByNumber)
+        either (fail . T.unpack) pure $
+          validateRpcLogBlockHash logEntry blockInfo
+
+      transactionPairs <- forM (Map.toList txHashesByKey) $ \(txKey, txHash) -> do
+        transactionInfo <-
+          getTransactionInfo manager (picRpcUrls cfg) reqIdRef txHash
+        pure (txKey, transactionInfo)
+      let transactionByHash = Map.fromList transactionPairs
+      boundTransactionPairs <- forM orderedLogs $ \logEntry -> do
+        blockInfo <-
+          maybe
+            (fail "Missing canonical block metadata for transaction evidence")
+            pure
+            (Map.lookup (rlBlockNumber logEntry) blockInfoByNumber)
+        transactionInfo <-
+          maybe
+            (fail "Missing transaction evidence for monitored log")
+            pure
+            (Map.lookup (normalizeHex $ rlTxHash logEntry) transactionByHash)
+        boundInfo <-
+          either (fail . T.unpack) pure $
+            bindTransactionInfoToLog blockInfo logEntry transactionInfo
+        pure (logEvidenceKey logEntry, boundInfo)
+      let boundTransactionByLog = Map.fromList boundTransactionPairs
+
+      endInfo <-
+        requireRpc "eth_getBlockByNumber(range-end-after)" $
+          getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
       unless
-        (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
+        (normalizeHex (biHash rangeEndInfo) == normalizeHex (biHash endInfo))
         (fail "Canonical end block changed while validating the fetched log range")
 
-      enrichedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
-        mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+      enrichedLogs <- forM orderedLogs $ \logEntry -> do
+        blockInfo <-
+          maybe
+            (fail "Missing canonical block metadata for enriched log")
+            pure
+            (Map.lookup (rlBlockNumber logEntry) blockInfoByNumber)
+        transactionInfo <-
+          maybe
+            (fail "Missing bound transaction evidence for enriched log")
+            pure
+            (Map.lookup (logEvidenceKey logEntry) boundTransactionByLog)
         let parsedLog = parseConfiguredLog cfg logEntry
         tradeCosts <- case parsedLog of
           Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
             | kind == "Open" || kind == "Close" -> do
-            result <- getTradeCosts manager cfg reqIdRef logEntry parsed
-            case result of
-              Right costs -> pure $ Just costs
-              Left err -> do
-                logWarnEvery
-                  60
-                  "perps_indexer_trade_cost_preview_failed"
-                  "Perps history indexer could not reconstruct optional activity cost metadata"
-                  [ field "tx_hash" $ rlTxHash logEntry
-                  , field "log_index" $ rlLogIndex logEntry
-                  , field "error" err
-                  ]
-                pure Nothing
+                result <- getTradeCosts manager cfg reqIdRef logEntry parsed
+                case result of
+                  Right costs -> pure $ Just costs
+                  Left err -> do
+                    logWarnEvery
+                      60
+                      "perps_indexer_trade_cost_preview_failed"
+                      "Perps history indexer could not reconstruct optional activity cost metadata"
+                      [ field "tx_hash" $ rlTxHash logEntry
+                      , field "log_index" $ rlLogIndex logEntry
+                      , field "error" err
+                      ]
+                    pure Nothing
           _ -> pure Nothing
-        pure (logEntry, blockInfo, mTxFrom, tradeCosts)
-      -- Persist the whole canonical range, its volume rollups, and the cursor
-      -- in one transaction. A failure cannot advance the cursor past missing
-      -- events or leave rollups only partly rebuilt.
-      certifiedCanonicalContinuity <- withDb pool $ \conn -> withTransaction conn $ do
-        lockPerpsIndexerTransaction
-          conn
-          (picChainId cfg)
-          (picIndexerName cfg)
-          (paOrderRouter $ picAddresses cfg)
-        (currentCursor, currentCursorHash) <-
-          getPerpsIndexerLastBlock
+        pure (logEntry, blockInfo, transactionInfo, tradeCosts)
+
+      globalSnapshots <-
+        collectGlobalSnapshots manager cfg reqIdRef endInfo
+      accountSnapshots <-
+        collectAccountSnapshots
+          manager
+          cfg
+          reqIdRef
+          blockInfoByNumber
+          orderedLogs
+
+      (certifiedProtocolContinuity, certifiedLegacyContinuity) <-
+        withDb pool $ \conn -> withTransaction conn $ do
+          let releaseRouter = paOrderRouter $ picAddresses cfg
+          lockPerpsIndexerTransaction
             conn
             (picChainId cfg)
             (picIndexerName cfg)
-            (paOrderRouter $ picAddresses cfg)
-        let certifiesCanonicalContinuity =
-              canCertifyIndexedRange
-                (picStartBlock cfg)
-                currentCursor
-                startBlock
-                endBlock
-        -- Close the gap between the initial cursor verification and commit.
-        -- A certifying append with a persisted boundary hash must still be on
-        -- that same canonical chain immediately before the first write.
-        when certifiesCanonicalContinuity $
-          forM_ currentCursorHash $ \persistedHash -> do
-            boundaryInfo <- requireRpc "eth_getBlockByNumber(cursor-boundary)" $
-              getBlockByNumber manager (picRpcUrls cfg) reqIdRef (startBlock - 1)
-            case validateIndexedBoundary (startBlock - 1) persistedHash boundaryInfo of
-              Left err -> fail $ T.unpack err
-              Right () -> pure ()
-        affectedVolumeTimes <- fmap catMaybes $ forM enrichedLogs $ \(logEntry, blockInfo, mTxFrom, tradeCosts) ->
-          processLog conn cfg blockInfo mTxFrom tradeCosts logEntry
-        -- Rollups are recomputed from the canonical activity table after all
-        -- writes in this range. The batch primitive deduplicates both minutes
-        -- and their overlapping parent buckets, bounding write amplification
-        -- while preserving idempotence when an RPC provider replays a range.
-        let affectedVolumeMinutes =
-              Set.toAscList $
-                Set.fromList $
-                  map (\timestamp -> (timestamp `div` 60) * 60) affectedVolumeTimes
-        when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
-          recomputeMarketVolumeHierarchyBatch
-            conn
-            (picChainId cfg)
-            (paOrderRouter $ picAddresses cfg)
-            affectedVolumeMinutes
-            (picCandleLatenessSeconds cfg)
-          -- Only a range contiguous with the persisted block cursor proves
-          -- that every intervening block was inspected. Explicit historical
-          -- or disjoint replays may repair canonical rows and rollups, but
-          -- must not certify skipped blocks as zero-volume.
-          when certifiesCanonicalContinuity $
-            advanceMarketVolumeCoverage
+            releaseRouter
+          (protocolCursor, protocolCursorHash) <-
+            getProtocolIndexerCursor
+              conn
+              (picReleaseId cfg)
+              (picIndexerName cfg)
+          (legacyCursor, legacyCursorHash) <-
+            getPerpsIndexerLastBlock
               conn
               (picChainId cfg)
-              (paOrderRouter $ picAddresses cfg)
-              (biTimestamp endInfo)
-              0
-        when certifiesCanonicalContinuity $
-          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-            (picStartBlock cfg) endBlock (Just $ biHash endInfo)
-        pure certifiesCanonicalContinuity
+              (picIndexerName cfg)
+              releaseRouter
+          let certifiesProtocolContinuity =
+                canAdvanceCompletenessCursor
+                  (picStartBlock cfg)
+                  protocolCursor
+                  startBlock
+                  endBlock
+              certifiesLegacyContinuity =
+                canCertifyIndexedRange
+                  (picStartBlock cfg)
+                  legacyCursor
+                  startBlock
+                  endBlock
+
+          -- Close the gap between the initial cursor verification and commit.
+          -- A certifying append must still share the persisted boundary hash.
+          when certifiesProtocolContinuity $
+            forM_ protocolCursorHash $ \persistedHash -> do
+              boundaryInfo <-
+                requireRpc "eth_getBlockByNumber(protocol-cursor-boundary)" $
+                  getBlockByNumber
+                    manager
+                    (picRpcUrls cfg)
+                    reqIdRef
+                    (startBlock - 1)
+              either (fail . T.unpack) pure $
+                validateIndexedBoundary
+                  (startBlock - 1)
+                  persistedHash
+                  boundaryInfo
+          when certifiesLegacyContinuity $
+            forM_ legacyCursorHash $ \persistedHash -> do
+              boundaryInfo <-
+                requireRpc "eth_getBlockByNumber(legacy-cursor-boundary)" $
+                  getBlockByNumber
+                    manager
+                    (picRpcUrls cfg)
+                    reqIdRef
+                    (startBlock - 1)
+              either (fail . T.unpack) pure $
+                validateIndexedBoundary
+                  (startBlock - 1)
+                  persistedHash
+                  boundaryInfo
+
+          affectedVolumeTimes <-
+            fmap catMaybes $
+              forM enrichedLogs $
+                \(logEntry, blockInfo, transactionInfo, tradeCosts) -> do
+                  persistProtocolLog
+                    conn
+                    cfg
+                    blockInfo
+                    transactionInfo
+                    logEntry
+                  processLog
+                    conn
+                    cfg
+                    blockInfo
+                    (tiFrom transactionInfo)
+                    tradeCosts
+                    logEntry
+
+          persistGlobalSnapshots conn cfg endInfo globalSnapshots
+          persistAccountSnapshots conn cfg accountSnapshots
+          upsertProtocolBlockCheckpoints
+            conn
+            (picReleaseId cfg)
+            (picIndexerName cfg)
+            [ (blockNumber, biHash blockInfo)
+            | (blockNumber, blockInfo) <- blockPairs
+            ]
+
+          let affectedVolumeMinutes =
+                Set.toAscList $
+                  Set.fromList $
+                    map (\timestamp -> (timestamp `div` 60) * 60) affectedVolumeTimes
+          when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+            recomputeMarketVolumeHierarchyBatch
+              conn
+              (picChainId cfg)
+              releaseRouter
+              affectedVolumeMinutes
+              (picCandleLatenessSeconds cfg)
+            when certifiesLegacyContinuity $
+              advanceMarketVolumeCoverage
+                conn
+                (picChainId cfg)
+                releaseRouter
+                (biTimestamp endInfo)
+                0
+
+          when certifiesProtocolContinuity $
+            setProtocolIndexerCursor
+              conn
+              (picReleaseId cfg)
+              (picIndexerName cfg)
+              endBlock
+              (Just $ biHash endInfo)
+          when certifiesLegacyContinuity $
+            setPerpsIndexerState
+              conn
+              (picChainId cfg)
+              (picIndexerName cfg)
+              releaseRouter
+              (picStartBlock cfg)
+              endBlock
+              (Just $ biHash endInfo)
+          pure (certifiesProtocolContinuity, certifiesLegacyContinuity)
+
       logInfoEvery
         300
         "perps_indexer_progress"
-        "Perps history indexer processed a block range"
+        "Perps history indexer processed a confirmed block range"
         [ field "from_block" startBlock
         , field "to_block" endBlock
         , field "safe_head_block" safeBlock
         , field "event_count" $ length orderedLogs
-        , field "canonical_progress_certified" certifiedCanonicalContinuity
+        , field "canonical_progress_certified" certifiedProtocolContinuity
+        , field "legacy_progress_certified" certifiedLegacyContinuity
         , field "indexed_through_timestamp" $ biTimestamp endInfo
         ]
       pure True
 
+-- | Collect every release-global snapshot at the confirmed range-end block.
+-- Calls are deliberately independent: an unavailable archive read affects only
+-- its own fields and never prevents event ingestion or the remaining reads.
+collectGlobalSnapshots
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> BlockInfo
+  -> IO [SnapshotDocument]
+collectGlobalSnapshots manager cfg reqIdRef blockInfo =
+  forM globalSnapshotPlans $
+    collectSnapshotDocument manager cfg reqIdRef blockInfo
+
+-- | Collect one account-ledger snapshot for each distinct trading account and
+-- confirmed block affected by this range. Targets are planned before any RPC
+-- reads, so multiple logs for the same account in one block still issue only
+-- one AccountLens call.
+collectAccountSnapshots
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> Map.Map Integer BlockInfo
+  -> [RpcLog]
+  -> IO [(BlockInfo, SnapshotDocument)]
+collectAccountSnapshots manager cfg reqIdRef blockCache logs =
+  forM (accountSnapshotTargets (picAddresses cfg) logs) $
+    \(blockNumber, account) -> do
+      blockInfo <-
+        maybe
+          (fail "Indexer block cache is missing an account snapshot block")
+          pure
+          (Map.lookup blockNumber blockCache)
+      document <-
+        collectSnapshotDocument
+          manager
+          cfg
+          reqIdRef
+          blockInfo
+          (accountLedgerSnapshotPlan account)
+      pure (blockInfo, document)
+
+collectSnapshotDocument
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> BlockInfo
+  -> SnapshotPlan
+  -> IO SnapshotDocument
+collectSnapshotDocument manager cfg reqIdRef blockInfo plan = do
+  snapshotReads <-
+    forM (spCalls plan) $
+      collectSnapshotRead manager cfg reqIdRef blockInfo
+  pure $
+    buildSnapshot
+      SnapshotBuildContext
+        { sbcReleaseId = picReleaseId cfg
+        , sbcCalculationVersion = picCalculationVersion cfg
+        , sbcSourceBlock =
+            SnapshotSourceBlock
+              { ssbNumber = biNumber blockInfo
+              , ssbHash = Just $ biHash blockInfo
+              , ssbTimestamp = Just $ biTimestamp blockInfo
+              }
+        }
+      plan
+      snapshotReads
+
+collectSnapshotRead
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> BlockInfo
+  -> SnapshotCallPlan
+  -> IO SnapshotRead
+collectSnapshotRead manager cfg reqIdRef blockInfo callPlan =
+  case snapshotContractAddress (picAddresses cfg) (scpContract callPlan) of
+    Nothing ->
+      pure $
+        unavailableSnapshotRead callPlan "release_contract_unavailable"
+    Just contractAddress ->
+      case snapshotCallData callPlan of
+        Left failure ->
+          pure SnapshotRead
+            { srCallId = scpId callPlan
+            , srResult = Left failure
+            }
+        Right callData -> do
+          rpcResult <-
+            rpcCallAny
+              manager
+              (picRpcUrls cfg)
+              reqIdRef
+              "eth_call"
+              (snapshotEthCallParams contractAddress callData blockInfo)
+          pure $ snapshotReadFromRpcResult callPlan rpcResult
+
+-- | Build an EIP-1898 canonical block-hash request for a snapshot read.
+-- Pinning the call to the already-resolved range-end hash prevents a provider
+-- from resolving a numeric block tag against a different fork.
+snapshotEthCallParams :: Text -> ByteString -> BlockInfo -> [Value]
+snapshotEthCallParams contractAddress callData blockInfo =
+  [ object
+      [ "to" .= contractAddress
+      , "data" .= ("0x" <> bytesToHex callData)
+      ]
+  , object
+      [ "blockHash" .= biHash blockInfo
+      , "requireCanonical" .= True
+      ]
+  ]
+
+persistGlobalSnapshots
+  :: Connection
+  -> PerpsIndexerConfig
+  -> BlockInfo
+  -> [SnapshotDocument]
+  -> IO ()
+persistGlobalSnapshots conn cfg blockInfo =
+  mapM_ $ persistSnapshotAtBlock conn cfg blockInfo
+
+persistAccountSnapshots
+  :: Connection
+  -> PerpsIndexerConfig
+  -> [(BlockInfo, SnapshotDocument)]
+  -> IO ()
+persistAccountSnapshots conn cfg =
+  mapM_ $ \(blockInfo, document) ->
+    persistSnapshotAtBlock conn cfg blockInfo document
+
+persistSnapshotAtBlock
+  :: Connection
+  -> PerpsIndexerConfig
+  -> BlockInfo
+  -> SnapshotDocument
+  -> IO ()
+persistSnapshotAtBlock conn cfg blockInfo document =
+  upsertProtocolStateSnapshot
+    conn
+    (picReleaseId cfg)
+    (sdScope document)
+    (biNumber blockInfo)
+    (biHash blockInfo)
+    (biTimestamp blockInfo)
+    (snapshotDocumentToJson document)
+    (Aeson.toJSON $ map snapshotAvailabilityToJson $ sdAvailability document)
+    (picCalculationVersion cfg)
+
+-- | Plan one AccountLens read per canonical @(block, trading account)@ pair.
+-- The account field on governance and tranche actions has a different meaning,
+-- so only actions that can mutate the trading ledger are eligible.
+accountSnapshotTargets
+  :: PerpsAddresses
+  -> [RpcLog]
+  -> [(Integer, Text)]
+accountSnapshotTargets addresses =
+  Set.toAscList . Set.fromList . catMaybes . map targetForLog
+  where
+    targetForLog logEntry = do
+      (actionType, account) <-
+        case parsePerpsLogForAddresses addresses logEntry of
+          Just parsedEvent -> do
+            affectedAccount <- parsedAccount parsedEvent
+            pure (fst $ parsedAction parsedEvent, affectedAccount)
+          Nothing -> do
+            classified <- classifyProtocolLogForAddresses addresses logEntry
+            affectedAccount <- plcAccount classified
+            pure (plcActionType classified, affectedAccount)
+      if actionType `Set.member` accountLedgerActionTypes
+          && isValidAddress account
+        then Just (rlBlockNumber logEntry, T.toLower account)
+        else Nothing
+
+accountLedgerActionTypes :: Set.Set Text
+accountLedgerActionTypes =
+  Set.fromList
+    [ "order_commitment"
+    , "order_execution"
+    , "order_cleanup"
+    , "position_open"
+    , "position_close"
+    , "position_change"
+    , "liquidation"
+    , "margin_add"
+    , "margin_deposit"
+    , "margin_withdraw"
+    ]
+
+-- | Resolve a versioned snapshot plan's symbolic contract against the release
+-- addresses supplied to this indexer.
+snapshotContractAddress
+  :: PerpsAddresses
+  -> SnapshotContract
+  -> Maybe Text
+snapshotContractAddress addresses (ReleaseContract contractName) =
+  case contractName of
+    "orderRouter" -> present $ paOrderRouter addresses
+    "orderLifecycleBook" -> paOrderLifecycleBook addresses >>= present
+    "orderRouterAdmin" -> present $ paOrderRouterAdmin addresses
+    "cfdEngine" -> present $ paCfdEngine addresses
+    "cfdEngineAdmin" -> present $ paCfdEngineAdmin addresses
+    "marginClearinghouse" -> present $ paMarginClearinghouse addresses
+    "pletherOracle" -> present $ paPletherOracle addresses
+    "accountLens" -> present $ paAccountLens addresses
+    "publicLens" -> present $ paPublicLens addresses
+    "housePool" -> present $ paHousePool addresses
+    "seniorVault" -> present $ paSeniorVault addresses
+    "juniorVault" -> present $ paJuniorVault addresses
+    _ -> Nothing
+  where
+    present address
+      | isValidAddress address = Just address
+      | otherwise = Nothing
+
+-- | Encode a snapshot call without permitting malformed addresses or values to
+-- be silently coerced into valid-looking ABI words.
+snapshotCallData
+  :: SnapshotCallPlan
+  -> Either SnapshotUnavailable ByteString
+snapshotCallData callPlan =
+  encodeCall (scpSignature callPlan) <$> traverse encodeArgument (scpArguments callPlan)
+  where
+    encodeArgument = \case
+      UintArgument value
+        | value >= 0 && value < twoTo256 ->
+            Right $ encodeUint256 value
+        | otherwise ->
+            Left $
+              snapshotUnavailable "invalid_snapshot_uint_argument"
+      AddressArgument address
+        | isValidAddress address ->
+            Right $ encodeAddress address
+        | otherwise ->
+            Left $
+              snapshotUnavailable "invalid_snapshot_address_argument"
+
+-- | Convert a raw provider response into the evidence model. Provider errors,
+-- archive gaps, and malformed JSON-RPC payloads intentionally collapse to one
+-- public reason with no provider URL, node message, or internal error detail.
+snapshotReadFromRpcResult
+  :: SnapshotCallPlan
+  -> Either Text Value
+  -> SnapshotRead
+snapshotReadFromRpcResult callPlan rpcResult =
+  SnapshotRead
+    { srCallId = scpId callPlan
+    , srResult =
+        case rpcResult of
+          Right (String hexResult) ->
+            maybe
+              (Left archiveUnavailable)
+              Right
+              (decodeRpcHexResult hexResult)
+          _ -> Left archiveUnavailable
+    }
+  where
+    archiveUnavailable =
+      snapshotUnavailable "archive_state_unavailable"
+
+unavailableSnapshotRead :: SnapshotCallPlan -> Text -> SnapshotRead
+unavailableSnapshotRead callPlan reason =
+  SnapshotRead
+    { srCallId = scpId callPlan
+    , srResult = Left $ snapshotUnavailable reason
+    }
+
+snapshotUnavailable :: Text -> SnapshotUnavailable
+snapshotUnavailable reason =
+  SnapshotUnavailable
+    { suReason = reason
+    , suDetail = Nothing
+    }
+
+decodeRpcHexResult :: Text -> Maybe ByteString
+decodeRpcHexResult value
+  | not (T.isPrefixOf "0x" value || T.isPrefixOf "0X" value) = Nothing
+  | odd $ T.length digits = Nothing
+  | not $ T.all isHexDigit digits = Nothing
+  | otherwise =
+      either (const Nothing) Just $
+        B16.decode $
+          TE.encodeUtf8 $
+            T.toLower digits
+  where
+    digits = T.drop 2 value
+
+twoTo256 :: Integer
+twoTo256 = 2 ^ (256 :: Int)
+
+-- | A completeness cursor may certify only a range that starts at the release
+-- floor or directly after the previously certified block. Bounded repair
+-- backfills can still populate idempotent projections and checkpoints, but a
+-- gap can never advance either the protocol or legacy cursor.
+canAdvanceCompletenessCursor
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Bool
+canAdvanceCompletenessCursor deploymentBlock currentCursor rangeStart rangeEnd =
+  rangeEnd >= rangeStart
+    && rangeStart == max deploymentBlock (currentCursor + 1)
+
+-- | Persist both range boundaries plus every block that emitted a monitored
+-- log. Boundaries keep empty ranges recoverable; event blocks make the common
+-- ancestor walk precise around protocol activity.
+checkpointBlockNumbers :: Integer -> Integer -> [Integer] -> [Integer]
+checkpointBlockNumbers rangeStart rangeEnd observedLogBlocks =
+  Set.toAscList $
+    Set.insert rangeStart $
+      Set.insert rangeEnd $
+        Set.fromList observedLogBlocks
+
+-- | Walk stored checkpoints newest-first and return the newest one whose hash
+-- still matches the canonical chain. Resolver failures are skipped so one
+-- unavailable archive block does not hide an older verifiable ancestor.
+findNewestCommonCheckpoint
+  :: Monad m
+  => (Integer -> m (Either e Text))
+  -> [(Integer, Text)]
+  -> m (Maybe (Integer, Text))
+findNewestCommonCheckpoint resolve =
+  go . sortOn (Down . fst)
+  where
+    go [] = pure Nothing
+    go ((blockNumber, storedHash) : remaining) = do
+      canonicalHash <- resolve blockNumber
+      case canonicalHash of
+        Right currentHash
+          | normalizeHex currentHash == normalizeHex storedHash ->
+              pure $ Just (blockNumber, storedHash)
+        _ -> go remaining
 -- A processed block range may advance canonical state only when it begins at
 -- the exact next block implied by the persisted cursor. The configured start
 -- block is the trusted lower boundary for a fresh or rewound indexer. This
@@ -1011,59 +1745,115 @@ verifyCursor _ _ _ _ 0 _ = pure ()
 verifyCursor _ _ _ _ _ Nothing = pure ()
 verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
   eBlock <- getBlockByNumber manager (picRpcUrls cfg) reqIdRef lastBlock
-  case eBlock of
-    Right blockInfo | normalizeHex (biHash blockInfo) == normalizeHex storedHash -> pure ()
-    Right _ -> rewind
-    Left err ->
-      fail $
-        "Perps indexer could not verify canonical cursor block "
-          <> show lastBlock
-          <> ": "
-          <> show err
+  case cursorBlockMatchesCanonical storedHash eBlock of
+    Right True -> pure ()
+    Right False -> rewindToCommonAncestor
+    Left reason -> do
+      logWarnEvery
+        60
+        "perps_indexer_cursor_verification_failed"
+        "Perps indexer could not verify its cursor block hash; aborting this range"
+        [ field "cursor_block" lastBlock
+        , field "reason" reason
+        ]
+      fail $ T.unpack reason
   where
-    rewind = do
-      -- A mismatch at the cursor proves that some ancestor may also have been
-      -- replaced. We only persist the cursor hash, so the sole correctness-safe
-      -- recovery is to rebuild this release from its configured start block.
-      let rewindBlock = picStartBlock cfg
-          newCursor = max 0 (rewindBlock - 1)
+    rewindToCommonAncestor = do
+      checkpoints <- withDb pool $ \conn ->
+        getProtocolBlockCheckpointsDescending
+          conn
+          (picReleaseId cfg)
+          (picIndexerName cfg)
+          (lastBlock - 1)
+      commonAncestor <-
+        findNewestCommonCheckpoint
+          ( \blockNumber ->
+              fmap (fmap biHash) $
+                getBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+          )
+          (filter ((>= picStartBlock cfg) . fst) checkpoints)
+      let rewindBlock =
+            maybe
+              (picStartBlock cfg)
+              ((+ 1) . fst)
+              commonAncestor
+          newCursor =
+            maybe
+              (max 0 $ picStartBlock cfg - 1)
+              fst
+              commonAncestor
+          newCursorHash = snd <$> commonAncestor
+          releaseRouter = paOrderRouter $ picAddresses cfg
       logWarn
         "perps_indexer_reorg_detected"
-        "Perps indexer detected a block hash mismatch and is rebuilding the release history"
+        "Perps indexer detected a block hash mismatch and rewound to its newest verified checkpoint"
         [ field "mismatch_block" lastBlock
         , field "rewind_to_block" newCursor
+        , field "common_ancestor_found" $ isJust commonAncestor
         ]
       withDb pool $ \conn -> withTransaction conn $ do
         lockPerpsIndexerTransaction
           conn
           (picChainId cfg)
           (picIndexerName cfg)
-          (paOrderRouter $ picAddresses cfg)
+          releaseRouter
         affectedVolumeMinutes <-
           if picCandleWriteMode cfg == PerpsCandleWritesDual
             then
               invalidateMarketVolumeFromBlock
                 conn
                 (picChainId cfg)
-                (paOrderRouter $ picAddresses cfg)
+                releaseRouter
                 rewindBlock
             else pure []
         invalidateCompetitionSnapshotsForReleaseRebuild
           conn
           (picChainId cfg)
-          (paOrderRouter $ picAddresses cfg)
-        deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
-        -- Rebuild while the dataset is still coverage-gated. A minute may now
-        -- be empty because its sole trade was orphaned; recomputing it also
-        -- reconstructs affected parent buckets from retained pre-rewind rows.
+          releaseRouter
+        deletePerpsHistoryFromBlock
+          conn
+          (picChainId cfg)
+          releaseRouter
+          rewindBlock
+        deleteProtocolLedgerFromBlock conn (picReleaseId cfg) rewindBlock
+        deleteProtocolBlockCheckpointsFromBlock
+          conn
+          (picReleaseId cfg)
+          (picIndexerName cfg)
+          rewindBlock
         recomputeMarketVolumeHierarchyBatch
           conn
           (picChainId cfg)
-          (paOrderRouter $ picAddresses cfg)
+          releaseRouter
           affectedVolumeMinutes
           (picCandleLatenessSeconds cfg)
-        setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-          (picStartBlock cfg) newCursor Nothing
+        setProtocolIndexerCursor
+          conn
+          (picReleaseId cfg)
+          (picIndexerName cfg)
+          newCursor
+          newCursorHash
+        setPerpsIndexerState
+          conn
+          (picChainId cfg)
+          (picIndexerName cfg)
+          releaseRouter
+          (picStartBlock cfg)
+          newCursor
+          newCursorHash
+
+-- | Treat an unavailable cursor header as a hard verification failure. The
+-- caller must not append a new range until the existing cursor's canonical
+-- identity has been proven.
+cursorBlockMatchesCanonical
+  :: Text
+  -> Either e BlockInfo
+  -> Either Text Bool
+cursorBlockMatchesCanonical storedHash = \case
+  Left _ -> Left "cursor_block_unavailable"
+  Right blockInfo ->
+    Right $
+      normalizeHex (biHash blockInfo) == normalizeHex storedHash
 
 enrichPendingExecutionEvidence
   :: Manager
@@ -1098,7 +1888,7 @@ enrichPendingExecutionEvidence manager pool cfg reqIdRef = do
       cachedBy
         transactionCacheRef
         (normalizeHex $ peerTerminalTxHash candidate)
-        (getTransactionInfo manager (picRpcUrls cfg) reqIdRef $ peerTerminalTxHash candidate)
+        (getExecutionTransactionInfo manager (picRpcUrls cfg) reqIdRef $ peerTerminalTxHash candidate)
     case txResult >>= validateExecutionTransaction candidate of
       Left err ->
         logExecutionEvidenceFailure candidate "transaction" err
@@ -1187,14 +1977,14 @@ cachedBy cacheRef key action = do
 
 validateExecutionTransaction
   :: PerpsExecutionEvidenceRow
-  -> TransactionInfo
-  -> Either Text TransactionInfo
+  -> ExecutionTransactionInfo
+  -> Either Text ExecutionTransactionInfo
 validateExecutionTransaction candidate txInfo = do
   unless
-    (normalizeHex (tiHash txInfo) == normalizeHex (peerTerminalTxHash candidate))
+    (normalizeHex (etiHash txInfo) == normalizeHex (peerTerminalTxHash candidate))
     (Left "Transaction hash does not match the indexed terminal event")
   unless
-    (normalizeHex (tiBlockHash txInfo) == normalizeHex (peerTerminalBlockHash candidate))
+    (normalizeHex (etiBlockHash txInfo) == normalizeHex (peerTerminalBlockHash candidate))
     (Left "Transaction block hash does not match the indexed terminal event")
   pure txInfo
 
@@ -1203,7 +1993,7 @@ deriveOrderExecutionOracle
   -> PerpsIndexerConfig
   -> IORef Integer
   -> PerpsExecutionEvidenceRow
-  -> TransactionInfo
+  -> ExecutionTransactionInfo
   -> Integer
   -> IO (Either Text (Maybe ExecutionOracleSnapshot))
 deriveOrderExecutionOracle manager cfg reqIdRef candidate txInfo commitTimestamp =
@@ -1231,7 +2021,7 @@ deriveTransactionExecutionEconomics
   :: Manager
   -> PerpsIndexerConfig
   -> IORef Integer
-  -> TransactionInfo
+  -> ExecutionTransactionInfo
   -> IO (Either Text (Map.Map Integer TradeExecutionEvidence))
 deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
   rpcTrace <-
@@ -1240,7 +2030,7 @@ deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
       (picRpcUrls cfg)
       reqIdRef
       "debug_traceTransaction"
-      [ String $ tiHash txInfo
+      [ String $ etiHash txInfo
       , object
           [ "tracer" .= ("callTracer" :: Text)
           , "timeout" .= ("20s" :: Text)
@@ -1252,7 +2042,7 @@ deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
       case picTraceApiUrl cfg of
         Nothing -> pure $ Left rpcErr
         Just traceApiUrl -> do
-          explorerTrace <- fetchBlockscoutTrace manager traceApiUrl (tiHash txInfo)
+          explorerTrace <- fetchBlockscoutTrace manager traceApiUrl (etiHash txInfo)
           pure $
             case explorerTrace >>= decodeTrace of
               Right evidence -> Right evidence
@@ -1273,17 +2063,17 @@ deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
         (paPletherOracle $ picAddresses cfg)
         trace
 
-validateCanonicalTraceRoot :: TransactionInfo -> Value -> Either Text ()
+validateCanonicalTraceRoot :: ExecutionTransactionInfo -> Value -> Either Text ()
 validateCanonicalTraceRoot txInfo = \case
   Object trace -> do
     traceFrom <- requiredString "from" trace
     traceTo <- requiredString "to" trace
     traceInput <- requiredString "input" trace
-    unless (normalizeHex traceFrom == normalizeHex (tiFrom txInfo)) $
+    unless (normalizeHex traceFrom == normalizeHex (etiFrom txInfo)) $
       Left "Trace root sender does not match the canonical transaction"
-    unless (normalizeHex traceTo == normalizeHex (tiTo txInfo)) $
+    unless (normalizeHex traceTo == normalizeHex (etiTo txInfo)) $
       Left "Trace root target does not match the canonical transaction"
-    unless (decodeHex traceInput == tiInput txInfo) $
+    unless (decodeHex traceInput == etiInput txInfo) $
       Left "Trace root calldata does not match the canonical transaction"
   _ -> Left "Trace root must be an object"
 
@@ -1344,6 +2134,113 @@ executionOracleDerivationVersion, executionOraclePayloadDerivationVersion, execu
 executionOracleDerivationVersion = 2
 executionOraclePayloadDerivationVersion = 1
 executionEconomicsDerivationVersion = 1
+
+-- | Persist every monitored release log with transaction/receipt evidence.
+-- The legacy Perps projection below remains deliberately narrower; generic
+-- governance, tranche, oracle, and dependency events live in this immutable
+-- release-scoped ledger even when no typed projection exists yet.
+persistProtocolLog
+  :: Connection
+  -> PerpsIndexerConfig
+  -> BlockInfo
+  -> TransactionInfo
+  -> RpcLog
+  -> IO ()
+persistProtocolLog conn cfg blockInfo txInfo logEntry = do
+  let addresses = picAddresses cfg
+      parsed = parseConfiguredLog cfg logEntry
+      common = classifyProtocolLogForAddresses addresses logEntry
+      eventName =
+        maybe
+          (maybe "Unclassified" plcEventName common)
+          parsedEventName
+          parsed
+      account = maybe (common >>= plcAccount) parsedAccount parsed
+      orderId = parsed >>= parsedOrderId
+      eventPayload =
+        maybe
+          (maybe unclassifiedPayload plcPayload common)
+          parsedPayload
+          parsed
+      (actionType, actionStatus) =
+        maybe
+          ( maybe
+              ("unclassified_event", "unavailable")
+              ( \entry ->
+                  ( plcActionType entry
+                  , if plcActionType entry == "unclassified_event"
+                      then "unavailable"
+                      else "success"
+                  )
+              )
+              common
+          )
+          parsedAction
+          parsed
+      classificationAvailability =
+        maybe [] plcAvailability common
+          <> case (parsed, common) of
+            (Nothing, Nothing) ->
+              [ object
+                  [ "field" .= ("decodedData" :: Text)
+                  , "reason" .= ("unknown_event_signature" :: Text)
+                  ]
+              ]
+            _ -> []
+      decoded = isJust parsed || maybe False plcDecoded common
+      evidence = object $
+        [ "level" .=
+            if null classificationAvailability
+              then ("exact" :: Text)
+              else ("unavailable" :: Text)
+        , "source" .= ("confirmed_log" :: Text)
+        , "identityLevel" .= ("exact" :: Text)
+        , "eventName" .= eventName
+        , "sourceBlock" .= show (rlBlockNumber logEntry)
+        , "decoded" .= decoded
+        , "calculationVersion" .= picCalculationVersion cfg
+        , "formulaIdentifier" .= ("protocol.action.log_projection.v1" :: Text)
+        , "transactionEvidence" .= tiEvidence txInfo
+        ]
+          <> [ "availability" .= classificationAvailability
+             | not (null classificationAvailability)
+             ]
+      rawTopics = Aeson.toJSON $ map (("0x" <>) . bytesToHex) (rlTopics logEntry)
+      rawData = "0x" <> bytesToHex (rlData logEntry)
+      unclassifiedPayload =
+        object
+          [ "classification" .= ("unavailable" :: Text)
+          , "reason" .= ("unknown_event_signature" :: Text)
+          ]
+  insertProtocolLedgerEntry
+    conn
+    (picReleaseId cfg)
+    (picChainId cfg)
+    (rlTxHash logEntry)
+    (rlAddress logEntry)
+    (rlBlockNumber logEntry)
+    (rlBlockHash logEntry)
+    (rlTxIndex logEntry)
+    (rlLogIndex logEntry)
+    (biTimestamp blockInfo)
+    eventName
+    actionType
+    (tiStatus txInfo)
+    actionStatus
+    (tiFrom txInfo)
+    (tiTo txInfo)
+    (tiSelector txInfo)
+    (tiNativeValue txInfo)
+    (tiGasUsed txInfo)
+    (tiEffectiveGasPrice txInfo)
+    rawTopics
+    (tiInput txInfo)
+    rawData
+    account
+    orderId
+    eventPayload
+    (tiEvidence txInfo)
+    evidence
 
 processLog
   :: Connection
@@ -1643,10 +2540,49 @@ parseConfiguredLog cfg logEntry
       case rlTopics logEntry of
         topic : _ | topic == transferTopic -> parseUsdcTransfer logEntry
         _ -> Nothing
-  | otherwise = parsePerpsLog logEntry
+  | otherwise = parsePerpsLogForAddresses (picAddresses cfg) logEntry
+
+parsedAction :: ParsedPerpsLog -> (Text, Text)
+parsedAction = \case
+  ParsedOrderCommitted {} -> ("order_commitment", "pending")
+  ParsedIntentRegistered {} -> ("order_commitment", "pending")
+  ParsedOrderFinalized _ _ _ _ status _ _ _ _ _ _
+    | status == "Executed" -> ("order_execution", "success")
+    | status == "Expired / Cleaned up" -> ("order_cleanup", "success")
+    | otherwise -> ("order_execution", "failure")
+  ParsedOrderExecuted {} -> ("order_execution", "success")
+  -- OrderFailed is an order-level terminal outcome emitted by a successful
+  -- cleanup transaction. The decoded reason remains in the action payload.
+  ParsedOrderFailed {} -> ("order_cleanup", "success")
+  ParsedPositionActivity kind _ _ _ _ _ _ _
+    | kind == "Open" -> ("position_open", "success")
+    | kind == "Close" -> ("position_close", "success")
+    | kind == "Liquidated" -> ("liquidation", "success")
+    | otherwise -> ("position_change", "success")
+  ParsedMarginActivity kind _ _ _
+    | kind == "Deposit" -> ("margin_deposit", "success")
+    | kind == "Withdraw" -> ("margin_withdraw", "success")
+    | otherwise -> ("margin_add", "success")
+  ParsedUsdcTransfer {} -> ("usdc_transfer", "success")
 
 parsePerpsLog :: RpcLog -> Maybe ParsedPerpsLog
-parsePerpsLog logEntry =
+parsePerpsLog = parsePerpsLogForAddresses defaultPerpsAddresses
+
+parsePerpsLogForAddresses ::
+  PerpsAddresses ->
+  RpcLog ->
+  Maybe ParsedPerpsLog
+parsePerpsLogForAddresses addresses logEntry = do
+  topic <- case rlTopics logEntry of
+    firstTopic : _ -> Just firstTopic
+    [] -> Nothing
+  expectedAddress <- perpsEventExpectedAddress addresses topic
+  if protocolAddressMatches expectedAddress (rlAddress logEntry)
+    then parsePerpsLogAbi logEntry
+    else Nothing
+
+parsePerpsLogAbi :: RpcLog -> Maybe ParsedPerpsLog
+parsePerpsLogAbi logEntry =
   case rlTopics logEntry of
     topic : _
       | topic == orderCommittedTopic -> parseOrderCommitted logEntry
@@ -1661,6 +2597,555 @@ parsePerpsLog logEntry =
       | topic == depositTopic -> parseDepositWithdraw "Deposit" logEntry
       | topic == withdrawTopic -> parseDepositWithdraw "Withdraw" logEntry
     _ -> Nothing
+
+classifyProtocolLog :: RpcLog -> Maybe ProtocolLogClassification
+classifyProtocolLog =
+  classifyProtocolLogForAddresses defaultPerpsAddresses
+
+classifyProtocolLogForAddresses ::
+  PerpsAddresses ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyProtocolLogForAddresses addresses logEntry =
+  case rlTopics logEntry of
+    topic : _
+      | topic == erc4626DepositTopic ->
+          classifyErc4626Deposit addresses logEntry
+      | topic == erc4626WithdrawTopic ->
+          classifyErc4626Withdraw addresses logEntry
+      | otherwise ->
+          classifyMalformedPerpsEvent addresses topic logEntry
+            <|> classifyGovernanceConfigEvent addresses topic logEntry
+            <|> classifyGovernanceRoleEvent addresses topic logEntry
+    _ -> Nothing
+
+classifyErc4626Deposit ::
+  PerpsAddresses ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyErc4626Deposit addresses logEntry =
+  Just $
+    case validateVaultEmitter addresses logEntry of
+      Left reason ->
+        unavailableKnownEvent
+          "Deposit"
+          "tranche_deposit"
+          reason
+      Right () ->
+        classifyShape
+  where
+    classifyShape =
+      case validateStaticLogShape erc4626DepositShape logEntry of
+        Left reason ->
+          unavailableKnownEvent
+            "Deposit"
+            "tranche_deposit"
+            reason
+        Right () ->
+          let sender = requiredIndexedAddress (rlTopics logEntry) 1
+              owner = requiredIndexedAddress (rlTopics logEntry) 2
+              assets = wordAt (rlData logEntry) 0
+              shares = wordAt (rlData logEntry) 1
+           in ProtocolLogClassification
+                { plcEventName = "Deposit"
+                , plcActionType = "tranche_deposit"
+                , plcAccount = Just owner
+                , plcPayload =
+                    object
+                      [ "sender" .= sender
+                      , "owner" .= owner
+                      , "assets" .= show assets
+                      , "shares" .= show shares
+                      , "assetsUnit" .= ("USDC:6" :: Text)
+                      , "sharesUnit" .= ("shares:18" :: Text)
+                      ]
+                , plcDecoded = True
+                , plcAvailability = []
+                }
+
+classifyErc4626Withdraw ::
+  PerpsAddresses ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyErc4626Withdraw addresses logEntry =
+  Just $
+    case validateVaultEmitter addresses logEntry of
+      Left reason ->
+        unavailableKnownEvent
+          "Withdraw"
+          "tranche_withdraw"
+          reason
+      Right () ->
+        classifyShape
+  where
+    classifyShape =
+      case validateStaticLogShape erc4626WithdrawShape logEntry of
+        Left reason ->
+          unavailableKnownEvent
+            "Withdraw"
+            "tranche_withdraw"
+            reason
+        Right () ->
+          let sender = requiredIndexedAddress (rlTopics logEntry) 1
+              receiver = requiredIndexedAddress (rlTopics logEntry) 2
+              owner = requiredIndexedAddress (rlTopics logEntry) 3
+              assets = wordAt (rlData logEntry) 0
+              shares = wordAt (rlData logEntry) 1
+           in ProtocolLogClassification
+                { plcEventName = "Withdraw"
+                , plcActionType = "tranche_withdraw"
+                , plcAccount = Just owner
+                , plcPayload =
+                    object
+                      [ "sender" .= sender
+                      , "receiver" .= receiver
+                      , "owner" .= owner
+                      , "assets" .= show assets
+                      , "shares" .= show shares
+                      , "assetsUnit" .= ("USDC:6" :: Text)
+                      , "sharesUnit" .= ("shares:18" :: Text)
+                      ]
+                , plcDecoded = True
+                , plcAvailability = []
+                }
+
+-- | A matching topic proves only the event identity. If the remaining ABI
+-- shape is malformed, retain that identity and the raw log while explicitly
+-- preventing it from entering any typed action projection.
+classifyMalformedPerpsEvent ::
+  PerpsAddresses ->
+  ByteString ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyMalformedPerpsEvent addresses topic logEntry = do
+  (eventName, intendedActionType, shape) <- perpsEventMetadata topic
+  expectedAddress <- perpsEventExpectedAddress addresses topic
+  if not $ protocolAddressMatches expectedAddress (rlAddress logEntry)
+    then
+      Just $
+        unavailableKnownEvent
+          eventName
+          intendedActionType
+          "event_contract_address_mismatch"
+    else
+      case (validateStaticLogShape shape logEntry, parsePerpsLogAbi logEntry) of
+        (Right (), Just _) -> Nothing
+        (Right (), Nothing) ->
+          Just $
+            unavailableKnownEvent
+              eventName
+              intendedActionType
+              "event_decode_unavailable"
+        (Left reason, _) ->
+          Just $
+            unavailableKnownEvent eventName intendedActionType reason
+
+unavailableKnownEvent ::
+  Text ->
+  Text ->
+  Text ->
+  ProtocolLogClassification
+unavailableKnownEvent eventName intendedActionType reason =
+  ProtocolLogClassification
+    { plcEventName = eventName
+    , plcActionType = "unclassified_event"
+    , plcAccount = Nothing
+    , plcPayload =
+        object
+          [ "classification" .= ("unavailable" :: Text)
+          , "reason" .= reason
+          , "intendedActionType" .= intendedActionType
+          ]
+    , plcDecoded = False
+    , plcAvailability =
+        [ object
+            [ "field" .= ("decodedData" :: Text)
+            , "reason" .= reason
+            ]
+        ]
+    }
+
+perpsEventMetadata ::
+  ByteString ->
+  Maybe (Text, Text, StaticLogShape)
+perpsEventMetadata topic
+  | topic == orderCommittedTopic =
+      Just ("OrderCommitted", "order_commitment", orderCommittedShape)
+  | topic == intentRegisteredTopic =
+      Just ("IntentRegistered", "order_commitment", intentRegisteredShape)
+  | topic == orderFinalizedTopic =
+      Just ("OrderFinalized", "order_execution", orderFinalizedShape)
+  | topic == orderExecutedTopic =
+      Just ("OrderExecuted", "order_execution", orderExecutedShape)
+  | topic == orderFailedTopic =
+      Just ("OrderFailed", "order_cleanup", orderFailedShape)
+  | topic == positionOpenedTopic =
+      Just ("PositionOpened", "position_open", positionShape)
+  | topic == positionClosedTopic =
+      Just ("PositionClosed", "position_close", positionShape)
+  | topic == positionLiquidatedTopic =
+      Just ("PositionLiquidated", "liquidation", positionShape)
+  | topic == marginAddedTopic =
+      Just ("MarginAdded", "margin_add", singleAccountAmountShape)
+  | topic == depositTopic =
+      Just ("Deposit", "margin_deposit", marginTransferShape)
+  | topic == withdrawTopic =
+      Just ("Withdraw", "margin_withdraw", marginTransferShape)
+  | otherwise = Nothing
+
+perpsEventExpectedAddress ::
+  PerpsAddresses ->
+  ByteString ->
+  Maybe Text
+perpsEventExpectedAddress addresses topic
+  | topic `elem` [orderCommittedTopic, orderExecutedTopic, orderFailedTopic] =
+      Just $ paOrderRouter addresses
+  | topic `elem` [intentRegisteredTopic, orderFinalizedTopic] =
+      paOrderLifecycleBook addresses
+  | topic `elem` [positionOpenedTopic, positionClosedTopic, positionLiquidatedTopic] =
+      Just $ paCfdEngine addresses
+  | topic `elem` [marginAddedTopic, depositTopic, withdrawTopic] =
+      Just $ paMarginClearinghouse addresses
+  | otherwise = Nothing
+
+validateVaultEmitter ::
+  PerpsAddresses ->
+  RpcLog ->
+  Either Text ()
+validateVaultEmitter addresses logEntry
+  | any
+      ( \candidate ->
+          protocolAddressMatches candidate (rlAddress logEntry)
+      )
+      [paSeniorVault addresses, paJuniorVault addresses] =
+      Right ()
+  | otherwise =
+      Left "event_contract_address_mismatch"
+
+protocolAddressMatches :: Text -> Text -> Bool
+protocolAddressMatches expected actual =
+  isValidAddress expected
+    && isValidAddress actual
+    && normalizeHex expected == normalizeHex actual
+
+governanceRoleAddress ::
+  PerpsAddresses ->
+  GovernanceContractRole ->
+  Text
+governanceRoleAddress addresses = \case
+  OrderRouterAdminRole -> paOrderRouterAdmin addresses
+  CfdEngineAdminRole -> paCfdEngineAdmin addresses
+  HousePoolRole -> paHousePool addresses
+  OrderRouterRole -> paOrderRouter addresses
+  CfdEngineRole -> paCfdEngine addresses
+  PletherOracleRole -> paPletherOracle addresses
+
+classifyGovernanceConfigEvent ::
+  PerpsAddresses ->
+  ByteString ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyGovernanceConfigEvent addresses topic logEntry = do
+  (categoryDefinition, eventDefinition) <-
+    find
+      ((== topic) . gedTopic . snd)
+      [ (definition, eventDefinition)
+      | definition <- governanceCategoryDefinitions
+      , eventDefinition <- gcdEvents definition
+      ]
+  let eventName = eventNameFromSignature $ gedSignature eventDefinition
+      actionType = governanceLifecycleActionType $ gedLifecycle eventDefinition
+      basePayload =
+        [ "category" .= governanceCategoryName (gcdCategory categoryDefinition)
+        , "lifecycle" .= governanceLifecycleName (gedLifecycle eventDefinition)
+        , "eventSignature" .= gedSignature eventDefinition
+        ]
+      unavailable malformed reason =
+        ProtocolLogClassification
+          { plcEventName = eventName
+          , plcActionType =
+              if malformed
+                then "unclassified_event"
+                else actionType
+          , plcAccount = Nothing
+          , plcPayload =
+              object $
+                basePayload
+                  <> [ "classification" .= ("unavailable" :: Text)
+                     , "reason" .= reason
+                     ]
+                  <> [ "intendedActionType" .= actionType
+                     | malformed
+                     ]
+          , plcDecoded = False
+          , plcAvailability =
+              [ object
+                  [ "field" .= ("governanceFields" :: Text)
+                  , "reason" .= reason
+                  ]
+              ]
+          }
+  if
+    not $
+      protocolAddressMatches
+        (governanceRoleAddress addresses $ gcdContractRole categoryDefinition)
+        (rlAddress logEntry)
+    then
+      Just $
+        unavailable True ("event_contract_address_mismatch" :: Text)
+    else if length (rlTopics logEntry) /= 1
+      then Just $ unavailable True ("governance_event_topics_invalid" :: Text)
+    else
+      case decodeGovernanceEvent categoryDefinition topic (rlData logEntry) of
+        Right decodedEvent ->
+          Just
+            ProtocolLogClassification
+              { plcEventName = eventName
+              , plcActionType = actionType
+              , plcAccount = Nothing
+              , plcPayload =
+                  object $
+                    basePayload
+                      <> [ "fields" .= map governanceFieldJson (dgeFields decodedEvent)
+                         ]
+              , plcDecoded = True
+              , plcAvailability = []
+              }
+        Left decodeError ->
+          Just $
+            unavailable
+              (governanceDecodeIsMalformed decodeError)
+              (governanceDecodeReason decodeError)
+
+classifyGovernanceRoleEvent ::
+  PerpsAddresses ->
+  ByteString ->
+  RpcLog ->
+  Maybe ProtocolLogClassification
+classifyGovernanceRoleEvent addresses topic logEntry = do
+  definition <- find ((== topic) . gredTopic) governanceRoleEvents
+  let matchingRole =
+        find
+          ( \role ->
+              protocolAddressMatches
+                (governanceRoleAddress addresses role)
+                (rlAddress logEntry)
+          )
+          (gredContractRoles definition)
+      eventName = eventNameFromSignature $ gredSignature definition
+      actionType = governanceRoleActionType $ gredKey definition
+      basePayload =
+        [ "governanceKey" .= gredKey definition
+        , "eventSignature" .= gredSignature definition
+        ]
+          <> maybe
+            []
+            (\role -> ["contractRole" .= governanceContractRoleKey role])
+            matchingRole
+      unavailable reason =
+        ProtocolLogClassification
+          { plcEventName = eventName
+          , plcActionType = "unclassified_event"
+          , plcAccount = Nothing
+          , plcPayload =
+              object $
+                basePayload
+                  <> [ "classification" .= ("unavailable" :: Text)
+                     , "reason" .= reason
+                     , "intendedActionType" .= actionType
+                     ]
+          , plcDecoded = False
+          , plcAvailability =
+              [ object
+                  [ "field" .= ("governanceRoleFields" :: Text)
+                  , "reason" .= reason
+                  ]
+              ]
+          }
+  if matchingRole == Nothing
+    then
+      Just $
+        unavailable ("event_contract_address_mismatch" :: Text)
+    else
+      case decodeGovernanceRolePayload (gredKey definition) logEntry of
+        Right (account, fields) ->
+          Just
+            ProtocolLogClassification
+              { plcEventName = eventName
+              , plcActionType = actionType
+              , plcAccount = account
+              , plcPayload = object $ basePayload <> fields
+              , plcDecoded = True
+              , plcAvailability = []
+              }
+        Left reason -> Just $ unavailable reason
+
+decodeGovernanceRolePayload ::
+  Text ->
+  RpcLog ->
+  Either Text (Maybe Text, [Pair])
+decodeGovernanceRolePayload governanceKey logEntry
+  | governanceKey == "governance.ownership_transfer_started" = do
+      (previousOwner, newOwner) <- twoIndexedAddresses logEntry
+      pure
+        ( Just newOwner
+        , [ "previousOwner" .= previousOwner
+          , "newOwner" .= newOwner
+          ]
+        )
+  | governanceKey == "governance.ownership_transferred" = do
+      (previousOwner, newOwner) <- twoIndexedAddresses logEntry
+      pure
+        ( Just newOwner
+        , [ "previousOwner" .= previousOwner
+          , "newOwner" .= newOwner
+          ]
+        )
+  | governanceKey == "governance.pauser_updated" = do
+      (previousPauser, newPauser) <- twoIndexedAddresses logEntry
+      pure
+        ( Just newPauser
+        , [ "previousPauser" .= previousPauser
+          , "newPauser" .= newPauser
+          ]
+        )
+  | governanceKey == "governance.paused" = do
+      account <- singleAddressEvent logEntry
+      pure (Just account, ["account" .= account])
+  | governanceKey == "governance.unpaused" = do
+      account <- singleAddressEvent logEntry
+      pure (Just account, ["account" .= account])
+  | governanceKey == "governance.protocol_treasury_updated" = do
+      treasury <- singleIndexedAddress logEntry
+      pure
+        ( Just treasury
+        , ["protocolTreasury" .= treasury]
+        )
+  | otherwise = Left "governance_role_event_schema_unavailable"
+
+twoIndexedAddresses :: RpcLog -> Either Text (Text, Text)
+twoIndexedAddresses logEntry =
+  case rlTopics logEntry of
+    [_eventTopic, firstWord, secondWord]
+      | BS.null (rlData logEntry) -> do
+          firstAddress <- canonicalAddressWord firstWord
+          secondAddress <- canonicalAddressWord secondWord
+          pure (firstAddress, secondAddress)
+    _ -> Left "governance_role_event_shape_invalid"
+
+singleIndexedAddress :: RpcLog -> Either Text Text
+singleIndexedAddress logEntry =
+  case rlTopics logEntry of
+    [_eventTopic, addressWord]
+      | BS.null (rlData logEntry) ->
+          canonicalAddressWord addressWord
+    _ -> Left "governance_role_event_shape_invalid"
+
+-- OpenZeppelin Pausable emits its account in event data. The indexed form is
+-- retained as a compatibility path for earlier deployments and fixtures.
+singleAddressEvent :: RpcLog -> Either Text Text
+singleAddressEvent logEntry =
+  case rlTopics logEntry of
+    [_eventTopic]
+      | BS.length (rlData logEntry) == 32 ->
+          canonicalAddressWord (rlData logEntry)
+    [_eventTopic, addressWord]
+      | BS.null (rlData logEntry) ->
+          canonicalAddressWord addressWord
+    _ -> Left "governance_role_event_shape_invalid"
+
+canonicalAddressWord :: ByteString -> Either Text Text
+canonicalAddressWord word
+  | BS.length word /= 32 =
+      Left "governance_address_word_length_invalid"
+  | BS.take 12 word /= BS.replicate 12 0 =
+      Left "governance_address_not_canonical"
+  | otherwise =
+      Right $ "0x" <> bytesToHex (BS.drop 12 word)
+
+governanceFieldJson :: DecodedGovernanceField -> Value
+governanceFieldJson DecodedGovernanceField {dgfDefinition, dgfValue} =
+  object
+    [ "key" .= gfKey dgfDefinition
+    , "rawValue" .= governanceDecodedRawValue dgfValue
+    , "scale" .= gfScale dgfDefinition
+    , "unit" .= gfUnit dgfDefinition
+    , "valueType" .= governanceFieldTypeName (gfType dgfDefinition)
+    , "evidence" .=
+        object
+          [ "level" .= ("exact" :: Text)
+          , "source" .= ("confirmed_log" :: Text)
+          ]
+    ]
+
+governanceDecodedRawValue :: GovernanceDecodedValue -> Value
+governanceDecodedRawValue = \case
+  GovernanceUint value -> String $ T.pack $ show value
+  GovernanceAddress value -> String value
+  GovernanceBool value -> Bool value
+
+governanceFieldTypeName :: GovernanceFieldType -> Text
+governanceFieldTypeName = \case
+  Uint256Field -> "uint256"
+  AddressField -> "address"
+  BoolField -> "bool"
+  Uint256ArrayField -> "uint256[]"
+
+governanceCategoryName :: GovernanceCategory -> Text
+governanceCategoryName = \case
+  RouterConfigCategory -> "router_config"
+  OracleConfigCategory -> "oracle_config"
+  EngineRiskConfigCategory -> "engine_risk_config"
+  EngineCalendarConfigCategory -> "engine_calendar_config"
+  EngineFreshnessConfigCategory -> "engine_freshness_config"
+  HousePoolConfigCategory -> "house_pool_config"
+
+governanceLifecycleName :: GovernanceLifecycle -> Text
+governanceLifecycleName = \case
+  GovernanceProposed -> "proposed"
+  GovernanceFinalized -> "finalized"
+  GovernanceCancelled -> "cancelled"
+
+governanceLifecycleActionType :: GovernanceLifecycle -> Text
+governanceLifecycleActionType = \case
+  GovernanceProposed -> "governance_proposal"
+  GovernanceFinalized -> "governance_execution"
+  GovernanceCancelled -> "governance_cancellation"
+
+governanceRoleActionType :: Text -> Text
+governanceRoleActionType governanceKey
+  | governanceKey == "governance.ownership_transfer_started" = "ownership_transfer_started"
+  | governanceKey == "governance.ownership_transferred" = "ownership_transfer"
+  | governanceKey == "governance.pauser_updated" = "pauser_update"
+  | governanceKey == "governance.paused" = "pause"
+  | governanceKey == "governance.unpaused" = "unpause"
+  | governanceKey == "governance.protocol_treasury_updated" = "protocol_treasury_update"
+  | otherwise = "governance_role_change"
+
+governanceDecodeReason :: GovernanceDecodeError -> Text
+governanceDecodeReason = \case
+  GovernanceDynamicPayloadUnavailable reason -> reason
+  GovernancePayloadLengthMismatch {} -> "governance_payload_length_mismatch"
+  GovernanceSchemaWordCountMismatch {} -> "governance_schema_word_count_mismatch"
+  GovernanceNonCanonicalAddress {} -> "governance_address_not_canonical"
+  GovernanceInvalidBool {} -> "governance_bool_not_canonical"
+  GovernanceUnsupportedStaticField {} -> "governance_static_field_unsupported"
+  GovernanceUnknownEventTopic {} -> "governance_event_topic_unknown"
+
+governanceDecodeIsMalformed :: GovernanceDecodeError -> Bool
+governanceDecodeIsMalformed = \case
+  -- A correctly-shaped dynamic calendar event has an exact identity even
+  -- though the current calculation version deliberately cannot decode it.
+  GovernanceDynamicPayloadUnavailable {} -> False
+  GovernancePayloadLengthMismatch {} -> True
+  GovernanceSchemaWordCountMismatch {} -> True
+  GovernanceNonCanonicalAddress {} -> True
+  GovernanceInvalidBool {} -> True
+  GovernanceUnsupportedStaticField {} -> True
+  GovernanceUnknownEventTopic {} -> True
+
+eventNameFromSignature :: Text -> Text
+eventNameFromSignature = T.takeWhile (/= '(')
 
 parseUsdcTransfer :: RpcLog -> Maybe ParsedPerpsLog
 parseUsdcTransfer logEntry =
@@ -1682,6 +3167,7 @@ parseUsdcTransfer logEntry =
 
 parseOrderCommitted :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderCommitted logEntry = do
+  requireStaticLogShape orderCommittedShape logEntry
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   let side = fromInteger $ wordAt (rlData logEntry) 0
@@ -1690,32 +3176,90 @@ parseOrderCommitted logEntry = do
 
 parseIntentRegistered :: RpcLog -> Maybe ParsedPerpsLog
 parseIntentRegistered logEntry = do
-  unless (BS.length (rlData logEntry) == 20 * 32) Nothing
+  requireStaticLogShape intentRegisteredShape logEntry
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
-  let side = fromInteger $ wordAt (rlData logEntry) 3
+  let bytes = rlData logEntry
+      requestClientOrderId = hexWordAt bytes 2
+      side = fromInteger $ wordAt bytes 3
+      sizeDelta = wordAt bytes 4
+      marginDeltaUsdc = wordAt bytes 5
+      acceptablePrice = wordAt bytes 6
+      isClose = wordAt bytes 7 == 1
+      policy =
+        object
+          [ "validUntil" .= show (wordAt bytes 8)
+          , "allowedExecutionModes" .= wordAt bytes 9
+          , "expectedConfigHash" .= hexWordAt bytes 10
+          , "maxExecutionBountyUsdc" .= show (wordAt bytes 11)
+          , "maxExecutionNotionalUsdc" .= show (wordAt bytes 12)
+          , "maxGrossAccountDebitUsdc" .= show (wordAt bytes 13)
+          , "maxActionChargeUsdc" .= show (wordAt bytes 14)
+          , "maxExplicitFeesUsdc" .= show (wordAt bytes 15)
+          , "maxPostPositionSize" .= show (wordAt bytes 16)
+          , "minPostSettlementBalanceUsdc" .= show (wordAt bytes 17)
+          , "minPostPositionEquityUsdc" .= show (wordAt bytes 18)
+          , "maxPostLeverageBps" .= show (wordAt bytes 19)
+          ]
+      request =
+        object
+          [ "clientOrderId" .= requestClientOrderId
+          , "side" .= side
+          , "sizeDelta" .= show sizeDelta
+          , "marginDeltaUsdc" .= show marginDeltaUsdc
+          , "acceptablePrice" .= show acceptablePrice
+          , "isClose" .= isClose
+          , "policy" .= policy
+          ]
       payload = object
         [ "orderId" .= show oid
         , "account" .= account
         , "clientOrderId" .= clientOrderId
-        , "intentHash" .= hexWordAt (rlData logEntry) 0
-        , "executionBountyUsdc" .= show (wordAt (rlData logEntry) 1)
+        , "intentHash" .= hexWordAt bytes 0
+        , "executionBountyUsdc" .= show (wordAt bytes 1)
         , "side" .= side
-        , "validUntil" .= show (wordAt (rlData logEntry) 8)
-        , "allowedExecutionModes" .= wordAt (rlData logEntry) 9
-        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 10
+        , "sizeDelta" .= show sizeDelta
+        , "marginDeltaUsdc" .= show marginDeltaUsdc
+        , "acceptablePrice" .= show acceptablePrice
+        , "isClose" .= isClose
+        , "validUntil" .= show (wordAt bytes 8)
+        , "allowedExecutionModes" .= wordAt bytes 9
+        , "expectedConfigHash" .= hexWordAt bytes 10
+        , "request" .= request
+        , "policy" .= policy
+        , "units" .= object
+            [ "executionBountyUsdc" .= ("USDC:6" :: Text)
+            , "sizeDelta" .= ("position:18" :: Text)
+            , "marginDeltaUsdc" .= ("USDC:6" :: Text)
+            , "acceptablePrice" .= ("indexPrice:8" :: Text)
+            , "validUntil" .= ("unix_seconds" :: Text)
+            , "maxExecutionBountyUsdc" .= ("USDC:6" :: Text)
+            , "maxExecutionNotionalUsdc" .= ("USDC:6" :: Text)
+            , "maxGrossAccountDebitUsdc" .= ("USDC:6" :: Text)
+            , "maxActionChargeUsdc" .= ("USDC:6" :: Text)
+            , "maxExplicitFeesUsdc" .= ("USDC:6" :: Text)
+            , "maxPostPositionSize" .= ("position:18" :: Text)
+            , "minPostSettlementBalanceUsdc" .= ("USDC:6" :: Text)
+            , "minPostPositionEquityUsdc" .= ("USDC:6" :: Text)
+            , "maxPostLeverageBps" .= ("basis_points" :: Text)
+            ]
         ]
   pure $ ParsedIntentRegistered oid account clientOrderId side payload
 
 parseOrderFinalized :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderFinalized logEntry = do
-  unless (BS.length (rlData logEntry) == 46 * 32) Nothing
+  requireStaticLogShape orderFinalizedShape logEntry
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
   let bytes = rlData logEntry
-      receiptHash = hexWordAt bytes 0
+  receiptAccount <- dataAddressAt bytes 4
+  executor <- dataAddressAt bytes 12
+  bountyRecipient <- dataAddressAt bytes 20
+  let receiptHash = hexWordAt bytes 0
+      receiptOrderId = wordAt bytes 3
+      receiptClientOrderId = hexWordAt bytes 5
       lifecycleStatus = fromInteger (wordAt bytes 9) :: Int
       terminalReasonCode = fromInteger (wordAt bytes 10) :: Int
       executionModeCode = fromInteger (wordAt bytes 11) :: Int
@@ -1731,6 +3275,16 @@ parseOrderFinalized logEntry = do
         if failedConstraintCode == 0
           then Nothing
           else Just $ failedConstraintName failedConstraintCode
+      failure = object
+        [ "selector" .= hexBytesAt bytes 22 4
+        , "category" .= wordAt bytes 23
+        , "code" .= wordAt bytes 24
+        , "failedConstraintCode" .= failedConstraintCode
+        , "failedConstraint" .= failedConstraint
+        , "argument0" .= show (wordAt bytes 26)
+        , "argument1" .= show (wordAt bytes 27)
+        , "revertDataHash" .= hexWordAt bytes 28
+        ]
       economics = object
         [ "executionNotionalUsdc" .= show (wordAt bytes 29)
         , "realizedPnlUsdc" .= show (intWordAt bytes 30)
@@ -1750,6 +3304,32 @@ parseOrderFinalized logEntry = do
         , "postPositionEquityUsdc" .= show (intWordAt bytes 44)
         , "postLeverageBps" .= show (wordAt bytes 45)
         ]
+      receipt = object
+        [ "orderId" .= show receiptOrderId
+        , "account" .= receiptAccount
+        , "clientOrderId" .= receiptClientOrderId
+        , "intentHash" .= hexWordAt bytes 6
+        , "expectedConfigHash" .= hexWordAt bytes 7
+        , "observedConfigHash" .= hexWordAt bytes 8
+        , "lifecycleStatus" .= lifecycleStatus
+        , "status" .= status
+        , "terminalReasonCode" .= terminalReasonCode
+        , "terminalReason" .= terminalReason
+        , "executionModeCode" .= executionModeCode
+        , "executionMode" .= mode
+        , "executor" .= executor
+        , "priceSource" .= wordAt bytes 13
+        , "executionPrice" .= show executionPrice
+        , "neutralMarkPrice" .= show (wordAt bytes 15)
+        , "poolDepthUsdc" .= show (wordAt bytes 16)
+        , "oraclePublishTime" .= show (wordAt bytes 17)
+        , "priceReachedEngine" .= (wordAt bytes 18 == 1)
+        , "bountyUsdc" .= show (wordAt bytes 19)
+        , "bountyRecipient" .= bountyRecipient
+        , "bountyDisposition" .= wordAt bytes 21
+        , "failure" .= failure
+        , "economics" .= economics
+        ]
       payload = object
         [ "orderId" .= show oid
         , "account" .= account
@@ -1760,9 +3340,27 @@ parseOrderFinalized logEntry = do
         , "status" .= lifecycleStatus
         , "terminalReason" .= terminalReason
         , "executionMode" .= mode
+        , "executor" .= executor
         , "failedConstraint" .= failedConstraint
         , "executionPrice" .= show executionPrice
+        , "intentHash" .= hexWordAt bytes 6
+        , "expectedConfigHash" .= hexWordAt bytes 7
+        , "observedConfigHash" .= hexWordAt bytes 8
+        , "oraclePublishTime" .= show (wordAt bytes 17)
+        , "bountyUsdc" .= show (wordAt bytes 19)
+        , "bountyRecipient" .= bountyRecipient
+        , "receipt" .= receipt
+        , "failure" .= failure
         , "economics" .= economics
+        , "units" .= object
+            [ "terminalTime" .= ("unix_seconds" :: Text)
+            , "executionPrice" .= ("indexPrice:8" :: Text)
+            , "neutralMarkPrice" .= ("indexPrice:8" :: Text)
+            , "poolDepthUsdc" .= ("USDC:6" :: Text)
+            , "oraclePublishTime" .= ("unix_seconds" :: Text)
+            , "bountyUsdc" .= ("USDC:6" :: Text)
+            , "economics" .= ("USDC:6 except position/leverage fields" :: Text)
+            ]
         ]
   pure $
     ParsedOrderFinalized
@@ -1771,6 +3369,7 @@ parseOrderFinalized logEntry = do
 
 parseOrderExecuted :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderExecuted logEntry = do
+  requireStaticLogShape orderExecutedShape logEntry
   oid <- indexedUint (rlTopics logEntry) 1
   let executionPrice = wordAt (rlData logEntry) 0
   pure $ ParsedOrderExecuted oid executionPrice $
@@ -1778,6 +3377,7 @@ parseOrderExecuted logEntry = do
 
 parseOrderFailed :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderFailed logEntry = do
+  requireStaticLogShape orderFailedShape logEntry
   oid <- indexedUint (rlTopics logEntry) 1
   let reason = fromInteger $ wordAt (rlData logEntry) 0
       reasonName = orderFailReasonName reason
@@ -1786,6 +3386,7 @@ parseOrderFailed logEntry = do
 
 parsePositionOpened :: RpcLog -> Maybe ParsedPerpsLog
 parsePositionOpened logEntry = do
+  requireStaticLogShape positionShape logEntry
   account <- indexedAddress (rlTopics logEntry) 1
   let side = fromInteger $ wordAt (rlData logEntry) 0
       sizeDelta = wordAt (rlData logEntry) 1
@@ -1802,6 +3403,7 @@ parsePositionOpened logEntry = do
 
 parsePositionClosed :: RpcLog -> Maybe ParsedPerpsLog
 parsePositionClosed logEntry = do
+  requireStaticLogShape positionShape logEntry
   account <- indexedAddress (rlTopics logEntry) 1
   let side = fromInteger $ wordAt (rlData logEntry) 0
       sizeDelta = wordAt (rlData logEntry) 1
@@ -1950,6 +3552,7 @@ addTradeCosts (Just TradeCosts {..}) payloadValue = addToPayload payloadValue
 
 parsePositionLiquidated :: RpcLog -> Maybe ParsedPerpsLog
 parsePositionLiquidated logEntry = do
+  requireStaticLogShape positionShape logEntry
   account <- indexedAddress (rlTopics logEntry) 1
   let side = fromInteger $ wordAt (rlData logEntry) 0
       sizeDelta = wordAt (rlData logEntry) 1
@@ -1966,6 +3569,7 @@ parsePositionLiquidated logEntry = do
 
 parseMarginAdded :: RpcLog -> Maybe ParsedPerpsLog
 parseMarginAdded logEntry = do
+  requireStaticLogShape singleAccountAmountShape logEntry
   account <- indexedAddress (rlTopics logEntry) 1
   let amount = wordAt (rlData logEntry) 0
   pure $ ParsedMarginActivity "Add margin" account amount $
@@ -1973,6 +3577,7 @@ parseMarginAdded logEntry = do
 
 parseDepositWithdraw :: Text -> RpcLog -> Maybe ParsedPerpsLog
 parseDepositWithdraw kind logEntry = do
+  requireStaticLogShape marginTransferShape logEntry
   account <- indexedAddress (rlTopics logEntry) 1
   asset <- indexedAddress (rlTopics logEntry) 2
   let amount = wordAt (rlData logEntry) 0
@@ -2096,19 +3701,60 @@ activityKey logEntry kind orderId =
     , maybe "" (T.pack . show) orderId
     ]
 
+logEvidenceKey :: RpcLog -> (Text, Integer, Integer)
+logEvidenceKey logEntry =
+  ( normalizeHex $ rlTxHash logEntry
+  , rlBlockNumber logEntry
+  , rlLogIndex logEntry
+  )
+
 perpsAddresses :: PerpsIndexerConfig -> [Text]
 perpsAddresses cfg =
-  paUsdc (picAddresses cfg) : perpsContractAddresses cfg
+  dedupeAddresses $
+    paUsdc (picAddresses cfg) : perpsContractAddresses cfg
 
 perpsContractAddresses :: PerpsIndexerConfig -> [Text]
 perpsContractAddresses = perpsContractAddressesFor . picAddresses
 
+-- | Every release contract whose logs contribute to the immutable protocol
+-- ledger. Keep LifecycleBook beside the router so V2 intent/finalization
+-- events are indexed while retaining the wider explorer coverage.
 perpsContractAddressesFor :: PerpsAddresses -> [Text]
 perpsContractAddressesFor addresses =
-  [ paOrderRouter addresses
-  , paCfdEngine addresses
-  , paMarginClearinghouse addresses
-  ] <> maybe [] pure (paOrderLifecycleBook addresses)
+  dedupeAddresses $
+    [ paOrderRouter addresses
+    ]
+      <> maybe [] pure (paOrderLifecycleBook addresses)
+      <> [ paOrderRouterAdmin addresses
+         , paCfdEngine addresses
+         , paCfdEngineAdmin addresses
+         , paCfdEngineLens addresses
+         , paCfdEngineSettlementSidecar addresses
+         , paMarginClearinghouse addresses
+         , paPletherOracle addresses
+         , paAccountLens addresses
+         , paPublicLens addresses
+         , paHousePool addresses
+         , paSeniorVault addresses
+         , paJuniorVault addresses
+         ]
+
+replayPerpsContractAddresses :: PerpsIndexerConfig -> [Text]
+replayPerpsContractAddresses cfg =
+  dedupeAddresses $
+    [ paOrderRouter addresses
+    ]
+      <> maybe [] pure (paOrderLifecycleBook addresses)
+      <> [ paCfdEngine addresses
+         , paMarginClearinghouse addresses
+         ]
+  where
+    addresses = picAddresses cfg
+
+dedupeAddresses :: [Text] -> [Text]
+dedupeAddresses =
+  nubBy ((==) `on` normalizeHex)
+    . filter (not . T.null . T.strip)
 
 requireRpc :: Text -> IO (Either Text a) -> IO a
 requireRpc label action = do
@@ -2122,8 +3768,12 @@ getCurrentBlockNumber manager rpcUrls reqIdRef = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_blockNumber" ([] :: [Value])
   pure $ case result of
     Left err -> Left err
-    Right (String hex) -> Right $ hexToInteger $ strip0x hex
-    Right _ -> Left "Expected hex string"
+    Right (String hex) ->
+      maybe
+        (Left "Expected canonical block quantity")
+        Right
+        (parseRpcQuantity hex)
+    Right _ -> Left "Expected canonical block quantity"
 
 getReplayCurrentBlockNumber :: Manager -> [Text] -> IORef Integer -> IO (Either Text Integer)
 getReplayCurrentBlockNumber manager rpcUrls reqIdRef = do
@@ -2140,13 +3790,263 @@ getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getBlockByNumber" [String $ "0x" <> intToHex blockNumber, Bool False]
   pure $ case result of
     Left err -> Left err
-    Right (Object obj) -> Right $
-      BlockInfo
-        { biNumber = blockNumber
-        , biHash = getString "hash" obj
-        , biTimestamp = hexToInteger $ strip0x $ getString "timestamp" obj
-        }
-    Right _ -> Left "Expected block object"
+    Right value -> parseBlockInfo blockNumber value
+
+getTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO TransactionInfo
+getTransactionInfo manager rpcUrls reqIdRef txHash = do
+  txResult <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
+  receiptResult <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionReceipt" [String txHash]
+  pure $ transactionInfoFromRpcResults txResult receiptResult
+
+transactionInfoFromRpcResults :: Either Text Value -> Either Text Value -> TransactionInfo
+transactionInfoFromRpcResults txResult receiptResult =
+  let (txObject, txUnavailable) = rpcObjectResult "transaction" txResult
+      (receiptObject, receiptUnavailable) = rpcObjectResult "receipt" receiptResult
+      txIdentityResult = maybe (Left "transaction_identity_unavailable") (parseTransactionIdentity "transaction") txObject
+      receiptIdentityResult = maybe (Left "receipt_identity_unavailable") (parseTransactionIdentity "receipt") receiptObject
+      receiptLogsResult = maybe (Left "receipt_logs_unavailable") parseReceiptLogs receiptObject
+      senderResult =
+        maybe (Left "transaction_sender_unavailable")
+          (mapLeft (const "transaction_sender_unavailable") . requiredCanonicalAddress "from")
+          txObject
+      recipientResult =
+        maybe (Left "transaction_recipient_unavailable")
+          (mapLeft (const "transaction_recipient_unavailable") . nullableCanonicalAddress "to")
+          txObject
+      inputResult =
+        maybe (Left "transaction_input_unavailable")
+          (mapLeft (const "transaction_input_unavailable") . requiredCanonicalData "input")
+          txObject
+      nativeValueResult =
+        maybe (Left "transaction_native_value_unavailable")
+          (mapLeft (const "transaction_native_value_unavailable") . requiredCanonicalQuantity "value")
+          txObject
+      statusResult =
+        maybe (Left "receipt_status_unavailable")
+          (mapLeft (const "receipt_status_unavailable") . parseReceiptStatus)
+          receiptObject
+      gasUsedResult =
+        maybe (Left "receipt_gas_used_unavailable")
+          (mapLeft (const "receipt_gas_used_unavailable") . requiredCanonicalQuantity "gasUsed")
+          receiptObject
+      effectiveGasPriceResult =
+        maybe
+          (Left "receipt_effective_gas_price_unavailable")
+          (mapLeft (const "receipt_effective_gas_price_unavailable") . requiredCanonicalQuantity "effectiveGasPrice")
+          receiptObject
+      sender = either (const Nothing) Just senderResult
+      recipient = either (const Nothing) id recipientResult
+      input = either (const Nothing) Just inputResult
+      nativeValue = either (const Nothing) Just nativeValueResult
+      status = either (const "unavailable") id statusResult
+      gasUsed = either (const Nothing) Just gasUsedResult
+      effectiveGasPrice = either (const Nothing) Just effectiveGasPriceResult
+      transactionIdentity = either (const Nothing) Just txIdentityResult
+      receiptIdentity = either (const Nothing) Just receiptIdentityResult
+      receiptLogs = either (const Nothing) Just receiptLogsResult
+      selector =
+        input >>= \value ->
+          if T.length value >= 10
+            then Just $ T.take 10 value
+            else Nothing
+      availability =
+        catMaybes [txUnavailable, receiptUnavailable]
+          <> eitherAvailability "transactionIdentity" txIdentityResult
+          <> eitherAvailability "receiptIdentity" receiptIdentityResult
+          <> eitherAvailability "receiptLogs" receiptLogsResult
+          <> eitherAvailability "sender" senderResult
+          <> eitherAvailability "recipient" recipientResult
+          <> eitherAvailability "input" inputResult
+          <> eitherAvailability "nativeValue" nativeValueResult
+          <> eitherAvailability "status" statusResult
+          <> eitherAvailability "gasUsed" gasUsedResult
+          <> eitherAvailability "effectiveGasPrice" effectiveGasPriceResult
+      evidence =
+        transactionEvidence
+          "unbound"
+          (isJust txObject)
+          (isJust receiptObject)
+          availability
+          Nothing
+  in TransactionInfo
+    { tiFrom = sender
+    , tiTo = recipient
+    , tiSelector = selector
+    , tiInput = input
+    , tiNativeValue = nativeValue
+    , tiStatus = status
+    , tiGasUsed = gasUsed
+    , tiEffectiveGasPrice = effectiveGasPrice
+    , tiTransactionIdentity = transactionIdentity
+    , tiReceiptIdentity = receiptIdentity
+    , tiReceiptLogs = receiptLogs
+    , tiAvailability = availability
+    , tiTransactionAvailable = isJust txObject
+    , tiReceiptAvailable = isJust receiptObject
+    , tiEvidence = evidence
+    }
+
+-- | Bind parsed transaction/receipt payloads to the exact confirmed log and
+-- canonical block selected for this range. Any disagreement is retryable
+-- provider/fork evidence and must abort the range before a ledger write.
+bindTransactionInfoToLog
+  :: BlockInfo
+  -> RpcLog
+  -> TransactionInfo
+  -> Either Text TransactionInfo
+bindTransactionInfoToLog blockInfo logEntry txInfo = do
+  validateCanonicalRpcLog logEntry
+  unlessEither
+    (biNumber blockInfo == rlBlockNumber logEntry)
+    "transaction_evidence_block_number_mismatch"
+  unlessEither
+    (normalizeHex (biHash blockInfo) == normalizeHex (rlBlockHash logEntry))
+    "transaction_evidence_block_hash_mismatch"
+  transactionIdentity <-
+    maybe
+      (Left "transaction_identity_unavailable")
+      Right
+      (tiTransactionIdentity txInfo)
+  receiptIdentity <-
+    maybe
+      (Left "receipt_identity_unavailable")
+      Right
+      (tiReceiptIdentity txInfo)
+  receiptLogs <-
+    maybe
+      (Left "receipt_logs_unavailable")
+      Right
+      (tiReceiptLogs txInfo)
+  validateExpectedIdentity "transaction" logEntry transactionIdentity
+  validateExpectedIdentity "receipt" logEntry receiptIdentity
+  unlessEither
+    (transactionIdentity == receiptIdentity)
+    "transaction_receipt_identity_mismatch"
+  unlessEither
+    (all (receiptLogBelongsTo receiptIdentity) receiptLogs)
+    "receipt_log_parent_identity_mismatch"
+  receiptLog <-
+    case filter ((== rlLogIndex logEntry) . rlLogIndex) receiptLogs of
+      [matchedLog] -> Right matchedLog
+      [] -> Left "receipt_log_identity_missing"
+      _ -> Left "receipt_log_identity_ambiguous"
+  unlessEither
+    (receiptLogExactlyMatches logEntry receiptLog)
+    "receipt_log_identity_mismatch"
+  let binding =
+        object
+          [ "transactionHash" .= normalizeHex (rlTxHash logEntry)
+          , "blockNumber" .= show (rlBlockNumber logEntry)
+          , "blockHash" .= normalizeHex (rlBlockHash logEntry)
+          , "transactionIndex" .= show (rlTxIndex logEntry)
+          , "receiptLogIndex" .= show (rlLogIndex logEntry)
+          , "receiptLogAddress" .= normalizeHex (rlAddress receiptLog)
+          , "receiptLogMatched" .= True
+          ]
+      evidence =
+        transactionEvidence
+          "exact"
+          (tiTransactionAvailable txInfo)
+          (tiReceiptAvailable txInfo)
+          (tiAvailability txInfo)
+          (Just binding)
+  pure txInfo {tiEvidence = evidence}
+
+transactionEvidence
+  :: Text
+  -> Bool
+  -> Bool
+  -> [Value]
+  -> Maybe Value
+  -> Value
+transactionEvidence identityLevel transactionAvailable receiptAvailable availability binding =
+  object $
+    [ "level" .=
+        if identityLevel == "exact" && null availability
+          then ("exact" :: Text)
+          else ("unavailable" :: Text)
+    , "source" .= ("transaction_and_receipt" :: Text)
+    , "identityLevel" .= identityLevel
+    , "transactionAvailable" .= transactionAvailable
+    , "receiptAvailable" .= receiptAvailable
+    , "availability" .= availability
+    ]
+      <> maybe [] (\value -> ["binding" .= value]) binding
+
+validateExpectedIdentity :: Text -> RpcLog -> TransactionIdentity -> Either Text ()
+validateExpectedIdentity sourceName logEntry identity = do
+  unlessEither
+    (normalizeHex (txiHash identity) == normalizeHex (rlTxHash logEntry))
+    (sourceName <> "_hash_mismatch")
+  unlessEither
+    (txiBlockNumber identity == rlBlockNumber logEntry)
+    (sourceName <> "_block_number_mismatch")
+  unlessEither
+    (normalizeHex (txiBlockHash identity) == normalizeHex (rlBlockHash logEntry))
+    (sourceName <> "_block_hash_mismatch")
+  unlessEither
+    (txiTransactionIndex identity == rlTxIndex logEntry)
+    (sourceName <> "_transaction_index_mismatch")
+
+receiptLogBelongsTo :: TransactionIdentity -> RpcLog -> Bool
+receiptLogBelongsTo identity receiptLog =
+  normalizeHex (rlTxHash receiptLog) == normalizeHex (txiHash identity)
+    && rlBlockNumber receiptLog == txiBlockNumber identity
+    && normalizeHex (rlBlockHash receiptLog) == normalizeHex (txiBlockHash identity)
+    && rlTxIndex receiptLog == txiTransactionIndex identity
+
+receiptLogExactlyMatches :: RpcLog -> RpcLog -> Bool
+receiptLogExactlyMatches expected actual =
+  normalizeHex (rlAddress expected) == normalizeHex (rlAddress actual)
+    && rlTopics expected == rlTopics actual
+    && rlData expected == rlData actual
+    && normalizeHex (rlTxHash expected) == normalizeHex (rlTxHash actual)
+    && rlBlockNumber expected == rlBlockNumber actual
+    && normalizeHex (rlBlockHash expected) == normalizeHex (rlBlockHash actual)
+    && rlTxIndex expected == rlTxIndex actual
+    && rlLogIndex expected == rlLogIndex actual
+
+unlessEither :: Bool -> Text -> Either Text ()
+unlessEither condition reason =
+  if condition then Right () else Left reason
+
+eitherAvailability :: Text -> Either Text a -> [Value]
+eitherAvailability fieldName =
+  either (\reason -> [unavailableField fieldName reason]) (const [])
+
+rpcObjectResult :: Text -> Either Text Value -> (Maybe Aeson.Object, Maybe Value)
+rpcObjectResult sourceName = \case
+  Right (Object obj) -> (Just obj, Nothing)
+  Right Null ->
+    ( Nothing
+    , Just $ unavailableField sourceName (sourceName <> "_not_returned")
+    )
+  Right _ ->
+    ( Nothing
+    , Just $ unavailableField sourceName (sourceName <> "_response_invalid")
+    )
+  Left _ ->
+    ( Nothing
+    , Just $ unavailableField sourceName (sourceName <> "_rpc_unavailable")
+    )
+
+unavailableField :: Text -> Text -> Value
+unavailableField fieldName reason =
+  object
+    [ "field" .= fieldName
+    , "reason" .= reason
+    ]
+
+parseRpcQuantity :: Text -> Maybe Integer
+parseRpcQuantity value =
+  if not ("0x" `T.isPrefixOf` value)
+    || T.null digits
+    || not (T.all isHexDigit digits)
+    || (T.length digits > 1 && T.head digits == '0')
+    then Nothing
+    else Just $ hexToInteger digits
+  where
+    digits = T.drop 2 value
 
 getReplayBlockByNumber
   :: Manager -> [Text] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
@@ -2191,8 +4091,8 @@ parseCanonicalHexQuantity label value = do
     (Left $ "Replay " <> label <> " is not a canonical hex quantity")
   pure $ hexToInteger $ T.drop 2 value
 
-getTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
-getTransactionInfo manager rpcUrls reqIdRef txHash = do
+getExecutionTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text ExecutionTransactionInfo)
+getExecutionTransactionInfo manager rpcUrls reqIdRef txHash = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
   pure $ case result of
     Left err -> Left err
@@ -2203,23 +4103,23 @@ getTransactionInfo manager rpcUrls reqIdRef txHash = do
       blockHash <- requiredString "blockHash" obj
       input <- requiredString "input" obj
       Right
-        TransactionInfo
-          { tiHash = transactionHash
-          , tiFrom = fromAddress
-          , tiTo = toAddress
-          , tiBlockHash = blockHash
-          , tiInput = decodeHex input
+        ExecutionTransactionInfo
+          { etiHash = transactionHash
+          , etiFrom = fromAddress
+          , etiTo = toAddress
+          , etiBlockHash = blockHash
+          , etiInput = decodeHex input
           }
     Right Null -> Left $ "Transaction not found: " <> txHash
     Right _ -> Left "Expected transaction object"
 
-getReplayTransactionInfo
-  :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
-getReplayTransactionInfo manager rpcUrls reqIdRef txHash = do
+getReplayExecutionTransactionInfo
+  :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text ExecutionTransactionInfo)
+getReplayExecutionTransactionInfo manager rpcUrls reqIdRef txHash = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
   pure $ result >>= parseReplayTransactionInfo
 
-parseReplayTransactionInfo :: Value -> Either Text TransactionInfo
+parseReplayTransactionInfo :: Value -> Either Text ExecutionTransactionInfo
 parseReplayTransactionInfo = \case
   Object obj -> do
     transactionHash <- requiredString "hash" obj
@@ -2233,49 +4133,34 @@ parseReplayTransactionInfo = \case
       Left "Replay transaction sender/target is not a canonical 20-byte address"
     input <- requiredHexBytes "transaction input" inputText
     pure
-      TransactionInfo
-        { tiHash = transactionHash
-        , tiFrom = fromAddress
-        , tiTo = toAddress
-        , tiBlockHash = blockHash
-        , tiInput = input
+      ExecutionTransactionInfo
+        { etiHash = transactionHash
+        , etiFrom = fromAddress
+        , etiTo = toAddress
+        , etiBlockHash = blockHash
+        , etiInput = input
         }
   Null -> Left "Replay transaction was not found"
   _ -> Left "Replay transaction response must be a JSON object"
-
-getTransactionFrom :: Manager -> [Text] -> IORef Integer -> Text -> IO (Maybe Text)
-getTransactionFrom manager rpcUrls reqIdRef txHash = do
-  result <- getTransactionInfo manager rpcUrls reqIdRef txHash
-  case result of
-    Right txInfo -> pure $ Just $ tiFrom txInfo
-    Left err -> do
-      logWarnEvery
-        60
-        "perps_indexer_transaction_sender_unavailable"
-        "Perps history indexer could not read optional transaction sender metadata"
-        [ field "tx_hash" txHash
-        , field "error" err
-        ]
-      pure Nothing
 
 executionUpdateData
   :: PerpsIndexerConfig
   -> Text
   -> Text
-  -> TransactionInfo
+  -> ExecutionTransactionInfo
   -> Integer
   -> Either Text [ByteString]
 executionUpdateData cfg expectedTxHash expectedBlockHash txInfo orderId = do
-  if normalizeHex (tiHash txInfo) == normalizeHex expectedTxHash
+  if normalizeHex (etiHash txInfo) == normalizeHex expectedTxHash
     then Right ()
     else Left "Execution transaction hash does not match the indexed terminal event"
-  if normalizeHex (tiBlockHash txInfo) == normalizeHex expectedBlockHash
+  if normalizeHex (etiBlockHash txInfo) == normalizeHex expectedBlockHash
     then Right ()
     else Left "Execution transaction block hash does not match the indexed terminal event"
-  if normalizeHex (tiTo txInfo) == normalizeHex (paOrderRouter $ picAddresses cfg)
+  if normalizeHex (etiTo txInfo) == normalizeHex (paOrderRouter $ picAddresses cfg)
     then Right ()
     else Left "Execution transaction target does not match the configured order router"
-  decodeExecutionUpdateData orderId (tiInput txInfo)
+  decodeExecutionUpdateData orderId (etiInput txInfo)
 
 deriveExecutionOracleMidpoint
   :: Manager
@@ -2327,30 +4212,136 @@ executionFeedIds = traverse decodeFeedId basketComponents
 renderRpcError :: RpcError -> Text
 renderRpcError = T.pack . show
 
-getLogs :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
+getLogs
+  :: Manager
+  -> [Text]
+  -> IORef Integer
+  -> PerpsIndexerConfig
+  -> Integer
+  -> Integer
+  -> IO (Either Text [RpcLog])
 getLogs manager rpcUrls reqIdRef cfg fromBlock toBlock = do
-  perpsResult <- getLogsFor manager rpcUrls reqIdRef (perpsContractAddresses cfg) perpsEventTopics fromBlock toBlock
-  transferResult <- getLogsFor manager rpcUrls reqIdRef [paUsdc $ picAddresses cfg] [transferTopic] fromBlock toBlock
+  protocolResult <-
+    getLogsFor
+      manager
+      rpcUrls
+      reqIdRef
+      (perpsContractAddresses cfg)
+      Nothing
+      parseLogEntry
+      fromBlock
+      toBlock
+  transferResult <-
+    getLogsFor
+      manager
+      rpcUrls
+      reqIdRef
+      [paUsdc $ picAddresses cfg]
+      (Just [transferTopic])
+      parseLogEntry
+      fromBlock
+      toBlock
+  pure $ (<>) <$> protocolResult <*> transferResult
+
+-- Bounded replay intentionally remains narrower than the immutable protocol
+-- ledger: it proves duplicate ingestion only for the canonical Perps
+-- projection and USDC transfer rows that existed before the explorer.
+getReplayLogs
+  :: Manager
+  -> [Text]
+  -> IORef Integer
+  -> PerpsIndexerConfig
+  -> Integer
+  -> Integer
+  -> IO (Either Text [RpcLog])
+getReplayLogs manager rpcUrls reqIdRef cfg fromBlock toBlock = do
+  perpsResult <-
+    getLogsFor
+      manager
+      rpcUrls
+      reqIdRef
+      (replayPerpsContractAddresses cfg)
+      (Just perpsEventTopics)
+      parseReplayLogEntry
+      fromBlock
+      toBlock
+  transferResult <-
+    getLogsFor
+      manager
+      rpcUrls
+      reqIdRef
+      [paUsdc $ picAddresses cfg]
+      (Just [transferTopic])
+      parseReplayLogEntry
+      fromBlock
+      toBlock
   pure $ (<>) <$> perpsResult <*> transferResult
 
-getLogsFor :: Manager -> [Text] -> IORef Integer -> [Text] -> [ByteString] -> Integer -> Integer -> IO (Either Text [RpcLog])
-getLogsFor manager rpcUrls reqIdRef addresses eventTopics fromBlock toBlock = do
-  let topics = map (String . ("0x" <>) . bytesToHex) eventTopics
-      filterObject = object
+getLogsFor
+  :: Manager
+  -> [Text]
+  -> IORef Integer
+  -> [Text]
+  -> Maybe [ByteString]
+  -> (Value -> Either Text RpcLog)
+  -> Integer
+  -> Integer
+  -> IO (Either Text [RpcLog])
+getLogsFor manager rpcUrls reqIdRef addresses eventTopics parseEntry fromBlock toBlock = do
+  let filterFields =
         [ "address" .= addresses
-        , "topics" .= [topics]
         , "fromBlock" .= ("0x" <> intToHex fromBlock)
         , "toBlock" .= ("0x" <> intToHex toBlock)
         ]
-  result <- rpcCallAny manager rpcUrls reqIdRef "eth_getLogs" [filterObject]
+          <> maybe
+            []
+            (\topics ->
+              [ "topics"
+                  .= [map (String . ("0x" <>) . bytesToHex) topics]
+              ]
+            )
+            eventTopics
+  result <-
+    rpcCallAny
+      manager
+      rpcUrls
+      reqIdRef
+      "eth_getLogs"
+      [object filterFields]
   pure $ case result of
     Left err -> Left err
-    Right (Array arr) -> traverse parseReplayLogEntry $ toList arr
+    Right (Array entries) -> traverse parseEntry $ toList entries
     Right _ -> Left "Expected logs array"
 
-getReplayLogs
-  :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
-getReplayLogs = getLogs
+
+parseLogEntry :: Value -> Either Text RpcLog
+parseLogEntry = \case
+  Object obj -> do
+    address <- requiredCanonicalAddress "address" obj
+    topics <- requiredCanonicalTopics obj
+    eventData <- requiredCanonicalDataBytes "data" obj
+    txHash <- requiredCanonicalHash "transactionHash" obj
+    blockNumber <- requiredCanonicalQuantity "blockNumber" obj
+    blockHash <- requiredCanonicalHash "blockHash" obj
+    txIndex <- requiredCanonicalQuantity "transactionIndex" obj
+    logIndex <- requiredCanonicalQuantity "logIndex" obj
+    case KM.lookup "removed" obj of
+      Just (Bool True) -> Left "log_removed"
+      Just (Bool False) -> pure ()
+      Nothing -> pure ()
+      _ -> Left "log_removed_flag_invalid"
+    pure
+      RpcLog
+        { rlAddress = address
+        , rlTopics = topics
+        , rlData = eventData
+        , rlTxHash = txHash
+        , rlBlockNumber = blockNumber
+        , rlBlockHash = blockHash
+        , rlTxIndex = txIndex
+        , rlLogIndex = logIndex
+        }
+  _ -> Left "log_response_invalid"
 
 parseReplayLogEntry :: Value -> Either Text RpcLog
 parseReplayLogEntry = \case
@@ -2384,15 +4375,172 @@ parseReplayLogEntry = \case
         }
   _ -> Left "Replay log entry must be a JSON object"
 
+parseBlockInfo :: Integer -> Value -> Either Text BlockInfo
+parseBlockInfo requestedBlock = \case
+  Object obj -> do
+    returnedBlock <- requiredCanonicalQuantity "number" obj
+    unlessEither (returnedBlock == requestedBlock) "block_number_mismatch"
+    blockHash <- requiredCanonicalHash "hash" obj
+    timestamp <- requiredCanonicalQuantity "timestamp" obj
+    pure
+      BlockInfo
+        { biNumber = returnedBlock
+        , biHash = blockHash
+        , biTimestamp = timestamp
+        }
+  Null -> Left "block_not_returned"
+  _ -> Left "block_response_invalid"
+
+parseTransactionIdentity :: Text -> Aeson.Object -> Either Text TransactionIdentity
+parseTransactionIdentity sourceName obj = do
+  transactionHash <-
+    mapLeft
+      (const $ sourceName <> "_hash_invalid")
+      ( requiredCanonicalHash
+          (if sourceName == "receipt" then "transactionHash" else "hash")
+          obj
+      )
+  blockNumber <-
+    mapLeft
+      (const $ sourceName <> "_block_number_invalid")
+      (requiredCanonicalQuantity "blockNumber" obj)
+  blockHash <-
+    mapLeft
+      (const $ sourceName <> "_block_hash_invalid")
+      (requiredCanonicalHash "blockHash" obj)
+  transactionIndex <-
+    mapLeft
+      (const $ sourceName <> "_transaction_index_invalid")
+      (requiredCanonicalQuantity "transactionIndex" obj)
+  pure
+    TransactionIdentity
+      { txiHash = transactionHash
+      , txiBlockNumber = blockNumber
+      , txiBlockHash = blockHash
+      , txiTransactionIndex = transactionIndex
+      }
+
+parseReceiptLogs :: Aeson.Object -> Either Text [RpcLog]
+parseReceiptLogs obj =
+  case KM.lookup "logs" obj of
+    Just (Array values) ->
+      mapLeft
+        (const "receipt_logs_invalid")
+        (traverse parseLogEntry $ toList values)
+    _ -> Left "receipt_logs_invalid"
+
+parseReceiptStatus :: Aeson.Object -> Either Text Text
+parseReceiptStatus obj = do
+  status <- requiredCanonicalQuantity "status" obj
+  case status of
+    0 -> Right "reverted"
+    1 -> Right "success"
+    _ -> Left "receipt_status_invalid"
+
+requiredCanonicalAddress :: Text -> Aeson.Object -> Either Text Text
+requiredCanonicalAddress key obj = do
+  value <- requiredText key obj
+  if isCanonicalAddress value
+    then Right value
+    else Left $ key <> "_invalid"
+
+nullableCanonicalAddress :: Text -> Aeson.Object -> Either Text (Maybe Text)
+nullableCanonicalAddress key obj =
+  case KM.lookup (Key.fromText key) obj of
+    Just Null -> Right Nothing
+    Just (String value)
+      | isCanonicalAddress value -> Right $ Just value
+    _ -> Left $ key <> "_invalid"
+
+requiredCanonicalHash :: Text -> Aeson.Object -> Either Text Text
+requiredCanonicalHash key obj = do
+  value <- requiredText key obj
+  if isFixedHexText 32 value
+    then Right value
+    else Left $ key <> "_invalid"
+
+requiredCanonicalQuantity :: Text -> Aeson.Object -> Either Text Integer
+requiredCanonicalQuantity key obj = do
+  value <- requiredText key obj
+  maybe
+    (Left $ key <> "_invalid")
+    Right
+    (parseRpcQuantity value)
+
+requiredCanonicalData :: Text -> Aeson.Object -> Either Text Text
+requiredCanonicalData key obj = do
+  value <- requiredText key obj
+  _ <- decodeCanonicalHex value
+  pure value
+
+requiredCanonicalDataBytes :: Text -> Aeson.Object -> Either Text ByteString
+requiredCanonicalDataBytes key obj =
+  requiredText key obj >>= decodeCanonicalHex
+
+requiredCanonicalTopics :: Aeson.Object -> Either Text [ByteString]
+requiredCanonicalTopics obj =
+  case KM.lookup "topics" obj of
+    Just (Array values) -> traverse decodeTopic $ toList values
+    _ -> Left "topics_invalid"
+  where
+    decodeTopic = \case
+      String value
+        | isFixedHexText 32 value ->
+            decodeCanonicalHex value
+      _ -> Left "topics_invalid"
+
+requiredText :: Text -> Aeson.Object -> Either Text Text
+requiredText key obj =
+  case KM.lookup (Key.fromText key) obj of
+    Just (String value) | not (T.null value) -> Right value
+    _ -> Left $ key <> "_unavailable"
+
+decodeCanonicalHex :: Text -> Either Text ByteString
+decodeCanonicalHex value
+  | not ("0x" `T.isPrefixOf` value) = Left "hex_prefix_invalid"
+  | odd (T.length digits) = Left "hex_length_invalid"
+  | not (T.all isHexDigit digits) = Left "hex_data_invalid"
+  | otherwise =
+      mapLeft
+        (const "hex_data_invalid")
+        (B16.decode $ TE.encodeUtf8 $ T.toLower digits)
+  where
+    digits = T.drop 2 value
+
+isCanonicalAddress :: Text -> Bool
+isCanonicalAddress value =
+  "0x" `T.isPrefixOf` value
+    && T.length value == 42
+    && isValidAddress value
+
+isFixedHexText :: Int -> Text -> Bool
+isFixedHexText byteLength value =
+  "0x" `T.isPrefixOf` value
+    && T.length value == 2 + byteLength * 2
+    && T.all isHexDigit (T.drop 2 value)
+
+validateCanonicalRpcLog :: RpcLog -> Either Text ()
+validateCanonicalRpcLog logEntry = do
+  unlessEither (isCanonicalAddress $ rlAddress logEntry) "log_address_invalid"
+  unlessEither (isFixedHexText 32 $ rlTxHash logEntry) "log_transaction_hash_invalid"
+  unlessEither (isFixedHexText 32 $ rlBlockHash logEntry) "log_block_hash_invalid"
+  unlessEither (rlBlockNumber logEntry >= 0) "log_block_number_invalid"
+  unlessEither (rlTxIndex logEntry >= 0) "log_transaction_index_invalid"
+  unlessEither (rlLogIndex logEntry >= 0) "log_index_invalid"
+  unlessEither (all ((== 32) . BS.length) $ rlTopics logEntry) "log_topics_invalid"
+
+mapLeft :: (a -> b) -> Either a c -> Either b c
+mapLeft f =
+  either (Left . f) Right
 requiredStringArray :: Text -> KM.KeyMap Value -> Either Text [Text]
 requiredStringArray name obj =
   case KM.lookup (Key.fromText name) obj of
     Just (Array values) -> traverse requireString $ toList values
     _ -> Left $ "Missing or invalid replay log field: " <> name
- where
-  requireString = \case
-    String value -> Right value
-    _ -> Left $ "Replay log array field contains a non-string: " <> name
+  where
+    requireString = \case
+      String value -> Right value
+      _ -> Left $ "Replay log array field contains a non-string: " <> name
 
 requiredHexQuantity :: Text -> KM.KeyMap Value -> Either Text Integer
 requiredHexQuantity name obj = do
@@ -2413,27 +4561,16 @@ requiredHexBytes name value = do
     Right bytes -> Right bytes
     Left _ -> Left $ "Replay log field could not be decoded: " <> name
 
-isCanonicalAddress :: Text -> Bool
-isCanonicalAddress value =
-  T.length value == 42
-    && "0x" `T.isPrefixOf` value
-    && T.all isHexDigit (T.drop 2 value)
-
 isCanonicalHash :: Text -> Bool
 isCanonicalHash value =
   T.length value == 66
     && "0x" `T.isPrefixOf` value
     && T.all isHexDigit (T.drop 2 value)
 
-isHexDigit :: Char -> Bool
-isHexDigit value =
-  (value >= '0' && value <= '9')
-    || (value >= 'a' && value <= 'f')
-    || (value >= 'A' && value <= 'F')
-
 isLowerHexDigit :: Char -> Bool
 isLowerHexDigit value =
   (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
+
 
 rpcCallAny :: (Aeson.ToJSON params) => Manager -> [Text] -> IORef Integer -> Text -> params -> IO (Either Text Value)
 rpcCallAny manager rpcUrls reqIdRef method params = tryUrls rpcUrls
@@ -2486,18 +4623,92 @@ rpcCall manager rpcUrl reqIdRef methodName params = do
 nextId :: IORef Integer -> IO Integer
 nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)
 
+validateStaticLogShape :: StaticLogShape -> RpcLog -> Either Text ()
+validateStaticLogShape shape logEntry
+  | length topics /= slsTopicCount shape =
+      Left "event_topic_count_invalid"
+  | any ((/= 32) . BS.length) topics =
+      Left "event_topic_word_length_invalid"
+  | BS.length eventData /= slsDataWordCount shape * 32 =
+      Left "event_data_length_invalid"
+  | Just _ <- find (not . canonicalAddressAt) (slsIndexedAddresses shape) =
+      Left "event_indexed_address_not_canonical"
+  | Just (_, width) <-
+      find
+        (not . indexedUintFits)
+        (slsIndexedUintWidths shape) =
+      Left $ narrowUintReason width
+  | Just (_, width) <-
+      find
+        (not . dataUintFits)
+        (slsDataUintWidths shape) =
+      Left $ narrowUintReason width
+  | otherwise = Right ()
+  where
+    topics = rlTopics logEntry
+    eventData = rlData logEntry
+
+    canonicalAddressAt index =
+      case atIndex topics index >>= eitherToMaybe . canonicalAddressWord of
+        Just _ -> True
+        Nothing -> False
+
+    indexedUintFits (index, width) =
+      maybe False (fitsUnsignedWidth width . bytesToInteger) $
+        atIndex topics index
+
+    dataUintFits (index, width)
+      | index < 0 || index >= slsDataWordCount shape = False
+      | otherwise = fitsUnsignedWidth width $ wordAt eventData index
+
+requireStaticLogShape :: StaticLogShape -> RpcLog -> Maybe ()
+requireStaticLogShape shape =
+  either (const Nothing) (const $ Just ()) . validateStaticLogShape shape
+
+fitsUnsignedWidth :: Int -> Integer -> Bool
+fitsUnsignedWidth width value =
+  width > 0
+    && width <= 256
+    && value >= 0
+    && value < 2 ^ width
+
+narrowUintReason :: Int -> Text
+narrowUintReason 1 = "event_bool_not_canonical"
+narrowUintReason width =
+  "event_uint"
+    <> T.pack (show width)
+    <> "_not_canonical"
+
+atIndex :: [a] -> Int -> Maybe a
+atIndex values index
+  | index < 0 = Nothing
+  | otherwise =
+      case drop index values of
+        value : _ -> Just value
+        [] -> Nothing
+
+eitherToMaybe :: Either a b -> Maybe b
+eitherToMaybe = either (const Nothing) Just
+
 rpcRequestTimeoutMicros :: Int
 rpcRequestTimeoutMicros = 25_000_000
 
 indexedUint :: [ByteString] -> Int -> Maybe Integer
-indexedUint topics idx
-  | idx < length topics = Just $ bytesToInteger (topics !! idx)
-  | otherwise = Nothing
+indexedUint topics idx = do
+  topicWord <- atIndex topics idx
+  if BS.length topicWord == 32
+    then Just $ bytesToInteger topicWord
+    else Nothing
 
 indexedAddress :: [ByteString] -> Int -> Maybe Text
-indexedAddress topics idx
-  | idx < length topics = Just $ "0x" <> T.drop 24 (bytesToHex (topics !! idx))
-  | otherwise = Nothing
+indexedAddress topics idx =
+  atIndex topics idx >>= eitherToMaybe . canonicalAddressWord
+
+requiredIndexedAddress :: [ByteString] -> Int -> Text
+requiredIndexedAddress topics index =
+  fromMaybe
+    (error "validated indexed address is unavailable")
+    (indexedAddress topics index)
 
 indexedBytes32 :: [ByteString] -> Int -> Maybe Text
 indexedBytes32 topics idx
@@ -2505,9 +4716,20 @@ indexedBytes32 topics idx
       Just $ "0x" <> bytesToHex (topics !! idx)
   | otherwise = Nothing
 
+dataAddressAt :: ByteString -> Int -> Maybe Text
+dataAddressAt bytes index =
+  eitherToMaybe . canonicalAddressWord $
+    BS.take 32 $ BS.drop (index * 32) bytes
+
 hexWordAt :: ByteString -> Int -> Text
 hexWordAt bytes index =
   "0x" <> bytesToHex (BS.take 32 $ BS.drop (index * 32) bytes)
+
+hexBytesAt :: ByteString -> Int -> Int -> Text
+hexBytesAt bytes index byteCount =
+  "0x"
+    <> bytesToHex
+      (BS.take byteCount $ BS.drop (index * 32) bytes)
 
 wordAt :: ByteString -> Int -> Integer
 wordAt bytes index = bytesToInteger $ BS.take 32 $ BS.drop (index * 32) bytes
@@ -2528,7 +4750,7 @@ bytesToHex = TE.decodeUtf8 . B16.encode
 decodeHex :: Text -> ByteString
 decodeHex txt =
   case B16.decode (TE.encodeUtf8 $ T.toLower $ strip0x txt) of
-    Right bs -> bs
+    Right bytes -> bytes
     Left _ -> ""
 
 strip0x :: Text -> Text
@@ -2539,11 +4761,6 @@ strip0x txt
 
 normalizeHex :: Text -> Text
 normalizeHex txt = "0x" <> T.toLower (strip0x txt)
-
-getString :: Text -> Aeson.Object -> Text
-getString key obj = case KM.lookup (Key.fromText key) obj of
-  Just (String s) -> s
-  _ -> ""
 
 requiredString :: Text -> Aeson.Object -> Either Text Text
 requiredString key obj =

@@ -30,6 +30,16 @@ cabal run plether-api
 
 Server starts at `http://localhost:3001`.
 
+## Protocol Release Manifest
+
+`config/protocol-releases.json` is the checked-in release and analytics-ABI
+catalog used for deployment review and backfill reconciliation. The backend
+currently compiles the matching release addresses into
+`Plether.Protocol.Release` so startup does not depend on locating a mutable
+runtime file. When adding a release, update both sources; backend tests enforce
+address parity and require the manifest ABI to cover every parameter,
+governance, dependency, and lifecycle signature consumed by the explorer.
+
 ## ECS OpenTelemetry Logs
 
 The ECS task definitions route application `stdout` and `stderr` through an
@@ -522,6 +532,7 @@ Local URLs:
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
+| `PROTOCOL_EXPLORER_ENABLED` | No | `false` | Public Protocol Transparency Explorer rollout switch. Enable only after the release backfill, event-count parity, freshness, and representative reconciliations pass. When false, only its current-release bootstrap remains available and Insights falls back to the competition. |
 | `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
@@ -762,6 +773,33 @@ accepts `activityLimit`.
 `finalPnlUsdc` is the cash-flow-adjusted net competition result. The separate
 `realizedPnlUsdc` field sums directional close/liquidation P&L before execution
 fees, VPI, carry, rewards, and manual competition adjustments.
+
+### Protocol Transparency Explorer (requires PostgreSQL and feature flag)
+
+Resolve the release through
+`GET /api/insights/v1/protocol/releases/current`, then use its `releaseId` in
+the release-scoped endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/insights/v1/protocol/releases/:releaseId/overview` | Liveness, solvency, market state, and deterministic anomaly indicators |
+| `GET /api/insights/v1/protocol/releases/:releaseId/transactions` | Filtered protocol activity feed |
+| `GET /api/insights/v1/protocol/releases/:releaseId/transactions/:txHash` | Canonical transaction, actions, logs, and state evidence |
+| `GET /api/insights/v1/protocol/releases/:releaseId/orders/:orderId` | Logical order lifecycle |
+| `GET /api/insights/v1/protocol/releases/:releaseId/house-pool` | HousePool accounting and solvency |
+| `GET /api/insights/v1/protocol/releases/:releaseId/tranches/:tranche` | Senior or Junior current state |
+| `GET /api/insights/v1/protocol/releases/:releaseId/tranches/:tranche/history` | Paginated tranche history |
+| `GET /api/insights/v1/protocol/releases/:releaseId/keepers` | Keeper windows, latency, costs, and concentration |
+| `GET /api/insights/v1/protocol/releases/:releaseId/keepers/:address` | Keeper-specific actions and evidence |
+| `GET /api/insights/v1/protocol/releases/:releaseId/wallets` | Public operational identities and native-funding diagnostics |
+| `GET /api/insights/v1/protocol/releases/:releaseId/wallets/:address` | Operational-wallet roles, balance, activity, and gross-spend evidence |
+| `GET /api/insights/v1/protocol/releases/:releaseId/parameters` | Current and directly read pending protocol parameters |
+| `GET /api/insights/v1/protocol/releases/:releaseId/parameter-changes` | Governance and parameter history |
+
+Every explorer response carries a confirmed block anchor, release/calculation
+version, explicit units, evidence, and machine-readable availability reasons.
+Operational-wallet funding estimates use gross transaction value and gas; they
+do not net refunds or claim to measure profit or guaranteed liveness.
 
 ## Response Format
 

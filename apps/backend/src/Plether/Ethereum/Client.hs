@@ -1,14 +1,29 @@
 module Plether.Ethereum.Client
   ( EthClient (..)
   , RpcError (..)
+  , RpcChainBindingError (..)
+  , CanonicalBlockRef
+  , canonicalBlockNumber
+  , canonicalBlockHash
+  , mkCanonicalBlockRef
+  , decodeCanonicalBlockRef
+  , renderCanonicalBlockIdentifier
+  , canonicalEthCallParams
   , newClient
+  , newClientWithManager
   , rpcCall
   , ethCall
   , ethCallAt
   , ethCallWithValue
   , ethCallWithTransactionGas
   , ethCallAtBlock
+  , ethCallAtCanonicalBlock
+  , ethGetCanonicalBlockRef
   , ethBlockNumber
+  , ethChainId
+  , decodeChainIdResult
+  , validateRpcChainId
+  , selectRpcUrlsForChain
   , parseRpcQuantity
   , parseRpcData
   , CallParams (..)
@@ -59,6 +74,24 @@ data RpcError
   | RpcNodeError Int Text (Maybe Text)
   deriving stock (Show, Eq)
 
+-- | A deliberately redacted release-to-provider binding failure. Consumers
+-- may expose this classification publicly without leaking provider URLs or
+-- node error details.
+data RpcChainBindingError
+  = RpcChainIdUnavailable
+  | RpcChainIdMismatch
+  deriving stock (Show, Eq)
+
+-- | A block number/hash pair that has passed strict local validation. EIP-1898
+-- sends only the hash to @eth_call@; retaining the number in this opaque value
+-- binds returned evidence and API envelopes to the header from which the hash
+-- was resolved.
+data CanonicalBlockRef = CanonicalBlockRef
+  { canonicalBlockNumber :: Integer
+  , canonicalBlockHash :: Text
+  }
+  deriving stock (Show, Eq)
+
 data RpcRequest = RpcRequest
   { rpcMethod :: Text
   , rpcParams :: Value
@@ -106,6 +139,10 @@ instance FromJSON RpcResponseError where
 newClient :: Text -> IO EthClient
 newClient rpcUrl = do
   manager <- newManager tlsManagerSettings
+  newClientWithManager manager rpcUrl
+
+newClientWithManager :: Manager -> Text -> IO EthClient
+newClientWithManager manager rpcUrl = do
   reqId <- newIORef 1
   pure $
     EthClient
@@ -252,13 +289,164 @@ ethCallAtTag client CallParams {..} maybeFrom maybeValue maybeGas blockTag =
 ethCallAtBlock :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
 ethCallAtBlock client params = ethCallAt client params . BlockNumber
 
+-- | Evaluate an @eth_call@ against one canonical block hash. Providers that
+-- do not support EIP-1898, no longer consider the hash canonical, or cannot
+-- serve its state return an RPC error; callers must not fall back to a numeric
+-- block tag for evidence-bearing reads.
+ethCallAtCanonicalBlock
+  :: EthClient
+  -> CallParams
+  -> CanonicalBlockRef
+  -> IO (Either RpcError ByteString)
+ethCallAtCanonicalBlock client callParams blockRef = do
+  result <-
+    rpcCall
+      client
+      "eth_call"
+      (canonicalEthCallParams callParams blockRef)
+  pure $ result >>= decodeEthCallResult
+
+-- | Resolve and strictly validate the exact header pair for a numeric block.
+-- This is used before historical reads whose source data contains a number but
+-- not a trusted hash.
+ethGetCanonicalBlockRef
+  :: EthClient
+  -> Integer
+  -> IO (Either RpcError CanonicalBlockRef)
+ethGetCanonicalBlockRef client expectedBlockNumber
+  | expectedBlockNumber < 0 =
+      pure $ Left $ RpcJsonError "Block number cannot be negative"
+  | otherwise = do
+      result <-
+        rpcCall
+          client
+          "eth_getBlockByNumber"
+          ( Aeson.toJSON
+              [ String $ "0x" <> intToHex expectedBlockNumber
+              , Bool False
+              ]
+          )
+      pure $ result >>= decodeCanonicalBlockRef expectedBlockNumber
+
+decodeCanonicalBlockRef
+  :: Integer
+  -> Value
+  -> Either RpcError CanonicalBlockRef
+decodeCanonicalBlockRef expectedBlockNumber = \case
+  Object fields -> do
+    numberValue <-
+      maybe
+        (Left $ RpcJsonError "Block did not include number")
+        Right
+        (KM.lookup (Key.fromText "number") fields)
+    returnedBlockNumber <- case numberValue of
+      String quantity -> parseRpcQuantity "block number" quantity
+      _ -> Left $ RpcJsonError "Expected block number as a hex quantity string"
+    if returnedBlockNumber /= expectedBlockNumber
+      then Left $ RpcJsonError "Returned block number did not match the requested block"
+      else do
+        hashValue <-
+          maybe
+            (Left $ RpcJsonError "Block did not include hash")
+            Right
+            (KM.lookup (Key.fromText "hash") fields)
+        case hashValue of
+          String blockHash -> mkCanonicalBlockRef returnedBlockNumber blockHash
+          _ -> Left $ RpcJsonError "Expected block hash as a hex string"
+  Null -> Left $ RpcJsonError "Block was not found"
+  _ -> Left $ RpcJsonError "Expected block object"
+
+mkCanonicalBlockRef
+  :: Integer
+  -> Text
+  -> Either RpcError CanonicalBlockRef
+mkCanonicalBlockRef blockNumber blockHash
+  | blockNumber < 0 =
+      Left $ RpcJsonError "Block number cannot be negative"
+  | T.length blockHash /= 66
+      || not ("0x" `T.isPrefixOf` blockHash)
+      || not (T.all isHexDigit $ T.drop 2 blockHash) =
+      Left $ RpcJsonError "Expected a canonical 32-byte block hash"
+  | otherwise =
+      Right $
+        CanonicalBlockRef
+          { canonicalBlockNumber = blockNumber
+          , canonicalBlockHash = T.toLower blockHash
+          }
+  where
+    isHexDigit char =
+      (char >= '0' && char <= '9')
+        || (char >= 'a' && char <= 'f')
+        || (char >= 'A' && char <= 'F')
+
+renderCanonicalBlockIdentifier :: CanonicalBlockRef -> Value
+renderCanonicalBlockIdentifier blockRef =
+  object
+    [ "blockHash" .= canonicalBlockHash blockRef
+    , "requireCanonical" .= True
+    ]
+
+canonicalEthCallParams :: CallParams -> CanonicalBlockRef -> Value
+canonicalEthCallParams CallParams {..} blockRef =
+  Aeson.toJSON
+    [ object
+        [ "to" .= callTo
+        , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+        ]
+    , renderCanonicalBlockIdentifier blockRef
+    ]
+
 ethBlockNumber :: EthClient -> IO (Either RpcError Integer)
 ethBlockNumber client = do
   result <- rpcCall client "eth_blockNumber" (Aeson.toJSON ([] :: [Value]))
   pure $ case result of
     Left err -> Left err
-    Right (String hex) -> parseRpcQuantity "block number" hex
+    Right (String quantity) -> parseRpcQuantity "block number" quantity
     Right _ -> Left $ RpcJsonError "Expected hex string from block number"
+
+-- | Return the EIP-155 chain identifier reported by the configured provider.
+-- JSON-RPC quantities are parsed strictly so malformed responses cannot be
+-- mistaken for chain zero (the historical 'hexToInteger' helper is
+-- intentionally permissive and is therefore unsuitable for this boundary).
+ethChainId :: EthClient -> IO (Either RpcError Integer)
+ethChainId client = do
+  result <- rpcCall client "eth_chainId" (Aeson.toJSON ([] :: [Value]))
+  pure $ result >>= decodeChainIdResult
+
+decodeChainIdResult :: Value -> Either RpcError Integer
+decodeChainIdResult = \case
+  String quantity -> parseRpcQuantity "chain ID" quantity
+  _ -> Left $ RpcJsonError "Expected chain ID as a hex quantity string"
+
+validateRpcChainId
+  :: Integer
+  -> Either RpcError Integer
+  -> Either RpcChainBindingError ()
+validateRpcChainId expectedChainId = \case
+  Left _ -> Left RpcChainIdUnavailable
+  Right observedChainId
+    | observedChainId == expectedChainId -> Right ()
+    | otherwise -> Left RpcChainIdMismatch
+
+-- | Keep only providers that were positively bound to the expected chain.
+-- Failed and mismatching probes are excluded from later fallback rotation.
+selectRpcUrlsForChain
+  :: Integer
+  -> [(Text, Either RpcError Integer)]
+  -> [Text]
+selectRpcUrlsForChain expectedChainId =
+  foldr
+    ( \(rpcUrl, observedChainId) matching ->
+        case validateRpcChainId expectedChainId observedChainId of
+          Right () -> rpcUrl : matching
+          Left _ -> matching
+    )
+    []
+
+decodeEthCallResult :: Value -> Either RpcError ByteString
+decodeEthCallResult = \case
+  String value -> parseRpcData "eth_call result" True value
+  _ -> Left $ RpcJsonError "Expected hex string result"
 
 -- | Decode a canonical Ethereum JSON-RPC quantity. Quantities require a
 -- lowercase @0x@ prefix, at least one hexadecimal digit, and no leading zero

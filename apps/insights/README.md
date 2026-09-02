@@ -36,6 +36,12 @@ The registration route is `/competitions/testnet-trading-2026-09/register`
 (`/register` redirects to the current competition). It resumes through the
 secure HttpOnly browser session established by the API.
 
+When testing against a deployed backend that predates the Protocol Explorer,
+set `VITE_PROTOCOL_EXPLORER_LEGACY_FALLBACK=true`. In local development only,
+a missing current-release bootstrap endpoint then falls back to the competition
+instead of presenting the backend's 404 as an Explorer configuration failure.
+Other bootstrap failures remain visible and retryable.
+
 ## Validation
 
 ```sh

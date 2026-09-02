@@ -44,6 +44,10 @@ import Plether.Config
   , PerpsCandleWriteMode (..)
   )
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database.Protocol
+  ( deleteProtocolLedgerFromBlock
+  , ensureProtocolSchema
+  )
 import Plether.Database.Schema
   ( deletePerpsHistoryFromBlock
   , ensurePerpsHistorySchema
@@ -59,7 +63,8 @@ import Plether.Insights.Competition
   , july2026Competition
   )
 import Plether.Perps.CriticalPathFixture
-import Plether.Perps.HistoryIndexer (runPerpsIndexer)
+import Plether.Perps.HistoryIndexer (perpsIndexerName, runPerpsIndexer)
+import Plether.Protocol.Release (ProtocolRelease (..))
 import Test.Hspec
   ( Expectation
   , Spec
@@ -246,6 +251,7 @@ prepareDatabase pool = do
       _ -> fail "PostgreSQL did not return exactly one current_database() row"
     ensurePerpsHistorySchema connection
     ensurePerpsKeeperSchema connection
+    ensureProtocolSchema connection criticalPathRelease
   cleanupDatabase pool
 
 cleanupDatabase :: DbPool -> IO ()
@@ -256,6 +262,19 @@ cleanupDatabase pool =
       testChainId
       testRouter
       0
+    deleteProtocolLedgerFromBlock connection criticalPathReleaseId 0
+    void $
+      execute
+        connection
+        "DELETE FROM protocol_indexed_blocks \
+        \WHERE release_id = ? AND indexer_name = ?"
+        (criticalPathReleaseId, perpsIndexerName)
+    void $
+      execute
+        connection
+        "DELETE FROM protocol_indexer_state \
+        \WHERE release_id = ? AND indexer_name = ?"
+        (criticalPathReleaseId, perpsIndexerName)
     void $
       execute
         connection
@@ -457,6 +476,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgProtocolExplorerEnabled = False
     , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
     , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
     , cfgPerpsCandleReadIntervals = []
@@ -475,13 +495,18 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsMarginClearinghouse = testClearinghouse
     , cfgPerpsPletherOracle = testOracle
     , cfgPerpsAccountLens = testLens
+    , cfgPerpsPublicLens = testLens
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSeniorVault = testEngine
+    , cfgPerpsJuniorVault = testSidecar
+    , cfgPerpsOrderRouterAdmin = testRouter
+    , cfgPerpsCfdEngineAdmin = testEngine
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
     , cfgVaultHistoryHousePoolAddress = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
-    , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
-    , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
-    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistorySeniorVaultAddress = testEngine
+    , cfgVaultHistoryJuniorVaultAddress = testSidecar
+    , cfgVaultHistoryDeploymentBlock = commitBlockNumber
     , cfgVaultHistoryRpcUrl = rpcUrl
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
@@ -505,6 +530,35 @@ testConfig databaseUrl rpcUrl =
     , cfgLpSettlementPendingReplacementSeconds = 60
     , cfgLpSettlementMaxReplacements = 3
     , cfgLpSettlementMaxTxCostWei = 0
+    }
+
+criticalPathReleaseId :: Text
+criticalPathReleaseId = "critical-path-integration"
+
+criticalPathRelease :: ProtocolRelease
+criticalPathRelease =
+  ProtocolRelease
+    { prId = criticalPathReleaseId
+    , prName = "Deterministic critical-path integration"
+    , prChainId = testChainId
+    , prDeploymentBlock = commitBlockNumber
+    , prCalculationVersion = "protocol-transparency-v1"
+    , prUsdc = testUsdc
+    , prOrderRouter = testRouter
+    , prOrderLifecycleBook = Just testLifecycleBook
+    , prOrderRouterAdmin = testRouter
+    , prCfdEngine = testEngine
+    , prCfdEngineLens = testLens
+    , prCfdEngineSettlementSidecar = testSidecar
+    , prCfdEngineAdmin = testEngine
+    , prMarginClearinghouse = testClearinghouse
+    , prPublicLens = testLens
+    , prAccountLens = testLens
+    , prHousePool = testClearinghouse
+    , prSeniorVault = testSidecar
+    , prJuniorVault = testOracle
+    , prPletherOracle = testOracle
+    , prOperationalWallets = []
     }
 
 testCompetitionReleaseManifest :: CompetitionReleaseManifest

@@ -1,12 +1,20 @@
 module Plether.Api
   ( app
   , handleBasketCurrentCandleAt
+  , noStoreErrorResponses
+  , parseDatabaseBigInt
+  , parseProtocolCursor
+  , parseTrancheHistoryCursor
+  , parseProtocolOrderId
+  , protocolExplorerGate
+  , protocolRpcChainGate
+  , protocolRpcChainGateWith
   ) where
 
 import Control.Exception (evaluate)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:?), (.=))
+import Data.Aeson (FromJSON (..), ToJSON, encode, object, withObject, (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
@@ -22,10 +30,20 @@ import qualified Data.Text.Lazy as LT
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
-import Network.HTTP.Types.Header (hCacheControl, hPragma)
-import Network.HTTP.Types.Status (status200, status400, status403, status404, status426, status429, status500, status503)
+import Network.HTTP.Types.Header (hCacheControl, hContentType, hPragma)
+import Network.HTTP.Types.Method (methodGet)
+import Network.HTTP.Types.Status (status200, status400, status403, status404, status426, status429, status500, status503, statusCode)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware, pathInfo, queryString, requestHeaders)
+import Network.Wai
+  ( Middleware
+  , mapResponseHeaders
+  , pathInfo
+  , queryString
+  , requestHeaders
+  , requestMethod
+  , responseLBS
+  , responseStatus
+  )
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -35,7 +53,13 @@ import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
-import Plether.Ethereum.Client (EthClient)
+import Plether.Ethereum.Client
+  ( EthClient
+  , RpcChainBindingError (..)
+  , RpcError
+  , ethChainId
+  , validateRpcChainId
+  )
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import Plether.Perps.Release
   ( perpsV2CalldataPolicy
@@ -99,6 +123,27 @@ import Plether.Handlers.Insights
   , getCurrentCompetitionResponse
   , getInsightsDataStatusResponse
   )
+import Plether.Handlers.ProtocolInsights
+  ( ProtocolCursor
+  , ProtocolTransactionFilters (..)
+  , TrancheHistoryCursor
+  , decodeProtocolCursor
+  , decodeTrancheHistoryCursor
+  , getCurrentProtocolReleaseResponse
+  , getHousePoolResponse
+  , getKeeperResponse
+  , getKeepersResponse
+  , getOperationalWalletResponse
+  , getOperationalWalletsResponse
+  , getParameterChangesResponse
+  , getParametersResponse
+  , getProtocolOrderResponse
+  , getProtocolOverviewResponse
+  , getProtocolTransactionResponse
+  , getProtocolTransactionsResponse
+  , getTrancheHistoryResponse
+  , getTrancheResponse
+  )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet
@@ -114,6 +159,7 @@ import Plether.Handlers.TestnetFaucetGuard
   , faucetGuardFailureReasonText
   , faucetQuotaScopeText
   )
+import Plether.Protocol.Release (ProtocolRelease (..), currentProtocolRelease)
 import Plether.Types.History (HistoryParams (..))
 import Plether.Types.Perps
   ( BasketHistoryParams (..)
@@ -162,7 +208,16 @@ instance FromJSON TestnetFaucetRequest where
 
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> ScottyM ()
 app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState = do
+  middleware noStoreErrorResponses
   middleware $ corsMiddleware cfg
+  middleware $ protocolExplorerGate (cfgProtocolExplorerEnabled cfg)
+  middleware $
+    if cfgProtocolExplorerEnabled cfg
+      then
+        protocolRpcChainGate
+          perpsClient
+          (prChainId $ currentProtocolRelease cfg)
+      else id
 
   case mPool of
     Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager
@@ -388,6 +443,222 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
     case mPool of
       Just pool -> liftIO (getInsightsDataStatusResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/protocol/releases/current" $
+    liftIO (getCurrentProtocolReleaseResponse mPool perpsClient cfg) >>= handleResult
+
+  get "/api/insights/v1/protocol/releases/:releaseId/overview" $ do
+    releaseId <- pathParam "releaseId"
+    case mPool of
+      Just pool -> liftIO (getProtocolOverviewResponse pool perpsClient cfg releaseId) >>= handleResult
+      Nothing -> protocolInsightsUnavailable
+
+  get "/api/insights/v1/protocol/releases/:releaseId/transactions" $ do
+    releaseId <- pathParam "releaseId"
+    mActionType <- queryParamMaybe "actionType"
+    mOutcome <- queryParamMaybe "outcome"
+    mAddress <- queryParamMaybe "address"
+    mAccount <- queryParamMaybe "account"
+    mKeeper <- queryParamMaybe "keeper"
+    mContract <- queryParamMaybe "contract"
+    mTxHash <- queryParamMaybe "transactionHash"
+    mFrom <- queryParamMaybe "from"
+    mTo <- queryParamMaybe "to"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case
+        ( traverse validateOptionalAddress [mAddress, mAccount, mKeeper, mContract]
+        , traverse validateOptionalTxHash mTxHash
+        , traverse parseDatabaseBigInt mFrom
+        , traverse parseDatabaseBigInt mTo
+        , traverse parseNonNegativeInt mLimit
+        , traverse parseProtocolCursor mCursor
+        )
+      of
+      (Just _, Just _, Just fromTimestamp, Just toTimestamp, Just parsedLimit, Just cursor) ->
+        case mPool of
+          Just pool -> do
+            result <- liftIO $
+              getProtocolTransactionsResponse
+                pool
+                perpsClient
+                cfg
+                releaseId
+                ProtocolTransactionFilters
+                  { ptfActionType = mActionType
+                  , ptfOutcome = mOutcome
+                  , ptfAddress = mAddress
+                  , ptfAccount = mAccount
+                  , ptfKeeper = mKeeper
+                  , ptfContract = mContract
+                  , ptfTransactionHash = mTxHash
+                  , ptfFromTimestamp = fromTimestamp
+                  , ptfToTimestamp = toTimestamp
+                  }
+                (maybe 50 id parsedLimit)
+                cursor
+            handleResult result
+          Nothing -> protocolInsightsUnavailable
+      (Nothing, _, _, _, _, _) -> handleError $ E.invalidAddress "address, account, keeper, or contract filter"
+      (_, Nothing, _, _, _, _) -> handleError $ E.invalidAmount "transactionHash must be a 32-byte hex hash"
+      (_, _, Nothing, _, _, _) -> handleError $ E.invalidAmount "from must be a unix timestamp"
+      (_, _, _, Nothing, _, _) -> handleError $ E.invalidAmount "to must be a unix timestamp"
+      (_, _, _, _, Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, _, _, _, _, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/transactions/:txHash" $ do
+    releaseId <- pathParam "releaseId"
+    txHash <- pathParam "txHash"
+    if isValidTransactionHash txHash
+      then case mPool of
+        Just pool -> liftIO (getProtocolTransactionResponse pool perpsClient cfg releaseId txHash) >>= handleResult
+        Nothing -> protocolInsightsUnavailable
+      else handleError $ E.invalidAmount "txHash must be a 32-byte hex hash"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/orders/:orderId" $ do
+    releaseId <- pathParam "releaseId"
+    rawOrderId <- pathParam "orderId"
+    case parseProtocolOrderId rawOrderId of
+      Just orderId -> case mPool of
+        Just pool -> liftIO (getProtocolOrderResponse pool perpsClient cfg releaseId orderId) >>= handleResult
+        Nothing -> protocolInsightsUnavailable
+      Nothing -> handleError $ E.invalidAmount "orderId must be a non-negative indexed uint64 value"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/house-pool" $ do
+    releaseId <- pathParam "releaseId"
+    case mPool of
+      Just pool -> liftIO (getHousePoolResponse pool perpsClient cfg releaseId) >>= handleResult
+      Nothing -> protocolInsightsUnavailable
+
+  get "/api/insights/v1/protocol/releases/:releaseId/tranches/:tranche/history" $ do
+    releaseId <- pathParam "releaseId"
+    tranche <- pathParam "tranche"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case (traverse parseNonNegativeInt mLimit, traverse parseTrancheHistoryCursor mCursor) of
+      (Just parsedLimit, Just cursor) -> case mPool of
+        Just pool -> liftIO (getTrancheHistoryResponse pool perpsClient cfg releaseId tranche (maybe 200 id parsedLimit) cursor) >>= handleResult
+        Nothing -> protocolInsightsUnavailable
+      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/tranches/:tranche" $ do
+    releaseId <- pathParam "releaseId"
+    tranche <- pathParam "tranche"
+    case mPool of
+      Just pool -> liftIO (getTrancheResponse pool perpsClient cfg releaseId tranche) >>= handleResult
+      Nothing -> protocolInsightsUnavailable
+
+  get "/api/insights/v1/protocol/releases/:releaseId/keepers" $ do
+    releaseId <- pathParam "releaseId"
+    window <- maybe "7d" id <$> queryParamMaybe "window"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case
+        ( isValidKeeperWindow window
+        , traverse parseNonNegativeInt mLimit
+        , traverse parseProtocolCursor mCursor
+        )
+      of
+      (True, Just parsedLimit, Just cursor) ->
+        case mPool of
+          Just pool ->
+            liftIO
+              (getKeepersResponse pool perpsClient cfg releaseId window (maybe 100 id parsedLimit) cursor)
+              >>= handleResult
+          Nothing -> protocolInsightsUnavailable
+      (False, _, _) -> handleError $ E.invalidAmount "window must be 24h, 7d, or 30d"
+      (_, Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, _, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/keepers/:address" $ do
+    releaseId <- pathParam "releaseId"
+    address <- pathParam "address"
+    window <- maybe "7d" id <$> queryParamMaybe "window"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case
+        ( isValidAddress address
+        , isValidKeeperWindow window
+        , traverse parseNonNegativeInt mLimit
+        , traverse parseProtocolCursor mCursor
+        )
+      of
+      (True, True, Just parsedLimit, Just cursor) ->
+        case mPool of
+          Just pool ->
+            liftIO
+              (getKeeperResponse pool perpsClient cfg releaseId address window (maybe 100 id parsedLimit) cursor)
+              >>= handleResult
+          Nothing -> protocolInsightsUnavailable
+      (False, _, _, _) -> handleError $ E.invalidAddress address
+      (_, False, _, _) -> handleError $ E.invalidAmount "window must be 24h, 7d, or 30d"
+      (_, _, Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, _, _, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/wallets" $ do
+    releaseId <- pathParam "releaseId"
+    window <- maybe "7d" id <$> queryParamMaybe "window"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case
+        ( isValidKeeperWindow window
+        , traverse parseNonNegativeInt mLimit
+        , traverse parseProtocolCursor mCursor
+        )
+      of
+      (True, Just parsedLimit, Just cursor) ->
+        case mPool of
+          Just pool ->
+            liftIO
+              (getOperationalWalletsResponse pool perpsClient cfg releaseId window (maybe 50 id parsedLimit) cursor)
+              >>= handleResult
+          Nothing -> protocolInsightsUnavailable
+      (False, _, _) -> handleError $ E.invalidAmount "window must be 24h, 7d, or 30d"
+      (_, Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, _, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/wallets/:address" $ do
+    releaseId <- pathParam "releaseId"
+    address <- pathParam "address"
+    window <- maybe "7d" id <$> queryParamMaybe "window"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case
+        ( isValidAddress address
+        , isValidKeeperWindow window
+        , traverse parseNonNegativeInt mLimit
+        , traverse parseProtocolCursor mCursor
+        )
+      of
+      (True, True, Just parsedLimit, Just cursor) ->
+        case mPool of
+          Just pool ->
+            liftIO
+              (getOperationalWalletResponse pool perpsClient cfg releaseId address window (maybe 100 id parsedLimit) cursor)
+              >>= handleResult
+          Nothing -> protocolInsightsUnavailable
+      (False, _, _, _) -> handleError $ E.invalidAddress address
+      (_, False, _, _) -> handleError $ E.invalidAmount "window must be 24h, 7d, or 30d"
+      (_, _, Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, _, _, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
+
+  get "/api/insights/v1/protocol/releases/:releaseId/parameters" $ do
+    releaseId <- pathParam "releaseId"
+    case mPool of
+      Just pool -> liftIO (getParametersResponse pool perpsClient cfg releaseId) >>= handleResult
+      Nothing -> protocolInsightsUnavailable
+
+  get "/api/insights/v1/protocol/releases/:releaseId/parameter-changes" $ do
+    releaseId <- pathParam "releaseId"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    case (traverse parseNonNegativeInt mLimit, traverse parseProtocolCursor mCursor) of
+      (Just parsedLimit, Just cursor) -> case mPool of
+        Just pool -> liftIO (getParameterChangesResponse pool perpsClient cfg releaseId (maybe 200 id parsedLimit) cursor) >>= handleResult
+        Nothing -> protocolInsightsUnavailable
+      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, Nothing) -> handleError $ E.invalidAmount "cursor is invalid"
 
   case mPool of
     Just pool -> do
@@ -976,10 +1247,22 @@ parseNonNegativeInt txt = do
     then Just $ fromInteger value
     else Nothing
 
+parseDatabaseBigInt :: Text -> Maybe Integer
+parseDatabaseBigInt txt = do
+  value <- parseAmount txt
+  if value <= 2 ^ (63 :: Int) - 1
+    then Just value
+    else Nothing
+
 insightsUnavailable :: ActionM ()
 insightsUnavailable =
   handleServiceUnavailable $
     E.internalError "DATABASE_URL is not configured; Plether Insights is unavailable"
+
+protocolInsightsUnavailable :: ActionM ()
+protocolInsightsUnavailable =
+  handleServiceUnavailable $
+    E.internalError "Protocol Insights is temporarily unavailable"
 
 parseHistoryCursor :: Text -> Maybe (Integer, Integer)
 parseHistoryCursor txt =
@@ -995,6 +1278,145 @@ validateRouterParam Nothing = Just Nothing
 validateRouterParam (Just router)
   | isValidAddress router = Just $ Just router
   | otherwise = Nothing
+
+parseProtocolCursor :: Text -> Maybe ProtocolCursor
+parseProtocolCursor = decodeProtocolCursor
+
+parseTrancheHistoryCursor :: Text -> Maybe TrancheHistoryCursor
+parseTrancheHistoryCursor = decodeTrancheHistoryCursor
+
+parseProtocolOrderId :: Text -> Maybe Integer
+parseProtocolOrderId txt = do
+  value <- parseAmount txt
+  -- The contract identity is uint64, while the current projection stores it
+  -- in PostgreSQL BIGINT. Enforce the narrower storage boundary before either
+  -- querying the database or encoding calldata.
+  if value <= min maxUint64Value maxDatabaseBigInt
+    then Just value
+    else Nothing
+
+maxUint64Value :: Integer
+maxUint64Value = 2 ^ (64 :: Int) - 1
+
+maxDatabaseBigInt :: Integer
+maxDatabaseBigInt = 2 ^ (63 :: Int) - 1
+
+validateOptionalAddress :: Maybe Text -> Maybe (Maybe Text)
+validateOptionalAddress Nothing = Just Nothing
+validateOptionalAddress (Just address)
+  | isValidAddress address = Just $ Just address
+  | otherwise = Nothing
+
+validateOptionalTxHash :: Text -> Maybe Text
+validateOptionalTxHash txHash
+  | isValidTransactionHash txHash = Just txHash
+  | otherwise = Nothing
+
+isValidTransactionHash :: Text -> Bool
+isValidTransactionHash value =
+  T.length value == 66
+    && ("0x" `T.isPrefixOf` value || "0X" `T.isPrefixOf` value)
+    && T.all isHexDigitText (T.drop 2 value)
+  where
+    isHexDigitText char =
+      (char >= '0' && char <= '9')
+        || (char >= 'a' && char <= 'f')
+        || (char >= 'A' && char <= 'F')
+
+isValidKeeperWindow :: Text -> Bool
+isValidKeeperWindow value = T.toLower value `elem` ["24h", "7d", "30d"]
+
+protocolExplorerGate :: Bool -> Middleware
+protocolExplorerGate explorerEnabled downstream request respond
+  | explorerEnabled
+      || not (isProtocolExplorerReadPath $ pathInfo request)
+      || pathInfo request == currentReleasePath =
+      downstream request respond
+  | otherwise =
+      respond $
+        responseLBS
+          status404
+          [ (hContentType, "application/json")
+          , (hCacheControl, "no-store")
+          ]
+          (encode $ E.notFound "Protocol explorer is disabled")
+  where
+    currentReleasePath = ["api", "insights", "v1", "protocol", "releases", "current"]
+
+-- | Prevent clients and intermediary caches from retaining any unsuccessful
+-- response, including framework-generated errors and redirects. This
+-- middleware must remain the first Scotty middleware so it wraps every other
+-- middleware and route.
+noStoreErrorResponses :: Middleware
+noStoreErrorResponses downstream request respond =
+  downstream request $ \response ->
+    let code = statusCode $ responseStatus response
+     in respond $
+          if code >= 200 && code < 300
+            then response
+            else mapResponseHeaders replaceCacheControl response
+ where
+  replaceCacheControl headers =
+    (hCacheControl, "no-store")
+      : filter ((/= hCacheControl) . fst) headers
+
+-- | Refuse every protocol explorer read unless the perps provider is
+-- positively bound to the chain declared by the selected current release.
+-- This runs before route handlers, so a mismatch cannot trigger an eth_call
+-- that is subsequently labeled as exact release state.
+protocolRpcChainGate :: EthClient -> Integer -> Middleware
+protocolRpcChainGate client =
+  protocolRpcChainGateWith (ethChainId client)
+
+protocolRpcChainGateWith
+  :: IO (Either RpcError Integer)
+  -> Integer
+  -> Middleware
+protocolRpcChainGateWith readChainId expectedChainId downstream request respond
+  | requestMethod request /= methodGet
+      || not (isProtocolExplorerReadPath $ pathInfo request) =
+      downstream request respond
+  | otherwise = do
+      binding <- validateRpcChainId expectedChainId <$> readChainId
+      case binding of
+        Right () -> downstream request respond
+        Left failure ->
+          respond $
+            responseLBS
+              status503
+              [ (hContentType, "application/json")
+              , (hCacheControl, "no-store")
+              ]
+              (encode $ rpcChainBindingError failure)
+
+rpcChainBindingError :: RpcChainBindingError -> ApiError
+rpcChainBindingError failure =
+  (E.networkError "Protocol release RPC chain could not be verified")
+    { E.errDetails =
+        Just $
+          object
+            [ "availability"
+                .= [ object
+                       [ "field" .= ("rpcChainId" :: Text)
+                       , "reason" .= rpcChainBindingReason failure
+                       ]
+                   ]
+            ]
+    }
+
+rpcChainBindingReason :: RpcChainBindingError -> Text
+rpcChainBindingReason = \case
+  RpcChainIdUnavailable -> "rpc_chain_id_unavailable"
+  RpcChainIdMismatch -> "rpc_chain_id_mismatch"
+
+isProtocolExplorerReadPath :: [Text] -> Bool
+isProtocolExplorerReadPath path =
+  ["api", "insights", "v1", "protocol", "releases"] `isPrefixOfPath` path
+  where
+    isPrefixOfPath [] _ = True
+    isPrefixOfPath _ [] = False
+    isPrefixOfPath (expected : restExpected) (actual : restActual) =
+      expected == actual && isPrefixOfPath restExpected restActual
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ \waiRequest -> Just $

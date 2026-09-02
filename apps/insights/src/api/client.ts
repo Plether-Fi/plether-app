@@ -2,7 +2,24 @@ import type {
   ApiErrorBody,
   Competition,
   InsightsStatus,
+  CurrentReleaseResponse,
+  HousePoolResponse,
+  KeeperResponse,
+  KeepersResponse,
   LeaderboardResponse,
+  ParameterChangesResponse,
+  ParametersResponse,
+  ProtocolEnvelope,
+  ProtocolOrderResponse,
+  ProtocolOverviewResponse,
+  ProtocolTransactionResponse,
+  ProtocolTransactionsResponse,
+  ProtocolWalletActivity,
+  ProtocolWalletResponse,
+  ProtocolWalletSummary,
+  ProtocolWalletsResponse,
+  TrancheHistoryResponse,
+  TrancheResponse,
   RegistrationSession,
   WalletActivity,
   WalletChallenge,
@@ -393,6 +410,537 @@ export async function getWallet(slug: string, address: string, signal?: AbortSig
 export async function getStatus(signal?: AbortSignal): Promise<InsightsStatus> {
   const response = await request<WireStatusResponse>('/status', signal)
   return normalizeStatus(response)
+}
+
+export function getCurrentProtocolRelease(signal?: AbortSignal): Promise<CurrentReleaseResponse> {
+  return request<CurrentReleaseResponse>('/protocol/releases/current', signal)
+}
+
+function protocolPath(releaseId: string, suffix: string): string {
+  return `/protocol/releases/${encodeURIComponent(releaseId)}${suffix}`
+}
+
+export function getProtocolOverview(releaseId: string, signal?: AbortSignal): Promise<ProtocolOverviewResponse> {
+  return request<ProtocolOverviewResponse>(protocolPath(releaseId, '/overview'), signal)
+}
+
+export interface ProtocolTransactionsParams {
+  actionType?: string
+  outcome?: string
+  address?: string
+  account?: string
+  keeper?: string
+  contract?: string
+  transactionHash?: string
+  from?: string
+  to?: string
+  limit?: number
+  cursor?: string
+  signal?: AbortSignal
+}
+
+export interface CursorPaginationParams {
+  limit?: number
+  cursor?: string
+  signal?: AbortSignal
+}
+
+export type TrancheHistoryParams = CursorPaginationParams
+
+export interface KeeperDetailParams extends CursorPaginationParams {
+  window?: string
+}
+
+export interface KeepersParams extends CursorPaginationParams {
+  window?: string
+}
+
+export interface ProtocolWalletsParams extends CursorPaginationParams {
+  window?: string
+}
+
+export interface ProtocolWalletDetailParams extends CursorPaginationParams {
+  window?: string
+}
+
+export type ParameterChangesParams = CursorPaginationParams
+
+export function getProtocolTransactions(
+  releaseId: string,
+  params: ProtocolTransactionsParams = {},
+): Promise<ProtocolTransactionsResponse> {
+  const query = new URLSearchParams()
+  query.set('limit', String(params.limit ?? 50))
+  for (const key of ['actionType', 'outcome', 'address', 'account', 'keeper', 'contract', 'transactionHash', 'from', 'to', 'cursor'] as const) {
+    const value = params[key]
+    if (value) query.set(key, value)
+  }
+  return request<ProtocolTransactionsResponse>(
+    `${protocolPath(releaseId, '/transactions')}?${query.toString()}`,
+    params.signal,
+  )
+}
+
+export function getProtocolTransaction(
+  releaseId: string,
+  txHash: string,
+  signal?: AbortSignal,
+): Promise<ProtocolTransactionResponse> {
+  return request<ProtocolTransactionResponse>(
+    protocolPath(releaseId, `/transactions/${encodeURIComponent(txHash)}`),
+    signal,
+  )
+}
+
+export function getProtocolOrder(
+  releaseId: string,
+  orderId: string,
+  signal?: AbortSignal,
+): Promise<ProtocolOrderResponse> {
+  return request<ProtocolOrderResponse>(
+    protocolPath(releaseId, `/orders/${encodeURIComponent(orderId)}`),
+    signal,
+  )
+}
+
+export function getHousePool(releaseId: string, signal?: AbortSignal): Promise<HousePoolResponse> {
+  return request<HousePoolResponse>(protocolPath(releaseId, '/house-pool'), signal)
+}
+
+export function getTranche(
+  releaseId: string,
+  tranche: string,
+  signal?: AbortSignal,
+): Promise<TrancheResponse> {
+  return request<TrancheResponse>(
+    protocolPath(releaseId, `/tranches/${encodeURIComponent(tranche)}`),
+    signal,
+  )
+}
+
+export function getTrancheHistory(
+  releaseId: string,
+  tranche: string,
+  paramsOrSignal: TrancheHistoryParams | AbortSignal = {},
+): Promise<TrancheHistoryResponse> {
+  const params = normalizeCursorPaginationParams(paramsOrSignal)
+  const query = cursorPaginationQuery(params, 500)
+  return request<TrancheHistoryResponse>(
+    `${protocolPath(releaseId, `/tranches/${encodeURIComponent(tranche)}/history`)}?${query.toString()}`,
+    params.signal,
+  )
+}
+
+export function getKeepers(
+  releaseId: string,
+  params?: KeepersParams,
+): Promise<KeepersResponse>
+export function getKeepers(
+  releaseId: string,
+  window: string,
+  pagination?: CursorPaginationParams | AbortSignal,
+): Promise<KeepersResponse>
+export function getKeepers(
+  releaseId: string,
+  paramsOrWindow: KeepersParams | string = {},
+  paginationOrSignal: CursorPaginationParams | AbortSignal = {},
+): Promise<KeepersResponse> {
+  const params = typeof paramsOrWindow === 'string'
+    ? { ...normalizeCursorPaginationParams(paginationOrSignal), window: paramsOrWindow }
+    : paramsOrWindow
+  const query = new URLSearchParams({
+    window: params.window ?? '7d',
+    limit: String(params.limit ?? 100),
+  })
+  if (params.cursor) query.set('cursor', params.cursor)
+  return request<KeepersResponse>(
+    `${protocolPath(releaseId, '/keepers')}?${query.toString()}`,
+    params.signal,
+  )
+}
+
+export function getKeeper(
+  releaseId: string,
+  address: string,
+  params?: KeeperDetailParams,
+): Promise<KeeperResponse>
+export function getKeeper(
+  releaseId: string,
+  address: string,
+  window: string,
+  pagination?: CursorPaginationParams | AbortSignal,
+): Promise<KeeperResponse>
+export function getKeeper(
+  releaseId: string,
+  address: string,
+  paramsOrWindow: KeeperDetailParams | string = {},
+  paginationOrSignal: CursorPaginationParams | AbortSignal = {},
+): Promise<KeeperResponse> {
+  const params = typeof paramsOrWindow === 'string'
+    ? { ...normalizeCursorPaginationParams(paginationOrSignal), window: paramsOrWindow }
+    : paramsOrWindow
+  const query = new URLSearchParams({
+    window: params.window ?? '7d',
+    limit: String(params.limit ?? 100),
+  })
+  if (params.cursor) query.set('cursor', params.cursor)
+  return request<KeeperResponse>(
+    `${protocolPath(releaseId, `/keepers/${encodeURIComponent(address)}`)}?${query.toString()}`,
+    params.signal,
+  )
+}
+
+export function getProtocolWallets(
+  releaseId: string,
+  params: ProtocolWalletsParams = {},
+): Promise<ProtocolWalletsResponse> {
+  const query = new URLSearchParams({
+    window: params.window ?? '7d',
+    limit: String(params.limit ?? 100),
+  })
+  if (params.cursor) query.set('cursor', params.cursor)
+  return request<unknown>(
+    `${protocolPath(releaseId, '/wallets')}?${query.toString()}`,
+    params.signal,
+  ).then(normalizeProtocolWalletsResponse)
+}
+
+export function getProtocolWallet(
+  releaseId: string,
+  address: string,
+  params: ProtocolWalletDetailParams = {},
+): Promise<ProtocolWalletResponse> {
+  const query = new URLSearchParams({
+    window: params.window ?? '7d',
+    limit: String(params.limit ?? 100),
+  })
+  if (params.cursor) query.set('cursor', params.cursor)
+  return request<unknown>(
+    `${protocolPath(releaseId, `/wallets/${encodeURIComponent(address)}`)}?${query.toString()}`,
+    params.signal,
+  ).then(normalizeProtocolWalletResponse)
+}
+
+export function getParameters(releaseId: string, signal?: AbortSignal): Promise<ParametersResponse> {
+  return request<ParametersResponse>(protocolPath(releaseId, '/parameters'), signal)
+}
+
+export function getParameterChanges(
+  releaseId: string,
+  params?: ParameterChangesParams,
+): Promise<ParameterChangesResponse>
+export function getParameterChanges(
+  releaseId: string,
+  limit?: number,
+  signal?: AbortSignal,
+): Promise<ParameterChangesResponse>
+export function getParameterChanges(
+  releaseId: string,
+  paramsOrLimit: ParameterChangesParams | number = {},
+  legacySignal?: AbortSignal,
+): Promise<ParameterChangesResponse> {
+  const params = typeof paramsOrLimit === 'number'
+    ? { limit: paramsOrLimit, signal: legacySignal }
+    : { ...paramsOrLimit, signal: paramsOrLimit.signal ?? legacySignal }
+  const query = cursorPaginationQuery(params, 200)
+  return request<ParameterChangesResponse>(
+    `${protocolPath(releaseId, '/parameter-changes')}?${query.toString()}`,
+    params.signal,
+  )
+}
+
+function normalizeCursorPaginationParams(
+  paramsOrSignal: CursorPaginationParams | AbortSignal,
+): CursorPaginationParams {
+  return isAbortSignal(paramsOrSignal) ? { signal: paramsOrSignal } : paramsOrSignal
+}
+
+function isAbortSignal(value: CursorPaginationParams | AbortSignal): value is AbortSignal {
+  return 'aborted' in value && 'addEventListener' in value
+}
+
+function cursorPaginationQuery(params: CursorPaginationParams, defaultLimit: number): URLSearchParams {
+  const query = new URLSearchParams({ limit: String(params.limit ?? defaultLimit) })
+  if (params.cursor) query.set('cursor', params.cursor)
+  return query
+}
+
+function normalizeProtocolWalletsResponse(value: unknown): ProtocolWalletsResponse {
+  const root = wireRecord(value)
+  const payload = wireRecord(root.wallets ?? root.operationalWallets)
+  const rawItems = wireArray(payload.items ?? payload.wallets)
+  return {
+    ...protocolEnvelope(root),
+    wallets: {
+      window: wireString(payload.window) ?? '7d',
+      windowStart: wireTimestamp(payload.windowStart),
+      windowEnd: wireTimestamp(payload.windowEnd),
+      definition: normalizeOperationalWalletDefinition(payload.definition),
+      items: rawItems.map(normalizeProtocolWalletSummary),
+      nextCursor: wireString(payload.nextCursor),
+      oracleUpdaterIdentityAvailable: wireBoolean(
+        payload.oracleUpdaterIdentityAvailable
+        ?? payload.oracleUpdaterPublished,
+      ),
+      oracleUpdaterActivityAttributable: wireBoolean(
+        payload.oracleUpdaterActivityAttributable,
+      ),
+      totalTrackedWalletCount: wireString(
+        payload.totalTrackedWalletCount
+        ?? payload.totalWalletCount,
+      ),
+      totalAtRiskWalletCount: wireString(payload.totalAtRiskWalletCount),
+      units: wireStringRecord(payload.units),
+    },
+  }
+}
+
+function normalizeProtocolWalletResponse(value: unknown): ProtocolWalletResponse {
+  const root = wireRecord(value)
+  const payload = wireRecord(root.wallet ?? root.operationalWallet)
+  const activityPayload = wireRecord(payload.activity)
+  const rawActivity = wireArray(
+    Array.isArray(payload.activity)
+      ? payload.activity
+      : activityPayload.items ?? payload.actions ?? payload.transactions,
+  )
+  const activity = rawActivity.map(normalizeProtocolWalletActivity)
+  const summary = normalizeProtocolWalletSummary(payload)
+  return {
+    ...protocolEnvelope(root),
+    wallet: {
+      ...summary,
+      lastActivityTransactionHash:
+        summary.lastActivityTransactionHash
+        ?? activity.find((item) => item.transactionHash !== null)?.transactionHash
+        ?? null,
+      activity,
+      nextCursor: wireString(payload.nextCursor ?? activityPayload.nextCursor),
+    },
+  }
+}
+
+function normalizeProtocolWalletSummary(value: unknown): ProtocolWalletSummary {
+  const raw = wireRecord(value)
+  const balances = wireRecord(raw.balances ?? raw.balance)
+  const costs = wireRecord(raw.observedCosts ?? raw.costs ?? raw.activitySummary)
+  const runway = wireRecord(raw.runway)
+  const lastActivity = wireRecord(raw.lastActivity)
+  const rawRoles = Array.isArray(raw.roles)
+    ? raw.roles
+    : raw.role === undefined || raw.role === null
+      ? []
+      : [raw.role]
+  return {
+    address: wireString(raw.address ?? raw.wallet) ?? '',
+    roles: rawRoles
+      .map((role) => wireString(role))
+      .filter((role): role is string => role !== null),
+    roleSources: wireArray(raw.roleSources).map(wireRecord),
+    status: wireString(raw.status ?? runway.status) ?? 'unknown',
+    nativeBalanceWei: wireString(
+      raw.nativeBalanceWei
+      ?? raw.balanceWei
+      ?? balances.nativeBalanceWei
+      ?? balances.nativeWei,
+    ),
+    observedGasCostWei: wireString(
+      raw.observedGasCostWei
+      ?? raw.gasCostWei
+      ?? costs.observedGasCostWei
+      ?? costs.gasCostWei,
+    ),
+    observedTransactionNativeValueWei: wireString(
+      raw.observedTransactionNativeValueWei
+      ?? raw.transactionNativeValueWei
+      ?? costs.observedTransactionNativeValueWei
+      ?? costs.transactionNativeValueWei,
+    ),
+    observedActionCount: wireString(
+      raw.observedActionCount
+      ?? raw.actionCount
+      ?? costs.observedActionCount
+      ?? costs.actionCount,
+    ),
+    observedTransactionCount: wireString(
+      raw.observedTransactionCount
+      ?? raw.transactionCount
+      ?? costs.observedTransactionCount
+      ?? costs.transactionCount,
+    ),
+    medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei: wireString(
+      raw.medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei
+      ?? costs.medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei
+      ?? runway.medianObservedSuccessfulOperationalTransactionGrossNativeSpendWei
+      ?? raw.medianObservedSuccessfulOperationalTransactionNativeOutlayWei
+      ?? costs.medianObservedSuccessfulOperationalTransactionNativeOutlayWei
+      ?? runway.medianObservedSuccessfulOperationalTransactionNativeOutlayWei
+      ?? raw.medianObservedSuccessfulActionNativeOutlayWei
+      ?? costs.medianObservedSuccessfulActionNativeOutlayWei
+      ?? runway.medianObservedSuccessfulActionNativeOutlayWei,
+    ),
+    estimatedTransactionsAtObservedGrossSpend: wireString(
+      raw.estimatedTransactionsAtObservedGrossSpend
+      ?? runway.estimatedTransactionsAtObservedGrossSpend
+      ?? raw.estimatedTransactionsRemaining
+      ?? runway.estimatedTransactionsRemaining
+      ?? raw.actionsRemainingEstimate
+      ?? raw.estimatedActionsRemaining
+      ?? runway.actionsRemainingEstimate
+      ?? runway.estimatedActionsRemaining,
+    ),
+    runwayFormula: normalizeRunwayFormula(raw.runwayFormula, runway, raw.formulaIdentifier),
+    lastActivityTimestamp: wireTimestamp(
+      raw.lastActivityTimestamp
+      ?? raw.lastActivityAt
+      ?? raw.lastSuccessfulActionAt
+      ?? costs.lastActivityTimestamp
+      ?? lastActivity.timestamp
+      ?? lastActivity.occurredAt,
+    ),
+    lastActivityTransactionHash: wireString(
+      raw.lastActivityTransactionHash
+      ?? raw.lastTransactionHash
+      ?? lastActivity.transactionHash
+      ?? lastActivity.txHash,
+    ),
+    evidence: wireRecord(raw.evidence),
+    availability: wireAvailability(raw.availability),
+    raw,
+  }
+}
+
+function normalizeProtocolWalletActivity(value: unknown, index: number): ProtocolWalletActivity {
+  const raw = wireRecord(value)
+  const receipt = wireRecord(raw.receipt)
+  const transactionHash = wireString(raw.transactionHash ?? raw.txHash)
+  const actionEvidence = wireRecord(raw.evidence)
+  const transactionEvidence = wireRecord(raw.transactionEvidence)
+  const transactionAvailability = wireAvailability(raw.transactionAvailability)
+  const actionAvailability = wireAvailability(raw.availability)
+  return {
+    activityId:
+      wireString(raw.activityId ?? raw.actionId ?? raw.id)
+      ?? `${transactionHash ?? 'wallet-activity'}:${String(index)}`,
+    transactionHash,
+    timestamp: wireTimestamp(raw.timestamp ?? raw.occurredAt ?? raw.blockTimestamp),
+    actionType: wireString(raw.actionType ?? raw.type ?? raw.activityType) ?? 'protocol_action',
+    outcome: wireString(raw.outcome ?? raw.status) ?? 'success',
+    gasCostWei: wireString(raw.gasCostWei ?? receipt.gasCostWei),
+    nativeValueWei: wireString(
+      raw.nativeValueWei
+      ?? raw.transactionNativeValueWei
+      ?? receipt.nativeValueWei,
+    ),
+    evidence:
+      Object.keys(actionEvidence).length > 0
+      || Object.keys(transactionEvidence).length > 0
+      || wireString(raw.evidence) !== null
+      || wireString(raw.transactionEvidence) !== null
+        ? {
+            action: raw.evidence ?? null,
+            transaction: raw.transactionEvidence ?? null,
+          }
+        : { level: 'unavailable' },
+    availability: [...actionAvailability, ...transactionAvailability],
+    raw,
+  }
+}
+
+function normalizeOperationalWalletDefinition(value: unknown): Record<string, unknown> {
+  const definition = wireRecord(value)
+  if (Object.keys(definition).length > 0) return definition
+  const text = wireString(value)
+  return {
+    trackedIdentity:
+      text
+      ?? 'A public, release-scoped protocol wallet whose native-token balance can affect liveness.',
+    interpretation:
+      'Operational transaction capacity is a conservative gross-spend diagnostic; refunds are not netted, and it is not a time estimate, net cost, or profit calculation.',
+  }
+}
+
+function normalizeRunwayFormula(
+  rawFormula: unknown,
+  runway: Record<string, unknown>,
+  rawFormulaIdentifier: unknown,
+): Record<string, unknown> | null {
+  const formula = wireRecord(rawFormula)
+  const source = Object.keys(formula).length > 0 ? formula : runway
+  const normalized = {
+    formulaIdentifier:
+      wireString(source.formulaIdentifier ?? rawFormulaIdentifier),
+    calculationVersion: wireString(source.calculationVersion),
+    releaseCalculationVersion: wireString(source.releaseCalculationVersion),
+    estimateKind: wireString(source.estimateKind),
+    expression: wireString(source.expression ?? source.formula),
+    sampleCount: wireString(source.sampleCount),
+  }
+  return Object.values(normalized).some((item) => item !== null) ? normalized : null
+}
+
+function protocolEnvelope(root: Record<string, unknown>): ProtocolEnvelope {
+  const confirmedBlock = wireRecord(root.confirmedBlock)
+  return {
+    releaseId: wireString(root.releaseId) ?? '',
+    chainId: wireString(root.chainId) ?? '',
+    confirmedBlock: {
+      number: wireString(confirmedBlock.number) ?? '0',
+      hash: wireString(confirmedBlock.hash) ?? '',
+      timestamp: wireTimestamp(confirmedBlock.timestamp) ?? 0,
+    },
+    indexerTimestamp: wireTimestamp(root.indexerTimestamp),
+    calculationVersion: wireString(root.calculationVersion) ?? '',
+    evidence: wireRecord(root.evidence),
+    availability: wireAvailability(root.availability),
+  }
+}
+
+function wireRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function wireArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function wireString(value: unknown): string | null {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint'
+    ? String(value)
+    : null
+}
+
+function wireBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
+}
+
+function wireTimestamp(value: unknown): number | null {
+  if (typeof value === 'string' && !/^\d+(?:\.\d+)?$/.test(value)) {
+    const parsedDate = Date.parse(value)
+    return Number.isNaN(parsedDate) ? null : Math.floor(parsedDate / 1000)
+  }
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null
+}
+
+function wireAvailability(value: unknown): { field: string; reason: string }[] {
+  return wireArray(value).flatMap((item) => {
+    const record = wireRecord(item)
+    const field = wireString(record.field)
+    const reason = wireString(record.reason)
+    return field !== null && reason !== null ? [{ field, reason }] : []
+  })
+}
+
+function wireStringRecord(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(wireRecord(value)).flatMap(([key, item]) => {
+      const normalized = wireString(item)
+      return normalized === null ? [] : [[key, normalized]]
+    }),
+  )
 }
 
 function normalizeCompetition(raw: WireCompetition): Competition {

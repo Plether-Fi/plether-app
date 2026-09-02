@@ -16,6 +16,7 @@ module Plether.Perps.CriticalPathFixture
   , testChainId
   , testOrderId
   , testAccount
+  , testUsdc
   , testRouter
   , testLifecycleBook
   , testClientOrderId
@@ -99,7 +100,6 @@ import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (PerpsIndexerOnce)
-  , perpsEventTopics
   , perpsIndexerName
   , transferTopic
   )
@@ -217,6 +217,8 @@ testIndexerConfig chain =
     { picRpcUrls = [fixtureRpcUrl chain]
     , picTraceApiUrl = Just $ fixtureTraceApiUrl chain
     , picChainId = testChainId
+    , picReleaseId = "critical-path-integration"
+    , picCalculationVersion = "protocol-transparency-v1"
     , picAddresses = testAddresses
     , picStartBlock = commitBlockNumber
     , picConfirmations = 0
@@ -341,13 +343,24 @@ dispatchRpc unexpectedRef state methodName params =
             Just transaction -> pure $ RpcSuccess transaction
             Nothing -> unexpectedRpc unexpectedRef methodName params
         _ -> unexpectedRpc unexpectedRef methodName params
-    "eth_call" ->
-      checkedParams
-        unexpectedRef
-        methodName
-        (expectedClosePreviewParams state)
-        params
-        (String $ hexText $ closePreviewResult $ fsTraceEvidence state)
+    "eth_getTransactionReceipt" ->
+      case arrayItems params of
+        [String txHash] ->
+          case receiptValue state txHash of
+            Just receipt -> pure $ RpcSuccess receipt
+            Nothing -> unexpectedRpc unexpectedRef methodName params
+        _ -> unexpectedRpc unexpectedRef methodName params
+    "eth_call"
+      | params == expectedClosePreviewParams state ->
+          pure $
+            RpcSuccess $
+              String $ hexText $ closePreviewResult $ fsTraceEvidence state
+      | isExpectedSnapshotCall state params ->
+          pure $
+            RpcFailure
+              (-32000)
+              "archive state intentionally unavailable in critical-path fixture"
+      | otherwise -> unexpectedRpc unexpectedRef methodName params
     "debug_traceTransaction" ->
       case arrayItems params of
         [String txHash, Object options]
@@ -591,8 +604,11 @@ transactionValue state requestedHash
           [ "hash" .= bfCommitTxHash branch
           , "from" .= testAccount
           , "to" .= testRouter
+          , "blockNumber" .= quantityHex commitBlockNumber
           , "blockHash" .= bfCommitBlockHash branch
+          , "transactionIndex" .= quantityHex 0
           , "input" .= ("0x" :: Text)
+          , "value" .= quantityHex 0
           ]
   | branchHasTerminal (fsBranch state)
       && requestedHash == bfTerminalTxHash branch =
@@ -601,12 +617,49 @@ transactionValue state requestedHash
           [ "hash" .= bfTerminalTxHash branch
           , "from" .= testKeeper
           , "to" .= testRouter
+          , "blockNumber" .= quantityHex terminalBlockNumber
           , "blockHash" .= bfTerminalBlockHash branch
+          , "transactionIndex" .= quantityHex 0
           , "input" .= hexText executionTransactionInput
+          , "value" .= quantityHex 0
           ]
   | otherwise = Nothing
   where
     branch = branchFixture $ fsBranch state
+
+receiptValue :: FixtureState -> Text -> Maybe Value
+receiptValue state requestedHash
+  | requestedHash == bfCommitTxHash branch =
+      Just $
+        canonicalReceipt
+          (bfCommitTxHash branch)
+          commitBlockNumber
+          (bfCommitBlockHash branch)
+          (committedLogs branch)
+  | branchHasTerminal (fsBranch state)
+      && requestedHash == bfTerminalTxHash branch =
+      Just $
+        canonicalReceipt
+          (bfTerminalTxHash branch)
+          terminalBlockNumber
+          (bfTerminalBlockHash branch)
+          (terminalLogs branch $ fsTraceEvidence state)
+  | otherwise = Nothing
+  where
+    branch = branchFixture $ fsBranch state
+
+canonicalReceipt :: Text -> Integer -> Text -> [Value] -> Value
+canonicalReceipt txHash blockNumber blockHash logs =
+  object
+    [ "transactionHash" .= txHash
+    , "blockNumber" .= quantityHex blockNumber
+    , "blockHash" .= blockHash
+    , "transactionIndex" .= quantityHex 0
+    , "status" .= quantityHex 1
+    , "gasUsed" .= quantityHex 21_000
+    , "effectiveGasPrice" .= quantityHex 1_000_000_000
+    , "logs" .= logs
+    ]
 
 executionTrace :: FixtureState -> Value
 executionTrace state =
@@ -744,14 +797,55 @@ expectedClosePreviewParams state =
     , String "0x64"
     ]
 
+-- The explorer snapshot collector pins every historical read to a canonical
+-- block hash. This fixture intentionally has no archive state: recognizing the
+-- exact EIP-1898 shape lets the indexer exercise its public
+-- archive_state_unavailable path without weakening unexpected-call detection.
+isExpectedSnapshotCall :: FixtureState -> Value -> Bool
+isExpectedSnapshotCall state params =
+  case arrayItems params of
+    [Object callObject, Object blockObject] ->
+      case
+        ( KeyMap.lookup (Key.fromText "to") callObject
+        , KeyMap.lookup (Key.fromText "data") callObject
+        , KeyMap.lookup (Key.fromText "blockHash") blockObject
+        , KeyMap.lookup (Key.fromText "requireCanonical") blockObject
+        )
+      of
+        (Just (String target), Just (String callData), Just (String blockHash), Just (Bool True)) ->
+          Text.toLower target `elem` map Text.toLower snapshotTargets
+            && Text.isPrefixOf "0x" callData
+            && Text.toLower blockHash `elem` map Text.toLower canonicalBlockHashes
+        _ -> False
+    _ -> False
+  where
+    branch = branchFixture $ fsBranch state
+    canonicalBlockHashes =
+      [ bfCommitBlockHash branch
+      , bfTerminalBlockHash branch
+      ]
+    snapshotTargets =
+      [ testRouter
+      , testEngine
+      , testLens
+      , testSidecar
+      , testClearinghouse
+      , testOracle
+      ]
+
 expectedLogsParams :: Value
 expectedLogsParams =
   Aeson.toJSON
     [ object
         [ "address"
-            .= [testRouter, testEngine, testClearinghouse, testLifecycleBook]
-        , "topics"
-            .= [map (String . hexText) perpsEventTopics]
+            .= [ testRouter
+               , testLifecycleBook
+               , testEngine
+               , testLens
+               , testSidecar
+               , testClearinghouse
+               , testOracle
+               ]
         , "fromBlock" .= ("0x64" :: Text)
         , "toBlock" .= ("0x65" :: Text)
         ]
@@ -882,12 +976,19 @@ testAddresses =
   PerpsAddresses
     { paUsdc = testUsdc
     , paOrderRouter = testRouter
+    , paOrderRouterAdmin = testRouter
     , paOrderLifecycleBook = Just testLifecycleBook
     , paCfdEngine = testEngine
+    , paCfdEngineAdmin = testEngine
     , paCfdEngineLens = testLens
     , paCfdEngineSettlementSidecar = testSidecar
     , paMarginClearinghouse = testClearinghouse
     , paPletherOracle = testOracle
+    , paAccountLens = testLens
+    , paPublicLens = testLens
+    , paHousePool = testClearinghouse
+    , paSeniorVault = testSidecar
+    , paJuniorVault = testOracle
     }
 
 testChainId, testOrderId :: Integer

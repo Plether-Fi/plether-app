@@ -659,6 +659,12 @@ variable "cors_origins" {
   default = "*"
 }
 
+variable "protocol_explorer_enabled" {
+  type        = bool
+  default     = false
+  description = "Expose the release-scoped Protocol Transparency Explorer API and UI bootstrap. Enable only after the release backfill and reconciliation acceptance checks pass."
+}
+
 variable "indexer_start_block" {
   type    = string
   default = "7726000"
@@ -780,11 +786,10 @@ variable "perps_order_lifecycle_book" {
 
   validation {
     condition = (
-      var.environment != "sepolia"
-      || var.perps_order_lifecycle_book == ""
-      || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      var.perps_order_lifecycle_book == ""
+      || can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_order_lifecycle_book))
     )
-    error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+    error_message = "perps_order_lifecycle_book must be empty or a canonical Ethereum address."
   }
 }
 
@@ -816,6 +821,23 @@ variable "perps_margin_clearinghouse" {
 variable "perps_account_lens" {
   type    = string
   default = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+}
+
+# Transparency explorer release manifest. These remain ordinary, non-secret
+# deployment inputs so a later release can be indexed without a schema change.
+variable "perps_public_lens" {
+  type    = string
+  default = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+}
+
+variable "perps_order_router_admin" {
+  type    = string
+  default = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
+}
+
+variable "perps_cfd_engine_admin" {
+  type    = string
+  default = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
 }
 
 variable "perps_indexer_start_block" {

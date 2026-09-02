@@ -19,6 +19,14 @@ const API_CACHE_TTLS = {
   status: 30,
   leaderboard: 15,
   wallet: 15,
+  protocolBootstrap: 5,
+  protocolLiveState: 15,
+  protocolActivity: 10,
+  // The backend currently exposes a shallow confirmed head. Keep canonical
+  // transaction details close to live-state TTLs so a reorg rewind cannot
+  // leave an orphaned detail page cached for an hour.
+  protocolConfirmedDetail: 15,
+  protocolHistory: 30,
 };
 
 function resolvePublicApiCacheTtl(method, pathname) {
@@ -38,6 +46,26 @@ function resolvePublicApiCacheTtl(method, pathname) {
 
   if (/^\/competitions\/[^/]+\/wallets\/[^/]+$/.test(apiPath)) {
     return API_CACHE_TTLS.wallet;
+  }
+
+  if (apiPath === '/protocol/releases/current') {
+    return API_CACHE_TTLS.protocolBootstrap;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/(overview|house-pool|keepers|wallets|parameters|orders\/[^/]+|keepers\/[^/]+|wallets\/[^/]+|tranches\/[^/]+)$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolLiveState;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/transactions$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolActivity;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/transactions\/[^/]+$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolConfirmedDetail;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/(tranches\/[^/]+\/history|parameter-changes)$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolHistory;
   }
 
   return null;
@@ -125,26 +153,33 @@ function apiFetchOptions(request, headers, cacheTtl, forceNoStore) {
   return options;
 }
 
-function applyResponseHeaders(response, pathname) {
+function applyResponseHeaders(response, pathname, method = 'GET') {
   const headers = new Headers(response.headers);
 
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
     headers.set(name, value);
   }
 
-  if (pathname.startsWith('/assets/')) {
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-  } else if (pathname === '/favicon.svg') {
-    headers.set('Cache-Control', 'public, max-age=86400');
-  } else if (pathname === `${API_PREFIX}/competitions/current`) {
-    headers.set('Cache-Control', 'no-store');
-  } else if (isRegistrationPath(pathname)) {
+  if (isRegistrationPath(pathname)) {
     // Registration responses may contain session state or rotate an HttpOnly
     // cookie. Never let a browser, intermediary, or Cloudflare cache retain
     // them, including GET status and OAuth callback responses.
     headers.set('Cache-Control', 'private, no-store, max-age=0');
     headers.set('Pragma', 'no-cache');
     headers.set('Referrer-Policy', 'no-referrer');
+  } else if (
+    method !== 'GET'
+    && method !== 'HEAD'
+  ) {
+    headers.set('Cache-Control', 'no-store');
+  } else if (response.status < 200 || response.status >= 300) {
+    headers.set('Cache-Control', 'no-store');
+  } else if (pathname.startsWith('/assets/')) {
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  } else if (pathname === '/favicon.svg') {
+    headers.set('Cache-Control', 'public, max-age=86400');
+  } else if (pathname === `${API_PREFIX}/competitions/current`) {
+    headers.set('Cache-Control', 'no-store');
   }
 
   return new Response(response.body, {
@@ -154,11 +189,32 @@ function applyResponseHeaders(response, pathname) {
   });
 }
 
-function backendConfigurationError(code, message, pathname) {
+function backendConfigurationError(code, message, pathname, method = 'GET') {
   return applyResponseHeaders(
     Response.json({ error: { code, message } }, { status: 502 }),
     pathname,
+    method,
   );
+}
+
+function publicApiRequestHeaders(request, backendUrl) {
+  const headers = new Headers();
+  for (const name of [
+    'Accept',
+    'Accept-Encoding',
+    'Content-Type',
+    'If-Modified-Since',
+    'If-None-Match',
+    'Range',
+    'User-Agent',
+  ]) {
+    const value = request.headers.get(name);
+    if (value !== null) {
+      headers.set(name, value);
+    }
+  }
+  headers.set('Host', backendUrl.hostname);
+  return headers;
 }
 
 function registrationOriginError(pathname) {
@@ -233,6 +289,7 @@ export default {
           'backend_not_configured',
           'Insights backend is not configured.',
           url.pathname,
+          request.method,
         );
       }
 
@@ -242,12 +299,15 @@ export default {
           'backend_configuration_invalid',
           'Insights backend configuration is invalid.',
           url.pathname,
+          request.method,
         );
       }
 
       const backendUrl = new URL(url.pathname + url.search, origin);
-      const headers = new Headers(request.headers);
       const registrationRequest = isRegistrationPath(url.pathname);
+      const headers = registrationRequest
+        ? new Headers(request.headers)
+        : publicApiRequestHeaders(request, backendUrl);
 
       // A browser must never be able to choose the credential trusted by the
       // backend. Strip it on every API request and add the Pages secret only
@@ -322,10 +382,20 @@ export default {
         headers.set('Pragma', 'no-cache');
       }
 
-      const response = await fetch(
-        backendUrl,
-        apiFetchOptions(request, headers, cacheTtl, forceNoStore),
-      );
+      let response;
+      try {
+        response = await fetch(
+          backendUrl,
+          apiFetchOptions(request, headers, cacheTtl, forceNoStore),
+        );
+      } catch {
+        return backendConfigurationError(
+          'backend_unavailable',
+          'Insights backend is temporarily unavailable.',
+          url.pathname,
+          request.method,
+        );
+      }
 
       if (
         registrationRequest &&
@@ -342,13 +412,13 @@ export default {
         );
       }
 
-      return applyResponseHeaders(response, url.pathname);
+      return applyResponseHeaders(response, url.pathname, request.method);
     }
 
     let response = await env.ASSETS.fetch(request);
     if (response.status === 404 && !url.pathname.includes('.')) {
       response = await env.ASSETS.fetch(new URL('/', request.url));
     }
-    return applyResponseHeaders(response, url.pathname);
+    return applyResponseHeaders(response, url.pathname, request.method);
   },
 };

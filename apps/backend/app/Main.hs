@@ -11,6 +11,7 @@ import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Database.Protocol (ensureProtocolSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (newClient)
@@ -19,8 +20,9 @@ import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
-import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Plether.Perps.Release (verifyPerpsV2ReleaseBindings)
+import Plether.Protocol.Release (currentProtocolRelease)
+import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
 import Plether.Vaults.PerformanceIndexer
   ( VaultPerformanceIndexerConfig (..)
@@ -71,6 +73,7 @@ main = do
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
+          withDb pool $ \conn -> ensureProtocolSchema conn (currentProtocolRelease cfg)
           withDb pool ensureTestnetFaucetSchema
           withDb pool ensureVaultPerformanceSchema
           withDb pool $ \conn ->

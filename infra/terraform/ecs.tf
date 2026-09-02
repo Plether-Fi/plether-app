@@ -345,7 +345,13 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_CFD_ENGINE_LENS", value = var.perps_cfd_engine_lens },
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+      { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
+      { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+      { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
+      { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
+      { name = "PERPS_CFD_ENGINE_ADMIN", value = var.perps_cfd_engine_admin },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "PROTOCOL_EXPLORER_ENABLED", value = tostring(var.protocol_explorer_enabled) },
       { name = "AA_SPONSORSHIP_ENABLED", value = tostring(var.enable_aa_sponsorship) },
       { name = "AA_IP_RATE_LIMIT_PER_MINUTE", value = var.aa_ip_rate_limit_per_minute },
       { name = "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", value = var.aa_account_rate_limit_per_minute },
@@ -359,6 +365,14 @@ resource "aws_ecs_task_definition" "api" {
   }, local.otel_log_router_container])
 
   lifecycle {
+    precondition {
+      condition = (
+        var.environment != "sepolia"
+        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      )
+      error_message = "Sepolia must use the pinned bounded-V2 LifecycleBook."
+    }
+
     precondition {
       condition     = var.faucet_global_requests_per_hour >= var.faucet_client_requests_per_hour
       error_message = "The global faucet request limit must be at least the per-client limit."
@@ -793,6 +807,11 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_CFD_ENGINE_LENS", value = var.perps_cfd_engine_lens },
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+      { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
+      { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+      { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
+      { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
+      { name = "PERPS_CFD_ENGINE_ADMIN", value = var.perps_cfd_engine_admin },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
@@ -876,6 +895,11 @@ resource "aws_ecs_task_definition" "insights_worker" {
         { name = "PERPS_CFD_ENGINE_LENS", value = var.perps_cfd_engine_lens },
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+        { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
+        { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+        { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
+        { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
+        { name = "PERPS_CFD_ENGINE_ADMIN", value = var.perps_cfd_engine_admin },
         { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
         { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
@@ -1061,6 +1085,11 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CFD_ENGINE_LENS", value = var.perps_cfd_engine_lens },
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+        { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
+        { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+        { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
+        { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
+        { name = "PERPS_CFD_ENGINE_ADMIN", value = var.perps_cfd_engine_admin },
         { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
         { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
         { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
@@ -1103,6 +1132,11 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CFD_ENGINE_LENS", value = var.perps_cfd_engine_lens },
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+        { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
+        { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+        { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
+        { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
+        { name = "PERPS_CFD_ENGINE_ADMIN", value = var.perps_cfd_engine_admin },
         { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
         { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },

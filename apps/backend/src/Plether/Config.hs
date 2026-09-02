@@ -14,6 +14,8 @@ module Plether.Config
   , defaultPythLatestMaxAgeSeconds
   , maxPythLatestMaxAgeSeconds
   , validatePythLatestMaxAgeSeconds
+  , defaultProtocolExplorerEnabled
+  , validateProtocolExplorerEnabled
   , parsePerpsCandleReadIntervals
   , parsePerpsCandleReadMode
   , parsePerpsCandleWriteMode
@@ -70,6 +72,7 @@ data Config = Config
   , cfgPythSampleIntervalSeconds :: Integer
   , cfgPythLatestMaxAgeSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
+  , cfgProtocolExplorerEnabled :: Bool
   , cfgPerpsCandleWriteMode :: PerpsCandleWriteMode
   , cfgPerpsCandleReadMode :: PerpsCandleReadMode
   , cfgPerpsCandleReadIntervals :: [Integer]
@@ -88,7 +91,12 @@ data Config = Config
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
+  , cfgPerpsPublicLens :: Text
   , cfgPerpsHousePool :: Text
+  , cfgPerpsSeniorVault :: Text
+  , cfgPerpsJuniorVault :: Text
+  , cfgPerpsOrderRouterAdmin :: Text
+  , cfgPerpsCfdEngineAdmin :: Text
   , cfgPerpsSettlementMonitorLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
   , cfgVaultHistoryHousePoolAddress :: Text
@@ -432,6 +440,9 @@ defaultPythLatestMaxAgeSeconds = 10
 maxPythLatestMaxAgeSeconds :: Integer
 maxPythLatestMaxAgeSeconds = 10
 
+defaultProtocolExplorerEnabled :: Bool
+defaultProtocolExplorerEnabled = False
+
 validatePythLatestMaxAgeSeconds :: String -> Either String Integer
 validatePythLatestMaxAgeSeconds rawValue =
   case readMaybe normalizedValue of
@@ -486,6 +497,14 @@ validateFaucetGuardConfig maybePrivateKey maybeOriginToken clientLimitRaw global
                     }
         (Nothing, Nothing) -> Right Nothing
 
+validateProtocolExplorerEnabled :: String -> Either String Bool
+validateProtocolExplorerEnabled rawValue =
+  case parseBoolStrict rawValue of
+    Just enabled -> Right enabled
+    Nothing ->
+      Left
+        "PROTOCOL_EXPLORER_ENABLED must be one of true, false, 1, 0, yes, no, on, or off"
+
 loadConfig :: IO (Either String Config)
 loadConfig = do
   registrationConfig <- loadRegistrationConfig
@@ -506,6 +525,9 @@ loadConfig = do
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
       pythLatestMaxAgeStr <- fromMaybe (show defaultPythLatestMaxAgeSeconds) <$> lookupEnv "PYTH_LATEST_MAX_AGE_SECONDS"
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
+      protocolExplorerEnabledStr <-
+        fromMaybe (if defaultProtocolExplorerEnabled then "true" else "false")
+          <$> lookupEnv "PROTOCOL_EXPLORER_ENABLED"
       candleWriteModeStr <- fromMaybe "off" <$> lookupEnv "PERPS_CANDLE_WRITE_MODE"
       candleReadModeStr <- fromMaybe "legacy" <$> lookupEnv "PERPS_CANDLE_READ_MODE"
       candleReadIntervalsStr <- fromMaybe "" <$> lookupEnv "PERPS_CANDLE_READ_INTERVALS"
@@ -528,6 +550,11 @@ loadConfig = do
       mPerpsIndexerStartBlockStr <- lookupEnv "PERPS_INDEXER_START_BLOCK"
       perpsHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "PERPS_HOUSE_POOL"
       perpsSettlementMonitorLens <- fromMaybe "0xd251AC0BD90780c48F31F575152808315200664E" <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
+      perpsPublicLens <- fromMaybe "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A" <$> lookupEnv "PERPS_PUBLIC_LENS"
+      perpsSeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "PERPS_SENIOR_VAULT"
+      perpsJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "PERPS_JUNIOR_VAULT"
+      perpsOrderRouterAdmin <- fromMaybe "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37" <$> lookupEnv "PERPS_ORDER_ROUTER_ADMIN"
+      perpsCfdEngineAdmin <- fromMaybe "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A" <$> lookupEnv "PERPS_CFD_ENGINE_ADMIN"
       vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
       vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
       vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
@@ -857,6 +884,7 @@ loadConfig = do
 
       case
           ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
+          , validateProtocolExplorerEnabled protocolExplorerEnabledStr
           , aaConfig
           , candleConfig
           , vaultHistoryConfig
@@ -865,14 +893,16 @@ loadConfig = do
           , faucetGuardConfig
           )
         of
-        (Left err, _, _, _, _, _, _) -> pure $ Left err
-        (_, Left err, _, _, _, _, _) -> pure $ Left err
-        (_, _, Left err, _, _, _, _) -> pure $ Left err
-        (_, _, _, Left err, _, _, _) -> pure $ Left err
-        (_, _, _, _, Left err, _, _) -> pure $ Left err
-        (_, _, _, _, _, Left err, _) -> pure $ Left err
-        (_, _, _, _, _, _, Left err) -> pure $ Left err
+        (Left err, _, _, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
+          , Right protocolExplorerEnabled
           , Right resolvedAaConfig
           , Right
               ( candleWriteMode
@@ -914,6 +944,7 @@ loadConfig = do
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
                 , cfgPythLatestMaxAgeSeconds = pythLatestMaxAgeSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
+                , cfgProtocolExplorerEnabled = protocolExplorerEnabled
                 , cfgPerpsCandleWriteMode = candleWriteMode
                 , cfgPerpsCandleReadMode = candleReadMode
                 , cfgPerpsCandleReadIntervals = candleReadIntervals
@@ -932,7 +963,12 @@ loadConfig = do
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
+                , cfgPerpsPublicLens = T.pack perpsPublicLens
                 , cfgPerpsHousePool = T.pack perpsHousePool
+                , cfgPerpsSeniorVault = T.pack perpsSeniorVault
+                , cfgPerpsJuniorVault = T.pack perpsJuniorVault
+                , cfgPerpsOrderRouterAdmin = T.pack perpsOrderRouterAdmin
+                , cfgPerpsCfdEngineAdmin = T.pack perpsCfdEngineAdmin
                 , cfgPerpsSettlementMonitorLens = T.pack perpsSettlementMonitorLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgVaultHistoryHousePoolAddress = T.pack vaultHistoryHousePool

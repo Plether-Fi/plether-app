@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { DEFAULT_COMPETITION_SLUG } from '../api'
 import { Panel } from '../components/ui'
 
 function Rule({ number, title, children }: { number: string; title: string; children: ReactNode }) {
@@ -15,8 +16,31 @@ export function MethodologyPage() {
   return (
     <article className="mx-auto max-w-4xl">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">Transparent by design</p>
-      <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Competition methodology</h1>
-      <p className="mt-4 max-w-3xl text-base leading-7 text-content-secondary">How Plether calculates standings and determines prize eligibility for the 2026 testnet trading competition.</p>
+      <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Insights methodology</h1>
+      <p className="mt-4 max-w-3xl text-base leading-7 text-content-secondary">How the protocol explorer distinguishes onchain facts from reconstruction, and how Plether calculates the 2026 testnet competition standings.</p>
+
+      <div id="protocol-parameters">
+        <Panel className="mt-8">
+          <Rule number="A1" title="Evidence levels">
+          <p><strong className="text-positive">Exact</strong> values come from confirmed transaction receipts, raw logs, decoded calldata, or a historical contract read at the stated block.</p>
+          <p><strong className="text-brand-peach">Derived</strong> values name their formula and calculation version. <strong className="text-brand-yellow">Block-level delta</strong> compares state at block − 1 and block; it is not attributed to one transaction when several protocol transactions share that block.</p>
+          <p>An unavailable field remains empty and carries a machine-readable reason. The explorer never substitutes zero for a failed, truncated, or unsupported historical read.</p>
+          </Rule>
+          <Rule number="A2" title="Current-release limits">
+          <p>The Arbitrum Sepolia launch release predates the richer observability events planned for the next deployment. Its immutable event ledger is exact, while fee decomposition, six-component oracle publish times, some tranche lifecycle details, and transaction-exact pool waterfall allocation may be unreconstructable.</p>
+          <p><code>HousePool.cancelPoolConfigProposal()</code> emits no event in this release. Direct pending-state reads remain authoritative, but historical HousePool cancellation rows are explicitly unavailable rather than inferred from a missing proposal.</p>
+          <p>Archive-provider gaps are reported as unavailable and do not stop confirmed log indexing. Raw topics and data remain visible so independent analysts can verify or improve a projection.</p>
+          </Rule>
+          <Rule number="A3" title="Keeper economics">
+          <p>“Active keeper” means an address that submitted at least one confirmed successful permissionless protocol action in the selected window.</p>
+          <p>The current release exposes liquidation bounties, so those are labelled <strong className="text-content-primary">observed liquidation bounties</strong>. Available exact receipt gas costs and transaction-native values are summed separately in wei; aggregates are marked partial when a required receipt or value is missing. The Pyth component, USDC conversion, and net profit remain unavailable.</p>
+          </Rule>
+        <Rule number="A4" title="Confirmed state and reorgs">
+          <p>Live state is read at one configured confirmed block. Release-scoped block checkpoints identify the newest common ancestor after a hash mismatch; the affected branch is removed and replayed idempotently.</p>
+          <p>Every monetary integer is returned as a decimal string with an explicit unit and scale, avoiding browser-number rounding.</p>
+          </Rule>
+        </Panel>
+      </div>
 
       <Panel className="mt-8">
         <Rule number="01" title="Starting point">
@@ -48,10 +72,13 @@ export function MethodologyPage() {
       </Panel>
 
       <div className="mt-6 border border-brand-yellow/35 bg-brand-yellow/10 p-5 text-sm leading-6 text-brand-yellow">
-        <strong>Data finality:</strong> Insights uses finalized indexed protocol events. The “indexed through block” indicator shows the newest block included in the public view.
+        <strong>Data confirmation:</strong> Insights uses confirmed indexed protocol events at the configured confirmation depth; it does not call shallow confirmations finality. The “indexed through block” indicator shows the newest block included in the public view.
       </div>
 
-      <Link to="/" className="mt-8 inline-flex border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">View leaderboard</Link>
+      <div className="mt-8 flex flex-wrap gap-3">
+        <Link to="/" className="inline-flex border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">Protocol overview</Link>
+        <Link to={`/competitions/${DEFAULT_COMPETITION_SLUG}`} className="inline-flex border border-brand-border/40 px-5 py-2.5 text-sm font-semibold hover:border-brand-peach">View competition</Link>
+      </div>
     </article>
   )
 }

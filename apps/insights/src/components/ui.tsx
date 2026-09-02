@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { formatSignedUsdc, shortAddress, xProfileUrl } from '../utils/format'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <section className={`border border-brand-border/25 bg-surface-panel ${className}`}>{children}</section>
+  return <section className={`min-w-0 border border-brand-border/25 bg-surface-panel ${className}`}>{children}</section>
 }
 
 export function StatusBadge({ eligible, label }: { eligible: boolean; label?: string }) {

@@ -23,6 +23,7 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --retry 3 \
 WORKDIR /build
 
 COPY apps/backend/plether-api.cabal apps/backend/cabal.project apps/backend/cabal.project.freeze ./
+COPY apps/backend/config/protocol-releases.json config/protocol-releases.json
 RUN cabal update && cabal build --only-dependencies
 
 COPY apps/backend/app/ app/
@@ -65,6 +66,7 @@ COPY --from=oracle-worker /oracle /app/oracle
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
+COPY apps/backend/config/protocol-releases.json /app/config/protocol-releases.json
 COPY apps/backend/schema.sql /app/schema.sql
 
 WORKDIR /app
