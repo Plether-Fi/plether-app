@@ -1,6 +1,11 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  PERPS_EXECUTION_MODE,
+  PERPS_EXECUTION_MODE_MASK,
+  type PreparedPerpsOrderV2,
+} from '../contracts/perpsOrderV2'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import {
   PerpsIdentityContext,
@@ -19,7 +24,7 @@ const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 
 const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
-  version: 'perps-aa-arbitrum-sepolia-v1',
+  version: 'perps-aa-arbitrum-sepolia-v2',
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -35,6 +40,8 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   marginClearinghouse: '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211',
   cfdEngine: '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D',
   orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
+  orderLifecycleBook: '0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E',
+  policyEvaluator: '0xaa4703B190684b5A57b8a9aA432fA043B169D171',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -105,6 +112,44 @@ const currentLongPosition = {
   pendingCarryUsdc: 4_200_000n,
   vpiAccrued: 60n * USDC,
 }
+
+const executionProtectionsFixture = {
+  account: STORY_TRADING_ACCOUNT,
+  manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+  orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
+  orderLifecycleBook: '0x1111111111111111111111111111111111111111',
+  request: {
+    clientOrderId: `0x${'12'.repeat(32)}`,
+    side: 0,
+    sizeDelta: 2_000n * 10n ** 18n,
+    marginDelta: 393_200_000n,
+    targetPrice: 98_250_000n,
+    isClose: false,
+    bounds: {
+      validUntil: 1_788_000_300n,
+      allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
+      expectedConfigHash: `0x${'34'.repeat(32)}`,
+      maxExecutionBountyUsdc: 250_000n,
+      maxExecutionNotionalUsdc: 1_966n * USDC,
+      maxGrossAccountDebitUsdc: 396_236_400n,
+      maxActionChargeUsdc: 1_400_000n,
+      maxExplicitFeesUsdc: 786_400n,
+      maxPostPositionSize: 2_000n * 10n ** 18n,
+      minPostSettlementBalanceUsdc: 9_857_013_600n,
+      minPostPositionEquityUsdc: 391_013_600n,
+      maxPostLeverageBps: 50_000,
+    },
+  },
+  executionBountyUsdc: 250_000n,
+  reviewedBlockNumber: 302_257_125n,
+  reviewedBlockHash: `0x${'56'.repeat(32)}`,
+  reviewedPrice: ORACLE_PRICE,
+  protection: {
+    validUntil: 1_788_000_300n,
+    executionMode: PERPS_EXECUTION_MODE.LIVE,
+    executionBountyUsdc: 250_000n,
+  },
+} satisfies PreparedPerpsOrderV2
 
 function openPreviewFixture({
   size,
@@ -217,7 +262,7 @@ function TicketFrame(args: React.ComponentProps<typeof PerpsTradeTicket>) {
   return (
     <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="ml-auto max-w-md">
-        <PerpsTradeTicket maintenanceMarginBps={100n} {...args} />
+        <PerpsTradeTicket maintenanceMarginBps={10n} initialMarginBps={20n} executionFeeBps={4n} {...args} />
       </div>
     </div>
   )
@@ -238,7 +283,7 @@ export const LongUnavailableDueToMarketSkew: Story = {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
     initialDirection: 'long',
-    initialSize: '1 058.97',
+    initialOrderQuantity: '1 000',
     currentPositionAmount: '0',
     validationErrorFixture: getOpenCapacityUnavailableMessage({
       direction: 'long',
@@ -256,7 +301,7 @@ export const PreviewModal: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '2 000',
+    initialOrderQuantity: '2 000',
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
@@ -276,7 +321,7 @@ export const PreparingWalletRequest: Story = {
     initialLifecycleState: 'commitPreparing',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '2 000',
+    initialOrderQuantity: '2 000',
     initialCommittedVpiUsdc: 1_400_000n,
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
@@ -297,7 +342,7 @@ export const IncreaseLongPreparingWalletRequest: Story = {
     initialLifecycleState: 'commitPreparing',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '5 000',
+    initialOrderQuantity: '5 000',
     initialCommittedVpiUsdc: 1_400_000n,
     initialCommittedPositionVpiAccrued: 61_400_000n,
     currentPosition: currentLongPosition,
@@ -320,7 +365,7 @@ export const CloseLongPreparingWalletRequest: Story = {
     initialLifecycleState: 'commitPreparing',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '8 200',
+    initialOrderQuantity: '8 200',
     initialReduceOnly: true,
     initialCommittedVpiUsdc: -12_300_000n,
     initialCommittedPositionVpiAccrued: 60n * USDC,
@@ -341,7 +386,7 @@ export const OpenLongPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '2 000',
+    initialOrderQuantity: '2 000',
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
       size: 2_000n * 10n ** 18n,
@@ -354,20 +399,29 @@ export const OpenLongPreview: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+export const ExecutionProtections: Story = {
+  name: 'Open Long · Execution Protections',
+  args: {
+    ...OpenLongPreview.args,
+    executionProtectionsFixture,
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const IncreaseLongPreview: Story = {
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
-    initialReviewOpen: true,
+    initialReviewOpen: false,
     initialDirection: 'long',
-    initialSize: '5 000',
+    initialOrderQuantity: '4 900',
     currentPosition: currentLongPosition,
     openPreviewFixture: openPreviewFixture({
-      size: 5_000n * 10n ** 18n,
-      notionalUsdc: 4_915n * USDC,
-      marginDeltaUsdc: 983n * USDC,
-      postSize: 13_200n * 10n ** 18n,
-      postMarginUsdc: 2_623n * USDC,
+      size: 4_900n * 10n ** 18n,
+      notionalUsdc: 4_816_700_000n,
+      marginDeltaUsdc: 963_340_000n,
+      postSize: 13_100n * 10n ** 18n,
+      postMarginUsdc: 2_603_340_000n,
       postVpiAccrued: 61_400_000n,
     }),
   },
@@ -381,7 +435,7 @@ export const ReduceLongPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '5 000',
+    initialOrderQuantity: '5 000',
     currentPosition: currentLongPosition,
     closePreviewFixture: closePreviewFixture({
       sizeDelta: 5_000n * 10n ** 18n,
@@ -399,7 +453,7 @@ export const ReduceLongWithProvisionalVpiCredit: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '4 100',
+    initialOrderQuantity: '4 100',
     currentPosition: { ...currentLongPosition, vpiAccrued: -40n * USDC },
     closePreviewFixture: closePreviewFixture({
       sizeDelta: 4_100n * 10n ** 18n,
@@ -418,7 +472,7 @@ export const CloseLongPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '8 200',
+    initialOrderQuantity: '8 200',
     currentPosition: currentLongPosition,
     closePreviewFixture: closePreviewFixture({
       sizeDelta: POSITION_SIZE,
@@ -435,7 +489,7 @@ export const FlipLongToShortPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '10 000',
+    initialOrderQuantity: '10 000',
     currentPositionSide: 'long',
     currentPositionAmount: '8 200',
   },
@@ -447,7 +501,7 @@ export const FlipShortToLongPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '10 000',
+    initialOrderQuantity: '10 000',
     currentPositionSide: 'short',
     currentPositionAmount: '8 200',
   },
@@ -459,7 +513,7 @@ export const ReduceOnlyPreventsFlipPreview: Story = {
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '10 000',
+    initialOrderQuantity: '10 000',
     initialReduceOnly: true,
     currentPositionSide: 'long',
     currentPositionAmount: '8 200',
@@ -473,7 +527,7 @@ export const CommitPending: Story = {
     initialLifecycleState: 'commitPending',
     initialReviewOpen: true,
     initialDirection: 'long',
-    initialSize: '2 000',
+    initialOrderQuantity: '2 000',
     initialCommittedVpiUsdc: 1_400_000n,
     currentPositionAmount: '0',
     openPreviewFixture: openPreviewFixture({
@@ -531,7 +585,7 @@ export const Executed: Story = {
     initialLifecycleState: 'executed',
     initialReviewOpen: true,
     initialDirection: 'short',
-    initialSize: '8 200',
+    initialOrderQuantity: '8 200',
     initialReduceOnly: true,
     initialCommittedIsFullClose: true,
     initialCommittedPositionVpiAccrued: 60n * USDC,
@@ -619,9 +673,11 @@ export const MarginCallSimulatorConfirmation: Story = {
   args: {
     initialMarginCallSimulatorConfirmationOpen: true,
     initialDirection: 'long',
-    initialSize: '10 000',
+    initialOrderQuantity: '10 000',
     initialLeverage: 33,
-    maintenanceMarginBps: 25n,
+    maintenanceMarginBps: 10n,
+    initialMarginBps: 20n,
+    executionFeeBps: 4n,
     marketPhase: 'open',
     marketCurrentDuration: '2h 18m',
   },
@@ -631,7 +687,7 @@ export const MarginCallSimulatorConfirmation: Story = {
 export const MarginAccountSummary: Story = {
   args: {
     initialDirection: 'long',
-    initialSize: '2 000',
+    initialOrderQuantity: '2 000',
     portfolioValueRaw: 1_248_250_000n,
     withdrawableUsdcRaw: 648_250_000n,
     availableToTradeRaw: 848_250_000n,

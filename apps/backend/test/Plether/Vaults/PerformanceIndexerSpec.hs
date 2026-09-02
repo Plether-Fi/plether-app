@@ -116,6 +116,7 @@ block :: Integer -> RpcBlock
 block number =
   RpcBlock
     { rpcBlockNumber = number
+    , rpcBlockL1Number = Nothing
     , rpcBlockHash = if number == 5 then canonicalHash else "0xhash"
     , rpcBlockTimestamp = number * 10
     }

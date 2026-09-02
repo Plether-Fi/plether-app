@@ -6,6 +6,8 @@ const navLinks = [
   { path: '/vaults', label: 'Vaults', icon: 'account_balance', color: 'brand-peach' },
 ]
 
+const leaderboardUrl = 'https://insights.plether.com'
+
 const colorStyles: Record<string, { active: string; hover: string }> = {
   'brand-peach': {
     active: 'text-brand-peach bg-brand-peach/10',
@@ -46,6 +48,15 @@ export function MobileNav() {
             </Link>
           )
         })}
+        <a
+          href={leaderboardUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-4 py-2 text-content-secondary transition-colors hover:text-brand-yellow"
+        >
+          <span className="material-symbols-outlined text-xl">leaderboard</span>
+          <span className="text-xs font-medium">Leaderboard</span>
+        </a>
       </div>
     </nav>
   )

@@ -21,8 +21,6 @@ The links below assume Storybook is available at `http://localhost:6006`.
 - The current deployment uses a separate SimpleAccount v0.8 Trading Account. Obsolete same-address, EIP-7702 and owner-wallet transfer-authorization captures are not mapped.
 - The current sponsored trader interface relies on keepers for order finalization and expired-order cleanup. Manual **Finalize Trade** and **Clean Up** captures are not mapped.
 - Aggregate trader-claim coverage is not preflighted by the live trader card. The retained coverage screenshot is a documentation prototype and its article labels it as illustrative.
-- LP interface captures are explicitly labelled **Documentation prototype — not live** and **Illustrative testnet values** because the published testnet application does not yet provide the LP workflow.
-- The new **Providing liquidity on Plether** pages use text placeholders rather than captured images while the `Vaults` interface is under development. Add mappings only after the production fields and deterministic stories are finalized.
 
 ## Story sources
 
@@ -32,7 +30,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Market-phase banner | `PerpsMarketStatePanel` | Current application component with deterministic countdown text |
 | Unrealized-PnL explanation | `PerpsMetricDetailsDocumentation.stories.tsx` | Documentation composition around the current position component |
 | Trader-claim coverage model | `PerpsClaimPanel.stories.tsx` | Documentation prototype; not a live coverage preflight |
-| LP position and withdrawal screens | `LpPrototypePanel` | Documentation prototype; LP actions are not implemented in the published testnet app |
+| Vault overview, detail, position, activity and transaction previews | `VaultsDocumentation.stories.tsx` | Current production Vaults components with deterministic pool, history, account and request fixtures |
 | Executed increase composition | `PerpsOpenIncreaseDocumentation.stories.tsx` | Current position and order-history components in one deterministic state |
 | Disabled review messages | `PerpsDocumentationWorkspace.stories.tsx` | Deterministic examples of current validation-message patterns |
 
@@ -55,19 +53,37 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/market-states-and-oracle-closures.md:522` | Open followed by the three-hour close-only runway | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown |
+| `how-plether-works/market-states-and-oracle-closures.md:518` | Open followed by the three-hour close-only runway | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown |
 
 ## Settlement liquidity and trader claims
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/settlement-liquidity-and-trader-claims.md:308` | Claim balance, aggregate coverage, settlement availability and Margin Account destination | [Available to Settle](http://localhost:6006/?path=/story/documentation-trader-claims--available-to-settle) | Documentation prototype; the article states that the live card does not preflight aggregate coverage |
+| `how-plether-works/settlement-liquidity-and-trader-claims.md:308` | Claim balance, aggregate coverage, settlement availability and flat-account Margin Account destination | [Available to Settle](http://localhost:6006/?path=/story/documentation-trader-claims--available-to-settle) | Documentation prototype of the flat-account branch; the article states that open-position settlement credits PnL pledge and the live card does not preflight aggregate coverage |
 
 ## HousePool and tranche waterfall
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/the-housepool-and-tranche-waterfall.md:594` | Senior withdrawal fee, burned shares and expected receipt | [LP Withdrawal Preview](http://localhost:6006/?path=/story/documentation-lp-interface-prototype--withdrawal-preview) | Explicitly labelled documentation prototype |
+| `how-plether-works/the-housepool-and-tranche-waterfall.md:553` | Current Vaults withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
+
+## LP quickstart
+
+| Documentation reference | Required visual | Storybook target | Coverage |
+| --- | --- | --- | --- |
+| `liquidity-provider-quickstart.md:93` | Vaults overview with current pool liquidity and Senior and Junior Vault cards | [Overview](http://localhost:6006/?path=/story/documentation-vaults--overview) | Current production components, illustrative values |
+
+## Providing liquidity
+
+| Documentation reference | Required visual | Storybook target | Coverage |
+| --- | --- | --- | --- |
+| `providing-liquidity/deposit-liquidity.md:103` | Deposit preview for a queued Senior or Junior Vault deposit | [Deposit Preview](http://localhost:6006/?path=/story/documentation-vaults--deposit-preview) | Current production component, illustrative values |
+| `providing-liquidity/lp-risks-and-safeguards.md:13` | Junior Vault risk safeguards and shared pool status | [Risk and House Pool](http://localhost:6006/?path=/story/documentation-vaults--risk-and-house-pool) | Documentation composition of current production components, illustrative values |
+| `providing-liquidity/lp-troubleshooting.md:144` | Pending deposit and withdrawal records with their current actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Documentation composition of the current production component, illustrative values |
+| `providing-liquidity/manage-a-pending-deposit.md:20` | Pending deposit records with their expected processing time, status and available actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Documentation composition of the current production component, illustrative values |
+| `providing-liquidity/read-your-lp-position-and-pool-health.md:30` | Senior Vault Your position view with active shares and the current empty pending-request state | [Position](http://localhost:6006/?path=/story/documentation-vaults--position) | Documentation composition of the current production component, illustrative values |
+| `providing-liquidity/read-your-lp-position-and-pool-health.md:143` | Senior Vault Overview with current value, share-price context and operating rules | [Senior Vault Detail](http://localhost:6006/?path=/story/documentation-vaults--senior-vault-detail) | Current production components, illustrative values |
+| `providing-liquidity/withdraw-liquidity.md:137` | Withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
 
 ## Open or increase a position
 
@@ -102,7 +118,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 ## Inventory result
 
-- Screenshot references found: **14**
-- Unique screenshot assets: **9**
-- References mapped to a Storybook target: **14**
+- Screenshot references found: **22**
+- Unique screenshot assets: **15**
+- References mapped to a Storybook target: **22**
 - Unmapped references: **0**

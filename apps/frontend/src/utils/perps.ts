@@ -1,6 +1,12 @@
 import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
-import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
+import {
+  PERPS_DECIMALS,
+  PERPS_POSITION_SIZE_QUANTUM,
+  PERPS_POSITION_SIZE_TO_USDC_SCALE,
+  PERPS_SIDE,
+  type PerpsSide,
+} from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
 export type PerpsOracleFreshness = 'fresh' | 'checking' | 'market-closed' | 'stale'
@@ -29,6 +35,16 @@ export function parsePerpsUsdc(value: string): bigint {
   }
 }
 
+export function parsePerpsPositionSize(value: string): bigint {
+  try {
+    const cleaned = cleanNumericInput(value)
+    if (!cleaned || cleaned === '.') return 0n
+    return parseUnits(cleaned, PERPS_DECIMALS.POSITION_SIZE)
+  } catch {
+    return 0n
+  }
+}
+
 export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 0): string {
   if (!Number.isFinite(value)) return '--'
 
@@ -41,6 +57,14 @@ export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 
 export function formatPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
   return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)), maxDecimals)
+}
+
+export function formatPerpsPositionSize(amount: bigint | undefined, maxDecimals = 2): string {
+  if (amount === undefined) return '--'
+  return formatPerpsNumber(
+    Number(formatUnits(amount, PERPS_DECIMALS.POSITION_SIZE)),
+    maxDecimals
+  )
 }
 
 const PERPS_SUMMARY_WHOLE_USDC_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.USDC)
@@ -125,11 +149,11 @@ export function displayDxyPriceToOraclePrice(displayDxyPrice: bigint | undefined
 }
 
 export function directionToPerpsSide(direction: PerpsDirection): PerpsSide {
-  return direction === 'long' ? PERPS_SIDE.BULL : PERPS_SIDE.BEAR
+  return direction === 'long' ? PERPS_SIDE.LONG : PERPS_SIDE.SHORT
 }
 
 export function perpsSideToDirection(side: number | bigint | undefined): PerpsDirection {
-  return Number(side ?? PERPS_SIDE.BULL) === PERPS_SIDE.BEAR ? 'short' : 'long'
+  return Number(side ?? PERPS_SIDE.LONG) === PERPS_SIDE.SHORT ? 'short' : 'long'
 }
 
 export function perpsSideLabel(side: number | bigint | undefined): string {
@@ -139,6 +163,31 @@ export function perpsSideLabel(side: number | bigint | undefined): string {
 export function notionalUsdcToSizeDelta(notionalUsdc: bigint, oraclePrice: bigint): bigint {
   if (oraclePrice === 0n) return 0n
   return ((notionalUsdc * PERPS_POSITION_SIZE_TO_USDC_SCALE) + oraclePrice - 1n) / oraclePrice
+}
+
+export type PerpsPositionSizeRounding = 'down' | 'up'
+
+export function quantizePerpsPositionSize(
+  sizeDelta: bigint,
+  rounding: PerpsPositionSizeRounding = 'down'
+): bigint {
+  if (sizeDelta <= 0n) return 0n
+  if (rounding === 'up') {
+    return ((sizeDelta + PERPS_POSITION_SIZE_QUANTUM - 1n) / PERPS_POSITION_SIZE_QUANTUM) *
+      PERPS_POSITION_SIZE_QUANTUM
+  }
+  return (sizeDelta / PERPS_POSITION_SIZE_QUANTUM) * PERPS_POSITION_SIZE_QUANTUM
+}
+
+export function notionalUsdcToQuantizedSizeDelta(
+  notionalUsdc: bigint,
+  oraclePrice: bigint,
+  rounding: PerpsPositionSizeRounding = 'down'
+): bigint {
+  return quantizePerpsPositionSize(
+    notionalUsdcToSizeDelta(notionalUsdc, oraclePrice),
+    rounding
+  )
 }
 
 export function sizeDeltaToNotionalUsdc(sizeDelta: bigint | undefined, oraclePrice: bigint | undefined): bigint | undefined {
@@ -157,6 +206,25 @@ export function dxyExposureFromContractNotional(
   }
 
   const sizeDelta = notionalUsdcToSizeDelta(contractNotionalUsdc, rawOraclePrice)
+  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
+}
+
+export function quantizedDxyExposureFromContractNotional(
+  contractNotionalUsdc: bigint,
+  rawOraclePrice: bigint | undefined,
+  rounding: PerpsPositionSizeRounding
+): bigint | undefined {
+  if (contractNotionalUsdc <= 0n) return 0n
+  const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
+  if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
+    return undefined
+  }
+
+  const sizeDelta = notionalUsdcToQuantizedSizeDelta(
+    contractNotionalUsdc,
+    rawOraclePrice,
+    rounding
+  )
   return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
 }
 

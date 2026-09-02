@@ -111,16 +111,30 @@ spec = do
         )
         [129, 130, 131, 133]
 
-    it "requires explicit consent flags and versions bounded to 64 characters" $ do
+    it "requires rules/privacy consent and defaults optional promotional email consent to false" $ do
       let valid =
             object
               [ "acceptRules" .= True
               , "acceptPrivacy" .= True
+              , "acceptPromotionalEmail" .= True
               , "rulesVersion" .= T.replicate 64 "r"
               , "privacyVersion" .= ("v1" :: T.Text)
               ]
       fmap crrAcceptRules (decodeJson valid :: Either String CompleteRegistrationRequest)
         `shouldBe` Right True
+      fmap crrAcceptPromotionalEmail (decodeJson valid :: Either String CompleteRegistrationRequest)
+        `shouldBe` Right True
+      fmap crrAcceptPromotionalEmail
+        ( decodeJson
+            ( object
+                [ "acceptRules" .= True
+                , "acceptPrivacy" .= True
+                , "rulesVersion" .= ("v1" :: T.Text)
+                , "privacyVersion" .= ("v1" :: T.Text)
+                ]
+            ) :: Either String CompleteRegistrationRequest
+        )
+        `shouldBe` Right False
       isLeft
         ( decodeJson
             ( object

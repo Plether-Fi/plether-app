@@ -86,7 +86,9 @@ library
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.CandleFinalizerProbe
+        Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
+        Plether.Perps.Release
         Plether.Perps.IndexerOptions
         Plether.Protocol.Governance
         Plether.Protocol.ParameterChanges
@@ -102,6 +104,7 @@ library
         Plether.LiquidationWorker
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
+        Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.ProtocolInsights
         Plether.Handlers.InsightsRegistration
@@ -292,6 +295,7 @@ test-suite plether-api-test
         Plether.Ethereum.Contracts.SettlementMonitorSpec
         Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
         Plether.Ethereum.Contracts.TrancheVaultSpec
+        Plether.Ethereum.RpcSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
@@ -301,6 +305,7 @@ test-suite plether-api-test
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.ProtocolInsightsSpec
         Plether.Handlers.TestnetFaucetSpec
+        Plether.Handlers.TestnetFaucetGuardSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
         Plether.RequestLoggingSpec
@@ -311,6 +316,7 @@ test-suite plether-api-test
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
         Plether.Perps.CandleFinalizerProbeSpec
+        Plether.Perps.ClosedPriceGapSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Protocol.GovernanceSpec
@@ -319,6 +325,7 @@ test-suite plether-api-test
         Plether.Protocol.ReleaseSpec
         Plether.Protocol.SnapshotsSpec
         Plether.Database.ProtocolSpec
+        Plether.Perps.ReleaseSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.VaultPerformanceSpec
         Plether.Database.InsightsSpec
@@ -352,7 +359,8 @@ test-suite plether-api-test
         base16-bytestring >= 1.0,
         time >= 1.12,
         wai >= 3.2,
-        wai-extra >= 3.1
+        wai-extra >= 3.1,
+        warp >= 3.3
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
@@ -360,6 +368,7 @@ test-suite plether-api-test
     default-extensions:
         OverloadedStrings
         LambdaCase
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
 
 test-suite plether-api-integration-test
     import:           warnings
@@ -369,6 +378,8 @@ test-suite plether-api-integration-test
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
+        Plether.Keeper.LpSettlementDatabaseSpec
+        Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec
     build-depends:

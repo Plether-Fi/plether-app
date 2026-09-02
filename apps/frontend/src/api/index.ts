@@ -21,6 +21,8 @@ export {
   getScopedApiSource,
   getScopedApiWsUrl,
   isUpstreamApiError,
+  testnetFaucetErrorMessage,
+  TESTNET_FAUCET_UPGRADE_REQUIRED_MESSAGE,
 } from './client';
 export type { ApiScope, PlethApiConfig } from './client';
 

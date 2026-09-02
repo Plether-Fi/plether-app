@@ -6,6 +6,7 @@ import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
   PERPS_MARGIN_CLEARINGHOUSE_ABI,
+  PERPS_ORDER_LIFECYCLE_BOOK_ABI,
   PERPS_ORDER_ROUTER_ABI,
   PERPS_PUBLIC_LENS_ABI,
 } from '../contracts/abis'
@@ -277,6 +278,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     ownerAddress,
     accountAddress,
     status: identityStatus,
+    manifest,
   } = usePerpsIdentity()
   const isConnected = ownerAddress !== undefined
   const account = accountAddress ?? zeroAddress
@@ -360,6 +362,13 @@ export function usePerpsAccount(markPrice?: bigint) {
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'positions',
+        args: [account],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getActivePositionProtection',
         args: [account],
       },
     ],
@@ -493,6 +502,27 @@ export function usePerpsAccount(markPrice?: bigint) {
       refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
     },
   })
+  const {
+    data: pendingOrderPoliciesData,
+    isLoading: pendingOrderPoliciesLoading,
+  } = useReadContracts({
+    contracts: manifest?.orderLifecycleBook
+      ? basicPendingOrders.map((order) => ({
+          chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+          address: manifest.orderLifecycleBook,
+          abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
+          functionName: 'pendingPolicy',
+          args: [order.orderId],
+        } as const))
+      : [],
+    query: {
+      enabled: isConnected &&
+        accountAddress !== undefined &&
+        manifest?.orderLifecycleBook !== undefined &&
+        basicPendingOrders.length > 0,
+      refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
+    },
+  })
 
   const freshAccount = useMemo(() => {
     const accountView = readResult(dynamicContractData, 0)
@@ -504,6 +534,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     const accountLedgerSnapshot = readResult(dynamicContractData, 7)
     const isFadWindow = readResult(dynamicContractData, 8) as boolean | undefined
     const enginePosition = readResult(dynamicContractData, 9)
+    const activeProtection = readResult(dynamicContractData, 10)
     const riskParams = readResult(engineConfigurationData, 0)
     const maxPendingOrders = readResult(routerConfigurationData, 1) as bigint | undefined
     const maxOrderAge = readResult(routerConfigurationData, 2) as bigint | undefined
@@ -540,9 +571,13 @@ export function usePerpsAccount(markPrice?: bigint) {
       : { ...position, liquidationPrice, pendingCarryUsdc, vpiAccrued }
     const pendingOrders = basicPendingOrders.map((order, index) => {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
-      const expiryTime = commitTime !== undefined && maxOrderAge !== undefined
-        ? commitTime + maxOrderAge
-        : undefined
+      const pendingPolicy = readResult(pendingOrderPoliciesData, index)
+      const policyValidUntil = readBigInt(pendingPolicy, 0, 'validUntil')
+      const expiryTime = manifest?.orderLifecycleBook
+        ? policyValidUntil
+        : commitTime !== undefined && maxOrderAge !== undefined
+          ? commitTime + maxOrderAge
+          : undefined
 
       return {
         ...order,
@@ -573,6 +608,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       isConnected,
       isLoading,
       isPendingOrderDetailsLoading: pendingOrderViewsLoading,
+      isPendingOrderPolicyLoading: pendingOrderPoliciesLoading,
       error,
       refetchDynamic: refetchDynamicContracts,
       refetch,
@@ -588,6 +624,10 @@ export function usePerpsAccount(markPrice?: bigint) {
       pendingExecutionBountyUsdc: tupleValue(accountView, 3, 'pendingExecutionBountyUsdc') as bigint | undefined,
       maxPendingOrders,
       maxOrderAge,
+      activePositionProtectionId:
+        readBigInt(activeProtection, 0, 'protectionId') ?? 0n,
+      activePositionProtectionStatus:
+        Number(tupleValue(activeProtection, 15, 'status') ?? 0),
       firstPendingOrderId,
       firstPendingOrderExpiryTime,
       accountHasOpenPosition,
@@ -606,7 +646,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
       },
     }
-  }, [accountAddress, basicPendingOrders, dynamicContractData, engineConfigurationData, error, identityStatus, immutableContractData, isConnected, isLoading, markPrice, ownerAddress, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refetchDynamicContracts, routerConfigurationData])
+  }, [accountAddress, basicPendingOrders, dynamicContractData, engineConfigurationData, error, identityStatus, immutableContractData, isConnected, isLoading, manifest?.orderLifecycleBook, markPrice, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refetchDynamicContracts, routerConfigurationData])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return

@@ -22,10 +22,13 @@ module Plether.LiquidationWorker
   , checkLiveSignerBalance
   , transactionMaximumCost
   , canAffordTransaction
+  , liquidationTransactionGasLimit
   , FreshLiquidationRiskInputs (..)
   , LiquidationRiskGlobals (..)
   , LiquidationBasketComponent (..)
   , PythStoredPrice (..)
+  , liquidationRiskCalls
+  , decodeLiquidationRiskGlobals
   , liquidationSnapshotCalls
   , decodeLiquidationSnapshotResults
   , selectLiquidationSimulationCandidates
@@ -436,7 +439,7 @@ liquidationRiskCalls cfg =
       }
   , riskCall (lwcPletherOracle cfg) "isOracleFrozen()"
   , riskCall (lwcPletherOracle cfg) "liquidationStalenessLimit()"
-  , riskCall (lwcPletherOracle cfg) "pythMaxConfidenceRatioBps()"
+  , riskCall (lwcPletherOracle cfg) "basketMaxConfidenceRatioBps()"
   , riskCall (lwcCfdEngine cfg) "fadMaxStaleness()"
   , riskCall (lwcCfdEngine cfg) "isFadWindow()"
   , riskCall (lwcCfdEngine cfg) "lastMarkTime()"
@@ -479,7 +482,7 @@ decodeLiquidationRiskGlobals results =
       liquidationStalenessBytes <-
         successfulResult "liquidationStalenessLimit()" 32 liquidationStalenessResult
       maxConfidenceRatioBytes <-
-        successfulResult "pythMaxConfidenceRatioBps()" 32 maxConfidenceRatioResult
+        successfulResult "basketMaxConfidenceRatioBps()" 32 maxConfidenceRatioResult
       fadMaxStalenessBytes <-
         successfulResult "fadMaxStaleness()" 32 fadMaxStalenessResult
       isFadWindowBytes <- successfulResult "isFadWindow()" 32 isFadWindowResult
@@ -1536,7 +1539,7 @@ prepareLiquidationTransaction cfg client workerAddress estimatedGas value callDa
     (Right nonce, Right gasPrice) -> do
       let priorityBase = either (const gasPrice) id priorityResult
           maxFeeBase = max gasPrice priorityBase
-          gasLimit = max 21_000 $ applyBuffer estimatedGas (lwcGasBufferBps cfg)
+          gasLimit = liquidationTransactionGasLimit (lwcGasBufferBps cfg) estimatedGas
           maxPriorityFee = applyBuffer priorityBase (lwcFeeBufferBps cfg)
           maxFee = max maxPriorityFee $ applyBuffer maxFeeBase (lwcFeeBufferBps cfg)
           tx =
@@ -1801,7 +1804,7 @@ replacePendingBatchTransaction cfg conn client pendingSender candidates nonce tx
                       , txNonce = nonce
                       , txMaxPriorityFeePerGas = replacementPriorityFee
                       , txMaxFeePerGas = replacementMaxFee
-                      , txGasLimit = gasLimit
+                      , txGasLimit = liquidationTransactionGasLimit 0 gasLimit
                       , txTo = lwcOrderRouter cfg
                       , txValue = value
                       , txData = callData
@@ -2384,6 +2387,24 @@ mapMaybePositionOpened =
 applyBuffer :: Integer -> Integer -> Integer
 applyBuffer value bufferBps =
   ((value * (10_000 + bufferBps)) + 9_999) `div` 10_000
+
+-- | The V2 liquidation router returns successfully with
+-- @LiquidationBatchStopped(0)@ when the transaction does not retain enough gas
+-- to enter its first account. That makes @eth_estimateGas@ observe the cheap
+-- early-stop path instead of the liquidation path. The deployed release caps
+-- pending orders at five and requires, before item zero, 600k engine gas, 250k
+-- router gas, 600k per pending order, and a 250k tail reserve. Five million
+-- covers that 4.1m gate plus the oracle update and router preamble.
+liquidationTransactionGasFloor :: Integer
+liquidationTransactionGasFloor = 5_000_000
+
+liquidationTransactionGasLimit
+  :: Integer -- configured estimate buffer, in basis points
+  -> Integer -- node-provided gas estimate
+  -> Integer
+liquidationTransactionGasLimit bufferBps estimatedGas =
+  max liquidationTransactionGasFloor $
+    applyBuffer (max 0 estimatedGas) (max 0 bufferBps)
 
 sameNonceReplacementFees
   :: Integer -- current fee buffer bps

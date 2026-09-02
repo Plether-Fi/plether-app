@@ -34,9 +34,10 @@ spec = do
             , alsTraderClaimBalanceUsdc = 110
             , alsPendingOrderCount = 111
             , alsCloseReachableUsdc = 112
-            , alsTerminalReachableUsdc = 113
-            , alsAccountEquityUsdc = 114
-            , alsFreeBuyingPowerUsdc = 115
+            , alsLiquidationReachableSettlementUsdc = 113
+            , alsTerminalPriceCollectibleCapUsdc = 114
+            , alsAccountEquityUsdc = 115
+            , alsFreeBuyingPowerUsdc = 116
             , alsHasPosition = True
             , alsSide = 2
             , alsSize = 118
@@ -49,7 +50,11 @@ spec = do
 
     it "rejects truncated RPC output instead of fabricating zero fields" $ do
       decodeAccountLedgerSnapshot (BS.take (BS.length encodedSnapshot - 1) encodedSnapshot)
-        `shouldBe` Left "Expected 736 bytes for AccountLedgerSnapshot, received 735"
+        `shouldBe` Left "Expected 768 bytes for AccountLedgerSnapshot, received 767"
+
+    it "rejects the legacy 23-word snapshot shape" $ do
+      decodeAccountLedgerSnapshot (BS.take (23 * 32) encodedSnapshot)
+        `shouldBe` Left "Expected 768 bytes for AccountLedgerSnapshot, received 736"
 
   describe "renderBlockTag" $ do
     it "renders an exact block number as a canonical JSON-RPC quantity" $ do
@@ -66,7 +71,7 @@ spec = do
 encodedSnapshot :: BS.ByteString
 encodedSnapshot =
   mconcat $
-    map encodeUint256 [101 .. 115]
+    map encodeUint256 [101 .. 116]
       <> [ encodeUint256 1
          , encodeUint256 2
          , encodeUint256 118

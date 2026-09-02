@@ -35,7 +35,7 @@ describe('analytics client', () => {
       wallet_address: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
       wallet_family: 'MetaMask',
       wallet_version: '12.0.0',
-      manifest_version: 'perps-aa-arbitrum-sepolia-v1',
+      manifest_version: 'perps-aa-arbitrum-sepolia-v2',
       exact_amount: '1000',
       arbitrary: 'value',
     })).toEqual({
@@ -43,7 +43,7 @@ describe('analytics client', () => {
       direction: 'long',
       wallet_family: 'MetaMask',
       wallet_version: '12.0.0',
-      manifest_version: 'perps-aa-arbitrum-sepolia-v1',
+      manifest_version: 'perps-aa-arbitrum-sepolia-v2',
     })
   })
 

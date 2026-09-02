@@ -156,8 +156,8 @@ reorg discovery and deletion on both history tables.
 The protected workflow defaults `migrate` to a 60-second lock timeout; this
 schema/index operation is distinct from candle data backfill.
 
-Production backfill, repair, and controlled indexer replay run only through the
-protected `candle-admin.yml` workflow. They require
+Production backfill, repair, closed-price-gap recovery, and controlled indexer
+replay run only through the protected `candle-admin.yml` workflow. They require
 `PERPS_CANDLE_WRITE_MODE=dual` and enforce lock, statement, and absolute runtime
 limits; backfill and repair also refuse an empty canonical source domain. The
 admin and backend deployment workflows share an environment-specific
@@ -165,6 +165,16 @@ concurrency group so a deployment cannot change write mode during a mutation.
 Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
 runs from a stable deployed indexer digest without moving its canonical cursor
 or coverage certification.
+
+`recover-closed-price-gap` is also Sepolia-only. It is not a candle backfill:
+it never inserts or rewrites a price. The one-shot basket worker requires an
+empty authenticated Pyth minute-history range for all six feeds, validates the
+latest payload through the deployed Pyth contract, matches that signed state to
+the last stored signed observation, and permits the coverage-only publication
+only inside the conservative Friday 22:00–Sunday 21:00 UTC frozen window. The
+protected `from_timestamp` is the exact stored minute coverage terminal;
+`to_timestamp` is an exclusive operator-approved deadline so a delayed approval
+cannot cross into the live FX session.
 
 An arbitrary price-history start is selected with the protected
 `set-history-target` action. Selection is desired state only: the basket worker
@@ -346,6 +356,7 @@ CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
 PERPS_USDC=0x1647e41f49ED6D688936092B5a291c4B28106343 \
 PERPS_ORDER_ROUTER=0x97A901dE2B267c307E264FD5F71403F8072F73e7 \
+PERPS_ORDER_LIFECYCLE_BOOK=0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E \
 PERPS_MARGIN_CLEARINGHOUSE=0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
@@ -534,7 +545,10 @@ Local URLs:
 | `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
 | `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SENIOR_VAULT` | With active LP settlement | v1.2.0 Arbitrum Sepolia Senior Vault | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_JUNIOR_VAULT` | With active LP settlement | v1.2.0 Arbitrum Sepolia Junior Vault | Must match both the Settlement Monitor and HousePool binding |
 | `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
@@ -542,10 +556,14 @@ Local URLs:
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
 | `PERPS_INDEXER_START_BLOCK` | No | `302257125` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia mock-USDC signer; configuring it also requires the dedicated proxy token |
+| `FAUCET_PROXY_ORIGIN_TOKEN` | With faucet signer | - | Dedicated secret required from the exact trusted Pages/Vite faucet proxy path |
+| `FAUCET_CLIENT_REQUESTS_PER_HOUR` | No | `20` | Rolling-hour accepted request limit per pseudonymous trusted client IP |
+| `FAUCET_GLOBAL_REQUESTS_PER_HOUR` | No | `200` | Rolling-hour accepted request limit across the single API process |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
-| `AA_SPONSORSHIP_ENABLED` | No | `true` | Authoritative issuance/submission kill switch; set explicitly to `false` to pause issuance while keeping recovery reads available |
+| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; enable only after `/api/aa/status` verifies the bounded-V2 release |
 | `AA_IP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-IP issuance limit; recovery reads receive four times this budget |
 | `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
 | `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
@@ -555,8 +573,13 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
-| `LP_SETTLEMENT_ENABLED` | No | `false` | Enables one health-checked, bounded LP settlement pass per eligible keeper poll |
-| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Minimum interval between LP settlement monitor cycles |
+| `LP_SETTLEMENT_MODE` | No | `off` | `off`, read/simulate-only `observe`, or durable `execute`; legacy `LP_SETTLEMENT_ENABLED=true` is rejected |
+| `LP_SETTLEMENT_PRIVATE_KEY` | With active LP settlement or preflight | - | Separately funded signer; must differ from order, liquidation, and oracle-updater keys |
+| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Exact interval between active LP settlement cycles; `observe` and `execute` reject any value other than `15` |
+| `LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS` | No | `4` | Maximum confirmed settlement transactions drained from a fresh observation cycle |
+| `LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS` | No | `60` | Age at which an unconfirmed durable transaction is replaced at the same nonce |
+| `LP_SETTLEMENT_MAX_REPLACEMENTS` | No | `3` | Maximum same-nonce fee replacements before the nonce lane requires manual review |
+| `LP_SETTLEMENT_MAX_TX_COST_WEI` | Execute mode | `0` | Hard maximum of transaction value plus gas-limit times max-fee; execute requires a positive observed-derived cap |
 | `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
 | `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
 | `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
@@ -578,8 +601,9 @@ Local URLs:
 | `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
 | `INSIGHTS_COMPETITION_RELEASE_ID` | September release binding | - | Omit during registration-only activation. After contract deployment, set it to `testnet-trading-2026-09` together with explicit nonzero, pairwise-distinct addresses absent from the July manifest and a positive new indexer start; the release then binds once before the baseline and becomes immutable. |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
-| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
-| `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
+| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes, Benchmarks, and Pyth Pro History, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
+| `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for signed historical update payloads |
+| `PYTH_HISTORY_URL` | No | `https://pyth.dourolabs.app/v1` | Pyth Pro History API used for OHLC backfills and closed-market recovery evidence; the retired Benchmarks TradingView shim is not supported |
 | `PYTH_BACKFILL_DAYS` | No | `7` | Default historical backfill window |
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
@@ -643,6 +667,7 @@ the backend alert is a receipt-based secondary signal.
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /api/aa/status` | Public bounded-V2 release fingerprint, startup binding verification state, and sponsorship kill-switch state |
 | `POST /api/aa/pimlico` | Authenticated, fail-closed Pimlico JSON-RPC proxy for the approved Arbitrum Sepolia SimpleAccount and Plether action surface |
 
 ### Protocol
@@ -831,12 +856,19 @@ PERPS_CRITICAL_PATH_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/p
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
+# Verify the LP settlement deployment, signer balance, monitor schema, and any
+# currently eligible settlement simulation without locks or database writes
+cabal run plether-keeper -- --lp-settlement-preflight
+
 # Discover and simulate liquidations once without submitting transactions
 cabal run plether-liquidation-worker -- --once --dry-run
 
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
+
+See [the LP settlement keeper runbook](../../docs/runbooks/lp-settlement-keeper.md)
+for the Sepolia activation, cost-cap, alarm, manual-review, and rollback procedure.
 
 The critical-path gate runs the real Perps history indexer and HTTP API against
 PostgreSQL and an in-process scripted chain. It covers delayed trace evidence,

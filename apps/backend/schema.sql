@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS perps_indexer_state (
     CONSTRAINT perps_indexer_state_release_scope CHECK (
         indexer_name NOT LIKE 'perps-history-costs-v1:%'
         OR (release_router IS NOT NULL AND configured_start_block > 0)
+    ),
+    CONSTRAINT perps_indexer_state_v2_release_scope CHECK (
+        indexer_name NOT LIKE 'perps-history-costs-v2:%'
+        OR (release_router IS NOT NULL AND configured_start_block > 0)
     )
 );
 
@@ -236,6 +240,1110 @@ CREATE TABLE IF NOT EXISTS perps_keeper_orders (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending ON perps_keeper_orders(order_router, order_id ASC) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block ON perps_keeper_orders(commit_block DESC);
+
+-- Legacy LP settlement observation/status table. It remains available during
+-- the keeper rollout, but new signed intents and broadcasts are never written
+-- here because it cannot represent their complete transaction identity.
+CREATE TABLE IF NOT EXISTS perps_lp_settlement_attempts (
+    chain_id BIGINT NOT NULL,
+    monitor_address TEXT NOT NULL,
+    observation_digest VARCHAR(66) NOT NULL,
+    epoch BIGINT NOT NULL,
+    observed_block BIGINT NOT NULL,
+    execution_path INTEGER NOT NULL,
+    operational_blocker_mask TEXT NOT NULL,
+    warning_mask TEXT NOT NULL,
+    dependency_failure_mask TEXT NOT NULL,
+    critical_fault_mask TEXT NOT NULL,
+    transaction_hash VARCHAR(66),
+    status VARCHAR(24) NOT NULL,
+    last_error TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (chain_id, monitor_address, observation_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_lp_settlement_submitted
+    ON perps_lp_settlement_attempts(chain_id, monitor_address, updated_at)
+    WHERE status = 'submitted';
+
+-- Immutable settlement monitor observations. Detail fields are nullable only
+-- for legacy rows, which did not persist the full monitor response.
+CREATE TABLE IF NOT EXISTS perps_lp_settlement_observations (
+    chain_id BIGINT NOT NULL CHECK (chain_id > 0),
+    monitor_address VARCHAR(42) NOT NULL CHECK (monitor_address ~ '^0x[0-9a-f]{40}$'),
+    observation_digest VARCHAR(66) NOT NULL CHECK (observation_digest ~ '^0x[0-9a-f]{64}$'),
+    epoch BIGINT NOT NULL CHECK (epoch >= 0),
+    observed_block BIGINT NOT NULL CHECK (observed_block >= 0),
+    observed_block_hash VARCHAR(66) CHECK (observed_block_hash IS NULL OR observed_block_hash ~ '^0x[0-9a-f]{64}$'),
+    execution_path INTEGER NOT NULL CHECK (execution_path >= 0),
+    operational_blocker_mask NUMERIC(78,0) NOT NULL CHECK (operational_blocker_mask >= 0),
+    warning_mask NUMERIC(78,0) NOT NULL CHECK (warning_mask >= 0),
+    dependency_failure_mask NUMERIC(78,0) NOT NULL CHECK (dependency_failure_mask >= 0),
+    critical_fault_mask NUMERIC(78,0) NOT NULL CHECK (critical_fault_mask >= 0),
+    schema_version NUMERIC(78,0) CHECK (schema_version IS NULL OR schema_version >= 0),
+    health_state NUMERIC(78,0) CHECK (health_state IS NULL OR health_state >= 0),
+    execution_path_dependency_mask NUMERIC(78,0) CHECK (execution_path_dependency_mask IS NULL OR execution_path_dependency_mask >= 0),
+    status_dependency_failure_mask NUMERIC(78,0) CHECK (status_dependency_failure_mask IS NULL OR status_dependency_failure_mask >= 0),
+    health_dependency_failure_mask NUMERIC(78,0) CHECK (health_dependency_failure_mask IS NULL OR health_dependency_failure_mask >= 0),
+    observation_complete BOOLEAN,
+    has_matured_work BOOLEAN,
+    lp_epoch_settlement_paused BOOLEAN,
+    first_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, monitor_address, observation_digest),
+    UNIQUE (chain_id, monitor_address, observation_digest, epoch)
+);
+
+-- Migrate only canonical legacy observations. In particular, do not turn a
+-- legacy transaction hash into a new attempt: the old table has no signer,
+-- nonce, target, calldata, value, fee envelope, or signed raw transaction.
+WITH canonical_legacy AS MATERIALIZED (
+    SELECT
+        chain_id,
+        lower(trim(monitor_address)) AS monitor_address,
+        lower(trim(observation_digest)) AS observation_digest,
+        epoch,
+        observed_block,
+        execution_path,
+        CASE
+            WHEN trim(operational_blocker_mask) ~ '^[0-9]+$'
+             AND length(trim(operational_blocker_mask)) <= 78
+            THEN trim(operational_blocker_mask)::NUMERIC
+        END AS operational_blocker_mask,
+        CASE
+            WHEN trim(warning_mask) ~ '^[0-9]+$'
+             AND length(trim(warning_mask)) <= 78
+            THEN trim(warning_mask)::NUMERIC
+        END AS warning_mask,
+        CASE
+            WHEN trim(dependency_failure_mask) ~ '^[0-9]+$'
+             AND length(trim(dependency_failure_mask)) <= 78
+            THEN trim(dependency_failure_mask)::NUMERIC
+        END AS dependency_failure_mask,
+        CASE
+            WHEN trim(critical_fault_mask) ~ '^[0-9]+$'
+             AND length(trim(critical_fault_mask)) <= 78
+            THEN trim(critical_fault_mask)::NUMERIC
+        END AS critical_fault_mask,
+        created_at AT TIME ZONE 'UTC' AS first_observed_at,
+        updated_at AT TIME ZONE 'UTC' AS last_observed_at
+    FROM perps_lp_settlement_attempts
+    WHERE chain_id > 0
+      AND epoch >= 0
+      AND observed_block >= 0
+      AND execution_path >= 0
+      AND lower(trim(monitor_address)) ~ '^0x[0-9a-f]{40}$'
+      AND lower(trim(observation_digest)) ~ '^0x[0-9a-f]{64}$'
+      AND trim(operational_blocker_mask) ~ '^[0-9]+$'
+      AND length(trim(operational_blocker_mask)) <= 78
+      AND trim(warning_mask) ~ '^[0-9]+$'
+      AND length(trim(warning_mask)) <= 78
+      AND trim(dependency_failure_mask) ~ '^[0-9]+$'
+      AND length(trim(dependency_failure_mask)) <= 78
+      AND trim(critical_fault_mask) ~ '^[0-9]+$'
+      AND length(trim(critical_fault_mask)) <= 78
+), unambiguous AS (
+    SELECT
+        chain_id,
+        monitor_address,
+        observation_digest,
+        MIN(epoch) AS epoch,
+        MIN(observed_block) AS observed_block,
+        MIN(execution_path) AS execution_path,
+        MIN(operational_blocker_mask) AS operational_blocker_mask,
+        MIN(warning_mask) AS warning_mask,
+        MIN(dependency_failure_mask) AS dependency_failure_mask,
+        MIN(critical_fault_mask) AS critical_fault_mask,
+        COALESCE(MIN(first_observed_at), NOW()) AS first_observed_at,
+        COALESCE(MAX(last_observed_at), NOW()) AS last_observed_at
+    FROM canonical_legacy
+    GROUP BY chain_id, monitor_address, observation_digest
+    HAVING COUNT(DISTINCT (
+        epoch,
+        observed_block,
+        execution_path,
+        operational_blocker_mask,
+        warning_mask,
+        dependency_failure_mask,
+        critical_fault_mask
+    )) = 1
+)
+INSERT INTO perps_lp_settlement_observations (
+    chain_id,
+    monitor_address,
+    observation_digest,
+    epoch,
+    observed_block,
+    execution_path,
+    operational_blocker_mask,
+    warning_mask,
+    dependency_failure_mask,
+    critical_fault_mask,
+    first_observed_at,
+    last_observed_at
+)
+SELECT
+    chain_id,
+    monitor_address,
+    observation_digest,
+    epoch,
+    observed_block,
+    execution_path,
+    operational_blocker_mask,
+    warning_mask,
+    dependency_failure_mask,
+    critical_fault_mask,
+    first_observed_at,
+    last_observed_at
+FROM unambiguous
+ON CONFLICT (chain_id, monitor_address, observation_digest) DO NOTHING;
+
+-- An observation digest is immutable. The only allowed update is filling
+-- detail fields that were absent from a migrated legacy row and advancing its
+-- last-seen timestamp.
+CREATE OR REPLACE FUNCTION protect_lp_settlement_observation_identity()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'perps_lp_settlement_observations is append-only';
+    END IF;
+    IF ROW(
+        OLD.chain_id,
+        OLD.monitor_address,
+        OLD.observation_digest,
+        OLD.epoch,
+        OLD.observed_block,
+        OLD.execution_path,
+        OLD.operational_blocker_mask,
+        OLD.warning_mask,
+        OLD.dependency_failure_mask,
+        OLD.critical_fault_mask,
+        OLD.first_observed_at
+    ) IS DISTINCT FROM ROW(
+        NEW.chain_id,
+        NEW.monitor_address,
+        NEW.observation_digest,
+        NEW.epoch,
+        NEW.observed_block,
+        NEW.execution_path,
+        NEW.operational_blocker_mask,
+        NEW.warning_mask,
+        NEW.dependency_failure_mask,
+        NEW.critical_fault_mask,
+        NEW.first_observed_at
+    ) THEN
+        RAISE EXCEPTION 'LP settlement observation identity is immutable';
+    END IF;
+    IF (OLD.observed_block_hash IS NOT NULL AND OLD.observed_block_hash IS DISTINCT FROM NEW.observed_block_hash)
+       OR (OLD.schema_version IS NOT NULL AND OLD.schema_version IS DISTINCT FROM NEW.schema_version)
+       OR (OLD.health_state IS NOT NULL AND OLD.health_state IS DISTINCT FROM NEW.health_state)
+       OR (OLD.execution_path_dependency_mask IS NOT NULL AND OLD.execution_path_dependency_mask IS DISTINCT FROM NEW.execution_path_dependency_mask)
+       OR (OLD.status_dependency_failure_mask IS NOT NULL AND OLD.status_dependency_failure_mask IS DISTINCT FROM NEW.status_dependency_failure_mask)
+       OR (OLD.health_dependency_failure_mask IS NOT NULL AND OLD.health_dependency_failure_mask IS DISTINCT FROM NEW.health_dependency_failure_mask)
+       OR (OLD.observation_complete IS NOT NULL AND OLD.observation_complete IS DISTINCT FROM NEW.observation_complete)
+       OR (OLD.has_matured_work IS NOT NULL AND OLD.has_matured_work IS DISTINCT FROM NEW.has_matured_work)
+       OR (OLD.lp_epoch_settlement_paused IS NOT NULL AND OLD.lp_epoch_settlement_paused IS DISTINCT FROM NEW.lp_epoch_settlement_paused)
+    THEN
+        RAISE EXCEPTION 'LP settlement observation detail is immutable once known';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_perps_lp_settlement_observation_identity'
+          AND tgrelid = 'perps_lp_settlement_observations'::regclass
+    ) THEN
+        BEGIN
+            CREATE TRIGGER trg_perps_lp_settlement_observation_identity
+                BEFORE UPDATE OR DELETE ON perps_lp_settlement_observations
+                FOR EACH ROW EXECUTE FUNCTION protect_lp_settlement_observation_identity();
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END;
+    END IF;
+END $$;
+
+-- Every signed transaction (including a fee replacement) has its own durable
+-- row. Semantic fields are copied from the predecessor by the atomic
+-- replacement API; only fees, raw bytes, and the signed hash may change.
+CREATE TABLE IF NOT EXISTS perps_lp_settlement_transactions (
+    id BIGSERIAL PRIMARY KEY,
+    chain_id BIGINT NOT NULL,
+    monitor_address VARCHAR(42) NOT NULL,
+    observation_digest VARCHAR(66) NOT NULL,
+    epoch BIGINT NOT NULL CHECK (epoch >= 0),
+    replacement_count INTEGER NOT NULL DEFAULT 0 CHECK (replacement_count >= 0),
+    replaces_attempt_id BIGINT REFERENCES perps_lp_settlement_transactions(id) ON DELETE RESTRICT,
+    signer_address VARCHAR(42) NOT NULL CHECK (signer_address ~ '^0x[0-9a-f]{40}$'),
+    tx_nonce NUMERIC(78,0) NOT NULL CHECK (tx_nonce >= 0),
+    target_address VARCHAR(42) NOT NULL CHECK (target_address ~ '^0x[0-9a-f]{40}$'),
+    tx_value NUMERIC(78,0) NOT NULL CHECK (tx_value >= 0),
+    calldata BYTEA NOT NULL CHECK (octet_length(calldata) >= 4),
+    gas_limit NUMERIC(78,0) NOT NULL CHECK (gas_limit > 0),
+    max_priority_fee_per_gas NUMERIC(78,0) NOT NULL CHECK (max_priority_fee_per_gas >= 0),
+    max_fee_per_gas NUMERIC(78,0) NOT NULL CHECK (max_fee_per_gas >= max_priority_fee_per_gas),
+    signed_raw_transaction BYTEA NOT NULL CHECK (octet_length(signed_raw_transaction) > 0),
+    signed_transaction_hash VARCHAR(66) NOT NULL UNIQUE CHECK (signed_transaction_hash ~ '^0x[0-9a-f]{64}$'),
+    status VARCHAR(32) NOT NULL CHECK (status IN (
+        'prepared',
+        'broadcast',
+        'pending',
+        'confirming',
+        'manual_review',
+        'replaced',
+        'confirmed_success',
+        'confirmed_revert',
+        'failed',
+        'abandoned',
+        'superseded'
+    )),
+    last_error TEXT,
+    receipt_transaction_hash VARCHAR(66) CHECK (receipt_transaction_hash IS NULL OR receipt_transaction_hash ~ '^0x[0-9a-f]{64}$'),
+    receipt_block_number BIGINT CHECK (receipt_block_number IS NULL OR receipt_block_number >= 0),
+    receipt_block_hash VARCHAR(66) CHECK (receipt_block_hash IS NULL OR receipt_block_hash ~ '^0x[0-9a-f]{64}$'),
+    receipt_succeeded BOOLEAN,
+    confirmed_at TIMESTAMPTZ,
+    confirmation_depth INTEGER CHECK (confirmation_depth IS NULL OR confirmation_depth >= 0),
+    settlement_event_log_index BIGINT CHECK (settlement_event_log_index IS NULL OR settlement_event_log_index >= 0),
+    cutoff_epoch NUMERIC(78,0) CHECK (cutoff_epoch IS NULL OR cutoff_epoch >= 0),
+    senior_redeem_assets NUMERIC(78,0) CHECK (senior_redeem_assets IS NULL OR senior_redeem_assets >= 0),
+    junior_redeem_assets NUMERIC(78,0) CHECK (junior_redeem_assets IS NULL OR junior_redeem_assets >= 0),
+    junior_deposit_assets NUMERIC(78,0) CHECK (junior_deposit_assets IS NULL OR junior_deposit_assets >= 0),
+    senior_deposit_assets NUMERIC(78,0) CHECK (senior_deposit_assets IS NULL OR senior_deposit_assets >= 0),
+    senior_backlog BOOLEAN,
+    junior_backlog BOOLEAN,
+    entries_deferred BOOLEAN,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (chain_id, monitor_address, observation_digest, epoch)
+        REFERENCES perps_lp_settlement_observations(chain_id, monitor_address, observation_digest, epoch)
+        ON DELETE RESTRICT,
+    UNIQUE (replaces_attempt_id),
+    UNIQUE (chain_id, signer_address, tx_nonce, replacement_count),
+    CHECK (
+        (replacement_count = 0 AND replaces_attempt_id IS NULL)
+        OR (replacement_count > 0 AND replaces_attempt_id IS NOT NULL)
+    ),
+    CHECK (
+        (
+            receipt_transaction_hash IS NULL
+            AND receipt_block_number IS NULL
+            AND receipt_block_hash IS NULL
+            AND receipt_succeeded IS NULL
+        )
+        OR (
+            receipt_transaction_hash IS NOT NULL
+            AND receipt_block_number IS NOT NULL
+            AND receipt_block_hash IS NOT NULL
+            AND receipt_succeeded IS NOT NULL
+        )
+    ),
+    CHECK (
+        (
+            settlement_event_log_index IS NULL
+            AND cutoff_epoch IS NULL
+            AND senior_redeem_assets IS NULL
+            AND junior_redeem_assets IS NULL
+            AND junior_deposit_assets IS NULL
+            AND senior_deposit_assets IS NULL
+            AND senior_backlog IS NULL
+            AND junior_backlog IS NULL
+            AND entries_deferred IS NULL
+        )
+        OR (
+            settlement_event_log_index IS NOT NULL
+            AND cutoff_epoch IS NOT NULL
+            AND senior_redeem_assets IS NOT NULL
+            AND junior_redeem_assets IS NOT NULL
+            AND junior_deposit_assets IS NOT NULL
+            AND senior_deposit_assets IS NOT NULL
+            AND senior_backlog IS NOT NULL
+            AND junior_backlog IS NOT NULL
+            AND entries_deferred IS NOT NULL
+        )
+    ),
+    CONSTRAINT perps_lp_settlement_confirmation_state_check CHECK (
+        (
+            status IN ('confirmed_success', 'confirmed_revert')
+            AND confirmed_at IS NOT NULL
+            AND confirmation_depth IS NOT NULL
+        )
+        OR (
+            status = 'superseded'
+            AND (
+                confirmed_at IS NULL
+                OR (
+                    receipt_transaction_hash IS NOT NULL
+                    AND confirmation_depth IS NOT NULL
+                )
+            )
+        )
+        OR (
+            status NOT IN ('confirmed_success', 'confirmed_revert', 'superseded')
+            AND confirmed_at IS NULL
+        )
+    ),
+    CHECK (
+        status <> 'confirmed_success'
+        OR (receipt_succeeded IS TRUE AND settlement_event_log_index IS NOT NULL)
+    ),
+    CHECK (
+        status <> 'confirmed_revert'
+        OR (receipt_succeeded IS FALSE AND settlement_event_log_index IS NULL)
+    ),
+    CONSTRAINT perps_lp_settlement_terminal_receipt_identity_check CHECK (
+        (
+            status NOT IN ('confirmed_success', 'confirmed_revert')
+            AND (status <> 'superseded' OR confirmed_at IS NULL)
+        )
+        OR receipt_transaction_hash = signed_transaction_hash
+    ),
+    CONSTRAINT perps_lp_settlement_superseded_receipt_check CHECK (
+        status <> 'superseded'
+        OR confirmed_at IS NULL
+        OR (
+            receipt_transaction_hash IS NOT NULL
+            AND
+            receipt_succeeded IS FALSE
+            AND settlement_event_log_index IS NULL
+            AND confirmation_depth IS NOT NULL
+        )
+    ),
+    CONSTRAINT perps_lp_settlement_success_epoch_check CHECK (
+        status <> 'confirmed_success'
+        OR cutoff_epoch = epoch
+    ),
+    CHECK (
+        status <> 'confirming'
+        OR (
+            receipt_transaction_hash IS NOT NULL
+            AND confirmed_at IS NULL
+            AND settlement_event_log_index IS NULL
+        )
+    ),
+    CHECK (
+        status NOT IN ('prepared', 'broadcast', 'pending')
+        OR (receipt_transaction_hash IS NULL AND settlement_event_log_index IS NULL)
+    )
+);
+
+-- Additive migration for databases initialized by a pre-release keeper build.
+DO $$
+DECLARE
+    old_constraint record;
+BEGIN
+    FOR old_constraint IN
+        SELECT k.conname
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.contype = 'c'
+          AND k.conkey = ARRAY[(
+              SELECT a.attnum
+              FROM pg_attribute a
+              WHERE a.attrelid = k.conrelid
+                AND a.attname = 'status'
+          )]
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') <>
+              '2bbd439a6b83336279526a7f336eb14aab3934929267a056211c35760228cbfa'
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE perps_lp_settlement_transactions DROP CONSTRAINT %I',
+            old_constraint.conname
+        );
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.contype = 'c'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '2bbd439a6b83336279526a7f336eb14aab3934929267a056211c35760228cbfa'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_status_domain_check CHECK (
+                status IN (
+                    'prepared', 'broadcast', 'pending', 'confirming',
+                    'manual_review', 'replaced', 'confirmed_success',
+                    'confirmed_revert', 'failed', 'abandoned', 'superseded'
+                )
+            );
+    END IF;
+END
+$$;
+
+DO $$
+DECLARE
+    legacy_object record;
+BEGIN
+    FOR legacy_object IN
+        SELECT k.conname
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.contype = 'u'
+          AND k.conkey = ARRAY[
+              (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = k.conrelid AND a.attname = 'chain_id'),
+              (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = k.conrelid AND a.attname = 'signer_address'),
+              (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = k.conrelid AND a.attname = 'tx_nonce')
+          ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE perps_lp_settlement_transactions DROP CONSTRAINT %I',
+            legacy_object.conname
+        );
+    END LOOP;
+    FOR legacy_object IN
+        SELECT idx.relname AS index_name
+        FROM pg_index i
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tbl ON tbl.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = tbl.relnamespace
+        LEFT JOIN pg_constraint k ON k.conindid = i.indexrelid
+        WHERE n.nspname = current_schema()
+          AND tbl.relname = 'perps_lp_settlement_transactions'
+          AND k.oid IS NULL
+          AND i.indisunique
+          AND i.indpred IS NULL
+          AND i.indnatts = 3 AND i.indnkeyatts = 3
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'chain_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'signer_address'
+          AND pg_get_indexdef(i.indexrelid, 3, true) = 'tx_nonce'
+    LOOP
+        EXECUTE format('DROP INDEX %I', legacy_object.index_name);
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.contype = 'u'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '4515d727d3995c3c2022d5ae8f7e8259e765718cd09d23db00ad64cc85a04b6f'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_nonce_replacement_unique;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_nonce_replacement_unique
+            UNIQUE (chain_id, signer_address, tx_nonce, replacement_count);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.contype = 'u'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '74a720f18e3e0f47c41f7ab05c2b192f666d94ea418ad50b135aaa77570ec055'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_replaces_attempt_unique;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_replaces_attempt_unique
+            UNIQUE (replaces_attempt_id);
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.conname = 'perps_lp_settlement_success_epoch_check'
+          AND k.contype = 'c'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '17853a3381c45cdd3a9bb4d0d4afc7722437c8aa09eb0e44ef9cb92eb26be9fa'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_success_epoch_check;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_success_epoch_check CHECK (
+                status <> 'confirmed_success' OR cutoff_epoch = epoch
+            );
+    END IF;
+END
+$$;
+
+DO $$
+DECLARE
+    old_constraint record;
+BEGIN
+    FOR old_constraint IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND contype = 'c'
+          AND conname <> 'perps_lp_settlement_confirmation_state_check'
+          AND pg_get_constraintdef(oid) ILIKE '%confirmed_at%'
+          AND pg_get_constraintdef(oid) ILIKE '%confirmation_depth%'
+          AND pg_get_constraintdef(oid) ILIKE '%confirmed_success%'
+          AND pg_get_constraintdef(oid) ILIKE '%confirmed_revert%'
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE perps_lp_settlement_transactions DROP CONSTRAINT %I',
+            old_constraint.conname
+        );
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.conname = 'perps_lp_settlement_confirmation_state_check'
+          AND k.contype = 'c'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '10a4e0fa933c2201f0e5525531dc709a69c33a7f041b08f299ea9db78a73a777'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_confirmation_state_check;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_confirmation_state_check CHECK (
+                (
+                    status IN ('confirmed_success', 'confirmed_revert')
+                    AND confirmed_at IS NOT NULL
+                    AND confirmation_depth IS NOT NULL
+                )
+                OR (
+                    status = 'superseded'
+                    AND (
+                        confirmed_at IS NULL
+                        OR (
+                            receipt_transaction_hash IS NOT NULL
+                            AND confirmation_depth IS NOT NULL
+                        )
+                    )
+                )
+                OR (
+                    status NOT IN ('confirmed_success', 'confirmed_revert', 'superseded')
+                    AND confirmed_at IS NULL
+                )
+            );
+    END IF;
+END
+$$;
+
+DO $$
+DECLARE
+    old_constraint record;
+BEGIN
+    FOR old_constraint IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND contype = 'c'
+          AND conname <> 'perps_lp_settlement_terminal_receipt_identity_check'
+          AND pg_get_constraintdef(oid) ILIKE '%receipt_transaction_hash%'
+          AND pg_get_constraintdef(oid) ILIKE '%signed_transaction_hash%'
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE perps_lp_settlement_transactions DROP CONSTRAINT %I',
+            old_constraint.conname
+        );
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.conname = 'perps_lp_settlement_terminal_receipt_identity_check'
+          AND k.contype = 'c'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              'c2f90b0ccef94f85ebc3f3365ddfed88443aced61775661cf01b5db62babb079'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_terminal_receipt_identity_check;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_terminal_receipt_identity_check CHECK (
+                (
+                    status NOT IN ('confirmed_success', 'confirmed_revert')
+                    AND (status <> 'superseded' OR confirmed_at IS NULL)
+                )
+                OR receipt_transaction_hash = signed_transaction_hash
+            );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint k
+        WHERE k.conrelid = 'perps_lp_settlement_transactions'::regclass
+          AND k.conname = 'perps_lp_settlement_superseded_receipt_check'
+          AND k.contype = 'c'
+          AND k.convalidated
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(pg_get_constraintdef(k.oid, true))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '5003d267946b1bfc7d66aeada89395bcb814829359bb7427c02ca0015c1f39b6'
+    ) THEN
+        ALTER TABLE perps_lp_settlement_transactions
+            DROP CONSTRAINT IF EXISTS perps_lp_settlement_superseded_receipt_check;
+        ALTER TABLE perps_lp_settlement_transactions
+            ADD CONSTRAINT perps_lp_settlement_superseded_receipt_check CHECK (
+                status <> 'superseded'
+                OR confirmed_at IS NULL
+                OR (
+                    receipt_transaction_hash IS NOT NULL
+                    AND
+                    receipt_succeeded IS FALSE
+                    AND settlement_event_log_index IS NULL
+                    AND confirmation_depth IS NOT NULL
+                )
+            );
+    END IF;
+END
+$$;
+
+-- manual_review and confirming intentionally block both the monitor lane and
+-- the signer's chain-wide nonce lane while work is unresolved.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tbl ON tbl.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = tbl.relnamespace
+        JOIN pg_am am ON am.oid = idx.relam
+        WHERE n.nspname = current_schema()
+          AND idx.relname = 'idx_perps_lp_settlement_one_active'
+          AND tbl.relname = 'perps_lp_settlement_transactions'
+          AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+          AND NOT i.indisexclusion
+          AND i.indnatts = 2 AND i.indnkeyatts = 2
+          AND am.amname = 'btree'
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'chain_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'monitor_address'
+          AND i.indoption::text = '0 0'
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(COALESCE(pg_get_expr(i.indpred, i.indrelid, true), ''))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '11614e1c65ad7e4cbba8b221d476771aa63e0a0a85d2f0935f083e24ed1eff7a'
+    ) THEN
+        DROP INDEX IF EXISTS idx_perps_lp_settlement_one_active;
+    END IF;
+END
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_perps_lp_settlement_one_active
+    ON perps_lp_settlement_transactions(chain_id, monitor_address)
+    WHERE status IN ('prepared', 'broadcast', 'pending', 'confirming', 'manual_review');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tbl ON tbl.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = tbl.relnamespace
+        JOIN pg_am am ON am.oid = idx.relam
+        WHERE n.nspname = current_schema()
+          AND idx.relname = 'idx_perps_lp_settlement_one_active_signer'
+          AND tbl.relname = 'perps_lp_settlement_transactions'
+          AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+          AND NOT i.indisexclusion
+          AND i.indnatts = 2 AND i.indnkeyatts = 2
+          AND am.amname = 'btree'
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'chain_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'signer_address'
+          AND i.indoption::text = '0 0'
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(COALESCE(pg_get_expr(i.indpred, i.indrelid, true), ''))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '11614e1c65ad7e4cbba8b221d476771aa63e0a0a85d2f0935f083e24ed1eff7a'
+    ) THEN
+        DROP INDEX IF EXISTS idx_perps_lp_settlement_one_active_signer;
+    END IF;
+END
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_perps_lp_settlement_one_active_signer
+    ON perps_lp_settlement_transactions(chain_id, signer_address)
+    WHERE status IN ('prepared', 'broadcast', 'pending', 'confirming', 'manual_review');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tbl ON tbl.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = tbl.relnamespace
+        JOIN pg_am am ON am.oid = idx.relam
+        WHERE n.nspname = current_schema()
+          AND idx.relname = 'idx_perps_lp_settlement_one_terminal_nonce'
+          AND tbl.relname = 'perps_lp_settlement_transactions'
+          AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+          AND NOT i.indisexclusion
+          AND i.indnatts = 3 AND i.indnkeyatts = 3
+          AND am.amname = 'btree'
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'chain_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'signer_address'
+          AND pg_get_indexdef(i.indexrelid, 3, true) = 'tx_nonce'
+          AND i.indoption::text = '0 0 0'
+          AND encode(sha256(convert_to(regexp_replace(lower(trim(COALESCE(pg_get_expr(i.indpred, i.indrelid, true), ''))), E'\\s+', ' ', 'g'), 'UTF8')), 'hex') =
+              '476c99ceb93e8b141f47c954d09b35e8e52b29e7dcf8cdf1bb1cc194aff580be'
+    ) THEN
+        DROP INDEX IF EXISTS idx_perps_lp_settlement_one_terminal_nonce;
+    END IF;
+END
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_perps_lp_settlement_one_terminal_nonce
+    ON perps_lp_settlement_transactions(chain_id, signer_address, tx_nonce)
+    WHERE status IN ('confirmed_success', 'confirmed_revert')
+       OR (status = 'superseded' AND confirmed_at IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_perps_lp_settlement_observation_history
+    ON perps_lp_settlement_transactions(chain_id, monitor_address, observation_digest, replacement_count);
+CREATE INDEX IF NOT EXISTS idx_perps_lp_settlement_receipt_recheck
+    ON perps_lp_settlement_transactions(chain_id, monitor_address, updated_at)
+    WHERE status IN ('broadcast', 'pending', 'confirming', 'manual_review');
+CREATE INDEX IF NOT EXISTS idx_perps_lp_settlement_success_heartbeat
+    ON perps_lp_settlement_transactions(chain_id, monitor_address, confirmed_at DESC)
+    WHERE status = 'confirmed_success';
+
+-- A replacement is a new prepared intent whose semantic transaction fields
+-- exactly match its predecessor. Only its fee envelope, signed bytes, and hash
+-- may change, and at least one fee component must increase.
+CREATE OR REPLACE FUNCTION validate_lp_settlement_replacement_insert()
+RETURNS trigger AS $$
+DECLARE
+    predecessor perps_lp_settlement_transactions%ROWTYPE;
+BEGIN
+    IF NEW.status <> 'prepared' THEN
+        RAISE EXCEPTION 'LP settlement transactions must be inserted prepared';
+    END IF;
+    IF NEW.replaces_attempt_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT *
+    INTO predecessor
+    FROM perps_lp_settlement_transactions
+    WHERE id = NEW.replaces_attempt_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'LP settlement replacement predecessor does not exist';
+    END IF;
+    IF predecessor.status <> 'replaced' THEN
+        RAISE EXCEPTION 'LP settlement replacement predecessor is not marked replaced';
+    END IF;
+    IF NEW.replacement_count <> predecessor.replacement_count + 1 THEN
+        RAISE EXCEPTION 'invalid LP settlement replacement_count';
+    END IF;
+    IF ROW(
+        NEW.chain_id,
+        NEW.monitor_address,
+        NEW.observation_digest,
+        NEW.epoch,
+        NEW.signer_address,
+        NEW.tx_nonce,
+        NEW.target_address,
+        NEW.tx_value,
+        NEW.calldata,
+        NEW.gas_limit
+    ) IS DISTINCT FROM ROW(
+        predecessor.chain_id,
+        predecessor.monitor_address,
+        predecessor.observation_digest,
+        predecessor.epoch,
+        predecessor.signer_address,
+        predecessor.tx_nonce,
+        predecessor.target_address,
+        predecessor.tx_value,
+        predecessor.calldata,
+        predecessor.gas_limit
+    ) THEN
+        RAISE EXCEPTION 'LP settlement replacement changed signed transaction semantics';
+    END IF;
+    IF NEW.max_priority_fee_per_gas < predecessor.max_priority_fee_per_gas
+       OR NEW.max_fee_per_gas < predecessor.max_fee_per_gas
+       OR (
+           NEW.max_priority_fee_per_gas = predecessor.max_priority_fee_per_gas
+           AND NEW.max_fee_per_gas = predecessor.max_fee_per_gas
+       ) THEN
+        RAISE EXCEPTION 'LP settlement replacement fees did not increase';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_perps_lp_settlement_replacement_insert'
+          AND tgrelid = 'perps_lp_settlement_transactions'::regclass
+    ) THEN
+        BEGIN
+            CREATE TRIGGER trg_perps_lp_settlement_replacement_insert
+                BEFORE INSERT ON perps_lp_settlement_transactions
+                FOR EACH ROW EXECUTE FUNCTION validate_lp_settlement_replacement_insert();
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END;
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION require_lp_settlement_replacement_successor()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.status = 'replaced'
+       AND NOT EXISTS (
+           SELECT 1
+           FROM perps_lp_settlement_transactions successor
+           WHERE successor.replaces_attempt_id = NEW.id
+       ) THEN
+        RAISE EXCEPTION 'replaced LP settlement transaction must retain a successor';
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_perps_lp_settlement_replaced_successor'
+          AND tgrelid = 'perps_lp_settlement_transactions'::regclass
+    ) THEN
+        BEGIN
+            CREATE CONSTRAINT TRIGGER trg_perps_lp_settlement_replaced_successor
+                AFTER INSERT OR UPDATE ON perps_lp_settlement_transactions
+                DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION require_lp_settlement_replacement_successor();
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM perps_lp_settlement_transactions predecessor
+        WHERE predecessor.status = 'replaced'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM perps_lp_settlement_transactions successor
+              WHERE successor.replaces_attempt_id = predecessor.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'replaced LP settlement transaction exists without a successor';
+    END IF;
+END $$;
+
+-- Lifecycle and receipt metadata may advance, but a persisted signed intent
+-- can never be rewritten or deleted. Fee replacement therefore always creates
+-- a new row and preserves the predecessor as history.
+CREATE OR REPLACE FUNCTION protect_lp_settlement_transaction_intent()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'perps_lp_settlement_transactions is append-only';
+    END IF;
+    IF ROW(
+        OLD.id,
+        OLD.chain_id,
+        OLD.monitor_address,
+        OLD.observation_digest,
+        OLD.epoch,
+        OLD.replacement_count,
+        OLD.replaces_attempt_id,
+        OLD.signer_address,
+        OLD.tx_nonce,
+        OLD.target_address,
+        OLD.tx_value,
+        OLD.calldata,
+        OLD.gas_limit,
+        OLD.max_priority_fee_per_gas,
+        OLD.max_fee_per_gas,
+        OLD.signed_raw_transaction,
+        OLD.signed_transaction_hash,
+        OLD.created_at
+    ) IS DISTINCT FROM ROW(
+        NEW.id,
+        NEW.chain_id,
+        NEW.monitor_address,
+        NEW.observation_digest,
+        NEW.epoch,
+        NEW.replacement_count,
+        NEW.replaces_attempt_id,
+        NEW.signer_address,
+        NEW.tx_nonce,
+        NEW.target_address,
+        NEW.tx_value,
+        NEW.calldata,
+        NEW.gas_limit,
+        NEW.max_priority_fee_per_gas,
+        NEW.max_fee_per_gas,
+        NEW.signed_raw_transaction,
+        NEW.signed_transaction_hash,
+        NEW.created_at
+    ) THEN
+        RAISE EXCEPTION 'LP settlement signed intent is immutable';
+    END IF;
+    IF NOT (
+        OLD.status = NEW.status
+        OR (
+            OLD.status = 'prepared'
+            AND NEW.status IN (
+                'broadcast', 'pending', 'manual_review', 'replaced',
+                'confirmed_success', 'superseded'
+            )
+        )
+        OR (
+            OLD.status IN ('broadcast', 'pending')
+            AND NEW.status IN (
+                'broadcast', 'pending', 'confirming', 'manual_review',
+                'replaced', 'confirmed_success', 'superseded'
+            )
+        )
+        OR (
+            OLD.status = 'confirming'
+            AND NEW.status IN (
+                'pending', 'manual_review', 'confirmed_success', 'superseded'
+            )
+        )
+        OR (
+            OLD.status = 'manual_review'
+            AND NEW.status IN ('confirmed_success', 'superseded')
+        )
+        OR (
+            OLD.status = 'replaced'
+            AND NEW.status IN ('manual_review', 'confirmed_success', 'superseded')
+        )
+    ) THEN
+        RAISE EXCEPTION 'invalid LP settlement transaction status transition';
+    END IF;
+    IF OLD.status IN ('prepared', 'broadcast', 'pending', 'confirming', 'manual_review')
+       AND NEW.status IN ('failed', 'abandoned') THEN
+        RAISE EXCEPTION 'active LP settlement transaction cannot be released without canonical receipt evidence';
+    END IF;
+    IF OLD.status = 'manual_review'
+       AND NEW.status NOT IN ('manual_review', 'confirmed_success', 'superseded') THEN
+        RAISE EXCEPTION 'manual-review LP settlement transaction cannot be reopened without canonical terminal evidence';
+    END IF;
+    IF OLD.status IN ('prepared', 'broadcast', 'pending', 'confirming', 'manual_review')
+       AND NEW.status = 'confirmed_revert' THEN
+        RAISE EXCEPTION 'reverted LP settlement receipt must be recorded as manual review or receipt-backed superseded';
+    END IF;
+    IF OLD.status IN ('prepared', 'broadcast', 'pending', 'confirming', 'manual_review')
+       AND NEW.status = 'superseded'
+       AND NEW.confirmed_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1
+           FROM perps_lp_settlement_transactions winner
+           WHERE winner.id <> OLD.id
+             AND winner.chain_id = OLD.chain_id
+             AND winner.signer_address = OLD.signer_address
+             AND winner.tx_nonce = OLD.tx_nonce
+             AND (
+                 winner.status IN ('confirmed_success', 'confirmed_revert')
+                 OR (winner.status = 'superseded' AND winner.confirmed_at IS NOT NULL)
+             )
+       ) THEN
+        RAISE EXCEPTION 'active LP settlement transaction cannot be superseded without a terminal same-nonce receipt';
+    END IF;
+    IF (
+           OLD.status IN ('confirmed_success', 'confirmed_revert')
+           OR (OLD.status = 'superseded' AND OLD.confirmed_at IS NOT NULL)
+       )
+       AND ROW(
+           OLD.status,
+           OLD.last_error,
+           OLD.receipt_transaction_hash,
+           OLD.receipt_block_number,
+           OLD.receipt_block_hash,
+           OLD.receipt_succeeded,
+           OLD.confirmed_at,
+           OLD.confirmation_depth,
+           OLD.settlement_event_log_index,
+           OLD.cutoff_epoch,
+           OLD.senior_redeem_assets,
+           OLD.junior_redeem_assets,
+           OLD.junior_deposit_assets,
+           OLD.senior_deposit_assets,
+           OLD.senior_backlog,
+           OLD.junior_backlog,
+           OLD.entries_deferred
+       ) IS DISTINCT FROM ROW(
+           NEW.status,
+           NEW.last_error,
+           NEW.receipt_transaction_hash,
+           NEW.receipt_block_number,
+           NEW.receipt_block_hash,
+           NEW.receipt_succeeded,
+           NEW.confirmed_at,
+           NEW.confirmation_depth,
+           NEW.settlement_event_log_index,
+           NEW.cutoff_epoch,
+           NEW.senior_redeem_assets,
+           NEW.junior_redeem_assets,
+           NEW.junior_deposit_assets,
+           NEW.senior_deposit_assets,
+           NEW.senior_backlog,
+           NEW.junior_backlog,
+           NEW.entries_deferred
+       ) THEN
+        RAISE EXCEPTION 'terminal LP settlement evidence is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_perps_lp_settlement_transaction_intent'
+          AND tgrelid = 'perps_lp_settlement_transactions'::regclass
+    ) THEN
+        BEGIN
+            CREATE TRIGGER trg_perps_lp_settlement_transaction_intent
+                BEFORE UPDATE OR DELETE ON perps_lp_settlement_transactions
+                FOR EACH ROW EXECUTE FUNCTION protect_lp_settlement_transaction_intent();
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END;
+    END IF;
+END $$;
+
+-- Every RPC send has an immutable history row, including rejected and
+-- ambiguous responses. A database trigger enforces append-only semantics.
+CREATE TABLE IF NOT EXISTS perps_lp_settlement_broadcasts (
+    id BIGSERIAL PRIMARY KEY,
+    attempt_id BIGINT NOT NULL REFERENCES perps_lp_settlement_transactions(id) ON DELETE RESTRICT,
+    broadcast_sequence INTEGER NOT NULL CHECK (broadcast_sequence > 0),
+    outcome VARCHAR(24) NOT NULL CHECK (outcome IN ('accepted', 'already_known', 'rejected', 'ambiguous')),
+    returned_transaction_hash VARCHAR(66) CHECK (returned_transaction_hash IS NULL OR returned_transaction_hash ~ '^0x[0-9a-f]{64}$'),
+    rpc_error TEXT,
+    broadcast_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (attempt_id, broadcast_sequence)
+);
+
+CREATE OR REPLACE FUNCTION reject_lp_settlement_broadcast_mutation()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'perps_lp_settlement_broadcasts is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'trg_perps_lp_settlement_broadcasts_append_only'
+          AND tgrelid = 'perps_lp_settlement_broadcasts'::regclass
+    ) THEN
+        BEGIN
+            CREATE TRIGGER trg_perps_lp_settlement_broadcasts_append_only
+                BEFORE UPDATE OR DELETE ON perps_lp_settlement_broadcasts
+                FOR EACH ROW EXECUTE FUNCTION reject_lp_settlement_broadcast_mutation();
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END;
+    END IF;
+END $$;
 
 -- Plether Insights competitions, participants, canonical account snapshots,
 -- and review audit data. Competition metadata is inserted once from runtime
@@ -1118,6 +2226,8 @@ CREATE TABLE IF NOT EXISTS insights_registration_applications (
     wallet_verified_at TIMESTAMPTZ,
     rules_version TEXT,
     privacy_version TEXT,
+    promotional_email_consent BOOLEAN NOT NULL DEFAULT FALSE,
+    promotional_email_consent_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1151,6 +2261,9 @@ CREATE TABLE IF NOT EXISTS insights_registration_applications (
         octet_length(turnstile_token_digest) = 32
         AND (email_digest IS NULL OR octet_length(email_digest) = 32)
         AND (x_user_id_digest IS NULL OR octet_length(x_user_id_digest) = 32)
+    ),
+    CONSTRAINT insights_registration_applications_promotional_email_consent_check CHECK (
+        promotional_email_consent = (promotional_email_consent_at IS NOT NULL)
     ),
     CHECK (
         status <> 'completed'

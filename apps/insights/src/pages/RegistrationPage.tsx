@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import {
   completeRegistration,
   confirmXFollow,
@@ -15,6 +15,7 @@ import {
   useRegistrationSession,
 } from '../api'
 import { RegistrationWalletStep } from '../components/RegistrationWalletStep'
+import { RegistrationReviewStep } from '../components/RegistrationReviewStep'
 import { TurnstileWidget } from '../components/TurnstileWidget'
 import { ErrorState, LoadingState, Panel } from '../components/ui'
 import { useUtcNow } from '../hooks/useUtcNow'
@@ -32,6 +33,7 @@ const TURNSTILE_SITE_KEY = configuredTurnstileSiteKey.length > 0
     ? '1x00000000000000000000AA'
     : ''
 const TRADING_APP_URL = 'https://app.sepolia.plether.com'
+const DISCORD_URL = 'https://plether.com/discord'
 const PRIMARY_BUTTON = 'border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg disabled:cursor-not-allowed disabled:opacity-50'
 
 const STEPS = [
@@ -132,7 +134,7 @@ function RegistrationUnavailable({ competition }: { competition: Competition }) 
   return <ErrorState title="Registration is closed" message={`Registration closed ${formatUtc(metadata.closesAt)}.`} />
 }
 
-function Completion({ competition, registration }: { competition: Competition; registration: RegistrationSession }) {
+export function RegistrationConfirmation({ competition, registration }: { competition: Competition; registration: RegistrationSession }) {
   const handle = registration.identity?.xHandle
   const profileUrl = xProfileUrl(handle)
   const now = useUtcNow()
@@ -190,7 +192,14 @@ function Completion({ competition, registration }: { competition: Competition; r
       </div>
       <div className="flex flex-wrap gap-3 px-5 pb-6 sm:px-7">
         <a href={TRADING_APP_URL} className={PRIMARY_BUTTON}>Open Plether testnet ↗</a>
-        <Link to="/" className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold hover:border-brand-peach">View leaderboard</Link>
+        <a
+          href={DISCORD_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold hover:border-brand-peach"
+        >
+          Join Discord ↗
+        </a>
       </div>
     </Panel>
   )
@@ -205,6 +214,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
   const [actionError, setActionError] = useState<string | null>(null)
   const [acceptRules, setAcceptRules] = useState(false)
   const [acceptPrivacy, setAcceptPrivacy] = useState(false)
+  const [acceptPromotionalEmail, setAcceptPromotionalEmail] = useState(false)
   const [editingWallet, setEditingWallet] = useState(false)
   const registration = sessionQuery.data
   const completed = completedStepCount(registration)
@@ -287,6 +297,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
         registration.csrfToken,
         rulesVersion,
         privacyVersion,
+        acceptPromotionalEmail,
       )
       updateRegistration(completedRegistration)
       await Promise.all([
@@ -308,7 +319,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
     return (
       <div className="space-y-5">
         <StepRail completed={STEPS.length} />
-        <Completion competition={competition} registration={registration} />
+        <RegistrationConfirmation competition={competition} registration={registration} />
       </div>
     )
   }
@@ -386,35 +397,17 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
             </button>
           </div>
         ) : (
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-peach">Step 5 of 5</p>
-            <h2 className="mt-2 text-2xl font-semibold">Review your entry</h2>
-            <dl className="mt-5 grid gap-px bg-brand-border/20 sm:grid-cols-2">
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Public X handle</dt><dd className="mt-1 font-semibold">@{registration.identity?.xHandle.replace(/^@/, '')}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Confirmed email</dt><dd className="mt-1">{registration.identity?.maskedEmail}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Owner wallet (private)</dt><dd className="mt-1 font-mono text-sm" title={registration.wallet?.ownerAddress}>{registration.wallet ? shortAddress(registration.wallet.ownerAddress) : '—'}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Scored Trading Account</dt><dd className="mt-1 font-mono text-sm" title={registration.wallet?.tradingAccount}>{registration.wallet ? shortAddress(registration.wallet.tradingAccount) : '—'}</dd></div>
-            </dl>
-            <div className="mt-5 space-y-3 text-sm leading-6 text-content-secondary">
-              <label className="flex items-start gap-3"><input type="checkbox" checked={acceptRules} onChange={(event) => { setAcceptRules(event.target.checked) }} className="mt-1 h-4 w-4 accent-brand-orange" /><span>I accept the <Link to="/methodology" className="font-semibold text-brand-peach hover:underline">competition rules</Link>, including the one-wallet and integrity-review requirements.</span></label>
-              <div className="flex items-start gap-3">
-                <input id="accept-registration-privacy" type="checkbox" checked={acceptPrivacy} onChange={(event) => { setAcceptPrivacy(event.target.checked) }} aria-describedby="registration-privacy-details" className="mt-1 h-4 w-4 shrink-0 accent-brand-orange" />
-                <div>
-                  <label htmlFor="accept-registration-privacy">I accept the privacy notice:</label>
-                  <ul id="registration-privacy-details" className="mt-1 list-disc space-y-1 pl-5">
-                    <li>My X handle will be public.</li>
-                    <li>My confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages.</li>
-                    <li>The private owner-wallet-to-Trading-Account link is protected and retained indefinitely for integrity and scoring audits.</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <div className="mt-5">
-              <button type="button" className={PRIMARY_BUTTON} disabled={!acceptRules || !acceptPrivacy || pendingAction === 'complete'} onClick={() => { void finishRegistration() }}>
-                {pendingAction === 'complete' ? 'Completing registration…' : 'Complete registration'}
-              </button>
-            </div>
-          </div>
+          <RegistrationReviewStep
+            registration={registration}
+            acceptRules={acceptRules}
+            acceptPrivacy={acceptPrivacy}
+            acceptPromotionalEmail={acceptPromotionalEmail}
+            isCompleting={pendingAction === 'complete'}
+            onAcceptRulesChange={setAcceptRules}
+            onAcceptPrivacyChange={setAcceptPrivacy}
+            onAcceptPromotionalEmailChange={setAcceptPromotionalEmail}
+            onComplete={() => { void finishRegistration() }}
+          />
         )}
       </Panel>
 

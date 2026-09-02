@@ -468,3 +468,81 @@ describe('Cloudflare API proxy candle caching', () => {
     assert.equal(fetchOptions.headers.get('Cookie'), 'session=backend-session');
   });
 });
+
+describe('Cloudflare Sepolia faucet proxy authentication', () => {
+  const faucetUrl = 'https://app.plether.com/api/perps/v1/testnet/faucet';
+  const faucetHeader = 'X-Plether-Faucet-Proxy-Token';
+
+  it('injects the trusted token only on the exact faucet path and preserves the Cloudflare IP', async () => {
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+    const request = new Request(`${faucetUrl}?source=welcome`, {
+      method: 'POST',
+      headers: {
+        [faucetHeader]: 'browser-spoof',
+        'CF-Connecting-IP': '203.0.113.8',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        address: '0x1111111111111111111111111111111111111111',
+        confirmationMode: 'async',
+      }),
+    });
+
+    await worker.fetch(request, {
+      ...workerEnv(),
+      FAUCET_PROXY_ORIGIN_TOKEN: 'trusted-faucet-origin-token',
+    });
+
+    assert.equal(fetchMock.mock.callCount(), 1);
+    assert.equal(
+      fetchMock.mock.calls[0].arguments[0].href,
+      'https://sepolia-api.plether.test/api/testnet/faucet?source=welcome',
+    );
+    const forwardedHeaders = fetchMock.mock.calls[0].arguments[1].headers;
+    assert.equal(
+      forwardedHeaders.get(faucetHeader),
+      'trusted-faucet-origin-token',
+    );
+    assert.equal(forwardedHeaders.get('CF-Connecting-IP'), '203.0.113.8');
+  });
+
+  it('fails closed without the faucet Pages secret', async () => {
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+    const response = await worker.fetch(new Request(faucetUrl, {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '203.0.113.8' },
+      body: '{}',
+    }), workerEnv());
+
+    assert.equal(response.status, 502);
+    assert.equal(fetchMock.mock.callCount(), 0);
+  });
+
+  it('removes caller-supplied faucet credentials from unrelated API routes', async () => {
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+    await worker.fetch(new Request(
+      'https://app.plether.com/api/perps/v1/user/0x1111111111111111111111111111111111111111/dashboard',
+      { headers: { [faucetHeader]: 'browser-spoof' } },
+    ), {
+      ...workerEnv(),
+      FAUCET_PROXY_ORIGIN_TOKEN: 'trusted-faucet-origin-token',
+    });
+
+    assert.equal(fetchMock.mock.callCount(), 1);
+    const forwardedHeaders = fetchMock.mock.calls[0].arguments[1].headers;
+    assert.equal(forwardedHeaders.has(faucetHeader), false);
+  });
+
+  it('does not inject the credential into a faucet-like subpath', async () => {
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+    await worker.fetch(new Request(`${faucetUrl}/status`, {
+      headers: { [faucetHeader]: 'browser-spoof' },
+    }), {
+      ...workerEnv(),
+      FAUCET_PROXY_ORIGIN_TOKEN: 'trusted-faucet-origin-token',
+    });
+
+    const forwardedHeaders = fetchMock.mock.calls[0].arguments[1].headers;
+    assert.equal(forwardedHeaders.has(faucetHeader), false);
+  });
+});

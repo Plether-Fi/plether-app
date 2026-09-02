@@ -129,18 +129,20 @@ Junior takes more risk because it absorbs bad debt first. In return, it receives
 
 **Liability is the product. Return is what LPs receive for underwriting it.**
 
-LP entry and exit are not always immediate:
+LP entry and exit use hourly vault processing:
 
-* While trader positions are open, ordinary deposits can enter through pending deposit epochs.
-* Withdrawals are subject to a cooldown.
-* Capital reserved for trader payouts or claims cannot be withdrawn.
-* Available withdrawals depend on free pool cash, solvency, oracle state and protocol status.
+* Deposits and withdrawals whose transactions are included onchain strictly before the five-minute cutoff target the next processing window; inclusion at or after the cutoff rolls into the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so the confirmed request record is authoritative.
+* A processed deposit creates shares that the LP moves from vault escrow to the owner wallet.
+* A processed withdrawal creates USDC that the LP moves to the owner wallet. Senior requests are funded before Junior requests.
+* Vault delivery of processed shares, withdrawal cancellation and return of a zero-value remainder start or restart the wallet's one-hour withdrawal cooldown for that tranche. An ordinary wallet transfer propagates the sender's existing timestamp instead of starting a fresh hour.
+* Capital reserved for trader payouts or claims cannot fund LP withdrawals.
+* Processing can wait on free pool cash, solvency, oracle state, protocol health or an explicit hourly-processing pause.
 
 ### 6. Solvency is checked before exposure grows
 
 The bounded market price lets Plether calculate the maximum aggregate payout for each direction.
 
-Before accepting a trade that increases risk, the protocol compares physically backed HousePool assets—after existing trader-claim liabilities—with the worst-case directional liability after the trade.
+Before accepting a trade that increases risk, the protocol compares physically backed HousePool assets—after existing trader-claim liabilities—with the worst-case directional liability after the trade plus the configured liability-scaled settlement buffer.
 
 If the pool cannot support that obligation, the trade is rejected.
 
@@ -148,7 +150,7 @@ This is **solvency before volume**. It does not mean that LP principal is guaran
 
 Plether does not forcibly reduce unrelated profitable positions to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim remains an obligation of the pool and can later be settled into the Trading Account’s Margin Account when sufficient cash is available.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim remains an obligation of the pool and can later settle when aggregate claims are fully cash-covered: into PnL pledge if a position remains open, or into free Margin Account balance if the account is flat.
 
 If a terminal settlement reveals insolvency, the protocol enters degraded mode. New risk is blocked while closes, liquidations and recapitalization remain available.
 
@@ -162,7 +164,7 @@ The dollar market does not trade like crypto. Plether changes behavior around FX
 | **Market-close runway** | New risk is blocked and a higher margin requirement applies; closes and liquidations continue                |
 | **Oracle frozen**       | Opens remain blocked; eligible closes and liquidations use conservative frozen-market rules; carry continues |
 | **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                      |
-| **Degraded**            | New risk and affected withdrawals are blocked; closes, liquidations and recapitalization continue            |
+| **Degraded**            | New risk and LP deposits are blocked; LP withdrawal requests may still queue, but no new withdrawal USDC is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. Closes, liquidations and recapitalization continue. |
 
 Frozen-market execution prioritizes risk reduction over normal live-price guarantees. Voluntary closes use special pricing rules and a fixed LP-owned frozen-close spread; liquidations keep their separate adverse-confidence policy and do not pay that spread.
 

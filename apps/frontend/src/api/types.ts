@@ -34,8 +34,11 @@ export type ApiErrorCode =
   | 'INVALID_SIDE'
   | 'RPC_ERROR'
   | 'RATE_LIMITED'
+  | 'FORBIDDEN'
+  | 'UPGRADE_REQUIRED'
   | 'INTERNAL_ERROR'
-  | 'NETWORK_ERROR';
+  | 'NETWORK_ERROR'
+  | 'NOT_FOUND';
 
 // =============================================================================
 // Protocol Types

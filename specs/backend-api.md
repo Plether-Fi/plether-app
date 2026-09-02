@@ -102,11 +102,36 @@ Error codes:
 - `INVALID_SIDE` - Side must be "bear" or "bull"
 - `RPC_ERROR` - Upstream RPC failed
 - `RATE_LIMITED` - Too many requests
+- `FORBIDDEN` - Request did not arrive through the trusted Plether app proxy
+- `UPGRADE_REQUIRED` - Faucet client must refresh and send the current request shape
 - `INTERNAL_ERROR` - Server error
+- `NETWORK_ERROR` - Upstream network failure
+- `NOT_FOUND` - Requested resource does not exist
 
 ---
 
 ## Endpoints
+
+### Testnet Faucet
+
+`POST /api/testnet/faucet` is available to visitors through the official
+Sepolia app proxy. Direct origin calls fail with HTTP 403. The current request
+shape is:
+
+```json
+{
+  "address": "0x...",
+  "confirmationMode": "async"
+}
+```
+
+Missing or unsupported confirmation modes return HTTP 426 with
+`UPGRADE_REQUIRED`. Accepted requests share rolling-hour limits of 20 per
+pseudonymous client IP and 200 globally; quota failures return HTTP 429 with a
+`Retry-After` header. Successful `submitted`, `minted`, `already_claimed`, and
+`already_funded` responses retain their existing shapes.
+
+---
 
 ### Protocol Endpoints
 

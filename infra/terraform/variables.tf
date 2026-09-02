@@ -1,6 +1,17 @@
 variable "aws_region" {
   type    = string
-  default = "us-east-1"
+  default = "ap-southeast-1"
+}
+
+variable "expected_aws_account_id" {
+  type        = string
+  default     = "932542905614"
+  description = "AWS account that Terraform is allowed to manage. The provider refuses credentials for any other account."
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_aws_account_id))
+    error_message = "expected_aws_account_id must be a 12-digit AWS account ID without separators."
+  }
 }
 
 variable "environment" {
@@ -94,6 +105,17 @@ variable "pyth_benchmarks_url" {
   default = "https://benchmarks.pyth.network"
 }
 
+variable "pyth_history_url" {
+  type        = string
+  default     = "https://pyth.dourolabs.app/v1"
+  description = "Pyth Pro History API base URL used for authenticated OHLC history after the legacy Benchmarks TradingView endpoints retired."
+
+  validation {
+    condition     = replace(lower(trimspace(var.pyth_history_url)), "/\\/+$/", "") == "https://pyth.dourolabs.app/v1"
+    error_message = "pyth_history_url must use the official Pyth Pro History API base https://pyth.dourolabs.app/v1."
+  }
+}
+
 variable "pyth_backfill_days" {
   type    = string
   default = "7"
@@ -125,6 +147,27 @@ variable "keeper_private_key" {
   sensitive = true
 }
 
+variable "lp_settlement_private_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Dedicated private key used only for LP epoch settlement. Required outside off mode and kept separate from every other transaction worker."
+
+  validation {
+    condition = var.lp_settlement_private_key == "" || (
+      can(regex("^0x[0-9A-Fa-f]{64}$", var.lp_settlement_private_key))
+      && lower(var.lp_settlement_private_key) != "0x0000000000000000000000000000000000000000000000000000000000000000"
+    )
+    error_message = "lp_settlement_private_key must be empty or a non-zero, 0x-prefixed 32-byte hexadecimal private key."
+  }
+}
+
+variable "lp_settlement_signer_funding_confirmed" {
+  type        = bool
+  default     = false
+  description = "Operator attestation that the dedicated LP signer was funded and its balance verified with --lp-settlement-preflight; required for observe or execute."
+}
+
 variable "oracle_updater_private_key" {
   type        = string
   sensitive   = true
@@ -142,6 +185,54 @@ variable "faucet_private_key" {
   sensitive = true
 }
 
+variable "faucet_proxy_origin_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Dedicated Cloudflare Pages-to-faucet origin credential. Generate at least 32 random bytes and never reuse the AA proxy token."
+
+  validation {
+    condition = (
+      var.faucet_proxy_origin_token == ""
+      || (
+        trimspace(var.faucet_proxy_origin_token) == var.faucet_proxy_origin_token
+        && length(var.faucet_proxy_origin_token) >= 32
+      )
+    )
+    error_message = "faucet_proxy_origin_token must be empty or contain at least 32 whitespace-free characters."
+  }
+}
+
+variable "faucet_client_requests_per_hour" {
+  type        = number
+  default     = 20
+  description = "Maximum accepted Sepolia faucet requests per pseudonymous Cloudflare client IP in a rolling hour."
+
+  validation {
+    condition = (
+      floor(var.faucet_client_requests_per_hour) == var.faucet_client_requests_per_hour
+      && var.faucet_client_requests_per_hour >= 1
+      && var.faucet_client_requests_per_hour <= 1000000
+    )
+    error_message = "faucet_client_requests_per_hour must be a whole number between 1 and 1000000."
+  }
+}
+
+variable "faucet_global_requests_per_hour" {
+  type        = number
+  default     = 200
+  description = "Maximum accepted Sepolia faucet requests across the single API task in a rolling hour."
+
+  validation {
+    condition = (
+      floor(var.faucet_global_requests_per_hour) == var.faucet_global_requests_per_hour
+      && var.faucet_global_requests_per_hour >= 1
+      && var.faucet_global_requests_per_hour <= 1000000
+    )
+    error_message = "faucet_global_requests_per_hour must be a whole number between 1 and 1000000."
+  }
+}
+
 variable "provision_aa_proxy" {
   type        = bool
   default     = false
@@ -150,7 +241,7 @@ variable "provision_aa_proxy" {
 
 variable "enable_aa_sponsorship" {
   type        = bool
-  default     = true
+  default     = false
   description = "Authoritative managed sponsorship issuance/submission kill switch; disable explicitly only when sponsorship must be paused."
 }
 
@@ -437,7 +528,7 @@ variable "api_hostname" {
 variable "operations_alarm_sns_topic_arn" {
   type        = string
   default     = ""
-  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet."
+  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet and whenever LP settlement is active."
 
   validation {
     condition = var.operations_alarm_sns_topic_arn == trimspace(var.operations_alarm_sns_topic_arn) && (
@@ -637,8 +728,39 @@ variable "perps_house_pool" {
   description = "HousePool bound to the configured v1.2.0 settlement monitor."
 
   validation {
-    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
-    error_message = "perps_house_pool must be a canonical Ethereum address."
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+      && lower(var.perps_house_pool) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_house_pool must be a non-zero canonical Ethereum address."
+  }
+}
+
+variable "perps_senior_vault" {
+  type        = string
+  default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+  description = "Senior TrancheVault bound to the configured HousePool settlement release."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_senior_vault))
+      && lower(var.perps_senior_vault) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_senior_vault must be a non-zero canonical Ethereum address."
+  }
+}
+
+variable "perps_junior_vault" {
+  type        = string
+  default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+  description = "Junior TrancheVault bound to the configured HousePool settlement release."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_junior_vault))
+      && lower(var.perps_junior_vault) != "0x0000000000000000000000000000000000000000"
+    )
+    error_message = "perps_junior_vault must be a non-zero canonical Ethereum address."
   }
 }
 
@@ -650,9 +772,24 @@ variable "perps_settlement_monitor_lens" {
   validation {
     condition = (
       can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+      && lower(var.perps_settlement_monitor_lens) != "0x0000000000000000000000000000000000000000"
       && lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
     )
     error_message = "perps_settlement_monitor_lens must be the facade, never the v1.2.0 monitor sidecar."
+  }
+}
+
+variable "perps_order_lifecycle_book" {
+  description = "V2 immutable order lifecycle book from the pinned bounded-order deployment"
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.perps_order_lifecycle_book == ""
+      || can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_order_lifecycle_book))
+    )
+    error_message = "perps_order_lifecycle_book must be empty or a canonical Ethereum address."
   }
 }
 
@@ -691,16 +828,6 @@ variable "perps_account_lens" {
 variable "perps_public_lens" {
   type    = string
   default = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
-}
-
-variable "perps_senior_vault" {
-  type    = string
-  default = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
-}
-
-variable "perps_junior_vault" {
-  type    = string
-  default = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
 }
 
 variable "perps_order_router_admin" {
@@ -800,6 +927,11 @@ variable "keeper_max_batch_size" {
 variable "keeper_confirmations" {
   type    = string
   default = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.keeper_confirmations)) && try(tonumber(var.keeper_confirmations) <= 10000, false)
+    error_message = "keeper_confirmations must be a canonical whole number from 1 through 10000."
+  }
 }
 
 variable "keeper_gas_buffer_bps" {
@@ -812,24 +944,81 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
-variable "lp_settlement_enabled" {
-  type        = bool
-  default     = false
-  description = "Enables signer-backed hourly LP settlement after a successful dry-run and keeper funding check."
+variable "lp_settlement_mode" {
+  type        = string
+  default     = "off"
+  description = "LP epoch settlement mode: off disables monitoring, observe performs all read/simulation checks without broadcasting, and execute permits bounded transactions."
+
+  validation {
+    condition     = contains(["off", "observe", "execute"], var.lp_settlement_mode)
+    error_message = "lp_settlement_mode must be off, observe, or execute."
+  }
 }
 
 variable "lp_settlement_poll_seconds" {
   type        = string
   default     = "15"
-  description = "Minimum interval between LP settlement monitor cycles in the shared keeper process."
+  description = "Exact interval between LP settlement monitor cycles in the shared keeper process."
 
   validation {
-    condition = try(
-      can(regex("^[1-9][0-9]*$", var.lp_settlement_poll_seconds))
-      && tonumber(var.lp_settlement_poll_seconds) <= 3600,
-      false
+    condition     = var.lp_settlement_poll_seconds == "15"
+    error_message = "lp_settlement_poll_seconds must be exactly 15."
+  }
+}
+
+variable "lp_settlement_max_drain_transactions" {
+  type        = number
+  default     = 4
+  description = "Maximum LP settlement transactions confirmed successfully during one eligible drain cycle."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_max_drain_transactions) == var.lp_settlement_max_drain_transactions
+      && var.lp_settlement_max_drain_transactions >= 1
+      && var.lp_settlement_max_drain_transactions <= 4
     )
-    error_message = "lp_settlement_poll_seconds must be a whole number from 1 through 3600."
+    error_message = "lp_settlement_max_drain_transactions must be a whole number from 1 through 4."
+  }
+}
+
+variable "lp_settlement_pending_replacement_seconds" {
+  type        = number
+  default     = 60
+  description = "Age in seconds at which an unconfirmed LP settlement transaction becomes eligible for same-nonce replacement."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_pending_replacement_seconds) == var.lp_settlement_pending_replacement_seconds
+      && var.lp_settlement_pending_replacement_seconds >= 60
+      && var.lp_settlement_pending_replacement_seconds <= 3600
+    )
+    error_message = "lp_settlement_pending_replacement_seconds must be a whole number from 60 through 3600."
+  }
+}
+
+variable "lp_settlement_max_replacements" {
+  type        = number
+  default     = 3
+  description = "Maximum same-nonce fee-bump replacements allowed for one LP settlement transaction."
+
+  validation {
+    condition = (
+      floor(var.lp_settlement_max_replacements) == var.lp_settlement_max_replacements
+      && var.lp_settlement_max_replacements >= 0
+      && var.lp_settlement_max_replacements <= 3
+    )
+    error_message = "lp_settlement_max_replacements must be a whole number from 0 through 3."
+  }
+}
+
+variable "lp_settlement_max_tx_cost_wei" {
+  type        = string
+  default     = "0"
+  description = "Maximum total native-token cost accepted for one LP settlement transaction. Zero is allowed only in off or observe mode."
+
+  validation {
+    condition     = can(regex("^(0|[1-9][0-9]*)$", var.lp_settlement_max_tx_cost_wei))
+    error_message = "lp_settlement_max_tx_cost_wei must be a canonical non-negative whole-number string."
   }
 }
 
@@ -899,6 +1088,17 @@ variable "liquidation_worker_desired_count" {
   type        = number
   default     = 1
   description = "Desired task count for the dedicated liquidation worker service."
+}
+
+variable "api_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired API task count. Set to zero while restoring or validating a migrated database."
+
+  validation {
+    condition     = floor(var.api_desired_count) == var.api_desired_count && var.api_desired_count >= 0
+    error_message = "api_desired_count must be a non-negative whole number."
+  }
 }
 
 variable "consolidate_workers" {
@@ -977,8 +1177,8 @@ variable "db_storage_type" {
 
 variable "db_storage_encrypted" {
   type        = bool
-  default     = false
-  description = "Optionally encrypt RDS storage at rest. Existing unencrypted instances must be migrated through encrypted snapshot copy/restore rather than modified in place."
+  default     = true
+  description = "Encrypt RDS storage at rest. The company-account migration restores from an encrypted snapshot; existing unencrypted instances must be migrated through snapshot copy/restore rather than modified in place."
 }
 
 variable "db_kms_key_id" {
@@ -1079,6 +1279,23 @@ variable "db_final_snapshot_identifier" {
       false
     )
     error_message = "db_final_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
+  }
+}
+
+variable "db_snapshot_identifier" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Optional target-region manual snapshot used only to create this RDS lifecycle. Keep the value stable after restoration because changing it replaces the DB instance."
+
+  validation {
+    condition = var.db_snapshot_identifier == null || try(
+      length(var.db_snapshot_identifier) <= 255
+      && can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.db_snapshot_identifier))
+      && !strcontains(var.db_snapshot_identifier, "--"),
+      false
+    )
+    error_message = "db_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
   }
 }
 

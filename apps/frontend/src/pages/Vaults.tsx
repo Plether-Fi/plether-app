@@ -213,6 +213,21 @@ interface VaultsSnapshot {
   refresh: () => void
 }
 
+interface VaultActivityViewState {
+  holders: VaultHolderDistribution[]
+  activity: VaultOverviewActivityItem[]
+  isLoading: boolean
+  isError: boolean
+}
+
+interface VaultRequestsViewState {
+  depositRequests: VaultDepositRequest[]
+  redeemRequests: VaultRedeemRequest[]
+  isLoading: boolean
+  discoveryError: boolean
+  refresh: () => void
+}
+
 const USDC_DECIMALS = 6
 const SHARE_DECIMALS = 9
 const LENS_SHARE_PRICE_DECIMALS = 18 + USDC_DECIMALS - SHARE_DECIMALS
@@ -1328,20 +1343,28 @@ function PoolStat({
   )
 }
 
-function VaultEpochCountdown() {
-  const [remainingSeconds, setRemainingSeconds] = useState(() => (
+function VaultEpochCountdown({
+  fixedRemainingSeconds,
+}: {
+  fixedRemainingSeconds?: number
+} = {}) {
+  const [liveRemainingSeconds, setLiveRemainingSeconds] = useState(() => (
     secondsUntilNextVaultEpoch()
   ))
 
   useEffect(() => {
+    if (fixedRemainingSeconds !== undefined) return undefined
+
     const interval = window.setInterval(() => {
-      setRemainingSeconds(secondsUntilNextVaultEpoch())
+      setLiveRemainingSeconds(secondsUntilNextVaultEpoch())
     }, 1_000)
 
     return () => {
       window.clearInterval(interval)
     }
-  }, [])
+  }, [fixedRemainingSeconds])
+
+  const remainingSeconds = fixedRemainingSeconds ?? liveRemainingSeconds
 
   return (
     <time
@@ -2113,12 +2136,14 @@ function VaultActivitySection({
   )
 }
 
-function VaultsOverview({
+export function VaultsOverview({
   snapshot,
   history,
+  epochCountdownSeconds,
 }: {
   snapshot: VaultsSnapshot
   history?: VaultHistory
+  epochCountdownSeconds?: number
 }) {
   const pool = snapshot.pool
   const seniorPerformance = getCompleteVaultPerformance(history, 'senior')
@@ -2187,7 +2212,7 @@ function VaultsOverview({
           />
           <PoolStat
             label="Next processing time in"
-            value={<VaultEpochCountdown />}
+            value={<VaultEpochCountdown fixedRemainingSeconds={epochCountdownSeconds} />}
             subvalue="Deposits and withdrawals submitted during the final five minutes are processed the following hour."
             tooltip="Deposits and withdrawals are processed on the hour. Submit at least five minutes beforehand to join that processing time."
             stackedOnMobile
@@ -2334,16 +2359,18 @@ function DetailRow({
   )
 }
 
-function OverviewTab({
+export function OverviewTab({
   tranche,
   liveData,
   snapshot,
   isConnected,
+  epochCountdownSeconds,
 }: {
   tranche: TrancheDefinition
   liveData: TrancheLiveData
   snapshot: VaultsSnapshot
   isConnected: boolean
+  epochCountdownSeconds?: number
 }) {
   const pool = snapshot.pool
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
@@ -2402,7 +2429,8 @@ function OverviewTab({
           detail={depositMode === 'Open for deposits'
             ? (
               <span>
-                Current hourly window ends in <VaultEpochCountdown />
+                Current hourly window ends in{' '}
+                <VaultEpochCountdown fixedRemainingSeconds={epochCountdownSeconds} />
               </span>
             )
             : 'New deposits are not available right now'}
@@ -3040,7 +3068,7 @@ function PerformanceTab({
   )
 }
 
-function ActivityTab({
+export function ActivityTab({
   tranche,
   liveData,
   snapshot,
@@ -3937,7 +3965,7 @@ function VaultRequestActionModal({
   )
 }
 
-function VaultPreviewModal({
+export function VaultPreviewModal({
   isOpen,
   onClose,
   onReset,
@@ -4693,18 +4721,7 @@ function VaultActionPanel({
   )
 }
 
-function VaultDetail({
-  tranche,
-  snapshot,
-  history,
-  ownerAddress,
-  isConnected,
-  isWrongNetwork,
-  onConnect,
-  onSwitchNetwork,
-  isSwitchingNetwork,
-  switchError,
-}: {
+interface VaultDetailProps {
   tranche: TrancheDefinition
   snapshot: VaultsSnapshot
   history?: VaultHistory
@@ -4715,14 +4732,20 @@ function VaultDetail({
   onSwitchNetwork: () => void
   isSwitchingNetwork: boolean
   switchError?: string
-}) {
-  const [activeSection, setActiveSection] = useState<DetailSectionId>('overview')
-  const stickyHeaderHeight = useStickyHeaderHeight()
-  const stickyElementTop = stickyHeaderHeight + STICKY_ELEMENT_GAP_PX
-  const sectionScrollOffset = stickyElementTop + SECTION_NAV_HEIGHT_PX
+}
+
+type VaultDetailViewProps = Omit<VaultDetailProps, 'ownerAddress'> & {
+  vaultActivity: VaultActivityViewState
+  vaultRequests: VaultRequestsViewState
+  epochCountdownSeconds?: number
+}
+
+function VaultDetail({
+  ownerAddress,
+  ...viewProps
+}: VaultDetailProps) {
+  const { snapshot, tranche } = viewProps
   const liveData = snapshot.tranches[tranche.id]
-  const performance = getCompleteVaultPerformance(history, tranche.id)
-  const hasPerformance = performance !== undefined
   const vaultActivity = useVaultActivity({
     seniorTotalAssets: snapshot.tranches.senior.totalAssets,
     seniorEffectiveSupply: snapshot.tranches.senior.effectiveTotalSupply
@@ -4736,6 +4759,37 @@ function VaultDetail({
     isSenior: tranche.id === 'senior',
     currentEpoch: liveData.currentEpoch,
   })
+
+  return (
+    <VaultDetailView
+      {...viewProps}
+      vaultActivity={vaultActivity}
+      vaultRequests={vaultRequests}
+    />
+  )
+}
+
+export function VaultDetailView({
+  tranche,
+  snapshot,
+  history,
+  isConnected,
+  isWrongNetwork,
+  onConnect,
+  onSwitchNetwork,
+  isSwitchingNetwork,
+  switchError,
+  vaultActivity,
+  vaultRequests,
+  epochCountdownSeconds,
+}: VaultDetailViewProps) {
+  const [activeSection, setActiveSection] = useState<DetailSectionId>('overview')
+  const stickyHeaderHeight = useStickyHeaderHeight()
+  const stickyElementTop = stickyHeaderHeight + STICKY_ELEMENT_GAP_PX
+  const sectionScrollOffset = stickyElementTop + SECTION_NAV_HEIGHT_PX
+  const liveData = snapshot.tranches[tranche.id]
+  const performance = getCompleteVaultPerformance(history, tranche.id)
+  const hasPerformance = performance !== undefined
   const poolWithdrawCap = tranche.id === 'senior'
     ? snapshot.pool.seniorPoolWithdrawCapUsdc
     : snapshot.pool.juniorPoolWithdrawCapUsdc
@@ -4970,6 +5024,7 @@ function VaultDetail({
               liveData={liveData}
               snapshot={snapshot}
               isConnected={isConnected}
+              epochCountdownSeconds={epochCountdownSeconds}
             />
           </section>
 
@@ -5135,4 +5190,5 @@ export function Vaults() {
   )
 }
 
+export { TRANCHES as VAULT_TRANCHES }
 export default Vaults

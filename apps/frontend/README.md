@@ -86,6 +86,12 @@ keeps direct callers from spoofing the client IP used for rate limits. The
 testnet deploy workflow provisions the Pages value from the GitHub Actions
 secret with the same name; the backend must receive the matching secret.
 
+Configure a separate `FAUCET_PROXY_ORIGIN_TOKEN` Pages secret for the exact
+`/api/perps/v1/testnet/faucet` route. The Worker removes any caller-supplied
+`X-Plether-Faucet-Proxy-Token`, injects the Pages secret, and preserves
+Cloudflare's client-IP header for the backend's pseudonymous hourly quotas.
+Never reuse the AA token for the faucet.
+
 Before `eth_sendUserOperation`, the frontend atomically persists the locally
 computed hash with the signed UserOperation preimage. Recovery parses that
 preimage, recomputes and matches the exact hash, and derives the nonce and

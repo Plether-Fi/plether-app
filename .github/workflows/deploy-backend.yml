@@ -15,6 +15,14 @@ on:
         required: false
         default: false
         type: boolean
+      deployment_scope:
+        description: Deploy every backend service or only the API
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - api
 
 concurrency:
   # Shared with candle-admin.yml; never replace the deployed writer mode while
@@ -23,7 +31,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
@@ -32,14 +40,16 @@ jobs:
     timeout-minutes: 8
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Validate deployed Pyth configuration
         env:
@@ -343,11 +353,237 @@ jobs:
             exit 1
           fi
 
+  lp-settlement-config-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
+
+      - name: Validate deployed LP settlement topology
+        env:
+          ALLOW_MISSING_TASK_DEFINITIONS: ${{ inputs.bootstrap && 'true' || 'false' }}
+          AWS_MAX_ATTEMPTS: '3'
+          AWS_PAGER: ''
+          AWS_RETRY_MODE: standard
+        run: |
+          set -euo pipefail
+          umask 077
+
+          task_def_dir=$(mktemp -d)
+          trap 'rm -rf "$task_def_dir"' EXIT
+
+          families=(
+            "plether-${TARGET_ENV}-workers"
+            "plether-${TARGET_ENV}-keeper"
+          )
+          detected_mode=""
+          detected_config=""
+          missing_definition=false
+          workers_definition_validated=false
+
+          for family in "${families[@]}"; do
+            task_def_file="${task_def_dir}/${family}.json"
+            if ! aws ecs describe-task-definition \
+                --task-definition "$family" \
+                --query taskDefinition.containerDefinitions \
+                --output json \
+                --cli-connect-timeout 5 \
+                --cli-read-timeout 10 \
+                > "$task_def_file"; then
+              missing_definition=true
+              echo "::warning::LP settlement preflight could not load ${family}."
+              continue
+            fi
+
+            if ! jq --exit-status \
+                --arg expected_signer_suffix ":parameter/plether/${TARGET_ENV}/lp-settlement-private-key" \
+                '
+                def env_map:
+                  reduce (.environment // [])[] as $entry ({}; .[$entry.name] = $entry.value);
+                def valid_address:
+                  type == "string"
+                  and test("^0x[0-9A-Fa-f]{40}$")
+                  and ascii_downcase != "0x0000000000000000000000000000000000000000";
+                def integer_between($minimum; $maximum):
+                  type == "string"
+                  and test("^(0|[1-9][0-9]*)$")
+                  and ((tonumber >= $minimum) and (tonumber <= $maximum));
+                def exactly_one_named($entries; $name):
+                  ([($entries // [])[] | select(.name == $name)] | length) == 1;
+                def exactly_one_nonempty_secret($entries; $name):
+                  ([($entries // [])[] | select(.name == $name)]) as $matches
+                  | ($matches | length) == 1
+                  and ($matches[0].valueFrom | type == "string" and length > 0);
+
+                ([.[] | select(.name == "plether-keeper")]) as $keepers
+                | ($keepers[0]) as $keeper
+                | ($keeper | env_map) as $env
+                | ($env.LP_SETTLEMENT_MODE // "") as $mode
+                | ([($keeper.secrets // [])[] | select(.name == "LP_SETTLEMENT_PRIVATE_KEY")]) as $settlement_signers
+                | ($keepers | length) == 1
+                and all(
+                  [
+                    "PERPS_CHAIN_ID",
+                    "PERPS_HOUSE_POOL",
+                    "PERPS_SENIOR_VAULT",
+                    "PERPS_JUNIOR_VAULT",
+                    "PERPS_SETTLEMENT_MONITOR_LENS",
+                    "PERPS_ORDER_ROUTER",
+                    "PERPS_CFD_ENGINE",
+                    "PERPS_PLETHER_ORACLE",
+                    "KEEPER_CONFIRMATIONS",
+                    "KEEPER_GAS_BUFFER_BPS",
+                    "KEEPER_FEE_BUFFER_BPS",
+                    "LP_SETTLEMENT_MODE",
+                    "LP_SETTLEMENT_POLL_SECONDS",
+                    "LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS",
+                    "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS",
+                    "LP_SETTLEMENT_MAX_REPLACEMENTS",
+                    "LP_SETTLEMENT_MAX_TX_COST_WEI"
+                  ][];
+                  . as $name | exactly_one_named($keeper.environment; $name)
+                )
+                and all(
+                  ["DATABASE_URL", "PERPS_RPC_URL", "KEEPER_PRIVATE_KEY"][];
+                  . as $name | exactly_one_nonempty_secret($keeper.secrets; $name)
+                )
+                and ([($keeper.environment // [])[] | select(.name == "LP_SETTLEMENT_ENABLED")] | length == 0)
+                and ($settlement_signers | length <= 1)
+                and all($settlement_signers[]; (.valueFrom | type == "string" and endswith($expected_signer_suffix)))
+                and ($mode == "off" or ($settlement_signers | length == 1))
+                and ($mode == "off" or ([($keeper.secrets // [])[] | select(.name != "LP_SETTLEMENT_PRIVATE_KEY" and .valueFrom == $settlement_signers[0].valueFrom)] | length == 0))
+                and ($mode == "off" or $mode == "observe" or $mode == "execute")
+                and ($env.PERPS_HOUSE_POOL | valid_address)
+                and ($env.PERPS_SENIOR_VAULT | valid_address)
+                and ($env.PERPS_JUNIOR_VAULT | valid_address)
+                and ($env.PERPS_SETTLEMENT_MONITOR_LENS | valid_address)
+                and ($env.PERPS_ORDER_ROUTER | valid_address)
+                and ($env.PERPS_CFD_ENGINE | valid_address)
+                and ($env.PERPS_PLETHER_ORACLE | valid_address)
+                and ([
+                  $env.PERPS_HOUSE_POOL,
+                  $env.PERPS_SENIOR_VAULT,
+                  $env.PERPS_JUNIOR_VAULT,
+                  $env.PERPS_SETTLEMENT_MONITOR_LENS,
+                  $env.PERPS_ORDER_ROUTER,
+                  $env.PERPS_CFD_ENGINE,
+                  $env.PERPS_PLETHER_ORACLE
+                ] | map(ascii_downcase) | unique | length == 7)
+                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
+                and (($env.PERPS_HOUSE_POOL | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
+                and (($env.PERPS_SENIOR_VAULT | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
+                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_HOUSE_POOL | ascii_downcase))
+                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_SENIOR_VAULT | ascii_downcase))
+                and (($env.PERPS_SETTLEMENT_MONITOR_LENS | ascii_downcase) != ($env.PERPS_JUNIOR_VAULT | ascii_downcase))
+                and ($env.LP_SETTLEMENT_POLL_SECONDS == "15")
+                and ($env.KEEPER_CONFIRMATIONS | integer_between(1; 10000))
+                and ($env.LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS | integer_between(1; 4))
+                and ($env.LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS | integer_between(60; 3600))
+                and ($env.LP_SETTLEMENT_MAX_REPLACEMENTS | integer_between(0; 3))
+                and (($env.LP_SETTLEMENT_MAX_TX_COST_WEI // "") | test("^(0|[1-9][0-9]*)$"))
+                and ($mode != "execute" or $env.LP_SETTLEMENT_MAX_TX_COST_WEI != "0")
+                and ($mode == "off" or $env.PERPS_CHAIN_ID == "421614")
+              ' "$task_def_file" > /dev/null; then
+              echo "::error title=LP settlement ECS preflight failed::${family}/plether-keeper is missing required fail-closed addresses, limits, mode, chain, or signer reference. Apply infra/terraform for ${TARGET_ENV}, then rerun this workflow."
+              exit 1
+            fi
+
+            family_mode=$(jq -r '
+              .[]
+              | select(.name == "plether-keeper")
+              | (.environment // [])[]
+              | select(.name == "LP_SETTLEMENT_MODE")
+              | .value
+            ' "$task_def_file")
+            if [ -n "$detected_mode" ] && [ "$family_mode" != "$detected_mode" ]; then
+              echo "::error title=LP settlement ECS preflight failed::Keeper task definitions disagree on LP_SETTLEMENT_MODE (${detected_mode} versus ${family_mode}). Apply Terraform before deploying."
+              exit 1
+            fi
+            detected_mode="$family_mode"
+
+            family_config=$(jq --compact-output '
+              .[]
+              | select(.name == "plether-keeper")
+              | {
+                  environment: ((.environment // []) | sort_by(.name)),
+                  secrets: ((.secrets // []) | sort_by(.name))
+                }
+            ' "$task_def_file")
+            if [ -n "$detected_config" ] && [ "$family_config" != "$detected_config" ]; then
+              echo "::error title=LP settlement ECS preflight failed::Consolidated and standalone keeper task definitions have different environment or secret bindings. Apply Terraform before deploying."
+              exit 1
+            fi
+            detected_config="$family_config"
+
+            if [ "$family" = "plether-${TARGET_ENV}-workers" ]; then
+              workers_definition_validated=true
+            fi
+          done
+
+          if [ "$missing_definition" = true ]; then
+            if [ -z "$detected_mode" ]; then
+              if [ "$ALLOW_MISSING_TASK_DEFINITIONS" = true ]; then
+                echo "::warning title=LP settlement bootstrap override::Proceeding without a keeper task definition because the manual bootstrap override was explicitly enabled."
+                exit 0
+              fi
+              echo "::error title=LP settlement ECS topology preflight failed::No keeper task definition exists. Apply infra/terraform for ${TARGET_ENV}; use bootstrap only for first-time provisioning."
+              exit 1
+            fi
+            echo "::warning title=LP settlement topology::Only one keeper task-definition topology exists; this is permitted when it matches the configured runtime mode."
+          fi
+
+          if [ -z "$detected_mode" ]; then
+            echo "::error title=LP settlement ECS preflight failed::No LP_SETTLEMENT_MODE was found."
+            exit 1
+          fi
+          if [ "$TARGET_ENV" != "sepolia" ] && [ "$detected_mode" != "off" ]; then
+            echo "::error title=LP settlement environment guard failed::${TARGET_ENV} must keep LP settlement off until a production vault release is reviewed."
+            exit 1
+          fi
+
+          if [ "$detected_mode" != "off" ]; then
+            if [ "$workers_definition_validated" != true ]; then
+              echo "::error title=LP settlement consolidated topology missing::Active LP settlement requires the consolidated plether-${TARGET_ENV}-workers task definition."
+              exit 1
+            fi
+
+            services_file="${task_def_dir}/services.json"
+            aws ecs describe-services \
+              --cluster "plether-${TARGET_ENV}" \
+              --services plether-workers plether-keeper \
+              --output json \
+              --cli-connect-timeout 5 \
+              --cli-read-timeout 10 \
+              > "$services_file"
+
+            if ! jq --exit-status '
+                ([.services[] | select(.serviceName == "plether-workers" and .desiredCount == 1)] | length) == 1
+                and ([.services[] | select(.serviceName == "plether-keeper" and .desiredCount != 0)] | length) == 0
+                and ([.failures[]? | select((.arn // "") | endswith("plether-workers"))] | length) == 0
+              ' "$services_file" > /dev/null; then
+              echo "::error title=LP settlement singleton guard failed::Active LP settlement requires plether-workers desiredCount=1 and, if present, plether-keeper desiredCount=0."
+              exit 1
+            fi
+          fi
+
+          echo "LP settlement ECS configuration is valid in ${detected_mode} mode for ${TARGET_ENV}"
+
   build:
-    needs: pyth-config-preflight
+    needs: [pyth-config-preflight, lp-settlement-config-preflight]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
+      id-token: write
     outputs:
       image: ${{ steps.images.outputs.image }}
       log_router_image: ${{ steps.images.outputs.log_router_image }}
@@ -356,11 +592,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Login to ECR
         id: ecr
@@ -420,19 +657,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     strategy:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
+        include: ${{ fromJson((inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]')) }}
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Get current task definition
         id: task-definition-status
@@ -445,6 +684,30 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
           fi
+
+      - name: Validate Sepolia faucet guard configuration
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        run: |
+          jq --exit-status \
+            --arg container "${{ matrix.container_name }}" \
+            '
+            .containerDefinitions
+            | map(select(.name == $container))
+            | .[0] as $api
+            | ($api.secrets // []) as $secrets
+            | ($api.environment // []) as $environment
+            | ([$secrets[] | select(.name == "FAUCET_PRIVATE_KEY")] | length) == 1
+              and ([$secrets[] | select(
+                .name == "FAUCET_PROXY_ORIGIN_TOKEN"
+                and ((.valueFrom // "") | type == "string" and length > 0)
+              )] | length) == 1
+              and ([$environment[] | select(
+                .name == "FAUCET_CLIENT_REQUESTS_PER_HOUR" and .value == "20"
+              )] | length) == 1
+              and ([$environment[] | select(
+                .name == "FAUCET_GLOBAL_REQUESTS_PER_HOUR" and .value == "200"
+              )] | length) == 1
+            ' task-def.json > /dev/null
 
       - name: Patch Sepolia API task definition
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
@@ -469,7 +732,6 @@ jobs:
                 |
                 upsert_env("CHAIN_ID"; "421614")
                 | upsert_env("INDEXER_START_BLOCK"; "280884700")
-                | upsert_env("AA_SPONSORSHIP_ENABLED"; "true")
                 | upsert_secret("RPC_URL"; $rpcSecret)
               else
                 .
@@ -524,6 +786,8 @@ jobs:
             def address_names: [
               "PERPS_USDC",
               "PERPS_ORDER_ROUTER",
+              "PERPS_ORDER_LIFECYCLE_BOOK",
+              "PERPS_HOUSE_POOL",
               "PERPS_PLETHER_ORACLE",
               "PERPS_CFD_ENGINE",
               "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR",
@@ -547,6 +811,14 @@ jobs:
               and ([address_names[] as $name | $env[$name] | valid_address] | all)
               and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
               and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
+            def valid_bounded_v2_release($env):
+              (($env.PERPS_USDC // "") | ascii_downcase) == "0x1647e41f49ed6d688936092b5a291c4b28106343"
+              and (($env.PERPS_ORDER_ROUTER // "") | ascii_downcase) == "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+              and (($env.PERPS_ORDER_LIFECYCLE_BOOK // "") | ascii_downcase) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+              and (($env.PERPS_CFD_ENGINE // "") | ascii_downcase) == "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
+              and (($env.PERPS_MARGIN_CLEARINGHOUSE // "") | ascii_downcase) == "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
+              and (($env.PERPS_HOUSE_POOL // "") | ascii_downcase) == "0x86939a377a78ede8eee5445765ac77c9016e35e2"
+              and $env.PERPS_INDEXER_START_BLOCK == "302257125";
             def valid_registration_only_manifest($env):
               $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
               and (($env.INSIGHTS_COMPETITION_RELEASE_ID // "") == "");
@@ -564,7 +836,9 @@ jobs:
                 error("canonical Sepolia API task definition has no plether-api container")
               else
                 ($canonicalApi | env_map) as $expected
-                | if ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
+                | if valid_bounded_v2_release($expected) | not then
+                    error("canonical Sepolia API task definition does not use the pinned bounded-V2 release")
+                  elif ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
                     true
                   elif valid_registration_only_manifest($expected) then
                     [.containerDefinitions[] | select(release_consumer)] as $consumers

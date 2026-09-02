@@ -95,6 +95,7 @@ spec = do
 
     it "caps overview and pending-order facts" $ do
       queryContains protocolOverviewCountsQuerySql "actions.block_number <= ?"
+      queryContains protocolOverviewCountsQuerySql "'failure', 'failed', 'reverted'"
       queryContains protocolPendingOrderTimesQuerySql "orders.commit_block_number <= ?"
       queryContains
         protocolPendingOrderTimesQuerySql

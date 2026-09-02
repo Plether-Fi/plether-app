@@ -51,6 +51,7 @@ locals {
   pyth_environment = [
     { name = "PYTH_HERMES_URL", value = local.effective_pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
+    { name = "PYTH_HISTORY_URL", value = var.pyth_history_url },
     { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
     { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
     { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
@@ -75,7 +76,11 @@ locals {
     { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
     { name = "PERPS_USDC", value = var.perps_usdc },
     { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+    { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+    { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
     { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
+    { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
+    { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
     { name = "PERPS_SETTLEMENT_MONITOR_LENS", value = var.perps_settlement_monitor_lens },
     { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
     { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
@@ -84,8 +89,12 @@ locals {
     { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
     { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
     { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
-    { name = "LP_SETTLEMENT_ENABLED", value = tostring(var.lp_settlement_enabled) },
+    { name = "LP_SETTLEMENT_MODE", value = var.lp_settlement_mode },
     { name = "LP_SETTLEMENT_POLL_SECONDS", value = var.lp_settlement_poll_seconds },
+    { name = "LP_SETTLEMENT_MAX_DRAIN_TRANSACTIONS", value = tostring(var.lp_settlement_max_drain_transactions) },
+    { name = "LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS", value = tostring(var.lp_settlement_pending_replacement_seconds) },
+    { name = "LP_SETTLEMENT_MAX_REPLACEMENTS", value = tostring(var.lp_settlement_max_replacements) },
+    { name = "LP_SETTLEMENT_MAX_TX_COST_WEI", value = var.lp_settlement_max_tx_cost_wei },
   ]
 
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
@@ -102,10 +111,26 @@ locals {
     }
   ] : []
 
+  faucet_proxy_origin_secret = var.faucet_private_key != "" ? [
+    {
+      name      = "FAUCET_PROXY_ORIGIN_TOKEN"
+      valueFrom = aws_ssm_parameter.faucet_proxy_origin_token[0].arn
+    }
+  ] : []
+
   vault_history_rpc_secret = trimspace(var.vault_history_rpc_url) != "" ? [
     {
       name      = "VAULT_HISTORY_RPC_URL"
       valueFrom = aws_ssm_parameter.vault_history_rpc_url[0].arn
+    }
+  ] : []
+
+  # Declassifying key presence exposes no secret material and lets defaults-off
+  # task definitions omit the signer env entirely, as required by Config.
+  lp_settlement_private_key_secret = nonsensitive(var.lp_settlement_private_key != "") ? [
+    {
+      name      = "LP_SETTLEMENT_PRIVATE_KEY"
+      valueFrom = aws_ssm_parameter.lp_settlement_private_key[0].arn
     }
   ] : []
 
@@ -299,7 +324,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -312,6 +337,8 @@ resource "aws_ecs_task_definition" "api" {
       { name = "VAULT_HISTORY_CONFIRMATIONS", value = var.vault_history_confirmations },
       { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+      { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
       { name = "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", value = var.perps_cfd_engine_settlement_sidecar },
@@ -319,7 +346,6 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
-      { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
       { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
       { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
       { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
@@ -331,12 +357,36 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", value = var.aa_account_rate_limit_per_minute },
       { name = "AA_MAX_REQUEST_BYTES", value = var.aa_max_request_bytes },
       { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
+      { name = "FAUCET_CLIENT_REQUESTS_PER_HOUR", value = tostring(var.faucet_client_requests_per_hour) },
+      { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment, local.perps_candle_environment, local.insights_registration_environment, local.insights_competition_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
+    precondition {
+      condition = (
+        var.environment != "sepolia"
+        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      )
+      error_message = "Sepolia must use the pinned bounded-V2 LifecycleBook."
+    }
+
+    precondition {
+      condition     = var.faucet_global_requests_per_hour >= var.faucet_client_requests_per_hour
+      error_message = "The global faucet request limit must be at least the per-client limit."
+    }
+
+    precondition {
+      condition = var.faucet_private_key == "" || (
+        length(var.faucet_proxy_origin_token) >= 32
+        && var.faucet_proxy_origin_token != var.aa_proxy_origin_token
+        && var.api_desired_count <= 1
+      )
+      error_message = "A configured faucet signer requires a dedicated 32-character-or-longer proxy token and at most one API task."
+    }
+
     precondition {
       condition = !var.provision_aa_proxy || (
         trimspace(var.pimlico_api_key) != ""
@@ -351,6 +401,18 @@ resource "aws_ecs_task_definition" "api" {
     precondition {
       condition     = !var.enable_aa_sponsorship || var.provision_aa_proxy
       error_message = "AA sponsorship cannot be enabled unless the proxy credentials are provisioned."
+    }
+
+    precondition {
+      condition = var.environment != "sepolia" || !var.provision_aa_proxy || (
+        lower(var.perps_order_router) == "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+        && lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+        && lower(var.perps_cfd_engine) == "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
+        && lower(var.perps_margin_clearinghouse) == "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
+        && lower(var.perps_house_pool) == "0x86939a377a78ede8eee5445765ac77c9016e35e2"
+        && var.perps_indexer_start_block == "302257125"
+      )
+      error_message = "The Sepolia AA proxy must use the pinned bounded-V2 release and deployment block."
     }
 
     precondition {
@@ -426,7 +488,7 @@ resource "aws_ecs_service" "api" {
   name                              = "plether-api"
   cluster                           = aws_ecs_cluster.main.id
   task_definition                   = aws_ecs_task_definition.api.arn
-  desired_count                     = 1
+  desired_count                     = var.api_desired_count
   launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 300
 
@@ -480,7 +542,7 @@ resource "aws_ecs_task_definition" "keeper" {
 
     logConfiguration = local.posthog_log_configuration
 
-    secrets = [
+    secrets = concat([
       {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
@@ -493,7 +555,7 @@ resource "aws_ecs_task_definition" "keeper" {
         name      = "KEEPER_PRIVATE_KEY"
         valueFrom = aws_ssm_parameter.keeper_private_key.arn
       }
-    ]
+    ], local.lp_settlement_private_key_secret)
 
     environment = local.keeper_environment
   }, local.otel_log_router_container])
@@ -737,6 +799,8 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+      { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
       { name = "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", value = var.perps_cfd_engine_settlement_sidecar },
@@ -744,7 +808,6 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
-      { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
       { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
       { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
       { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
@@ -824,6 +887,8 @@ resource "aws_ecs_task_definition" "insights_worker" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_USDC", value = var.perps_usdc },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
         { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
         { name = "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", value = var.perps_cfd_engine_settlement_sidecar },
@@ -831,7 +896,6 @@ resource "aws_ecs_task_definition" "insights_worker" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
-        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
         { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
         { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
@@ -901,7 +965,7 @@ resource "aws_ecs_task_definition" "workers" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
@@ -914,7 +978,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "KEEPER_PRIVATE_KEY"
           valueFrom = aws_ssm_parameter.keeper_private_key.arn
         }
-      ]
+      ], local.lp_settlement_private_key_secret)
 
       environment = local.keeper_environment
     },
@@ -1013,6 +1077,8 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_USDC", value = var.perps_usdc },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
         { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
         { name = "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", value = var.perps_cfd_engine_settlement_sidecar },
@@ -1020,7 +1086,6 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
-        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
         { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
         { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },
@@ -1059,6 +1124,8 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_USDC", value = var.perps_usdc },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
+        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
         { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
         { name = "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", value = var.perps_cfd_engine_settlement_sidecar },
@@ -1066,7 +1133,6 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "PERPS_PUBLIC_LENS", value = var.perps_public_lens },
-        { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
         { name = "PERPS_SENIOR_VAULT", value = var.perps_senior_vault },
         { name = "PERPS_JUNIOR_VAULT", value = var.perps_junior_vault },
         { name = "PERPS_ORDER_ROUTER_ADMIN", value = var.perps_order_router_admin },

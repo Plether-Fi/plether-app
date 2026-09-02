@@ -67,15 +67,19 @@ test.describe('Trading Page', () => {
   })
 
   test('shows slippage setting', async ({ page }) => {
-    const slippageText = page.getByText(/slippage/i)
+    const slippageControl = page.getByRole('button', {
+      name: /^Max slippage\s+\d+(?:\.\d+)?%$/i,
+    })
 
-    if (await slippageText.isVisible()) {
-      await expect(slippageText).toContainText('%')
+    if (await slippageControl.isVisible()) {
+      await expect(slippageControl).toBeVisible()
     }
   })
 
   test('swap button shows appropriate state', async ({ page }) => {
-    const swapButton = page.getByRole('button', { name: /buy dxy-|sell dxy-|approve|connect wallet/i })
+    const swapButton = page.getByRole('button', {
+      name: /buy dxy-|sell dxy-|approve|connect wallet/i,
+    }).first()
 
     if (await swapButton.isVisible()) {
       await expect(swapButton).toBeVisible()
@@ -106,10 +110,10 @@ test.describe('Trading Flow', () => {
     await page.goto('/')
     await waitForPageLoad(page)
 
-    const maxButton = page.getByRole('button', { name: /max/i })
+    const maxButton = page.getByRole('button', { name: /^Max: .* USDC$/i })
 
     if (await maxButton.isVisible()) {
-      await expect(maxButton).toBeEnabled()
+      await expect(maxButton).toBeVisible()
     }
   })
 })

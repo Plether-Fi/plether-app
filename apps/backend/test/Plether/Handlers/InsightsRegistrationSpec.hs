@@ -12,7 +12,8 @@ import qualified Network.Wai as Wai
 import Plether.AA.Pimlico (OwnedTradingAccountFailure (..))
 import qualified Plether.Database.Insights.Registration as Db
 import Plether.Handlers.InsightsRegistration
-  ( canonicalBlockLookupParams
+  ( XFollowFailureDisposition (..)
+  , canonicalBlockLookupParams
   , completionResultDecision
   , csrfTokenFromRequest
   , maximumRegistrationBodyBytes
@@ -24,16 +25,28 @@ import Plether.Handlers.InsightsRegistration
   , validateJsonRequest
   , validateOrigin
   , xAccountAgeEligible
+  , xFollowFailureDisposition
   )
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
+import Plether.Insights.Registration.Provider (XFollowVerificationFailure (..))
 import Plether.Insights.Registration.Types
   ( RegistrationError (..)
   , RegistrationErrorCode (..)
+  , registrationError
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "X follow failure state preservation" $ do
+    it "releases retryable attempts but resets definitively invalid credentials" $ do
+      xFollowFailureDisposition
+        (XFollowVerificationFailure (registrationError ProviderUnavailable "retryable") False)
+        `shouldBe` ReleaseXFollowAttempt
+      xFollowFailureDisposition
+        (XFollowVerificationFailure (registrationError ProviderUnavailable "invalid credential") True)
+        `shouldBe` ResetXIdentity
+
   describe "registration JSON request boundaries" $ do
     it "accepts only JSON media types without any Content-Encoding" $ do
       validateJsonRequest (jsonRequest "application/json" Nothing $ Wai.KnownLength 2)
@@ -187,7 +200,7 @@ spec = do
         `shouldBe` Right (T.toLower ownerAddress)
 
   describe "X account age boundary" $
-    it "accepts the exact 90-day cutoff and rejects the next second" $ do
+    it "accepts the exact 30-day cutoff and rejects the next second" $ do
       let competition =
             Db.RegistrationCompetition
               { Db.rgcSlug = competitionSlug
@@ -195,13 +208,13 @@ spec = do
               , Db.rgcStartTimestamp = 1_789_329_600
               , Db.rgcRegistrationOpenTimestamp = Just 1_788_000_000
               , Db.rgcRegistrationCloseTimestamp = 1_789_934_400
-              , Db.rgcMinimumXAccountAgeDays = 90
+              , Db.rgcMinimumXAccountAgeDays = 30
               , Db.rgcTargetXHandle = "plether_fi"
               , Db.rgcRulesVersion = "rules-v1"
               , Db.rgcPrivacyNoticeVersion = Just "privacy-v1"
               , Db.rgcFinalized = False
               }
-          cutoff = Db.rgcStartTimestamp competition - 90 * 86_400
+          cutoff = Db.rgcStartTimestamp competition - 30 * 86_400
       xAccountAgeEligible competition cutoff `shouldBe` True
       xAccountAgeEligible competition (cutoff + 1) `shouldBe` False
 
@@ -297,5 +310,5 @@ registrationConfig =
     , rcSessionRateLimitPerMinute = 30
     , rcRulesVersion = "2026-09-v1"
     , rcPrivacyVersion = "2026-09-v1"
-    , rcMinimumXAccountAgeDays = 90
+    , rcMinimumXAccountAgeDays = 30
     }

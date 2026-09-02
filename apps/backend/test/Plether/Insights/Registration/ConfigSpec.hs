@@ -79,7 +79,7 @@ spec = do
             rcSessionTtlSeconds config `shouldBe` 1800
             rcIpRateLimitPerMinute config `shouldBe` 10
             rcSessionRateLimitPerMinute config `shouldBe` 30
-            rcMinimumXAccountAgeDays config `shouldBe` 90
+            rcMinimumXAccountAgeDays config `shouldBe` 30
           other -> expectationFailure $ "expected an enabled configuration, got " <> show other
 
     it "accepts one distinct strong next edge token for zero-downtime rotation" $

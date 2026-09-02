@@ -1,10 +1,10 @@
 {
   "manifest": "STORYBOOK_SCREENSHOT_MAP.md",
-  "mappedReferences": 80,
-  "uniqueStories": 55,
+  "mappedReferences": 22,
+  "uniqueStories": 15,
   "manifestReferencesUpdated": 0,
-  "replacements": 77,
-  "retainedSupportInstructions": 3,
+  "replacements": 22,
+  "retainedSupportInstructions": 0,
   "captures": [
     {
       "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png",
@@ -329,6 +329,69 @@
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--withdrawal-confirmation"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png",
+      "storyId": "documentation-vaults--deposit-preview",
+      "dimensions": {
+        "height": 386,
+        "width": 304
+      },
+      "storyPath": "/?path=/story/documentation-vaults--deposit-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--overview.png",
+      "storyId": "documentation-vaults--overview",
+      "dimensions": {
+        "height": 769,
+        "width": 688
+      },
+      "storyPath": "/?path=/story/documentation-vaults--overview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png",
+      "storyId": "documentation-vaults--pending-activity",
+      "dimensions": {
+        "height": 725,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/documentation-vaults--pending-activity"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--position.png",
+      "storyId": "documentation-vaults--position",
+      "dimensions": {
+        "height": 383,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/documentation-vaults--position"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-house-pool.png",
+      "storyId": "documentation-vaults--risk-and-house-pool",
+      "dimensions": {
+        "height": 883,
+        "width": 624
+      },
+      "storyPath": "/?path=/story/documentation-vaults--risk-and-house-pool"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--senior-vault-detail.png",
+      "storyId": "documentation-vaults--senior-vault-detail",
+      "dimensions": {
+        "height": 1213,
+        "width": 688
+      },
+      "storyPath": "/?path=/story/documentation-vaults--senior-vault-detail"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png",
+      "storyId": "documentation-vaults--withdrawal-preview",
+      "dimensions": {
+        "height": 366,
+        "width": 304
+      },
+      "storyPath": "/?path=/story/documentation-vaults--withdrawal-preview"
     },
     {
       "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png",

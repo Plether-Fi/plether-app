@@ -7,12 +7,23 @@ module Plether.Insights.Registration.Provider
   , buildXAuthorizationUrl
   , exchangeXAuthorizationCode
   , fetchXIdentity
+  , XFollowAttemptResult (..)
+  , XFollowLookupResult (..)
+  , XFollowProviderFailure (..)
+  , XFollowValidationReason (..)
+  , XFollowVerificationFailure (..)
   , verifyXFollow
+  , runXFollowVerificationWith
+  , classifyXFollowResponse
   , parseTurnstileResponseAt
   , parseXIdentityResponse
   , parseXFollowLookupResponse
+  , parseXFollowLookupResponseDetailed
+  , providerRequestIdFromHeaders
   ) where
 
+import Control.Applicative ((<|>))
+import Control.Concurrent (threadDelay)
 import Control.Exception
   ( SomeAsyncException
   , SomeException
@@ -22,15 +33,16 @@ import Control.Exception
   )
 import Data.Aeson
   ( FromJSON (..)
-  , Value
+  , Value (..)
   , eitherDecodeStrict'
   , withObject
   , (.:)
   , (.:?)
   , (.!=)
   )
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
-import Data.Char (isControl, isSpace)
+import Data.Char (isAlphaNum, isAscii, isControl, isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -46,19 +58,23 @@ import Network.HTTP.Client
   , checkResponse
   , parseRequest
   , responseBody
+  , responseHeaders
   , responseStatus
   , responseTimeoutMicro
   , withResponse
   )
 import Network.HTTP.Types.Status (statusCode)
+import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.URI (renderSimpleQuery)
+import qualified Data.Vector as Vector
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Insights.Registration.Types
-  ( RegistrationError
+  ( RegistrationError (..)
   , RegistrationErrorCode (..)
   , XIdentity (..)
   , registrationError
   )
+import Plether.Logging (field, logWarn)
 
 newtype XAccessToken = XAccessToken BS.ByteString
 
@@ -186,7 +202,7 @@ buildXAuthorizationUrl config competitionSlug state codeChallenge
                 [ ("response_type", "code")
                 , ("client_id", TE.encodeUtf8 $ rcXClientId config)
                 , ("redirect_uri", TE.encodeUtf8 $ rcXCallbackUrl config)
-                , ("scope", "users.read users.email follows.read")
+                , ("scope", "tweet.read users.read users.email follows.read")
                 , ("state", TE.encodeUtf8 state)
                 , ("code_challenge", TE.encodeUtf8 codeChallenge)
                 , ("code_challenge_method", "S256")
@@ -243,24 +259,26 @@ exchangeXAuthorizationCode manager config code verifier
             , requestBody = RequestBodyBS form
             }
       outcome <- performBounded manager prepared
-      pure $ do
-        (httpStatus, body) <- outcome
-        if httpStatus < 200 || httpStatus >= 300
-          then Left providerUnavailable
-          else do
-            tokenResponse <- either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
-            let grantedScopes = T.words $ xtrScope tokenResponse
-                requiredScopes = ["users.read", "users.email", "follows.read"]
-            if T.toCaseFold (xtrTokenType tokenResponse) /= "bearer"
-                || T.null (xtrAccessToken tokenResponse)
-                || T.length (xtrAccessToken tokenResponse) > 8192
-                || any (`notElem` grantedScopes) requiredScopes
-                || "offline.access" `elem` grantedScopes
-                || xtrRefreshToken tokenResponse /= Nothing
-                || maybe False (\seconds -> seconds <= 0 || seconds > 86_400) (xtrExpiresIn tokenResponse)
+      let result = do
+            (httpStatus, body) <- outcome
+            if httpStatus < 200 || httpStatus >= 300
               then Left providerUnavailable
-              else maybe (Left providerUnavailable) Right $
-                xAccessTokenFromBytes $ TE.encodeUtf8 $ xtrAccessToken tokenResponse
+              else do
+                tokenResponse <- either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
+                let grantedScopes = T.words $ xtrScope tokenResponse
+                    requiredScopes = ["tweet.read", "users.read", "users.email", "follows.read"]
+                if T.toCaseFold (xtrTokenType tokenResponse) /= "bearer"
+                    || T.null (xtrAccessToken tokenResponse)
+                    || T.length (xtrAccessToken tokenResponse) > 8192
+                    || any (`notElem` grantedScopes) requiredScopes
+                    || "offline.access" `elem` grantedScopes
+                    || xtrRefreshToken tokenResponse /= Nothing
+                    || maybe False (\seconds -> seconds <= 0 || seconds > 86_400) (xtrExpiresIn tokenResponse)
+                  then Left providerUnavailable
+                  else maybe (Left providerUnavailable) Right $
+                    xAccessTokenFromBytes $ TE.encodeUtf8 $ xtrAccessToken tokenResponse
+      logXProviderFailure "oauth_token" outcome result
+      pure result
 
 data XProfileResponse = XProfileResponse (Maybe XProfile) [Value]
 
@@ -293,11 +311,13 @@ fetchXIdentity manager token = do
   request <- parseRequest "https://api.x.com/2/users/me?user.fields=confirmed_email%2Ccreated_at%2Cusername"
   let prepared = bearerRequest token request
   outcome <- performBounded manager prepared
-  pure $ do
-    (httpStatus, body) <- outcome
-    if httpStatus < 200 || httpStatus >= 300
-      then Left providerUnavailable
-      else parseXIdentityResponse body
+  let result = do
+        (httpStatus, body) <- outcome
+        if httpStatus < 200 || httpStatus >= 300
+          then Left providerUnavailable
+          else parseXIdentityResponse body
+  logXProviderFailure "authenticated_user" outcome result
+  pure result
 
 parseXIdentityResponse :: BS.ByteString -> Either RegistrationError XIdentity
 parseXIdentityResponse body = do
@@ -324,61 +344,252 @@ parseXIdentityResponse body = do
           }
     _ -> Left $ registrationError XEmailUnverified "X did not provide a confirmed email address"
 
-data XFollowLookupResponse = XFollowLookupResponse (Maybe XFollowLookupData) [Value]
+data XFollowValidationReason
+  = XFollowInvalidJson
+  | XFollowResponseNotObject
+  | XFollowErrorsInvalid
+  | XFollowErrorsPresent
+  | XFollowDataMissing
+  | XFollowDataInvalid
+  | XFollowTargetIdMissing
+  | XFollowTargetIdInvalid
+  | XFollowTargetMismatch
+  | XFollowConnectionStatusMissing
+  | XFollowConnectionStatusInvalid
+  deriving stock (Show, Eq)
 
-instance FromJSON XFollowLookupResponse where
-  parseJSON = withObject "XFollowLookupResponse" $ \value ->
-    XFollowLookupResponse
-      <$> value .:? "data"
-      <*> (value .:? "errors" .!= [])
+data XFollowLookupResult
+  = XFollowLookupConfirmed
+  | XFollowLookupNotConfirmed
+  | XFollowLookupInvalid XFollowValidationReason
+  deriving stock (Show, Eq)
 
-data XFollowLookupData = XFollowLookupData
-  { xfldUserId :: Text
-  , xfldConnectionStatus :: [Text]
+data XFollowProviderFailure = XFollowProviderFailure
+  { xfpfKind :: Text
+  , xfpfHttpStatus :: Maybe Int
+  , xfpfValidationReason :: Maybe XFollowValidationReason
+  , xfpfRequestId :: Maybe Text
+  , xfpfRetryable :: Bool
+  , xfpfInvalidatesIdentity :: Bool
   }
+  deriving stock (Show, Eq)
 
-instance FromJSON XFollowLookupData where
-  parseJSON = withObject "XFollowLookupData" $ \value ->
-    XFollowLookupData
-      <$> value .: "id"
-      <*> value .: "connection_status"
+data XFollowAttemptResult
+  = XFollowAttemptVerified
+  | XFollowAttemptNotConfirmed
+  | XFollowAttemptProviderFailed XFollowProviderFailure
+  deriving stock (Show, Eq)
+
+data XFollowVerificationFailure = XFollowVerificationFailure
+  { xfvfError :: RegistrationError
+  , xfvfResetIdentity :: Bool
+  }
+  deriving stock (Show, Eq)
 
 verifyXFollow
   :: Manager
   -> RegistrationConfig
   -> Text
   -> XAccessToken
-  -> IO (Either RegistrationError ())
+  -> IO (Either XFollowVerificationFailure ())
 verifyXFollow manager config sourceUserId token
-  | not (validXId sourceUserId) || not (validXId targetUserId) = pure $ Left providerUnavailable
+  | not (validXId sourceUserId) || not (validXId targetUserId) =
+      pure $ Left $ XFollowVerificationFailure providerUnavailable False
   | otherwise = do
       request <- parseRequest $
         "https://api.x.com/2/users/"
           <> T.unpack targetUserId
           <> "?user.fields=connection_status"
       let prepared = bearerRequest token request
-      outcome <- performBounded manager prepared
-      pure $ do
-        (httpStatus, body) <- outcome
-        if httpStatus < 200 || httpStatus >= 300
-          then Left providerUnavailable
-          else parseXFollowLookupResponse targetUserId body
+          attempt = performXFollowAttempt manager prepared targetUserId
+      runXFollowVerificationWith
+        (threadDelay 100_000)
+        logXFollowProviderEvent
+        attempt
   where
     targetUserId = rcXTargetUserId config
 
+runXFollowVerificationWith
+  :: IO ()
+  -> (Text -> Int -> XFollowProviderFailure -> IO ())
+  -> IO XFollowAttemptResult
+  -> IO (Either XFollowVerificationFailure ())
+runXFollowVerificationWith delayBeforeRetry logProviderEvent attempt = do
+  first <- attempt
+  case first of
+    XFollowAttemptProviderFailed providerFailure
+      | xfpfRetryable providerFailure -> do
+          logProviderEventSafely "registration_x_provider_retry" 1 providerFailure
+          delayBeforeRetry
+          second <- attempt
+          finish 2 second
+    result -> finish 1 result
+  where
+    finish _ XFollowAttemptVerified = pure $ Right ()
+    finish _ XFollowAttemptNotConfirmed =
+      pure $ Left $ XFollowVerificationFailure followRequired False
+    finish attemptNumber (XFollowAttemptProviderFailed providerFailure) = do
+      logProviderEventSafely "registration_x_provider_failure" attemptNumber providerFailure
+      pure $ Left $
+        XFollowVerificationFailure
+          providerUnavailable
+          (xfpfInvalidatesIdentity providerFailure)
+
+    followRequired = registrationError XFollowRequired "The X follow is not confirmed"
+
+    logProviderEventSafely eventName attemptNumber providerFailure = do
+      logResult <- try @SomeException $ logProviderEvent eventName attemptNumber providerFailure
+      case logResult of
+        Right () -> pure ()
+        Left exception ->
+          case fromException exception :: Maybe SomeAsyncException of
+            Just _ -> throwIO exception
+            Nothing -> pure ()
+
+performXFollowAttempt :: Manager -> Request -> Text -> IO XFollowAttemptResult
+performXFollowAttempt manager request targetUserId = do
+  outcome <- performBoundedDetailed manager request
+  pure $ case outcome of
+    Left _ ->
+      XFollowAttemptProviderFailed $
+        XFollowProviderFailure
+          { xfpfKind = "transport_or_response_size"
+          , xfpfHttpStatus = Nothing
+          , xfpfValidationReason = Nothing
+          , xfpfRequestId = Nothing
+          , xfpfRetryable = True
+          , xfpfInvalidatesIdentity = False
+          }
+    Right response ->
+      classifyXFollowResponse
+        targetUserId
+        (boundedStatus response)
+        (boundedHeaders response)
+        (boundedBody response)
+
+classifyXFollowResponse
+  :: Text
+  -> Int
+  -> [Header]
+  -> BS.ByteString
+  -> XFollowAttemptResult
+classifyXFollowResponse targetUserId httpStatus headers body
+  | httpStatus < 200 || httpStatus >= 300 =
+      XFollowAttemptProviderFailed $
+        XFollowProviderFailure
+          { xfpfKind = "http_status"
+          , xfpfHttpStatus = Just httpStatus
+          , xfpfValidationReason = Nothing
+          , xfpfRequestId = providerRequestIdFromHeaders headers
+          , xfpfRetryable = retryableProviderStatus httpStatus
+          -- A 401 is an unambiguous rejection of the stored bearer token.
+          -- Preserve state for 403 responses because they can also mean
+          -- an app entitlement or provider-policy failure.
+          , xfpfInvalidatesIdentity = httpStatus == 401
+          }
+  | otherwise =
+      case parseXFollowLookupResponseDetailed targetUserId body of
+        XFollowLookupConfirmed -> XFollowAttemptVerified
+        XFollowLookupNotConfirmed -> XFollowAttemptNotConfirmed
+        XFollowLookupInvalid validationReason ->
+          XFollowAttemptProviderFailed $
+            XFollowProviderFailure
+              { xfpfKind = "response_validation"
+              , xfpfHttpStatus = Just httpStatus
+              , xfpfValidationReason = Just validationReason
+              , xfpfRequestId = providerRequestIdFromHeaders headers
+              , xfpfRetryable = True
+              , xfpfInvalidatesIdentity = False
+              }
+
+retryableProviderStatus :: Int -> Bool
+retryableProviderStatus httpStatus =
+  -- Retrying a 429 immediately would consume another request inside the same
+  -- provider rate-limit window. Preserve the OAuth state and let the caller
+  -- retry later instead.
+  httpStatus `elem` [408, 425] || httpStatus >= 500
+
 parseXFollowLookupResponse :: Text -> BS.ByteString -> Either RegistrationError ()
-parseXFollowLookupResponse targetUserId body = do
-  XFollowLookupResponse maybeFollowData apiErrors <-
-    either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
-  if null apiErrors then pure () else Left providerUnavailable
-  followData <- maybe (Left providerUnavailable) Right maybeFollowData
-  if xfldUserId followData /= targetUserId
-    then Left providerUnavailable
-    else pure ()
-  let connectionStatus = xfldConnectionStatus followData
-  if "following" `elem` connectionStatus && "follow_request_sent" `notElem` connectionStatus
-    then Right ()
-    else Left $ registrationError XFollowRequired "The X follow is not confirmed"
+parseXFollowLookupResponse targetUserId body =
+  case parseXFollowLookupResponseDetailed targetUserId body of
+    XFollowLookupConfirmed -> Right ()
+    XFollowLookupNotConfirmed ->
+      Left $ registrationError XFollowRequired "The X follow is not confirmed"
+    XFollowLookupInvalid _ -> Left providerUnavailable
+
+parseXFollowLookupResponseDetailed :: Text -> BS.ByteString -> XFollowLookupResult
+parseXFollowLookupResponseDetailed targetUserId body =
+  case eitherDecodeStrict' body :: Either String Value of
+    Left _ -> XFollowLookupInvalid XFollowInvalidJson
+    Right (Object response) -> parseEnvelope response
+    Right _ -> XFollowLookupInvalid XFollowResponseNotObject
+  where
+    parseEnvelope response =
+      case KeyMap.lookup "errors" response of
+        Just (Array errors)
+          | not $ Vector.null errors -> XFollowLookupInvalid XFollowErrorsPresent
+        Just Null -> parseData response
+        Nothing -> parseData response
+        Just (Array _) -> parseData response
+        Just _ -> XFollowLookupInvalid XFollowErrorsInvalid
+
+    parseData response =
+      case KeyMap.lookup "data" response of
+        Nothing -> XFollowLookupInvalid XFollowDataMissing
+        Just Null -> XFollowLookupInvalid XFollowDataMissing
+        Just (Object followData) -> parseFollowData followData
+        Just _ -> XFollowLookupInvalid XFollowDataInvalid
+
+    parseFollowData followData =
+      case KeyMap.lookup "id" followData of
+        Nothing -> XFollowLookupInvalid XFollowTargetIdMissing
+        Just (String returnedUserId)
+          | returnedUserId /= targetUserId -> XFollowLookupInvalid XFollowTargetMismatch
+          | otherwise -> parseConnectionStatus followData
+        Just _ -> XFollowLookupInvalid XFollowTargetIdInvalid
+
+    parseConnectionStatus followData =
+      case KeyMap.lookup "connection_status" followData of
+        Nothing -> XFollowLookupInvalid XFollowConnectionStatusMissing
+        Just (Array values) ->
+          case traverse asText $ Vector.toList values of
+            Nothing -> XFollowLookupInvalid XFollowConnectionStatusInvalid
+            Just connectionStatus
+              | "following" `elem` connectionStatus
+                  && "follow_request_sent" `notElem` connectionStatus -> XFollowLookupConfirmed
+              | otherwise -> XFollowLookupNotConfirmed
+        Just _ -> XFollowLookupInvalid XFollowConnectionStatusInvalid
+
+    asText (String value) = Just value
+    asText _ = Nothing
+
+logXFollowProviderEvent :: Text -> Int -> XFollowProviderFailure -> IO ()
+logXFollowProviderEvent eventName attemptNumber failure =
+  logWarn
+    eventName
+    (if eventName == "registration_x_provider_retry" then "Retrying X registration provider request" else "X registration provider request failed")
+    [ field "provider_stage" ("follow_lookup" :: Text)
+    , field "provider_attempt" attemptNumber
+    , field "provider_failure_kind" $ xfpfKind failure
+    , field "provider_http_status" $ xfpfHttpStatus failure
+    , field "provider_validation_reason" $ validationReasonText <$> xfpfValidationReason failure
+    , field "provider_request_id" $ xfpfRequestId failure
+    , field "provider_retryable" $ xfpfRetryable failure
+    ]
+
+validationReasonText :: XFollowValidationReason -> Text
+validationReasonText = \case
+  XFollowInvalidJson -> "invalid_json"
+  XFollowResponseNotObject -> "response_not_object"
+  XFollowErrorsInvalid -> "errors_invalid"
+  XFollowErrorsPresent -> "errors_present"
+  XFollowDataMissing -> "data_missing"
+  XFollowDataInvalid -> "data_invalid"
+  XFollowTargetIdMissing -> "target_id_missing"
+  XFollowTargetIdInvalid -> "target_id_invalid"
+  XFollowTargetMismatch -> "target_mismatch"
+  XFollowConnectionStatusMissing -> "connection_status_missing"
+  XFollowConnectionStatusInvalid -> "connection_status_invalid"
 
 bearerRequest :: XAccessToken -> Request -> Request
 bearerRequest (XAccessToken token) request = (secureRequest request)
@@ -399,18 +610,66 @@ performBounded
   :: Manager
   -> Request
   -> IO (Either RegistrationError (Int, BS.ByteString))
-performBounded manager request = do
+performBounded manager request =
+  fmap
+    (fmap $ \response -> (boundedStatus response, boundedBody response))
+    (performBoundedDetailed manager request)
+
+data BoundedResponse = BoundedResponse
+  { boundedStatus :: Int
+  , boundedHeaders :: [Header]
+  , boundedBody :: BS.ByteString
+  }
+
+performBoundedDetailed
+  :: Manager
+  -> Request
+  -> IO (Either RegistrationError BoundedResponse)
+performBoundedDetailed manager request = do
   result <- try @SomeException $
     withResponse request manager $ \response -> do
-      body <- readBodyBounded 1_048_576 $ responseBody response
-      pure (statusCode $ responseStatus response, body)
+      let httpStatus = statusCode $ responseStatus response
+          headers = responseHeaders response
+      -- Callers never inspect provider error bodies. Return the status and
+      -- headers immediately so an oversized or interrupted error body cannot
+      -- hide a definite bearer rejection such as HTTP 401.
+      if httpStatus < 200 || httpStatus >= 300
+        then pure (httpStatus, headers, Right BS.empty)
+        else do
+          body <- readBodyBounded 1_048_576 $ responseBody response
+          pure (httpStatus, headers, body)
   case result of
     Left exception ->
       case fromException exception :: Maybe SomeAsyncException of
         Just _ -> throwIO exception
         Nothing -> pure $ Left providerUnavailable
-    Right (_, Left ()) -> pure $ Left providerUnavailable
-    Right (httpStatus, Right body) -> pure $ Right (httpStatus, body)
+    Right (_, _, Left ()) -> pure $ Left providerUnavailable
+    Right (httpStatus, headers, Right body) ->
+      pure $
+        Right
+          BoundedResponse
+            { boundedStatus = httpStatus
+            , boundedHeaders = headers
+            , boundedBody = body
+            }
+
+providerRequestIdFromHeaders :: [Header] -> Maybe Text
+providerRequestIdFromHeaders headers =
+  (lookup "x-transaction-id" headers >>= sanitizeProviderRequestId)
+    <|> (lookup "x-request-id" headers >>= sanitizeProviderRequestId)
+
+sanitizeProviderRequestId :: BS.ByteString -> Maybe Text
+sanitizeProviderRequestId raw =
+  case TE.decodeUtf8' raw of
+    Left _ -> Nothing
+    Right value
+      | T.null value || T.length value > 128 -> Nothing
+      | T.all validRequestIdCharacter value -> Just value
+      | otherwise -> Nothing
+  where
+    validRequestIdCharacter character =
+      isAscii character
+        && (isAlphaNum character || character `elem` ("-_.:" :: String))
 
 readBodyBounded :: Int -> BodyReader -> IO (Either () BS.ByteString)
 readBodyBounded maximumBytes reader = go 0 []
@@ -485,6 +744,32 @@ validEmail value =
 
 providerUnavailable :: RegistrationError
 providerUnavailable = registrationError ProviderUnavailable "Identity provider is temporarily unavailable"
+
+-- OAuth credentials, response bodies, access tokens, and user data are
+-- deliberately excluded. These fields are sufficient to distinguish network,
+-- HTTP, and schema failures without exposing registration identities.
+logXProviderFailure
+  :: Text
+  -> Either RegistrationError (Int, BS.ByteString)
+  -> Either RegistrationError value
+  -> IO ()
+logXProviderFailure stage outcome result =
+  case result of
+    Left err | reCode err == ProviderUnavailable ->
+      logWarn
+        "registration_x_provider_failure"
+        "X registration provider request failed"
+        [ field "provider_stage" stage
+        , field "provider_failure_kind" $ case outcome of
+            Left _ -> ("transport_or_response_size" :: Text)
+            Right (httpStatus, _)
+              | httpStatus < 200 || httpStatus >= 300 -> "http_status"
+              | otherwise -> "response_validation"
+        , field "provider_http_status" $ case outcome of
+            Left _ -> Nothing @Int
+            Right (httpStatus, _) -> Just httpStatus
+        ]
+    _ -> pure ()
 
 validUuid :: Text -> Bool
 validUuid value =

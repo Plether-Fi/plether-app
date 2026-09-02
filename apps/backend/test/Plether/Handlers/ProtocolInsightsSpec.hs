@@ -26,9 +26,14 @@ import Plether.Handlers.ProtocolInsights
   , operationalMetricJsonForRoles
   , operationalRolePaginationPolicy
   , orderAtConfirmedBlock
+  , orderCommitIntentFromActions
+  , orderEconomics
+  , orderEconomicsAvailability
+  , orderFinalizationFromActions
   , orderRevealTiming
   , orderStateDeltaEvidenceLabel
   , orderTerminalMarketState
+  , protocolProjectionIndexerName
   , selectProjectionListAnchor
   , qualifiesObservedOperationalWallet
   , stateDeltaAvailability
@@ -106,6 +111,29 @@ spec = do
       selectProjectionListAnchor 100 99 125 `shouldBe` Nothing
       selectProjectionListAnchor 100 125 99 `shouldBe` Nothing
 
+  describe "protocolProjectionIndexerName" $ do
+    it "uses the bounded V2 cursor namespace for the current router and lifecycle release" $ do
+      let currentRelease =
+            listToMaybe
+              [ candidateRelease
+              | candidateRelease <- knownProtocolReleases
+              , prId candidateRelease == "arbitrum-sepolia-2026-08-v1.2.0"
+              ]
+
+      fmap protocolProjectionIndexerName currentRelease
+        `shouldBe` Just "perps-history-costs-v2:finalized-abi3"
+
+    it "preserves the V1 cursor namespace for the historical router-only release" $ do
+      let historicalRelease =
+            listToMaybe
+              [ candidateRelease
+              | candidateRelease <- knownProtocolReleases
+              , prId candidateRelease == "arbitrum-sepolia-2026-07"
+              ]
+
+      fmap protocolProjectionIndexerName historicalRelease
+        `shouldBe` Just "perps-history-costs-v1"
+
   describe "orderRevealTiming" $ do
     it "opens on the first second after commitment and closes at the settlement-window bound" $
       orderRevealTiming (Just 1_000) (Just 60)
@@ -116,6 +144,67 @@ spec = do
         `shouldBe` (Just 1_001, Nothing)
       orderRevealTiming Nothing (Just 60)
         `shouldBe` (Nothing, Nothing)
+
+  describe "V2 order lifecycle evidence" $ do
+    it "selects the target order's canonical intent and exposes every execution bound" $ do
+      let anotherOrder =
+            (intentRegisteredAction 99)
+              { parData =
+                  object
+                    [ "intentHash" .= hashOf '9'
+                    , "request" .= object
+                        [ "side" .= (1 :: Integer)
+                        , "sizeDelta" .= ("99" :: Text)
+                        , "marginDeltaUsdc" .= ("99" :: Text)
+                        , "acceptablePrice" .= ("99" :: Text)
+                        , "isClose" .= False
+                        , "policy" .= object []
+                        ]
+                    ]
+              }
+          intent =
+            orderCommitIntentFromActions
+              release
+              42
+              [anotherOrder, intentRegisteredAction 42]
+
+      (intent >>= jsonField ["acceptablePrice"])
+        `shouldBe` Just (String "101000000")
+      (intent >>= jsonField ["executionBountyUsdc"])
+        `shouldBe` Just (String "250000")
+      (intent >>= jsonField ["policy", "maxGrossAccountDebitUsdc"])
+        `shouldBe` Just (String "5000000")
+      (intent >>= jsonField ["policy", "maxPostLeverageBps"])
+        `shouldBe` Just (String "25000")
+      (intent >>= jsonField ["evidence", "level"])
+        `shouldBe` Just (String "exact_confirmed_intent_registered_event")
+
+    it "projects exact terminal metadata and receipt economics without relabelling the fee" $ do
+      let actions = [intentRegisteredAction 42, orderFinalizedAction 42]
+          finalization = orderFinalizationFromActions release 42 actions
+          economics = orderEconomics 42 Nothing actions
+          availability = show $ orderEconomicsAvailability 42 Nothing actions
+
+      (finalization >>= jsonField ["executionMode"])
+        `shouldBe` Just (String "Permissionless")
+      (finalization >>= jsonField ["executor"])
+        `shouldBe` Just (String keeper)
+      (finalization >>= jsonField ["failure", "failedConstraintCode"])
+        `shouldBe` Just (Number 0)
+      (finalization >>= jsonField ["receipt", "observedConfigHash"])
+        `shouldBe` Just (String $ hashOf '8')
+      jsonField ["realizedPnlUsdc"] economics
+        `shouldBe` Just (String "-250000")
+      jsonField ["carryUsdc"] economics
+        `shouldBe` Just (String "-10000")
+      jsonField ["executionFeeUsdc"] economics
+        `shouldBe` Just (String "5000")
+      jsonField ["claimCreatedUsdc"] economics
+        `shouldBe` Just (String "40000")
+      jsonField ["protocolFeeUsdc"] economics
+        `shouldBe` Just Null
+      availability `shouldNotContain` "economics.carryUsdc"
+      availability `shouldContain` "receipt_does_not_isolate_protocol_fee"
 
   describe "orderTerminalMarketState" $ do
     it "marks a null market mode unavailable when either source read is missing" $ do
@@ -543,6 +632,126 @@ trancheAction =
         ]
     )
     (prSeniorVault release)
+
+intentRegisteredAction :: Integer -> ProtocolActionRow
+intentRegisteredAction orderId =
+  ( action
+      ("intent-" <> T.pack (show orderId))
+      "order_commitment"
+      ( object
+          [ "orderId" .= show orderId
+          , "clientOrderId" .= hashOf '1'
+          , "intentHash" .= hashOf '2'
+          , "executionBountyUsdc" .= ("250000" :: Text)
+          , "request" .= object
+              [ "clientOrderId" .= hashOf '1'
+              , "side" .= (0 :: Integer)
+              , "sizeDelta" .= ("1000000000000000000" :: Text)
+              , "marginDeltaUsdc" .= ("1000000" :: Text)
+              , "acceptablePrice" .= ("101000000" :: Text)
+              , "isClose" .= False
+              , "policy" .= executionPolicy
+              ]
+          , "policy" .= executionPolicy
+          , "units" .= object
+              [ "sizeDelta" .= ("position:18" :: Text)
+              , "marginDeltaUsdc" .= ("USDC:6" :: Text)
+              , "acceptablePrice" .= ("indexPrice:8" :: Text)
+              ]
+          ]
+      )
+      lifecycleBook
+  )
+    { parOrderId = Just orderId
+    }
+  where
+    executionPolicy =
+      object
+        [ "validUntil" .= ("1785000060" :: Text)
+        , "allowedExecutionModes" .= (3 :: Integer)
+        , "expectedConfigHash" .= hashOf '7'
+        , "maxExecutionBountyUsdc" .= ("250000" :: Text)
+        , "maxExecutionNotionalUsdc" .= ("100000000" :: Text)
+        , "maxGrossAccountDebitUsdc" .= ("5000000" :: Text)
+        , "maxActionChargeUsdc" .= ("25000" :: Text)
+        , "maxExplicitFeesUsdc" .= ("50000" :: Text)
+        , "maxPostPositionSize" .= ("2000000000000000000" :: Text)
+        , "minPostSettlementBalanceUsdc" .= ("100000" :: Text)
+        , "minPostPositionEquityUsdc" .= ("500000" :: Text)
+        , "maxPostLeverageBps" .= ("25000" :: Text)
+        ]
+
+orderFinalizedAction :: Integer -> ProtocolActionRow
+orderFinalizedAction orderId =
+  ( action
+      ("finalized-" <> T.pack (show orderId))
+      "order_execution"
+      ( object
+          [ "orderId" .= show orderId
+          , "clientOrderId" .= hashOf '1'
+          , "receiptHash" .= hashOf '6'
+          , "intentHash" .= hashOf '2'
+          , "expectedConfigHash" .= hashOf '7'
+          , "observedConfigHash" .= hashOf '8'
+          , "terminalReason" .= ("Executed" :: Text)
+          , "executionMode" .= ("Permissionless" :: Text)
+          , "executor" .= keeper
+          , "failedConstraint" .= (Nothing :: Maybe Text)
+          , "executionPrice" .= ("100500000" :: Text)
+          , "oraclePublishTime" .= ("1785000058" :: Text)
+          , "bountyUsdc" .= ("250000" :: Text)
+          , "bountyRecipient" .= keeper
+          , "failure" .= terminalFailure
+          , "economics" .= receiptEconomics
+          , "receipt" .= object
+              [ "lifecycleStatus" .= (2 :: Integer)
+              , "status" .= ("Executed" :: Text)
+              , "terminalReasonCode" .= (1 :: Integer)
+              , "terminalReason" .= ("Executed" :: Text)
+              , "executionModeCode" .= (1 :: Integer)
+              , "executionMode" .= ("Permissionless" :: Text)
+              , "executor" .= keeper
+              , "executionPrice" .= ("100500000" :: Text)
+              , "observedConfigHash" .= hashOf '8'
+              , "failure" .= terminalFailure
+              , "economics" .= receiptEconomics
+              ]
+          , "units" .= object ["executionPrice" .= ("indexPrice:8" :: Text)]
+          ]
+      )
+      lifecycleBook
+  )
+    { parOrderId = Just orderId
+    }
+  where
+    terminalFailure =
+      object
+        [ "selector" .= ("0x00000000" :: Text)
+        , "category" .= (0 :: Integer)
+        , "code" .= (0 :: Integer)
+        , "failedConstraintCode" .= (0 :: Integer)
+        , "failedConstraint" .= (Nothing :: Maybe Text)
+        , "argument0" .= ("0" :: Text)
+        , "argument1" .= ("0" :: Text)
+        , "revertDataHash" .= hashOf '0'
+        ]
+    receiptEconomics =
+      object
+        [ "executionNotionalUsdc" .= ("100000000" :: Text)
+        , "realizedPnlUsdc" .= ("-250000" :: Text)
+        , "vpiUsdc" .= ("15000" :: Text)
+        , "carryUsdc" .= ("-10000" :: Text)
+        , "executionFeeUsdc" .= ("5000" :: Text)
+        , "frozenSpreadUsdc" .= ("0" :: Text)
+        , "preTraderClaimBalanceUsdc" .= ("100000" :: Text)
+        , "postTraderClaimBalanceUsdc" .= ("140000" :: Text)
+        ]
+
+lifecycleBook :: Text
+lifecycleBook =
+  case prOrderLifecycleBook release of
+    Just address -> address
+    Nothing -> error "The current release must configure OrderLifecycleBook"
 
 action :: Text -> Text -> Value -> Text -> ProtocolActionRow
 action actionId actionType actionData contractAddress =

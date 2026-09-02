@@ -2,239 +2,185 @@
 
 Withdrawing liquidity exchanges active Senior or Junior Vault shares for USDC[^usdc]. It is a tranche-vault action, not a withdrawal from the Trading Account's Margin Account.
 
-LP[^lp] withdrawals are **synchronous**. There is no LP withdrawal queue: a permitted withdrawal confirms and sends USDC directly to the recipient, while an amount above the current limit cannot be submitted.
+Every LP[^lp] withdrawal uses the hourly vault queue. The request locks the quoted number of vault shares, but it does not send USDC to the owner wallet. When LP settlement is enabled, a healthy keeper can process eligible requests; Senior receives funding priority, and the holder moves funded USDC to the wallet in a separate transaction.
 
-> **Synchronous does not mean always available.**
+> **Share value and withdrawal liquidity are different**
 >
-> Your share value can be positive while your current withdrawal limit is lower—or zero. Plether allows only physically free HousePool cash to leave after reserving for trader obligations and applying Senior–Junior priority.
+> A vault position can have positive accounting value while no shares are currently eligible for a new request or no USDC is available to fund it. Trader obligations rank ahead of both vaults, and Senior ranks ahead of Junior when the remaining LP liquidity is allocated.
 
-> **Current interface status**
+> The `Withdraw` action on the Perps page withdraws from the Trading Account's **Margin Account**. It does not redeem Senior or Junior Vault shares.
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. The labels on this page—such as `Withdraw USDC` and `Withdrawal preview`—describe that in-progress interface and should be treated as placeholders until it is deployed.
->
-> The visible `Withdraw` action on the current Perps page withdraws from the Trading Account's **Margin Account**. It does not redeem Senior or Junior Vault shares.
->
-> LP withdrawals are not currently gas-sponsored. Keep enough Arbitrum Sepolia ETH in the connected owner wallet for the transaction, and treat an LP action as sponsored only if the interface explicitly marks that action as **Sponsored**.
+> Vault actions use the connected owner wallet. The current Vaults flow does not sponsor them, so keep enough Arbitrum Sepolia ETH for the request and any later claim, cancellation or share-return transaction.
 
 ### 1. Check what you are withdrawing
 
-Before opening the withdrawal flow, confirm that you hold **active** shares in the intended tranche.
+Before opening the withdrawal flow, confirm that you hold wallet shares in the intended tranche.
 
-These are different states:
-
-| What you hold | Can it be withdrawn through the LP withdrawal flow? |
+| What you hold | Can it fund a new withdrawal request? |
 | --- | --- |
-| Active Senior Vault shares | Yes, subject to the live Senior limit and holder gates |
-| Active Junior Vault shares | Yes, subject to the live Junior limit and holder gates |
-| A pending deposit request | No; the request must be cancelled while eligible or finalized and claimed |
-| Unclaimed shares from a finalized epoch | No; claim the shares first |
+| Wallet-held Senior shares (`psLP`) | Yes, up to **Shares available to withdraw** |
+| Wallet-held Junior shares (`pjLP`) | Yes, up to **Shares available to withdraw** |
+| USDC in a queued deposit | No; it must be processed into shares or returned |
+| **Shares ready** from a processed deposit | Not until you select **Move shares to wallet** and the resulting cooldown ends |
+| Shares already locked in a queued withdrawal | No; monitor that request under **Pending withdrawals** |
 | USDC in the Trading Account's Margin Account | No; use the separate trader withdrawal flow |
 | MockUSDC in the owner wallet | It is already in the wallet and is not an LP position |
 
-The tranche position should distinguish:
+On the vault page, read these values separately:
 
-* `Current value` — the current USDC accounting value of your shares;
-* `Share price` — the current accounting value per share;
-* `Withdrawable now` — the current asset-denominated limit for your position.
+* **Current value** estimates the USDC accounting value of the wallet-held shares.
+* **Shares available to withdraw** is the share amount currently eligible for a new request after the holder cooldown and vault limits.
+* **Estimated withdrawal liquidity** in the vault header and **Available withdrawal liquidity** in **Overview** estimate how much USDC the selected tranche can receive at the next processing time.
+* **USDC ready for wallet** is already funded and can be claimed from a processed request.
 
-`Current value` and `Withdrawable now` answer different questions. A tranche share is a claim on tranche accounting value, not an unconditional claim on an equal portion of the HousePool's raw USDC balance.
+Positive **Current value** does not guarantee positive **Shares available to withdraw**, and neither value means USDC is already allocated.
 
-### 2. Read the live maximum
+### 2. Read the live request limit
 
-The tranche vault exposes two ERC-4626[^erc4626] limits conceptually:
+The withdrawal form accepts a target USDC amount. The vault quote converts that amount into **Estimated shares used**, and the interface checks the estimate against **Shares available to withdraw**.
 
-* `maxWithdraw` answers how much USDC the holder may currently request through the asset-denominated withdrawal path.
-* `maxRedeem` answers how many shares the holder may currently submit through a share-denominated redemption path.
+The form rejects an amount when:
 
-The in-progress `Vaults` interface accepts a USDC amount and uses the withdrawal path. It does not currently provide a share-count or **Redeem** control. `maxRedeem` is still useful for understanding the underlying vault rule, but LPs should use `Withdrawable now` for the interface's live USDC limit.
+* it is zero or cannot be parsed;
+* the latest share estimate is unavailable;
+* the estimated shares exceed the wallet's current request limit; or
+* required pool, vault or wallet data is unavailable.
 
-Both limits are ceilings, not guarantees that a previously viewed amount will remain available. The vault reconciles HousePool accounting when the withdrawal is submitted, so the live limit can change between opening the preview and confirming the transaction.
+A partial withdrawal request must estimate to at least the vault's live minimum, currently `1 USDC`. A complete exit of all remaining requestable shares may use the contract's smaller dust-exit exception. The current interface may not prevalidate this minimum, so an enabled review action is not by itself proof that a smaller partial request will succeed onchain.
 
-During an active holder cooldown, both `maxWithdraw` and `maxRedeem` return zero.
+The limit is a request ceiling, not a promise of funding at the next hour. Share price, protected reserves and pool liquidity can change after the request is queued.
 
-> A withdrawal preview does not reserve liquidity or create a place in a queue. If conditions change before confirmation, request a fresh preview.
+### 3. Understand hourly processing
 
-### 3. Understand the withdrawal firewall
+The vault assigns every request to an hourly processing time.
 
-Plether reserves cash for trader obligations before allowing LP capital to leave.
+| Onchain inclusion time | Expected processing |
+| --- | --- |
+| Strictly before the five-minute cutoff | The next hourly processing time |
+| At or after the five-minute cutoff | The following hourly processing time |
+| Processing paused or a required gate blocked | Delayed until processing can resume |
+
+The displayed **Expected processing** time is an estimate, not a guaranteed payout time. A request can remain **Waiting for USDC** after that time if the pool cannot yet fund it.
+
+The contract uses the request transaction's block-inclusion timestamp. Signing or sending before the cutoff is not enough if inclusion lands at or after it; treat the confirmed request record as authoritative.
+
+From the holder's perspective, the lifecycle is:
+
+`Review withdrawal → Queue withdrawal → Pending → eligible hourly settlement → USDC ready → Move USDC to wallet`
+
+The holder does not submit a separate processing transaction. While the request waits, its locked shares continue to gain or lose value, so the final USDC can differ from the amount shown in the request preview.
+
+### 4. Understand the withdrawal firewall and tranche priority
+
+Plether reserves cash for trader obligations before allocating funds to LP withdrawals.
 
 Conceptually:
 
 ```
-Free USDC
+Available LP liquidity
 = physical HousePool assets
-− withdrawal reserves
+− protected trader and protocol reserves
 ```
 
-Withdrawal reserves include:
+Protected amounts include maximum bounded trader liability, its configured liability-scaled settlement buffer, existing trader claims, USDC already set aside for trader claims, unassigned assets and any explicit protocol reserve.
 
-* Maximum bounded trader liability
-* Existing trader claims
-* USDC already set aside for trader claims
-* Unassigned assets
-* Any additional explicit protocol reserve
+The `Vaults` page surfaces these inputs through **Total pool funds**, **Available liquidity**, **Reserved for trader withdrawals**, **Estimated withdrawal liquidity** and **Available withdrawal liquidity**. None of those values is the complete amount every LP can withdraw.
 
-Only the remaining physically free USDC can support LP withdrawals. This protection is the **withdrawal firewall**.
+After protected obligations are accounted for:
 
-The `Vaults` pool metrics should help separate the inputs:
+1. Matured Senior withdrawal requests receive funding first, up to their demand, Senior principal and available USDC.
+2. Once no matured Senior backlog remains, Junior is capped by remaining free cash, Junior principal and the governed maximum Senior share of protected tranche capital. Dormant Senior principal is not fully reserved.
 
-* `Free liquidity` is HousePool cash remaining after protected reserves.
-* `Withdrawal reserve` is the cash Plether is retaining for protected obligations.
-* `Pool withdrawal cap` is the current tranche-level ceiling before applying your personal share balance and holder gates.
-* `Market state` summarizes degraded mode, oracle-frozen state and mark freshness. It does not by itself prove that a withdrawal is permitted; also require a fresh positive `Withdrawable now` value and an enabled action.
+This is why Junior can show positive share value while a matured request remains **Waiting for USDC**. Senior priority is relative, not a guaranteed Senior payout at the first eligible hour.
 
-Free liquidity is not total HousePool assets, total tranche NAV[^nav] or the amount every LP can withdraw.
+For the complete accounting model, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall).
 
-For the full accounting model, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall).
+### 5. Check the one-hour cooldown
 
-### 4. Apply Senior–Junior withdrawal priority
+The vault's **Move shares to wallet**, **Cancel withdrawal** and **Return shares to wallet** actions start or restart a one-hour withdrawal cooldown for the wallet's complete position in that tranche. This includes:
 
-Trader obligations rank ahead of both tranches. Senior–Junior priority applies only after those obligations have been reserved.
+* selecting **Move shares to wallet** after a deposit is processed;
+* cancelling a queued withdrawal and returning its shares; and
+* selecting **Return shares to wallet** for a zero-value withdrawal remainder.
 
-At pool level, Senior receives first access to free LP cash:
+During the cooldown, **Shares available to withdraw** is zero. The vault page shows **Available in** with a live countdown, and the action panel shows **Withdrawal cooldown active**.
 
-```
-Senior maximum withdrawal
-= min(free USDC, Senior principal)
-```
+An ordinary wallet-to-wallet share transfer is possible only after the sender's cooldown and propagates that timestamp rather than starting a fresh one-hour period. Wait for the displayed countdown to reach zero before entering a new withdrawal amount. Queuing a withdrawal or moving funded USDC to the wallet does not itself return shares and should not be treated as a cooldown restart.
 
-Junior can withdraw only from free liquidity above the complete Senior claim:
+### 6. Read pauses, degraded mode and frozen pricing correctly
 
-```
-Junior maximum withdrawal
-= min(
-    Junior principal,
-    max(free USDC − Senior principal, 0)
-  )
-```
+Several states affect submission and processing differently.
 
-Your personal limit is then further constrained by:
+| State | New withdrawal request | Funding at hourly processing | Existing actions |
+| --- | --- | --- | --- |
+| **Hourly processing paused** | Still allowed when the holder limit and quote permit | No new USDC is allocated until processing resumes | Ready funds can be moved; eligible requests can be cancelled; returnable funds or shares can be claimed |
+| **HousePool safety pause** | Still allowed when the holder limit and quote permit | Follow **New withdrawal funding** and the request status | The pause blocks new deposits, not the protective withdrawal controls by itself |
+| **Safety restrictions active** (degraded mode) | Still allowed by the interface when the holder limit and quote permit | No new USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode | Deposit requests are blocked; already-funded withdrawal actions remain available |
+| **Live pricing unavailable** (`oracleFrozen`) | Can remain available under the bounded frozen-pricing rules | The current quote can include a temporary tranche-specific fee; later fee or price changes affect the final USDC from the fixed queued shares | Deposits are unavailable; wait for live pricing when the withdrawal is not urgent |
 
-* Your share balance
-* Your holder cooldown
-* Current oracle and protocol state
-* The tranche's active frozen-oracle surcharge
+The action panel shows **Temporary withdrawal surcharge active** when frozen pricing is active. Its current percentage is tranche-specific, and the current quote uses more shares for the same target USDC. The request then locks that quoted share amount. If the fee or share price changes before processing, the final USDC changes; the vault does not pull additional shares from the wallet.
 
-This is why:
+A close-only trading schedule does not by itself activate this fee. If accepted price data becomes too old even for the frozen-pricing rules, quoting or processing can wait until valid data returns.
 
-* Senior `Withdrawable now` can be below Senior `Current value`.
-* Junior `Withdrawable now` can be zero even while Junior shares retain positive value.
-* An increase in free liquidity can restore some withdrawal capacity without changing your share count.
+### 7. Submit the withdrawal request
 
-Senior has relative withdrawal priority, not an unconditional right to immediate cash.
+1. Open `Vaults` and select **Explore Senior Vault** or **Explore Junior Vault**.
+2. Confirm **Current value**, **Shares available to withdraw**, **Estimated withdrawal liquidity**, **Available withdrawal liquidity** and the pool status.
+3. Select the `withdraw` mode. The panel heading becomes **Withdraw USDC**.
+4. Enter **Amount to withdraw**.
+5. Check **Estimated shares used**, **Position value**, **Estimated USDC you’ll receive**, **Processing** and any active temporary pricing fee.
+6. Select **Review withdrawal**.
+7. In the preview, verify **USDC to withdraw**, **Estimated shares used**, **Current share price**, **Processing** and **Expected processing**. When complete history is available, it also shows **7d realized APY**.
+8. Select **Confirm withdrawal**, then confirm **Queue withdrawal** in the owner wallet.
+9. Keep the modal open until it reports **Withdrawal submitted**, then select **View activity** or open **Your position**.
 
-### 5. Check the cooldown and minimum
+![Withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png)
 
-An immediate deposit starts a fixed **one-hour withdrawal cooldown** for the holder. Depositing more into the same vault refreshes the applicable cooldown.
+The request transaction targets the selected Tranche Vault and locks the quoted shares. Do not send shares to the HousePool, Margin Clearinghouse or an unknown contract.
 
-During the cooldown:
+### 8. Monitor or cancel the queued request
 
-* Shares cannot be withdrawn.
-* Shares cannot be transferred to bypass the restriction.
-* `maxWithdraw` and `maxRedeem` return zero.
+Under **Your position → Pending withdrawals**, each request shows a reference, requested shares, **Expected processing** and **Estimated USDC**.
 
-A later share transfer propagates the relevant cooldown timestamp to the receiver.
+Before its processing time, the status is **Pending** and **Cancel withdrawal** is available. Cancelling returns the locked shares to the owner wallet and restarts the one-hour cooldown for the complete tranche position.
 
-Every successful withdrawal or redemption resets the holder's one-hour cooldown. After a partial withdrawal, the remaining shares therefore normally need to complete another cooldown before the next withdrawal.
+Once the request reaches its processing time, ordinary cancellation is no longer available. If USDC has not been allocated, the status becomes **Waiting for USDC** even when a pause, pricing or health gate means funding is not yet eligible. Leave the request queued and monitor the pool; do not submit a duplicate request for the same locked shares.
 
-Ordinary deposits and partial withdrawals are subject to the vault's live minimum. The current development frontend enforces at least `1 USDC` for an ordinary withdrawal; the deployed interface and onchain vault rules are authoritative.
+### 9. Move funded USDC or returned shares
 
-A complete residual exit remains possible when the holder's entire remaining claim is below `1 USDC`. This is a dust-exit exception for closing the complete position; it does not permit an arbitrary sub-minimum partial withdrawal.
+Eligible processing can produce these actionable states:
 
-### 6. Review a frozen-oracle surcharge
+| Status | Meaning | Action |
+| --- | --- | --- |
+| **USDC ready** | USDC has been allocated to all or part of the request; a zero-value remainder can also be returnable | **Move USDC to wallet** |
+| **Shares ready to return** | A remaining share amount quoted to zero assets and entered the terminal refund state | **Return shares to wallet** |
 
-A scheduled close-only runway does not, by itself, activate an LP surcharge. The surcharge applies only while the onchain `oracleFrozen` state is active.
+These are separate owner-wallet transactions and can coexist after partial funding. **USDC ready** takes status precedence when any assets are claimable. Ordinary insufficient-liquidity remainders stay FIFO-queued for later funding; only a zero-value remainder becomes returnable. **USDC ready** is not part of the wallet balance until **Move USDC to wallet** confirms. Returning shares restarts the one-hour cooldown; moving USDC does not.
 
-During that state, a withdrawal may remain available under the extended frozen-market freshness policy. Each tranche applies its own configured rate.
+After each action, verify the transaction on Arbiscan, the remaining request state, the wallet's USDC or share balance, and the vault position.
 
-The current `Vaults` interface uses the asset-denominated `withdraw(assets)` path: the amount entered is the target USDC wallet receipt. While the surcharge is active:
+### If funding takes longer than expected
 
-* Delivering that target USDC amount requires burning more shares than the ordinary quote.
-* The additional economic value remains inside the same tranche.
-* The retained value does not go to the protocol treasury or the other tranche.
+Do not cancel and resubmit after the request has become **Waiting for USDC**; the ordinary cancellation action is no longer available. Funding can improve as trader liabilities are released, cash enters the HousePool or valid pricing returns. Paying a trader claim from existing HousePool cash reduces cash and the claim together; it does not by itself create net LP withdrawal liquidity.
 
-A share-denominated `redeem(shares)` instead returns less USDC for the submitted shares, but the current interface does not expose that path.
-
-Senior and Junior can have different surcharge rates. Use the refreshed vault quote and the configured onchain tranche rate rather than assuming a fixed value. The current development preview shows the surcharge state but does not itemize a numeric rate.
-
-The extended frozen-market window is not indefinite. If the accepted oracle data becomes too stale, LP entry and exit can be blocked until valid data or protocol recovery becomes available.
-
-### 7. Submit the withdrawal
-
-When the LP interface is available:
-
-1. Open `Vaults`.
-2. Select the Senior or Junior position you intend to exit.
-3. Select the `withdraw` toggle.
-4. Enter an `Amount to withdraw` no greater than `Withdrawable now`.
-5. Select `Review withdraw`.
-6. Read the complete `Withdrawal preview`.
-7. Select `Withdraw USDC`, then confirm the owner-wallet transaction.
-8. Wait for confirmation, then verify the result.
-
-The in-progress `Withdrawal preview` shows:
-
-* Selected tranche
-* Requested USDC amount
-* Estimated shares burned
-* Current `Share price`
-* Synchronous settlement when permitted
-* A reminder that the live maximum already reflects the holder cooldown
-* Frozen-oracle surcharge state
-* Network, relative-risk label and quote-refresh time
-
-Before opening the preview, also check `Withdrawable now`, `Pool withdrawal cap`, `Free liquidity`, `Withdrawal reserve` and `Market state` on the vault page. The current preview does not separately itemize a numeric surcharge rate, share-cost decomposition, recipient row or gas estimate. Confirm the connected owner wallet and decoded vault call before signing, and treat the onchain quote as authoritative.
-
-Verify that the transaction targets the selected **Tranche Vault**. Do not send shares to the HousePool, Margin Clearinghouse or an unknown contract.
-
-> **Screenshot placeholder — Withdrawal preview**
->
-> Add the deployed `Withdrawal preview` together with the surrounding live-limit fields after the interface is finalized. The capture should show the tranche, requested USDC, estimated shares burned, share price, settlement mode, cooldown treatment, surcharge state, network, quote time and final action without exposing unrelated wallet data.
-
-### 8. Verify the result
-
-After the transaction confirms, check all of the following:
-
-1. The block explorer shows a successful transaction to the verified tranche vault.
-2. The recipient wallet received the requested USDC amount.
-3. The expected number of vault shares was burned, including any extra shares required by a frozen-oracle surcharge.
-4. `Current value` and the share balance reflect any remaining position.
-5. The pending request list did not change; LP withdrawals do not use deposit epochs.
-6. If shares remain, the holder cooldown has restarted.
-7. Any frozen-oracle surcharge reconciles with the configured onchain tranche rate, refreshed quote and additional shares burned; the current preview's generic surcharge state is not enough by itself.
-
-Do not verify the exit from wallet USDC alone. The share burn and tranche-vault transaction establish which LP position changed.
-
-### If the full amount is unavailable
-
-If `Withdrawable now` is lower than your intended exit, you can:
-
-* Withdraw an eligible amount within the live limit, understanding that the holder cooldown restarts; or
-* Leave the shares invested and try again after conditions change.
-
-Withdrawal capacity may improve as trader positions close, claims are funded, liabilities are released or valid oracle data becomes available. There is no guaranteed time by which this will happen, and the protocol does not queue the unfilled remainder.
-
-If the limit is unexpectedly zero, the preview changes, or the transaction fails, use [**LP troubleshooting**](lp-troubleshooting.md).
+There is no guaranteed funding date. Junior requests can wait longer because Senior is funded first. Use [**LP troubleshooting**](lp-troubleshooting.md) if the request status or available action does not match the expected lifecycle.
 
 ### Exit checklist
 
-Before confirming:
+Before queuing:
 
-* Confirm that this is a Senior or Junior Vault withdrawal, not a Margin Account withdrawal.
-* Confirm the connected owner wallet and supported network.
-* Check `Current value`, `Share price` and `Withdrawable now` separately.
-* Keep the requested amount within the fresh live maximum.
-* Check the one-hour holder cooldown.
-* Check the protocol minimum and whether a complete dust exit applies.
-* Review the withdrawal firewall and tranche priority.
-* Check the oracle state and any tranche-specific surcharge.
-* Compare requested USDC, estimated shares burned and the refreshed vault quote.
-* Verify the tranche-vault address and recipient.
-* Keep enough Arbitrum Sepolia ETH for the transaction.
+* Confirm this is a Senior or Junior Vault action, not a Margin Account withdrawal.
+* Confirm the owner wallet and Arbitrum Sepolia network.
+* Check the cooldown countdown and **Shares available to withdraw**.
+* Compare the target USDC with **Estimated shares used**.
+* Review available pool liquidity, protected reserves and tranche priority.
+* Check **New withdrawal funding**, hourly-processing status and safety restrictions.
+* Review frozen-pricing state and any temporary surcharge.
+* Verify the Tranche Vault address.
+* Keep enough ETH for the request and later claim or return transaction.
+* Remember that the preview is an estimate and the request can wait beyond its expected processing time.
 
-LP withdrawals can be reduced, delayed or blocked. Review [**LP risks and safeguards**](lp-risks-and-safeguards.md) before treating tranche value as available cash.
+LP withdrawals can be delayed or partially funded; a zero-value remainder can be returned, and vault shares can lose value while a request waits. Review [**LP risks and safeguards**](lp-risks-and-safeguards.md) before treating tranche value as available cash.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
-[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
-[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

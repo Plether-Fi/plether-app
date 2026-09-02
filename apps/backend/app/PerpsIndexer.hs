@@ -29,9 +29,11 @@ import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
+  , applyPerpsAddressEnvironment
   , defaultPerpsAddresses
-  , perpsIndexerName
+  , perpsIndexerNameForRelease
   , runPerpsIndexer
+  , validatePerpsIndexerReleaseConfig
   )
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import Plether.Protocol.Release (ProtocolRelease (..), currentProtocolRelease)
@@ -110,18 +112,19 @@ runConfiguredIndexer
   -> [String]
   -> Config
   -> IO ()
-runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
+runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
   let release = currentProtocolRelease cfg
       configuredAddresses =
         defaultPerpsAddresses
           { paUsdc = prUsdc release
           , paOrderRouter = prOrderRouter release
           , paOrderRouterAdmin = prOrderRouterAdmin release
+          , paOrderLifecycleBook = prOrderLifecycleBook release
           , paCfdEngine = prCfdEngine release
           , paCfdEngineAdmin = prCfdEngineAdmin release
-          , paCfdEngineLens = cfgPerpsCfdEngineLens cfg
+          , paCfdEngineLens = prCfdEngineLens release
           , paCfdEngineSettlementSidecar =
-              cfgPerpsCfdEngineSettlementSidecar cfg
+              prCfdEngineSettlementSidecar release
           , paMarginClearinghouse = prMarginClearinghouse release
           , paPletherOracle = prPletherOracle release
           , paAccountLens = prAccountLens release
@@ -139,91 +142,12 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
                 IndexerOptions.PerpsIndexerReplay replayOptions ->
                   PerpsIndexerReplay replayOptions
           }
-   in case cfgDatabaseUrl cfg of
-        Nothing -> do
-          logError
-            "perps_indexer_database_missing"
-            "Perps indexer requires a database"
-            []
-          exitFailure
-        Just dbUrl -> do
-          manager <- newManager tlsManagerSettings
-          let configuredRpcUrls =
-                fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
-          probeResults <- forM configuredRpcUrls $ \rpcUrl -> do
-            client <- newClientWithManager manager rpcUrl
-            observedChainId <- ethChainId client
-            pure (rpcUrl, observedChainId)
-          let matchingRpcUrls =
-                selectRpcUrlsForChain (prChainId release) probeResults
-              mismatchCount =
-                countBindingFailures
-                  (prChainId release)
-                  RpcChainIdMismatch
-                  probeResults
-              unavailableCount =
-                countBindingFailures
-                  (prChainId release)
-                  RpcChainIdUnavailable
-                  probeResults
-          if null matchingRpcUrls
-            then do
-              logError
-                "perps_indexer_rpc_chain_binding_failed"
-                "No configured RPC provider matches the protocol release chain"
-                [ field "configured_provider_count" $ length configuredRpcUrls
-                , field "mismatched_provider_count" mismatchCount
-                , field "unavailable_provider_count" unavailableCount
-                , field "expected_chain_id" $ prChainId release
-                ]
-              exitFailure
-            else
-              startValidatedIndexer
-                manager
-                dbUrl
-                cfg
-                release
-                invocation
-                deploymentEnvironment
-                args
-                matchingRpcUrls
-
-startValidatedIndexer
-  :: Manager
-  -> Text
-  -> Config
-  -> ProtocolRelease
-  -> IndexerOptions.PerpsIndexerInvocation
-  -> Maybe Text
-  -> WorkerArgs
-  -> [Text]
-  -> IO ()
-startValidatedIndexer manager dbUrl cfg release invocation deploymentEnvironment args rpcUrls = do
-  pool <- newDbPool dbUrl
-  case invocation of
-    IndexerOptions.PerpsIndexerLoop -> do
-      withDb pool ensurePerpsHistorySchema
-      withDb pool $ \conn -> ensureProtocolSchema conn release
-    -- Replay is a duplicate-ingestion proof over a pre-existing schema. It may
-    -- not run migrations or bootstrap a protocol release as a side effect.
-    IndexerOptions.PerpsIndexerReplay _ -> pure ()
-  let startBlock = prDeploymentBlock release
+      configuredRpcUrls =
+        fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
+      startBlock = prDeploymentBlock release
       requestedStartBlock =
         fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
       addresses = waAddresses args
-      releaseManifest =
-        (cfgInsightsCompetitionReleaseManifest cfg)
-          { crmChainId = prChainId release
-          , crmUsdc = paUsdc addresses
-          , crmOrderRouter = paOrderRouter addresses
-          , crmMarginClearinghouse = paMarginClearinghouse addresses
-          , crmAccountLens = paAccountLens addresses
-          , crmCfdEngine = paCfdEngine addresses
-          , crmCfdEngineLens = paCfdEngineLens addresses
-          , crmSettlementSidecar = paCfdEngineSettlementSidecar addresses
-          , crmPletherOracle = paPletherOracle addresses
-          , crmIndexerStartBlock = startBlock
-          }
       traceApiUrl =
         case waTraceApiUrl args of
           Just value
@@ -233,9 +157,14 @@ startValidatedIndexer manager dbUrl cfg release invocation deploymentEnvironment
             | prChainId release == 421614 ->
                 Just "https://arbitrum-sepolia.blockscout.com/api/v2"
             | otherwise -> Nothing
+      indexerName =
+        perpsIndexerNameForRelease
+          (prChainId release)
+          (paOrderRouter addresses)
+          (paOrderLifecycleBook addresses)
       indexerCfg =
         PerpsIndexerConfig
-          { picRpcUrls = rpcUrls
+          { picRpcUrls = configuredRpcUrls
           , picTraceApiUrl = traceApiUrl
           , picChainId = prChainId release
           , picReleaseId = prId release
@@ -246,11 +175,103 @@ startValidatedIndexer manager dbUrl cfg release invocation deploymentEnvironment
           , picBatchSize = waBatchSize args
           , picPollIntervalMicros =
               max 1 (waPollSeconds args) * 1_000_000
-          , picIndexerName = perpsIndexerName
+          , picIndexerName = indexerName
           , picMode = waMode args
           , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
           , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
           , picDeploymentEnvironment = deploymentEnvironment
+          }
+
+  case validatePerpsIndexerReleaseConfig
+    (prChainId release)
+    addresses
+    (paHousePool addresses)
+    startBlock of
+    Left err -> do
+      logError
+        "perps_indexer_release_configuration_invalid"
+        "Perps indexer effective release configuration is invalid"
+        [field "error" err]
+      exitFailure
+    Right () -> pure ()
+
+  case cfgDatabaseUrl cfg of
+    Nothing -> do
+      logError
+        "perps_indexer_database_missing"
+        "Perps indexer requires a database"
+        []
+      exitFailure
+    Just dbUrl -> do
+      manager <- newManager tlsManagerSettings
+      probeResults <- forM configuredRpcUrls $ \rpcUrl -> do
+        client <- newClientWithManager manager rpcUrl
+        observedChainId <- ethChainId client
+        pure (rpcUrl, observedChainId)
+      let matchingRpcUrls =
+            selectRpcUrlsForChain (prChainId release) probeResults
+          mismatchCount =
+            countBindingFailures
+              (prChainId release)
+              RpcChainIdMismatch
+              probeResults
+          unavailableCount =
+            countBindingFailures
+              (prChainId release)
+              RpcChainIdUnavailable
+              probeResults
+      if null matchingRpcUrls
+        then do
+          logError
+            "perps_indexer_rpc_chain_binding_failed"
+            "No configured RPC provider matches the protocol release chain"
+            [ field "configured_provider_count" $ length configuredRpcUrls
+            , field "mismatched_provider_count" mismatchCount
+            , field "unavailable_provider_count" unavailableCount
+            , field "expected_chain_id" $ prChainId release
+            ]
+          exitFailure
+        else
+          startValidatedIndexer
+            manager
+            dbUrl
+            cfg
+            release
+            invocation
+            requestedStartBlock
+            indexerCfg {picRpcUrls = matchingRpcUrls}
+
+startValidatedIndexer
+  :: Manager
+  -> Text
+  -> Config
+  -> ProtocolRelease
+  -> IndexerOptions.PerpsIndexerInvocation
+  -> Integer
+  -> PerpsIndexerConfig
+  -> IO ()
+startValidatedIndexer manager dbUrl cfg release invocation requestedStartBlock indexerCfg = do
+  pool <- newDbPool dbUrl
+  case invocation of
+    IndexerOptions.PerpsIndexerLoop -> do
+      withDb pool ensurePerpsHistorySchema
+      withDb pool $ \conn -> ensureProtocolSchema conn release
+    -- Replay is a duplicate-ingestion proof over a pre-existing schema. It may
+    -- not run migrations or bootstrap a protocol release as a side effect.
+    IndexerOptions.PerpsIndexerReplay _ -> pure ()
+  let addresses = picAddresses indexerCfg
+      releaseManifest =
+        (cfgInsightsCompetitionReleaseManifest cfg)
+          { crmChainId = picChainId indexerCfg
+          , crmUsdc = paUsdc addresses
+          , crmOrderRouter = paOrderRouter addresses
+          , crmMarginClearinghouse = paMarginClearinghouse addresses
+          , crmAccountLens = paAccountLens addresses
+          , crmCfdEngine = paCfdEngine addresses
+          , crmCfdEngineLens = paCfdEngineLens addresses
+          , crmSettlementSidecar = paCfdEngineSettlementSidecar addresses
+          , crmPletherOracle = paPletherOracle addresses
+          , crmIndexerStartBlock = picStartBlock indexerCfg
           }
   whenReleaseBound cfg releaseManifest $ \boundManifest ->
     withDb pool $ \conn ->
@@ -261,15 +282,18 @@ startValidatedIndexer manager dbUrl cfg release invocation deploymentEnvironment
   logInfo
     "perps_indexer_started"
     "Perps history indexer started with release-bound RPC providers"
-    [ field "mode" $ show $ waMode args
+    [ field "mode" $ show $ picMode indexerCfg
     , field "release_id" $ prId release
-    , field "start_block" startBlock
+    , field "start_block" $ picStartBlock indexerCfg
     , field "requested_start_block" requestedStartBlock
-    , field "confirmations" $ waConfirmations args
-    , field "batch_size" $ waBatchSize args
-    , field "poll_seconds" $ waPollSeconds args
-    , field "rpc_provider_count" $ length rpcUrls
-    , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
+    , field "confirmations" $ picConfirmations indexerCfg
+    , field "batch_size" $ picBatchSize indexerCfg
+    , field "poll_seconds" $ picPollIntervalMicros indexerCfg `div` 1_000_000
+    , field "indexer_name" $ picIndexerName indexerCfg
+    , field "order_lifecycle_book" $ paOrderLifecycleBook addresses
+    , field "rpc_provider_count" $ length $ picRpcUrls indexerCfg
+    , field "trace_api_fallback_enabled" $
+        maybe False (const True) $ picTraceApiUrl indexerCfg
     ]
   runPerpsIndexer manager pool indexerCfg
 
@@ -359,6 +383,7 @@ loadEnvArgs = do
       , "PERPS_USDC"
       , "PERPS_ORDER_ROUTER"
       , "PERPS_ORDER_ROUTER_ADMIN"
+      , "PERPS_ORDER_LIFECYCLE_BOOK"
       , "PERPS_CFD_ENGINE"
       , "PERPS_CFD_ENGINE_ADMIN"
       , "PERPS_CFD_ENGINE_LENS"
@@ -416,41 +441,11 @@ parseWorkerArgs addressDefaults env args =
             (lookupFlag "--trace-api-url" args)
             (lookup "PERPS_INDEXER_TRACE_API_URL" env)
     , waAddresses =
-        addressDefaults
-          { paUsdc = addressEnv "PERPS_USDC" paUsdc
-          , paOrderRouter = addressEnv "PERPS_ORDER_ROUTER" paOrderRouter
-          , paOrderRouterAdmin =
-              addressEnv "PERPS_ORDER_ROUTER_ADMIN" paOrderRouterAdmin
-          , paCfdEngine = addressEnv "PERPS_CFD_ENGINE" paCfdEngine
-          , paCfdEngineAdmin =
-              addressEnv "PERPS_CFD_ENGINE_ADMIN" paCfdEngineAdmin
-          , paCfdEngineLens =
-              addressEnv "PERPS_CFD_ENGINE_LENS" paCfdEngineLens
-          , paCfdEngineSettlementSidecar =
-              addressEnv
-                "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
-                paCfdEngineSettlementSidecar
-          , paMarginClearinghouse =
-              addressEnv
-                "PERPS_MARGIN_CLEARINGHOUSE"
-                paMarginClearinghouse
-          , paPletherOracle =
-              addressEnv "PERPS_PLETHER_ORACLE" paPletherOracle
-          , paAccountLens = addressEnv "PERPS_ACCOUNT_LENS" paAccountLens
-          , paPublicLens = addressEnv "PERPS_PUBLIC_LENS" paPublicLens
-          , paHousePool = addressEnv "PERPS_HOUSE_POOL" paHousePool
-          , paSeniorVault = addressEnv "PERPS_SENIOR_VAULT" paSeniorVault
-          , paJuniorVault = addressEnv "PERPS_JUNIOR_VAULT" paJuniorVault
-          }
+        applyPerpsAddressEnvironment addressDefaults env
     }
   where
     readEnv name fallback = fromMaybe fallback (lookup name env >>= readMaybe)
     readEnvMaybe name = lookup name env >>= readMaybe
-    addressEnv name fieldAccessor =
-      T.pack $
-        fromMaybe
-          (T.unpack $ fieldAccessor addressDefaults)
-          (lookup name env)
 
 parseMode :: [String] -> PerpsIndexerMode
 parseMode args =

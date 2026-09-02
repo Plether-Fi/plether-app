@@ -22,6 +22,10 @@ module Plether.Handlers.ProtocolInsights
   , getParameterChangesResponse
   , orderRevealTiming
   , orderAtConfirmedBlock
+  , orderCommitIntentFromActions
+  , orderFinalizationFromActions
+  , orderEconomics
+  , orderEconomicsAvailability
   , mergePendingChanges
   , StateRead (..)
   , StateImpactPair (..)
@@ -38,6 +42,7 @@ module Plether.Handlers.ProtocolInsights
   , transactionActionAnalysisJson
   , transactionEvidenceLabel
   , transactionAvailability
+  , protocolProjectionIndexerName
   , selectProjectionListAnchor
   , estimateOperationalTransactionsAtObservedGrossSpend
   , operationalWalletStatus
@@ -129,6 +134,7 @@ import Plether.Ethereum.Rpc
   , ethGetBalanceAtCanonicalBlock
   , ethGetBlockByNumber
   )
+import Plether.Perps.HistoryIndexer (perpsIndexerNameForRelease)
 import Plether.Protocol.Parameters
   ( ParameterDefinition (..)
   , parameterCatalog
@@ -635,7 +641,7 @@ getProtocolOverviewAt pool client release listContext = do
     pure $ Right $ protocolResponse release context (Just indexedHead)
       (object
         [ "overview" .= ("mixed_exact_and_derived" :: Text)
-        , "projectionCoverage" .= projectionCoverageEvidence listContext
+        , "projectionCoverage" .= projectionCoverageEvidence release listContext
         ])
       (ccAvailability context <> plcAvailability listContext <> stateAvailability)
       "overview"
@@ -765,7 +771,7 @@ getProtocolTransactionAt pool client release listContext txHash = do
                 , "actions" .= ("versioned_projection" :: Text)
                 , "stateImpact" .= stateImpactEvidence
                 , "analysis" .= analysisEvidence
-                , "projectionCoverage" .= projectionCoverageEvidence listContext
+                , "projectionCoverage" .= projectionCoverageEvidence release listContext
                 ])
               availability
               "transaction"
@@ -902,13 +908,31 @@ getProtocolOrderAt pool client release listContext orderId = do
             pendingOrder = pendingOrderViewJson <$> pendingOrderWords
             settlementWindow = srValue settlementWindowRead
             maxOrderAge = srValue maxOrderAgeRead
-            intent = commitTx >>= decodeCommitIntent release
-            intentArguments =
-              commitTx >>= either (const Nothing) Just . canonicalCommitArguments release
+            resolvedIntent =
+              resolveOrderCommitIntent release orderId commitTx correlatedActions
+            intent = ociValue <$> resolvedIntent
             intentUnavailableReason =
-              case commitTx of
-                Nothing -> Just "commitment_transaction_unavailable"
-                Just transaction -> either Just (const Nothing) $ canonicalCommitArguments release transaction
+              orderIntentUnavailableReason release commitTx resolvedIntent
+            exactIntentObserved =
+              maybe False (const True) $
+                exactOrderCommitIntent release orderId correlatedActions
+            finalization =
+              orderFinalizationFromActions release orderId correlatedActions
+            finalizationExecutor =
+              orderFinalizationField release orderId "executor" correlatedActions
+            finalizationReceiptHash =
+              orderFinalizationField release orderId "receiptHash" correlatedActions
+            finalizationTerminalReason =
+              orderFinalizationField release orderId "terminalReason" correlatedActions
+            finalizationExecutionMode =
+              orderFinalizationField release orderId "executionMode" correlatedActions
+            finalizationFailedConstraint =
+              orderFinalizationField release orderId "failedConstraint" correlatedActions
+            finalizationFailure = do
+              action <- findOrderFinalizationAction release orderId correlatedActions
+              objectField "failure" $ parData action
+            terminalKeeper =
+              finalizationExecutor <|> (String <$> porCleanupActor orderRow)
             (firstEligible, lastEligible) =
               orderRevealTiming (porCommitTimestamp orderRow) settlementWindow
             expiryTimestamp = (+) <$> porCommitTimestamp orderRow <*> maxOrderAge
@@ -929,7 +953,7 @@ getProtocolOrderAt pool client release listContext orderId = do
                 terminalStatusRead
                 terminalPoolRead
             slippageBoundary =
-              orderSlippageBoundary intentArguments (porExecutionPrice orderRow)
+              orderSlippageBoundary resolvedIntent (porExecutionPrice orderRow)
             stateDeltaEvidence =
               orderStateDeltaEvidenceLabel stateDelta
             lifecycle = object
@@ -945,9 +969,12 @@ getProtocolOrderAt pool client release listContext orderId = do
                   , "expiryTimestamp" .= expiryTimestamp
                   , "evidence" .= object
                       [ "event" .=
-                          if commitTx == Nothing
-                            then ("unavailable" :: Text)
-                            else "exact"
+                          if exactIntentObserved
+                            then ("exact_confirmed_intent_registered_event" :: Text)
+                            else
+                              if commitTx == Nothing
+                                then "unavailable"
+                                else "exact"
                       , "transactionHash" .=
                           orderEventEvidence commitTx "exact_confirmed_log" (porCommitTxHash orderRow)
                       , "blockNumber" .=
@@ -958,7 +985,8 @@ getProtocolOrderAt pool client release listContext orderId = do
                           orderEventEvidence commitTx "exact_confirmed_log" (porAccount orderRow)
                       , "side" .=
                           orderEventEvidence commitTx "exact_confirmed_log" (porSide orderRow)
-                      , "intent" .= if intent == Nothing then ("unavailable" :: Text) else "decoded_transaction_input"
+                      , "intent" .=
+                          maybe ("unavailable" :: Text) ociEvidence resolvedIntent
                       , "onchainReservation" .=
                           if pendingOrder == Nothing
                             then ("unavailable" :: Text)
@@ -1008,10 +1036,16 @@ getProtocolOrderAt pool client release listContext orderId = do
                   , "timestamp" .= porTerminalTimestamp orderRow
                   , "status" .= porTerminalStatus orderRow
                   , "failureReason" .= porFailureReason orderRow
+                  , "receiptHash" .= fromMaybe Null finalizationReceiptHash
+                  , "terminalReason" .= fromMaybe Null finalizationTerminalReason
+                  , "executionMode" .= fromMaybe Null finalizationExecutionMode
+                  , "failedConstraint" .= fromMaybe Null finalizationFailedConstraint
+                  , "failure" .= fromMaybe Null finalizationFailure
                   , "executionPrice" .= fmap show (porExecutionPrice orderRow)
                   , "marketAndOracleState" .= terminalMarketState
                   , "slippageBoundary" .= slippageBoundary
-                  , "keeper" .= porCleanupActor orderRow
+                  , "keeper" .= fromMaybe Null terminalKeeper
+                  , "finalization" .= fromMaybe Null finalization
                   , "commitToTerminalLatencySeconds" .= fmap show terminalLatency
                   , "firstEligibleToTerminalLatencySeconds" .=
                       fmap show firstEligibleLatency
@@ -1032,6 +1066,16 @@ getProtocolOrderAt pool client release listContext orderId = do
                             else "derived_no_terminal_action_through_projection_anchor"
                       , "failureReason" .=
                           orderEventEvidence terminalTx "exact_confirmed_log" (porFailureReason orderRow)
+                      , "receiptHash" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalizationReceiptHash
+                      , "terminalReason" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalizationTerminalReason
+                      , "executionMode" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalizationExecutionMode
+                      , "failedConstraint" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalizationFailedConstraint
+                      , "failure" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalizationFailure
                       , "executionPrice" .=
                           orderEventEvidence terminalTx "exact_confirmed_log" (porExecutionPrice orderRow)
                       , "marketAndOracleState" .=
@@ -1048,12 +1092,20 @@ getProtocolOrderAt pool client release listContext orderId = do
                                 _ -> "partial"
                       , "slippageBoundary" .=
                           if terminalTx == Nothing
-                            || intentArguments == Nothing
+                            || maybe True (const False) resolvedIntent
                             || porExecutionPrice orderRow == Nothing
                             then ("unavailable" :: Text)
                             else "derived"
                       , "keeper" .=
-                          orderEventEvidence terminalTx "exact_confirmed_transaction_sender" (porCleanupActor orderRow)
+                          case finalizationExecutor of
+                            Just _ -> ("exact_confirmed_order_finalized_event" :: Text)
+                            Nothing ->
+                              orderEventEvidence
+                                terminalTx
+                                "exact_confirmed_transaction_sender"
+                                (porCleanupActor orderRow)
+                      , "finalization" .=
+                          presentEvidence "exact_confirmed_order_finalized_event" finalization
                       , "commitToTerminalLatencySeconds" .=
                           orderLifecycleDerivedEvidence commitTx terminalTx terminalLatency
                       , "firstEligibleToTerminalLatencySeconds" .=
@@ -1156,7 +1208,16 @@ getProtocolOrderAt pool client release listContext orderId = do
                            then "terminal_transaction_sender_unavailable"
                            else "order_terminal_not_observed_at_confirmed_block"
                        )
-                   | porCleanupActor orderRow == Nothing
+                   | maybe True (const False) terminalKeeper
+                   ]
+                <> [ unavailable
+                       "terminal.finalization"
+                       ( if terminalObserved
+                           then "order_finalized_event_unavailable"
+                           else "order_terminal_not_observed_at_confirmed_block"
+                       )
+                   | prOrderLifecycleBook release /= Nothing
+                   , finalization == Nothing
                    ]
                 <> [ unavailable "terminal.commitToTerminalLatencySeconds" "commitment_or_terminal_timestamp_unavailable"
                    | terminalLatency == Nothing
@@ -1169,8 +1230,8 @@ getProtocolOrderAt pool client release listContext orderId = do
                   "terminal.marketAndOracleState"
                   terminalStatusRead
                   terminalPoolRead
-                <> orderSlippageAvailability intentArguments (porExecutionPrice orderRow)
-                <> orderEconomicsAvailability pendingOrderWords correlatedActions
+                <> orderSlippageAvailability resolvedIntent (porExecutionPrice orderRow)
+                <> orderEconomicsAvailability orderId pendingOrderWords correlatedActions
                 <> keeperTransactionCostAvailability terminalTx
                 <> liquidationAvailability orderRow correlatedActions stateDelta
                 <> stateDeltaAvailability stateDelta
@@ -1210,7 +1271,7 @@ getProtocolOrderAt pool client release listContext orderId = do
                   , "units" .= object ["sizeDelta" .= ("position:18" :: Text), "price" .= ("indexPrice:8" :: Text), "pnlUsdc" .= ("USDC:6" :: Text)]
                   ]
               , "stateImpact" .= stateDeltaJson stateDelta
-              , "economics" .= orderEconomics pendingOrderWords correlatedActions
+              , "economics" .= orderEconomics orderId pendingOrderWords correlatedActions
               , "keeperEconomics" .= keeperTransactionCostJson terminalTx
               , "actions" .= map actionToJson correlatedActions
               , "actionCorrelation" .= object
@@ -1232,17 +1293,23 @@ getProtocolOrderAt pool client release listContext orderId = do
               (object
                 [ "lifecycle" .= object
                     [ "commitment" .=
-                        if commitTx == Nothing
-                          then ("unavailable" :: Text)
-                          else "exact_confirmed_log_plus_historical_reads"
+                        if exactIntentObserved
+                          then ("exact_confirmed_intent_event_plus_historical_reads" :: Text)
+                          else
+                            if commitTx == Nothing
+                              then "unavailable"
+                              else "exact_confirmed_log_plus_historical_reads"
                     , "reveal" .= ("derived_timing_with_explicit_unavailable_oracle_components" :: Text)
                     , "terminal" .=
-                        if terminalObserved
-                          then
-                            if terminalTx == Nothing
-                              then ("unavailable" :: Text)
-                              else "exact_confirmed_log_plus_derived_latency"
-                          else "derived_pending_through_projection_anchor"
+                        case finalization of
+                          Just _ -> ("exact_confirmed_order_finalized_event_plus_derived_latency" :: Text)
+                          Nothing ->
+                            if terminalObserved
+                              then
+                                if terminalTx == Nothing
+                                  then "unavailable"
+                                  else "exact_confirmed_log_plus_derived_latency"
+                              else "derived_pending_through_projection_anchor"
                     ]
                 , "positionChange" .=
                     if positionEvidenceAvailable
@@ -1251,7 +1318,7 @@ getProtocolOrderAt pool client release listContext orderId = do
                 , "stateImpact" .= stateDeltaEvidence
                 , "actionCorrelation" .=
                     ("direct_order_id_plus_same_commit_or_terminal_transaction" :: Text)
-                , "projectionCoverage" .= projectionCoverageEvidence listContext
+                , "projectionCoverage" .= projectionCoverageEvidence release listContext
                 ])
               (plcAvailability listContext <> availability)
               "order"
@@ -4353,8 +4420,12 @@ isCanonicalBlockHash value =
     && T.take 2 value == "0x"
     && T.all isHexDigit (T.drop 2 value)
 
-protocolProjectionIndexerName :: Text
-protocolProjectionIndexerName = "perps-history"
+protocolProjectionIndexerName :: ProtocolRelease -> Text
+protocolProjectionIndexerName release =
+  perpsIndexerNameForRelease
+    (prChainId release)
+    (prOrderRouter release)
+    (prOrderLifecycleBook release)
 
 -- | Choose the newest block for which both the chain-confirmation policy and
 -- the contiguous immutable-ledger cursor can make a completeness claim.
@@ -4395,7 +4466,7 @@ resolveProjectionListContext pool client cfg release expectedScope cursor =
               getProtocolProjectionHead
                 conn
                 (prId release)
-                protocolProjectionIndexerName
+                (protocolProjectionIndexerName release)
           case indexedHead of
             Nothing ->
               pure $
@@ -4890,15 +4961,15 @@ projectionListResponse release listContext evidence availability bodyKey body =
     release
     context
     (Just $ plcIndexedHead listContext)
-    (insertEvidenceField "listProjection" (projectionCoverageEvidence listContext) evidence)
+    (insertEvidenceField "listProjection" (projectionCoverageEvidence release listContext) evidence)
     (ccAvailability context <> plcAvailability listContext <> availability)
     bodyKey
     body
   where
     context = plcConfirmedContext listContext
 
-projectionCoverageEvidence :: ProjectionListContext -> Value
-projectionCoverageEvidence listContext =
+projectionCoverageEvidence :: ProtocolRelease -> ProjectionListContext -> Value
+projectionCoverageEvidence release listContext =
   object
     [ "level" .=
         if lagBlocks > 0
@@ -4906,7 +4977,7 @@ projectionCoverageEvidence listContext =
           else "exact"
     , "policy" .=
         ("minimum_of_chain_confirmed_and_contiguous_projection_heads" :: Text)
-    , "indexerName" .= protocolProjectionIndexerName
+    , "indexerName" .= protocolProjectionIndexerName release
     , "anchorReusedFromCursor" .=
         plcCursorAnchorReused listContext
     , "anchorBlock" .= object
@@ -5155,26 +5226,231 @@ getProtocolTransactionFor :: Text -> Integer -> Text -> Connection -> IO (Maybe 
 getProtocolTransactionFor releaseId maxBlock txHash conn =
   getProtocolTransaction conn releaseId txHash maxBlock
 
-decodeCommitIntent :: ProtocolRelease -> ProtocolTransactionRow -> Maybe Value
-decodeCommitIntent release transaction = do
+data OrderCommitIntent = OrderCommitIntent
+  { ociSide :: Integer
+  , ociAcceptablePrice :: Integer
+  , ociIsClose :: Bool
+  , ociValue :: Value
+  , ociEvidence :: Text
+  }
+
+-- | Resolve the canonical V2 intent from the lifecycle event belonging to the
+-- requested order. The order-id predicate is important for batch transactions:
+-- actions from the other orders in the same transaction are deliberately
+-- included in the detail response, but must never supply this order's intent.
+orderCommitIntentFromActions
+  :: ProtocolRelease
+  -> Integer
+  -> [ProtocolActionRow]
+  -> Maybe Value
+orderCommitIntentFromActions release orderId actions =
+  ociValue <$> exactOrderCommitIntent release orderId actions
+
+exactOrderCommitIntent
+  :: ProtocolRelease
+  -> Integer
+  -> [ProtocolActionRow]
+  -> Maybe OrderCommitIntent
+exactOrderCommitIntent release orderId actions = do
+  lifecycleBook <- prOrderLifecycleBook release
+  action <-
+    find
+      (\candidate ->
+        parOrderId candidate == Just orderId
+          && sameAddress (parContractAddress candidate) lifecycleBook
+          && parActionType candidate == "order_commitment"
+          && objectField "intentHash" (parData candidate) /= Nothing
+          && objectField "request" (parData candidate) /= Nothing
+      )
+      actions
+  request <- objectField "request" $ parData action
+  policy <- objectField "policy" request <|> objectField "policy" (parData action)
+  side <- objectIntegerField "side" request
+  sizeDelta <- objectIntegerField "sizeDelta" request
+  marginDelta <- objectIntegerField "marginDeltaUsdc" request
+  acceptablePrice <- objectIntegerField "acceptablePrice" request
+  isClose <- objectBooleanField "isClose" request
+  let payload = parData action
+      rendered =
+        object
+          [ "clientOrderId" .= fromMaybe Null (objectField "clientOrderId" payload)
+          , "intentHash" .= fromMaybe Null (objectField "intentHash" payload)
+          , "executionBountyUsdc" .=
+              fromMaybe Null (objectField "executionBountyUsdc" payload)
+          , "side" .= show side
+          , "action" .=
+              if isClose
+                then ("reduce_or_close" :: Text)
+                else "open_or_increase"
+          , "sizeDelta" .= show sizeDelta
+          , "marginDeltaUsdc" .= show marginDelta
+          , "acceptablePrice" .= show acceptablePrice
+          , "isClose" .= isClose
+          , "request" .= request
+          , "policy" .= policy
+          , "evidence" .= object
+              [ "level" .= ("exact_confirmed_intent_registered_event" :: Text)
+              , "actionId" .= parActionId action
+              , "transactionHash" .= parTxHash action
+              , "blockNumber" .= show (parBlockNumber action)
+              , "logIndex" .= show (parLogIndex action)
+              ]
+          , "units" .= fromMaybe Null (objectField "units" payload)
+          ]
+  pure
+    OrderCommitIntent
+      { ociSide = side
+      , ociAcceptablePrice = acceptablePrice
+      , ociIsClose = isClose
+      , ociValue = rendered
+      , ociEvidence = "exact_confirmed_intent_registered_event"
+      }
+
+legacyOrderCommitIntent
+  :: ProtocolRelease
+  -> ProtocolTransactionRow
+  -> Maybe OrderCommitIntent
+legacyOrderCommitIntent release transaction = do
   args <- either (const Nothing) Just $ canonicalCommitArguments release transaction
   let side = uintWord args 0
       sizeDelta = uintWord args 1
       marginDelta = uintWord args 2
-      targetPrice = uintWord args 3
+      acceptablePrice = uintWord args 3
       isClose = uintWord args 4 /= 0
-  Just $ object
-    [ "side" .= show side
-    , "action" .= if isClose then ("reduce_or_close" :: Text) else "open_or_increase"
-    , "sizeDelta" .= show sizeDelta
-    , "marginDeltaUsdc" .= show marginDelta
-    , "acceptablePrice" .= show targetPrice
-    , "units" .= object
-        [ "sizeDelta" .= ("position:18" :: Text)
-        , "marginDeltaUsdc" .= ("USDC:6" :: Text)
-        , "acceptablePrice" .= ("indexPrice:8" :: Text)
+      rendered = object
+        [ "side" .= show side
+        , "action" .= if isClose then ("reduce_or_close" :: Text) else "open_or_increase"
+        , "sizeDelta" .= show sizeDelta
+        , "marginDeltaUsdc" .= show marginDelta
+        , "acceptablePrice" .= show acceptablePrice
+        , "units" .= object
+            [ "sizeDelta" .= ("position:18" :: Text)
+            , "marginDeltaUsdc" .= ("USDC:6" :: Text)
+            , "acceptablePrice" .= ("indexPrice:8" :: Text)
+            ]
         ]
+  pure
+    OrderCommitIntent
+      { ociSide = side
+      , ociAcceptablePrice = acceptablePrice
+      , ociIsClose = isClose
+      , ociValue = rendered
+      , ociEvidence = "decoded_commitment_transaction_input"
+      }
+
+resolveOrderCommitIntent
+  :: ProtocolRelease
+  -> Integer
+  -> Maybe ProtocolTransactionRow
+  -> [ProtocolActionRow]
+  -> Maybe OrderCommitIntent
+resolveOrderCommitIntent release orderId transaction actions =
+  exactOrderCommitIntent release orderId actions
+    <|> (transaction >>= legacyOrderCommitIntent release)
+
+orderIntentUnavailableReason
+  :: ProtocolRelease
+  -> Maybe ProtocolTransactionRow
+  -> Maybe OrderCommitIntent
+  -> Maybe Text
+orderIntentUnavailableReason _ _ (Just _) = Nothing
+orderIntentUnavailableReason release Nothing Nothing
+  | prOrderLifecycleBook release /= Nothing =
+      Just "intent_registered_event_unavailable"
+  | otherwise = Just "commitment_transaction_unavailable"
+orderIntentUnavailableReason release (Just transaction) Nothing
+  | prOrderLifecycleBook release /= Nothing =
+      Just "intent_registered_event_unavailable"
+  | otherwise = either Just (const Nothing) $ canonicalCommitArguments release transaction
+
+findOrderFinalizationAction
+  :: ProtocolRelease
+  -> Integer
+  -> [ProtocolActionRow]
+  -> Maybe ProtocolActionRow
+findOrderFinalizationAction release orderId actions = do
+  lifecycleBook <- prOrderLifecycleBook release
+  find
+    (\candidate ->
+      parOrderId candidate == Just orderId
+        && sameAddress (parContractAddress candidate) lifecycleBook
+        && objectField "receiptHash" (parData candidate) /= Nothing
+        && objectField "receipt" (parData candidate) /= Nothing
+    )
+    actions
+
+-- | Render the full accounting-neutral V2 terminal receipt. The nested
+-- receipt/failure/economics objects preserve the canonical event vocabulary;
+-- the selected high-value fields make the order page useful without requiring
+-- consumers to decode that tuple themselves.
+orderFinalizationFromActions
+  :: ProtocolRelease
+  -> Integer
+  -> [ProtocolActionRow]
+  -> Maybe Value
+orderFinalizationFromActions release orderId actions = do
+  action <- findOrderFinalizationAction release orderId actions
+  let payload = parData action
+      receipt = objectField "receipt" payload
+      receiptField keyName = receipt >>= objectField keyName
+      payloadField keyName = objectField keyName payload
+      exactField keyName = payloadField keyName <|> receiptField keyName
+  pure $ object
+    [ "receiptHash" .= fromMaybe Null (payloadField "receiptHash")
+    , "clientOrderId" .= fromMaybe Null (payloadField "clientOrderId")
+    , "intentHash" .= fromMaybe Null (exactField "intentHash")
+    , "expectedConfigHash" .= fromMaybe Null (exactField "expectedConfigHash")
+    , "observedConfigHash" .= fromMaybe Null (exactField "observedConfigHash")
+    , "lifecycleStatus" .= fromMaybe Null (receiptField "lifecycleStatus")
+    , "status" .= fromMaybe Null (receiptField "status")
+    , "terminalReasonCode" .= fromMaybe Null (receiptField "terminalReasonCode")
+    , "terminalReason" .= fromMaybe Null (exactField "terminalReason")
+    , "executionModeCode" .= fromMaybe Null (receiptField "executionModeCode")
+    , "executionMode" .= fromMaybe Null (exactField "executionMode")
+    , "executor" .= fromMaybe Null (exactField "executor")
+    , "priceSource" .= fromMaybe Null (receiptField "priceSource")
+    , "executionPrice" .= fromMaybe Null (exactField "executionPrice")
+    , "neutralMarkPrice" .= fromMaybe Null (receiptField "neutralMarkPrice")
+    , "poolDepthUsdc" .= fromMaybe Null (receiptField "poolDepthUsdc")
+    , "oraclePublishTime" .= fromMaybe Null (exactField "oraclePublishTime")
+    , "priceReachedEngine" .= fromMaybe Null (receiptField "priceReachedEngine")
+    , "bountyUsdc" .= fromMaybe Null (exactField "bountyUsdc")
+    , "bountyRecipient" .= fromMaybe Null (exactField "bountyRecipient")
+    , "bountyDisposition" .= fromMaybe Null (receiptField "bountyDisposition")
+    , "failedConstraint" .= fromMaybe Null (payloadField "failedConstraint")
+    , "failure" .= fromMaybe Null (objectField "failure" payload)
+    , "economics" .= fromMaybe Null (objectField "economics" payload)
+    , "receipt" .= fromMaybe Null receipt
+    , "evidence" .= object
+        [ "level" .= ("exact_confirmed_order_finalized_event" :: Text)
+        , "actionId" .= parActionId action
+        , "transactionHash" .= parTxHash action
+        , "blockNumber" .= show (parBlockNumber action)
+        , "logIndex" .= show (parLogIndex action)
+        ]
+    , "units" .= fromMaybe Null (objectField "units" payload)
     ]
+
+orderFinalizationField
+  :: ProtocolRelease
+  -> Integer
+  -> Text
+  -> [ProtocolActionRow]
+  -> Maybe Value
+orderFinalizationField release orderId keyName actions = do
+  action <- findOrderFinalizationAction release orderId actions
+  objectField keyName $ parData action
+
+objectBooleanField :: Text -> Value -> Maybe Bool
+objectBooleanField keyName value = do
+  fieldValue <- objectField keyName value
+  case fieldValue of
+    Bool boolean -> Just boolean
+    _ -> Nothing
+
+sameAddress :: Text -> Text -> Bool
+sameAddress left right =
+  T.toLower (T.strip left) == T.toLower (T.strip right)
 
 canonicalCommitArguments :: ProtocolRelease -> ProtocolTransactionRow -> Either Text BS.ByteString
 canonicalCommitArguments release transaction = do
@@ -5735,12 +6011,12 @@ stateReadEvidenceLabel exactLabel result =
     "partial" -> "partial"
     _ -> "unavailable"
 
-orderSlippageBoundary :: Maybe BS.ByteString -> Maybe Integer -> Value
+orderSlippageBoundary :: Maybe OrderCommitIntent -> Maybe Integer -> Value
 orderSlippageBoundary Nothing _ = Null
-orderSlippageBoundary (Just args) executionPrice =
-  let side = uintWord args 0
-      acceptablePrice = uintWord args 3
-      isClose = uintWord args 4 == 1
+orderSlippageBoundary (Just intent) executionPrice =
+  let side = ociSide intent
+      acceptablePrice = ociAcceptablePrice intent
+      isClose = ociIsClose intent
       executionMustNotExceed =
         (side == 0 && not isClose)
           || (side == 1 && isClose)
@@ -5767,7 +6043,7 @@ orderSlippageBoundary (Just args) executionPrice =
         , "formula" .=
             ("LONG open and SHORT close require execution <= acceptable; SHORT open and LONG close require execution >= acceptable." :: Text)
         , "provenance" .= object
-            [ "acceptablePrice" .= ("decoded_commitment_transaction_input" :: Text)
+            [ "acceptablePrice" .= ociEvidence intent
             , "executionPrice" .= ("exact_terminal_event_when_present" :: Text)
             , "satisfied" .= ("derived" :: Text)
             ]
@@ -5777,12 +6053,12 @@ orderSlippageBoundary (Just args) executionPrice =
             ]
         ]
 
-orderSlippageAvailability :: Maybe BS.ByteString -> Maybe Integer -> [Value]
+orderSlippageAvailability :: Maybe OrderCommitIntent -> Maybe Integer -> [Value]
 orderSlippageAvailability Nothing _ =
   [unavailable "terminal.slippageBoundary" "commitment_intent_unavailable"]
-orderSlippageAvailability (Just args) executionPrice =
+orderSlippageAvailability (Just intent) executionPrice =
   [ unavailable "terminal.slippageBoundary.satisfied" "acceptable_price_not_configured"
-  | uintWord args 3 == 0
+  | ociAcceptablePrice intent == 0
   ]
     <> [ unavailable "terminal.slippageBoundary.executionPrice" "terminal_execution_price_unavailable"
        | executionPrice == Nothing
@@ -6047,73 +6323,208 @@ accountSnapshotAt client release account blockRef = do
         ])
     result
 
-orderEconomics :: Maybe [Integer] -> [ProtocolActionRow] -> Value
-orderEconomics pendingOrderWords actions =
-  object
-    [ "realizedPnlUsdc" .= firstData "pnl" actions
-    , "executionRewardUsdc" .=
-        maybe Null (String . T.pack . show . (`word` 9)) pendingOrderWords
-    , "protocolFeeUsdc" .= Null
-    , "carryUsdc" .= Null
-    , "vpiUsdc" .= Null
-    , "frozenSpreadUsdc" .= Null
-    , "immediatePayoutUsdc" .= Null
-    , "claimCreatedUsdc" .= Null
-    , "claimConsumedUsdc" .= Null
-    , "seizedCollateralUsdc" .= Null
-    , "badDebtUsdc" .= Null
-    , "keeperBountyUsdc" .= firstData "keeperBountyUsdc" actions
-    , "provenance" .= object
-        [ "realizedPnlUsdc" .=
-            if firstData "pnl" actions == Null
-              then ("unavailable" :: Text)
-              else "exact_event"
-        , "executionRewardUsdc" .=
-            if pendingOrderWords == Nothing
-              then ("unavailable" :: Text)
-              else "exact_historical_pending_order_read"
-        , "keeperBountyUsdc" .=
-            if firstData "keeperBountyUsdc" actions == Null
-              then ("unavailable" :: Text)
-              else "exact_event"
-        , "feeBreakdown" .= ("unavailable" :: Text)
+orderEconomics :: Integer -> Maybe [Integer] -> [ProtocolActionRow] -> Value
+orderEconomics orderId pendingOrderWords actions =
+  let receiptEconomics = orderFinalizedEconomics orderId actions
+      exact keyName = receiptEconomics >>= objectField keyName
+      legacyRealizedPnl = firstDataMaybe "pnl" actions
+      realizedPnl = exact "realizedPnlUsdc" <|> legacyRealizedPnl
+      intentBounty = orderIntentData orderId "executionBountyUsdc" actions
+      historicalReward =
+        String . T.pack . show . (`word` 9) <$> pendingOrderWords
+      executionReward = intentBounty <|> historicalReward
+      keeperBounty = firstDataMaybe "keeperBountyUsdc" actions
+      claimDeltas = traderClaimDeltas receiptEconomics
+      claimCreated = fst <$> claimDeltas
+      claimConsumed = snd <$> claimDeltas
+      exactReceiptEvidence keyName =
+        presentEvidence
+          "exact_confirmed_order_finalized_event"
+          (exact keyName)
+      usdcFields =
+        [ "executionNotionalUsdc"
+        , "vpiUsdc"
+        , "carryUsdc"
+        , "executionFeeUsdc"
+        , "frozenSpreadUsdc"
+        , "actionChargeAssessedUsdc"
+        , "actionChargeCollectedUsdc"
+        , "grossAccountDebitUsdc"
+        , "preSettlementBalanceUsdc"
+        , "postSettlementBalanceUsdc"
+        , "preTraderClaimBalanceUsdc"
+        , "postTraderClaimBalanceUsdc"
+        , "postPositionMarginUsdc"
+        , "postPositionEquityUsdc"
         ]
-    , "units" .= object
-        [ "realizedPnlUsdc" .= ("USDC:6" :: Text)
-        , "executionRewardUsdc" .= ("USDC:6" :: Text)
-        , "keeperBountyUsdc" .= ("USDC:6" :: Text)
-        , "protocolFeeUsdc" .= ("USDC:6" :: Text)
-        , "carryUsdc" .= ("USDC:6" :: Text)
-        , "vpiUsdc" .= ("USDC:6" :: Text)
-        , "frozenSpreadUsdc" .= ("USDC:6" :: Text)
-        , "immediatePayoutUsdc" .= ("USDC:6" :: Text)
-        , "claimCreatedUsdc" .= ("USDC:6" :: Text)
-        , "claimConsumedUsdc" .= ("USDC:6" :: Text)
-        , "seizedCollateralUsdc" .= ("USDC:6" :: Text)
-        , "badDebtUsdc" .= ("USDC:6" :: Text)
+      receiptPairs =
+        [ Key.fromText keyName .= fromMaybe Null (exact keyName)
+        | keyName <- usdcFields
         ]
+          <> [ "postPositionSize" .= fromMaybe Null (exact "postPositionSize")
+             , "postLeverageBps" .= fromMaybe Null (exact "postLeverageBps")
+             ]
+      receiptEvidencePairs =
+        [ Key.fromText keyName .= exactReceiptEvidence keyName
+        | keyName <- usdcFields <> ["postPositionSize", "postLeverageBps"]
+        ]
+      unitPairs =
+        [ Key.fromText keyName .= ("USDC:6" :: Text)
+        | keyName <- usdcFields
+        ]
+   in object $
+        [ "realizedPnlUsdc" .= fromMaybe Null realizedPnl
+        , "executionRewardUsdc" .= fromMaybe Null executionReward
+        , "protocolFeeUsdc" .= Null
+        , "immediatePayoutUsdc" .= Null
+        , "claimCreatedUsdc" .= maybe Null (String . T.pack . show) claimCreated
+        , "claimConsumedUsdc" .= maybe Null (String . T.pack . show) claimConsumed
+        , "seizedCollateralUsdc" .= Null
+        , "badDebtUsdc" .= Null
+        , "keeperBountyUsdc" .= fromMaybe Null keeperBounty
+        , "provenance" .= object
+            ( [ "realizedPnlUsdc" .=
+                  case exact "realizedPnlUsdc" of
+                    Just _ -> ("exact_confirmed_order_finalized_event" :: Text)
+                    Nothing -> presentEvidence "exact_event" legacyRealizedPnl
+              , "executionRewardUsdc" .=
+                  case intentBounty of
+                    Just _ -> ("exact_confirmed_intent_registered_event" :: Text)
+                    Nothing ->
+                      presentEvidence
+                        "exact_historical_pending_order_read"
+                        historicalReward
+              , "keeperBountyUsdc" .=
+                  presentEvidence "exact_event" keeperBounty
+              , "claimCreatedUsdc" .=
+                  presentEvidence
+                    "derived_from_exact_order_finalized_claim_balances"
+                    claimCreated
+              , "claimConsumedUsdc" .=
+                  presentEvidence
+                    "derived_from_exact_order_finalized_claim_balances"
+                    claimConsumed
+              , "protocolFeeUsdc" .= ("unavailable" :: Text)
+              , "immediatePayoutUsdc" .= ("unavailable" :: Text)
+              , "seizedCollateralUsdc" .= ("unavailable" :: Text)
+              , "badDebtUsdc" .= ("unavailable" :: Text)
+              , "feeBreakdown" .=
+                  if receiptEconomics == Nothing
+                    then ("unavailable" :: Text)
+                    else "exact_confirmed_order_finalized_event"
+              ]
+                <> receiptEvidencePairs
+            )
+        , "units" .= object
+            ( [ "executionRewardUsdc" .= ("USDC:6" :: Text)
+              , "realizedPnlUsdc" .= ("USDC:6 signed" :: Text)
+              , "keeperBountyUsdc" .= ("USDC:6" :: Text)
+              , "protocolFeeUsdc" .= ("USDC:6" :: Text)
+              , "immediatePayoutUsdc" .= ("USDC:6" :: Text)
+              , "claimCreatedUsdc" .= ("USDC:6" :: Text)
+              , "claimConsumedUsdc" .= ("USDC:6" :: Text)
+              , "seizedCollateralUsdc" .= ("USDC:6" :: Text)
+              , "badDebtUsdc" .= ("USDC:6" :: Text)
+              , "postPositionSize" .= ("position:18" :: Text)
+              , "postLeverageBps" .= ("basis_points" :: Text)
+              ]
+                <> unitPairs
+            )
+        ]
+          <> receiptPairs
+
+orderEconomicsAvailability
+  :: Integer
+  -> Maybe [Integer]
+  -> [ProtocolActionRow]
+  -> [Value]
+orderEconomicsAvailability orderId pendingOrderWords actions =
+  let receiptEconomics = orderFinalizedEconomics orderId actions
+      exact keyName = receiptEconomics >>= objectField keyName
+      intentBounty = orderIntentData orderId "executionBountyUsdc" actions
+      legacyRealizedPnl = firstDataMaybe "pnl" actions
+      claimDeltas = traderClaimDeltas receiptEconomics
+      exactReceiptFields =
+        [ "executionNotionalUsdc"
+        , "vpiUsdc"
+        , "carryUsdc"
+        , "executionFeeUsdc"
+        , "frozenSpreadUsdc"
+        , "actionChargeAssessedUsdc"
+        , "actionChargeCollectedUsdc"
+        , "grossAccountDebitUsdc"
+        , "preSettlementBalanceUsdc"
+        , "postSettlementBalanceUsdc"
+        , "preTraderClaimBalanceUsdc"
+        , "postTraderClaimBalanceUsdc"
+        , "postPositionSize"
+        , "postPositionMarginUsdc"
+        , "postPositionEquityUsdc"
+        , "postLeverageBps"
+        ]
+   in [ unavailable
+          "economics.executionRewardUsdc"
+          "intent_event_and_pending_order_snapshot_unavailable"
+      | intentBounty == Nothing && pendingOrderWords == Nothing
+      ]
+        <> [ unavailable
+               "economics.realizedPnlUsdc"
+               "order_finalized_receipt_and_legacy_event_value_unavailable"
+           | exact "realizedPnlUsdc" == Nothing
+           , legacyRealizedPnl == Nothing
+           ]
+        <> [ unavailable
+               ("economics." <> keyName)
+               "order_finalized_receipt_economics_unavailable"
+           | keyName <- exactReceiptFields
+           , exact keyName == Nothing
+           ]
+        <> [ unavailable
+               fieldName
+               "order_finalized_claim_balances_unavailable"
+           | claimDeltas == Nothing
+           , fieldName <-
+               [ "economics.claimCreatedUsdc"
+               , "economics.claimConsumedUsdc"
+               ]
+           ]
+        <> [unavailable "economics.protocolFeeUsdc" "receipt_does_not_isolate_protocol_fee"]
+        <> [unavailable "economics.immediatePayoutUsdc" "receipt_does_not_isolate_immediate_payout"]
+        <> [unavailable "economics.seizedCollateralUsdc" "receipt_does_not_emit_seized_collateral"]
+        <> [unavailable "economics.badDebtUsdc" "receipt_does_not_emit_bad_debt"]
+
+orderFinalizedEconomics :: Integer -> [ProtocolActionRow] -> Maybe Value
+orderFinalizedEconomics orderId actions = do
+  action <-
+    find
+      (\candidate ->
+        parOrderId candidate == Just orderId
+          && objectField "receiptHash" (parData candidate) /= Nothing
+          && objectField "receipt" (parData candidate) /= Nothing
+      )
+      actions
+  objectField "economics" $ parData action
+
+orderIntentData :: Integer -> Text -> [ProtocolActionRow] -> Maybe Value
+orderIntentData orderId keyName actions =
+  listToMaybe
+    [ fieldValue
+    | action <- actions
+    , parOrderId action == Just orderId
+    , objectField "intentHash" (parData action) /= Nothing
+    , Just fieldValue <- [objectField keyName $ parData action]
     ]
 
-orderEconomicsAvailability :: Maybe [Integer] -> [ProtocolActionRow] -> [Value]
-orderEconomicsAvailability pendingOrderWords actions =
-  [ unavailable "economics.executionRewardUsdc" "pending_order_snapshot_unavailable"
-  | pendingOrderWords == Nothing
-  ]
-    <> [ unavailable "economics.realizedPnlUsdc" "event_value_not_emitted_or_not_applicable"
-       | firstData "pnl" actions == Null
-       ]
-    <> map
-      (`unavailable` "current_release_settlement_telemetry_missing")
-      [ "economics.protocolFeeUsdc"
-      , "economics.carryUsdc"
-      , "economics.vpiUsdc"
-      , "economics.frozenSpreadUsdc"
-      , "economics.immediatePayoutUsdc"
-      , "economics.claimCreatedUsdc"
-      , "economics.claimConsumedUsdc"
-      , "economics.seizedCollateralUsdc"
-      , "economics.badDebtUsdc"
-      ]
+traderClaimDeltas :: Maybe Value -> Maybe (Integer, Integer)
+traderClaimDeltas receiptEconomics = do
+  economics <- receiptEconomics
+  before <- objectSignedIntegerField "preTraderClaimBalanceUsdc" economics
+  after <- objectSignedIntegerField "postTraderClaimBalanceUsdc" economics
+  pure (max 0 (after - before), max 0 (before - after))
+
+firstDataMaybe :: Text -> [ProtocolActionRow] -> Maybe Value
+firstDataMaybe keyName actions =
+  listToMaybe $ catMaybes $ map (objectField keyName . parData) actions
 
 keeperTransactionCostJson :: Maybe ProtocolTransactionRow -> Value
 keeperTransactionCostJson Nothing = Null

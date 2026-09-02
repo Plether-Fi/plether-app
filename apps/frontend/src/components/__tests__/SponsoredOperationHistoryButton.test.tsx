@@ -76,7 +76,7 @@ function operation(input: {
     chainId: input.chainId ?? identityMocks.chainId,
     accountMode: 'simple',
     manifestVersion:
-      input.manifestVersion ?? 'perps-aa-arbitrum-sepolia-v1',
+      input.manifestVersion ?? 'perps-aa-arbitrum-sepolia-v2',
     action: input.action,
     lane: 'default',
     status: input.status,

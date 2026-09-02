@@ -14,13 +14,14 @@ module Plether.Api
 import Control.Exception (evaluate)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, encode, object, withObject, (.:), (.:?), (.=))
+import Data.Aeson (FromJSON (..), ToJSON, encode, object, withObject, (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
+import Data.Either (isRight)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
@@ -31,7 +32,7 @@ import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Header (hCacheControl, hContentType, hPragma)
 import Network.HTTP.Types.Method (methodGet)
-import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503, statusCode)
+import Network.HTTP.Types.Status (status200, status400, status403, status404, status426, status429, status500, status503, statusCode)
 import Network.HTTP.Client (Manager)
 import Network.Wai
   ( Middleware
@@ -50,7 +51,7 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.Config (Config (..), perpsCandleRollupReadEnabled)
+import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client
   ( EthClient
@@ -60,6 +61,15 @@ import Plether.Ethereum.Client
   , validateRpcChainId
   )
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import Plether.Perps.Release
+  ( perpsV2CalldataPolicy
+  , perpsV2DeploymentBlock
+  , perpsV2ManifestVersion
+  , perpsV2PolicyEvaluator
+  , perpsV2PositionProtectionBook
+  , perpsV2PublicLens
+  , validatePerpsV2ReleaseConfig
+  )
 import Plether.Handlers.Perps
   ( BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
@@ -80,7 +90,7 @@ import Plether.Handlers.Perps
   , getPythUpdate
   , getRevealPayload
   )
-import Plether.Logging (field, logInfoEvery)
+import Plether.Logging (field, logInfo, logInfoEvery, logWarn)
 import Plether.Handlers.PerpsHistory
   ( getPerpsAccountActivity
   , getPerpsAccountOrders
@@ -138,7 +148,16 @@ import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet
   ( claimTestnetFaucet
-  , gateSubmittedFaucetResponse
+  )
+import Plether.Handlers.TestnetFaucetGuard
+  ( FaucetClientId (..)
+  , FaucetGuardFailure (..)
+  , FaucetGuardFailureReason (..)
+  , FaucetGuardState
+  , authenticateFaucetRequest
+  , checkFaucetRequest
+  , faucetGuardFailureReasonText
+  , faucetQuotaScopeText
   )
 import Plether.Protocol.Release (ProtocolRelease (..), currentProtocolRelease)
 import Plether.Types.History (HistoryParams (..))
@@ -162,6 +181,7 @@ import Web.Scotty
   ( ActionM
   , ScottyM
   , get
+  , header
   , jsonData
   , json
   , middleware
@@ -174,16 +194,20 @@ import Web.Scotty
   , status
   )
 
-data TestnetFaucetRequest = TestnetFaucetRequest Text Bool
+data TestnetFaucetRequest = TestnetFaucetRequest (Maybe Text) Bool
 
 instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v -> do
-    address <- v .: "address"
+    addressValue <- v .:? "address"
     confirmationMode <- v .:? "confirmationMode"
-    pure $ TestnetFaucetRequest address (confirmationMode == Just ("async" :: Text))
+    let address = case addressValue of
+          Just (Aeson.String value) -> Just value
+          _ -> Nothing
+        acceptsAsync = confirmationMode == Just (Aeson.String "async")
+    pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState = do
   middleware noStoreErrorResponses
   middleware $ corsMiddleware cfg
   middleware $ protocolExplorerGate (cfgProtocolExplorerEnabled cfg)
@@ -203,17 +227,74 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
 
+  get "/api/aa/status" $ do
+    let releaseConfigured =
+          isRight $
+            validatePerpsV2ReleaseConfig
+              (cfgPerpsChainId cfg)
+              (cfgPerpsOrderRouter cfg)
+              (cfgPerpsOrderLifecycleBook cfg)
+              (cfgPerpsCfdEngine cfg)
+              (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsHousePool cfg)
+              (cfgPerpsIndexerStartBlock cfg)
+        sponsorshipEnabled = maybe False aaSponsorshipEnabled $ cfgAaConfig cfg
+    status status200
+    json $
+      Aeson.object
+        [ "manifestVersion" .= perpsV2ManifestVersion
+        , "chainId" .= cfgPerpsChainId cfg
+        , "deploymentBlock" .= perpsV2DeploymentBlock
+        , "usdc" .= cfgPerpsUsdc cfg
+        , "orderRouter" .= cfgPerpsOrderRouter cfg
+        , "orderLifecycleBook" .= cfgPerpsOrderLifecycleBook cfg
+        , "cfdEngine" .= cfgPerpsCfdEngine cfg
+        , "marginClearinghouse" .= cfgPerpsMarginClearinghouse cfg
+        , "housePool" .= cfgPerpsHousePool cfg
+        , "policyEvaluator" .= perpsV2PolicyEvaluator
+        , "positionProtectionBook" .= perpsV2PositionProtectionBook
+        , "perpsPublicLens" .= perpsV2PublicLens
+        , "calldataPolicy" .= perpsV2CalldataPolicy
+        -- A configured lifecycle book makes startup perform the coherent-block
+        -- graph and runtime-code verification before the server can listen.
+        , "bindingsVerified" .= releaseConfigured
+        , "sponsorshipEnabled" .= sponsorshipEnabled
+        ]
+
   post "/api/testnet/faucet" $ do
-    TestnetFaucetRequest addr acceptsSubmitted <- jsonData
-    if isValidAddress addr
-      then case mPool of
-        Just pool -> do
-          result <- liftIO $ claimTestnetFaucet pool perpsClient cfg addr
-          handleResult $ gateSubmittedFaucetResponse acceptsSubmitted result
-        Nothing ->
-          handleServiceUnavailable $
-            E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
-      else handleError $ E.invalidAddress addr
+    suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"
+    suppliedClientIp <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+    case
+        authenticateFaucetRequest
+          (cfgFaucetGuardConfig cfg)
+          suppliedToken
+          suppliedClientIp
+      of
+      Left failure -> handleFaucetGuardFailure failure
+      Right (guardConfig, clientId) -> do
+        TestnetFaucetRequest maybeAddress acceptsAsync <- jsonData
+        guardResult <-
+          liftIO $
+            checkFaucetRequest
+              faucetGuardState
+              guardConfig
+              clientId
+              acceptsAsync
+        case guardResult of
+          Left failure -> handleFaucetGuardFailure failure
+          Right () -> do
+            liftIO $ logFaucetGuardAccepted clientId
+            case maybeAddress of
+              Just addr
+                | isValidAddress addr ->
+                    case mPool of
+                      Just pool ->
+                        liftIO (claimTestnetFaucet pool perpsClient cfg addr) >>= handleResult
+                      Nothing ->
+                        handleServiceUnavailable $
+                          E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
+              Just addr -> handleError $ E.invalidAddress addr
+              Nothing -> handleError $ E.invalidAddress "address is required"
 
   post "/api/aa/pimlico" $
     handlePimlicoProxy pimlicoProxyState cfg perpsClient manager
@@ -1055,12 +1136,58 @@ handleError err = do
   status $
     case E.errCode err of
       E.RateLimited -> status429
+      E.Forbidden -> status403
+      E.UpgradeRequired -> status426
       E.RpcError -> status503
       E.NetworkError -> status503
       E.NotFound -> status404
       E.InternalError -> status500
       _ -> status400
   json err
+
+handleFaucetGuardFailure :: FaucetGuardFailure -> ActionM ()
+handleFaucetGuardFailure failure = do
+  liftIO $ logFaucetGuardRejected failure
+  case fgfReason failure of
+    FaucetConfirmationModeUnsupported ->
+      handleError $
+        E.upgradeRequired
+          "Plether was updated. Refresh this page, then try the faucet again."
+    FaucetClientQuotaExceeded -> handleQuotaFailure
+    FaucetGlobalQuotaExceeded -> handleQuotaFailure
+    _ ->
+      handleError $
+        E.forbidden "Faucet requests must use the official Plether app."
+  where
+    handleQuotaFailure = do
+      case fgfRetryAfterSeconds failure of
+        Just retryAfter -> setHeader "Retry-After" $ LT.pack $ show retryAfter
+        Nothing -> pure ()
+      handleError $ E.rateLimited
+
+logFaucetGuardAccepted :: FaucetClientId -> IO ()
+logFaucetGuardAccepted clientId =
+  logInfo
+    "testnet_faucet_guard"
+    "Testnet faucet request passed the request guard"
+    [ field "outcome" ("accepted" :: Text)
+    , field "rejection_reason" ("none" :: Text)
+    , field "client_id" $ unFaucetClientId clientId
+    , field "quota_scope" ("both" :: Text)
+    , field "retry_after_seconds" (Nothing :: Maybe Int)
+    ]
+
+logFaucetGuardRejected :: FaucetGuardFailure -> IO ()
+logFaucetGuardRejected failure =
+  logWarn
+    "testnet_faucet_guard"
+    "Testnet faucet request was rejected by the request guard"
+    [ field "outcome" ("rejected" :: Text)
+    , field "rejection_reason" $ faucetGuardFailureReasonText $ fgfReason failure
+    , field "client_id" $ fmap unFaucetClientId $ fgfClientId failure
+    , field "quota_scope" $ faucetQuotaScopeText $ fgfQuotaScope failure
+    , field "retry_after_seconds" $ fgfRetryAfterSeconds failure
+    ]
 
 handleServiceUnavailable :: ApiError -> ActionM ()
 handleServiceUnavailable err = do

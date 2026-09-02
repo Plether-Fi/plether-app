@@ -4,23 +4,24 @@
 >
 > Senior and Junior shares can lose value. A positive share balance may not be immediately withdrawable, and either tranche can be completely wiped out.
 
-Plether uses solvency checks, a Senior–Junior waterfall, conservative accounting and a withdrawal firewall to limit specific risks. These controls change when and how losses can occur. They do not guarantee principal, return, liquidity or correct protocol operation.
+Plether uses solvency checks, a Senior–Junior waterfall, conservative accounting, protected liquidity and hourly request processing to limit specific risks. These controls change when and how losses or delays can occur. They do not guarantee principal, return, liquidity, processing time or correct protocol operation.
 
-> **Current interface status**
+> **Testnet, wallet and gas**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. Full activity history and APY history are not enabled. The `Senior Vault` and `Junior Vault` controls referenced in this section must not be treated as published until the deployed application exposes them.
->
-> LP actions are outside the current trader gas-sponsorship promise. An LP should expect to use the connected owner wallet and pay native network gas for each approval and vault transaction.
+> The current test configuration targets Arbitrum Sepolia and uses the connected owner wallet. LP approvals, deposits, withdrawals, cancellations, claims and refunds are ordinary wallet transactions. They are not Plether Trading Account-sponsored actions and require Arbitrum Sepolia ETH for gas.
+
+![Junior Vault risk safeguards and shared pool status.](../.gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-house-pool.png)
 
 ### Start with the economic risk
 
-The HousePool is the USDC[^usdc] balance sheet behind Plether Perps[^perps]. LP[^lp] capital can be used to pay profitable traders, fund VPI[^vpi] rebates and absorb bad debt. Collected trader losses, collected carry[^carry] and positive VPI can add value to the pool.
+The HousePool is the USDC[^usdc] balance sheet behind Plether Perps[^perps]. LP[^lp] capital can be used to pay profitable traders, fund VPI[^vpi] rebates and absorb bad debt. Collectible marked or collected trader losses, collected carry[^carry], positive VPI, paid frozen-close spread, the LP remainder of a collected liquidation charge and temporary withdrawal pricing fees can add accounting or physical value to the pool or a tranche.
 
 This creates a direct tradeoff:
 
-* More HousePool/LP-owned revenue can increase tranche value.
-* Trader profits and other pool losses can decrease tranche value.
-* The order of loss differs between Senior and Junior, but neither tranche is protected from every loss.
+* More reconciled LP-owned value can increase tranche value.
+* Trader profits, rebates, shortfalls and other pool losses can decrease tranche value.
+* Senior and Junior take those changes in a different order, but neither tranche is protected from every loss.
+* Accounting value can remain positive while cash is unavailable to fund a withdrawal request.
 
 Read [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md) for the canonical accounting model.
 
@@ -29,18 +30,19 @@ Read [The HousePool and tranche waterfall](../how-plether-works/the-housepool-an
 | Safeguard | What it is designed to do | What it does not guarantee |
 | --- | --- | --- |
 | **Fixed `0.00–2.00` settlement range** | Makes the maximum modeled directional payout of the Plether index calculable | That component FX prices are bounded, or that non-directional losses and failures are bounded |
-| **Entry solvency check** | Rejects new trader exposure when effective backing would not cover the resulting maximum modeled liability | That LP principal cannot decline, that bad debt is impossible or that every obligation is immediately payable |
-| **Physical-asset accounting** | Uses the lower of raw and accounted HousePool assets and quarantines unassigned transfers | That USDC remains worth one dollar or that the token, chain and contracts cannot fail |
-| **Conservative reconciliation** | Counts unrealized trader gains as liabilities without counting unrealized trader losses as spendable assets | That every displayed NAV[^nav] is an exact future redemption value |
-| **Junior first-loss position** | Makes Junior absorb pool losses before Senior | Principal protection for Senior, or a limit on Junior loss |
-| **Senior restoration priority** | Routes future realized revenue toward an impaired Senior tranche before new residual value reaches Junior | That Senior will be restored, or when restoration will occur |
-| **Withdrawal firewall** | Keeps cash reserved for trader liabilities and other protected amounts inside the HousePool | Immediate or unconditional LP withdrawals |
-| **Pending deposit epochs** | Avoids immediate share issuance while open positions make deposit pricing incomplete | A fixed entry price, immediate activation, prompt finalization or cancellation after activation |
-| **Frozen-oracle surcharge** | Retains value inside the affected tranche when an LP enters or exits under bounded stale-price rules | Full compensation for an external FX move, or continued action availability once data becomes too old |
-| **Pause and degraded mode** | A HousePool pause blocks new deposits; degraded mode blocks LP withdrawals while risk-reducing trader actions remain available | A loss-free recovery or uninterrupted access to capital |
-| **Non-upgradeable perps logic and timelocks** | Limit in-place code replacement and provide notice for most risk-parameter changes | Correct code, safe governance decisions or immutability of every external dependency |
+| **Entry solvency check** | Rejects new trader exposure when effective backing would not cover the resulting maximum modeled liability plus the configured liability-scaled settlement buffer | That LP principal cannot decline, bad debt is impossible or every obligation is immediately payable |
+| **Physical-asset accounting** | Uses conservative HousePool assets and keeps unassigned transfers outside ordinary tranche value until reconciliation | That USDC remains worth one dollar or that token, chain and contract failures cannot occur |
+| **Terminal NAV reconciliation** | Uses one exact signed snapshot: marked gains reduce LP NAV and collectible marked losses can raise it only up to collateral and claim caps | That accounting NAV is physical withdrawal cash or an exact future receipt |
+| **Junior first-loss position** | Makes Junior absorb pool losses before Senior | Principal protection for Senior or a limit on Junior loss |
+| **Senior restoration priority** | Routes future reconciled LP-owned value toward an impaired Senior tranche before new residual value reaches Junior | That Senior will be restored or when restoration will occur |
+| **Protected liquidity** | Keeps cash reserved for trader withdrawals and other protected payments inside the HousePool | Immediate or unconditional LP withdrawals |
+| **Hourly request processing** | Prices deposits and funds withdrawals at controlled hourly boundaries | A fixed request-time conversion, exact processing at the displayed time or sufficient cash for every withdrawal |
+| **Cancellation and recovery actions** | Let users use ordinary UI cancellation before processing or recover refundable USDC or zero-value share remainders | Ordinary cancellation after the processing boundary or automatic movement of ready assets into the owner wallet; the contract retains narrow mature-deposit escape paths for a rejected epoch, projected terminal wipe, Senior impairment or invalid Senior reservation |
+| **Temporary withdrawal pricing fee** | Retains value inside the selected tranche when an eligible withdrawal is funded without live pricing | Full compensation for external FX moves or action availability after accepted data becomes too old |
+| **Pause and safety controls** | Block new deposits or hourly settlement when the current state is unsafe | A loss-free recovery or uninterrupted access to capital |
+| **Non-upgradeable perps logic and 48-hour settings delays** | Limit in-place code replacement and provide notice before displayed risk, fee, trading and pricing settings change | Correct code, safe governance decisions or immutability of every external dependency |
 
-The fixed settlement range and solvency check are admission controls. If the covered market outcome occurs, LP capital is still expected to pay traders.
+The fixed settlement range and solvency check are admission controls. If an admitted market liability is realized, LP capital is still expected to pay traders.
 
 ### Principal-loss risk differs by tranche
 
@@ -49,73 +51,120 @@ Senior and Junior are tranche[^tranche] claims on the same HousePool, not isolat
 | | Senior Vault | Junior Vault |
 | --- | --- | --- |
 | **Loss position** | Absorbs losses after Junior is exhausted | Absorbs losses first |
-| **Return position** | Receives a target coupon funded from available Junior value | Receives residual realized pool revenue after Senior obligations |
-| **Withdrawal position** | First LP claim on free cash | Withdraws only from cash remaining above the complete Senior claim |
+| **Return position** | Receives a targeted return funded from available Junior value | Receives residual reconciled LP-owned value after Senior priority |
+| **Withdrawal position** | Funded before Junior | Funded only after Senior priority |
+| **Annual maintenance fee** | None; the current vault card shows **Zero fees** | Pays the live **Annual vault fee** through newly issued pjLP shares |
 | **Severe outcome** | Can be impaired or completely wiped out | Can lose value or be completely wiped out before Senior loses value |
 
-The Senior target coupon is an allocation from Junior principal. It is not external yield, a guaranteed APY[^apy] or a debt claim against future revenue. If Junior cannot fund the coupon, the unpaid portion does not accumulate as an amount owed to Senior.
+The Senior targeted return is an allocation from Junior value. It is not external yield, a guaranteed APY[^apy] or a debt claim against future revenue. If Junior cannot fund the target, the unpaid portion does not become an accumulating amount owed to Senior.
 
-Junior receives residual upside because it funds that coupon and bears first loss. A wiped tranche cannot be silently revived by an ordinary deposit; recovery requires realized revenue allocated through the waterfall or an explicit recapitalization path.
+Junior receives residual upside because it funds the Senior target and bears first loss. Its annual maintenance fee creates additional dilution: newly issued fee shares increase effective supply and reduce each existing holder's proportional claim. Read the live **Annual vault fee**, **Accrued fee shares** and **Fee recipient** rather than assuming the fee is zero or paid as a separate USDC charge.
+
+A wiped tranche cannot be silently revived by an ordinary deposit. Recovery requires reconciled LP-owned value allocated through the waterfall or an explicit recapitalization path. A marked receivable can affect NAV but does not become withdrawal cash until collected.
 
 Use [Choose Senior or Junior](choose-senior-or-junior.md) to compare the two risk positions before depositing.
+
+### Hourly requests introduce timing and pricing risk
+
+Every deposit and withdrawal is a queued request. Requests become eligible at an assigned hourly boundary. The contract assigns that boundary from the request transaction's block-inclusion timestamp, so inclusion at or after the five-minute cutoff targets the following hour even if the transaction was signed or sent earlier. Treat the confirmed request record as authoritative.
+
+The displayed **Expected processing** time is not a guarantee. Processing can wait because of:
+
+* a governance **Hourly processing paused** state;
+* a stale or unavailable market price;
+* an unknown dependency or runtime safety restriction;
+* an unresolved pool shortfall or Senior impairment affecting deposits;
+* insufficient available USDC for a withdrawal; or
+* keeper, RPC or chain disruption.
+
+When LP settlement is enabled, a healthy keeper handles eligible processing through the permissionless path; the current interface exposes no user settlement transaction. A disabled or unavailable keeper is therefore another delay risk. If a request changes to **Waiting for processing** or **Waiting for USDC**, submitting a duplicate does not advance the original request and can create another commitment.
+
+The ordinary interface cancellation is available only before the request reaches its processing boundary. A delayed request can therefore be non-cancellable in the UI even though shares or USDC are not yet ready. At contract level, a mature deposit also has narrow escape paths when its epoch was rejected, processing would create a terminal wipe, Senior is impaired or the Senior reservation is invalid.
+
+### Deposit-request risks
+
+Submitting a deposit moves USDC out of the owner wallet and into vault custody. It does not immediately deliver wallet-held shares.
+
+| Status | Risk and user action |
+| --- | --- |
+| **Pending** | The USDC is held for hourly processing. The share amount is still an estimate. **Cancel deposit** is available before the processing boundary. |
+| **Waiting for processing** | The expected time passed without processing. The request is not a wallet-held share position, and cancellation is no longer offered. |
+| **Shares ready** | The processed shares already participate in vault performance but remain in vault custody until **Move shares to wallet** confirms. |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected. The user must select **Return USDC to wallet** to recover the refundable assets. |
+
+The final shares can differ from **Estimated shares** because the share price and applicable pricing conditions can change before processing. Approval confirmation alone is not a deposit request; **Queue deposit** must also confirm.
+
+Moving ready shares into the wallet starts or restarts a one-hour withdrawal cooldown for the wallet's entire position in that tranche.
+
+### Withdrawal-request risks
+
+The **Withdraw USDC** form accepts a desired USDC amount, but the queued object is the refreshed **Estimated shares used** quote. The request does not lock in the displayed USDC value.
+
+| Status | Risk and user action |
+| --- | --- |
+| **Pending** | The shares remain exposed to gains and losses while waiting. **Cancel withdrawal** is available before the processing boundary. |
+| **Waiting for USDC** | The expected processing epoch has arrived or passed, but no USDC has been allocated. A pause, pricing, health, liquidity or Senior-priority gate may still block funding. |
+| **USDC ready** | Some USDC has been allocated but still requires **Move USDC to wallet**. A share remainder may also be ready to return. |
+| **Shares ready to return** | A remaining share amount quoted to zero assets and entered terminal refund state. **Return shares to wallet** can coexist with claimable USDC after partial funding. |
+
+The final USDC can be higher or lower than the request-time estimate because queued shares continue changing in value until processing. The request locks the refreshed share quote; if the temporary pricing fee or share price changes afterward, the fixed shares yield a different USDC amount rather than the vault pulling more shares.
+
+Canceling a withdrawal or returning a zero-value share remainder moves shares back into the wallet and restarts the one-hour cooldown for the entire tranche position. An ordinary insufficient-liquidity remainder remains queued.
+
+There is no guaranteed date on which a waiting withdrawal, including a Junior request behind Senior priority, will receive enough USDC.
+
+### Cooldown and transfer risk
+
+The vault's share-delivery, withdrawal-cancellation and zero-value-remainder return actions start or restart a one-hour cooldown for that wallet's entire position in the same tranche. An ordinary wallet-to-wallet transfer can occur only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the live **Available in** countdown ends, those shares cannot be transferred or used for another withdrawal request.
+
+The current flow explicitly warns about the cooldown when the user:
+
+* selects **Move shares to wallet** after a deposit;
+* selects **Cancel withdrawal**; or
+* selects **Return shares to wallet** for a zero-value withdrawal remainder.
+
+The cooldown is a holder-level restriction, not an accounting loss. **Current value** can continue moving while **Shares available to withdraw** is zero.
 
 ### Share value is not withdrawal liquidity
 
 An ERC-4626[^erc4626] share represents a proportional claim on one tranche's accounting value. It is not an unconditional claim on the same fraction of the HousePool's raw USDC balance.
 
-Before LP cash can leave, Plether reserves value for:
+Before LP cash can be allocated, Plether protects value for:
 
-* Maximum bounded trader liability
-* Outstanding trader claims
-* USDC already set aside for trader claims and other protected obligations
-* Unassigned assets and explicit protocol reserves
+* maximum bounded trader liability and its configured liability-scaled settlement buffer;
+* outstanding trader claims;
+* USDC already reserved for trader withdrawals and other protected payments; and
+* unassigned assets and explicit protocol reserves.
 
-Trader claims rank ahead of both LP tranches. After those trader and protocol obligations determine free LP liquidity, Senior receives priority over Junior within the remaining amount. The complete Senior claim is a tranche-allocation priority, not an additional HousePool withdrawal-reserve deduction.
+Trader claims rank ahead of both LP tranches. After those obligations determine **Available liquidity**, Senior withdrawal requests are funded before Junior.
 
-Withdrawal capacity can also be limited by:
+Read these current labels as distinct measurements:
 
-* The holder's cooldown
-* Insufficient physical HousePool cash
-* Senior priority over Junior
-* Stale or unavailable oracle data
-* Pause, lifecycle or degraded-mode restrictions
-* A tranche-specific frozen-oracle surcharge
+* **Total pool funds** — canonical physically backed pool depth: the smaller of raw HousePool assets and accounted assets, excluding quarantined excess; it is not an LP withdrawal limit.
+* **Reserved funds** or **Reserved for trader withdrawals** — protected amounts that are not free LP cash.
+* **Available liquidity** — pool cash after protected amounts.
+* **Current vault value** — accounting value of the selected tranche.
+* **Shares available to withdraw** — wallet shares currently eligible for a request after the holder cooldown and request limit.
+* **Available withdrawal liquidity** — estimated pool-level funding capacity for the tranche, after priority.
+* **USDC ready for wallet** — already allocated withdrawal proceeds still waiting for a wallet transaction.
 
-The current vault design has no withdrawal queue. A permitted withdrawal settles synchronously; an amount above the live cap cannot be withdrawn. There is no guaranteed date on which a lower cap, including a zero Junior cap, will increase.
+Read [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md) for why a protocol can remain modeled as solvent while withdrawal funding is temporarily unavailable.
 
-Read [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md) for why a protocol can remain modeled as solvent while free cash is temporarily unavailable.
+### Accounting and performance can move at different times
 
-### Pending deposits introduce commitment and pricing risk
+Plether uses one exact signed, collateral-capped Terminal NAV snapshot for entry and exit accounting:
 
-When trader positions are open, ordinary LP entry uses a pending deposit epoch rather than issuing active shares immediately.
+* Marked trader gains reduce distributable LP value because they are potential pool liabilities.
+* Marked trader losses can increase LP value only up to the collectible amount backed by pledged collateral and eligible same-account claims.
+* That positive marked receivable is not physical HousePool cash and does not increase free withdrawal liquidity until collected.
 
-After a request is funded:
+This keeps accounting share value distinct from the cash that can safely leave now.
 
-* USDC leaves the owner wallet and sits in tranche-vault escrow.
-* Before finalization, the depositor holds no shares and does not participate in tranche returns.
-* Cancellation is normally available only before the activation epoch begins.
-* The request normally becomes binding at activation.
-* Permissionless finalization fixes one batch price and creates claimable shares in vault escrow; their value then moves with the tranche share price.
-* A separate claim transfers those escrowed shares to the owner wallet.
+A deposit estimate, current share price, position value, withdrawal share quote and final withdrawal receipt answer different questions. They should not be expected to remain equal or move together. ERC-4626 rounding, virtual-share protections and Junior fee-share issuance also affect exact conversions.
 
-The final share amount can differ from the request-time estimate. Pool economics and the oracle-frozen surcharge can change before finalization, and transaction ordering can affect which realized events are included in the batch price.
+When complete deployment-matched history exists, the interface shows **7d realized APY**, **7d return**, **Start share price** and **Current share price**. Realized APY annualizes the actual seven-day share-price change. It can be negative and is not a forecast. If the app omits **Performance**, do not interpret missing history as zero return.
 
-Finalization is permissionless, but the current protocol does not assign it a separate bounty. Permissionless does not mean immediate. If Senior impairment prevents an active epoch from finalizing, a special cancellation path becomes available so escrowed USDC can be recovered.
-
-See [Manage a pending deposit](manage-a-pending-deposit.md) before funding a request.
-
-### Accounting and pricing can move at different times
-
-Plether deliberately applies asymmetric LP accounting:
-
-* Unrealized trader gains can reduce distributable LP value because they are potential pool liabilities.
-* Unrealized trader losses do not increase LP value until the USDC is physically collected.
-
-This reduces the risk of LPs withdrawing against money the protocol does not possess. It can also temporarily understate tranche value, particularly in Junior.
-
-Deposit pricing and conservative withdrawal reconciliation answer different questions. A deposit preview, current share price, position value and current withdrawal capacity should not be expected to remain equal or move together. ERC-4626 rounding and virtual-share protections also affect exact share conversion.
-
-Read [Understand LP returns and share value](understand-lp-returns-and-share-value.md) before treating any displayed performance figure as a forecast.
+Read [Understand LP returns and share value](understand-lp-returns-and-share-value.md) before treating any displayed performance figure as an expected rate.
 
 ### Directional and model risk remain with LPs
 
@@ -125,7 +174,7 @@ LPs do not select LONG USD or SHORT USD, but the HousePool takes the economic ot
 * A SHORT USD-heavy market creates greater pool liability when the index weakens.
 * A more balanced market can still owe profitable traders on either side.
 
-Plether admits new exposure only when effective backing covers the resulting maximum modeled directional liability. That check depends on correct code, accounting, oracle data and model assumptions. It does not prevent capital from being paid out when an admitted liability is realized.
+Plether admits new exposure only when effective backing covers the resulting maximum modeled directional liability plus the configured liability-scaled settlement buffer. That check depends on correct code, accounting, oracle data and model assumptions. It does not prevent LP capital from being paid out when an admitted liability is realized.
 
 The index is DXY-inspired, uses a weighted arithmetic basket with fixed reference coefficients and clamps settlement to `0.00–2.00`. Effective currency weights can drift. External FX behavior, trader concentration and liquidation incentives can therefore produce outcomes that differ from a simple historical-return assumption.
 
@@ -133,67 +182,82 @@ The index is DXY-inspired, uses a weighted arithmetic basket with fixed referenc
 
 Plether relies on Pyth[^pyth] data for every basket component. Freshness, confidence and timestamp-alignment rules reject some unsafe observations, but they cannot eliminate incorrect data, feed compromise, publication outages or integration defects.
 
-During the scheduled oracle-frozen state, an LP deposit or withdrawal can remain available under an extended freshness policy and a tranche-specific surcharge. The retained amount stays in the same tranche for incumbent LPs; it is not protocol-treasury revenue.
+The current Vaults behavior distinguishes these conditions:
 
-The surcharge reduces a specific stale-price timing risk. It does not guarantee that:
+* A scheduled close-only period with live pricing does not, by itself, activate the **Temporary pricing fee**.
+* When live pricing is unavailable and the protocol is in its frozen state, new deposits are unavailable.
+* A withdrawal can still be queued while frozen. Its current quote can require more shares because of the selected tranche's temporary pricing fee. Once queued, that share amount is fixed; later fee or price changes affect final USDC. The interface recommends waiting for live pricing when possible.
+* Previously queued work can wait if no acceptable mark or safe execution path is available.
+* The extended frozen-data window is finite. Once data is too old for the active policy, pricing-dependent processing can stop.
 
-* The retained amount covers the next external FX move
-* The available basket is correct
-* Data remains young enough for the frozen policy
-* An LP action will execute
+The temporary pricing fee remains inside the affected tranche. It is not protocol-treasury revenue, and it does not guarantee that the retained value covers the next external FX move.
 
-A scheduled close-only runway does not by itself activate the surcharge. An unexpected live-market oracle outage does not automatically switch the protocol into frozen pricing. See [Market states and oracle closures](../how-plether-works/market-states-and-oracle-closures.md).
+See [Market states and oracle closures](../how-plether-works/market-states-and-oracle-closures.md) for the full calendar and oracle policy.
+
+### Pause, safety and backlog risk
+
+Do not treat every warning as the same kind of pause:
+
+| Displayed state | Current effect |
+| --- | --- |
+| **New deposits paused** | New deposit requests are blocked. A withdrawal request can still be submitted unless a separate limit applies. |
+| **Safety restrictions: Active** | Deposits are blocked. The interface can still accept withdrawal requests, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode. Already-funded actions remain usable. |
+| **Hourly processing paused** | New requests can still be submitted when other limits permit; pre-boundary cancellations and already-ready move, claim or return actions remain available. Deposits do not begin earning and withdrawals receive no new funding until processing resumes. |
+| **New withdrawal funding: Waiting** | Withdrawal requests can remain pending even if their expected processing time has passed. |
+| **Deposits past their expected processing time: Yes** | At least one deposit backlog exists. Review request status and do not duplicate it. |
+| **Withdrawals past their expected processing time: Yes** | At least one withdrawal backlog exists. Junior can wait longer because Senior is funded first. |
+| **Unresolved pool shortfall** | Pool accounting has a remaining deficit; new deposits are blocked and recovery rules apply. |
+
+An emergency deposit pause is therefore not proof that withdrawals are disabled, while an enabled withdrawal form is not proof that funding will be immediate.
 
 ### Technical, operational and external risks
 
 | Risk | Possible LP impact | What to verify or monitor |
 | --- | --- | --- |
-| **Smart contract** | Incorrect accounting, lost funds, blocked actions or permanent disruption | Exact source commit, deployed bytecode, contract addresses and security disclosures |
-| **Immutability** | A defect in non-upgradeable perps logic can require a new deployment and migration | Whether the deployment and audit scope cover the code actually in use |
-| **Audit and testnet** | Undiscovered defects or untested economic behavior | The active release's audit status; testnet use does not demonstrate production safety |
-| **Governance and pause** | Changed economic terms, blocked deposits or operational disruption | Timelocked parameter changes, emergency state and admin addresses |
-| **Keeper/finalizer availability** | Delayed order processing or pending-epoch finalization | Pending epochs, protocol operations and whether a permissionless action still needs submission |
+| **Smart contract** | Incorrect accounting, lost funds, blocked actions or permanent disruption | Exact source commit, deployed bytecode, contract addresses and current security disclosures |
+| **Immutability** | A defect in non-upgradeable perps logic can require a new deployment and migration | Whether the deployment and review scope cover the code actually in use |
+| **Testnet** | Unproven operational and economic behavior | Treat MockUSDC and testnet results as testing only, not evidence of mainnet safety |
+| **Governance and pause** | Changed terms, blocked deposits or delayed hourly processing | **Delayed settings changes**, emergency state and admin addresses |
+| **Keeper** | Delayed hourly request processing, including when the LP settlement worker is disabled or unavailable | **Next processing time**, backlog indicators and the exact request status; the UI exposes no user finalization action |
 | **Chain and RPC** | Delayed, reordered or unavailable transactions | Correct network, confirmed receipts and an independent block explorer |
 | **USDC** | Depeg, issuer freeze, token upgrade or transfer disruption | Exact token contract and collateral status; MockUSDC has no claim on real dollars |
-| **Wallet and approval** | Unauthorized token use or an unrecoverable transaction | Owner wallet, selected vault, exact spender, allowance and network before signing |
-| **Interface/indexer** | Stale or incorrect balances, previews or statuses | Onchain state and transaction receipts; the contracts are authoritative |
+| **Wallet and approval** | Unauthorized token use or an unrecoverable transaction | Owner wallet, selected vault, exact spender, allowance, transaction call and network before signing |
+| **Interface and history services** | Missing onchain metrics or previews, pending-request discovery, holders, activity or performance | `Unavailable` and `--` apply to affected onchain metrics or previews and are not zero; incomplete Performance is omitted, while Activity uses explicit empty/error text; use receipts and onchain state as authoritative |
 
-The core perps contracts are non-upgradeable, but that property does not prove they are correct. The current Arbitrum Sepolia release uses MockUSDC and has not completed a formal production audit. Treat it as a test environment, not evidence of mainnet safety.
+Holder distribution and recent activity depend on block-explorer indexing. Pending-request discovery checks current and nearby request IDs plus older activity found through local history and explorer logs. If **Older activity is unavailable** appears, the app still checks recent pending work; use **Retry history** and verify receipts before concluding that a request is gone.
 
 ### What to review before depositing
 
 At minimum, check:
 
-* The official deployment and selected Senior or Junior Vault address
-* Tranche principal, share price and Senior impairment status
-* Senior high-water mark and available Junior value
-* Physical HousePool assets and maximum live trader liability
-* Aggregate trader claims and other withdrawal reserves
-* Free liquidity and the tranche-specific withdrawal cap
-* Directional exposure, utilization and current market state
-* Immediate or pending deposit route
-* Pending-epoch timing and cancellation boundary
-* Current oracle state and frozen-oracle surcharge
-* Pause, degraded-mode and governance state
-* The exact transactions and native gas required to manage and eventually exit the position
+* The official deployment, connected owner wallet, network and selected Senior or Junior Vault address.
+* **Current vault value**, **Share price** and the tranche's loss and return position.
+* Senior **Protected balance** or the **Junior loss buffer**.
+* Junior **Annual vault fee**, **Accrued fee shares** and **Fee recipient**, when selecting Junior.
+* Senior capacity and the amount reserved for pending deposits, when selecting Senior.
+* **Total pool funds**, **Reserved funds**, **Available liquidity** and **Available withdrawal liquidity**.
+* **Unresolved pool shortfall**, **Market price**, **Live pricing available** and the **Temporary pricing fee**.
+* **New deposits paused**, **Safety restrictions**, **Hourly processing paused** and **New withdrawal funding**.
+* Deposit and withdrawal backlog indicators.
+* The five-minute **Submission deadline** and **Next processing time**.
+* The cancellation boundary and the separate **Move shares to wallet**, **Move USDC to wallet**, **Return USDC to wallet** and **Return shares to wallet** actions.
+* The one-hour cooldown and its live countdown.
+* The exact owner-wallet transactions and native gas required to manage and eventually exit the position.
 
-No single metric, including historical return or current free liquidity, summarizes all of these risks.
-
-> **Screenshot placeholder — final Vaults risk overview**
->
-> Add the production `Vaults` overview showing `HousePool assets`, `Free liquidity`, `Withdrawal reserve`, `Deposit route`, `Market state` and the Senior and Junior Vault cards after the interface and field definitions are finalized. Do not substitute the documentation prototype.
+No single metric, including **7d realized APY**, **Current vault value** or **Available liquidity**, summarizes all of these risks.
 
 ### Decide whether the position is suitable
 
 Do not provide liquidity if you require:
 
-* Guaranteed principal or yield
-* A guaranteed withdrawal date
-* A position whose value cannot depend on trader performance
-* A deposit that can always be cancelled
-* A protocol action that is always gas-sponsored
+* guaranteed principal or yield;
+* a guaranteed processing or withdrawal date;
+* a position whose value cannot depend on trader performance;
+* a request that can always be cancelled;
+* a fixed request-time deposit or withdrawal conversion; or
+* protocol actions that are always gas-sponsored.
 
-If these risks are acceptable, continue with [Deposit liquidity](deposit-liquidity.md) and verify every address and preview field before signing.
+If these risks are acceptable, continue with [Deposit liquidity](deposit-liquidity.md) and verify every address, amount, preview and request state before signing.
 
 For the broader protocol risk model, read [Risks you should understand first](../welcome/risks-you-should-understand-first.md).
 

@@ -9,6 +9,7 @@ import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -51,6 +52,7 @@ import Plether.LiquidationWorker
   , checkLiveSignerBalance
   , decodeCachedPythPayload
   , decodeCachedLiquidationComponents
+  , decodeLiquidationRiskGlobals
   , decodePythStoredPriceResults
   , freshLiquidationRiskInputsFromCache
   , isExpectedLiquidationSimulationRevert
@@ -61,8 +63,10 @@ import Plether.LiquidationWorker
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
+  , liquidationRiskCalls
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
+  , liquidationTransactionGasLimit
   , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
@@ -105,6 +109,31 @@ spec = do
       withEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" "999" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcExecutionBatchSize workerCfg `shouldBe` 256
+
+  describe "liquidation risk Multicall" $ do
+    it "calls the current basket confidence-ratio getter" $ do
+      workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+      let calls = liquidationRiskCalls workerCfg
+      length calls `shouldBe` 11
+      let confidenceCall = calls !! 6
+      Multicall.callTarget confidenceCall `shouldBe` lwcPletherOracle workerCfg
+      Multicall.callAllowFailure confidenceCall `shouldBe` True
+      Multicall.callCalldata confidenceCall
+        `shouldBe` encodeCall "basketMaxConfidenceRatioBps()" []
+      Multicall.callCalldata confidenceCall
+        `shouldNotBe` encodeCall "pythMaxConfidenceRatioBps()" []
+
+    it "decodes the current oracle getter result in the existing call layout" $ do
+      decodeLiquidationRiskGlobals liquidationRiskResults
+        `shouldBe` Right exactRiskGlobals
+
+    it "names the current getter when its subcall fails" $ do
+      let failedResults =
+            take 6 liquidationRiskResults
+              <> [Multicall.CallResult False BS.empty]
+              <> drop 7 liquidationRiskResults
+      decodeLiquidationRiskGlobals failedResults
+        `shouldBe` Left "basketMaxConfidenceRatioBps() subcall failed"
 
   describe "liquidation snapshot batching" $ do
     it "builds ordered, allow-failure account-lens calls" $ do
@@ -535,6 +564,16 @@ spec = do
     it "uses current buffered network fees when they are higher" $ do
       sameNonceReplacementFees 2_500 200 5 10 100 `shouldBe` (12, 250)
 
+  describe "liquidationTransactionGasLimit" $ do
+    it "floors the observed early-stop estimate high enough to enter item zero" $ do
+      liquidationTransactionGasLimit 2_000 893_365 `shouldBe` 5_000_000
+
+    it "preserves a buffered estimate above the liquidation floor" $ do
+      liquidationTransactionGasLimit 2_000 5_000_000 `shouldBe` 6_000_000
+
+    it "raises persisted under-gassed replacements without buffering them again" $ do
+      liquidationTransactionGasLimit 0 1_072_038 `shouldBe` 5_000_000
+
   describe "checkLiveSignerBalance" $ do
     it "does not evaluate the balance request in dry-run mode" $ do
       called <- newIORef False
@@ -679,6 +718,7 @@ testConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = "https://benchmarks.pyth.network"
+    , cfgPythHistoryUrl = "https://pyth.dourolabs.app/v1"
     , cfgPythHermesUrl = "https://hermes.pyth.network"
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
@@ -697,6 +737,7 @@ testConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"
     , cfgPerpsOrderRouter = "0x2222222222222222222222222222222222222222"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = configuredCfdEngine
     , cfgPerpsCfdEngineLens = "0x7777777777777777777777777777777777777777"
     , cfgPerpsCfdEngineSettlementSidecar = "0x8888888888888888888888888888888888888888"
@@ -721,6 +762,7 @@ testConfig =
     , cfgInsightsCompetitionReleaseManifest = liquidationReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -728,8 +770,15 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 liquidationReleaseManifest :: CompetitionReleaseManifest
@@ -775,11 +824,16 @@ receipt succeeded emitter eventAccount =
   TxReceipt
     { receiptTxHash = "0xabc"
     , receiptBlockNumber = 123
+    , receiptBlockHash = "0xblock"
+    , receiptTransactionIndex = 0
     , receiptSucceeded = succeeded
     , receiptLogs =
         [ RpcLog
             { rpcLogTxHash = "0xabc"
             , rpcLogBlockNumber = 123
+            , rpcLogBlockHash = "0xblock"
+            , rpcLogTransactionIndex = 0
+            , rpcLogIndex = 0
             , rpcLogAddress = emitter
             , rpcLogTopics = [positionLiquidatedTopic, encodeAddress eventAccount]
             , rpcLogData =
@@ -796,6 +850,8 @@ receiptWithLogs succeeded logs =
   TxReceipt
     { receiptTxHash = "0xbatch"
     , receiptBlockNumber = 124
+    , receiptBlockHash = "0xblock"
+    , receiptTransactionIndex = 0
     , receiptSucceeded = succeeded
     , receiptLogs = logs
     }
@@ -811,6 +867,9 @@ liquidationBatchItemLog index eventAccount result bounty selector =
   RpcLog
     { rpcLogTxHash = "0xbatch"
     , rpcLogBlockNumber = 124
+    , rpcLogBlockHash = "0xblock"
+    , rpcLogTransactionIndex = 0
+    , rpcLogIndex = index
     , rpcLogAddress = orderRouter
     , rpcLogTopics =
         [ liquidationBatchItemTopic
@@ -829,6 +888,9 @@ liquidationBatchStoppedLog nextIndex =
   RpcLog
     { rpcLogTxHash = "0xbatch"
     , rpcLogBlockNumber = 124
+    , rpcLogBlockHash = "0xblock"
+    , rpcLogTransactionIndex = 0
+    , rpcLogIndex = nextIndex
     , rpcLogAddress = orderRouter
     , rpcLogTopics = [liquidationBatchStoppedTopic, encodeUint256 nextIndex]
     , rpcLogData = BS.empty
@@ -927,6 +989,34 @@ exactRiskGlobals =
     , lrgLastMarkTime = 100
     }
 
+liquidationRiskResults :: [Multicall.CallResult]
+liquidationRiskResults =
+  map
+    (Multicall.CallResult True)
+    [ mconcat $
+        map
+          encodeUint256
+          [ 0
+          , 0
+          , 100
+          , 0
+          , 200
+          , 0
+          , 0
+          , 0
+          ]
+    , encodeUint256 200_000_000
+    , encodeUint256 2_000
+    , encodeAddress pythContract
+    , encodeUint256 0
+    , encodeUint256 10
+    , encodeUint256 10
+    , encodeUint256 20
+    , encodeUint256 0
+    , encodeUint256 100
+    , encodeUint256 110
+    ]
+
 emptyAccountSnapshot :: AccountLedgerSnapshot
 emptyAccountSnapshot =
   AccountLedgerSnapshot
@@ -942,7 +1032,8 @@ emptyAccountSnapshot =
     , alsTraderClaimBalanceUsdc = 0
     , alsPendingOrderCount = 0
     , alsCloseReachableUsdc = 0
-    , alsTerminalReachableUsdc = 0
+    , alsLiquidationReachableSettlementUsdc = 0
+    , alsTerminalPriceCollectibleCapUsdc = 0
     , alsAccountEquityUsdc = 0
     , alsFreeBuyingPowerUsdc = 0
     , alsHasPosition = False
@@ -970,7 +1061,8 @@ encodedAccountSnapshot AccountLedgerSnapshot {..} =
     , encodeUint256 alsTraderClaimBalanceUsdc
     , encodeUint256 alsPendingOrderCount
     , encodeUint256 alsCloseReachableUsdc
-    , encodeUint256 alsTerminalReachableUsdc
+    , encodeUint256 alsLiquidationReachableSettlementUsdc
+    , encodeUint256 alsTerminalPriceCollectibleCapUsdc
     , encodeUint256 alsAccountEquityUsdc
     , encodeUint256 alsFreeBuyingPowerUsdc
     , encodeUint256 $ if alsHasPosition then 1 else 0

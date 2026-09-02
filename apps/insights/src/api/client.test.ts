@@ -50,6 +50,20 @@ describe('Insights API client', () => {
     await expect(getCurrentCompetition()).resolves.toEqual(competition)
   })
 
+  it('uses the code-defined September profit threshold over stale API metadata', async () => {
+    const septemberCompetition = {
+      ...competition,
+      slug: 'testnet-trading-2026-09',
+      pnlEligibilityThreshold: '1000000000',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition: septemberCompetition }), { status: 200 })))
+
+    await expect(getCurrentCompetition()).resolves.toMatchObject({
+      slug: septemberCompetition.slug,
+      pnlEligibilityThreshold: '1000000',
+    })
+  })
+
   it('normalizes registration metadata for the current competition', async () => {
     const wireCompetition = {
       ...competition,
@@ -58,7 +72,7 @@ describe('Insights API client', () => {
         status: 'open' as const,
         opensAt: '2026-08-28T10:00:00Z',
         closesAt: '2026-09-20T21:00:00Z',
-        minimumXAccountAgeDays: 90,
+        minimumXAccountAgeDays: 30,
         targetXHandle: 'plether_fi',
         rulesVersion: '2026-09-01',
         privacyVersion: '2026-09-01',
@@ -88,7 +102,7 @@ describe('Insights API client', () => {
 
     await expect(getRegistrationSession(competition.slug)).resolves.toEqual(registration)
     await expect(createXAuthorization(competition.slug, registration.csrfToken)).resolves.toContain('https://x.com')
-    await expect(completeRegistration(competition.slug, registration.csrfToken, 'rules-v1', 'privacy-v1')).resolves.toEqual(registration)
+    await expect(completeRegistration(competition.slug, registration.csrfToken, 'rules-v1', 'privacy-v1', true)).resolves.toEqual(registration)
 
     expect(fetchMock).toHaveBeenNthCalledWith(1,
       `/api/insights/v1/competitions/${competition.slug}/registrations/session`,
@@ -101,6 +115,7 @@ describe('Insights API client', () => {
     expect(JSON.parse(String(completeInit.body))).toEqual({
       acceptRules: true,
       acceptPrivacy: true,
+      acceptPromotionalEmail: true,
       rulesVersion: 'rules-v1',
       privacyVersion: 'privacy-v1',
     })

@@ -1,289 +1,323 @@
 # Read your LP position and pool health
 
-An LP[^lp] position is a balance of active Senior or Junior vault shares. The shares record your proportional claim on one tranche[^tranche] of the HousePool; they are not a fixed USDC[^usdc] balance and they do not guarantee immediate redemption.
+An LP[^lp] position is a balance of Senior or Junior vault shares. Those shares record a proportional claim on one tranche[^tranche] of the HousePool. They are not a fixed USDC[^usdc] balance, and a positive position value does not guarantee that the same amount can be withdrawn immediately.
 
-Read the position through two separate questions:
+Read the page as three separate questions:
 
-1. **What is my tranche claim worth?** Check shares, share price and current value.
-2. **How much can safely leave now?** Check **Withdrawable now**, the cooldown, free LP liquidity and protocol state.
+1. **What is my tranche claim worth?** Read your share balance, **Share price** and **Current value**.
+2. **How many shares can I use for a withdrawal request?** Read **Shares available to withdraw** and its cooldown countdown.
+3. **How much pool cash may fund withdrawals?** Read **Available withdrawal liquidity**, **Available liquidity**, Senior priority and the current processing state.
 
-Those values can differ substantially without either one being an interface error.
+These values can differ substantially without any of them being an interface error.
 
-> **Current interface status**
+> **Wallet and network scope**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. The in-progress navigation has **Overview**, **Performance**, **Risk** and **Your position** tabs. **Your position** reads the active onchain share balance and token, **Current value**, **Share price**, **Withdrawable now**, and funded deposit epochs.
->
-> It does not yet show a holder cooldown countdown, while historical performance and 7-day or 30-day APY[^apy] are not indexed. Pending requests show their epoch, amount, activation time, batch accounting, status, and the currently available cancel, finalize, recovery, or claim action.
->
-> Treat the page below as guidance for the completed LP interface, and verify all live values onchain before acting.
->
-> The Perps page’s Margin Account balance and its `Deposit` or `Withdraw` controls are trader-account values. They are not your LP position.
+> The current `Vaults` interface runs on Arbitrum Sepolia. It reads the connected owner wallet, not the separate Plether Trading Account used by the Perps page. LP approvals, requests, cancellations and wallet transfers are ordinary owner-wallet transactions and require Arbitrum Sepolia ETH for gas.
 
-> **Screenshot placeholder — LP position overview**
->
-> Add a screenshot of **Vaults → Your position** showing the selected tranche, active shares, share token, current value, share price, withdrawable amount, cooldown and pending items after those fields are connected to live data.
+### Know your way around the Vaults interface
+
+The top-level `Vaults` page shows the shared pool summary and a card for each tranche. Select **Explore Senior Vault** or **Explore Junior Vault** to open its detail page.
+
+The detail page uses this navigation:
+
+* **Overview** — your high-level position, vault rules, shared pool status, tranche protection and delayed settings changes.
+* **Performance** — seven days of complete historical share-price data, when that history is available.
+* **Your position** — wallet-held shares plus pending deposit and withdrawal requests.
+* **Activity** — wallet-held share distribution and recent deposit and withdrawal submissions.
+
+**Performance** is conditional. If the app cannot verify a complete seven-day history for the active deployment, it omits the section rather than presenting partial history as a valid return.
+
+![Senior Vault Your position view with active shares and the current empty pending-request state.](../.gitbook/assets/screenshots/storybook-documentation-vaults--position.png)
 
 ### Start with the selected tranche
 
-Senior and Junior are separate ERC-4626[^erc4626] vaults with separate share supplies, share prices, frozen-oracle surcharges and withdrawal limits.
+Senior and Junior are separate ERC-4626[^erc4626] vaults with separate share supplies, share prices, return profiles, fees, request limits and withdrawal priority.
 
 | | Senior | Junior |
 | --- | --- | --- |
-| **Return profile** | Target coupon funded from Junior principal | Residual HousePool return |
+| **Return profile** | Targeted return funded from available Junior value | Residual HousePool return |
 | **Loss order** | Absorbs losses after Junior reaches zero | Absorbs losses first |
-| **Revenue order** | Restored toward its high-water mark first | Receives residual revenue after Senior priority |
-| **Withdrawal priority** | First access to free LP liquidity | Access only above the complete Senior claim |
+| **Revenue order** | Restored toward its protected balance before Junior receives new residual revenue | Receives residual revenue after Senior priority |
+| **Withdrawal priority** | Funded before Junior | Funded after Senior |
+| **Annual maintenance fee** | None; the current card shows **Zero fees** | The live **Annual vault fee** is paid by issuing new pjLP shares, which dilutes existing holders |
 
-Always confirm which tranche the position panel is showing. Shares in one vault cannot be read using the other vault’s price or withdrawal limit.
+Always confirm the vault name, share symbol and linked vault address before acting. psLP and pjLP are not interchangeable, even though both tranches supply the same HousePool.
 
-### Read your active shares
+### Read the headline values
 
-**Active shares** are the vault tokens currently held for your position. Conceptually:
+The selected vault header separates accounting value, historical performance and estimated liquidity:
+
+| Label | How to read it |
+| --- | --- |
+| **Current vault value** | Current accounting value assigned to the selected tranche. It is not cumulative deposits and is not a promise of immediate redemption. |
+| **7d realized APY** | Annualized historical return derived from the actual seven-day share-price change. It appears only with complete history and is not a forecast. |
+| **Share price** | Current accounting value of one psLP or pjLP share. |
+| **Estimated withdrawal liquidity** | Pool-level USDC that may be available to fund the selected tranche, with Senior funded first. It is not your wallet's guaranteed receipt. |
+| **How returns work** | A summary of the tranche's targeted or residual return model. |
+
+On **Overview**, the first four metrics answer more personal and operational questions:
+
+| Label | How to read it |
+| --- | --- |
+| **Your position** | Estimated current USDC value of the connected wallet's active shares. |
+| **Shares available to withdraw** | Shares the wallet can currently place into a withdrawal request. During cooldown, the live **Available in** countdown explains why this can be zero. |
+| **Available withdrawal liquidity** | Pool-level funding capacity for the selected tranche at the next processing time. Junior is shown after Senior priority. |
+| **Deposit availability** | Whether new deposit requests are open, together with the current hourly-window countdown. |
+
+In **Your position**, the app also shows **Your active position**, **Current value**, **Shares available to withdraw** and **USDC ready for wallet**. The last value is USDC already allocated to processed withdrawal requests but not yet moved into the owner wallet.
+
+### Read shares, share price and current value
+
+Conceptually:
 
 ```text
 Tranche share price
-= tranche accounting principal ÷ tranche share supply
+= tranche accounting value ÷ effective tranche share supply
 ```
 
 ```text
 Current value
-≈ active shares × current tranche share price
+≈ wallet-held shares × current tranche share price
 ```
 
-The exact conversion follows ERC-4626 rounding and the protocol’s virtual-share protections, so the interface or contract preview is authoritative for a transaction.
-
-The share token identifies the vault whose accounting claim you hold. Senior and Junior shares are not interchangeable, even though both ultimately reference the same HousePool.
-
-Pending deposit USDC is not included in active shares. Finalized-but-unclaimed shares also remain in vault escrow until you submit the separate claim transaction.
-
-### Read the share price
+The exact conversion follows ERC-4626 rounding and the protocol's virtual-share and fee-share accounting. Use the live interface and onchain preview for a transaction.
 
 LP economics appear through value per share. There is no periodic interest payment that must be harvested.
 
 Senior share value can change through:
 
-* coupon transferred from Junior;
-* restoration toward the Senior high-water mark;
+* targeted return transferred from Junior;
+* restoration toward the Senior protected balance;
 * losses that reach Senior after Junior is exhausted; and
-* tranche-retained oracle-frozen[^oracle] surcharges.
+* temporary withdrawal pricing fees retained by the tranche.
 
 Junior share value can change through:
 
-* residual realized HousePool revenue;
-* the Senior target coupon paid from Junior principal;
-* first-loss absorption; and
-* tranche-retained oracle-frozen surcharges.
+* collectible marked trader losses, collected trader losses, collected carry, positive VPI[^vpi], paid frozen-close spread, the LP remainder of collected liquidation charges and other LP-owned value;
+* the Senior targeted return paid from Junior value;
+* first-loss absorption;
+* temporary withdrawal pricing fees retained by the tranche; and
+* dilution from the Junior annual maintenance fee, which is paid by issuing new pjLP shares.
 
-Potential pool revenue includes collected trader losses, positive VPI[^vpi] and realized carry[^carry]. Trader profits, VPI rebates, liquidation shortfalls and bad debt can reduce LP value. Protocol execution fees and order-execution rewards are not direct LP yield.
+Trader profits, rebates, liquidation shortfalls and bad debt can reduce LP value. Protocol execution fees and keeper rewards are not direct LP yield.
 
-Plether prices LP value conservatively:
+Plether uses one exact signed, collateral-capped Terminal NAV snapshot for entry and exit accounting:
 
-* unrealized trader profits can reduce distributable LP value as liabilities;
-* unrealized trader losses do not increase LP value until collected; and
+* marked trader profits reduce distributable LP value as liabilities;
+* marked trader losses can increase LP value only up to the collectible amount backed by pledged collateral and eligible same-account claims;
+* that marked receivable is not physical withdrawal cash until collected; and
 * trader claims rank ahead of both LP tranches.
 
-A share price can therefore fall. A historical increase or displayed target rate does not guarantee a future return.
+A share price can therefore fall. A historical increase, a targeted Senior return or a displayed APY[^apy] does not guarantee future performance.
 
 For the complete allocation rules, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md#the-waterfall) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md#what-lps-receive).
 
-### Current value is not withdrawable USDC
+### Current value is not immediately withdrawable USDC
 
-**Current value** estimates your share of the tranche’s accounting value. **Withdrawable now** applies the live cash, priority and safety constraints to your own share balance.
+All withdrawals use the hourly request flow. The **Withdraw USDC** form accepts a desired USDC amount, refreshes an **Estimated shares used** quote, and queues those shares. It does not exchange the shares for a fixed USDC receipt in the submission transaction.
 
-| Value | What it answers | What it does not promise |
-| --- | --- | --- |
-| **Active shares** | How many vault tokens do I hold? | A fixed number of USDC per share |
-| **Share price** | What is one share worth under current tranche accounting? | That the same price will persist |
-| **Current value** | What is my complete active tranche claim worth now? | That all of it can leave immediately |
-| **Withdrawable now** | What does the vault currently allow this holder to withdraw? | That the amount will remain available until submission |
+The shares continue to gain or lose value while the request waits. The final USDC amount is set when Plether processes and funds the withdrawal, so it can differ from the request-time estimate.
 
-Before LP capital can leave, Plether reserves USDC for bounded live trader liabilities, outstanding trader claims and other protected amounts.
-
-Conceptually:
+Before LP capital can leave, Plether protects cash for trader liabilities, outstanding trader claims and other reserved amounts. Read these figures separately:
 
 ```text
-Free LP liquidity
-= physical HousePool assets
-− withdrawal reserves
+Available liquidity
+= max(Total pool funds − Reserved funds, 0)
 ```
 
-Senior has first access to that free liquidity:
+**Reserved funds** already includes the protected amounts used by this display.
 
-```text
-Senior pool withdrawal cap
-= min(free LP liquidity, Senior principal)
-```
-
-Junior can access only the amount above the complete Senior claim:
-
-```text
-Junior pool withdrawal cap
-= min(
-    Junior principal,
-    max(free LP liquidity − Senior principal, 0)
-  )
-```
-
-Your personal maximum is then constrained further by your share balance, cooldown, oracle state, protocol state and any active tranche surcharge.
+Senior withdrawal requests are funded before Junior requests. Junior can therefore retain positive share value while **Available withdrawal liquidity** is zero. Senior can also have less estimated withdrawal liquidity than its complete accounting value.
 
 This is why:
 
-* Senior withdrawable USDC can be below Senior current value.
-* Junior withdrawable USDC can be zero while Junior shares retain positive value.
-* Withdrawal capacity can improve when positions close, liabilities are released or additional pool value becomes physically available.
-* A large HousePool asset figure does not mean the same amount is free for LP withdrawal.
+* **Current value** can be positive while **Shares available to withdraw** is zero during cooldown.
+* Eligible shares can be queued while the request later waits for enough USDC.
+* Junior can wait longer than Senior for funding.
+* A large **Total pool funds** value does not mean the same amount is available for LP withdrawals.
 
-Trader claims are reserved ahead of Senior as well as Junior. “Senior” describes priority inside the LP stack, not priority over traders. See [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md#how-claims-affect-lp-withdrawals).
+Trader claims are protected ahead of Senior as well as Junior. “Senior” describes priority inside the LP stack, not priority over traders. See [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md#how-claims-affect-lp-withdrawals).
 
-### Read the tranche and pool metrics together
+### Read the detail Overview
 
-No single headline number describes pool health. Use the **Overview** and **Risk** views together.
+![Senior Vault Overview with its current value, share-price context and operating rules.](../.gitbook/assets/screenshots/storybook-documentation-vaults--senior-vault-detail.png)
 
-Read the data-status badge before the values. **Live onchain** means the required HousePool and vault reads completed; **Syncing** means the refresh is still in progress. **Partial onchain data** or **Onchain data unavailable** means at least part of the financial view is missing, so do not infer a zero balance or submit an action from the incomplete display.
+The **How this vault works** panel shows operational terms rather than a return guarantee:
 
-| Metric | How to read it |
+* **Processing** — every hour.
+* **Network** — Arbitrum Sepolia.
+* **Asset** — USDC.
+* **Vault share symbol** — `psLP` for Senior or `pjLP` for Junior.
+* **Deposits** — the current deposit status.
+* **Submission deadline** — five minutes before each hour.
+* **Next processing time** — the request epoch currently targeted.
+* **Temporary pricing fee** — the selected tranche's live frozen-pricing fee state.
+* **Deposits past their expected processing time** and **Withdrawals past their expected processing time** — whether a backlog is visible.
+* **Vault address** — the selected tranche vault's deployed contract address.
+
+Junior additionally shows **Annual vault fee**, **Accrued fee shares** and **Fee recipient**. Senior instead shows **Remaining Senior capacity**, **Maximum Senior value**, **Maximum Senior share of pool capital**, **Amount reserved for pending deposits** and whether pending deposits remain within current limits.
+
+The **Shared pool status** panel uses these exact labels:
+
+| Label | How to read it |
 | --- | --- |
-| **Tranche TVL[^tvl] / NAV[^nav]** | Current ERC-4626 accounting assets for the selected vault. It can rise or fall and is not cumulative deposits or an immediate-redemption promise. |
-| **Pool withdrawal cap** | Current pool-level ceiling for the selected tranche before applying your share balance and holder cooldown. Junior’s cap is already subordinated behind the complete Senior claim. |
-| **HousePool assets** | Capital backing the system. Protocol safety checks use conservative physical backing rather than assuming every visible or unsolicited token is LP-owned. It is not the LP withdrawal limit. |
-| **Withdrawal reserve** | Capital protected for maximum modeled live liability, aggregate trader claims and other explicit reserves. A higher reserve leaves less cash available to LPs. |
-| **Free LP liquidity** | Physical cash remaining after the withdrawal reserve. This is a pool-level limit before Senior/Junior priority and holder limits. |
-| **Pending trading revenue** | Trading-derived value awaiting protocol ownership assignment. Do not count it as ordinary tranche principal or free withdrawal liquidity until reconciliation assigns it. |
-| **Pending recapitalization** | Recovery capital awaiting recapitalization assignment. It is not trading return and should not be treated as ordinary tranche NAV or free liquidity before assignment. |
-| **Senior principal** | Current accounting value assigned to Senior. It receives withdrawal priority over Junior but remains subordinate to trader obligations. |
-| **Senior high-water mark** | The protected Senior reference used to measure impairment and restoration. It is not a separate pile of USDC. |
-| **Senior impairment** | Active when Senior principal is below its high-water mark. Deposits into both tranches stop, and future revenue restores Senior before Junior receives residual value. |
-| **Junior principal** | Current accounting value assigned to the first-loss tranche. It can reach zero before Senior is impaired. |
-| **Oracle mark** | Fresh-or-stale status of the price observation used to reconcile live trader liabilities under the active market-state policy. The current prototype does not show a numeric mark in this row. |
-| **Oracle frozen** | Indicates that the onchain `oracleFrozen` state is active, not merely that the market is in its scheduled close-only runway. Tranche surcharges and extended freshness rules may apply. |
+| **Total pool funds** | Canonical physically backed pool depth: `min(raw assets, accounted assets)`, excluding quarantined excess. It is not necessarily the literal HousePool token balance. |
+| **Available liquidity** | Pool cash left after protected amounts; this is before applying your share balance and request state. |
+| **Reserved for trader withdrawals** | USDC set aside for trader payouts and other protected payments. |
+| **Trading revenue awaiting distribution** | Collected value not yet assigned through tranche accounting. |
+| **Funds awaiting loss recovery** | Recovery capital awaiting assignment. It is not ordinary current yield. |
+| **Unresolved pool shortfall** | A remaining deficit. A positive value is a severe accounting and deposit-availability warning. |
+| **Market price** | Whether the current mark is up to date. |
+| **Live pricing available** | Whether live, rather than frozen, pricing is available. |
+| **Safety restrictions** | Whether degraded safety restrictions are active. |
+| **New deposits paused** | Whether the emergency pool pause blocks new deposits. |
+| **Hourly processing paused** | Whether new shares and withdrawal funding are waiting for processing to resume. |
+| **New withdrawal funding** | Whether the current state permits new USDC allocation to withdrawal requests. |
 
-If an interface labels a figure simply **Pool liquidity**, do not assume it means total LP capital. In the current trader interface, that label represents free HousePool USDC after protected reserves.
+The remaining Overview sections show **Protected balance** for Senior or **Junior loss buffer** for Junior, followed by **Delayed settings changes**. The displayed pool risk, Junior fee, trading and pricing settings require 48 hours' notice before taking effect.
 
-> **Screenshot placeholder — Live HousePool state**
->
-> Add a screenshot of the **Overview** tab showing HousePool assets, protected withdrawal reserve, free LP liquidity, pending trading revenue, pending recapitalization, oracle state and the selected tranche's protection-account metrics once the data is live.
+If required onchain action data is missing, the affected metric shows `Unavailable` or `--` and the preview is disabled. Missing optional history, activity or non-action metrics does not necessarily disable a transaction. Missing data is never a zero balance and should not be used to infer that an action is safe.
 
-### Check your cooldown before planning an exit
+### Understand hourly processing
 
-An immediate deposit starts a fixed one-hour withdrawal cooldown for the active shares. During that cooldown:
+Every deposit and withdrawal is a queued request:
 
-* the shares cannot be withdrawn;
-* the shares cannot be transferred to bypass the restriction; and
-* the vault’s maximum-withdraw and maximum-redeem views return zero.
+```text
+Owner-wallet USDC
+→ queued deposit
+→ hourly processing
+→ shares ready
+→ move shares to wallet
+→ one-hour cooldown
+→ queued withdrawal
+→ hourly funding
+→ move USDC to wallet
+```
 
-Depositing more into the same vault refreshes the applicable cooldown. A share transfer propagates the relevant cooldown timestamp to the receiver.
+Plether assigns requests to hourly eligibility boundaries; actual processing can occur later. The contract uses the request transaction's block-inclusion timestamp: inclusion strictly before the five-minute cutoff targets the next boundary, while inclusion at or after it targets the following one. Signing or sending earlier is not enough if confirmation lands after the cutoff; treat the confirmed request record as authoritative.
 
-A successful withdrawal or redemption also restarts the cooldown for the remaining shares. Multiple partial withdrawals therefore normally require another one-hour wait between transactions.
+The displayed **Expected processing** time is a target, not a guarantee. When LP settlement is enabled, a healthy keeper handles eligible settlement through the permissionless path; the current interface does not expose that transaction to users. A disabled or unavailable keeper, pause, unavailable dependency, safety restriction, stale price or insufficient liquidity can delay the next state.
 
-The current prototype does not show a cooldown countdown. Its live **Withdrawable now** value already reflects the holder cooldown, so a zero maximum can be a cooldown result even when the pool is otherwise healthy. When a countdown is added, read it alongside **Withdrawable now**.
+Do not submit a duplicate request just because its expected time has passed. Read its status and available action first.
 
-### Keep pending items separate
+### Read pending deposits
 
-The **Your position** view should distinguish active shares from deposit requests that have not completed their lifecycle.
+Pending deposit USDC is separate from wallet-held shares. The final share amount is set when processing occurs, not when the request is submitted.
 
-For each pending item, monitor:
-
-* selected tranche;
-* funded USDC amount;
-* epoch ID;
-* activation time;
-* whether cancellation is still available;
-* finalization status;
-* claimable shares; and
-* the next available action.
-
-| Pending state | Included in active **Current value**? | What to do |
+| Status | What it means | Available action |
 | --- | --- | --- |
-| Requested, before activation | No | Wait or cancel |
-| Active, awaiting finalization | No | Monitor the finalization gate |
-| Finalized, unclaimed | No | Claim the shares |
-| Claimed | Yes | Verify the active share balance |
+| **Pending** | The vault holds the submitted USDC for a future hourly processing time. | **Cancel deposit** is available before the processing boundary. |
+| **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet. | Wait; do not submit a duplicate. |
+| **Shares ready** | The processed shares already participate in vault performance but remain in vault custody. | **Move shares to wallet**. |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and USDC is available to recover. | **Return USDC to wallet**. |
 
-Do not add the request-time estimated shares to your active balance. The batch price and exact share quantity are fixed only at finalization.
+Each item includes a deposit reference, **Expected processing**, **Estimated shares**, and—when applicable—**Shares ready for wallet** or **USDC ready to return**.
 
-See [Manage a pending deposit](manage-a-pending-deposit.md) for cancellation, finalization, impairment recovery and claim instructions.
+### Read pending withdrawals
+
+A withdrawal request escrows shares, not a fixed USDC amount. The displayed **Estimated USDC** can change while those shares wait.
+
+| Status | What it means | Available action |
+| --- | --- | --- |
+| **Pending** | Shares are queued for a future hourly processing time and continue to gain or lose value. | **Cancel withdrawal** is available before the processing boundary. |
+| **Waiting for USDC** | The expected processing epoch has arrived or passed, but no USDC has been allocated. A pause, pricing, health, liquidity or matured-Senior gate may still block funding. | Wait and check the live funding state. |
+| **USDC ready** | USDC has been allocated to all or part of the request. A zero-value share remainder may also be returnable. | **Move USDC to wallet**. |
+| **Shares ready to return** | A remaining share amount quoted to zero assets and entered the terminal refund state. | **Return shares to wallet**. |
+
+A partially funded request can show **USDC ready** while also exposing **Return shares to wallet** for a zero-value remainder. Ordinary insufficient-liquidity remainders stay queued for later funding rather than becoming returnable.
+
+If older request discovery fails, the app warns **Older activity is unavailable** while continuing to check the latest pending activity. Use **Retry history** rather than assuming an older request disappeared.
+
+### Check the one-hour cooldown
+
+The cooldown applies to the connected wallet's entire position in the selected tranche, not only to a single batch of shares.
+
+The current vault claim and recovery actions start or restart the one-hour cooldown. They include:
+
+* selecting **Move shares to wallet** after a deposit is processed;
+* selecting **Cancel withdrawal**, which returns queued shares; and
+* selecting **Return shares to wallet** for a zero-value withdrawal remainder.
+
+An ordinary wallet-to-wallet transfer is possible only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the countdown ends, wallet-held shares cannot be transferred or used for a new withdrawal request. **Shares available to withdraw** shows a live **Available in** countdown. The action panel says **Withdrawal cooldown active** and **You can request a withdrawal in**. Waiting shares can still gain or lose value during the cooldown.
+
+Moving already allocated USDC to the wallet does not return shares and is not described as a cooldown-triggering action.
+
+### Read Performance when it is present
+
+The optional **Performance** section shows **Seven-day share price** recorded at hourly checkpoints, plus:
+
+* **7d realized APY** — the actual seven-day share-price change annualized for comparison;
+* **7d return** — the non-annualized share-price change over the period;
+* **Start share price**; and
+* **Current share price** — the last hourly checkpoint in that historical series, which can differ from the separate live share price in the vault header.
+
+Realized APY can be negative. It is historical, not a forecast or a promised rate. If complete deployment-matched history is unavailable, the app omits the section; that omission does not mean the return was zero.
+
+### Read Activity with its limits in mind
+
+**Holder distribution** shows the current value already moved into user wallets and each holder's percentage of wallet-held vault value. It excludes pending deposits and processed shares still waiting to be moved.
+
+**Recent deposits and withdrawals** shows submitted requests with **Date**, **Type**, **Amount**, **User** and **Transaction**. A withdrawal row displays an approximate current USDC value because its final amount is set at processing. Both lists are tranche-specific and paginated five rows at a time.
+
+Holder and recent-activity data comes from block-explorer indexing. A temporary activity error does not change the onchain vault balance, but it can make the list incomplete until the indexer recovers.
 
 ### Read impairment and wipeout warnings
 
 Senior impairment is defined as:
 
 ```text
-Senior principal < Senior high-water mark
+Senior principal < Senior protected balance
 ```
 
 During impairment:
 
 * ordinary deposits into both tranches are blocked;
-* Senior shares remain claims on reduced Senior principal;
-* future HousePool revenue restores Senior toward the high-water mark before Junior receives residual value; and
-* withdrawal availability still depends on free cash and runtime state.
+* Senior shares remain claims on reduced Senior value;
+* future reconciled LP-owned value restores Senior toward the protected balance before Junior receives new residual value; and
+* withdrawal funding still depends on available cash and current protocol state.
 
 Junior can be completely exhausted without Senior yet being impaired. Senior can also be fully wiped out if losses continue after Junior reaches zero.
 
-A tranche with shares outstanding and zero accounting assets is terminally wiped. An ordinary new deposit cannot silently revive it or transfer existing holders’ recovery rights to a new depositor.
-
-Treat an impairment or wipeout indicator as an accounting loss warning, not merely a temporary withdrawal warning.
+A tranche with shares outstanding and zero accounting assets is terminally wiped. Treat an impairment, unresolved shortfall or wipeout indicator as an accounting-loss warning, not merely a temporary liquidity warning.
 
 ### Check the current market and protocol state
 
-| State | LP implication |
+| State | Current Vaults behavior |
 | --- | --- |
-| **Scheduled close-only, oracle live** | Normal LP freshness, cooldown and liquidity rules continue; no frozen-market surcharge applies solely because of the schedule |
-| **Oracle frozen, mark still eligible** | Entry and exit may continue under the selected tranche’s live surcharge; retained value stays in that tranche |
-| **Oracle data over-stale** | Deposit finalization and withdrawals can be blocked; public withdrawal capacity can fall to zero |
-| **HousePool paused** | New deposits are blocked; the pause alone does not necessarily block protective withdrawals |
-| **Degraded mode** | LP withdrawals and new trader risk are blocked while closes, liquidations and recovery paths remain available |
-| **Senior impaired** | Ordinary deposits into both tranches stop; restoration takes priority over Junior residual return |
+| **Scheduled close-only, live pricing** | Normal request, cooldown and liquidity rules continue. The schedule alone does not activate the temporary pricing fee. |
+| **Live pricing unavailable / oracle frozen** | New deposits are unavailable. A withdrawal can still be queued, and its current share quote includes the displayed temporary pricing fee. The queued shares are fixed; later pricing or fee changes affect final USDC. Wait for live pricing when possible. |
+| **Market price out of date or required data unavailable** | Pricing-dependent processing or actions can wait until acceptable data returns. |
+| **New deposits paused** | New deposit requests are blocked. Withdrawal requests remain available unless a separate limit applies. |
+| **Safety restrictions active** | Deposits are blocked. The interface can still accept withdrawal requests, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode. Already-funded actions remain usable. |
+| **Hourly processing paused** | Requests can still be submitted when other limits permit; pre-boundary cancellations and already-ready claim or return actions remain available. Deposits do not start earning and withdrawals receive no new funding until processing resumes. |
+| **Senior impaired or unresolved pool shortfall** | New deposits are blocked and future value follows the recovery waterfall. |
 
-The current interface uses an asset-denominated withdrawal: the amount entered is the target USDC receipt. During `oracleFrozen`, the surcharge increases the shares burned to deliver that target. The preview does not yet itemize the rate or share-cost calculation, so verify both from the decoded call and onchain configuration. A separate share-denominated redemption would return less USDC and is not currently exposed. In either path, retained value remains in the tranche, not the treasury.
-
-The extended frozen-market freshness window is finite. **Oracle frozen** does not mean exits stay available indefinitely.
-
-### Common readings
-
-| What you see | How to interpret it |
-| --- | --- |
-| Positive current value, zero withdrawable | Check cooldown, reserves, tranche priority, oracle freshness and degraded mode |
-| Junior value is positive, Junior withdrawable is zero | Check whether free LP liquidity exceeds the complete Senior claim, then check the holder cooldown, oracle freshness, degraded mode and other holder or state gates |
-| Senior value is positive, but only part is withdrawable | Free LP liquidity is below the complete Senior claim or a holder/state limit applies |
-| Share price declined | Trader payouts, rebates, bad debt or waterfall losses reduced tranche principal |
-| Current value rose, but withdrawable did not | Accounting value increased while withdrawal reserves or holder limits still constrain cash |
-| Senior realized return is below the target | The coupon is limited by available Junior principal and is not guaranteed |
-| Epoch is finalized, but active shares did not increase | The batch allocation still requires a separate claim transaction |
-| Oracle frozen is active | Review the tranche-specific surcharge, mark freshness and live withdrawal maximum |
-| HousePool assets exceed your current value, but exit is unavailable | HousePool assets also back traders, claims, the other tranche and explicit reserves |
-
-### A practical LP monitoring routine
+### A practical monitoring routine
 
 Before depositing:
 
-1. Confirm Senior or Junior and its place in the waterfall.
-2. Review share price, tranche principal and Senior impairment.
-3. Compare HousePool assets, withdrawal reserve and free LP liquidity.
-4. Check the oracle and protocol state.
-5. Confirm whether entry is immediate or pending.
+1. Confirm the selected tranche, share symbol and vault address.
+2. Review **Current vault value**, **Share price**, fee terms and Senior protection or Junior first-loss position.
+3. Compare **Total pool funds**, **Reserved funds**, **Available liquidity** and **Available withdrawal liquidity**.
+4. Check **Deposit availability**, **Live pricing available**, **Safety restrictions** and **Hourly processing paused**.
+5. Note the five-minute submission deadline and **Next processing time**.
 
 While invested:
 
-1. Check active shares and current value.
-2. Keep pending requests separate and claim finalized shares.
-3. Compare current value with **Withdrawable now**.
-4. Monitor Senior impairment and Junior loss absorption.
-5. Check outstanding withdrawal reserves and free LP liquidity.
-6. Review cooldown and oracle state before planning an exit.
-7. Treat performance history and the Senior coupon as variable, not guaranteed.
+1. Keep **Your active position** separate from pending deposits, pending withdrawals and **USDC ready for wallet**.
+2. Review every pending item's exact status before taking an action or submitting another request.
+3. Compare **Current value**, **Shares available to withdraw** and **Available withdrawal liquidity**.
+4. Watch the live cooldown countdown.
+5. Check backlog, pricing, shortfall and impairment indicators.
+6. Treat **7d realized APY** as historical context only.
 
-When you are planning an exit, continue to [Withdraw liquidity](withdraw-liquidity.md). If an amount, epoch or transaction does not match the expected state, use [LP troubleshooting](lp-troubleshooting.md) before retrying.
+When planning an exit, continue to [Withdraw liquidity](withdraw-liquidity.md). If an amount, request or transaction does not match the expected state, use [LP troubleshooting](lp-troubleshooting.md) before retrying.
 
-The distinction to remember is simple: **shares measure your accounting claim; withdrawable USDC measures how much cash can safely leave now.**
+The distinction to remember is simple: **shares measure an accounting claim; the hourly request state and available liquidity determine when cash can move to the wallet.**
 
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^tvl]: Total value locked, the value reported as held by a protocol or vault.
-[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

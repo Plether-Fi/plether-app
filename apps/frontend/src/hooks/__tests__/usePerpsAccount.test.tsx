@@ -95,6 +95,7 @@ function primaryData({
     failure('ledger snapshot unavailable'),
     success(false),
     enginePositionResult,
+    success({ active: false }),
   ]
 }
 
@@ -179,6 +180,7 @@ describe('usePerpsAccount', () => {
       'getAccountLedgerSnapshot',
       'isFadWindow',
       'positions',
+      'getActivePositionProtection',
     ])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([

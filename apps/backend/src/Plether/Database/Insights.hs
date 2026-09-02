@@ -15,7 +15,9 @@ module Plether.Database.Insights
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
+  , isLegacySeptemberPrizeAndXAccountAgeMismatch
   , isLegacySeptemberPrizeOnlyMismatch
+  , isLegacySeptemberXAccountAgeOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
   , stageCompetitionParticipantWalletRemap
@@ -85,7 +87,9 @@ import Plether.Insights.Competition
   , competitionReleaseIsBound
   , competitionReleaseManifestText
   , finalizationBlockers
+  , competitionRulesForSlug
   , july2026CompetitionSlug
+  , minimumProfitUsdc
   , pendingCompetitionReleaseManifestText
   , participantEligibilityText
   , september2026CompetitionSlug
@@ -899,7 +903,8 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     result <- withTransaction conn $ do
       advisoryRows <- query conn
         "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
-        \ 'perps-indexer:perps-history-costs-v1:' || c.release_router, c.chain_id))\
+        \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+        \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
         \ FROM insights_competitions c WHERE c.slug = ?) locked"
         (Only finalizedSlug) :: IO [Only Integer]
       unless (length advisoryRows == 1) $
@@ -1111,7 +1116,7 @@ competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearin
     , csmResultsTimestamp = epoch $ crResultsAt rules
     , csmPaymentDeadlineTimestamp = epoch $ crPaymentDeadlineAt rules
     , csmStartingBalanceUsdc = crStartingBalanceUsdc rules
-    , csmMinimumProfitBps = crMinimumProfitBps rules
+    , csmMinimumProfitBps = crLegacyMinimumProfitBps rules
     , csmMinimumActiveDays = crMinimumActiveDays rules
     , csmFxSessionBoundaryUtcMinutes = crFxSessionBoundaryUtcMinutes rules
     , csmRegistrationCloseTimestamp = epoch <$> crRegistrationClosesAt rules
@@ -1224,6 +1229,44 @@ isLegacySeptemberPrizeOnlyMismatch expected stored =
       , csmFifthPrizeUsdc metadata
       ]
 
+-- This is the X-account age requirement used by the pre-launch September
+-- seed before eligibility was relaxed from 90 to 30 days. It may be migrated
+-- only before trading starts. Completed registrations remain valid because
+-- every account that satisfied the former 90-day minimum also satisfies the
+-- relaxed 30-day minimum.
+isLegacySeptemberXAccountAgeOnlyMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isLegacySeptemberXAccountAgeOnlyMismatch expected stored =
+  csmSlug expected == september2026CompetitionSlug
+    && csmSlug stored == september2026CompetitionSlug
+    && csmMinimumXAccountAgeDays expected == Just 30
+    && csmMinimumXAccountAgeDays stored == Just 90
+    && map csmmField (competitionSeedMismatches expected stored)
+      == ["minimum_x_account_age_days"]
+
+-- Some local and staged databases can still contain both pre-launch values.
+-- Recognize that exact combination so one guarded restart can apply both
+-- reviewed corrections atomically.
+isLegacySeptemberPrizeAndXAccountAgeMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isLegacySeptemberPrizeAndXAccountAgeMismatch expected stored =
+  isLegacySeptemberPrizeOnlyMismatch
+    expected
+    (stored {csmMinimumXAccountAgeDays = csmMinimumXAccountAgeDays expected})
+    && csmMinimumXAccountAgeDays expected == Just 30
+    && csmMinimumXAccountAgeDays stored == Just 90
+    && map csmmField (competitionSeedMismatches expected stored)
+      == [ "minimum_x_account_age_days"
+         , "second_prize_usdc"
+         , "third_prize_usdc"
+         , "fourth_prize_usdc"
+         , "fifth_prize_usdc"
+         ]
+
 validateOrMigrateCompetitionSeed
   :: Connection
   -> CompetitionSeedMetadata
@@ -1255,6 +1298,42 @@ validateOrMigrateCompetitionSeed conn expected stored =
                   <> "."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch payout-deadline correction was detected, but automatic migration is allowed only before boundary blocks, snapshots, or finalization exist."
+      | isLegacySeptemberPrizeAndXAccountAgeMismatch expected stored -> do
+          safeRows <- query conn
+            "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
+            \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_registration_applications\
+            \   WHERE competition_slug = ? AND status = 'completed')\
+            \ FROM insights_competitions WHERE slug = ?"
+            (csmSlug expected, csmSlug expected, csmSlug expected, csmSlug expected)
+          case safeRows of
+            [Only True] -> do
+              affected <- execute conn
+                "UPDATE insights_competitions SET minimum_x_account_age_days = ?,\
+                \ first_prize_usdc = ?, second_prize_usdc = ?, third_prize_usdc = ?,\
+                \ fourth_prize_usdc = ?, fifth_prize_usdc = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND minimum_x_account_age_days = 90\
+                \ AND first_prize_usdc = 600000000 AND second_prize_usdc = 300000000\
+                \ AND third_prize_usdc = 100000000 AND fourth_prize_usdc = 0 AND fifth_prize_usdc = 0"
+                ( csmMinimumXAccountAgeDays expected
+                , csmFirstPrizeUsdc expected
+                , csmSecondPrizeUsdc expected
+                , csmThirdPrizeUsdc expected
+                , csmFourthPrizeUsdc expected
+                , csmFifthPrizeUsdc expected
+                , csmSlug expected
+                )
+              unless (affected == 1) $
+                seedMismatchError expected mismatches $
+                  Just "The known pre-launch September corrections changed concurrently; startup refused to overwrite them."
+              putStrLn $
+                "Migrated the pre-launch Plether Insights September prize pool and minimum X-account age for "
+                  <> T.unpack (csmSlug expected)
+                  <> "."
+            _ -> seedMismatchError expected mismatches $
+              Just "The known pre-launch September corrections were detected, but automatic migration is allowed only before competition start, completed registrations, boundary blocks, snapshots, or finalization exist."
       | isLegacySeptemberPrizeOnlyMismatch expected stored -> do
           safeRows <- query conn
             "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
@@ -1289,6 +1368,29 @@ validateOrMigrateCompetitionSeed conn expected stored =
                   <> " from 1,000 USDC across three places to 2,000 USDC across five places."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch September prize correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
+      | isLegacySeptemberXAccountAgeOnlyMismatch expected stored -> do
+          safeRows <- query conn
+            "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
+            \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
+            \ FROM insights_competitions WHERE slug = ?"
+            (csmSlug expected, csmSlug expected, csmSlug expected)
+          case safeRows of
+            [Only True] -> do
+              affected <- execute conn
+                "UPDATE insights_competitions SET minimum_x_account_age_days = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND minimum_x_account_age_days = 90"
+                (csmMinimumXAccountAgeDays expected, csmSlug expected)
+              unless (affected == 1) $
+                seedMismatchError expected mismatches $
+                  Just "The known pre-launch September X-account age correction changed concurrently; startup refused to overwrite it."
+              putStrLn $
+                "Migrated the pre-launch Plether Insights minimum X-account age for "
+                  <> T.unpack (csmSlug expected)
+                  <> " from 90 days to 30 days; existing completed registrations were preserved."
+            _ -> seedMismatchError expected mismatches $
+              Just "The known pre-launch September X-account age correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
       | otherwise -> seedMismatchError expected mismatches Nothing
 
 seedMismatchError
@@ -1612,7 +1714,8 @@ finalizeCompetition conn slug finalizedBy verifyCanonicality =
   withTransaction conn $ do
     advisoryRows <- query conn
       "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
-      \ 'perps-indexer:perps-history-costs-v1:' || c.release_router, c.chain_id))\
+      \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
       \ FROM insights_competitions c WHERE c.slug = ?) locked"
       (Only slug) :: IO [Only Integer]
     unless (length advisoryRows == 1) $
@@ -1653,7 +1756,8 @@ finalizeCompetition conn slug finalizedBy verifyCanonicality =
                     \ c.score_cutoff_block, c.score_cutoff_block_hash, i.last_indexed_block, i.last_indexed_block_hash\
                     \ FROM insights_competitions c JOIN perps_indexer_state i\
                     \ ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
-                    \ AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+                    \ AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+                    \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
                     \ WHERE c.slug = ? AND c.start_block IS NOT NULL AND c.start_block_hash IS NOT NULL\
                     \ AND c.start_snapshot_block_hash IS NOT NULL AND c.score_cutoff_block IS NOT NULL\
                     \ AND c.score_cutoff_block_hash IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL"
@@ -1798,9 +1902,10 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
     cursorReady <- query conn
       "SELECT EXISTS (SELECT 1 FROM perps_indexer_state i\
       \ WHERE i.chain_id = ? AND i.release_router = ?\
-      \ AND i.indexer_name = ('perps-history-costs-v1:' || ?)\
+      \ AND i.indexer_name = ((CASE WHEN ? = 421614 AND ? = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || ?)\
       \ AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= ?)"
-      (chainId, releaseRouter, releaseRouter, blockNumber)
+      (chainId, releaseRouter, chainId, releaseRouter, releaseRouter, blockNumber)
     unless (cursorReady == [Only True]) $
       fail "Cannot publish an Insights snapshot ahead of a canonical perps-history cursor"
     configuredLens <- query conn
@@ -2048,19 +2153,21 @@ getCompetitionLeaderboard conn slug requestedSearch limitRows offsetRows =
                 <> " WHERE competition_slug = ? AND (wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!')"
                 <> leaderboardOrderBy)
               (slug, pattern, pattern, limitRows, offsetRows)
-    False -> case normalizeLeaderboardSearch requestedSearch of
-      Nothing ->
-        query conn
-          (leaderboardQuery <> leaderboardOrderBy)
-          (slug, limitRows, offsetRows)
-      Just search ->
-        let pattern = leaderboardSearchPattern search
-         in query conn
-              (leaderboardQuery
-                <> " WHERE wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!'\
-                   \"
-                <> leaderboardOrderBy)
-              (slug, pattern, pattern, limitRows, offsetRows)
+    False -> do
+      profitThreshold <- competitionMinimumProfitUsdc slug
+      case normalizeLeaderboardSearch requestedSearch of
+        Nothing ->
+          query conn
+            (leaderboardQuery <> leaderboardOrderBy)
+            (profitThreshold, slug, limitRows, offsetRows)
+        Just search ->
+          let pattern = leaderboardSearchPattern search
+           in query conn
+                (leaderboardQuery
+                  <> " WHERE wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!'\
+                     \"
+                  <> leaderboardOrderBy)
+                (profitThreshold, slug, pattern, pattern, limitRows, offsetRows)
 
 getCompetitionWallet :: Connection -> Text -> Text -> IO (Maybe LeaderboardRow)
 getCompetitionWallet conn slug wallet = do
@@ -2069,10 +2176,19 @@ getCompetitionWallet conn slug wallet = do
     then query conn
       (finalizedStandingsSelect <> " WHERE competition_slug = ? AND wallet = ? LIMIT 1")
       (slug, normalizeAddress wallet)
-    else query conn
-      (leaderboardQuery <> " WHERE wallet = ? LIMIT 1")
-      (slug, normalizeAddress wallet)
+    else do
+      profitThreshold <- competitionMinimumProfitUsdc slug
+      query conn
+        (leaderboardQuery <> " WHERE wallet = ? LIMIT 1")
+        (profitThreshold, slug, normalizeAddress wallet)
   pure $ firstRow rows
+
+competitionMinimumProfitUsdc :: Text -> IO Integer
+competitionMinimumProfitUsdc slug =
+  case competitionRulesForSlug slug of
+    Just rules -> pure $ minimumProfitUsdc rules
+    Nothing -> ioError $ userError $
+      "Insights competition rules are not defined in code for slug " <> T.unpack slug
 
 competitionUsesMaterializedStandings :: Connection -> Text -> IO Bool
 competitionUsesMaterializedStandings conn slug = do
@@ -2134,7 +2250,8 @@ insightsDataStatusQuerySql =
   \   EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
   \ FROM perps_indexer_state i\
   \ JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
-  \ WHERE i.indexer_name = ('perps-history-costs-v1:' || t.release_router) LIMIT 1\
+  \ WHERE i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router) LIMIT 1\
   \ )\
   \ SELECT COALESCE(p.participant_count, 0), s.wallet_count, s.start_count, s.final_count,\
   \ s.latest_block, s.latest_timestamp, i.last_indexed_block, i.last_indexed_block_hash,\
@@ -2150,9 +2267,21 @@ getLatestIndexedSafeBlock conn chainId releaseRouter = do
   rows <- query conn
     "SELECT last_indexed_block, last_indexed_block_hash FROM perps_indexer_state\
     \ WHERE chain_id = ? AND release_router = ?\
-    \ AND indexer_name = ('perps-history-costs-v1:' || ?) LIMIT 1"
-    (chainId, normalizeAddress releaseRouter, normalizeAddress releaseRouter)
+    \ AND indexer_name = (? || ?) LIMIT 1"
+    ( chainId
+    , normalizeAddress releaseRouter
+    , perpsCursorNamespace chainId releaseRouter
+    , normalizeAddress releaseRouter
+    )
   pure $ firstRow rows
+
+perpsCursorNamespace :: Integer -> Text -> Text
+perpsCursorNamespace chainId releaseRouter
+  | chainId == 421614
+      && normalizeAddress releaseRouter ==
+        "0x97a901de2b267c307e264fd5f71403f8072f73e7" =
+      "perps-history-costs-v2:finalized-abi3:"
+  | otherwise = "perps-history-costs-v1:"
 
 participantSelect :: Query
 participantSelect =
@@ -2168,7 +2297,8 @@ fundingIntegrityRefreshSql =
   "WITH target AS (\
   \ SELECT c.*, i.configured_start_block FROM insights_competitions c\
   \ JOIN perps_indexer_state i ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
-  \  AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+  \  AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \  THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \  AND i.configured_start_block IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL\
   \  AND split_part(c.release_manifest, '|', 12) ~ '^[1-9][0-9]*$'\
   \  AND i.configured_start_block = split_part(c.release_manifest, '|', 12)::bigint\
@@ -2358,7 +2488,8 @@ fundingIntegrityRefreshSqlLegacy =
   \ start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ('perps-history-costs-v1:' || t.release_router)\
+  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND t.start_snapshot_block_hash IS NOT NULL\
@@ -2530,11 +2661,12 @@ competitionSelect =
 leaderboardQuery :: Query
 leaderboardQuery =
   "WITH target AS (\
-  \ SELECT * FROM insights_competitions WHERE slug = ?\
+  \ SELECT c.*, ?::NUMERIC AS code_minimum_profit_usdc FROM insights_competitions c WHERE slug = ?\
   \ ), start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ('perps-history-costs-v1:' || t.release_router)\
+  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND (LOWER(b.block_hash) = LOWER(t.start_snapshot_block_hash)\
@@ -2545,7 +2677,8 @@ leaderboardQuery =
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ('perps-history-costs-v1:' || t.release_router)\
+  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2607,7 +2740,7 @@ leaderboardQuery =
   \ SELECT p.wallet, p.alias, p.eligibility_status, p.eligibility_reason, p.integrity_flags,\
   \ t.slug AS competition_slug,\
   \ t.starting_balance_usdc AS competition_starting_balance_usdc,\
-  \ t.minimum_profit_bps AS competition_minimum_profit_bps,\
+  \ t.code_minimum_profit_usdc AS competition_minimum_profit_usdc,\
   \ t.minimum_active_days AS competition_minimum_active_days,\
   \ ((t.first_prize_usdc > 0)::INT + (t.second_prize_usdc > 0)::INT + (t.third_prize_usdc > 0)::INT\
   \   + (t.fourth_prize_usdc > 0)::INT + (t.fifth_prize_usdc > 0)::INT) AS competition_prize_places,\
@@ -2646,7 +2779,7 @@ leaderboardQuery =
   \ COUNT(*) OVER (PARTITION BY final_pnl_usdc) AS prize_tie_count\
   \ FROM ranked WHERE final_pnl_usdc IS NOT NULL AND eligibility_status = 'eligible'\
   \ AND jsonb_array_length(integrity_flags) = 0\
-  \ AND final_pnl_usdc >= competition_starting_balance_usdc * competition_minimum_profit_bps / 10000\
+  \ AND final_pnl_usdc >= competition_minimum_profit_usdc\
   \ AND active_days >= competition_minimum_active_days\
   \ ), with_prizes AS (\
   \ SELECT ranked.*, CASE WHEN pc.prize_place <= competition_prize_places THEN pc.prize_place ELSE NULL END AS prize_place,\
@@ -2687,6 +2820,7 @@ materializeFinalizedStandings conn slug = do
       | existingCount == participantCount -> validateComplete participantCount
       | existingCount /= 0 -> pure $ Left "finalized standings are partially materialized"
       | otherwise -> do
+          profitThreshold <- competitionMinimumProfitUsdc slug
           inserted <- execute conn
             ("INSERT INTO insights_finalized_standings (competition_slug, competition_rank, prize_place, prize_tie_count,\
              \ wallet, alias, eligibility_status, eligibility_reason, funding_integrity_clear, final_pnl_usdc, roi_bps,\
@@ -2696,7 +2830,7 @@ materializeFinalizedStandings conn slug = do
              \ position_unrealized_pnl_usdc, position_liquidatable) SELECT ?, standings.* FROM ("
               <> leaderboardQuery
               <> ") standings")
-            (slug, slug)
+            (slug, profitThreshold, slug)
           if toInteger inserted == participantCount
             then validateComplete participantCount >>= \case
               success@(Right _) -> pure success
@@ -2738,7 +2872,8 @@ walletActivityQuery =
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ('perps-history-costs-v1:' || t.release_router)\
+  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2784,7 +2919,8 @@ finalizationReadinessQuery =
   \     AND LOWER(b.block_hash) = LOWER(c.start_snapshot_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2799,7 +2935,8 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2810,7 +2947,8 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)),\
   \ (SELECT MIN(b.block_hash) FROM insights_snapshot_batches b\
@@ -2818,7 +2956,8 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ('perps-history-costs-v1:' || c.release_router)\
+  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address))\
   \ FROM insights_competitions c WHERE c.slug = ? FOR UPDATE OF c"

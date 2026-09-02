@@ -12,8 +12,9 @@ import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
   ( AccountSnapshotInput (..)
@@ -32,6 +33,7 @@ import Plether.Database.Insights
   , setCompetitionBoundaryBlocks
   , stageCompetitionParticipantWalletRemap
   )
+import Plether.Database.Insights.Registration (ensureRegistrationSchema)
 import Plether.Database.Schema
   ( ensurePerpsHistorySchema
   , ensureTestnetFaucetSchema
@@ -70,6 +72,43 @@ insightsDatabaseSpec databaseUrl =
         fmap icrSlug current `shouldBe` Just (crSlug testSeptemberRules)
         fmap icrFinalized current `shouldBe` Just False
 
+    it "preserves completed registrations while relaxing the September X-account age from 90 to 30 days" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        now <- getCurrentTime
+        let currentRules = prelaunchAgeMigrationRules now
+            legacyRules = currentRules {crMinimumXAccountAgeDays = Just 90}
+            slug = crSlug currentRules
+            registrationId = "11111111-1111-4111-8111-111111111111" :: Text
+        void $ execute conn "DELETE FROM insights_competitions WHERE slug = ?" (Only slug)
+        ensureInsightsSchema
+          conn legacyRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+        ensureRegistrationSchema conn
+        void $ execute conn
+          "INSERT INTO insights_registration_applications (\
+          \ registration_id, competition_slug, status, turnstile_token_digest,\
+          \ email_key_version, email_nonce, email_ciphertext, email_tag, email_digest, email_masked,\
+          \ x_user_id_digest, x_username, x_created_timestamp, x_identity_verified_at, x_follow_verified_at,\
+          \ owner_wallet, trading_account, wallet_verification_block, wallet_verification_block_hash, wallet_verified_at,\
+          \ rules_version, privacy_version, completed_at)\
+          \ VALUES (?::uuid, ?, 'completed', decode(repeat('01', 32), 'hex'),\
+          \ 'v1', decode(repeat('02', 12), 'hex'), decode('03', 'hex'), decode(repeat('04', 16), 'hex'),\
+          \ decode(repeat('05', 32), 'hex'), 'f***@example.test',\
+          \ decode(repeat('06', 32), 'hex'), 'fixture_trader', 0, NOW(), NOW(),\
+          \ ?, ?, 1, ?, NOW(), ?, 'fixture-v1', NOW())"
+          (registrationId, slug, walletA, walletB, hashText "registration-block", crRulesVersion currentRules)
+        insertParticipantFor conn slug walletA registrationId
+
+        ensureInsightsSchema
+          conn currentRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+
+        migrated <- query conn
+          "SELECT c.minimum_x_account_age_days, a.status, a.rules_version,\
+          \ (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = c.slug)\
+          \ FROM insights_competitions c JOIN insights_registration_applications a\
+          \ ON a.competition_slug = c.slug WHERE c.slug = ? AND a.registration_id = ?::uuid"
+          (slug, registrationId) :: IO [(Maybe Int, Text, Text, Integer)]
+        migrated `shouldBe` [(Just 30, "completed", crRulesVersion currentRules, 1)]
+
     it "fails closed instead of freezing scoreless legacy standings" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         insertParticipantFor conn (crSlug july2026Competition) walletA "legacy-a"
@@ -85,7 +124,7 @@ insightsDatabaseSpec databaseUrl =
         insertParticipant conn walletA "trader-a"
         void $ execute conn
           "UPDATE insights_competitions SET registration_close_timestamp = ?,\
-          \ minimum_x_account_age_days = 90, target_x_handle = 'plether_fi' WHERE slug = ?"
+          \ minimum_x_account_age_days = 30, target_x_handle = 'plether_fi' WHERE slug = ?"
           (startTimestamp - 1, competitionSlug)
         result <- stageCompetitionParticipantWalletRemap
           conn competitionSlug "trader-a" walletA walletB
@@ -426,6 +465,17 @@ testSeptemberRules =
     { crRegistrationClosesAt = Nothing
     , crMinimumXAccountAgeDays = Nothing
     , crTargetXHandle = Nothing
+    }
+
+prelaunchAgeMigrationRules :: UTCTime -> CompetitionRules
+prelaunchAgeMigrationRules now =
+  september2026Competition
+    { crStartAt = addUTCTime 86_400 now
+    , crNewRiskCutoffAt = addUTCTime 172_800 now
+    , crScoreCutoffAt = addUTCTime 172_800 now
+    , crResultsAt = addUTCTime 259_200 now
+    , crPaymentDeadlineAt = addUTCTime 604_800 now
+    , crRegistrationClosesAt = Just $ addUTCTime 3_600 now
     }
 
 fixtureManifest :: CompetitionReleaseManifest

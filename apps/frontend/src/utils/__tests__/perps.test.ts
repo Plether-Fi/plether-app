@@ -4,12 +4,18 @@ import {
   confidenceAdjustedBasketPrice,
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
+  formatPerpsPositionSize,
   formatPerpsSummaryUsdc,
   formatSignedPerpsSummaryUsdc,
+  notionalUsdcToQuantizedSizeDelta,
   oraclePriceToDisplayDxyPrice,
+  parsePerpsPositionSize,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
+  quantizePerpsPositionSize,
+  sizeDeltaToNotionalUsdc,
 } from '../perps'
+import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 
 describe('perps summary USDC formatting', () => {
   it('keeps fractional precision below 100 000 USDC', () => {
@@ -20,6 +26,13 @@ describe('perps summary USDC formatting', () => {
     expect(formatPerpsSummaryUsdc(100_000_490_000n)).toBe('100 000')
     expect(formatPerpsSummaryUsdc(4_073_013_780_000n)).toBe('4 073 014')
     expect(formatSignedPerpsSummaryUsdc(-4_073_013_780_000n)).toBe('-4 073 014')
+  })
+})
+
+describe('perps position quantity formatting', () => {
+  it('formats 18-decimal contract quantities without a currency unit', () => {
+    expect(formatPerpsPositionSize(2_000n * 10n ** 18n)).toBe('2 000')
+    expect(formatPerpsPositionSize(1_234_567_000_000_000_000n)).toBe('1.23')
   })
 })
 
@@ -44,6 +57,41 @@ describe('DXY display price helpers', () => {
   it('can convert a display DXY price back to raw oracle price for future inputs', () => {
     expect(displayDxyPriceToOraclePrice(101_690_000n)).toBe(98_310_000n)
     expect(displayDxyPriceToOraclePrice(PERPS_DXY_PRICE_CAP)).toBe(0n)
+  })
+})
+
+describe('perps position size quantum', () => {
+  it('parses a formatted plDXY quantity at position-size precision', () => {
+    expect(parsePerpsPositionSize('4 900')).toBe(4_900n * 10n ** 18n)
+    expect(parsePerpsPositionSize('3 389 329.5585835346486935')).toBe(
+      3_389_329_558_583_534_648_693_500n
+    )
+  })
+
+  it('treats incomplete or invalid plDXY quantity input as zero', () => {
+    expect(parsePerpsPositionSize('')).toBe(0n)
+    expect(parsePerpsPositionSize('.')).toBe(0n)
+    expect(parsePerpsPositionSize('not a number')).toBe(0n)
+  })
+
+  it('rounds the requested exposure down to a 100 plDXY increment', () => {
+    const displayPrice = 101_420_000n
+    const sizeDelta = notionalUsdcToQuantizedSizeDelta(5_000_000_000n, displayPrice)
+
+    expect(sizeDelta).toBe(4_900n * 10n ** 18n)
+    expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
+    expect(sizeDeltaToNotionalUsdc(sizeDelta, displayPrice)).toBe(4_969_580_000n)
+  })
+
+  it('can round minimum requirements up to the next valid increment', () => {
+    const justOverOneQuantum = PERPS_POSITION_SIZE_QUANTUM + 1n
+
+    expect(quantizePerpsPositionSize(justOverOneQuantum, 'up')).toBe(
+      2n * PERPS_POSITION_SIZE_QUANTUM
+    )
+    expect(quantizePerpsPositionSize(justOverOneQuantum, 'down')).toBe(
+      PERPS_POSITION_SIZE_QUANTUM
+    )
   })
 })
 

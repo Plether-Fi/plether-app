@@ -115,7 +115,7 @@ Before provisioning the application:
 1. Fund the X developer account and confirm that its API credit balance covers
    the expected registrations plus retries.
 2. Configure OAuth 2.0 Authorization Code with PKCE and the scopes
-   `users.read users.email follows.read`.
+   `tweet.read users.read users.email follows.read`.
 3. Register this exact callback, without a query string or fragment:
 
    ```text
@@ -425,7 +425,12 @@ if normal restarts do not provide the required cleanup cadence. Completed
 application email data remains encrypted and available for competition
 integrity, duplicate prevention, and competition-relevant messages. Do not
 delete it without an approved retention-policy change and corresponding
-application support.
+application support. Promotional email is separately opt-in: use a completed
+registration email for product updates or promotions only when
+`promotional_email_consent` is true and its consent timestamp is present. A
+competition-relevant operational message does not imply promotional consent,
+and the mail provider's unsubscribe or suppression state always takes
+precedence over the original opt-in.
 
 Rotate the Pages-to-backend origin token without an outage:
 
@@ -553,7 +558,7 @@ the half-open scoring cutoff.
    fails closed unless boundary blocks, private trader references, reviews, and
    a complete canonical final snapshot batch are present.
 6. Export the eligibility-aware 600/500/400/300/200 USDC prize allocation. Entrants must
-   meet the +1% threshold and five-active-day requirement. Exact P&L ties split
+   meet the +1.00 mock-USDC threshold and five-active-day requirement. Exact P&L ties split
    the occupied prize pool equally at six-decimal USDC precision.
 7. Pay real USDC no later than `2026-10-03T00:00:00Z` and retain transaction
    hashes in the restricted payout record.

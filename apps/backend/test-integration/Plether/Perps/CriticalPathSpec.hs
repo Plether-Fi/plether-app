@@ -39,6 +39,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -52,11 +53,10 @@ import Plether.Database.Schema
   , ensurePerpsHistorySchema
   , ensurePerpsKeeperSchema
   , markPerpsKeeperOrderExecuted
-  , updatePerpsOrderEconomicsEvidence
-  , updatePerpsOrderOracleEvidence
   , upsertPerpsKeeperOrderCommitted
   )
 import Plether.Ethereum.Client (EthClient (..))
+import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , CompetitionRules (crSlug)
@@ -78,7 +78,7 @@ import Web.Scotty (scottyApp)
 criticalPathSpec :: Text -> Spec
 criticalPathSpec databaseUrl =
   describe "deterministic Perps critical path" $
-    it "reconciles keeper, canonical history, exact evidence, and reorgs" $
+    it "reconciles V2 lifecycle identity, canonical receipts, and reorgs" $
       withScriptedChain $ \chain ->
         withCriticalPathDatabase databaseUrl $ \pool -> do
           manager <- newManager defaultManagerSettings
@@ -100,83 +100,42 @@ runScenario
 runScenario manager pool apiApplication chain = do
   seedFastKeeperTerminal pool
 
-  -- The keeper is intentionally faster than canonical history. This proves
-  -- that /wait can surface inclusion immediately without manufacturing exact
-  -- execution evidence or a canonical block hash.
+  -- V1 keeper state is deliberately ignored. The V2 wait endpoint only
+  -- returns lifecycle-backed indexed history with a client intent identity.
   fastWait <- getApiJson apiApplication waitPath
-  assertPath fastWait ["data", "timedOut"] $ Bool False
-  fastOrder <- requirePath fastWait ["data", "order"]
-  assertField fastOrder "terminalStatus" $ String "Executed"
-  assertField fastOrder "commitTxHash" $ String commitTxHashA
-  assertField fastOrder "terminalTxHash" $ String terminalTxHashA
-  assertField fastOrder "executionPrice" $
-    String $ decimal $ efExecutionPrice evidenceA
-  assertMissingFields
-    fastOrder
-    [ "terminalBlockHash"
-    , "vpiUsdc"
-    , "executionOraclePrice"
-    , "executionOracleFrozen"
-    ]
+  assertPath fastWait ["data", "timedOut"] $ Bool True
+  assertPath fastWait ["data", "order"] Null
 
-  -- First pass: canonical terminal data is indexed, but both callTracer and
-  -- explorer evidence are unavailable. Activity preview VPI must remain
-  -- explicitly separate from the missing exact VPI.
+  -- The canonical V2 intent and finalization receipt are sufficient terminal
+  -- evidence. No Router terminal event or execution trace is consulted.
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 1
-  (terminalWithoutEvidence, waitWithoutEvidence) <-
+  getRawTraceRequestCount chain `shouldReturnValue` 0
+  (terminalOrder, waitOrder) <-
     getOrderFromBothEndpoints apiApplication
-  forM_ [terminalWithoutEvidence, waitWithoutEvidence] $ \order -> do
+  forM_ [terminalOrder, waitOrder] $ \order -> do
     assertCanonicalTerminal
       order
       commitTxHashA
       terminalTxHashA
       terminalBlockHashA
+      receiptHashA
       evidenceA
+    assertReceiptEconomics order evidenceA
     assertField order "activityVpiUsdc" $
       String $ decimal $ efActivityVpiUsdc evidenceA
-    assertMissingFields
-      order
-      [ "vpiUsdc"
-      , "frozenCloseSpreadUsdc"
-      , "executionEconomicsVersion"
-      , "executionOraclePrice"
-      , "executionOracleFrozen"
-      ]
-  ordersWithoutEvidence <- getApiJson apiApplication ordersPath
-  assertPath ordersWithoutEvidence ["data", "indexedThroughBlock"] $
+  indexedOrders <- getApiJson apiApplication ordersPath
+  assertPath indexedOrders ["data", "indexedThroughBlock"] $
     String $ decimal terminalBlockNumber
 
-  -- A normal iteration inside the five-minute backoff must not refetch the
-  -- trace. This catches a missing/failed attempt timestamp rather than merely
-  -- proving that an explicitly aged row can retry.
+  -- Re-indexing is idempotent and cannot mutate the canonical receipt.
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 1
-  backoffOrder <- getFirstOrder apiApplication
-  backoffOrder `shouldBe` terminalWithoutEvidence
-
-  -- The production retry interval is five minutes. Age the attempt in the
-  -- isolated database instead of sleeping, then enable only the Blockscout
-  -- fallback. The real evidence worker must hydrate the same canonical row.
-  ageEvidenceAttempt pool
-  setTraceAvailable chain True
-  runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 2
-  (enrichedOrder, enrichedWaitOrder) <-
-    getOrderFromBothEndpoints apiApplication
-  forM_ [enrichedOrder, enrichedWaitOrder] $ \order ->
-    assertExactEvidence order evidenceA
-
-  -- Once derivation versions are complete, a conflicting provider response
-  -- must not be fetched and cannot mutate the finalized values.
-  setTraceEvidence chain conflictingEvidence
-  runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 2
+  getRawTraceRequestCount chain `shouldReturnValue` 0
   stableOrder <- getFirstOrder apiApplication
-  stableOrder `shouldBe` enrichedOrder
+  stableOrder `shouldBe` terminalOrder
 
   -- Reorg A into a branch containing only a replacement commit. Canonical
-  -- history must rewind to Committed and /wait must suppress keeper terminal A.
+  -- history must rewind to the replacement V2 intent and /wait must continue
+  -- ignoring the stale V1 keeper terminal A.
   setCanonicalBranch chain CommittedOnly
   runIndexer manager pool chain
   committedOrder <- getFirstOrder apiApplication
@@ -208,9 +167,8 @@ runScenario manager pool apiApplication chain = do
   assertField committedWaitOrder "terminalStatus" $ String "Committed"
   assertMissingField committedWaitOrder "terminalTxHash"
 
-  -- Reorg again so even the commit disappears. Cursor coverage proves the old
-  -- keeper terminal stale, therefore /wait returns null instead of resurrecting
-  -- terminal A.
+  -- Reorg again so even the commit disappears. The old keeper terminal remains
+  -- irrelevant when the V2 intent disappears.
   setCanonicalBranch chain Empty
   runIndexer manager pool chain
   emptyOrders <- getApiJson apiApplication ordersPath
@@ -222,7 +180,7 @@ runScenario manager pool apiApplication chain = do
   -- Canonical replacement B is accepted and enriched independently.
   setCanonicalBranch chain TerminalB
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 3
+  getRawTraceRequestCount chain `shouldReturnValue` 0
   (replacementOrder, replacementWaitOrder) <-
     getOrderFromBothEndpoints apiApplication
   forM_ [replacementOrder, replacementWaitOrder] $ \order -> do
@@ -231,18 +189,13 @@ runScenario manager pool apiApplication chain = do
       commitTxHashB
       terminalTxHashB
       terminalBlockHashB
+      receiptHashB
       evidenceB
-    assertExactEvidence order evidenceB
+    assertReceiptEconomics order evidenceB
 
   oldTerminalEventCount <- countTerminalEvents pool terminalTxHashA
   oldTerminalEventCount `shouldBe` 0
 
-  -- Simulate a late evidence result from the orphaned A transaction. The
-  -- production SQL guards on tx, block, and block hash; B must remain byte
-  -- identical for both economics and oracle evidence.
-  writeLateOrphanedEvidence pool
-  replacementAfterLateEvidence <- getFirstOrder apiApplication
-  replacementAfterLateEvidence `shouldBe` replacementOrder
 
 runIndexer :: Manager -> DbPool -> ScriptedChain -> IO ()
 runIndexer manager pool chain =
@@ -257,6 +210,7 @@ makeApiApplication
 makeApiApplication manager pool config rpcUrl = do
   cache <- newAppCache
   proxyState <- newPimlicoProxyState
+  faucetGuardState <- newFaucetGuardState
   mainRequestId <- newIORef 1
   perpsRequestId <- newIORef 1
   let client =
@@ -272,7 +226,7 @@ makeApiApplication manager pool config rpcUrl = do
           , clientRequestId = perpsRequestId
           }
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState
+    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =
@@ -359,17 +313,6 @@ seedFastKeeperTerminal pool =
       terminalBlockNumber
       (efExecutionPrice evidenceA)
 
-ageEvidenceAttempt :: DbPool -> IO ()
-ageEvidenceAttempt pool =
-  withDb pool $ \connection ->
-    void $
-      execute
-        connection
-        "UPDATE perps_orders \
-        \SET execution_evidence_last_attempt_at = NOW() - INTERVAL '6 minutes' \
-        \WHERE chain_id = ? AND order_router = ? AND order_id = ?"
-        (testChainId, Text.toLower testRouter, testOrderId)
-
 countTerminalEvents :: DbPool -> Text -> IO Integer
 countTerminalEvents pool txHash =
   withDb pool $ \connection -> do
@@ -384,34 +327,6 @@ countTerminalEvents pool txHash =
     case rows of
       [Only count] -> pure count
       _ -> fail "Expected one COUNT(*) row for canonical terminal events"
-
-writeLateOrphanedEvidence :: DbPool -> IO ()
-writeLateOrphanedEvidence pool =
-  withDb pool $ \connection -> do
-    updatePerpsOrderEconomicsEvidence
-      connection
-      testChainId
-      testRouter
-      testOrderId
-      terminalTxHashA
-      terminalBlockNumber
-      terminalBlockHashA
-      9_999_999_999
-      (Just 8_888_888)
-      99
-    updatePerpsOrderOracleEvidence
-      connection
-      testChainId
-      testRouter
-      testOrderId
-      terminalTxHashA
-      terminalBlockNumber
-      terminalBlockHashA
-      (Just 77_777_777)
-      (Just True)
-      (Just 1)
-      (Just 1)
-      99
 
 getOrderFromBothEndpoints :: Application -> IO (Value, Value)
 getOrderFromBothEndpoints apiApplication = do
@@ -457,38 +372,31 @@ assertCanonicalTerminal
   -> Text
   -> Text
   -> Text
+  -> Text
   -> EvidenceFixture
   -> Expectation
-assertCanonicalTerminal order commitTxHash txHash blockHash evidence = do
+assertCanonicalTerminal order commitTxHash txHash blockHash receiptHash evidence = do
   assertField order "terminalStatus" $ String "Executed"
   assertField order "commitTxHash" $ String commitTxHash
   assertField order "terminalTxHash" $ String txHash
   assertField order "terminalBlockNumber" $
     String $ decimal terminalBlockNumber
   assertField order "terminalBlockHash" $ String blockHash
+  assertField order "clientOrderId" $ String testClientOrderId
+  assertField order "receiptHash" $ String receiptHash
+  assertField order "terminalReason" $ String "Executed"
+  assertField order "executionMode" $ String "Live"
   assertField order "executionPrice" $
     String $ decimal $ efExecutionPrice evidence
 
-assertExactEvidence :: Value -> EvidenceFixture -> Expectation
-assertExactEvidence order evidence = do
-  assertField order "vpiUsdc" $
+assertReceiptEconomics :: Value -> EvidenceFixture -> Expectation
+assertReceiptEconomics order evidence = do
+  assertPath order ["receiptEconomics", "vpiUsdc"] $
     String $ decimal $ efVpiUsdc evidence
-  assertField order "frozenCloseSpreadUsdc" $
+  assertPath order ["receiptEconomics", "frozenSpreadUsdc"] $
     String $ decimal $ efFrozenCloseSpreadUsdc evidence
   assertField order "executionEconomicsVersion" $
-    Aeson.toJSON (1 :: Int)
-  assertField order "executionOraclePrice" $
-    String $ decimal $ efOraclePrice evidence
-  assertField order "executionOracleFrozen" $
-    Bool $ efOracleFrozen evidence
-  assertField order "oracleMinPublishTime" $
-    String $ decimal $ efOraclePublishTime evidence
-  assertField order "oracleMaxPublishTime" $
-    String $ decimal $ efOraclePublishTime evidence
-  assertField order "oracleDerivationVersion" $
     Aeson.toJSON (2 :: Int)
-  assertField order "activityVpiUsdc" $
-    String $ decimal $ efActivityVpiUsdc evidence
 
 assertField :: Value -> Text -> Value -> Expectation
 assertField value fieldName expected =
@@ -561,6 +469,7 @@ testConfig databaseUrl rpcUrl =
     , cfgDatabaseUrl = Just databaseUrl
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = "https://benchmarks.pyth.network"
+    , cfgPythHistoryUrl = "https://pyth.dourolabs.app/v1"
     , cfgPythHermesUrl = "https://hermes.pyth.network"
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 1
@@ -579,6 +488,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
+    , cfgPerpsOrderLifecycleBook = Just testLifecycleBook
     , cfgPerpsCfdEngine = testEngine
     , cfgPerpsCfdEngineLens = testLens
     , cfgPerpsCfdEngineSettlementSidecar = testSidecar
@@ -603,6 +513,7 @@ testConfig databaseUrl rpcUrl =
     , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -610,8 +521,15 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 criticalPathReleaseId :: Text
@@ -627,8 +545,11 @@ criticalPathRelease =
     , prCalculationVersion = "protocol-transparency-v1"
     , prUsdc = testUsdc
     , prOrderRouter = testRouter
+    , prOrderLifecycleBook = Just testLifecycleBook
     , prOrderRouterAdmin = testRouter
     , prCfdEngine = testEngine
+    , prCfdEngineLens = testLens
+    , prCfdEngineSettlementSidecar = testSidecar
     , prCfdEngineAdmin = testEngine
     , prMarginClearinghouse = testClearinghouse
     , prPublicLens = testLens

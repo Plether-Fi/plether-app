@@ -2,17 +2,11 @@
 
 > **An LP deposit goes through a verified Senior or Junior Vault.**
 >
-> The existing trader `Deposit` action funds a Trading Account's Margin Account. It does not provide HousePool liquidity and does not issue LP shares.
+> The trader `Deposit` action funds a Trading Account's Margin Account. It does not provide HousePool liquidity and does not issue LP shares.
 
-Use this guide after deciding which tranche[^tranche] fits your risk tolerance. If you have not made that choice, start with [Choose Senior or Junior](choose-senior-or-junior.md) and [LP risks and safeguards](lp-risks-and-safeguards.md).
+Plether liquidity-provider (LP)[^lp] deposits are queued and processed hourly. Submitting a deposit moves USDC[^usdc] into the selected tranche[^tranche] vault, but it does not immediately put vault shares in your wallet.
 
-> **Current interface status**
->
-> The `Vaults` interface is under development and is not yet part of the published testnet application. The current development branch supports immediate deposits, funded epoch requests, request discovery, cancellation, finalization, claims and synchronous withdrawals. These controls must not be treated as published until the deployed application exposes them.
->
-> Historical APY and full vault-activity indexing are not enabled. A preview is still not a funded request: the approval and `Queue deposit` transaction must both confirm before USDC enters vault escrow.
->
-> Do not attempt to reproduce the flow by sending USDC directly to a vault or the HousePool. Wait until the application explicitly enables the verified LP action or use a separately documented direct-contract procedure from the deployment operator.
+Use this guide after deciding which tranche fits your risk tolerance. If you have not made that choice, start with [Choose Senior or Junior](choose-senior-or-junior.md) and [LP risks and safeguards](lp-risks-and-safeguards.md).
 
 ### Before you start
 
@@ -20,48 +14,47 @@ For the current Arbitrum Sepolia test environment, prepare:
 
 * A compatible self-custody owner wallet
 * Arbitrum Sepolia selected in both the application and wallet
-* MockUSDC[^usdc] at the connected **owner-wallet address**
-* Arbitrum Sepolia ETH for the approval and every subsequent LP transaction
-* Enough time to monitor a pending request if the deposit does not qualify for immediate entry
+* MockUSDC at the connected **owner-wallet address**
+* Arbitrum Sepolia ETH for every required transaction
+* Time to monitor the deposit until its shares are ready and moved to your wallet
 
-LP approvals, deposits, requests, cancellations, finalizations and share claims are not covered by the current trader gas-sponsorship promise. Treat an action as sponsored only if that specific LP action is explicitly marked **Sponsored** in a later interface.
+LP approvals, deposits, cancellations, claims and recovery actions are ordinary owner-wallet transactions. They are not covered by the trader gas-sponsorship flow.
+
+The testnet welcome flow may fund the separate **Trading Account** rather than the owner wallet. MockUSDC held by the Trading Account cannot be approved for an owner-wallet vault deposit. Check the deposit form's **Wallet balance** before continuing.
 
 ### 1. Open the LP deposit—not the trader deposit
 
-Open `Vaults`, select `Senior Vault` or `Junior Vault`, and select the `deposit` mode. The action-panel heading should read `Deposit USDC`.
+Open `Vaults`, select **Explore Senior Vault** or **Explore Junior Vault**, then select the `deposit` mode. The action-panel heading should read **Deposit USDC**.
 
-The two deposit routes have different destinations and outcomes:
+The two deposit systems have different purposes:
 
 | | LP vault deposit | Trader Margin Account deposit |
 | --- | --- | --- |
-| **Where it starts** | `Vaults` → `Senior Vault` or `Junior Vault` → `deposit` | The Perps or welcome deposit flow |
+| **Where it starts** | `Vaults` → **Explore Senior Vault** or **Explore Junior Vault** → `deposit` | The Perps or welcome deposit flow |
 | **USDC source** | Connected owner wallet | Trading Account balance, with an owner-wallet shortfall transfer when needed |
-| **Destination** | Selected tranche vault and, through its protocol method, the HousePool | Trading Account's Margin Account |
-| **What the user receives** | Active tranche shares or a funded pending-deposit request | Spendable or reserved trading-account balance |
-| **Purpose** | Underwrite HousePool liabilities as an LP[^lp] | Fund trading collateral and fees |
-| **Gas policy today** | LP pays native network gas | Eligible Trading Account actions can be sponsored |
+| **Destination** | Selected tranche-vault queue | Trading Account's Margin Account |
+| **What the user receives** | A queued deposit, followed by vault shares after processing | Trading collateral and fee balance |
+| **Purpose** | Underwrite HousePool liabilities | Fund trading collateral and fees |
+| **Gas policy** | Owner wallet pays network gas | Eligible Trading Account actions can be sponsored |
 
-Depositing to the Margin Account does not later convert the balance into LP shares. Withdrawing from the Margin Account and completing a separate LP vault deposit would be required.
+Depositing to the Margin Account does not later convert the balance into vault shares. Read [Your Margin Account](../trading-on-plether-perps/your-margin-account.md) if you are unsure which balance you are viewing.
 
-Read [Your Margin Account](../trading-on-plether-perps/your-margin-account.md) if you are unsure which balance the current trader interface displays.
-
-### 2. Confirm the owner wallet, network and balance
+### 2. Confirm the wallet, network and balance
 
 The owner wallet and Plether Trading Account are separate onchain addresses.
 
-The current testnet welcome flow funds the derived Trading Account. MockUSDC held there cannot be used directly by an owner-wallet approval for a tranche vault. The deposit form's **Wallet balance** is the connected owner-wallet balance and must cover the requested amount.
+Confirm that:
 
-If it does not:
+* the connected owner wallet is the address you intend to use;
+* the application and wallet are on Arbitrum Sepolia;
+* **Wallet balance** covers the deposit amount; and
+* the owner wallet has enough ETH for an optional approval and the deposit transaction.
 
-1. Obtain test MockUSDC at the owner-wallet address from the deployment operator or by a direct transfer.
-2. Verify the recipient is the connected owner wallet, not the Trading Account.
-3. Wait for the transfer to confirm before reopening the deposit preview.
-
-Also confirm that the owner wallet holds enough Arbitrum Sepolia ETH for more than one transaction. A new allowance and the deposit or funded request are separate onchain transactions. A pending flow can later require cancellation, finalization and claim transactions as well.
+If the owner-wallet MockUSDC balance is too low, obtain or transfer test MockUSDC to that exact address and wait for confirmation before reopening the preview.
 
 ### 3. Verify the selected tranche vault
 
-Never rely on the label `Senior Vault` or `Junior Vault` alone. The vault page header links its abbreviated address to the block explorer. Open that link, then compare the complete address with the active deployment's official contract metadata.
+Never rely on the **Senior Vault** or **Junior Vault** label alone. The vault-page header links the abbreviated vault address to the block explorer. Open it and compare the complete address with the active deployment's official contract metadata.
 
 Verify all of the following:
 
@@ -71,55 +64,55 @@ Verify all of the following:
 * **Vault address:** the official address for that exact tranche
 * **Approval spender:** the selected tranche vault
 
-The spender must not be:
+The spender must not be the HousePool, Margin Clearinghouse, Trading Account, owner wallet or an address supplied only through an unverified message or link.
 
-* The HousePool
-* The Margin Clearinghouse
-* The Trading Account
-* The owner wallet
-* An address supplied only through a message, search result or unverified link
+Do not make a plain MockUSDC transfer to the HousePool or tranche vault. Use the application's deposit flow so `requestDeposit` creates the queue accounting needed for processing, cancellation and share delivery.
 
-Do not make a plain MockUSDC transfer directly to the HousePool or selected vault. Use the vault's deposit or funded-request method so the protocol can account for the deposit and issue the correct claim.
+### 4. Check deposit availability and timing
 
-### 4. Enter the amount and review the preview
+Every accepted deposit is queued for an hourly processing time. There is no immediate-deposit path in the current interface.
 
-Enter the MockUSDC amount and select `Review deposit`. The current development frontend enforces a minimum deposit of `1 USDC`; the deployed interface and onchain vault rules remain authoritative.
+The vault overview shows:
 
-The in-progress `Deposit preview` shows:
+* **Deposit availability** and the current deposit limit
+* **Next processing time**
+* A countdown for the current hourly window
+* Whether hourly processing is paused
+* Whether deposits are past their expected processing time
 
-* **Selected tranche** and **Relative risk**
-* **USDC deposited**
-* **Estimated shares**, or **Current indicative shares** for a pending route
-* **Current share price**
-* **Deposit path:** `Immediate deposit`, `Pending deposit epoch` or unavailable
-* **Expected activation:** in this transaction for an immediate deposit, or dependent on epoch eligibility
-* **Frozen-oracle surcharge:** inactive, included in the quote where supported or state unavailable
-* **Network** and **Quote refreshed** time
-* An onchain-action notice and a final `Approve & deposit`, `Deposit USDC`, `Approve & queue`, `Queue deposit` or `Unavailable` state
+The contract uses the deposit transaction's block-inclusion timestamp. Inclusion strictly before the five-minute cutoff—more than five minutes before the hour—targets that processing time; inclusion at or after the cutoff targets the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so treat the confirmed deposit record as authoritative.
 
-The owner-wallet balance appears on the amount form rather than in the modal. The current preview does not show the balance after deposit, a numeric surcharge rate or an exact pending activation epoch. Calculate the expected remaining balance yourself, use the vault quote and onchain configuration for the active surcharge, and do not infer a pending deadline that is not displayed.
+An available deposit form does not guarantee processing at the displayed time. The protocol rechecks its safety conditions when the queue is processed. A safety pause, stale pricing, Senior impairment, a cap, an unresolved pool shortfall or another live gate can defer activation. **Refund available** is narrower: it means the processed batch's aggregate deposit quote rounded to zero shares and the epoch was rejected.
 
-The full vault address is available through the explorer link in the vault-page header, not as a preview row. Verify it before signing. A final `Approve & deposit` button means an exact MockUSDC approval is required; `Deposit USDC` means the current allowance is sufficient.
+### 5. Enter the amount and review the deposit
 
-The share estimate is not a guaranteed redemption value. Share value can rise or fall after deposit. A pending request is repriced at epoch finalization, so its final shares can differ from the preview.
+Enter the MockUSDC amount and select **Review deposit**. Keep the amount within the displayed owner-wallet balance, current deposit limit and live minimum.
 
-When an oracle-frozen surcharge applies, the depositor receives fewer shares. The retained value remains in the selected tranche for incumbent LPs; it does not go to the protocol treasury. Use the live preview rather than assuming a fixed rate.
+The amount form shows:
 
-> **Screenshot placeholder — final Deposit preview**
->
-> Add the production `Deposit preview` together with the vault-page address and amount form after the interface is finalized. The capture should show the selected tranche, owner-wallet balance, verified vault link, estimated or indicative shares, deposit path, activation status, surcharge state, network, quote time and final action state. Do not embed the current documentation prototype.
+* **Share price**
+* **Estimated shares you'll receive**
+* **Deposit status**
+* **Expected processing**
+* **7d realized APY**, when a complete history is available
 
-### 5. Approve the exact deposit amount
+The review modal shows the USDC to deposit, estimated shares, current share price, processing status and expected processing time. It also warns that the final share amount is set when the deposit is processed.
 
-If the owner wallet already has sufficient allowance for the selected vault, the preview uses `Deposit USDC` and can proceed without another approval. Otherwise, `Approve & deposit` should first request a conventional ERC-20[^erc20] approval transaction and then advance to the separate deposit transaction.
+The estimate is not a locked conversion rate. Tranche accounting and trader outcomes can change before processing. Deposits do not pay the frozen-oracle withdrawal surcharge; if live pricing is unavailable, deposit activation waits until the entry gates clear.
 
-The decoded approval must be equivalent to:
+![Deposit preview for a queued Senior or Junior Vault deposit.](../.gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png)
+
+### 6. Confirm the transactions
+
+Select **Confirm deposit** after reviewing the latest values.
+
+If the owner wallet does not already have enough allowance, the guided transaction sequence first asks you to **Approve USDC**. The decoded approval must be equivalent to:
 
 ```solidity
 MockUSDC.approve(selectedTrancheVault, depositAmount)
 ```
 
-Check the wallet request carefully:
+Check the approval carefully:
 
 | Approval field | Expected value |
 | --- | --- |
@@ -128,108 +121,79 @@ Check the wallet request carefully:
 | **Spender** | Official selected Senior or Junior Vault |
 | **Amount** | Exact MockUSDC deposit amount |
 | **Caller** | Connected owner wallet |
-| **Network** | Arbitrum Sepolia for the current deployment |
+| **Network** | Arbitrum Sepolia |
 
-The transaction is sent to the MockUSDC contract. The tranche vault appears as the decoded **spender**. These are intentionally different fields.
+The approval transaction changes allowance only. It does not move USDC or create a deposit. Reject an unlimited allowance, unfamiliar token, wrong vault or network change.
 
-Reject the request if it grants an unlimited allowance, names the wrong tranche, uses an unfamiliar token contract or changes networks. The approval only creates an allowance; it does not move USDC, issue shares or fund a pending request.
+After any required approval confirms, the sequence asks you to confirm **Queue deposit**. This transaction calls the selected vault's funded deposit-request method and moves the USDC into vault escrow.
 
-Wait for the approval receipt before confirming the deposit transaction. Both transactions consume owner-wallet native gas even when the interface presents them as one guided flow.
+Keep the flow open until the application reports **Deposit submitted**. Save both transaction hashes when an approval was required.
 
-### 6. Confirm the route selected by the protocol
+### 7. Verify the queued deposit
 
-The protocol determines which deposit route is allowed at execution.
+After **Queue deposit** confirms, open **Vaults → Your position** and verify:
 
-| Protocol condition | Deposit route | Result when confirmed |
+* the correct tranche;
+* the deposit reference;
+* the deposited USDC amount;
+* **Expected processing**;
+* the estimated shares; and
+* the current status.
+
+The initial status is normally **Pending**. Before processing, **Cancel deposit** returns the escrowed USDC to the owner wallet and issues no shares. Use that action only from the matching deposit record and verify its receipt before submitting a replacement.
+
+Do not submit another deposit merely because wallet-held shares are still zero. Queued USDC is not an active wallet share balance.
+
+### 8. Complete the deposit after processing
+
+When LP settlement is enabled, a healthy keeper[^keeper] can submit eligible hourly processing through the permissionless path. The current interface does not expose a user `Finalize epoch` transaction.
+
+The deposit record can move through these states:
+
+| Status | Meaning | Available action |
 | --- | --- | --- |
-| No trader positions are open and every deposit gate passes | **Immediate deposit** | Active tranche shares are issued in the deposit transaction |
-| One or more trader positions are open and the pending-request gates pass | **Pending deposit epoch** | USDC enters vault escrow; active shares arrive only after activation, finalization and claim |
-| Deposits are paused, Senior is impaired, required pricing is unavailable or another safety gate fails | **Unavailable** | No deposit or request is accepted and no shares are issued |
+| **Pending** | USDC is queued before its expected processing time | Wait or **Cancel deposit** |
+| **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet | Wait and check processing or protocol status |
+| **Shares ready** | Processing created your vault-share allocation | **Move shares to wallet** |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and its USDC is recoverable | **Return USDC to wallet** |
 
-Immediate deposits additionally require trading to be activated, an eligible mark, no unassigned assets awaiting ownership assignment and no Senior impairment. The contract rechecks its gates when the transaction executes. A route shown in an earlier preview is not permission to bypass a later failure.
+When **Shares ready** appears, the shares already participate in vault performance while held by the vault. Select **Move shares to wallet** to complete delivery.
 
-#### Immediate deposit
+Moving shares into the owner wallet starts or restarts the one-hour withdrawal cooldown for the owner's entire position in that vault. During the cooldown, those wallet-held shares cannot be transferred or used for a withdrawal request.
 
-When the preview shows `Immediate deposit`:
-
-1. Confirm the exact approval if required.
-2. Confirm the separate vault deposit transaction.
-3. Wait for the deposit receipt.
-4. Verify the tranche shares in the LP position.
-
-Active shares begin participating in tranche economics after confirmation. An immediate deposit starts a one-hour withdrawal cooldown. During that cooldown, the shares cannot be withdrawn. Transferring shares does not bypass the restriction because the receiver inherits the relevant cooldown timestamp. A later deposit into the same vault refreshes the applicable cooldown.
-
-#### Pending deposit epoch
-
-When the preview shows **Pending deposit epoch**, the second transaction funds a request rather than issuing shares.
-
-After it confirms:
-
-* The MockUSDC leaves the owner wallet and enters selected-vault escrow.
-* The depositor does not yet own active shares.
-* Escrowed USDC does not yet earn the Senior coupon or Junior residual return.
-* The request is assigned to a future activation epoch.
-* Cancellation is normally available only before activation.
-* Finalization fixes the batch share price, and the depositor must then claim the shares.
-
-The current contracts use one-hour epoch identifiers and assign requests two epochs ahead, producing an approximate one-to-two-hour wait before activation. This is not a guaranteed finalization time.
-
-The in-progress frontend submits this route through the verified vault's `requestDeposit` method and then displays the request under **Your position**. Do not send USDC directly to the vault; only the funded-request method creates the epoch accounting needed for cancellation and claiming.
-
-Read [Manage a pending deposit](manage-a-pending-deposit.md) before funding this route, including its cancellation boundary and recovery behavior.
-
-### 7. Verify what confirmed
-
-Do not treat a wallet signature, approval receipt or preview screen as proof of an LP deposit.
-
-For an immediate deposit, verify:
-
-* The vault deposit transaction succeeded
-* The correct tranche received the USDC through its deposit method
-* The expected Senior or Junior shares appear in the owner wallet's LP position
-* The owner-wallet MockUSDC balance changed by the deposited amount
-* `Withdrawable now` or the onchain `maxWithdraw` reflects any active cooldown; the current interface does not show a countdown
-
-For a pending request, verify:
-
-* The funded-request transaction succeeded
-* The requested USDC amount is shown in vault escrow
-* The correct tranche and assigned epoch are recorded
-* The activation time and cancellation deadline are visible
-* No active shares or returns are attributed to the request yet
-
-Save every applicable transaction hash: the approval, when required, and the deposit or funded request. Use an independent Arbitrum Sepolia explorer to confirm the contract addresses, decoded calls and emitted events.
+When **Refund available** appears, select **Return USDC to wallet** and verify that the correct amount returns before attempting another deposit.
 
 ### If the result is not what you expected
 
 | Symptom | Most likely explanation | What to do |
 | --- | --- | --- |
-| Approval confirmed, but the owner-wallet USDC balance did not change | Approval creates allowance only | Return to the verified vault flow and confirm the deposit or funded-request transaction |
-| USDC moved, but no LP shares appeared | The route may be pending, or the trader Margin Account deposit may have been used | Check the transaction target and pending-epoch record; a Margin Account credit is not an LP position |
-| `Deposit preview` showed pending but no request exists | Only the approval confirmed, the request failed, or event discovery is still refreshing | Check the funded-request receipt, refresh **Your position**, and do not send funds manually |
-| Immediate deposit became unavailable | A position opened or another execution-time gate changed | Refresh the preview and use the protocol-selected route; do not bypass the gate |
-| Wallet shows an unfamiliar spender | The approval is not for the verified selected vault | Reject it and re-check the official deployment metadata |
-| Approval or deposit is stuck | Network, RPC or fee conditions may have changed | Check the transaction hash before retrying; avoid creating multiple funded requests |
-| Final shares differ from the estimate | Pending batches are priced at finalization, with any active surcharge applied then | Verify the finalized batch price and any active frozen-oracle surcharge rather than the request-time estimate |
+| Approval confirmed, but the owner-wallet balance did not change | Approval creates allowance only | Return to the review flow and confirm **Queue deposit** |
+| USDC moved, but wallet-held shares are zero | The deposit is pending, waiting for processing or has shares ready in vault custody | Open **Your position** and read the matching deposit record |
+| No deposit record appears | The queue transaction failed, only approval confirmed or request discovery is refreshing | Check the transaction receipt and retry discovery before submitting again |
+| **Waiting for processing** persists | Hourly settlement is paused, delayed or blocked by the keeper path or a live safety gate | Check hourly-processing, backlog, market-price and safety status; do not look for a user finalization action |
+| Final shares differ from the preview | The preview was an estimate and processing used the then-current batch accounting and share price | Review the processed allocation rather than the request-time estimate |
+| **Refund available** appears | The processed batch's aggregate deposit quote rounded to zero shares and its epoch was rejected | Use **Return USDC to wallet** and verify the recovery transaction |
+| Shares are ready but absent from the wallet | The allocation still needs its delivery transaction | Select **Move shares to wallet** and verify the cooldown start |
 
-See [LP troubleshooting](lp-troubleshooting.md) for recovery paths and [Read your LP position and pool health](read-your-lp-position-and-pool-health.md) for the fields to monitor after shares become active.
+See [Manage a pending deposit](manage-a-pending-deposit.md) for the complete monitoring lifecycle and [LP troubleshooting](lp-troubleshooting.md) for broader recovery guidance.
 
 ### Deposit checklist
 
-Before the final deposit or request confirmation:
+Before confirming:
 
 * Confirm the owner wallet—not only the Trading Account—holds the MockUSDC.
-* Confirm the connected network and official MockUSDC contract.
+* Confirm Arbitrum Sepolia and the official MockUSDC contract.
 * Confirm Senior or Junior and understand its loss position.
 * Match the complete vault address with official deployment metadata.
 * Approve only the exact amount to the selected tranche vault.
-* Distinguish the approval receipt from the deposit/request receipt.
-* Review immediate versus pending routing.
-* Check the share estimate, active surcharge and expected remaining owner-wallet balance.
-* Keep native gas for every remaining LP transaction.
-* Accept that share value and future withdrawal capacity can both decrease.
+* Check the live minimum, deposit limit and expected processing time.
+* Have the transaction included onchain before the five-minute cutoff if you need the next hourly window; verify the confirmed request target.
+* Treat estimated shares and recent APY as historical or indicative, not guaranteed.
+* Distinguish **Approve USDC** from **Queue deposit**.
+* Keep native gas for cancellation, share delivery or refund recovery.
+* Accept that share value and future withdrawal liquidity can decrease.
 
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement; the current testnet uses MockUSDC with no claim on real dollars.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
-[^erc20]: The Ethereum token standard used by USDC and MockUSDC, including token allowances through `approve`.
+[^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.

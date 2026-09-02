@@ -24,7 +24,12 @@ import Plether.Api
   , protocolExplorerGate
   , protocolRpcChainGateWith
   )
-import Plether.Config (Config (..))
+import Plether.Config
+  ( Config (..)
+  , LpSettlementMode (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Ethereum.Client (RpcError (..))
 import Plether.Handlers.ProtocolInsights
   ( ProtocolCursor (..)
@@ -32,6 +37,10 @@ import Plether.Handlers.ProtocolInsights
   , encodeProtocolCursor
   , encodeTrancheHistoryCursor
   , getCurrentProtocolReleaseResponse
+  )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
   )
 import Plether.Types (ApiResponse (..))
 import Test.Hspec
@@ -278,6 +287,7 @@ disabledConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
@@ -285,11 +295,21 @@ disabledConfig =
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
     , cfgProtocolExplorerEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = zeroAddress
     , cfgPerpsOrderRouter = zeroAddress
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = zeroAddress
+    , cfgPerpsCfdEngineLens = zeroAddress
+    , cfgPerpsCfdEngineSettlementSidecar = zeroAddress
     , cfgPerpsMarginClearinghouse = zeroAddress
     , cfgPerpsPletherOracle = zeroAddress
     , cfgPerpsAccountLens = zeroAddress
@@ -299,8 +319,19 @@ disabledConfig =
     , cfgPerpsJuniorVault = zeroAddress
     , cfgPerpsOrderRouterAdmin = zeroAddress
     , cfgPerpsCfdEngineAdmin = zeroAddress
+    , cfgPerpsSettlementMonitorLens = zeroAddress
     , cfgPerpsIndexerStartBlock = 0
+    , cfgVaultHistoryHousePoolAddress = zeroAddress
+    , cfgVaultHistorySeniorVaultAddress = zeroAddress
+    , cfgVaultHistoryJuniorVaultAddress = zeroAddress
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = ""
+    , cfgVaultHistoryConfirmations = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = disabledReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -308,7 +339,32 @@ disabledConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = zeroAddress
+    , cfgLpSettlementJuniorVault = zeroAddress
+    , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 zeroAddress :: Text
 zeroAddress = "0x0000000000000000000000000000000000000000"
+
+disabledReleaseManifest :: CompetitionReleaseManifest
+disabledReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "disabled-explorer-test"
+    , crmChainId = 421614
+    , crmUsdc = zeroAddress
+    , crmOrderRouter = zeroAddress
+    , crmMarginClearinghouse = zeroAddress
+    , crmAccountLens = zeroAddress
+    , crmCfdEngine = zeroAddress
+    , crmCfdEngineLens = zeroAddress
+    , crmSettlementSidecar = zeroAddress
+    , crmPletherOracle = zeroAddress
+    , crmIndexerStartBlock = 0
+    }

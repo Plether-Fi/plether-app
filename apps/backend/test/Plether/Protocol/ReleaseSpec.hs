@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import Paths_plether_api (getDataFileName)
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -38,14 +39,23 @@ spec = do
       prDeploymentBlock release `shouldBe` 302257125
       prCalculationVersion release `shouldBe` "protocol-transparency-v1"
       prUsdc release `shouldBe` "0x1647e41f49ED6D688936092B5a291c4B28106343"
+      prOrderLifecycleBook release
+        `shouldBe` Just "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
+      prCfdEngineLens release
+        `shouldBe` "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+      prCfdEngineSettlementSidecar release
+        `shouldBe` "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
       protocolReleaseId 421614 `shouldBe` prId release
 
     it "pins every monitored contract address for the current release" $ do
       releaseAddresses currentSepoliaRelease
         `shouldBe`
           [ "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+          , "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
           , "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
           , "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+          , "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+          , "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
           , "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
           , "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
           , "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
@@ -63,6 +73,11 @@ spec = do
       prUsdc julySepoliaRelease `shouldBe` "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
       prOrderRouter julySepoliaRelease
         `shouldBe` "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+      prOrderLifecycleBook julySepoliaRelease `shouldBe` Nothing
+      prCfdEngineLens julySepoliaRelease
+        `shouldBe` "0xa9aa4097874e9622eaabee68f65ff5e3757728c5"
+      prCfdEngineSettlementSidecar julySepoliaRelease
+        `shouldBe` "0x0b652c4d4610234e221403076c116292f935b424"
 
     it "contains only complete, unique contract addresses in every release" $
       forM_ knownProtocolReleases $ \release -> do
@@ -139,9 +154,12 @@ spec = do
 
           map (\(releaseId, _, _) -> releaseId) releaseAnalytics
             `shouldBe` map prId knownProtocolReleases
-          forM_ releaseAnalytics $ \(_, manifestReads, manifestEvents) -> do
+          forM_ releaseAnalytics $ \(releaseId, manifestReads, manifestEvents) -> do
             requiredReads \\ manifestReads `shouldBe` []
             requiredEvents \\ manifestEvents `shouldBe` []
+            if releaseId == prId currentSepoliaRelease
+              then v2LifecycleEventSignatures \\ manifestEvents `shouldBe` []
+              else pure ()
             "PoolConfigCancelled()" `elem` manifestEvents `shouldBe` False
             length (nub manifestReads) `shouldBe` length manifestReads
             length (nub manifestEvents) `shouldBe` length manifestEvents
@@ -153,6 +171,8 @@ spec = do
               baseConfig
                 { cfgPerpsOrderRouter =
                     T.toLower (prOrderRouter currentSepoliaRelease)
+                , cfgPerpsOrderLifecycleBook =
+                    T.toLower <$> prOrderLifecycleBook currentSepoliaRelease
                 , cfgPerpsIndexerStartBlock = 1
                 }
 
@@ -183,6 +203,43 @@ spec = do
 
       prId release `shouldBe` "chain-421614-block-123"
       prPublicLens release `shouldBe` alternatePublicLens
+
+    it "does not reuse the known release when the lifecycle book differs" $ do
+      let alternateLifecycleBook =
+            "0x3333333333333333333333333333333333333333"
+          release =
+            currentProtocolRelease
+              baseConfig
+                { cfgPerpsOrderLifecycleBook = Just alternateLifecycleBook
+                , cfgPerpsIndexerStartBlock = 123
+                }
+
+      prId release `shouldBe` "chain-421614-block-123"
+      prOrderLifecycleBook release `shouldBe` Just alternateLifecycleBook
+
+    it "does not reuse the known release when an engine telemetry contract differs" $ do
+      let alternateEngineLens =
+            "0x4444444444444444444444444444444444444444"
+          alternateSettlementSidecar =
+            "0x5555555555555555555555555555555555555555"
+          lensRelease =
+            currentProtocolRelease
+              baseConfig
+                { cfgPerpsCfdEngineLens = alternateEngineLens
+                , cfgPerpsIndexerStartBlock = 123
+                }
+          sidecarRelease =
+            currentProtocolRelease
+              baseConfig
+                { cfgPerpsCfdEngineSettlementSidecar = alternateSettlementSidecar
+                , cfgPerpsIndexerStartBlock = 124
+                }
+
+      prId lensRelease `shouldBe` "chain-421614-block-123"
+      prCfdEngineLens lensRelease `shouldBe` alternateEngineLens
+      prId sidecarRelease `shouldBe` "chain-421614-block-124"
+      prCfdEngineSettlementSidecar sidecarRelease
+        `shouldBe` alternateSettlementSidecar
 
     it "gives fallback releases distinct IDs across chains and deployment blocks" $ do
       let first =
@@ -299,18 +356,21 @@ julySepoliaRelease =
 
 releaseAddresses :: ProtocolRelease -> [Text]
 releaseAddresses release =
-  [ prOrderRouter release
-  , prOrderRouterAdmin release
-  , prCfdEngine release
-  , prCfdEngineAdmin release
-  , prMarginClearinghouse release
-  , prPublicLens release
-  , prAccountLens release
-  , prHousePool release
-  , prSeniorVault release
-  , prJuniorVault release
-  , prPletherOracle release
-  ]
+  [prOrderRouter release]
+    <> maybe [] pure (prOrderLifecycleBook release)
+    <> [ prOrderRouterAdmin release
+       , prCfdEngine release
+       , prCfdEngineLens release
+       , prCfdEngineSettlementSidecar release
+       , prCfdEngineAdmin release
+       , prMarginClearinghouse release
+       , prPublicLens release
+       , prAccountLens release
+       , prHousePool release
+       , prSeniorVault release
+       , prJuniorVault release
+       , prPletherOracle release
+       ]
 
 ledgerEventSignatures :: [Text]
 ledgerEventSignatures =
@@ -326,6 +386,12 @@ ledgerEventSignatures =
   , "Deposit(address,address,uint256,uint256)"
   , "Withdraw(address,address,address,uint256,uint256)"
   , "Transfer(address,address,uint256)"
+  ]
+
+v2LifecycleEventSignatures :: [Text]
+v2LifecycleEventSignatures =
+  [ "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+  , "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
   ]
 
 zeroAddress :: Text
@@ -345,6 +411,7 @@ baseConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = "https://benchmarks.pyth.network"
+    , cfgPythHistoryUrl = "https://history.pyth.example"
     , cfgPythHermesUrl = "https://hermes.pyth.network"
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
@@ -363,6 +430,7 @@ baseConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , cfgPerpsOrderLifecycleBook = Just "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
     , cfgPerpsCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
     , cfgPerpsCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , cfgPerpsCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
@@ -387,6 +455,7 @@ baseConfig =
     , cfgInsightsCompetitionReleaseManifest = currentCompetitionReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -394,8 +463,15 @@ baseConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 currentCompetitionReleaseManifest :: CompetitionReleaseManifest
@@ -408,8 +484,8 @@ currentCompetitionReleaseManifest =
     , crmMarginClearinghouse = prMarginClearinghouse currentSepoliaRelease
     , crmAccountLens = prAccountLens currentSepoliaRelease
     , crmCfdEngine = prCfdEngine currentSepoliaRelease
-    , crmCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
-    , crmSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
+    , crmCfdEngineLens = prCfdEngineLens currentSepoliaRelease
+    , crmSettlementSidecar = prCfdEngineSettlementSidecar currentSepoliaRelease
     , crmPletherOracle = prPletherOracle currentSepoliaRelease
     , crmIndexerStartBlock = prDeploymentBlock currentSepoliaRelease
     }

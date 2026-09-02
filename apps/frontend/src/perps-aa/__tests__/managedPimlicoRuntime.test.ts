@@ -44,7 +44,7 @@ vi.mock('viem/account-abstraction', async (importOriginal) => ({
 import { createManagedPimlicoRuntime } from '../managedPimlicoRuntime'
 
 const manifest = {
-  version: 'perps-aa-arbitrum-sepolia-v1',
+  version: 'perps-aa-arbitrum-sepolia-v2',
   chainId: 421614,
   entryPoint: ENTRY_POINT,
   entryPointVersion: '0.8' as const,
@@ -63,6 +63,10 @@ const manifest = {
     '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D' as Address,
   orderRouter:
     '0x97A901dE2B267c307E264FD5F71403F8072F73e7' as Address,
+  orderLifecycleBook:
+    '0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E' as Address,
+  policyEvaluator:
+    '0xaa4703B190684b5A57b8a9aA432fA043B169D171' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -160,7 +164,7 @@ describe('createManagedPimlicoRuntime', () => {
       factoryAddress: FACTORY,
       accountVersion: 'permissionless-simple-v0.8',
       accountIndex: '0',
-      manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
       smartAccount: {
         accountAddress: ACCOUNT,
         entryPoint: ENTRY_POINT,

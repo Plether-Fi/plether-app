@@ -300,6 +300,7 @@ export function Perps() {
             orderHistory={perpsHistory.orderHistory}
             ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
+            activePositionProtectionId={perpsAccount.activePositionProtectionId}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
             firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
@@ -308,6 +309,7 @@ export function Perps() {
             minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
             minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
             maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
+            initialMarginBps={perpsMarket.raw.initialMarginBps}
             executionFeeBps={perpsMarket.raw.executionFeeBps}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}

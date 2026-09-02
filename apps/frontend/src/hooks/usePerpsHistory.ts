@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
+import { executionModeOracleFrozen } from '../contracts/perpsOrderV2'
 import { usePerpsIdentity } from '../perps-aa'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
@@ -14,11 +15,18 @@ export interface PerpsOrderHistoryRow {
   price: string
   size: string
   status: string
-  commitTxHash: Hex
+  account: Hex
+  clientOrderId: Hex
+  commitTxHash?: Hex
   revealTxHash?: Hex
+  receiptHash?: Hex
   terminalBlockNumberRaw?: bigint
   terminalBlockHash?: Hex
-  failureReason?: string
+  terminalReason?: string
+  pendingReason?: string
+  executionMode?: string
+  failedConstraint?: string
+  receiptEconomics?: BackendReceiptEconomics
   executionPriceRaw?: bigint
   executionOraclePriceRaw?: bigint
   executionOracleFrozen?: boolean
@@ -107,6 +115,7 @@ interface BackendErrorResponse {
 interface BackendOrderRow {
   orderId?: string
   account?: string
+  clientOrderId?: string
   side?: number
   commitTxHash?: string
   commitBlockNumber?: string
@@ -116,7 +125,12 @@ interface BackendOrderRow {
   terminalBlockHash?: string
   terminalTimestamp?: number
   terminalStatus?: string
-  failureReason?: string
+  terminalReason?: string
+  pendingReason?: string
+  executionMode?: string
+  failedConstraint?: string
+  receiptHash?: string
+  receiptEconomics?: BackendReceiptEconomics
   executionPrice?: string
   executionOraclePrice?: string
   executionOracleFrozen?: boolean
@@ -132,6 +146,26 @@ interface BackendOrderRow {
   activityPrice?: string
   activityVpiUsdc?: string
   activityPnlUsdc?: string
+}
+
+interface BackendReceiptEconomics {
+  executionNotionalUsdc?: string
+  realizedPnlUsdc?: string
+  vpiUsdc?: string
+  carryUsdc?: string
+  executionFeeUsdc?: string
+  frozenSpreadUsdc?: string
+  actionChargeAssessedUsdc?: string
+  actionChargeCollectedUsdc?: string
+  grossAccountDebitUsdc?: string
+  preSettlementBalanceUsdc?: string
+  postSettlementBalanceUsdc?: string
+  preTraderClaimBalanceUsdc?: string
+  postTraderClaimBalanceUsdc?: string
+  postPositionSize?: string
+  postPositionMarginUsdc?: string
+  postPositionEquityUsdc?: string
+  postLeverageBps?: string
 }
 
 interface BackendActivityRow {
@@ -190,8 +224,8 @@ function orderKind(row: BackendOrderRow): string {
 }
 
 function orderStatus(row: BackendOrderRow): string {
-  if (row.terminalStatus === 'Failed' && row.failureReason) {
-    return `Failed: ${orderFailureReasonLabel(row.failureReason)}`
+  if (row.terminalStatus === 'Failed' && row.terminalReason) {
+    return `Failed: ${orderFailureReasonLabel(row.terminalReason)}`
   }
   if (row.terminalStatus) return row.terminalStatus
   return 'Committed'
@@ -200,11 +234,18 @@ function orderStatus(row: BackendOrderRow): string {
 function orderFailureReasonLabel(reason: string): string {
   return {
     Expired: 'Expired',
-    CloseOnly: 'Close-only',
-    SlippageExceeded: 'Slippage exceeded',
-    EnginePanic: 'Engine panic',
+    Slippage: 'Slippage',
+    ConfigMismatch: 'Config mismatch',
+    'Config mismatch': 'Config mismatch',
+    ExecutionModeDisallowed: 'Mode disallowed',
+    'Mode disallowed': 'Mode disallowed',
+    RiskOff: 'Risk off',
+    'Risk off': 'Risk off',
+    PlannerRejected: 'Planner rejected',
+    'Planner rejected': 'Planner rejected',
+    ConstraintViolation: 'Constraint violation',
+    'Constraint violation': 'Constraint violation',
     AccountLiquidated: 'Account liquidated',
-    EngineRevert: 'Engine rejected',
   }[reason] ?? reason
 }
 
@@ -228,14 +269,22 @@ function orderPrice(row: BackendOrderRow): string {
 
 function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const orderId = parseBigInt(row.orderId)
+  const account = asHex(row.account)
+  const clientOrderId = asHex(row.clientOrderId)
   const commitTxHash = asHex(row.commitTxHash)
-  if (orderId === undefined || commitTxHash === undefined) return undefined
+  if (
+    orderId === undefined ||
+    account === undefined ||
+    clientOrderId === undefined
+  ) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
   const executionOraclePriceRaw = parseBigInt(row.executionOraclePrice)
   const oracleMinPublishTimeRaw = parseBigInt(row.oracleMinPublishTime)
   const oracleMaxPublishTimeRaw = parseBigInt(row.oracleMaxPublishTime)
-  const vpiUsdcRaw = parseBigInt(row.vpiUsdc)
-  const frozenCloseSpreadUsdcRaw = parseBigInt(row.frozenCloseSpreadUsdc)
+  const vpiUsdcRaw = parseBigInt(row.receiptEconomics?.vpiUsdc)
+  const frozenCloseSpreadUsdcRaw = parseBigInt(
+    row.receiptEconomics?.frozenSpreadUsdc
+  )
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
   const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
@@ -249,16 +298,23 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     price: orderPrice(row),
     size: orderSize(row),
     status: orderStatus(row),
+    account,
+    clientOrderId,
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
+    receiptHash: asHex(row.receiptHash),
     terminalBlockNumberRaw: parseBigInt(row.terminalBlockNumber),
     terminalBlockHash: asHex(row.terminalBlockHash),
-    failureReason: row.failureReason,
+    terminalReason: row.terminalReason,
+    pendingReason: row.pendingReason,
+    executionMode: row.executionMode,
+    failedConstraint: row.failedConstraint,
+    receiptEconomics: row.receiptEconomics,
     executionPriceRaw,
     executionOraclePriceRaw,
     executionOracleFrozen: typeof row.executionOracleFrozen === 'boolean'
       ? row.executionOracleFrozen
-      : undefined,
+      : executionModeOracleFrozen(row.executionMode),
     oracleMinPublishTimeRaw,
     oracleMaxPublishTimeRaw,
     oracleDerivationVersion: row.oracleDerivationVersion,

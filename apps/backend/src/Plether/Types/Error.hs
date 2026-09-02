@@ -9,6 +9,8 @@ module Plether.Types.Error
   , rpcErrorToApiError
   , rateLimited
   , rateLimitedWithDetails
+  , forbidden
+  , upgradeRequired
   , internalError
   , networkError
   , notFound
@@ -27,6 +29,8 @@ data ApiErrorCode
   | InvalidSide
   | RpcError
   | RateLimited
+  | Forbidden
+  | UpgradeRequired
   | InternalError
   | NetworkError
   | NotFound
@@ -39,6 +43,8 @@ instance ToJSON ApiErrorCode where
     InvalidSide -> "INVALID_SIDE"
     RpcError -> "RPC_ERROR"
     RateLimited -> "RATE_LIMITED"
+    Forbidden -> "FORBIDDEN"
+    UpgradeRequired -> "UPGRADE_REQUIRED"
     InternalError -> "INTERNAL_ERROR"
     NetworkError -> "NETWORK_ERROR"
     NotFound -> "NOT_FOUND"
@@ -91,6 +97,12 @@ rateLimitedWithDetails retryAfter =
             [ "retryAfter" .= fmap BS8.unpack retryAfter
             ]
     }
+
+forbidden :: Text -> ApiError
+forbidden = mkError Forbidden
+
+upgradeRequired :: Text -> ApiError
+upgradeRequired = mkError UpgradeRequired
 
 internalError :: Text -> ApiError
 internalError msg = mkError InternalError $ "Internal error: " <> msg

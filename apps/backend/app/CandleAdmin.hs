@@ -67,6 +67,11 @@ import Plether.Perps.CandleFinalizerProbe
   , validateFinalizerProbeEnvironment
   , validateFinalizerProbePrestate
   )
+import Plether.Perps.Release
+  ( perpsV2DeploymentBlock
+  , perpsV2OrderRouter
+  , perpsV2VolumeHistoryStartTimestamp
+  )
 import System.Environment (getArgs, getEnvironment, lookupEnv)
 import System.Exit (exitFailure)
 import System.Timeout (timeout)
@@ -2058,9 +2063,39 @@ sourceBounds conn runtime kind = do
             ()
         _ -> failWith "Could not determine whether the basket observation ledger exists"
     VolumeRollup ->
-      query
-        conn
-        "WITH event_bounds AS ( \
+      let pinnedDeploymentStart =
+            if arChainId runtime == 421614
+              && T.toLower (arReleaseRouter runtime) == T.toLower perpsV2OrderRouter
+              then Just perpsV2VolumeHistoryStartTimestamp
+              else Nothing
+       in query
+            conn
+            "WITH pinned_release AS ( \
+        \ SELECT ?::BIGINT AS first_timestamp, ?::BIGINT AS deployment_block), \
+        \release_candidate AS ( \
+        \ SELECT pinned.first_timestamp, pinned.deployment_block AS proof_block, \
+        \   ?::BIGINT AS chain_id, ?::TEXT AS release_router \
+        \ FROM pinned_release pinned WHERE pinned.first_timestamp IS NOT NULL \
+        \ UNION ALL \
+        \ SELECT ((epoch.activation_timestamp + 59) / 60) * 60 AS first_timestamp, \
+        \   epoch.activation_block AS proof_block, epoch.chain_id, epoch.release_router \
+        \ FROM perps_market_release_epochs epoch CROSS JOIN pinned_release pinned \
+        \ WHERE pinned.first_timestamp IS NULL AND epoch.market_id = ? \
+        \   AND epoch.chain_id = ? AND epoch.release_router = ?), \
+        \certified_release AS ( \
+        \ SELECT candidate.first_timestamp \
+        \ FROM release_candidate candidate \
+        \ WHERE EXISTS ( \
+        \   SELECT 1 FROM perps_indexer_state indexer_state \
+        \   WHERE indexer_state.chain_id = candidate.chain_id \
+        \   AND indexer_state.release_router = candidate.release_router \
+        \   AND indexer_state.indexer_name \
+        \     LIKE 'perps-history-costs-%:' || candidate.release_router \
+        \   AND indexer_state.configured_start_block <= candidate.proof_block \
+        \   AND indexer_state.last_indexed_block >= candidate.proof_block \
+        \   AND indexer_state.last_indexed_block_hash ~ '^0x[0-9a-f]{64}$') \
+        \ LIMIT 1), \
+        \event_bounds AS ( \
         \ SELECT MIN(timestamp) AS first_timestamp, MAX(timestamp) + 1 AS end_timestamp \
         \ FROM perps_events WHERE chain_id = ? AND release_router = ?), \
         \activity_count AS ( \
@@ -2068,13 +2103,25 @@ sourceBounds conn runtime kind = do
         \ WHERE chain_id = ? AND release_router = ? \
         \ AND activity_type IN ('Open', 'Close', 'Liquidated') \
         \ AND size_delta IS NOT NULL AND price IS NOT NULL) \
-        \SELECT first_timestamp, end_timestamp, row_count \
-        \FROM event_bounds CROSS JOIN activity_count"
-        ( arChainId runtime
-        , arReleaseRouter runtime
-        , arChainId runtime
-        , arReleaseRouter runtime
-        )
+        \SELECT CASE \
+        \   WHEN event_bounds.first_timestamp IS NULL THEN NULL \
+        \   WHEN certified_release.first_timestamp IS NULL THEN event_bounds.first_timestamp \
+        \   ELSE LEAST(certified_release.first_timestamp, event_bounds.first_timestamp) END, \
+        \ event_bounds.end_timestamp, activity_count.row_count \
+        \FROM event_bounds CROSS JOIN activity_count \
+        \LEFT JOIN certified_release ON TRUE"
+            ( pinnedDeploymentStart
+            , perpsV2DeploymentBlock
+            , arChainId runtime
+            , arReleaseRouter runtime
+            , defaultCandleMarketId
+            , arChainId runtime
+            , arReleaseRouter runtime
+            , arChainId runtime
+            , arReleaseRouter runtime
+            , arChainId runtime
+            , arReleaseRouter runtime
+            )
   case rows of
     [(Just fromTimestamp, Just toTimestamp, rowCount)] ->
       pure $ Just $ SourceBounds (alignDown fromTimestamp 60) (alignUp toTimestamp 60) rowCount

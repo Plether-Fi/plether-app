@@ -14,6 +14,8 @@ module Plether.Handlers.InsightsRegistration
   , completionResultDecision
   , ownedAccountDecision
   , xAccountAgeEligible
+  , XFollowFailureDisposition (..)
+  , xFollowFailureDisposition
   ) where
 
 import Control.Exception
@@ -80,6 +82,7 @@ import Plether.Insights.Registration.Crypto
   )
 import Plether.Insights.Registration.Provider
   ( XAccessToken
+  , XFollowVerificationFailure (..)
   , buildXAuthorizationUrl
   , exchangeXAuthorizationCode
   , fetchXIdentity
@@ -768,6 +771,16 @@ recordOAuthCallbackFailure pool sessionDigest err = do
       registrationErrorCodeText $ reCode err
   pure ()
 
+data XFollowFailureDisposition
+  = ReleaseXFollowAttempt
+  | ResetXIdentity
+  deriving stock (Show, Eq)
+
+xFollowFailureDisposition :: XFollowVerificationFailure -> XFollowFailureDisposition
+xFollowFailureDisposition XFollowVerificationFailure {xfvfResetIdentity}
+  | xfvfResetIdentity = ResetXIdentity
+  | otherwise = ReleaseXFollowAttempt
+
 completeXFollow
   :: DbPool
   -> Manager
@@ -807,14 +820,20 @@ completeXFollow pool manager config slug waiRequest =
                           config
                           (TE.decodeUtf8With TEE.lenientDecode xUserBytes)
                           accessToken
-                      _ -> pure $ Left internalError
-              followResult <- providerCall `onException` resetIdentity
+                      _ -> pure $ Left $ XFollowVerificationFailure internalError True
+              -- Unexpected local exceptions must not destroy a still-usable
+              -- OAuth identity. The two-minute lease is enough to prevent a
+              -- concurrent verification while this attempt is in flight.
+              followResult <- providerCall `onException` releaseAttempt
               case followResult of
-                Left err
-                  | reCode err == XFollowRequired -> releaseAttempt >> pure (Left err)
-                  | otherwise -> resetIdentity >> pure (Left err)
+                Left failure@XFollowVerificationFailure {xfvfError} ->
+                  case xFollowFailureDisposition failure of
+                    ResetXIdentity -> resetIdentity >> pure (Left xfvfError)
+                    ReleaseXFollowAttempt -> releaseAttempt >> pure (Left xfvfError)
                 Right () -> do
-                  confirmed <- withDb pool $ \connection -> Db.confirmXFollow connection applicationId attemptId
+                  confirmed <-
+                    (withDb pool $ \connection -> Db.confirmXFollow connection applicationId attemptId)
+                      `onException` releaseAttempt
                   if not confirmed
                     then resetIdentity >> pure (Left closedError)
                     else loadSessionView pool config slug sessionDigest
@@ -975,6 +994,7 @@ finishRegistration pool perpsClient registrationConfig _config slug authenticate
                           (Db.rsrPrivacyVersion row)
                           (crrRulesVersion requestValue)
                           (crrPrivacyVersion requestValue)
+                          (crrAcceptPromotionalEmail requestValue)
                           owner
                           storedTradingAccount
                           (tapBlockNumber proof)

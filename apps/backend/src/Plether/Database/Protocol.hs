@@ -460,8 +460,11 @@ ensureProtocolSchema conn ProtocolRelease {..} = do
         object
           [ "usdc" .= prUsdc
           , "orderRouter" .= prOrderRouter
+          , "orderLifecycleBook" .= prOrderLifecycleBook
           , "orderRouterAdmin" .= prOrderRouterAdmin
           , "cfdEngine" .= prCfdEngine
+          , "cfdEngineLens" .= prCfdEngineLens
+          , "cfdEngineSettlementSidecar" .= prCfdEngineSettlementSidecar
           , "cfdEngineAdmin" .= prCfdEngineAdmin
           , "marginClearinghouse" .= prMarginClearinghouse
           , "publicLens" .= prPublicLens
@@ -933,7 +936,7 @@ protocolOverviewCountsQuerySql =
   \COUNT(*) FILTER (WHERE actions.action_type = 'liquidation')::BIGINT, \
   \COUNT(DISTINCT actions.actor) FILTER (WHERE actions.actor IS NOT NULL \
   \AND actions.action_type IN ('order_execution', 'order_cleanup', 'liquidation', 'keeper_maintenance'))::BIGINT, \
-  \COUNT(*) FILTER (WHERE actions.status IN ('failed', 'reverted') \
+  \COUNT(*) FILTER (WHERE actions.status IN ('failure', 'failed', 'reverted') \
   \OR (actions.action_type = 'order_cleanup' \
   \AND COALESCE(actions.data->>'reasonName', '') NOT IN ('', 'Expired')))::BIGINT \
   \FROM protocol_actions actions \

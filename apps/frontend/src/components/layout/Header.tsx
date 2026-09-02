@@ -8,6 +8,8 @@ const navLinks = [
   { path: '/vaults', label: 'Vaults', perpsSurface: true },
 ]
 
+const leaderboardUrl = 'https://insights.plether.com'
+
 export function Header() {
   const location = useLocation()
   const shouldHidePerps = isPrimaryAppDeployment()
@@ -47,6 +49,16 @@ export function Header() {
                 </Link>
               )
             })}
+            {!shouldHidePerps ? (
+              <a
+                href={leaderboardUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="max-w-36 truncate whitespace-nowrap border border-transparent px-4 py-2 text-sm font-semibold text-content-secondary transition-colors hover:border-[#FF572D]/50 hover:bg-[#FF572D]/15 hover:text-[#FFF5F9] hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4"
+              >
+                Leaderboard
+              </a>
+            ) : null}
           </nav>
         </div>
 

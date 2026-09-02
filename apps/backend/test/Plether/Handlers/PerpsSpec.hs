@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import Plether.Cache (SingleFlightSource (..))
 import Plether.Config
   ( Config (..)
+  , LpSettlementMode (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
@@ -1124,12 +1125,14 @@ rollupConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgProtocolExplorerEnabled = False
     , cfgPerpsCandleWriteMode = PerpsCandleWritesDual
     , cfgPerpsCandleReadMode = PerpsCandleReadsRollup
     , cfgPerpsCandleReadIntervals = [60, 3600]
@@ -1141,13 +1144,19 @@ rollupConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
     , cfgPerpsCfdEngineLens = ""
     , cfgPerpsCfdEngineSettlementSidecar = ""
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
+    , cfgPerpsPublicLens = ""
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSeniorVault = ""
+    , cfgPerpsJuniorVault = ""
+    , cfgPerpsOrderRouterAdmin = ""
+    , cfgPerpsCfdEngineAdmin = ""
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
@@ -1160,6 +1169,7 @@ rollupConfig =
     , cfgInsightsCompetitionReleaseManifest = rollupReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -1167,8 +1177,15 @@ rollupConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
-    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementMode = LpSettlementOff
+    , cfgLpSettlementPrivateKey = Nothing
+    , cfgLpSettlementSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgLpSettlementJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgLpSettlementPollSeconds = 15
+    , cfgLpSettlementMaxDrainTransactions = 4
+    , cfgLpSettlementPendingReplacementSeconds = 60
+    , cfgLpSettlementMaxReplacements = 3
+    , cfgLpSettlementMaxTxCostWei = 0
     }
 
 rollupReleaseManifest :: CompetitionReleaseManifest

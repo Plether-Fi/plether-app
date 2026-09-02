@@ -149,7 +149,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={1_000_000_000n}
@@ -164,9 +164,9 @@ describe('Perps trade preview debounce', () => {
 
     const callsBeforeEditing = wagmiMocks.useReadContracts.mock.calls.length
     const sizeInput = screen.getByRole('textbox')
-    fireEvent.change(sizeInput, { target: { value: '101' } })
+    fireEvent.change(sizeInput, { target: { value: '200' } })
 
-    expect((sizeInput as HTMLInputElement).value).toBe('101')
+    expect((sizeInput as HTMLInputElement).value).toBe('200')
     expect(latestReadOptions()).toMatchObject({ contracts: [], query: { enabled: false } })
 
     await act(async () => {
@@ -224,6 +224,109 @@ describe('Perps trade preview debounce', () => {
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
   })
 
+  it('keeps the order quantity input while deriving its order exposure', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialOrderQuantity="4900"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    const options = latestReadOptions()
+    expect(options.contracts[0]?.functionName).toBe('previewOpen')
+    expect(options.contracts[0]?.args?.[2]).toBe(4_900n * 10n ** 18n)
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('4900')
+    expect(screen.queryByText(/^Rounded down to/)).not.toBeInTheDocument()
+
+    const previewPanel = screen.getByText('Preview').parentElement
+    expect(previewPanel).not.toBeNull()
+    const preview = within(previewPanel!)
+    const orderExposureRow = preview.getByText('Order exposure').closest('div')
+
+    expect(within(orderExposureRow!).getByText('4 969.58')).toBeInTheDocument()
+    expect(within(orderExposureRow!).getByText('USDC')).toBeInTheDocument()
+    expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
+  })
+
+  it('opens Commit Preview on the dialog without opening the oracle tooltip', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialOrderQuantity="4900"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        oracleFreshness="fresh"
+        oracleFreshnessTooltip="validated oracle basket updated 18s ago"
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+
+    expect(screen.getByRole('dialog')).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('blocks a partial close quantity outside the 100 plDXY protocol quantum', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="550"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        currentPosition={existingLongPosition}
+      />
+    )
+
+    expect(wagmiMocks.useReadContracts.mock.calls.some((call) => (
+      (call[0] as ReadContractsOptions).contracts[0]?.functionName === 'previewClose'
+    ))).toBe(false)
+    expect(screen.getByText('Order quantity must be a multiple of 100 plDXY.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+  })
+
+  it('blocks a non-quantized order in fixture mode', () => {
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialOrderQuantity="4950"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    expect(screen.getByText('Order quantity must be a multiple of 100 plDXY.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+  })
+
+  it('allows an exact non-quantized full close in fixture mode', () => {
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="9550"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        currentPosition={{
+          ...existingLongPosition,
+          size: 9_550n * 10n ** 18n,
+        }}
+      />
+    )
+
+    expect(screen.queryByText('Order quantity must be a multiple of 100 plDXY.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+  })
+
   it('shows the resulting position VPI balance when increasing an existing position', () => {
     const increasePreviewResult = {
       ...openPreviewResult,
@@ -236,7 +339,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         initialReviewOpen
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={1_000_000_000n}
@@ -260,7 +363,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         initialReviewOpen
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         currentPositionAmount="0"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}

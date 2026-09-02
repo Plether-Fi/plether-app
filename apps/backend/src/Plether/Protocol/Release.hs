@@ -43,8 +43,11 @@ data ProtocolRelease = ProtocolRelease
   , prCalculationVersion :: Text
   , prUsdc :: Text
   , prOrderRouter :: Text
+  , prOrderLifecycleBook :: Maybe Text
   , prOrderRouterAdmin :: Text
   , prCfdEngine :: Text
+  , prCfdEngineLens :: Text
+  , prCfdEngineSettlementSidecar :: Text
   , prCfdEngineAdmin :: Text
   , prMarginClearinghouse :: Text
   , prPublicLens :: Text
@@ -77,8 +80,11 @@ knownProtocolReleases =
       , prCalculationVersion = "protocol-transparency-v1"
       , prUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
       , prOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+      , prOrderLifecycleBook = Just "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
       , prOrderRouterAdmin = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
       , prCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+      , prCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+      , prCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
       , prCfdEngineAdmin = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
       , prMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
       , prPublicLens = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
@@ -97,8 +103,11 @@ knownProtocolReleases =
       , prCalculationVersion = "protocol-transparency-v1"
       , prUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
       , prOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+      , prOrderLifecycleBook = Nothing
       , prOrderRouterAdmin = "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C"
       , prCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+      , prCfdEngineLens = "0xa9aa4097874e9622eaabee68f65ff5e3757728c5"
+      , prCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
       , prCfdEngineAdmin = "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39"
       , prMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
       , prPublicLens = "0x4E202C06e2C378d1a85577ac631e592AB66f23FB"
@@ -156,8 +165,11 @@ currentProtocolRelease cfg =
         , prCalculationVersion = "protocol-transparency-v1"
         , prUsdc = cfgPerpsUsdc cfg
         , prOrderRouter = cfgPerpsOrderRouter cfg
+        , prOrderLifecycleBook = cfgPerpsOrderLifecycleBook cfg
         , prOrderRouterAdmin = cfgPerpsOrderRouterAdmin cfg
         , prCfdEngine = cfgPerpsCfdEngine cfg
+        , prCfdEngineLens = cfgPerpsCfdEngineLens cfg
+        , prCfdEngineSettlementSidecar = cfgPerpsCfdEngineSettlementSidecar cfg
         , prCfdEngineAdmin = cfgPerpsCfdEngineAdmin cfg
         , prMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
         , prPublicLens = cfgPerpsPublicLens cfg
@@ -193,8 +205,15 @@ matchesConfiguredRelease release cfg =
     && and
       [ sameAddress (prUsdc release) (cfgPerpsUsdc cfg)
       , sameAddress (prOrderRouter release) (cfgPerpsOrderRouter cfg)
+      , sameOptionalAddress
+          (prOrderLifecycleBook release)
+          (cfgPerpsOrderLifecycleBook cfg)
       , sameAddress (prOrderRouterAdmin release) (cfgPerpsOrderRouterAdmin cfg)
       , sameAddress (prCfdEngine release) (cfgPerpsCfdEngine cfg)
+      , sameAddress (prCfdEngineLens release) (cfgPerpsCfdEngineLens cfg)
+      , sameAddress
+          (prCfdEngineSettlementSidecar release)
+          (cfgPerpsCfdEngineSettlementSidecar cfg)
       , sameAddress (prCfdEngineAdmin release) (cfgPerpsCfdEngineAdmin cfg)
       , sameAddress (prMarginClearinghouse release) (cfgPerpsMarginClearinghouse cfg)
       , sameAddress (prPublicLens release) (cfgPerpsPublicLens cfg)
@@ -206,6 +225,9 @@ matchesConfiguredRelease release cfg =
       ]
  where
   sameAddress left right = T.toCaseFold left == T.toCaseFold right
+  sameOptionalAddress Nothing Nothing = True
+  sameOptionalAddress (Just left) (Just right) = sameAddress left right
+  sameOptionalAddress _ _ = False
 
 protocolReleaseToJson :: ProtocolRelease -> Value
 protocolReleaseToJson ProtocolRelease {..} =
@@ -218,8 +240,11 @@ protocolReleaseToJson ProtocolRelease {..} =
     , "contracts" .= object
         [ "usdc" .= prUsdc
         , "orderRouter" .= prOrderRouter
+        , "orderLifecycleBook" .= prOrderLifecycleBook
         , "orderRouterAdmin" .= prOrderRouterAdmin
         , "cfdEngine" .= prCfdEngine
+        , "cfdEngineLens" .= prCfdEngineLens
+        , "cfdEngineSettlementSidecar" .= prCfdEngineSettlementSidecar
         , "cfdEngineAdmin" .= prCfdEngineAdmin
         , "marginClearinghouse" .= prMarginClearinghouse
         , "publicLens" .= prPublicLens

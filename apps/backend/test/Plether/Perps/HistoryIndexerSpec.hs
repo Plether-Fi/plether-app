@@ -25,8 +25,9 @@ import Plether.Perps.HistoryIndexer
   , RpcLog (..)
   , TradeCosts (..)
   , TransactionInfo (..)
-  , bindTransactionInfoToLog
   , accountSnapshotTargets
+  , applyPerpsAddressEnvironment
+  , bindTransactionInfoToLog
   , canAdvanceCompletenessCursor
   , canCertifyIndexedRange
   , checkpointBlockNumbers
@@ -47,6 +48,7 @@ import Plether.Perps.HistoryIndexer
   , parseReplayLogEntry
   , parseReplayTransactionInfo
   , parseUsdcTransfer
+  , perpsContractAddressesFor
   , replayPreviewCallData
   , snapshotCallData
   , snapshotContractAddress
@@ -96,6 +98,21 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "effective worker contract addresses" $ do
+    it "preserves the configured LifecycleBook when no worker override is present" $
+      paOrderLifecycleBook (applyPerpsAddressEnvironment defaultPerpsAddresses [])
+        `shouldBe` paOrderLifecycleBook defaultPerpsAddresses
+
+    it "applies an explicit LifecycleBook worker override" $ do
+      let lifecycleBook = "0x0000000000000000000000000000000000000001"
+      paOrderLifecycleBook
+        (applyPerpsAddressEnvironment defaultPerpsAddresses [("PERPS_ORDER_LIFECYCLE_BOOK", lifecycleBook)])
+        `shouldBe` Just (Text.pack lifecycleBook)
+
+    it "includes the LifecycleBook in the indexed contract allowlist" $
+      perpsContractAddressesFor defaultPerpsAddresses
+        `shouldContain` maybe [] pure (paOrderLifecycleBook defaultPerpsAddresses)
+
   describe "bounded replay invariants" $ do
     let replay =
           ReplayOptions
@@ -337,6 +354,40 @@ spec = do
           _ -> False
       terminalStatus "Expired" `shouldBe` "Expired / Cleaned up"
       terminalStatus "EngineRevert" `shouldBe` "Failed"
+
+    it "parses V2 intent identity and canonical finalization evidence" $ do
+      let clientOrderId = BS.replicate 32 0x11
+          clientOrderIdText = "0x" <> Text.replicate 32 "11"
+          intentData = BS.concat
+            [ if index == 3 then word 1
+              else if index == 8 then word 1_700_000_300
+              else word 0
+            | index <- [0 :: Int .. 19]
+            ]
+          finalizedData = BS.concat
+            [ if index == 0 then BS.replicate 32 0xaa
+              else if index == 9 then word 3
+              else if index == 10 then word 3
+              else if index == 11 then word 2
+              else if index == 14 then word 101_250_000
+              else if index == 25 then word 4
+              else word 0
+            | index <- [0 :: Int .. 45]
+            ]
+      parsePerpsLog
+        (mkLog intentRegisteredTopic [word 42, addressTopic, clientOrderId] intentData)
+        `shouldBeParsedAs` \case
+          ParsedIntentRegistered 42 account clientId 1 _ ->
+            account == testAccount && clientId == clientOrderIdText
+          _ -> False
+      parsePerpsLog
+        (mkLog orderFinalizedTopic [word 42, addressTopic, clientOrderId] finalizedData)
+        `shouldBeParsedAs` \case
+          ParsedOrderFinalized 42 account clientId receiptHash "Failed" "Slippage" "FAD" (Just "Action charge") 101_250_000 _ _ ->
+            account == testAccount
+              && clientId == clientOrderIdText
+              && receiptHash == "0x" <> Text.replicate 32 "aa"
+          _ -> False
 
     it "parses position lifecycle activity" $ do
       parsePerpsLog (mkLog positionOpenedTopic [addressTopic] (words32 [0, 1_000, 101_000_000, 200_000_000]))
@@ -1415,6 +1466,9 @@ bytesToText = TE.decodeUtf8 . B16.encode
 
 fixtureEmitterForTopic :: ByteString -> Text
 fixtureEmitterForTopic topic
+  | topic `elem` [intentRegisteredTopic, orderFinalizedTopic]
+  , Just lifecycleBook <- paOrderLifecycleBook defaultPerpsAddresses =
+      lifecycleBook
   | topic `elem` [orderCommittedTopic, orderExecutedTopic, orderFailedTopic] =
       paOrderRouter defaultPerpsAddresses
   | topic `elem` [positionOpenedTopic, positionClosedTopic, positionLiquidatedTopic] =
@@ -1617,6 +1671,14 @@ orderExecutedTopic = keccak256Text "OrderExecuted(uint64,uint256)"
 
 orderFailedTopic :: ByteString
 orderFailedTopic = keccak256Text "OrderFailed(uint64,uint8)"
+
+intentRegisteredTopic :: ByteString
+intentRegisteredTopic = keccak256Text
+  "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+
+orderFinalizedTopic :: ByteString
+orderFinalizedTopic = keccak256Text
+  "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"

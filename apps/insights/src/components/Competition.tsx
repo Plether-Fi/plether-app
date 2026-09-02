@@ -4,6 +4,18 @@ import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCompactUsdc, formatCountdown, formatRoi, formatUsdc, formatUtc } from '../utils/format'
 import { EmptyState, Panel, Pnl, StatusBadge, WalletIdentity } from './ui'
 
+function labelMockUsdc(value: string): string {
+  return value.replace(/ USDC$/, ' mock USDC')
+}
+
+function formatMockUsdc(value: string): string {
+  return labelMockUsdc(formatUsdc(value))
+}
+
+function formatCompactMockUsdc(value: string | null | undefined): string {
+  return labelMockUsdc(formatCompactUsdc(value))
+}
+
 function statusLabel(status: Competition['status']): string {
   const labels: Record<Competition['status'], string> = {
     scheduled: 'Starts soon',
@@ -81,19 +93,17 @@ function prizePool(prizes: Competition['prizes']): string {
 
 export function CompetitionStats({ competition }: { competition: Competition }) {
   const stats = [
-    { label: 'Prize pool', value: prizePool(competition.prizes), accent: true },
-    { label: 'Starting balance', value: formatUsdc(competition.startingBalance) },
-    { label: 'Prize threshold', value: `+${formatUsdc(competition.pnlEligibilityThreshold)}` },
+    { label: 'Starting balance', value: formatMockUsdc(competition.startingBalance) },
     { label: 'Minimum activity', value: `${String(competition.minActiveDays)} active days` },
     { label: 'Registered traders', value: competition.participantCount?.toLocaleString() ?? '—' },
   ]
 
   return (
-    <div className="grid grid-cols-2 border-x border-b border-brand-border/25 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid border-x border-b border-brand-border/25 sm:grid-cols-3">
       {stats.map((stat, index) => (
-        <div key={stat.label} className={`bg-app-bg/40 px-4 py-4 sm:px-5 ${index > 0 ? 'border-l border-brand-border/15' : ''} ${index >= 2 ? 'border-t border-brand-border/15 sm:border-t-0' : ''} ${index >= 3 ? 'lg:border-t-0' : ''}`}>
+        <div key={stat.label} className={`bg-app-bg/40 px-4 py-4 sm:px-5 ${index > 0 ? 'border-t border-brand-border/15 sm:border-l sm:border-t-0' : ''}`}>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary">{stat.label}</div>
-          <div className={`mt-1 text-sm font-semibold tabular-nums sm:text-base ${stat.accent ? 'text-brand-peach' : 'text-content-primary'}`}>{stat.value}</div>
+          <div className="mt-1 text-sm font-semibold tabular-nums text-content-primary sm:text-base">{stat.value}</div>
         </div>
       ))}
     </div>
@@ -137,9 +147,9 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
             <tr key={standing.address} className={`transition-colors hover:bg-brand-peach/5 ${standing.prizePlace !== null ? 'bg-brand-yellow/5' : ''}`}>
               <td className="px-5 py-4"><Rank value={standing.rank} prizePlace={standing.prizePlace} /></td>
               <td className="px-3 py-4"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></td>
-              <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} /></td>
+              <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} usdcKind="mock" /></td>
               <td className={`px-3 py-4 text-right text-sm tabular-nums ${standing.roiBps !== null && standing.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}`}>{formatRoi(standing.roiBps)}</td>
-              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{formatCompactUsdc(standing.volume)}</td>
+              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{formatCompactMockUsdc(standing.volume)}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.trades}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.activeDays}<span className="text-content-tertiary"> / 5</span></td>
               <td className="px-5 py-4 text-right"><StatusBadge eligible={standing.eligible} label={eligibilityLabel(standing)} /></td>
@@ -163,7 +173,7 @@ function MobileList({ standings, competitionSlug }: { standings: Standing[]; com
                 <div className="min-w-0"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></div>
                 <div className="text-right">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">Net P&amp;L</div>
-                  <Pnl value={standing.pnl} className="whitespace-nowrap text-sm font-semibold" />
+                  <Pnl value={standing.pnl} usdcKind="mock" className="whitespace-nowrap text-sm font-semibold" />
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 text-xs text-content-tertiary">
@@ -198,16 +208,81 @@ export function LeaderboardTitle({ count, competitionSlug }: { count: number; co
 }
 
 export function RulesSummary({ competition }: { competition: Competition }) {
-  const prizeSchedule = competition.prizes
-    .map((prize) => formatUsdc(prize.amount).replace(/ USDC$/, ''))
-    .join(' / ')
-
   return (
-    <Panel className="grid gap-px bg-brand-border/20 sm:grid-cols-3">
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at a <strong className="text-content-primary">+1% net return or better</strong> after trading costs and log at least five active FX-session days.</p></div>
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">{prizeSchedule} USDC</strong> for the top {competition.prizes.length} eligible traders.</p></div>
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Fair play</p><p className="mt-2 text-sm leading-6 text-content-secondary">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p></div>
-    </Panel>
+    <section aria-labelledby="prizes-title" className="space-y-3">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">Competition rewards</p>
+          <h2 id="prizes-title" className="mt-1 text-xl font-semibold sm:text-2xl">Two ways to win</h2>
+        </div>
+        <p className="hidden text-xs uppercase tracking-[0.14em] text-content-tertiary sm:block">Prizes stack</p>
+      </div>
+
+      <Panel className="relative overflow-hidden">
+        <div className="absolute inset-y-0 left-0 w-1 bg-brand-orange" aria-hidden="true" />
+        <div className="p-5 sm:p-7 lg:p-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-mono text-xs font-semibold text-brand-orange">01</span>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Performance prize</p>
+            <span className="border border-brand-orange/35 bg-brand-orange/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-brand-peach">Fixed prize pool</span>
+          </div>
+          <h3 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">Finish in the top {competition.prizes.length}</h3>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-content-secondary sm:text-base">
+            Rank among the top eligible traders after trading costs and activity checks to earn a fixed USDC prize.
+          </p>
+          <div className="mt-5 border-t border-brand-border/25 pt-5 sm:flex sm:items-end sm:justify-between sm:gap-8">
+            <div className="shrink-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-tertiary">Total prize pool</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-brand-peach">{prizePool(competition.prizes)}</p>
+            </div>
+            <ol aria-label="Prize breakdown" className="mt-4 flex flex-wrap gap-2 sm:mt-0 sm:justify-end">
+              {competition.prizes.map((prize) => (
+                <li key={prize.place} className="flex items-center gap-2 border border-brand-orange/20 bg-brand-orange/5 px-3 py-2">
+                  <span className="font-mono text-[10px] font-semibold text-brand-orange">#{String(prize.place).padStart(2, '0')}</span>
+                  <span className="text-sm font-semibold tabular-nums text-content-primary">{formatUsdc(prize.amount).replace(/ USDC$/, '')}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel className="relative overflow-hidden border-brand-yellow/35">
+        <div className="absolute inset-y-0 left-0 w-1 bg-brand-yellow" aria-hidden="true" />
+        <div className="p-5 sm:p-7 lg:p-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-mono text-xs font-semibold text-brand-yellow">02</span>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Profitability prize</p>
+            <span className="border border-brand-yellow/35 bg-brand-yellow/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-brand-yellow">Shared reward</span>
+          </div>
+          <h3 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">Be profitable over five days of trading</h3>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-content-secondary sm:text-base">
+            Finish in the <strong className="text-content-primary">Top 1,000 P&amp;Ls</strong> with at least <strong className="text-content-primary">1 USDC in profit after fees</strong>, and you&rsquo;ll receive an equal share of <strong className="text-brand-yellow">50% of all protocol fees</strong> Plether generates during its first 90 days on mainnet. Your final share depends on mainnet trading volume and the number of qualifying traders.
+          </p>
+          <div className="mt-5 border-t border-brand-border/25 pt-5 sm:flex sm:items-end sm:justify-between sm:gap-8">
+            <div className="shrink-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-tertiary">Protocol fees shared</p>
+              <p className="mt-1 text-2xl font-semibold text-brand-yellow">50%</p>
+            </div>
+            <dl className="mt-4 flex flex-wrap gap-2 sm:mt-0 sm:justify-end">
+              <div className="flex items-center gap-3 border border-brand-yellow/20 bg-brand-yellow/5 px-3 py-2">
+                <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-content-tertiary">Mainnet period</dt>
+                <dd className="text-sm font-semibold text-content-primary">90 days</dd>
+              </div>
+              <div className="flex items-center gap-3 border border-brand-yellow/20 bg-brand-yellow/5 px-3 py-2">
+                <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-content-tertiary">Split</dt>
+                <dd className="text-sm font-semibold text-content-primary">Equal share</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </Panel>
+
+      <div className="border border-brand-border/20 bg-app-bg/30 px-5 py-4 sm:flex sm:items-center sm:gap-6">
+        <p className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">Fair play</p>
+        <p className="mt-2 text-sm leading-6 text-content-secondary sm:mt-0">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p>
+      </div>
+    </section>
   )
 }
 

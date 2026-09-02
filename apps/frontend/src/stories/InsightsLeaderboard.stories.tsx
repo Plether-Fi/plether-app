@@ -42,7 +42,7 @@ const standings: Standing[] = [
     prizeAmountUsdc: null,
     eligible: false,
     eligibilityStatus: 'pending',
-    eligibilityReasons: ['Below the +1% P&L threshold'],
+    eligibilityReasons: ['Below the +1.00 USDC prize threshold'],
   },
   {
     rank: 3,
@@ -60,7 +60,7 @@ const standings: Standing[] = [
     prizeAmountUsdc: null,
     eligible: false,
     eligibilityStatus: 'pending',
-    eligibilityReasons: ['Below the +1% P&L threshold'],
+    eligibilityReasons: ['Below the +1.00 USDC prize threshold'],
   },
   {
     rank: null,

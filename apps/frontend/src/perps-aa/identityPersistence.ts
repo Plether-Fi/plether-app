@@ -5,7 +5,7 @@ import {
   type Address,
 } from 'viem'
 import {
-  PERPS_AA_MANIFEST_V1_PATTERN,
+  PERPS_AA_MANIFEST_V2_PATTERN,
   type PerpsSmartAccountMode,
 } from './manifest'
 
@@ -63,6 +63,13 @@ const IDENTITY_KEYS = [
 ] as const
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`
+
+// The runtime manifest remains V2-only. This legacy pattern is accepted only
+// when reading persisted identity metadata so an existing deterministic
+// Trading Account can be compared with, and rewritten to, the current V2
+// identity instead of being stranded behind IDENTITY_STORAGE_INVALID.
+const PERPS_AA_PERSISTED_IDENTITY_V1_PATTERN =
+  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
 
 export class PerpsIdentityValidationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -145,8 +152,9 @@ function parseAccountMode(value: unknown): PerpsAccountMode {
   return 'simple'
 }
 
-export function parsePersistedPerpsIdentity(
-  value: unknown
+function parsePersistedPerpsIdentityValue(
+  value: unknown,
+  allowLegacyV1: boolean
 ): PersistedPerpsIdentity {
   if (!isRecord(value)) {
     throw new PerpsIdentityValidationError(
@@ -197,7 +205,11 @@ export function parsePersistedPerpsIdentity(
   )
   const isSameAddress = isAddressEqual(ownerAddress, accountAddress)
 
-  if (!PERPS_AA_MANIFEST_V1_PATTERN.test(manifestVersion)) {
+  if (
+    !PERPS_AA_MANIFEST_V2_PATTERN.test(manifestVersion) &&
+    !(allowLegacyV1 &&
+      PERPS_AA_PERSISTED_IDENTITY_V1_PATTERN.test(manifestVersion))
+  ) {
     throw new PerpsIdentityValidationError(
       'Sponsored identity manifestVersion is unsupported'
     )
@@ -221,6 +233,12 @@ export function parsePersistedPerpsIdentity(
     accountIndex,
     manifestVersion,
   }
+}
+
+export function parsePersistedPerpsIdentity(
+  value: unknown
+): PersistedPerpsIdentity {
+  return parsePersistedPerpsIdentityValue(value, false)
 }
 
 export function createPersistedPerpsIdentity(
@@ -267,8 +285,9 @@ export function readPersistedPerpsIdentity(
   if (serialized === null) return { status: 'missing' }
 
   try {
-    const identity = parsePersistedPerpsIdentity(
-      JSON.parse(serialized) as unknown
+    const identity = parsePersistedPerpsIdentityValue(
+      JSON.parse(serialized) as unknown,
+      true
     )
     if (
       identity.chainId !== chainId ||

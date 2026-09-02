@@ -38,13 +38,14 @@ afterEach(() => {
 })
 
 describe('waitForPerpsOrderTerminal', () => {
-  it('preserves immutable execution evidence and signed VPI from the backend', async () => {
+  it('preserves canonical V2 receipt evidence and signed VPI from the backend', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: {
         timedOut: false,
         order: {
           orderId: '9202',
           account: '0x10cf39340e1a5307e45f1de989ce7b21915ef377',
+          clientOrderId: `0x${'12'.repeat(32)}`,
           side: 1,
           commitTxHash: '0x54237f181c19e86acfd661fd217e219fd6570227dc5f0b9815589a9d278f6104',
           commitTimestamp: 1_785_437_833,
@@ -53,14 +54,19 @@ describe('waitForPerpsOrderTerminal', () => {
           terminalBlockHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           terminalTimestamp: 1_785_437_841,
           terminalStatus: 'Executed',
+          terminalReason: 'Executed',
+          executionMode: 'Live',
+          receiptHash: `0x${'34'.repeat(32)}`,
+          receiptEconomics: {
+            vpiUsdc: '182822887',
+            frozenSpreadUsdc: '0',
+          },
           executionPrice: '98391251',
           executionOraclePrice: '98391482',
-          executionOracleFrozen: false,
           oracleMinPublishTime: '1785437834',
           oracleMaxPublishTime: '1785437834',
           oracleDerivationVersion: 1,
-          vpiUsdc: '182822887',
-          executionEconomicsVersion: 1,
+          executionEconomicsVersion: 2,
           activityType: 'Close',
           activityPrice: '98391251',
           activityVpiUsdc: '-182822887',
@@ -81,6 +87,9 @@ describe('waitForPerpsOrderTerminal', () => {
       timedOut: false,
       order: expect.objectContaining({
         orderId: 9202n,
+        clientOrderId: `0x${'12'.repeat(32)}`,
+        receiptHash: `0x${'34'.repeat(32)}`,
+        terminalReason: 'Executed',
         terminalBlockNumberRaw: 190_002_345n,
         terminalBlockHash:
           '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -91,13 +100,36 @@ describe('waitForPerpsOrderTerminal', () => {
         oracleMaxPublishTimeRaw: 1_785_437_834n,
         oracleDerivationVersion: 1,
         vpiUsdcRaw: 182_822_887n,
-        executionEconomicsVersion: 1,
+        executionEconomicsVersion: 2,
         activityPriceRaw: 98_391_251n,
         activityVpiUsdcRaw: -182_822_887n,
       }),
     })
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/perps/orders/9202/wait')
+  })
+
+  it('rejects V1 history rows without a client intent identity', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        timedOut: false,
+        order: {
+          orderId: '9202',
+          account: '0x10cf39340e1a5307e45f1de989ce7b21915ef377',
+          terminalStatus: 'Executed',
+          terminalTxHash:
+            '0xebbbf75e5b32d516e9e0398d9a7b1647a1dcf434b385c0e90b123b815957eaed',
+        },
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(waitForPerpsOrderTerminal({ orderId: 9202n })).resolves.toEqual({
+      timedOut: false,
+      order: undefined,
+    })
   })
 
   it('exposes the sequenced orders height and resets it with the account history', async () => {

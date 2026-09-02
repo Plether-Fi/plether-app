@@ -33,12 +33,12 @@ resource "aws_cloudwatch_metric_alarm" "aa_sponsored_gas_alert" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
-  count = var.provision_aa_proxy ? 1 : 0
+  count = (var.provision_aa_proxy || var.lp_settlement_mode != "off") ? 1 : 0
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
   alarm_name          = "plether-${var.environment}-keeper-task-missing"
-  alarm_description   = "The keeper ECS service stopped publishing task CPU metrics."
+  alarm_description   = "The active keeper topology stopped publishing ECS task CPU metrics while a keeper-dependent feature is enabled."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -53,6 +53,127 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
     ClusterName = aws_ecs_cluster.main.name
     ServiceName = var.consolidate_workers ? "plether-workers" : "plether-keeper"
   }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
+  count = var.lp_settlement_mode != "off" ? 1 : 0
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  name           = "plether-${var.environment}-lp-settlement-heartbeat"
+  pattern        = "{ $.event = \"lp_settlement_heartbeat\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "LpSettlementHeartbeat-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lp_settlement_heartbeat_missing" {
+  count = var.lp_settlement_mode != "off" ? 1 : 0
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  alarm_name          = "plether-${var.environment}-lp-settlement-heartbeat-missing"
+  alarm_description   = "No LP settlement heartbeat was observed for three consecutive one-minute periods."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = aws_cloudwatch_log_metric_filter.lp_settlement_heartbeat[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.lp_settlement_heartbeat[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "lp_settlement_ready_backlog" {
+  count = var.lp_settlement_mode != "off" ? 1 : 0
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  name           = "plether-${var.environment}-lp-settlement-ready-backlog"
+  pattern        = "{ $.event = \"lp_settlement_ready_backlog\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "LpSettlementReadyBacklog-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lp_settlement_ready_backlog" {
+  count = var.lp_settlement_mode != "off" ? 1 : 0
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  alarm_name          = "plether-${var.environment}-lp-settlement-ready-backlog"
+  alarm_description   = "Safety-ready matured LP settlement work remained for five consecutive one-minute periods."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  metric_name         = aws_cloudwatch_log_metric_filter.lp_settlement_ready_backlog[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.lp_settlement_ready_backlog[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+locals {
+  lp_settlement_immediate_alarm_events = var.lp_settlement_mode != "off" ? {
+    pending_stuck = {
+      event       = "lp_settlement_pending_stuck"
+      description = "An LP settlement transaction exceeded its pending-age or replacement limit."
+    }
+    invariant_failure = {
+      event       = "lp_settlement_invariant_failure"
+      description = "LP settlement observed a binding, schema, event, receipt, or other fail-closed invariant violation."
+    }
+    low_balance = {
+      event       = "lp_settlement_low_balance"
+      description = "The LP settlement signer balance fell below twice the four-transaction cost budget."
+    }
+  } : {}
+}
+
+resource "aws_cloudwatch_log_metric_filter" "lp_settlement_immediate_alarm" {
+  for_each = local.lp_settlement_immediate_alarm_events
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  name           = "plether-${var.environment}-lp-settlement-${replace(each.key, "_", "-")}"
+  pattern        = "{ $.event = \"${each.value.event}\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "LpSettlement${replace(title(each.key), "_", "")}-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
+  for_each = local.lp_settlement_immediate_alarm_events
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
+
+  alarm_name          = "plether-${var.environment}-lp-settlement-${replace(each.key, "_", "-")}"
+  alarm_description   = each.value.description
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.lp_settlement_immediate_alarm[each.key].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.lp_settlement_immediate_alarm[each.key].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
@@ -493,6 +614,40 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_incomplete" {
   evaluation_periods  = 1
   metric_name         = aws_cloudwatch_log_metric_filter.candle_writer_coverage_incomplete[each.key].metric_transformation[0].name
   namespace           = aws_cloudwatch_log_metric_filter.candle_writer_coverage_incomplete[each.key].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_uninitialized" {
+  for_each = local.candle_writer_heartbeat_events
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  name           = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" && $.coverage_state = \"uninitialized\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "PerpsCandle${title(each.key)}WriterCoverageUninitialized-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_uninitialized" {
+  for_each = local.candle_writer_heartbeat_events
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  alarm_description   = "The live ${each.key} writer has not published candle coverage for its active dataset."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.candle_writer_coverage_uninitialized[each.key].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.candle_writer_coverage_uninitialized[each.key].metric_transformation[0].namespace
   period              = 300
   statistic           = "Sum"
   threshold           = 1
