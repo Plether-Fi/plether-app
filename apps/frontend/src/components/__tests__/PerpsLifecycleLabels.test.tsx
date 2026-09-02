@@ -75,7 +75,6 @@ const perpsTradingMocks = vi.hoisted(() => ({
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
-  findMaxOpenOrder: vi.fn(),
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
   readOrderLifecycleOutcome: vi.fn(),
@@ -110,7 +109,6 @@ vi.mock('../../hooks', () => ({
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
-    findMaxOpenOrder: perpsTradingMocks.findMaxOpenOrder,
     prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
     readOrderLifecycleOutcome: perpsTradingMocks.readOrderLifecycleOutcome,
@@ -1001,19 +999,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox')).toHaveValue('1 500')
   })
 
-  it('calculates an executable opening Max before filling the quantity', async () => {
-    mockIsConnected = true
-    wagmiMocks.readContractsData = [{
-      status: 'success',
-      result: { valid: true },
-    }]
-    let resolveMaxOrder!: (value: { sizeDelta: bigint }) => void
-    perpsTradingMocks.findMaxOpenOrder.mockReturnValue(
-      new Promise((resolve) => {
-        resolveMaxOrder = resolve
-      }),
-    )
-
+  it('fills an opening Max immediately from available funding and market capacity', () => {
     render(
       <PerpsTradeTicket
         enableLiveTrading
@@ -1027,21 +1013,10 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Calculate executable Max' }))
-    expect(screen.getByRole('button', { name: 'Calculating executable Max…' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
 
-    await act(async () => {
-      resolveMaxOrder({ sizeDelta: 400n * 10n ** 18n })
-    })
-
-    await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
-    })
-    expect(screen.getByRole('button', { name: /Max: 400 plDXY/ })).toBeEnabled()
-    expect(perpsTradingMocks.findMaxOpenOrder).toHaveBeenCalledWith(expect.objectContaining({
-      direction: 'long',
-      selectedMaxLeverageBps: 50_000,
-    }))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+    expect(screen.queryByText(/calculating executable max/i)).not.toBeInTheDocument()
   })
 
   it('shows protected margin and exact shortfall without enabling confirmation', async () => {

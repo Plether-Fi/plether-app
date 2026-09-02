@@ -89,8 +89,6 @@ type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
-type MaxOrderStatus = 'idle' | 'loading' | 'ready' | 'failed'
-
 interface PerpsOrderReviewSnapshot {
   direction: Direction
   notionalUsdc: bigint
@@ -1817,7 +1815,6 @@ export function PerpsTradeTicket({
     fundTradingAccount,
     depositMargin,
     withdrawMargin,
-    findMaxOpenOrder,
     prepareOrder,
     commitOrder,
     readOrderLifecycleOutcome,
@@ -1851,9 +1848,6 @@ export function PerpsTradeTicket({
   const [reviewFundingShortfallUsdc, setReviewFundingShortfallUsdc] = useState<bigint | undefined>()
   const [isExecutionProtectionsLoading, setIsExecutionProtectionsLoading] = useState(false)
   const [executionProtectionsError, setExecutionProtectionsError] = useState<string | undefined>()
-  const [maxOrderStatus, setMaxOrderStatus] = useState<MaxOrderStatus>('idle')
-  const [resolvedMaxOrderSize, setResolvedMaxOrderSize] = useState<bigint | undefined>()
-  const [maxOrderError, setMaxOrderError] = useState<string | undefined>()
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
@@ -1925,7 +1919,6 @@ export function PerpsTradeTicket({
     exhausted: boolean
   } | undefined>(undefined)
   const commitAttemptIdRef = useRef(0)
-  const maxOrderAttemptIdRef = useRef(0)
   const includedCommitAttemptRef = useRef<number | undefined>(undefined)
   const includedCommitIdentityRef = useRef<{
     account: string
@@ -2808,12 +2801,6 @@ export function PerpsTradeTicket({
   const effectiveMinOpenDxyExposureUsdc = isOpeningFromZero
     ? maxBigInt(minOpenDxyExposureUsdc ?? 0n, minNewPositionDxyExposureUsdc ?? 0n)
     : minOpenDxyExposureUsdc
-  const minimumOpenSizeForMaxRaw = effectiveMinOpenDxyExposureUsdc === undefined
-    ? undefined
-    : quantizePerpsPositionSize(
-        dxyExposureToSizeDelta(effectiveMinOpenDxyExposureUsdc, oraclePriceRaw) ?? 0n,
-        'up'
-      )
   const selectedOpenDxyCapacityUsdc = selectedOpenCapacityUsdc === undefined
     ? undefined
     : quantizedDxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw, 'down') ?? selectedOpenCapacityUsdc
@@ -2939,22 +2926,6 @@ export function PerpsTradeTicket({
     }
     return undefined
   })()
-  useEffect(() => {
-    maxOrderAttemptIdRef.current += 1
-    setMaxOrderStatus('idle')
-    setResolvedMaxOrderSize(undefined)
-    setMaxOrderError(undefined)
-  }, [
-    activeLeverage,
-    address,
-    availableToTradeRaw,
-    direction,
-    isReduceOnly,
-    isReducingCurrentPosition,
-    oraclePriceRaw,
-    selectedOpenCapacityUsdc,
-    slippageNumber,
-  ])
   useEffect(() => {
     if (
       !enableLiveTrading ||
@@ -3462,7 +3433,7 @@ export function PerpsTradeTicket({
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(liveValidationError) || isTradePreviewPending || maxOrderStatus === 'loading')
+    (Boolean(liveValidationError) || isTradePreviewPending)
   ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -4043,48 +4014,6 @@ export function PerpsTradeTicket({
     trackPerpsButtonClicked('leverage_input_changed', commonAnalyticsProperties)
   }
 
-  function clearMaxOrderCalculation() {
-    maxOrderAttemptIdRef.current += 1
-    setMaxOrderStatus('idle')
-    setResolvedMaxOrderSize(undefined)
-    setMaxOrderError(undefined)
-  }
-
-  async function calculateExecutableMaxOrder() {
-    if (
-      isReducingCurrentPosition ||
-      typeof findMaxOpenOrder !== 'function' ||
-      maxOpenSizeRaw <= 0n
-    ) return
-
-    const attemptId = maxOrderAttemptIdRef.current + 1
-    maxOrderAttemptIdRef.current = attemptId
-    setMaxOrderStatus('loading')
-    setResolvedMaxOrderSize(undefined)
-    setMaxOrderError(undefined)
-    trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
-    try {
-      const result = await findMaxOpenOrder({
-        direction,
-        slippagePercent: slippageNumber,
-        selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
-        minimumSizeDelta: minimumOpenSizeForMaxRaw,
-        maximumSizeDelta: maxOpenSizeRaw,
-      })
-      if (maxOrderAttemptIdRef.current !== attemptId) return
-      setIsFullCloseIntent(false)
-      setOrderQuantity(formatPerpsPositionSize(result.sizeDelta, 0))
-      setResolvedMaxOrderSize(result.sizeDelta)
-      setMaxOrderStatus('ready')
-    } catch (error) {
-      if (maxOrderAttemptIdRef.current !== attemptId) return
-      setMaxOrderStatus('failed')
-      setMaxOrderError(
-        error instanceof Error ? error.message : 'Executable Max could not be calculated.'
-      )
-    }
-  }
-
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-5 px-3 py-3 sm:px-5 sm:py-4">
@@ -4128,7 +4057,6 @@ export function PerpsTradeTicket({
             disabled={!canUseAvailableToTrade}
             onClick={() => {
               if (canUseAvailableToTrade) {
-                clearMaxOrderCalculation()
                 trackPerpsButtonClicked('fill_available_to_trade', commonAnalyticsProperties)
                 setIsFullCloseIntent(false)
                 setOrderQuantity(availableToTradeFillQuantity)
@@ -4141,7 +4069,6 @@ export function PerpsTradeTicket({
             disabled={!canUseCurrentPosition}
             onClick={() => {
               if (canUseCurrentPosition) {
-                clearMaxOrderCalculation()
                 trackPerpsButtonClicked('fill_current_position', commonAnalyticsProperties)
                 setIsFullCloseIntent(isReducingCurrentPosition)
                 setOrderQuantity(currentPositionFillQuantity)
@@ -4156,7 +4083,6 @@ export function PerpsTradeTicket({
             value={orderQuantityInputValue}
             onChange={(event) => {
               if (isNumericInput(event.target.value)) {
-                clearMaxOrderCalculation()
                 setIsFullCloseIntent(false)
                 setOrderQuantity(event.target.value)
               }
@@ -4167,46 +4093,21 @@ export function PerpsTradeTicket({
             <button
               type="button"
               className="group cursor-pointer text-right text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-content-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
-              disabled={!canUseMaxOrderQuantity || maxOrderStatus === 'loading'}
+              disabled={!canUseMaxOrderQuantity}
               onClick={() => {
-                if (!canUseMaxOrderQuantity) return
-                if (isReducingCurrentPosition || !enableLiveTrading) {
+                if (canUseMaxOrderQuantity) {
                   trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
                   setIsFullCloseIntent(isReducingCurrentPosition)
                   setOrderQuantity(maxOrderQuantityInputAmount)
-                  return
                 }
-                void calculateExecutableMaxOrder()
               }}
             >
-              {enableLiveTrading && !isReducingCurrentPosition ? (
-                maxOrderStatus === 'loading'
-                  ? <span>Calculating executable Max…</span>
-                  : maxOrderStatus === 'ready' && resolvedMaxOrderSize !== undefined
-                    ? (
-                        <>
-                          <span>Max: </span>
-                          <span className="group-hover:underline group-focus-visible:underline">
-                            <TokenAmount amount={formatPerpsPositionSize(resolvedMaxOrderSize, 0)} token="plDXY" />
-                          </span>
-                        </>
-                      )
-                    : <span className="group-hover:underline group-focus-visible:underline">Calculate executable Max</span>
-              ) : (
-                <>
-                  <span>Max: </span>
-                  <span className="group-hover:underline group-focus-visible:underline">
-                    <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />
-                  </span>
-                </>
-              )}
+              <span>Max: </span>
+              <span className="group-hover:underline group-focus-visible:underline">
+                <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />
+              </span>
             </button>
           </div>
-          {maxOrderError ? (
-            <div className="mt-2 text-right text-xs leading-4 text-brand-orange" role="alert">
-              {maxOrderError}
-            </div>
-          ) : null}
         </div>
 
         <div className="space-y-2">

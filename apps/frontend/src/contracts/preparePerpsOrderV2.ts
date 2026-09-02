@@ -11,7 +11,6 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
-import { PERPS_POSITION_SIZE_QUANTUM } from './perpsConstants'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
@@ -45,20 +44,6 @@ export interface PreparePerpsOrderV2Input {
 export interface ReviewedPerpsOrderV2 {
   preparedOrder: PreparedPerpsOrderV2
   reviewSummary: PerpsOrderReviewSummary
-}
-
-export interface FindMaxOpenPerpsOrderV2Input {
-  account: Address
-  direction: PerpsDirection
-  side: number
-  slippagePercent: number
-  selectedMaxLeverageBps: number
-  minimumSizeDelta?: bigint
-  maximumSizeDelta?: bigint
-}
-
-export interface MaxOpenPerpsOrderV2Result extends ReviewedPerpsOrderV2 {
-  sizeDelta: bigint
 }
 
 export class PerpsOrderFundingShortfallError extends Error {
@@ -129,16 +114,6 @@ function asAssessment(value: unknown): PerpsExecutionAssessment {
 
 function maximum(values: bigint[]): bigint {
   return values.reduce((result, value) => value > result ? value : result, 0n)
-}
-
-function quantizeSizeDown(sizeDelta: bigint): bigint {
-  return sizeDelta / PERPS_POSITION_SIZE_QUANTUM * PERPS_POSITION_SIZE_QUANTUM
-}
-
-function quantizeSizeUp(sizeDelta: bigint): bigint {
-  if (sizeDelta <= 0n) return PERPS_POSITION_SIZE_QUANTUM
-  return (sizeDelta + PERPS_POSITION_SIZE_QUANTUM - 1n) /
-    PERPS_POSITION_SIZE_QUANTUM * PERPS_POSITION_SIZE_QUANTUM
 }
 
 function validateInput(input: PreparePerpsOrderV2Input): void {
@@ -503,117 +478,4 @@ export async function preparePerpsOrderV2(
   }
   await simulateReviewedPerpsOrderV2(client, reviewedOrder)
   return reviewedOrder.preparedOrder
-}
-
-export async function findMaxOpenPerpsOrderV2(
-  client: PublicClient,
-  manifest: PerpsAaDeploymentManifest,
-  input: FindMaxOpenPerpsOrderV2Input
-): Promise<MaxOpenPerpsOrderV2Result> {
-  if (
-    !Number.isInteger(input.selectedMaxLeverageBps) ||
-    input.selectedMaxLeverageBps <= 0 ||
-    input.selectedMaxLeverageBps > 0xffff_ffff
-  ) {
-    throw new Error('Selected maximum leverage is invalid')
-  }
-  const context = await loadPerpsOrderReviewContext(client, manifest, input.account)
-  if (context.freeBuyingPowerUsdc <= 0n) {
-    throw new Error('No free margin is available for an opening order.')
-  }
-
-  const leverageBps = BigInt(input.selectedMaxLeverageBps)
-  const collateralUpperNotional = context.freeBuyingPowerUsdc * leverageBps / 10_000n
-  let maximumSizeDelta = quantizeSizeDown(
-    collateralUpperNotional * POSITION_SIZE_TO_USDC_SCALE / context.currentPrice
-  )
-  if (input.maximumSizeDelta !== undefined) {
-    maximumSizeDelta = maximumSizeDelta < input.maximumSizeDelta
-      ? maximumSizeDelta
-      : quantizeSizeDown(input.maximumSizeDelta)
-  }
-  const minimumSizeDelta = quantizeSizeUp(
-    input.minimumSizeDelta ?? PERPS_POSITION_SIZE_QUANTUM
-  )
-  if (maximumSizeDelta < minimumSizeDelta) {
-    throw new Error('Available margin cannot fund the minimum opening order.')
-  }
-
-  const baseInput = {
-    account: input.account,
-    direction: input.direction,
-    side: input.side,
-    slippagePercent: input.slippagePercent,
-    isClose: false,
-    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
-  }
-  const reviewedCandidates = new Map<bigint, ReviewedPerpsOrderV2 | null>()
-  const reviewCandidate = async (sizeDelta: bigint): Promise<ReviewedPerpsOrderV2 | null> => {
-    const cached = reviewedCandidates.get(sizeDelta)
-    if (cached !== undefined) return cached
-    const notionalUsdc = sizeDelta * context.currentPrice / POSITION_SIZE_TO_USDC_SCALE
-    const marginDelta = notionalUsdc * 10_000n / leverageBps
-    try {
-      const reviewed = await reviewPerpsOrderWithContext(context, {
-        ...baseInput,
-        sizeDelta,
-        marginDelta,
-      }, true)
-      reviewedCandidates.set(sizeDelta, reviewed)
-      return reviewed
-    } catch {
-      reviewedCandidates.set(sizeDelta, null)
-      return null
-    }
-  }
-  const isFeasible = async (sizeDelta: bigint): Promise<boolean> => {
-    const reviewed = await reviewCandidate(sizeDelta)
-    return reviewed !== null &&
-      reviewed.reviewSummary.requiredFundingUsdc <= context.freeBuyingPowerUsdc
-  }
-
-  if (!await isFeasible(minimumSizeDelta)) {
-    throw new Error('Available margin cannot fund the minimum opening order after fees and price impact.')
-  }
-
-  let lowUnits = minimumSizeDelta / PERPS_POSITION_SIZE_QUANTUM
-  let highUnits = maximumSizeDelta / PERPS_POSITION_SIZE_QUANTUM
-  let bestUnits = lowUnits
-  while (lowUnits <= highUnits) {
-    const midpointUnits = (lowUnits + highUnits) / 2n
-    const midpointSize = midpointUnits * PERPS_POSITION_SIZE_QUANTUM
-    if (await isFeasible(midpointSize)) {
-      bestUnits = midpointUnits
-      lowUnits = midpointUnits + 1n
-    } else {
-      highUnits = midpointUnits - 1n
-    }
-  }
-
-  let sizeDelta = bestUnits * PERPS_POSITION_SIZE_QUANTUM
-  let finalReviewed: ReviewedPerpsOrderV2 | undefined
-  while (sizeDelta >= minimumSizeDelta) {
-    const notionalUsdc = sizeDelta * context.currentPrice / POSITION_SIZE_TO_USDC_SCALE
-    const marginDelta = notionalUsdc * 10_000n / leverageBps
-    const reviewed = await reviewPerpsOrderWithContext(context, {
-      ...baseInput,
-      sizeDelta,
-      marginDelta,
-    }, true)
-    if (reviewed.reviewSummary.requiredFundingUsdc <= context.freeBuyingPowerUsdc) {
-      finalReviewed = reviewed
-      break
-    }
-    sizeDelta -= PERPS_POSITION_SIZE_QUANTUM
-  }
-  if (!finalReviewed) {
-    throw new Error('Available margin cannot fund the minimum opening order after final review.')
-  }
-
-  await simulateReviewedPerpsOrderV2(client, finalReviewed)
-  return {
-    sizeDelta,
-    preparedOrder: finalReviewed.preparedOrder,
-    reviewSummary: finalReviewed.reviewSummary,
-  }
 }
