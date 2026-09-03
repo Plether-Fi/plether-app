@@ -251,7 +251,7 @@ vaultActivityDatabaseSpec databaseUrl =
         withDb pool $ \conn -> do
           setVaultActivityIndexerState
             conn deploymentA 20 (Just $ blockHash 20) (now - 10)
-            30 (blockHash 30) now False
+            30 (blockHash 30) now True
           recomputeVaultAttributedHolderBalances
             conn deploymentA seniorVault 20 (blockHash 20)
           recomputeVaultAttributedHolderBalances
