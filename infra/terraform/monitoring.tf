@@ -1,5 +1,5 @@
 resource "aws_cloudwatch_log_metric_filter" "aa_sponsored_gas_alert" {
-  count = var.provision_aa_proxy ? 1 : 0
+  count = local.aa_gateway_enabled ? 1 : 0
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -15,7 +15,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_sponsored_gas_alert" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "aa_sponsored_gas_alert" {
-  count = var.provision_aa_proxy ? 1 : 0
+  count = local.aa_gateway_enabled ? 1 : 0
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -750,7 +750,25 @@ locals {
         metric  = "MemoryUtilization"
         service = aws_ecs_service.perps_indexer.name
       }
-    }
+    },
+    local.self_hosted_aa_resource_count == 1 ? {
+      alto_cpu = {
+        metric  = "CPUUtilization"
+        service = aws_ecs_service.alto[0].name
+      }
+      alto_memory = {
+        metric  = "MemoryUtilization"
+        service = aws_ecs_service.alto[0].name
+      }
+      aa_reconciler_cpu = {
+        metric  = "CPUUtilization"
+        service = aws_ecs_service.aa_reconciler[0].name
+      }
+      aa_reconciler_memory = {
+        metric  = "MemoryUtilization"
+        service = aws_ecs_service.aa_reconciler[0].name
+      }
+    } : {}
   )
 
   active_candle_writer_services = var.perps_candle_write_mode == "dual" ? (
@@ -839,6 +857,456 @@ resource "aws_cloudwatch_metric_alarm" "api_task_missing" {
     ClusterName = aws_ecs_cluster.main.name
     ServiceName = aws_ecs_service.api.name
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_task_missing" {
+  count = local.self_hosted_aa_resource_count == 1 && var.alto_desired_count == 1 ? 1 : 0
+
+  depends_on = [terraform_data.self_hosted_aa_guard]
+
+  alarm_name          = "plether-${var.environment}-alto-task-missing"
+  alarm_description   = "The single-active Alto service stopped publishing ECS task metrics."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.alto[0].name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_task_missing" {
+  count = local.self_hosted_aa_resource_count == 1 && var.aa_reconciler_desired_count == 1 ? 1 : 0
+
+  depends_on = [terraform_data.self_hosted_aa_guard]
+
+  alarm_name          = "plether-${var.environment}-aa-reconciler-task-missing"
+  alarm_description   = "The single-active AA reconciler stopped publishing ECS task metrics."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.aa_reconciler[0].name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_unhealthy_target" {
+  count = local.self_hosted_aa_resource_count == 1 && var.alto_desired_count == 1 ? 1 : 0
+
+  depends_on = [terraform_data.self_hosted_aa_guard]
+
+  alarm_name          = "plether-${var.environment}-alto-unhealthy-target"
+  alarm_description   = "The internal Alto load balancer has an unhealthy target."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  dimensions = {
+    LoadBalancer = aws_lb.alto[0].arn_suffix
+    TargetGroup  = aws_lb_target_group.alto[0].arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_target_5xx" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [terraform_data.self_hosted_aa_guard]
+
+  alarm_name          = "plether-${var.environment}-alto-target-5xx"
+  alarm_description   = "Alto emitted repeated target 5xx responses through its internal load balancer."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  dimensions = {
+    LoadBalancer = aws_lb.alto[0].arn_suffix
+    TargetGroup  = aws_lb_target_group.alto[0].arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "alto_fatal" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-alto-fatal"
+  pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"fatal\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AltoFatal-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_fatal" {
+  count = local.self_hosted_aa_resource_count
+
+  alarm_name          = "plether-${var.environment}-alto-fatal"
+  alarm_description   = "Alto emitted a fatal structured log record."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.alto_fatal[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.alto_fatal[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+locals {
+  alto_wallet_fault_patterns = local.self_hosted_aa_resource_count == 1 ? {
+    utility_refill_balance = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"validate-and-refill-wallets\" && $.msg = \"utility wallet has insufficient balance to refill wallets\" }"
+    initial_refill_error   = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"root\" && $.msg = \"Error during initial wallet validation and refill\" }"
+    scheduled_refill_error = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"root\" && $.msg = \"Error during scheduled wallet validation and refill\" }"
+    utility_monitor_error  = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"utility_wallet_monitor\" && $.msg = \"Failed to update utility wallet balance metrics\" }"
+    refill_gas_price_error = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"validate-and-refill-wallets\" && $.msg = \"No gas price available\" }"
+  } : {}
+
+  aa_reconciler_fatal_events = local.self_hosted_aa_resource_count == 1 ? toset([
+    "aa_reconciler_configuration_invalid",
+    "aa_reconciler_schema_invalid",
+    "aa_reconciler_unknown_operation",
+    "aa_reconciler_cursor_discontinuity",
+    "aa_reconciler_cost_exceeds_reservation",
+    "aa_reconciler_chain_mismatch",
+    "aa_reconciler_provider_disagreement",
+    "aa_reconciler_timestamp_invalid",
+    "aa_reconciler_failure_threshold_exceeded",
+    "aa_reconciler_crashed",
+  ]) : toset([])
+
+  aa_native_api_fault_patterns = local.self_hosted_aa_resource_count == 1 ? {
+    issuance_unavailable   = "{ $.container_name = \"plether-api\" && $.level = \"WARN\" && $.event = \"aa_native_issuance_unavailable\" }"
+    reconciler_stale       = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_reconciler_stale\" }"
+    signer_failure         = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_signer_failure\" }"
+    bundler_hash_mismatch  = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_bundler_hash_mismatch\" }"
+    sponsorship_db_failure = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_sponsorship_database_failure\" }"
+    security_attestation   = "{ $.container_name = \"plether-api\" && $.level = \"ERROR\" && $.event = \"aa_native_security_attestation_failure\" }"
+  } : {}
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_native_api_fault" {
+  for_each = local.aa_native_api_fault_patterns
+
+  name           = "plether-${var.environment}-aa-native-${replace(each.key, "_", "-")}"
+  pattern        = each.value
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaNativeApiFault-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_native_api_fault" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [aws_cloudwatch_log_metric_filter.aa_native_api_fault]
+
+  alarm_name          = "plether-${var.environment}-aa-native-api-fault"
+  alarm_description   = "Native AA issuance, signer, bundler hash, reconciliation freshness, or durable sponsorship state failed closed."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "AaNativeApiFault-${var.environment}"
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "alto_wallet_fault" {
+  for_each = local.alto_wallet_fault_patterns
+
+  name           = "plether-${var.environment}-alto-${replace(each.key, "_", "-")}"
+  pattern        = each.value
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AltoWalletFault-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_wallet_fault" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [aws_cloudwatch_log_metric_filter.alto_wallet_fault]
+
+  alarm_name          = "plether-${var.environment}-alto-wallet-fault"
+  alarm_description   = "Alto could not validate, refill, or monitor its utility/executor wallets."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "AltoWalletFault-${var.environment}"
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_initialization_error" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-alto-gas-price-initialization-error"
+  pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"gas_price_manager\" && $.msg = \"Error during gas price initialization\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AltoGasPriceFault-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_refresh_error" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-alto-gas-price-refresh-error"
+  pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"gas_price_manager\" && $.msg = \"Error updating gas prices in interval\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AltoGasPriceFault-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_gas_price_initialization_error" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [
+    aws_cloudwatch_log_metric_filter.alto_gas_price_initialization_error,
+    aws_cloudwatch_log_metric_filter.alto_gas_price_refresh_error,
+  ]
+
+  alarm_name          = "plether-${var.environment}-alto-gas-price-fault"
+  alarm_description   = "Alto could not initialize or refresh its gas-price manager; health checks can remain green while estimation and bundling are unavailable."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.alto_gas_price_initialization_error[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.alto_gas_price_initialization_error[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "alto_executor_insufficient_funds" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-alto-executor-insufficient-funds"
+  pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"warn\" && $.msg = \"executor has insufficient funds\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AltoExecutorInsufficientFunds-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alto_executor_insufficient_funds" {
+  count = local.self_hosted_aa_resource_count
+
+  alarm_name          = "plether-${var.environment}-alto-executor-insufficient-funds"
+  alarm_description   = "Alto attempted to bundle with an executor that had insufficient funds."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.alto_executor_insufficient_funds[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.alto_executor_insufficient_funds[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_fatal" {
+  for_each = local.aa_reconciler_fatal_events
+
+  name           = "plether-${var.environment}-${replace(each.value, "_", "-")}"
+  pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"ERROR\" && $.event = \"${each.value}\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaReconcilerFatal-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_fatal" {
+  count = local.self_hosted_aa_resource_count
+
+  depends_on = [aws_cloudwatch_log_metric_filter.aa_reconciler_fatal]
+
+  alarm_name          = "plether-${var.environment}-aa-reconciler-fatal"
+  alarm_description   = "The AA reconciler hit a startup, provider-agreement, cursor, operation, reservation, or durable-pause circuit breaker."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "AaReconcilerFatal-${var.environment}"
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_heartbeat" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-aa-reconciler-heartbeat"
+  pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.event = \"aa_reconciler_heartbeat\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaReconcilerHeartbeat-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_heartbeat_missing" {
+  count = local.self_hosted_aa_resource_count == 1 && var.aa_reconciler_desired_count == 1 ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-aa-reconciler-heartbeat-missing"
+  alarm_description   = "No AA reconciler heartbeat was observed for two consecutive five-minute windows."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_reconciler_heartbeat[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.aa_reconciler_heartbeat[0].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_low_deposit" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-aa-reconciler-paymaster-low-deposit"
+  pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"ERROR\" && $.event = \"aa_reconciler_paymaster_low_deposit\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaReconcilerPaymasterLowDeposit-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_low_deposit" {
+  count = local.self_hosted_aa_resource_count
+
+  alarm_name          = "plether-${var.environment}-aa-paymaster-low-deposit"
+  alarm_description   = "The paymaster EntryPoint deposit fell below the reconciler threshold; native issuance was paused in durable state."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_reconciler_paymaster_low_deposit[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.aa_reconciler_paymaster_low_deposit[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_unstaked" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-aa-reconciler-paymaster-unstaked"
+  pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"WARN\" && $.event = \"aa_reconciler_paymaster_unstaked\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaReconcilerPaymasterUnstaked-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_unstaked" {
+  count = local.self_hosted_aa_resource_count
+
+  alarm_name          = "plether-${var.environment}-aa-paymaster-unstaked"
+  alarm_description   = "The paymaster is not staked in EntryPoint."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_reconciler_paymaster_unstaked[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.aa_reconciler_paymaster_unstaked[0].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_rpc_unavailable" {
+  count = local.self_hosted_aa_resource_count
+
+  name           = "plether-${var.environment}-aa-reconciler-rpc-unavailable"
+  pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"WARN\" && $.event = \"aa_reconciler_rpc_unavailable\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "AaReconcilerRpcUnavailable-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_reconciler_rpc_unavailable" {
+  count = local.self_hosted_aa_resource_count
+
+  alarm_name          = "plether-${var.environment}-aa-reconciler-rpc-unavailable"
+  alarm_description   = "The AA reconciler repeatedly could not read safe-chain or paymaster state from its RPC."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_reconciler_rpc_unavailable[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.aa_reconciler_rpc_unavailable[0].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 3
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_heartbeat" {

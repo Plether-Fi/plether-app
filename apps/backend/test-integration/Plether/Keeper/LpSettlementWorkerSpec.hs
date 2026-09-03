@@ -1258,6 +1258,7 @@ workerConfig mode =
     , cfgInsightsCompetitionReleaseManifest = releaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing

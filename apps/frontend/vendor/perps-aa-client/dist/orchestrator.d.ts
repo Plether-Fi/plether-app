@@ -1,10 +1,20 @@
-import type { BundlerAdapter, PerpsActionPlan, SmartAccountAdapter, SponsorAdapter, SponsoredExecutionResult, SponsoredExecutionStatus } from "./types.js";
+import { type Address, type Hex } from "viem";
+import type { BundlerAdapter, PerpsActionPlan, PletherPaymasterProfile, SmartAccountAdapter, SponsorAdapter, SponsoredExecutionResult, SponsoredExecutionStatus } from "./types.js";
 export interface SendSponsoredActionInput<TOperation, TGasEstimate, TReceipt> {
     readonly chainId: number;
     readonly action: PerpsActionPlan;
     readonly account: SmartAccountAdapter<TOperation, TGasEstimate>;
     readonly sponsor: SponsorAdapter<TOperation>;
     readonly bundler: BundlerAdapter<TOperation, TGasEstimate, TReceipt>;
+    readonly paymasterProfile: PletherPaymasterProfile;
+    /**
+     * Must durably persist the exact signed operation before resolving. It returns
+     * the locally computed EntryPoint v0.8 UserOperation hash.
+     */
+    readonly journalSignedUserOperation: (input: {
+        readonly operation: TOperation;
+        readonly entryPoint: Address;
+    }) => Promise<Hex>;
     readonly waitForReceipt?: boolean;
     readonly onStatus?: (status: SponsoredExecutionStatus) => void;
 }

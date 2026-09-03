@@ -22,7 +22,7 @@ export class UserOperationReceiptNotSafeError extends Error {
   }
 }
 
-export type PimlicoUserOperationStatus =
+export type BundlerUserOperationStatus =
   | 'not_found'
   | 'not_submitted'
   | 'submitted'
@@ -32,12 +32,15 @@ export type PimlicoUserOperationStatus =
   | 'included'
   | 'failed'
 
-export interface PimlicoUserOperationStatusResult {
-  status: PimlicoUserOperationStatus
+export interface BundlerUserOperationStatusResult {
+  status: BundlerUserOperationStatus
   transactionHash: Hex | null
 }
 
-export interface ManagedPimlicoSmartAccount {
+export type PimlicoUserOperationStatus = BundlerUserOperationStatus
+export type PimlicoUserOperationStatusResult = BundlerUserOperationStatusResult
+
+export interface ManagedSmartAccount {
   accountAddress: Address
   entryPoint: Address
   prepareUserOperation(input: {
@@ -51,11 +54,13 @@ export interface ManagedPimlicoSmartAccount {
   sendUserOperation(operation: ManagedUserOperation): Promise<Hex>
   getUserOperationStatus(
     userOperationHash: Hex
-  ): Promise<PimlicoUserOperationStatusResult>
+  ): Promise<BundlerUserOperationStatusResult>
   getUserOperationReceipt(
     userOperationHash: Hex
   ): Promise<ManagedUserOperationReceipt>
 }
+
+export type ManagedPimlicoSmartAccount = ManagedSmartAccount
 
 export interface SponsoredOperationRecoverySnapshot {
   blockNumber: bigint
@@ -93,13 +98,16 @@ export type ObservedInclusionCanonicality =
 export interface PerpsAaSmartAccountRuntime {
   chainId: number
   ownerAddress: Address
-  smartAccount: ManagedPimlicoSmartAccount
+  smartAccount: ManagedSmartAccount
   factoryAddress: Address
   accountVersion: string
   accountIndex: string
   manifestVersion?: string
   walletFamily?: string
   walletVersion?: string
+  sponsorshipValidUntil?(
+    operation: ManagedUserOperation
+  ): bigint | undefined
   getRecoverySnapshot?(
     userOperationHash: Hex,
     nonceKey?: bigint

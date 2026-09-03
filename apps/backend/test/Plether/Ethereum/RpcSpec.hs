@@ -316,7 +316,10 @@ withRpcClientFor application action =
 rpcApplication :: Maybe Text -> [(Text, Value)] -> Application
 rpcApplication missingCodeAddress overrides request respond = do
   body <- strictRequestBody request
-  let result = case rpcRequest body of
+  let responseId = case rpcRequestId body of
+        Just value -> value
+        Nothing -> Null
+      result = case rpcRequest body of
         Just method
           | Just override <- lookup method overrides -> override
         Just "eth_chainId" -> String "0x66eee"
@@ -334,7 +337,7 @@ rpcApplication missingCodeAddress overrides request respond = do
     responseLBS
       status200
       [("Content-Type", "application/json")]
-      (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Integer), "result" .= result])
+      (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= responseId, "result" .= result])
 
 rpcMethod :: LBS.ByteString -> Maybe Text
 rpcMethod body = do
@@ -344,6 +347,11 @@ rpcMethod body = do
 
 rpcRequest :: LBS.ByteString -> Maybe Text
 rpcRequest = rpcMethod
+
+rpcRequestId :: LBS.ByteString -> Maybe Value
+rpcRequestId body = do
+  Object value <- decode body
+  KeyMap.lookup (Key.fromText "id") value
 
 rpcFirstParam :: LBS.ByteString -> Maybe Text
 rpcFirstParam body = do

@@ -5,6 +5,7 @@ export * from "./eip3009.js";
 export * from "./errors.js";
 export * from "./orchestrator.js";
 export * from "./paymaster.js";
+export * from "./sponsorship.js";
 export * from "./types.js";
 export * from "./protection.js";
 export * from "./protectionAbi.js";

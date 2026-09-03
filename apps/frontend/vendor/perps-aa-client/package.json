@@ -19,7 +19,10 @@
   "pletherVendoredFrom": {
     "repository": "plether-core",
     "path": "packages/perps-aa-client",
-    "commit": "3472427ed15b0a478248af7d025535da349a8592"
+    "commit": "3472427ed15b0a478248af7d025535da349a8592",
+    "baseCommit": "bc8f6290c540665e4ff61328ea83a4c3d421a8d4",
+    "patch": ".codex-artifacts/plether-core-self-hosted-aa.patch",
+    "patchSha256": "d1c6941c03f37cc9a93b35b95dc73a876ee87dab624524ed9c4d6336022f2955"
   },
   "dependencies": {
     "viem": "^2.38.0"

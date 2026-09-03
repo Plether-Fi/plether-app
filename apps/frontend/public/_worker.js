@@ -2,10 +2,14 @@ const ROUTES = {
   '/api/perps/v1/': 'SEPOLIA_BACKEND_URL',
   '/api/spot/v1/': 'MAINNET_BACKEND_URL',
 };
-const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
+const AA_PROXY_PATHS = new Set([
+  '/api/perps/v1/aa/pimlico',
+  '/api/perps/v1/aa/rpc',
+]);
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
+const PERPS_AA_MANIFEST_PATH = '/perps-aa-manifest.json';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
 const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
 const CANDLE_PAGE_SIZE = 500;
@@ -629,12 +633,12 @@ const requestHandler = {
         const backendUrl = new URL(backendPath + url.search, origin);
 
         const headers = new Headers(request.headers);
-        // Never trust or forward a browser-supplied origin-auth token. The
-        // The backend may trust CF-Connecting-IP for protected endpoints only
+        // Never trust or forward browser-supplied origin-auth tokens. The
+        // backend may trust CF-Connecting-IP for protected endpoints only
         // after the matching Worker-to-origin credential has been verified.
         headers.delete(AA_PROXY_AUTH_HEADER);
         headers.delete(FAUCET_PROXY_AUTH_HEADER);
-        if (url.pathname === AA_PROXY_PATH) {
+        if (AA_PROXY_PATHS.has(url.pathname)) {
           if (!env.AA_PROXY_ORIGIN_TOKEN) {
             return new Response('AA proxy authentication not configured', {
               status: 502,
@@ -675,6 +679,10 @@ const requestHandler = {
           method: request.method,
           headers,
           body: request.body,
+          // The origin credential must never be replayed to a Location target.
+          // Return a 3xx response to the browser instead of letting fetch follow
+          // it with the authenticated request headers.
+          redirect: 'manual',
         };
 
         const fetchBackend = () => fetch(backendUrl, fetchOptions);
@@ -697,6 +705,7 @@ const requestHandler = {
             fetchIdentity: () => fetch(identityUrl, {
               method: 'GET',
               headers: identityHeaders,
+              redirect: 'manual',
             }),
             fetchUncachedPage: () => {
               const uncachedHeaders = new Headers(headers);
@@ -729,6 +738,9 @@ const requestHandler = {
     }
 
     const response = await env.ASSETS.fetch(request);
+    if (url.pathname === PERPS_AA_MANIFEST_PATH) {
+      return noStoreResponse(response);
+    }
     if (response.status === 404 && !url.pathname.includes('.')) {
       return env.ASSETS.fetch(new URL('/', request.url));
     }

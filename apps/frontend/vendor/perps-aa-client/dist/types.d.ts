@@ -35,6 +35,27 @@ export interface ParsedPaymasterEnvelope {
     readonly accountCodeHash: Hex;
     readonly signature: Hex;
 }
+export interface PletherPaymasterProfile {
+    readonly chainId: number;
+    readonly entryPoint: Address;
+    readonly paymaster: Address;
+    readonly policyId: Hex;
+    readonly accountCodeHash: Hex;
+    readonly paymasterVerificationGasLimit: bigint;
+    readonly paymasterPostOpGasLimit: bigint;
+    readonly maxValidityWindowSeconds: bigint;
+}
+/** Packed v0.8 fields committed by the Plether sponsorship signature. */
+export interface SponsorshipUserOperation {
+    readonly sender: Address;
+    readonly nonce: bigint | Hex;
+    readonly initCode: Hex;
+    readonly callData: Hex;
+    readonly accountGasLimits: Hex;
+    readonly preVerificationGas: bigint | Hex;
+    readonly gasFees: Hex;
+    readonly paymasterAndData: Hex;
+}
 export interface SmartAccountAdapter<TOperation, TGasEstimate> {
     /** Counterfactual or deployed smart-account address used as `msg.sender`. */
     readonly accountAddress: Address;
@@ -83,7 +104,7 @@ export interface BundlerAdapter<TOperation, TGasEstimate, TReceipt> {
         readonly userOperationHash: Hex;
     }): Promise<TReceipt>;
 }
-export type SponsoredExecutionStatus = "building" | "requesting-stub" | "estimating" | "requesting-sponsorship" | "awaiting-signature" | "submitting" | "confirming" | "confirmed";
+export type SponsoredExecutionStatus = "building" | "requesting-stub" | "estimating" | "requesting-sponsorship" | "awaiting-signature" | "journaling" | "submitting" | "confirming" | "confirmed";
 export interface SponsoredExecutionResult<TReceipt> {
     readonly userOperationHash: Hex;
     readonly receipt?: TReceipt;

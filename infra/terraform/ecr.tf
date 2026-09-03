@@ -51,3 +51,38 @@ resource "aws_ecr_lifecycle_policy" "otel_log_router" {
     }]
   })
 }
+
+resource "aws_ecr_repository" "alto" {
+  count = local.self_hosted_aa_resource_count
+
+  name                 = "plether-alto-sepolia"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "alto" {
+  count = local.self_hosted_aa_resource_count
+
+  repository = aws_ecr_repository.alto[0].name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep the last 10 qualified immutable Alto images"
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 10
+      }
+      action = { type = "expire" }
+    }]
+  })
+}

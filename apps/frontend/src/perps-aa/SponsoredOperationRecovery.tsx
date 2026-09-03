@@ -26,7 +26,7 @@ import {
 } from './laneLock'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { SponsoredOperationLockedError } from './operationLockError'
-import { reconcilePimlicoUserOperation } from './operationReconciler'
+import { reconcileUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
 import {
   type PerpsAaSmartAccountRuntime,
@@ -375,7 +375,7 @@ export function SponsoredOperationRecovery() {
             let outcome
             try {
               if (!protocolOnly) {
-                outcome = await reconcilePimlicoUserOperation({
+                outcome = await reconcileUserOperation({
                   runtime,
                   userOperationHash,
                 })

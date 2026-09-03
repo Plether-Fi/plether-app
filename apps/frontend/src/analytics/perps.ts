@@ -35,6 +35,7 @@ export type PerpsSponsoredOperationStatus =
   | 'estimating'
   | 'requesting-sponsorship'
   | 'awaiting-signature'
+  | 'journaling'
   | 'submitting'
   | 'confirming'
   | 'confirmed'

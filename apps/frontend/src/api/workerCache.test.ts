@@ -207,9 +207,11 @@ describe('Perps public edge-cache allowlist', () => {
     expect(getPublicPerpsCachePolicy(new Request(
       'https://app.example/api/perps/v1/perps/orders/1/reveal-payload'
     ))).toBeUndefined()
-    expect(getPublicPerpsCachePolicy(new Request(
-      'https://app.example/api/perps/v1/aa/pimlico'
-    ))).toBeUndefined()
+    for (const path of ['/aa/pimlico', '/aa/rpc']) {
+      expect(getPublicPerpsCachePolicy(new Request(
+        `https://app.example/api/perps/v1${path}`
+      ))).toBeUndefined()
+    }
   })
 
   it('rejects cache-key amplification through unsupported public query parameters', () => {
@@ -935,6 +937,9 @@ describe('Perps public edge caching', () => {
     })
     expect(cache.put).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock.mock.calls.every(([, init]) =>
+      (init as RequestInit | undefined)?.redirect === 'manual'
+    )).toBe(true)
   })
 
   it('returns but never caches a page whose identity races the probe', async () => {
@@ -962,10 +967,13 @@ describe('Perps public edge caching', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
-  it('keeps AA origin authentication isolated from the public cache path', async () => {
+  it.each([
+    ['/api/perps/v1/aa/pimlico', '/api/aa/pimlico'],
+    ['/api/perps/v1/aa/rpc', '/api/aa/rpc'],
+  ])('authenticates only exact AA route %s', async (path, backendPath) => {
     const fetchMock = vi.fn(async () => jsonResponse())
     vi.stubGlobal('fetch', fetchMock)
-    const request = new Request('https://app.example/api/perps/v1/aa/pimlico', {
+    const request = new Request(`https://app.example${path}`, {
       method: 'POST',
       headers: { 'X-Plether-AA-Proxy-Token': 'browser-spoof' },
       body: '{}',
@@ -976,9 +984,103 @@ describe('Perps public edge caching', () => {
       workerEnv({ AA_PROXY_ORIGIN_TOKEN: 'trusted-origin-token' }),
       executionContext()
     )
+    const forwardedUrl = fetchMock.mock.calls[0]?.[0] as URL
     const forwardedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers
 
     expect(response.headers.get('X-Plether-Edge-Cache')).toBeNull()
-    expect(forwardedHeaders.get('X-Plether-AA-Proxy-Token')).toBe('trusted-origin-token')
+    expect(forwardedUrl.pathname).toBe(backendPath)
+    expect(forwardedHeaders.get('X-Plether-AA-Proxy-Token'))
+      .toBe('trusted-origin-token')
+  })
+
+  it.each([
+    '/api/perps/v1/aa/pimlico',
+    '/api/perps/v1/aa/rpc',
+  ])('never follows an authenticated origin redirect for %s', async (path) => {
+    const fetchMock = vi.fn(async () => new Response(null, {
+      status: 302,
+      headers: { Location: 'https://attacker.example/collect' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(new Request(
+      `https://app.example${path}`,
+      {
+        method: 'POST',
+        headers: { 'X-Plether-AA-Proxy-Token': 'browser-spoof' },
+        body: '{}',
+      }
+    ), workerEnv({ AA_PROXY_ORIGIN_TOKEN: 'trusted-origin-token' }), executionContext())
+
+    expect(response.status).toBe(302)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [forwardedUrl, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(forwardedUrl.origin).toBe('https://backend.example')
+    expect(init.redirect).toBe('manual')
+    expect((init.headers as Headers).get('X-Plether-AA-Proxy-Token'))
+      .toBe('trusted-origin-token')
+  })
+
+  it.each([
+    '/api/perps/v1/aa/pimlico',
+    '/api/perps/v1/aa/rpc',
+  ])('fails closed without origin authentication for %s', async (path) => {
+    const fetchMock = vi.fn(async () => jsonResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(new Request(
+      `https://app.example${path}`,
+      { method: 'POST', body: '{}' }
+    ), workerEnv(), executionContext())
+
+    expect(response.status).toBe(502)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('strips a spoofed AA token from non-AA perps requests', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.fetch(new Request(
+      'https://app.example/api/perps/v1/perps/market/stats',
+      { headers: { 'X-Plether-AA-Proxy-Token': 'browser-spoof' } }
+    ), workerEnv({ AA_PROXY_ORIGIN_TOKEN: 'trusted-origin-token' }), executionContext())
+
+    const forwardedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers
+    expect(forwardedHeaders.has('X-Plether-AA-Proxy-Token')).toBe(false)
+  })
+
+  it('does not authenticate near-miss AA paths', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.fetch(new Request(
+      'https://app.example/api/perps/v1/aa/rpc/extra',
+      { headers: { 'X-Plether-AA-Proxy-Token': 'browser-spoof' } }
+    ), workerEnv({ AA_PROXY_ORIGIN_TOKEN: 'trusted-origin-token' }), executionContext())
+
+    const forwardedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers
+    expect(forwardedHeaders.has('X-Plether-AA-Proxy-Token')).toBe(false)
+  })
+
+  it('forces the deployment manifest asset to no-store', async () => {
+    const assetFetch = vi.fn(async () => new Response('{}', {
+      headers: {
+        'Cache-Control': 'public, max-age=3600',
+        'X-Plether-Edge-Cache': 'HIT',
+        'X-Plether-Edge-Cached-At': '123',
+      },
+    }))
+
+    const response = await worker.fetch(
+      new Request('https://app.example/perps-aa-manifest.json'),
+      workerEnv({ ASSETS: { fetch: assetFetch } }),
+      executionContext()
+    )
+
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(response.headers.has('X-Plether-Edge-Cache')).toBe(false)
+    expect(response.headers.has('X-Plether-Edge-Cached-At')).toBe(false)
+    expect(assetFetch).toHaveBeenCalledOnce()
   })
 })

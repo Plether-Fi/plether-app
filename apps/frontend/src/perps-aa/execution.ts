@@ -21,13 +21,19 @@ import {
   acquireSponsoredOperationBrowserLane,
   type ReleaseSponsoredOperationBrowserLock,
 } from './laneLock'
-import type { PerpsAaDeploymentManifest } from './manifest'
+import {
+  isPerpsAaManifestV2,
+  type PerpsAaDeploymentManifest,
+} from './manifest'
 import {
   beginSponsoredOperationTracking,
   trackSponsoredOperationPreflightFailure,
 } from './operationTracker'
-import { reconcilePimlicoUserOperation } from './operationReconciler'
-import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
+import { reconcileUserOperation } from './operationReconciler'
+import {
+  createSponsorshipAuthority,
+  manifestSponsorshipValidUntil,
+} from './paymasterValidity'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
   hasDurableSponsoredOperationOrderIntent,
@@ -64,7 +70,7 @@ export interface ExecuteSponsoredPerpsActionResult {
   transactionHash: Hex
 }
 
-type PimlicoWaitOutcome =
+type UserOperationWaitOutcome =
   | {
       kind: 'included'
       receipt: ManagedUserOperationReceipt
@@ -87,7 +93,7 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
       reject(
         signal.reason instanceof Error
           ? signal.reason
-          : new DOMException('Pimlico request cancelled', 'AbortError')
+          : new DOMException('Bundler request cancelled', 'AbortError')
       )
     }
     signal.addEventListener('abort', onAbort, { once: true })
@@ -99,7 +105,7 @@ function asBundlerError(error: unknown): BundlerRequestError {
   return new BundlerRequestError({
     message: error instanceof Error ? error.message : String(error),
     // The exact operation hash is persisted before submission. A transport
-    // error cannot prove that Pimlico did not receive it, so submitting again
+    // error cannot prove that the bundler did not receive it, so submitting again
     // is unsafe; recovery must reconcile the existing hash.
     retryable: false,
     terminalStatus: 'receipt-timeout',
@@ -107,7 +113,7 @@ function asBundlerError(error: unknown): BundlerRequestError {
   })
 }
 
-async function waitForPimlicoOutcome(input: {
+async function waitForUserOperationOutcome(input: {
   runtime: PerpsAaSmartAccountRuntime
   userOperationHash: Hex
   signal: AbortSignal
@@ -122,7 +128,7 @@ async function waitForPimlicoOutcome(input: {
   onIncluded?: (receipt: ManagedUserOperationReceipt) => void
   timeoutMs?: number
   pollIntervalMs?: number
-}): Promise<PimlicoWaitOutcome> {
+}): Promise<UserOperationWaitOutcome> {
   const startedAt = Date.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   const pollIntervalMs = input.pollIntervalMs ?? 1_500
@@ -218,7 +224,7 @@ async function waitForPimlicoOutcome(input: {
   while (Date.now() - startedAt < timeoutMs) {
     input.signal.throwIfAborted()
     try {
-      const outcome = await reconcilePimlicoUserOperation({
+      const outcome = await reconcileUserOperation({
         runtime: input.runtime,
         userOperationHash: input.userOperationHash,
       })
@@ -228,7 +234,7 @@ async function waitForPimlicoOutcome(input: {
         }
       }
       if (outcome.kind === 'pending') {
-        // Pimlico can temporarily miss a receipt it previously indexed.
+        // A bundler can temporarily miss a receipt it previously indexed.
         // Retract only when the chain RPC proves that the exact observed block
         // hash was replaced.
         await retractInclusionIfReorged()
@@ -266,7 +272,7 @@ async function waitForPimlicoOutcome(input: {
       }
       lastReconciliationError = error
       await retractInclusionIfReorged()
-      // Receipt and status requests can race with Pimlico's indexer or fail
+      // Receipt and status requests can race with the bundler's indexer or fail
       // transiently. Keep reconciling the already-persisted local hash.
     }
 
@@ -276,7 +282,7 @@ async function waitForPimlicoOutcome(input: {
   throw new BundlerRequestError({
     message: persistedInclusion?.success === false
       ? 'The transaction failed onchain. Waiting for safe confirmation before another Trading Account action can be submitted.'
-      : 'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+      : 'Timed out reconciling the locally persisted UserOperation hash with the bundler',
     retryable: false,
     terminalStatus: 'receipt-timeout',
     cause: lastReconciliationError,
@@ -396,19 +402,24 @@ export async function executeSponsoredPerpsAction(
     } catch (error) {
       throw asSponsorRequestError(error)
     }
-    if (
-      pimlicoSponsorshipValidUntil(
-        operation.paymaster,
-        operation.paymasterData
-      ) === undefined
-    ) {
+    const sponsorshipValidUntil = manifestSponsorshipValidUntil(
+      input.manifest,
+      operation
+    )
+    if (sponsorshipValidUntil === undefined) {
       throw new SponsorRequestError({
         reason: 'SPONSOR_UNAVAILABLE',
         message:
-          'Pimlico returned a sponsorship format without a recoverable validity deadline',
+          'The paymaster returned an untrusted sponsorship format or an unrecoverable validity deadline',
         retryable: false,
       })
     }
+    const sponsorshipAuthority = isPerpsAaManifestV2(input.manifest)
+      ? createSponsorshipAuthority({
+          paymasterAddress: input.manifest.paymasterAddress,
+          validUntil: sponsorshipValidUntil,
+        })
+      : undefined
 
     if (
       input.orderRequestV2 &&
@@ -432,6 +443,7 @@ export async function executeSponsoredPerpsAction(
     const signedOperation =
       await input.runtime.smartAccount.signUserOperation(operation)
     activeTracker.signal.throwIfAborted()
+    status('journaling')
 
     // Wallet approval can remain open long enough for another tab's legacy
     // storage event to hydrate into this tab. Re-read and bulk-guard the lane
@@ -452,6 +464,7 @@ export async function executeSponsoredPerpsAction(
     const submissionStatePersisted =
       activeTracker.onUserOperationHash(localUserOperationHash, {
         signedUserOperation: signedOperation,
+        ...(sponsorshipAuthority ? { sponsorshipAuthority } : {}),
       })
     if (!submissionStatePersisted) {
       throw new SponsoredPreflightError({
@@ -465,7 +478,7 @@ export async function executeSponsoredPerpsAction(
     // No user callback runs after this point. Reconcile any storage event that
     // landed during the status update, then exact-check the singleton head,
     // signed journal, shared snapshot, and persistence revision immediately
-    // before invoking Pimlico.
+    // before invoking the bundler.
     restoreSponsoredOperationLane({
       chainId: input.manifest.chainId,
       accountAddress: input.runtime.smartAccount.accountAddress,
@@ -496,14 +509,14 @@ export async function executeSponsoredPerpsAction(
     ) {
       throw new BundlerRequestError({
         message:
-          'Pimlico returned a different hash for the submitted UserOperation',
+          'The bundler returned a different hash for the submitted UserOperation',
         retryable: false,
         terminalStatus: 'receipt-timeout',
       })
     }
 
     status('confirming')
-    const outcome = await waitForPimlicoOutcome({
+    const outcome = await waitForUserOperationOutcome({
       runtime: input.runtime,
       userOperationHash: localUserOperationHash,
       signal: activeTracker.signal,
