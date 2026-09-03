@@ -142,6 +142,28 @@ variable "perps_rpc_url" {
   sensitive = true
 }
 
+variable "rpc_auth_token_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString containing the bearer token for RPC_URL. Leave empty while using a public or legacy URL-authenticated endpoint."
+
+  validation {
+    condition     = trimspace(var.rpc_auth_token_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.rpc_auth_token_ssm_parameter_name)))
+    error_message = "rpc_auth_token_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
+}
+
+variable "perps_rpc_auth_token_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Existing SecureString containing the bearer token for PERPS_RPC_URL. Leave empty while using a public or legacy URL-authenticated endpoint."
+
+  validation {
+    condition     = trimspace(var.perps_rpc_auth_token_ssm_parameter_name) == "" || can(regex("^/plether/(sepolia|mainnet)/[A-Za-z0-9_.-]+$", trimspace(var.perps_rpc_auth_token_ssm_parameter_name)))
+    error_message = "perps_rpc_auth_token_ssm_parameter_name must be empty or a canonical /plether/<environment>/<name> SSM parameter path."
+  }
+}
+
 variable "keeper_private_key" {
   type      = string
   sensitive = true
@@ -915,6 +937,25 @@ variable "basket_worker_poll_seconds" {
 variable "keeper_poll_seconds" {
   type    = string
   default = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.keeper_poll_seconds)) && try(tonumber(var.keeper_poll_seconds) <= 3600, false)
+    error_message = "keeper_poll_seconds must be a canonical whole number from 1 through 3600."
+  }
+}
+
+variable "keeper_idle_poll_seconds" {
+  type        = string
+  default     = "5"
+  description = "Order-keeper polling cadence while its durable pending queue is empty."
+
+  validation {
+    condition = (
+      can(regex("^[1-9][0-9]*$", var.keeper_idle_poll_seconds))
+      && try(tonumber(var.keeper_idle_poll_seconds) <= 3600, false)
+    )
+    error_message = "keeper_idle_poll_seconds must be a canonical whole number from 1 through 3600."
+  }
 }
 
 variable "keeper_max_batch_size" {

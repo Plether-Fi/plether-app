@@ -16,6 +16,7 @@ import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
   ( BlockInfo (..)
   , PerpsAddresses (..)
+  , IndexerIterationOutcome (..)
   , ParsedPerpsLog (..)
   , RpcLog (..)
   , TradeCosts (..)
@@ -26,6 +27,7 @@ import Plether.Perps.HistoryIndexer
   , decodeReplayTradeCosts
   , defaultPerpsAddresses
   , isMarketVolumeActivity
+  , indexerIterationDelayMicros
   , orderFailReasonName
   , parsePerpsLog
   , parseUsdcTransfer
@@ -48,6 +50,14 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "indexer iteration pacing" $ do
+    it "waits for the configured interval after processed and caught-up polls" $ do
+      indexerIterationDelayMicros 12_000_000 IndexerProcessed `shouldBe` 12_000_000
+      indexerIterationDelayMicros 12_000_000 IndexerCaughtUp `shouldBe` 12_000_000
+
+    it "preserves the doubled failure backoff" $
+      indexerIterationDelayMicros 12_000_000 IndexerFailed `shouldBe` 24_000_000
+
   describe "effective worker contract addresses" $ do
     it "preserves the configured LifecycleBook when no worker override is present" $
       paOrderLifecycleBook (applyPerpsAddressEnvironment defaultPerpsAddresses [])

@@ -685,7 +685,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   get "/api/perps/pyth/cached-latest" $ do
     case mPool of
       Just pool -> do
-        result <- liftIO $ getCachedLatestPythUpdate pool perpsClient cfg
+        result <- liftIO $ getCachedLatestPythUpdate cache pool perpsClient cfg
         handleResult result
       Nothing ->
         handleServiceUnavailable $

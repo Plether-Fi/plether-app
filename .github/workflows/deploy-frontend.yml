@@ -95,6 +95,9 @@ jobs:
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
           VITE_DEPLOYMENT_ENV: ${{ env.TARGET_ENV }}
+          VITE_MAINNET_RPC_URL: ${{ vars.VITE_MAINNET_RPC_URL }}
+          VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
+          VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
           # Repository variables are selected explicitly because this job does
           # not bind to GitHub environments. Each target defaults fail-closed.

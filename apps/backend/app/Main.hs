@@ -14,7 +14,7 @@ import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
@@ -41,7 +41,9 @@ main = do
         [field "error" err]
     Right cfg -> do
       manager <- newManager tlsManagerSettings
-      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
+      perpsClient <-
+        newClientWithOptions $
+          RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "api-perps"
       case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
         (421614, Just _) -> do
           releaseVerification <-
@@ -66,7 +68,6 @@ main = do
                 , field "order_lifecycle_book" $ cfgPerpsOrderLifecycleBook cfg
                 ]
         _ -> pure ()
-      let vaultHistoryClient = perpsClient
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           pool <- newDbPool dbUrl
@@ -98,6 +99,7 @@ main = do
             [field "history_enabled" True]
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
+                , icRpcAuthToken = cfgRpcAuthToken cfg
                 , icDeployments = cfgDeployments cfg
                 , icStartBlock = cfgIndexerStartBlock cfg
                 , icBatchSize = 10000
@@ -122,11 +124,17 @@ main = do
             , field "deployment_block" $ vpicDeploymentBlock vaultHistoryCfg
             , field "confirmations" $ vpicConfirmations vaultHistoryCfg
             ]
+          vaultIndexerClient <-
+            newClientWithOptions $
+              RpcClientOptions
+                (cfgPerpsRpcUrl cfg)
+                (cfgPerpsRpcAuthToken cfg)
+                "vault-indexer"
           _ <-
             forkIO $
               startVaultPerformanceIndexer
-                perpsClient
-                vaultHistoryClient
+                vaultIndexerClient
+                vaultIndexerClient
                 pool
                 vaultHistoryCfg
           when (cfgPythIngestionEnabled cfg) $ do
@@ -159,7 +167,9 @@ main = do
             [field "history_enabled" False]
           pure Nothing
 
-      client <- newClient (cfgRpcUrl cfg)
+      client <-
+        newClientWithOptions $
+          RpcClientOptions (cfgRpcUrl cfg) (cfgRpcAuthToken cfg) "api-core"
       cache <- newAppCache
       pimlicoProxyState <- newPimlicoProxyState
       faucetGuardState <- newFaucetGuardState

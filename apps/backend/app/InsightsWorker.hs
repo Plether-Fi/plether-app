@@ -7,7 +7,7 @@ import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Insights.SnapshotWorker
   ( parseSnapshotMulticallSize
   , runInsightsSnapshotCycle
@@ -41,7 +41,9 @@ main = do
                   (cfgPerpsMarginClearinghouse cfg)
                   (cfgPerpsAccountLens cfg)
                   (cfgInsightsCompetitionReleaseManifest cfg)
-              client <- newClient $ cfgPerpsRpcUrl cfg
+              client <-
+                newClientWithOptions $
+                  RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "insights-worker"
               pollSeconds <- loadPollSeconds
               putStrLn $
                 "Starting Insights snapshot worker every "

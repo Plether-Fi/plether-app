@@ -18,7 +18,7 @@ import Plether.Config
   )
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsKeeperSchema)
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Ethereum.Transaction (deriveAddress)
 import Plether.Keeper
   ( KeeperMode (..)
@@ -47,7 +47,9 @@ main = do
     Right cfg -> do
       dbUrl <- require "DATABASE_URL is required for plether-keeper" (cfgDatabaseUrl cfg)
       pool <- newDbPool dbUrl
-      client <- newClient (cfgPerpsRpcUrl cfg)
+      client <-
+        newClientWithOptions $
+          RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "keeper"
       if kaLpSettlementPreflight args
         then do
           logInfo
@@ -85,6 +87,7 @@ main = do
             , field "mode" $ show $ kaMode args
             , field "dry_run" $ kaDryRun args
             , field "poll_seconds" $ cfgKeeperPollSeconds cfg
+            , field "idle_poll_seconds" $ cfgKeeperIdlePollSeconds cfg
             , field "lp_settlement_mode" $ lpSettlementModeText $ cfgLpSettlementMode cfg
             , field "lp_settlement_signer" lpSettlementSigner
             , field "lp_settlement_poll_seconds" $ cfgLpSettlementPollSeconds cfg

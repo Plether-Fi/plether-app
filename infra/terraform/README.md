@@ -51,6 +51,31 @@ terraform plan -var-file=terraform.tfvars.sepolia -out=sepolia.tfplan
 terraform show sepolia.tfplan
 ```
 
+## Alchemy credential rollout
+
+Create separate Alchemy apps for Sepolia Ethereum backend traffic, Arbitrum
+Sepolia backend traffic, and production browser traffic. Store the two backend
+app keys as externally managed SSM SecureStrings (for example,
+`/plether/sepolia/rpc-auth-token` and
+`/plether/sepolia/perps-rpc-auth-token`) and set the matching `*_ssm_parameter_name`
+variables. Configure `rpc_url` and `perps_rpc_url` with the keyless Alchemy
+`/v2` base URLs. Terraform injects the keys as bearer tokens without copying
+their values into Terraform state.
+
+Apply network and contract-address restrictions to both backend apps. The
+allowlist must include every address configured by the deployment: protocol
+contracts, both lenses, Multicall3, supported tokens, and the Pyth contract.
+Apply exact production-origin restrictions to the browser app. Do not enable
+IP restrictions while Fargate tasks use changing public IPs.
+
+Before rotation, configure Alchemy budget/CU alerts at 50%, 75%, and 90%.
+After deploying the new credentials, soak for at least 60 minutes while checking
+indexer cursors, keeper execution, Pyth endpoints, RPC request/failure alarms,
+and the consolidated-worker topology. Revoke the old unrestricted key only
+after the soak succeeds, then verify a request with the old key receives an
+authentication failure. Keep URL-embedded keys only for the first compatibility
+release; remove that path in the next release.
+
 The provider's `allowed_account_ids` guard rejects credentials for the source
 account or any account other than `932542905614`.
 

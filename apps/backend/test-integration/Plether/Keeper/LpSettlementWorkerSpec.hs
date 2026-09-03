@@ -1197,6 +1197,7 @@ workerConfig :: LpSettlementMode -> Config
 workerConfig mode =
   Config
     { cfgRpcUrl = ""
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = 11155111
     , cfgPort = 0
     , cfgCorsOrigins = []
@@ -1219,6 +1220,7 @@ workerConfig mode =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = fixtureChainId
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
@@ -1245,6 +1247,7 @@ workerConfig mode =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 15
+    , cfgKeeperIdlePollSeconds = 15
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2_000

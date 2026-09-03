@@ -1,7 +1,11 @@
 module Plether.Ethereum.Client
-  ( EthClient (..)
+  ( EthClient
+  , RpcClientOptions (..)
   , RpcError (..)
   , newClient
+  , newClientWithOptions
+  , newClientWithManager
+  , rpcHttpExceptionText
   , rpcCall
   , ethCall
   , ethCallAt
@@ -23,6 +27,7 @@ import Control.Exception
   , throwIO
   , try
   )
+import Control.Monad (when)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), object, withObject, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -31,26 +36,65 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Word (Word64)
 import GHC.Generics (Generic)
+import GHC.Clock (getMonotonicTimeNSec)
 import Plether.Utils.Hex (hexToInteger, intToHex)
+import Plether.Logging (field, logInfo, logWarnEvery)
 import Network.HTTP.Client
-  ( Manager
+  ( HttpException (..)
+  , HttpExceptionContent (..)
+  , Manager
   , Request (..)
   , RequestBody (..)
   , httpLbs
   , newManager
   , parseRequest
   , responseBody
+  , responseStatus
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types.Status (statusCode)
+import System.IO.Unsafe (unsafePerformIO)
 
 data EthClient = EthClient
   { clientManager :: Manager
   , clientRpcUrl :: Text
+  , clientBearerToken :: Maybe Text
+  , clientRole :: Text
   , clientRequestId :: IORef Integer
+  }
+
+data RpcClientOptions = RpcClientOptions
+  { rcoEndpoint :: Text
+  , rcoBearerToken :: Maybe Text
+  , rcoRole :: Text
+  }
+  deriving stock (Eq)
+
+instance Show RpcClientOptions where
+  show options =
+    "RpcClientOptions {rcoEndpoint = <redacted>, rcoBearerTokenConfigured = "
+      <> show (maybe False (const True) $ rcoBearerToken options)
+      <> ", rcoRole = "
+      <> show (rcoRole options)
+      <> "}"
+
+data RpcMethodStats = RpcMethodStats
+  { rmsRequestCount :: !Integer
+  , rmsFailureCount :: !Integer
+  , rmsTotalDurationNs :: !Word64
+  , rmsMaxDurationNs :: !Word64
+  }
+
+data RpcMetricsState = RpcMetricsState
+  { rmsWindowStartedAtNs :: !Word64
+  , rmsMethods :: !(Map (Text, Text) RpcMethodStats)
   }
 
 data RpcError
@@ -104,13 +148,34 @@ instance FromJSON RpcResponseError where
       <*> v .:? "data"
 
 newClient :: Text -> IO EthClient
-newClient rpcUrl = do
+newClient rpcUrl =
+  newClientWithOptions
+    RpcClientOptions
+      { rcoEndpoint = rpcUrl
+      , rcoBearerToken = Nothing
+      , rcoRole = "unattributed"
+      }
+
+newClientWithOptions :: RpcClientOptions -> IO EthClient
+newClientWithOptions options = do
   manager <- newManager tlsManagerSettings
   reqId <- newIORef 1
+  newClientWithManager manager reqId options
+
+newClientWithManager :: Manager -> IORef Integer -> RpcClientOptions -> IO EthClient
+newClientWithManager manager reqId RpcClientOptions {..} = do
+  when (isLegacyAlchemyCredentialUrl rcoEndpoint) $
+    logWarnEvery
+      300
+      "rpc_legacy_url_credential"
+      "Alchemy RPC authentication is embedded in the endpoint URL; migrate to bearer authentication"
+      [field "rpc_role" rcoRole]
   pure $
     EthClient
       { clientManager = manager
-      , clientRpcUrl = rpcUrl
+      , clientRpcUrl = rcoEndpoint
+      , clientBearerToken = rcoBearerToken
+      , clientRole = rcoRole
       , clientRequestId = reqId
       }
 
@@ -119,6 +184,7 @@ nextId client = atomicModifyIORef' (clientRequestId client) $ \n -> (n + 1, n)
 
 rpcCall :: EthClient -> Text -> Value -> IO (Either RpcError Value)
 rpcCall client method params = do
+  startedAt <- getMonotonicTimeNSec
   reqId <- nextId client
   let rpcReq =
         RpcRequest
@@ -133,27 +199,109 @@ rpcCall client method params = do
           req
             { method = "POST"
             , requestHeaders =
-                [ ("Content-Type", "application/json")
-                ]
+                ("Content-Type", "application/json")
+                  : maybe
+                    []
+                    (\token -> [("Authorization", "Bearer " <> TE.encodeUtf8 token)])
+                    (clientBearerToken client)
             , requestBody = RequestBodyLBS $ Aeson.encode rpcReq
             }
     response <- httpLbs req' (clientManager client)
-    pure $ responseBody response
+    pure (statusCode $ responseStatus response, responseBody response)
 
-  case eResult of
-    Left err ->
-      case fromException err :: Maybe SomeAsyncException of
-        Just _ -> throwIO err
-        Nothing -> pure $ Left $ RpcHttpError $ T.pack $ show err
-    Right body ->
-      case Aeson.eitherDecode body of
-        Left err -> pure $ Left $ RpcJsonError $ T.pack err
-        Right RpcResponse {rpcResult = Just result, rpcError = Nothing} ->
-          pure $ Right result
-        Right RpcResponse {rpcError = Just RpcResponseError {..}} ->
-          pure $ Left $ RpcNodeError rpcErrCode rpcErrMessage (renderErrorData <$> rpcErrData)
-        Right _ ->
-          pure $ Left $ RpcJsonError "No result or error in response"
+  outcome <-
+    case eResult of
+      Left err ->
+        case fromException err :: Maybe SomeAsyncException of
+          Just _ -> throwIO err
+          Nothing -> pure $ Left $ RpcHttpError $ rpcHttpExceptionText err
+      Right (httpStatus, body)
+        | httpStatus < 200 || httpStatus >= 300 ->
+            pure $ Left $ RpcHttpError $ "statusCode = " <> T.pack (show httpStatus)
+        | otherwise ->
+            pure $ case Aeson.eitherDecode body of
+              Left err -> Left $ RpcJsonError $ T.pack err
+              Right RpcResponse {rpcResult = Just result, rpcError = Nothing} ->
+                Right result
+              Right RpcResponse {rpcError = Just RpcResponseError {..}} ->
+                Left $ RpcNodeError rpcErrCode rpcErrMessage (renderErrorData <$> rpcErrData)
+              Right _ ->
+                Left $ RpcJsonError "No result or error in response"
+  finishedAt <- getMonotonicTimeNSec
+  recordRpcCall client method (finishedAt - startedAt) (either (const True) (const False) outcome)
+  pure outcome
+
+-- Keep provider diagnostics useful without ever rendering a Request, whose
+-- headers may contain bearer credentials. Status codes are sufficient for
+-- range-splitting and retry classification.
+rpcHttpExceptionText :: SomeException -> Text
+rpcHttpExceptionText exception =
+  case fromException exception of
+    Just (HttpExceptionRequest _ (StatusCodeException response _)) ->
+      "statusCode = " <> T.pack (show $ statusCode $ responseStatus response)
+    Just (InvalidUrlException _ _) -> "invalid RPC endpoint"
+    Just (HttpExceptionRequest _ ResponseTimeout) -> "response timeout"
+    Just (HttpExceptionRequest _ ConnectionTimeout) -> "connection timeout"
+    Just (HttpExceptionRequest _ _) -> "RPC transport failure"
+    Nothing -> "RPC request failed"
+
+rpcMetricsWindowNs :: Word64
+rpcMetricsWindowNs = 60 * 1_000_000_000
+
+recordRpcCall :: EthClient -> Text -> Word64 -> Bool -> IO ()
+recordRpcCall client methodName durationNs failed = do
+  nowNs <- getMonotonicTimeNSec
+  completedWindow <- atomicModifyIORef' rpcMetrics $ \state ->
+    let metricKey = (clientRole client, methodName)
+        previous = Map.findWithDefault emptyRpcMethodStats metricKey (rmsMethods state)
+        updated =
+          previous
+            { rmsRequestCount = rmsRequestCount previous + 1
+            , rmsFailureCount = rmsFailureCount previous + if failed then 1 else 0
+            , rmsTotalDurationNs = rmsTotalDurationNs previous + durationNs
+            , rmsMaxDurationNs = max (rmsMaxDurationNs previous) durationNs
+            }
+        updatedMethods = Map.insert metricKey updated (rmsMethods state)
+     in if nowNs - rmsWindowStartedAtNs state >= rpcMetricsWindowNs
+          then (RpcMetricsState nowNs Map.empty, Just updatedMethods)
+          else (state {rmsMethods = updatedMethods}, Nothing)
+  mapM_ emitRpcMethodSummary $ maybe [] Map.toList completedWindow
+
+{-# NOINLINE rpcMetrics #-}
+rpcMetrics :: IORef RpcMetricsState
+rpcMetrics = unsafePerformIO $ do
+  startedAt <- getMonotonicTimeNSec
+  newIORef $ RpcMetricsState startedAt Map.empty
+
+emptyRpcMethodStats :: RpcMethodStats
+emptyRpcMethodStats = RpcMethodStats 0 0 0 0
+
+emitRpcMethodSummary :: ((Text, Text), RpcMethodStats) -> IO ()
+emitRpcMethodSummary ((role, methodName), RpcMethodStats {..}) =
+  logInfo
+    "rpc_request_summary"
+    "Ethereum RPC request totals for the completed aggregation window"
+    [ field "rpc_role" role
+    , field "rpc_method" methodName
+    , field "request_count" rmsRequestCount
+    , field "failure_count" rmsFailureCount
+    , field "total_duration_ms" $ nanosecondsToMilliseconds rmsTotalDurationNs
+    , field "max_duration_ms" $ nanosecondsToMilliseconds rmsMaxDurationNs
+    ]
+
+nanosecondsToMilliseconds :: Word64 -> Double
+nanosecondsToMilliseconds value = fromIntegral value / 1_000_000
+
+isLegacyAlchemyCredentialUrl :: Text -> Bool
+isLegacyAlchemyCredentialUrl endpoint =
+  ".g.alchemy.com/v2/" `T.isInfixOf` endpoint
+    && case T.splitOn "/v2/" endpoint of
+      [_prefix, credential] ->
+        let normalized = T.strip credential
+         in not (T.null normalized)
+              && normalized /= "YOUR_KEY"
+              && not ("$" `T.isPrefixOf` normalized)
+      _ -> False
 
 renderErrorData :: Value -> Text
 renderErrorData = \case

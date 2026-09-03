@@ -1,3 +1,30 @@
+resource "terraform_data" "rpc_configuration_guard" {
+  input = {
+    environment                             = var.environment
+    rpc_auth_token_ssm_parameter_name       = var.rpc_auth_token_ssm_parameter_name
+    perps_rpc_auth_token_ssm_parameter_name = var.perps_rpc_auth_token_ssm_parameter_name
+    keeper_poll_seconds                     = var.keeper_poll_seconds
+    keeper_idle_poll_seconds                = var.keeper_idle_poll_seconds
+  }
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for parameter_name in [
+          var.rpc_auth_token_ssm_parameter_name,
+          var.perps_rpc_auth_token_ssm_parameter_name,
+        ] : trimspace(parameter_name) == "" || startswith(trimspace(parameter_name), "/plether/${var.environment}/")
+      ])
+      error_message = "RPC bearer-token parameters must belong to the current /plether/<environment>/ SSM namespace."
+    }
+
+    precondition {
+      condition     = tonumber(var.keeper_idle_poll_seconds) >= tonumber(var.keeper_poll_seconds)
+      error_message = "keeper_idle_poll_seconds must not be smaller than keeper_poll_seconds."
+    }
+  }
+}
+
 resource "terraform_data" "perps_candle_rollout_guard" {
   input = {
     environment                    = var.environment

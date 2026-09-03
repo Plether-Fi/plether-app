@@ -6,6 +6,8 @@ environment = "sepolia"
 consolidate_workers        = true
 workers_desired_count      = 1
 basket_worker_poll_seconds = "5"
+keeper_poll_seconds        = "1"
+keeper_idle_poll_seconds   = "5"
 
 perps_candle_write_mode                 = "dual"
 perps_candle_read_mode                  = "rollup"

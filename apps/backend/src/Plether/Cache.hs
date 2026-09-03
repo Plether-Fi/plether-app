@@ -123,7 +123,12 @@ data AppCache = AppCache
   { cacheProtocolStatus :: !(TVar (Maybe (CacheEntry ProtocolStatus)))
   , cacheUserDashboards :: !(TVar (Map Text (CacheEntry UserDashboard)))
   , cacheUserAllowances :: !(TVar (Map Text (CacheEntry UserAllowances)))
-  , cachePythUpdates :: !(TVar (Map Text (PythUpdateResponse, POSIXTime)))
+  , cachePythLatestUpdates
+      :: !(SingleFlightCache () (Either ApiError PythUpdateResponse))
+  , cachePythHistoricalUpdates
+      :: !(SingleFlightCache Integer (Either ApiError PythUpdateResponse))
+  , cacheStoredPythValidations
+      :: !(SingleFlightCache (Integer, Integer, Integer, Text) (Either ApiError PythUpdateResponse))
   , cachePythRateLimitUntil :: !(TVar (Maybe POSIXTime))
   , cacheBasketCandlePages
       :: !(SingleFlightCache (Integer, Integer) (Either ApiError CandlePageCacheValue))
@@ -149,6 +154,15 @@ currentCandleCacheMaxEntries = 32
 currentCandleCacheTtlNs :: Word64
 currentCandleCacheTtlNs = 850_000_000
 
+pythLatestCacheTtlNs :: Word64
+pythLatestCacheTtlNs = 2_000_000_000
+
+pythHistoricalCacheTtlNs :: Word64
+pythHistoricalCacheTtlNs = 10 * 60 * 1_000_000_000
+
+storedPythValidationCacheTtlNs :: Word64
+storedPythValidationCacheTtlNs = 60 * 1_000_000_000
+
 newAppCache :: IO AppCache
 newAppCache = do
   candlePages <-
@@ -160,11 +174,16 @@ newAppCache = do
     newConcurrentSingleFlightCache
       currentCandleCacheMaxEntries
       currentCandleCacheTtlNs
+  pythLatest <- newSingleFlightCache 1 pythLatestCacheTtlNs
+  pythHistorical <- newSingleFlightCache 64 pythHistoricalCacheTtlNs
+  storedPythValidations <- newSingleFlightCache 4 storedPythValidationCacheTtlNs
   AppCache
     <$> newTVarIO Nothing
     <*> newTVarIO Map.empty
     <*> newTVarIO Map.empty
-    <*> newTVarIO Map.empty
+    <*> pure pythLatest
+    <*> pure pythHistorical
+    <*> pure storedPythValidations
     <*> newTVarIO Nothing
     <*> pure candlePages
     <*> pure currentCandles

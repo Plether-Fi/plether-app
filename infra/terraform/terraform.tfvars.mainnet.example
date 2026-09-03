@@ -5,8 +5,11 @@ environment         = "mainnet"
 operations_alarm_sns_topic_arn = "arn:aws:sns:ap-southeast-1:932542905614:plether-mainnet-operations"
 posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
 posthog_otlp_host     = "eu.i.posthog.com"
-rpc_url                        = "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
-perps_rpc_url                  = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
+rpc_url                        = "https://eth-mainnet.g.alchemy.com/v2"
+perps_rpc_url                  = "https://arb-sepolia.g.alchemy.com/v2"
+# Provision these SecureStrings outside Terraform; only their names enter state.
+rpc_auth_token_ssm_parameter_name       = "/plether/mainnet/rpc-auth-token"
+perps_rpc_auth_token_ssm_parameter_name = "/plether/mainnet/perps-rpc-auth-token"
 keeper_private_key             = "0xYOUR_KEEPER_PRIVATE_KEY"
 lp_settlement_private_key       = ""
 lp_settlement_signer_funding_confirmed = false

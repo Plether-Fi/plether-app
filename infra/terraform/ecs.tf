@@ -38,6 +38,9 @@ locals {
 
   external_pyth_api_key_parameter_arn = local.effective_pyth_api_key_ssm_parameter_name != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.effective_pyth_api_key_ssm_parameter_name}" : null
 
+  rpc_auth_token_parameter_arn       = trimspace(var.rpc_auth_token_ssm_parameter_name) != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.rpc_auth_token_ssm_parameter_name)}" : null
+  perps_rpc_auth_token_parameter_arn = trimspace(var.perps_rpc_auth_token_ssm_parameter_name) != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${trimspace(var.perps_rpc_auth_token_ssm_parameter_name)}" : null
+
   effective_pyth_api_key_parameter_arn = local.external_pyth_api_key_parameter_arn != null ? local.external_pyth_api_key_parameter_arn : (
     var.enable_pyth_api_key ? aws_ssm_parameter.pyth_api_key[0].arn : null
   )
@@ -85,6 +88,7 @@ locals {
     { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
     { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
     { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
+    { name = "KEEPER_IDLE_POLL_SECONDS", value = var.keeper_idle_poll_seconds },
     { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
     { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
     { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
@@ -101,6 +105,20 @@ locals {
     {
       name      = "PYTH_API_KEY"
       valueFrom = local.effective_pyth_api_key_parameter_arn
+    }
+  ] : []
+
+  rpc_auth_token_secret = local.rpc_auth_token_parameter_arn != null ? [
+    {
+      name      = "RPC_AUTH_TOKEN"
+      valueFrom = local.rpc_auth_token_parameter_arn
+    }
+  ] : []
+
+  perps_rpc_auth_token_secret = local.perps_rpc_auth_token_parameter_arn != null ? [
+    {
+      name      = "PERPS_RPC_AUTH_TOKEN"
+      valueFrom = local.perps_rpc_auth_token_parameter_arn
     }
   ] : []
 
@@ -317,7 +335,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets)
+    ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -534,7 +552,7 @@ resource "aws_ecs_task_definition" "keeper" {
         name      = "KEEPER_PRIVATE_KEY"
         valueFrom = aws_ssm_parameter.keeper_private_key.arn
       }
-    ], local.lp_settlement_private_key_secret)
+    ], local.perps_rpc_auth_token_secret, local.lp_settlement_private_key_secret)
 
     environment = local.keeper_environment
   }, local.otel_log_router_container])
@@ -589,7 +607,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
 
     logConfiguration = local.posthog_log_configuration
 
-    secrets = [
+    secrets = concat([
       {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
@@ -602,7 +620,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
         name      = "LIQUIDATION_KEEPER_PRIVATE_KEY"
         valueFrom = aws_ssm_parameter.liquidation_keeper_private_key.arn
       }
-    ]
+    ], local.perps_rpc_auth_token_secret)
 
     environment = [
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
@@ -690,7 +708,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret)
+    ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret)
 
     environment = concat([
       { name = "CHAIN_ID", value = var.chain_id },
@@ -761,7 +779,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
 
     logConfiguration = local.posthog_log_configuration
 
-    secrets = [
+    secrets = concat([
       {
         name      = "PERPS_RPC_URL"
         valueFrom = aws_ssm_parameter.perps_rpc_url.arn
@@ -770,7 +788,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ]
+    ], local.perps_rpc_auth_token_secret)
 
     environment = concat([
       { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
@@ -850,7 +868,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "PERPS_RPC_URL"
           valueFrom = aws_ssm_parameter.perps_rpc_url.arn
@@ -859,7 +877,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
-      ]
+      ], local.perps_rpc_auth_token_secret)
 
       environment = concat([
         { name = "CHAIN_ID", value = var.perps_chain_id },
@@ -952,7 +970,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "KEEPER_PRIVATE_KEY"
           valueFrom = aws_ssm_parameter.keeper_private_key.arn
         }
-      ], local.lp_settlement_private_key_secret)
+      ], local.perps_rpc_auth_token_secret, local.lp_settlement_private_key_secret)
 
       environment = local.keeper_environment
     },
@@ -981,7 +999,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
-      ], local.pyth_api_key_secret)
+      ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret)
 
       environment = concat([
         { name = "CHAIN_ID", value = var.chain_id },
@@ -1002,7 +1020,7 @@ resource "aws_ecs_task_definition" "workers" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "ARBITRUM_SEPOLIA_RPC_URL"
           valueFrom = aws_ssm_parameter.perps_rpc_url.arn
@@ -1011,7 +1029,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "PERPS_ORACLE_UPDATER_PRIVATE_KEY"
           valueFrom = aws_ssm_parameter.oracle_updater_private_key.arn
         }
-      ]
+      ], local.perps_rpc_auth_token_secret)
 
       environment = [
         {
@@ -1034,7 +1052,7 @@ resource "aws_ecs_task_definition" "workers" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "PERPS_RPC_URL"
           valueFrom = aws_ssm_parameter.perps_rpc_url.arn
@@ -1043,7 +1061,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
-      ]
+      ], local.perps_rpc_auth_token_secret)
 
       environment = concat([
         { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
@@ -1082,7 +1100,7 @@ resource "aws_ecs_task_definition" "workers" {
       systemControls = []
       volumesFrom    = []
 
-      secrets = [
+      secrets = concat([
         {
           name      = "PERPS_RPC_URL"
           valueFrom = aws_ssm_parameter.perps_rpc_url.arn
@@ -1091,7 +1109,7 @@ resource "aws_ecs_task_definition" "workers" {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
-      ]
+      ], local.perps_rpc_auth_token_secret)
 
       environment = concat([
         { name = "CHAIN_ID", value = var.perps_chain_id },

@@ -11,22 +11,12 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (newIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import GHC.Generics (Generic)
-import Network.HTTP.Client
-  ( Manager
-  , Request (..)
-  , RequestBody (..)
-  , httpLbs
-  , parseRequest
-  , responseBody
-  )
+import Network.HTTP.Client (Manager)
 import Data.List (nub)
 import Plether.Config (Addresses (..), Deployment (..))
 import Plether.Utils.Hex (hexToInteger, intToHex)
@@ -35,9 +25,16 @@ import Plether.Database.Schema (getLastIndexedBlock, insertTransaction, setLastI
 import Plether.Indexer.Contracts (allEventSignatures, esTopic)
 import Plether.Indexer.Events (EventLog (..), MorphoMarkets (..), ParsedEvent (..), parseEventLog)
 import Plether.Logging (field, logErrorEvery, logInfo, logInfoEvery, logWarnEvery)
+import Plether.Ethereum.Client
+  ( EthClient
+  , RpcClientOptions (..)
+  , newClientWithManager
+  , rpcCall
+  )
 
 data IndexerConfig = IndexerConfig
   { icRpcUrl :: Text
+  , icRpcAuthToken :: Maybe Text
   , icDeployments :: [Deployment]
   , icStartBlock :: Integer
   , icBatchSize :: Integer
@@ -54,8 +51,13 @@ startIndexer manager pool cfg = do
     , field "poll_interval_ms" $ icPollInterval cfg `div` 1000
     ]
   reqIdRef <- newIORef 1
+  client <-
+    newClientWithManager
+      manager
+      reqIdRef
+      (RpcClientOptions (icRpcUrl cfg) (icRpcAuthToken cfg) "core-indexer")
   forever $ do
-    result <- try @SomeException $ runIndexerLoop manager pool cfg reqIdRef
+    result <- try @SomeException $ runIndexerLoop pool cfg client
     case result of
       Left err -> do
         logErrorEvery
@@ -66,12 +68,12 @@ startIndexer manager pool cfg = do
         threadDelay (icPollInterval cfg * 2)
       Right () -> pure ()
 
-runIndexerLoop :: Manager -> DbPool -> IndexerConfig -> IORef Integer -> IO ()
-runIndexerLoop manager pool cfg reqIdRef = do
+runIndexerLoop :: DbPool -> IndexerConfig -> EthClient -> IO ()
+runIndexerLoop pool cfg client = do
   lastBlock <- withDb pool getLastIndexedBlock
   let startBlock = max (icStartBlock cfg) (lastBlock + 1)
 
-  eCurrentBlock <- getCurrentBlockNumber manager (icRpcUrl cfg) reqIdRef
+  eCurrentBlock <- getCurrentBlockNumber client
   case eCurrentBlock of
     Left err -> do
       logWarnEvery
@@ -88,7 +90,7 @@ runIndexerLoop manager pool cfg reqIdRef = do
 
           let allAddrs = map deployAddresses (icDeployments cfg)
               contracts = nub $ concatMap getContractAddresses allAddrs
-          eLogs <- getLogs manager (icRpcUrl cfg) reqIdRef contracts startBlock endBlock
+          eLogs <- getLogs client contracts startBlock endBlock
           case eLogs of
             Left err -> do
               logWarnEvery
@@ -113,7 +115,7 @@ runIndexerLoop manager pool cfg reqIdRef = do
                 case mParsed of
                   Nothing -> pure ()
                   Just parsed -> do
-                    timestamp <- getBlockTimestamp manager (icRpcUrl cfg) reqIdRef (elBlockNumber log)
+                    timestamp <- getBlockTimestamp client (elBlockNumber log)
                     withDb pool $ \conn ->
                       insertTransaction conn
                         (elTxHash log)
@@ -137,7 +139,7 @@ runIndexerLoop manager pool cfg reqIdRef = do
                 ]
 
               when (endBlock < currentBlock) $
-                runIndexerLoop manager pool cfg reqIdRef
+                runIndexerLoop pool cfg client
 
 getContractAddresses :: Addresses -> [Text]
 getContractAddresses addrs =
@@ -151,31 +153,21 @@ getContractAddresses addrs =
   , addrMorpho addrs
   ]
 
-getCurrentBlockNumber :: Manager -> Text -> IORef Integer -> IO (Either Text Integer)
-getCurrentBlockNumber manager rpcUrl reqIdRef = do
-  reqId <- nextId reqIdRef
-  let payload = object
-        [ "jsonrpc" .= ("2.0" :: Text)
-        , "method" .= ("eth_blockNumber" :: Text)
-        , "params" .= ([] :: [Value])
-        , "id" .= reqId
-        ]
-  result <- rpcCall manager rpcUrl payload
+getCurrentBlockNumber :: EthClient -> IO (Either Text Integer)
+getCurrentBlockNumber client = do
+  result <- rpcCall client "eth_blockNumber" $ Aeson.toJSON ([] :: [Value])
   pure $ case result of
-    Left err -> Left err
+    Left err -> Left $ T.pack $ show err
     Right (String hex) -> Right $ hexToInteger $ T.drop 2 hex
     Right _ -> Left "Expected hex string"
 
-getBlockTimestamp :: Manager -> Text -> IORef Integer -> Integer -> IO Integer
-getBlockTimestamp manager rpcUrl reqIdRef blockNum = do
-  reqId <- nextId reqIdRef
-  let payload = object
-        [ "jsonrpc" .= ("2.0" :: Text)
-        , "method" .= ("eth_getBlockByNumber" :: Text)
-        , "params" .= [String $ "0x" <> intToHex blockNum, Bool False]
-        , "id" .= reqId
-        ]
-  result <- rpcCall manager rpcUrl payload
+getBlockTimestamp :: EthClient -> Integer -> IO Integer
+getBlockTimestamp client blockNum = do
+  result <-
+    rpcCall
+      client
+      "eth_getBlockByNumber"
+      (Aeson.toJSON [String $ "0x" <> intToHex blockNum, Bool False])
   case result of
     Right (Object obj) ->
       case KM.lookup (Key.fromText "timestamp") obj of
@@ -183,24 +175,20 @@ getBlockTimestamp manager rpcUrl reqIdRef blockNum = do
         _ -> pure 0
     _ -> pure 0
 
-getLogs :: Manager -> Text -> IORef Integer -> [Text] -> Integer -> Integer -> IO (Either Text [EventLog])
-getLogs manager rpcUrl reqIdRef addresses fromBlock toBlock = do
-  reqId <- nextId reqIdRef
+getLogs :: EthClient -> [Text] -> Integer -> Integer -> IO (Either Text [EventLog])
+getLogs client addresses fromBlock toBlock = do
   let topics = map (String . ("0x" <>) . TE.decodeUtf8 . B16.encode . esTopic) allEventSignatures
-      payload = object
-        [ "jsonrpc" .= ("2.0" :: Text)
-        , "method" .= ("eth_getLogs" :: Text)
-        , "params" .= [object
+      params = Aeson.toJSON
+        [ object
             [ "address" .= addresses
             , "topics" .= [topics]
             , "fromBlock" .= ("0x" <> intToHex fromBlock)
             , "toBlock" .= ("0x" <> intToHex toBlock)
-            ]]
-        , "id" .= reqId
+            ]
         ]
-  result <- rpcCall manager rpcUrl payload
+  result <- rpcCall client "eth_getLogs" params
   pure $ case result of
-    Left err -> Left err
+    Left err -> Left $ T.pack $ show err
     Right (Array arr) -> Right $ map parseLogEntry (toVec arr)
     Right _ -> Left "Expected array of logs"
   where
@@ -239,30 +227,3 @@ decodeHex txt =
   in case B16.decode (TE.encodeUtf8 $ T.toLower stripped) of
     Right bs -> bs
     Left _ -> ""
-
-rpcCall :: Manager -> Text -> Value -> IO (Either Text Value)
-rpcCall manager rpcUrl payload = do
-  eResult <- try @SomeException $ do
-    req <- parseRequest $ T.unpack rpcUrl
-    let req' = req
-          { method = "POST"
-          , requestHeaders = [("Content-Type", "application/json")]
-          , requestBody = RequestBodyLBS $ Aeson.encode payload
-          }
-    response <- httpLbs req' manager
-    pure $ responseBody response
-  case eResult of
-    Left err -> pure $ Left $ T.pack $ show err
-    Right body ->
-      case Aeson.decode body of
-        Just (Object obj) ->
-          case KM.lookup (Key.fromText "result") obj of
-            Just r -> pure $ Right r
-            Nothing ->
-              case KM.lookup (Key.fromText "error") obj of
-                Just errVal -> pure $ Left $ T.pack $ show errVal
-                Nothing -> pure $ Left "No result in response"
-        _ -> pure $ Left "Invalid JSON response"
-
-nextId :: IORef Integer -> IO Integer
-nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)
