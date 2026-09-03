@@ -81,6 +81,7 @@ const mocks = vi.hoisted(() => ({
       points: {
         timestamp: number
         blockNumber: string
+        markFresh: boolean
         sharePrice: string
         totalAssets: string
         totalSupply: string
@@ -92,6 +93,7 @@ const mocks = vi.hoisted(() => ({
       points: {
         timestamp: number
         blockNumber: string
+        markFresh: boolean
         sharePrice: string
         totalAssets: string
         totalSupply: string
@@ -335,6 +337,7 @@ function completeHistoryFixture() {
   const point = (timestamp: number, blockNumber: string, price: string) => ({
     timestamp,
     blockNumber,
+    markFresh: true,
     sharePrice: price,
     totalAssets: '1000000000000',
     totalSupply: '1000000000000',
@@ -807,6 +810,22 @@ describe('Vaults page', () => {
     const apyValue = apyLabel.parentElement?.querySelector('dd')
     expect(apyValue).toHaveTextContent('0.00%')
     expect(apyValue).not.toHaveTextContent('-0.00%')
+  })
+
+  it('labels carried-forward performance observations when the hourly mark was stale', () => {
+    const history = completeHistoryFixture()
+    history.senior.points[history.senior.points.length - 1].markFresh = false
+    mocks.vaultHistory = history
+
+    renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('button', { name: 'Performance' }))
+
+    expect(screen.getByText(/last fresh valuation/i)).toBeInTheDocument()
+    const chart = screen.getByRole('img', {
+      name: 'Senior Vault interactive seven-day share price chart',
+    })
+    fireEvent.focus(chart)
+    expect(screen.getAllByText('Last fresh valuation').length).toBeGreaterThanOrEqual(1)
   })
 
   it('rejects otherwise complete history from a different deployment', () => {

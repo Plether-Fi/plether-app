@@ -4,6 +4,7 @@ import Data.Aeson (encode, object, toJSON, (.=))
 import Plether.Database.VaultPerformance (VaultPerformanceSnapshotRow (..))
 import Plether.Handlers.VaultPerformance
   ( buildVaultPerformanceHistoryAt
+  , carryForwardStaleSnapshots
   , computeVaultPerformance
   , hasCompleteVaultPerformanceCoverageAt
   , latestEligibleVaultPerformanceEpoch
@@ -157,6 +158,37 @@ spec = do
       vpcComplete (vphCoverage history) `shouldBe` False
       length (vptPoints $ vphSenior history) `shouldBe` 85
 
+  describe "stale vault valuation handling" $ do
+    it "carries the last fresh valuation without hiding the stale observation" $ do
+      let fresh = snapshot 0
+          stale =
+            (snapshot 1)
+              { vpsMarkFresh = Just False
+              , vpsSeniorTotalAssets = 1
+              , vpsSeniorTotalSupply = 2
+              , vpsSeniorSharePriceWad = 3
+              , vpsJuniorTotalAssets = 4
+              , vpsJuniorTotalSupply = 5
+              , vpsJuniorSharePriceWad = 6
+              }
+          carried = carryForwardStaleSnapshots [fresh, stale]
+      length carried `shouldBe` 2
+      let carriedStale = last carried
+      vpsMarkFresh carriedStale `shouldBe` Just False
+      vpsBlockNumber carriedStale `shouldBe` vpsBlockNumber stale
+      vpsSeniorTotalAssets carriedStale `shouldBe` vpsSeniorTotalAssets fresh
+      vpsSeniorTotalSupply carriedStale `shouldBe` vpsSeniorTotalSupply fresh
+      vpsSeniorSharePriceWad carriedStale `shouldBe` vpsSeniorSharePriceWad fresh
+      vpsJuniorTotalAssets carriedStale `shouldBe` vpsJuniorTotalAssets fresh
+      vpsJuniorTotalSupply carriedStale `shouldBe` vpsJuniorTotalSupply fresh
+      vpsJuniorSharePriceWad carriedStale `shouldBe` vpsJuniorSharePriceWad fresh
+
+    it "omits stale or legacy rows until a fresh valuation is known" $ do
+      let stale = (snapshot 0) {vpsMarkFresh = Just False}
+          legacy = (snapshot 1) {vpsMarkFresh = Nothing}
+          fresh = snapshot 2
+      carryForwardStaleSnapshots [stale, legacy, fresh] `shouldBe` [fresh]
+
   describe "vault performance response" $ do
     it "sorts points chronologically and publishes metrics only when complete" $ do
       let history = buildVaultPerformanceHistoryAt freshNow deployment (reverse completeRows)
@@ -193,6 +225,7 @@ spec = do
             ( object
                 [ "timestamp" .= (1_800_000_000 :: Integer)
                 , "blockNumber" .= ("12345678901234567890" :: String)
+                , "markFresh" .= True
                 , "sharePrice" .= ("1007500000000000000" :: String)
                 , "totalAssets" .= ("402670000000000" :: String)
                 , "totalSupply" .= ("399673000000000000" :: String)
@@ -241,6 +274,7 @@ snapshot index =
     , vpsBlockNumber = 10_000 + fromIntegral index * 1_000
     , vpsBlockHash = "0xblock"
     , vpsBlockTimestamp = baseEpoch + fromIntegral index * vaultPerformanceIntervalSeconds - 12
+    , vpsMarkFresh = Just True
     , vpsSeniorTotalAssets = 400_000_000_000_000 + fromIntegral index * 1_000_000
     , vpsSeniorTotalSupply = 397_000_000_000_000
     , vpsSeniorSharePriceWad = 1_000_000_000_000_000_000 + fromIntegral index * 1_000_000_000_000
@@ -260,6 +294,7 @@ samplePoint =
   VaultPerformancePoint
     { vppTimestamp = 1_800_000_000
     , vppBlockNumber = 12_345_678_901_234_567_890
+    , vppMarkFresh = True
     , vppSharePrice = 1_007_500_000_000_000_000
     , vppTotalAssets = 402_670_000_000_000
     , vppTotalSupply = 399_673_000_000_000_000

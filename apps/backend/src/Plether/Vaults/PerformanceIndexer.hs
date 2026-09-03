@@ -28,6 +28,7 @@ import Control.Exception
 import Control.Monad (foldM, forever, unless)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (Connection, Only (..), query)
@@ -163,6 +164,7 @@ snapshotNeedsRepair row block =
     || normalizeHash (vpsBlockHash row) /= normalizeHash (rpcBlockHash block)
     || vpsBlockTimestamp row /= rpcBlockTimestamp block
     || rpcBlockTimestamp block > vpsEpochTimestamp row
+    || isNothing (vpsMarkFresh row)
 
 -- | Decide whether an existing checkpoint is already the canonical value.
 -- Missing rows, failed canonical block reads, and changed block identities all
@@ -361,9 +363,13 @@ sampleVaultPerformanceAtBlock client cfg epochTimestamp block = do
       pacedRpcResult $
         Multicall.multicallAtBlock
           client
-          (trancheVaultSnapshotCalls (vpicSeniorVaultAddress cfg) (vpicJuniorVaultAddress cfg))
+          ( trancheVaultSnapshotCalls
+              (vpicHousePoolAddress cfg)
+              (vpicSeniorVaultAddress cfg)
+              (vpicJuniorVaultAddress cfg)
+          )
           (rpcBlockNumber block)
-  (senior, junior) <- either (fail . T.unpack) pure $ decodeTrancheVaultSnapshotResults results
+  (markFresh, senior, junior) <- either (fail . T.unpack) pure $ decodeTrancheVaultSnapshotResults results
   -- A reorg between block discovery and eth_call must not publish values under
   -- a stale hash. Re-read the numeric block after the Multicall and retry the
   -- entire cycle if its identity changed.
@@ -382,6 +388,7 @@ sampleVaultPerformanceAtBlock client cfg epochTimestamp block = do
       , vpsBlockNumber = rpcBlockNumber canonicalBlock
       , vpsBlockHash = normalizeHash $ rpcBlockHash canonicalBlock
       , vpsBlockTimestamp = rpcBlockTimestamp canonicalBlock
+      , vpsMarkFresh = Just markFresh
       , vpsSeniorTotalAssets = tvsTotalAssets senior
       , vpsSeniorTotalSupply = tvsTotalSupply senior
       , vpsSeniorSharePriceWad = tvsSharePriceWad senior
