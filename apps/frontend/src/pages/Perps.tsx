@@ -228,7 +228,7 @@ export function Perps() {
   )
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       {perpsIdentity.isAaManifestConfigured && (
         perpsIdentity.status === 'selection-required' ||
         perpsIdentity.status === 'continuity-required' ||
@@ -259,7 +259,7 @@ export function Perps() {
           ) : null}
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 sm:gap-6 xl:flow-root">
+      <div className="flex flex-col gap-3 sm:gap-6 xl:flow-root">
         <div className="min-w-0 xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
           <PerpsInstrumentPanel stats={instrumentStats} />
         </div>

@@ -4,7 +4,7 @@ export function SepoliaNoticeBar() {
   const openSepoliaWelcome = useSettingsStore((s) => s.openSepoliaWelcome)
 
   return (
-    <div className="flex min-h-11 flex-col items-stretch justify-center gap-2 bg-brand-yellow px-3 py-2 text-center text-xs font-medium text-[#250917] sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2.5 sm:text-sm">
+    <div className="flex min-h-11 flex-col items-stretch justify-center gap-1 bg-brand-yellow px-2 py-1.5 text-center text-[10px] font-medium leading-tight text-[#250917] sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2.5 sm:text-sm sm:leading-normal">
       <span>
         <span className="block sm:hidden">Arbitrum Sepolia testnet · Mock funds only</span>
         <span className="hidden sm:inline">
@@ -25,7 +25,7 @@ export function SepoliaNoticeBar() {
       <button
         type="button"
         onClick={openSepoliaWelcome}
-        className="min-h-11 shrink-0 border border-[#250917] px-3 py-2 text-xs font-semibold text-[#250917] transition-colors hover:bg-[#250917] hover:text-white hover:underline hover:underline-offset-4 sm:py-1"
+        className="min-h-11 shrink-0 border border-[#250917] px-3 py-1 text-xs font-semibold text-[#250917] transition-colors hover:bg-[#250917] hover:text-white hover:underline hover:underline-offset-4 sm:py-1"
       >
         Get mock USDC
       </button>

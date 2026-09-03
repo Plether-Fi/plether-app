@@ -26,7 +26,7 @@ export function MobileNav() {
 
   return (
     <nav className="safe-area-bottom fixed inset-x-0 bottom-0 z-40 border-t border-brand-border/30 bg-surface-panel lg:hidden">
-      <div className="flex min-h-16 items-stretch justify-around">
+      <div className="flex min-h-12 items-stretch justify-around">
         {navLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path ||
             (path === '/vaults' && location.pathname.startsWith('/vaults/'))
@@ -36,15 +36,15 @@ export function MobileNav() {
               key={path}
               to={path}
               className={`
-                flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-4 py-2 transition-colors
+                flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-3 py-1 transition-colors
                 ${isActive
                   ? styles.active
                   : `text-content-secondary ${styles.hover}`
                 }
               `}
             >
-              <span className="material-symbols-outlined text-xl">{icon}</span>
-              <span className="text-xs font-medium">{label}</span>
+              <span className="material-symbols-outlined text-lg">{icon}</span>
+              <span className="text-[11px] font-medium">{label}</span>
             </Link>
           )
         })}
@@ -52,10 +52,10 @@ export function MobileNav() {
           href={leaderboardUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-4 py-2 text-content-secondary transition-colors hover:text-brand-yellow"
+          className="flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-3 py-1 text-content-secondary transition-colors hover:text-brand-yellow"
         >
-          <span className="material-symbols-outlined text-xl">leaderboard</span>
-          <span className="text-xs font-medium">Leaderboard</span>
+          <span className="material-symbols-outlined text-lg">leaderboard</span>
+          <span className="text-[11px] font-medium">Leaderboard</span>
         </a>
       </div>
     </nav>

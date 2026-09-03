@@ -121,10 +121,10 @@ function StatValueContent({ stat }: { stat: PerpsInstrumentStat }) {
 function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
   if (stat.values) {
     return (
-      <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+      <dd className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 sm:mt-2 sm:gap-x-4">
         {stat.values.map((item) => (
           <span key={item.label} className="min-w-0">
-            <span className={`text-xl font-semibold ${statToneClass(item.tone)}`}>{item.value}</span>
+            <span className={`text-lg font-semibold sm:text-xl ${statToneClass(item.tone)}`}>{item.value}</span>
           </span>
         ))}
       </dd>
@@ -132,7 +132,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
   }
 
   return (
-    <dd className={`mt-2 flex min-w-0 items-center gap-2 text-xl font-semibold 2xl:text-2xl ${statToneClass(stat.tone)}`}>
+    <dd className={`mt-1.5 flex min-w-0 items-center gap-1.5 text-lg font-semibold sm:mt-2 sm:gap-2 sm:text-xl 2xl:text-2xl ${statToneClass(stat.tone)}`}>
       <StatValueContent stat={stat} />
     </dd>
   )
@@ -140,8 +140,8 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
 
 function InstrumentStatLabel({ stat }: { stat: PerpsInstrumentStat }) {
   return (
-    <dt className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-content-secondary">
-      <span className="min-w-0 truncate" title={stat.label}>{stat.label}</span>
+    <dt className="flex min-w-0 items-center gap-1 text-[10px] font-medium leading-4 text-content-secondary min-[400px]:text-[11px] sm:gap-1.5 sm:text-xs">
+      <span className="min-w-0 break-words sm:truncate" title={stat.label}>{stat.label}</span>
       {stat.tooltip ? (
         <Tooltip
           content={stat.tooltip}
@@ -164,7 +164,7 @@ function InstrumentStatLabel({ stat }: { stat: PerpsInstrumentStat }) {
 
 function InstrumentStat({ stat }: { stat: PerpsInstrumentStat }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" data-perps-instrument-stat>
       <InstrumentStatLabel stat={stat} />
       <StatValue stat={stat} />
     </div>
@@ -317,9 +317,9 @@ function HoverDetailsStat({
 
   return (
     <>
-      <div ref={metricRef} className="min-w-0">
+      <div ref={metricRef} className="min-w-0" data-perps-instrument-stat>
         <InstrumentStatLabel stat={stat} />
-        <dd className={`mt-2 flex min-w-0 items-center gap-2 text-xl font-semibold 2xl:text-2xl ${statToneClass(stat.tone)}`}>
+        <dd className={`mt-1.5 flex min-w-0 items-center gap-1.5 text-lg font-semibold sm:mt-2 sm:gap-2 sm:text-xl 2xl:text-2xl ${statToneClass(stat.tone)}`}>
           <FreshnessIndicator stat={stat} />
           <button
             type="button"
@@ -486,21 +486,22 @@ function DirectionalLimitStat({
     <>
       <div
         className="min-w-0 sm:col-span-2 xl:col-span-1"
+        data-perps-instrument-stat
         onMouseEnter={openFromPointer}
         onMouseLeave={leaveFromPointer}
       >
-        <dt className="text-xs font-medium text-content-secondary">{stat.label}</dt>
+        <dt className="text-[10px] font-medium leading-4 text-content-secondary min-[400px]:text-[11px] sm:text-xs">{stat.label}</dt>
         <dd>
           <button
             type="button"
-            className="mt-2 flex min-w-0 max-w-full items-center gap-2 text-left"
+            className="mt-1.5 flex min-w-0 max-w-full items-center gap-px text-left min-[430px]:gap-1 sm:mt-2 sm:gap-2"
             aria-label={`${stat.label} details`}
             aria-controls={detailsId}
             aria-expanded={isExpanded}
             onFocus={openFromFocus}
             onBlur={leaveFromFocus}
           >
-            <span className={`text-xl font-semibold 2xl:text-2xl ${
+            <span className={`text-lg font-semibold sm:text-xl 2xl:text-2xl ${
               displayUsagePercent !== undefined && displayUsagePercent >= 100
                 ? 'text-brand-orange'
                 : 'text-content-primary'
@@ -508,7 +509,7 @@ function DirectionalLimitStat({
               {valueLabel}
             </span>
             <span
-              className={`whitespace-nowrap border px-2 py-1 text-[10px] font-semibold tracking-[0.08em] ${directionalBadgeClass(details.side)}`}
+              className={`whitespace-nowrap border px-px py-0.5 text-[8px] font-semibold tracking-normal min-[430px]:px-1 min-[430px]:text-[9px] min-[430px]:tracking-[0.03em] sm:px-2 sm:py-1 sm:text-[10px] sm:tracking-[0.08em] ${directionalBadgeClass(details.side)}`}
             >
               {directionalBadgeLabel(details.side, details.isLoading ?? false)}
             </span>
@@ -589,11 +590,11 @@ function DirectionalLimitStat({
 function DxyInstrumentMark() {
   return (
     <div
-      className="flex h-12 w-12 shrink-0 items-center justify-center border border-brand-border/50 bg-app-bg"
+      className="flex h-10 w-10 shrink-0 items-center justify-center border border-brand-border/50 bg-app-bg sm:h-12 sm:w-12"
       aria-hidden="true"
     >
-      <div className="relative flex h-4 w-4 items-center justify-center bg-[#FFAB96]">
-        <div className="h-3 w-3 rounded-full bg-app-bg" />
+      <div className="relative flex h-3.5 w-3.5 items-center justify-center bg-[#FFAB96] sm:h-4 sm:w-4">
+        <div className="h-2.5 w-2.5 rounded-full bg-app-bg sm:h-3 sm:w-3" />
       </div>
     </div>
   )
@@ -612,20 +613,20 @@ export function PerpsInstrumentPanel({
 
   return (
     <section className="relative z-10 overflow-visible border border-brand-border/30 bg-surface-panel">
-      <div className={`flex flex-col gap-4 px-3 py-3 sm:px-5 sm:py-4 lg:flex-row ${
+      <div className={`flex flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4 lg:flex-row ${
         hasDirectionalLimit ? 'lg:items-start' : 'lg:items-center'
       }`}>
-        <div className="flex min-w-0 shrink-0 items-center gap-3 sm:min-w-[200px]">
+        <div className="flex min-w-0 shrink-0 items-center gap-2.5 sm:min-w-[200px] sm:gap-3">
           <DxyInstrumentMark />
           <div className="min-w-0">
-            <h2 className="text-xl font-semibold text-content-primary sm:text-2xl">{name}</h2>
-            <p className="mt-1 text-sm text-content-secondary">{description}</p>
+            <h2 className="text-lg font-semibold text-content-primary sm:text-2xl">{name}</h2>
+            <p className="mt-0.5 text-xs text-content-secondary sm:mt-1 sm:text-sm">{description}</p>
           </div>
         </div>
 
         <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
-        <dl className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] gap-x-3 gap-y-4 2xl:gap-x-4">
+        <dl className="grid flex-1 grid-cols-2 gap-x-2 gap-y-3 min-[360px]:grid-cols-3 min-[430px]:gap-x-3 sm:grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] sm:gap-y-4 2xl:gap-x-4" data-perps-instrument-metrics>
           {stats.map((stat) => {
             if (stat.directionalLimit) {
               return (

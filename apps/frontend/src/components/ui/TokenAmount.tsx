@@ -17,7 +17,7 @@ export function TokenAmount({
   wrap = false,
 }: TokenAmountProps) {
   return (
-    <span className={`inline-flex items-baseline gap-1.5 ${wrap ? 'max-w-full flex-wrap' : 'whitespace-nowrap'} ${className}`}>
+    <span className={`inline-flex items-baseline gap-1 sm:gap-1.5 ${wrap ? 'max-w-full flex-wrap' : 'whitespace-nowrap'} ${className}`}>
       <span className={`${wrap ? 'whitespace-nowrap' : ''} ${amountClassName}`}>{amount}</span>
       <TokenLabel token={token} />
     </span>
