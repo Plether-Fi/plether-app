@@ -2377,3 +2377,119 @@ CREATE TABLE IF NOT EXISTS insights_registration_rate_limits (
 
 CREATE INDEX IF NOT EXISTS idx_insights_registration_rate_limits_window
     ON insights_registration_rate_limits(window_epoch_minute);
+
+-- Canonical vault log index. The deployment identity scopes rebuilds so a
+-- reorg cannot delete another release's data.
+CREATE TABLE IF NOT EXISTS vault_activity_indexer_state (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    senior_vault_address VARCHAR(42) NOT NULL,
+    junior_vault_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    last_indexed_block NUMERIC(78,0) NOT NULL,
+    last_indexed_block_hash VARCHAR(66),
+    last_indexed_block_timestamp BIGINT NOT NULL DEFAULT 0,
+    safe_head_block NUMERIC(78,0) NOT NULL DEFAULT 0,
+    safe_head_block_hash VARCHAR(66),
+    safe_head_timestamp BIGINT NOT NULL DEFAULT 0,
+    backfill_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    last_success_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, deployment_block),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND last_indexed_block >= 0 AND safe_head_block >= 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (senior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (junior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (last_indexed_block_hash IS NULL OR last_indexed_block_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (safe_head_block_hash IS NULL OR safe_head_block_hash ~ '^0x[0-9a-f]{64}$')
+);
+ALTER TABLE vault_activity_indexer_state
+    ADD COLUMN IF NOT EXISTS last_indexed_block_timestamp BIGINT NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS vault_canonical_logs (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    event_name TEXT NOT NULL,
+    tx_hash VARCHAR(66) NOT NULL,
+    block_number NUMERIC(78,0) NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    tx_index NUMERIC(78,0) NOT NULL,
+    log_index NUMERIC(78,0) NOT NULL,
+    block_timestamp BIGINT NOT NULL,
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),
+    CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'DepositRequested')),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
+);
+
+CREATE TABLE IF NOT EXISTS vault_share_transfers (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    from_address VARCHAR(42) NOT NULL,
+    to_address VARCHAR(42) NOT NULL,
+    amount NUMERIC(78,0) NOT NULL,
+    tx_hash VARCHAR(66) NOT NULL,
+    block_number NUMERIC(78,0) NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    tx_index NUMERIC(78,0) NOT NULL,
+    log_index NUMERIC(78,0) NOT NULL,
+    block_timestamp BIGINT NOT NULL,
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
+);
+CREATE INDEX IF NOT EXISTS idx_vault_share_transfers_holder
+    ON vault_share_transfers(chain_id, house_pool_address, deployment_block, vault_address, from_address, to_address);
+
+CREATE TABLE IF NOT EXISTS vault_holder_balances (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    holder_address VARCHAR(42) NOT NULL,
+    share_balance NUMERIC(78,0) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, holder_address),
+    CHECK (share_balance > 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (holder_address ~ '^0x[0-9a-f]{40}$')
+);
+CREATE INDEX IF NOT EXISTS idx_vault_holder_balances_rank
+    ON vault_holder_balances(chain_id, house_pool_address, deployment_block, vault_address, share_balance DESC, holder_address);
+
+CREATE TABLE IF NOT EXISTS vault_request_events (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    event_name TEXT NOT NULL,
+    controller_address VARCHAR(42) NOT NULL,
+    owner_address VARCHAR(42) NOT NULL,
+    request_id NUMERIC(78,0) NOT NULL,
+    raw_amount NUMERIC(78,0) NOT NULL,
+    tx_hash VARCHAR(66) NOT NULL,
+    block_number NUMERIC(78,0) NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    tx_index NUMERIC(78,0) NOT NULL,
+    log_index NUMERIC(78,0) NOT NULL,
+    block_timestamp BIGINT NOT NULL,
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),
+    CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'DepositRequested')),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND raw_amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (controller_address ~ '^0x[0-9a-f]{40}$' AND owner_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
+);
+CREATE INDEX IF NOT EXISTS idx_vault_request_events_recent
+    ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, block_number DESC, tx_index DESC, log_index DESC);
+CREATE INDEX IF NOT EXISTS idx_vault_request_events_controller
+    ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id DESC);
+CREATE INDEX IF NOT EXISTS idx_vault_request_events_owner
+    ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, owner_address, request_id DESC);

@@ -176,6 +176,137 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
 }
 
+resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-indexer-heartbeat"
+  pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultIndexerHeartbeat-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-indexer-heartbeat-missing"
+  alarm_description   = "No successful vault-indexer heartbeat was observed for three minutes."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_indexer_heartbeat[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_indexer_heartbeat[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-indexer-lag"
+  pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.lag_seconds >= 0 }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultIndexerLagSeconds-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.lag_seconds"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-indexer-confirmed-data-lag"
+  alarm_description   = "Confirmed vault activity lag exceeded two minutes for three consecutive periods."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_indexer_lag[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_indexer_lag[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 120
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-indexer-backfill"
+  pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.state = \"backfilling\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultIndexerBackfillIncomplete-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-indexer-backfill-incomplete"
+  alarm_description   = "The canonical vault index rebuild remained incomplete for ten minutes."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 10
+  datapoints_to_alarm = 10
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_indexer_backfill[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_indexer_backfill[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+locals {
+  vault_indexer_failure_events = var.perps_chain_id == "421614" ? {
+    invariant = "vault_activity_indexer_iteration_failed"
+    trace     = "perps_indexer_execution_evidence_economics_failed"
+  } : {}
+}
+
+resource "aws_cloudwatch_log_metric_filter" "vault_indexer_failure" {
+  for_each = local.vault_indexer_failure_events
+
+  name           = "plether-${var.environment}-${replace(each.key, "_", "-")}-failure"
+  pattern        = "{ $.event = \"${each.value}\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultIndexer${title(each.key)}Failure-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_indexer_failure" {
+  for_each = local.vault_indexer_failure_events
+
+  alarm_name          = "plether-${var.environment}-${replace(each.key, "_", "-")}-failure"
+  alarm_description   = each.key == "trace" ? "Alchemy transaction tracing failed repeatedly." : "The vault indexer rejected an invariant or provider response."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = each.key == "trace" ? 3 : 1
+  datapoints_to_alarm = each.key == "trace" ? 3 : 1
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_indexer_failure[each.key].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_indexer_failure[each.key].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 

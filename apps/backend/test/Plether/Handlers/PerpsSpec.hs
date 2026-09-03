@@ -1157,7 +1157,6 @@ rollupConfig =
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
     , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
     , cfgVaultHistoryDeploymentBlock = 0
-    , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = rollupReleaseManifest

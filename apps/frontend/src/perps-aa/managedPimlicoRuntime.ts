@@ -5,14 +5,12 @@ import {
   getAddress,
   hexToBigInt,
   http,
-  isAddress,
   isAddressEqual,
   isHex,
   maxUint256,
   parseAbi,
   parseAbiItem,
   size,
-  toEventSelector,
   type Account,
   type Address,
   type Chain,
@@ -53,10 +51,6 @@ const ENTRY_POINT_NONCE_ABI = parseAbi([
 const USER_OPERATION_EVENT = parseAbiItem(
   'event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)'
 )
-const USER_OPERATION_EVENT_SELECTOR = toEventSelector(USER_OPERATION_EVENT)
-const ARBITRUM_SEPOLIA_BLOCKSCOUT_ORIGIN =
-  'https://arbitrum-sepolia.blockscout.com'
-
 interface CreateManagedPimlicoRuntimeInput {
   manifest: PerpsAaDeploymentManifest
   ownerAddress: Address
@@ -106,7 +100,7 @@ function assertReceipt(
     !isAddressEqual(receipt.entryPoint, expectedEntryPoint)
   ) {
     throw new Error(
-      'Pimlico returned a receipt for a different Trading Account operation'
+      'Alchemy returned a receipt for a different Trading Account operation'
     )
   }
 }
@@ -146,9 +140,12 @@ async function assertCanonicalSafeReceipt(input: {
   expectedHash: Hex
   expectedSender: Address
   entryPoint: Address
+  safeBlockNumber?: bigint
 }): Promise<void> {
-  const [safeBlock, canonicalTransactionReceipt] = await Promise.all([
-    input.publicClient.getBlock({ blockTag: 'safe' }),
+  const [safeBlockNumber, canonicalTransactionReceipt] = await Promise.all([
+    input.safeBlockNumber === undefined
+      ? input.publicClient.getBlock({ blockTag: 'safe' }).then((block) => block.number)
+      : Promise.resolve(input.safeBlockNumber),
     input.publicClient.getTransactionReceipt({
       hash: input.receipt.receipt.transactionHash,
     }),
@@ -162,9 +159,7 @@ async function assertCanonicalSafeReceipt(input: {
       input.receipt.receipt.transactionHash.toLowerCase() ||
     canonicalTransactionReceipt.status !== input.receipt.receipt.status
   ) {
-    throw new Error(
-      'Pimlico returned a noncanonical UserOperation transaction receipt'
-    )
+    throw new Error('Alchemy returned a noncanonical UserOperation transaction receipt')
   }
 
   const events = await input.publicClient.getLogs({
@@ -196,158 +191,18 @@ async function assertCanonicalSafeReceipt(input: {
     event.args.success !== input.receipt.success
   ) {
     throw new Error(
-      'The canonical UserOperation event does not match Pimlico’s receipt'
+      'The canonical UserOperation event does not match Alchemy’s receipt'
     )
   }
-  if (input.receipt.receipt.blockNumber > safeBlock.number) {
+  if (input.receipt.receipt.blockNumber > safeBlockNumber) {
     throw new UserOperationReceiptNotSafeError(input.receipt)
   }
 }
 
-function recordOf(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object'
-    ? value as Record<string, unknown>
-    : undefined
-}
-
-function isExpectedAddress(value: unknown, expected: Address): boolean {
-  return typeof value === 'string' &&
-    isAddress(value, { strict: true }) &&
-    isAddressEqual(value, expected)
-}
-
-function parseBlockNumber(value: unknown, field: string): bigint {
-  if (
-    typeof value === 'number' &&
-    Number.isSafeInteger(value) &&
-    value >= 0
-  ) {
-    return BigInt(value)
-  }
-  if (
-    typeof value !== 'string' ||
-    !(
-      /^(0|[1-9]\d*)$/.test(value) ||
-      /^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(value)
-    )
-  ) {
-    throw new Error(`Blockscout returned an invalid ${field}`)
-  }
-  return value.startsWith('0x') || value.startsWith('0X')
-    ? hexToBigInt(value as Hex)
-    : BigInt(value)
-}
-
-function parseHash(value: unknown, field: string): Hex {
-  if (
-    typeof value !== 'string' ||
-    !isHex(value, { strict: true }) ||
-    size(value) !== 32
-  ) {
-    throw new Error(`Blockscout returned an invalid ${field}`)
-  }
-  return value
-}
-
-function expectedAddressTopic(address: Address): Hex {
-  return `0x${'0'.repeat(24)}${address.slice(2).toLowerCase()}`
-}
-
-type BlockscoutUserOperationEventLocator =
-  | {
-      kind: 'included'
-      blockNumber: bigint
-      transactionHash: Hex
-    }
-  | {
-      kind: 'not-located'
-    }
-
-async function getBlockscoutUserOperationEventLocator(input: {
-  userOperationHash: Hex
-  safeBlockNumber: bigint
-  accountAddress: Address
-  entryPoint: Address
-}): Promise<BlockscoutUserOperationEventLocator> {
-  const url = new URL(`${ARBITRUM_SEPOLIA_BLOCKSCOUT_ORIGIN}/api`)
-  url.search = new URLSearchParams({
-    module: 'logs',
-    action: 'getLogs',
-    fromBlock: '0',
-    toBlock: input.safeBlockNumber.toString(),
-    address: input.entryPoint,
-    topic0: USER_OPERATION_EVENT_SELECTOR,
-    topic1: input.userOperationHash,
-    topic0_1_opr: 'and',
-  }).toString()
-  const response = await fetch(
-    url,
-    {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-    }
-  )
-  if (!response.ok) {
-    throw new Error('Blockscout UserOperation event lookup is unavailable')
-  }
-
-  const value: unknown = await response.json()
-  const result = recordOf(value)
-  if (!Array.isArray(result?.result)) {
-    throw new Error('Blockscout returned invalid UserOperation event data')
-  }
-  if (
-    result.status === '0' &&
-    result.message === 'No logs found' &&
-    result.result.length === 0
-  ) {
-    // Explorer misses are never treated as proof of onchain absence. The
-    // locator is used only to find a block for a bounded canonical RPC check.
-    return { kind: 'not-located' }
-  }
-  if (
-    result.status !== '1' ||
-    result.message !== 'OK' ||
-    result.result.length !== 1
-  ) {
-    throw new Error('Blockscout returned ambiguous UserOperation event data')
-  }
-
-  const event = recordOf(result.result[0])
-  const topics = event?.topics
-  if (!Array.isArray(topics) || topics.length !== 4) {
-    throw new Error('Blockscout returned invalid UserOperation topics')
-  }
-  const selectorTopic = parseHash(topics[0], 'UserOperation event selector')
-  const userOperationHashTopic = parseHash(
-    topics[1],
-    'UserOperation hash topic'
-  )
-  const senderTopic = parseHash(topics[2], 'UserOperation sender topic')
-  parseHash(topics[3], 'UserOperation paymaster topic')
-  const blockNumber = parseBlockNumber(
-    event?.blockNumber,
-    'UserOperation block'
-  )
-  const transactionHash = parseHash(
-    event?.transactionHash,
-    'UserOperation transaction hash'
-  )
-  if (
-    blockNumber > input.safeBlockNumber ||
-    !isExpectedAddress(event?.address, input.entryPoint) ||
-    selectorTopic.toLowerCase() !== USER_OPERATION_EVENT_SELECTOR.toLowerCase() ||
-    userOperationHashTopic.toLowerCase() !==
-      input.userOperationHash.toLowerCase() ||
-    senderTopic.toLowerCase() !== expectedAddressTopic(input.accountAddress)
-  ) {
-    throw new Error('Blockscout returned mismatched UserOperation evidence')
-  }
-  return {
-    kind: 'included',
-    transactionHash,
-    blockNumber,
-  }
+function isReceiptNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const name = 'name' in error ? String(error.name) : ''
+  return name === 'UserOperationReceiptNotFoundError'
 }
 
 export async function createManagedPimlicoRuntime({
@@ -432,7 +287,7 @@ export async function createManagedPimlicoRuntime({
     },
     getRecoverySnapshot: async (userOperationHash, nonceKey = 0n) => {
       const block = await publicClient.getBlock({ blockTag: 'safe' })
-      const [accountNonce, locator] = await Promise.all([
+      const [accountNonce, receiptEvidence] = await Promise.all([
         publicClient.readContract({
           address: manifest.entryPoint,
           abi: ENTRY_POINT_NONCE_ABI,
@@ -440,62 +295,48 @@ export async function createManagedPimlicoRuntime({
           args: [accountAddress, nonceKey],
           blockNumber: block.number,
         }),
-        getBlockscoutUserOperationEventLocator({
-          userOperationHash,
-          safeBlockNumber: block.number,
-          accountAddress,
-          entryPoint: manifest.entryPoint,
-        }).catch(() => ({ kind: 'not-located' } as const)),
+        pimlicoClient.getUserOperationReceipt({ hash: userOperationHash })
+          .then((receipt: UserOperationReceipt<'0.8'> | null) => receipt === null
+            ? { kind: 'not-located' as const }
+            : { kind: 'located' as const, receipt })
+          .catch((error: unknown) => (
+            isReceiptNotFoundError(error)
+              ? { kind: 'not-located' as const }
+              : { kind: 'inconclusive' as const }
+          )),
       ])
       let userOperationEvidence:
-        SponsoredOperationRecoverySnapshot['userOperationEvidence'] = {
-          kind: 'not-located',
-        }
-      if (locator.kind === 'included') {
-        // Blockscout is only the full-history locator. A bounded one-block
-        // query against the configured chain RPC is the authoritative
-        // inclusion proof and supplies the execution outcome.
+        SponsoredOperationRecoverySnapshot['userOperationEvidence'] =
+          receiptEvidence.kind === 'inconclusive'
+            ? { kind: 'inconclusive' }
+            : { kind: 'not-located' }
+      if (receiptEvidence.kind === 'located') {
         try {
-          const events = await publicClient.getLogs({
-            address: manifest.entryPoint,
-            event: USER_OPERATION_EVENT,
-            args: {
-              userOpHash: userOperationHash,
-              sender: accountAddress,
-            },
-            fromBlock: locator.blockNumber,
-            toBlock: locator.blockNumber,
+          const receipt = normalizeReceiptNonce(receiptEvidence.receipt)
+          assertReceipt(
+            receipt,
+            userOperationHash,
+            accountAddress,
+            manifest.entryPoint,
+          )
+          await assertCanonicalSafeReceipt({
+            publicClient,
+            receipt,
+            expectedHash: userOperationHash,
+            expectedSender: accountAddress,
+            entryPoint: manifest.entryPoint,
+            safeBlockNumber: block.number,
           })
-          if (events.length !== 1) {
-            throw new Error(
-              'The canonical chain does not contain the indexed UserOperation'
-            )
-          }
-          const [event] = events
-          if (
-            event.blockNumber !== locator.blockNumber ||
-            event.transactionHash.toLowerCase() !==
-              locator.transactionHash.toLowerCase() ||
-            event.args.userOpHash?.toLowerCase() !==
-              userOperationHash.toLowerCase() ||
-            !event.args.sender ||
-            !isAddressEqual(event.args.sender, accountAddress) ||
-            typeof event.args.success !== 'boolean'
-          ) {
-            throw new Error(
-              'The canonical chain returned mismatched UserOperation evidence'
-            )
-          }
           userOperationEvidence = {
             kind: 'included',
-            success: event.args.success,
-            transactionHash: event.transactionHash,
-            blockNumber: event.blockNumber,
+            success: receipt.success,
+            transactionHash: receipt.receipt.transactionHash,
+            blockNumber: receipt.receipt.blockNumber,
           }
-        } catch {
-          // A positive explorer row is only a locator. If its one-block
-          // canonical proof fails, nonce/expiry recovery may still resolve
-          // the future-execution risk, but inclusion remains unknown.
+        } catch (error) {
+          userOperationEvidence = error instanceof UserOperationReceiptNotSafeError
+            ? { kind: 'not-safe-yet' }
+            : { kind: 'inconclusive' }
         }
       }
       return {

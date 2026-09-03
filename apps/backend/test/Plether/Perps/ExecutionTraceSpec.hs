@@ -43,7 +43,7 @@ spec = do
 
     it "decodes a signed open VPI" $ do
       let trace =
-            blockscoutRoot
+            callTracerRoot
               [processFrame TradeOpen 41 $ openSettlement (-123_456_789)]
       decode trace
         `shouldBe` Right
@@ -54,7 +54,7 @@ spec = do
 
     it "returns the actual nonzero frozen-close spread" $ do
       let trace =
-            blockscoutRoot
+            callTracerRoot
               [processFrame TradeClose 42 $ closeSettlement (-17) 3_940_366]
       decode trace
         `shouldBe` Right
@@ -70,7 +70,7 @@ spec = do
 
     it "preserves both VPI signs and frozen spread from live Sepolia traces" $ do
       let trace =
-            blockscoutRoot
+            callTracerRoot
               [ processFrameWithOracleCalls
                   oracle9218
                   TradeOpen
@@ -146,13 +146,13 @@ spec = do
               (String helperContract)
               (oracleFrame differentExecution)
           mismatched =
-            blockscoutRoot
+            callTracerRoot
               [oracleFrame defaultOracle, processForDifferentExecution]
           unauthenticated =
-            blockscoutRoot
+            callTracerRoot
               [wrongOracleTarget, processForDifferentExecution]
           oracleAfterProcess =
-            blockscoutRoot
+            callTracerRoot
               [processForDifferentExecution, oracleFrame differentExecution]
       decode mismatched `shouldSatisfy` isLeft
       decode unauthenticated `shouldSatisfy` isLeft
@@ -175,10 +175,10 @@ spec = do
               46
               [openSettlement 2]
           missingSecondOracle =
-            blockscoutRoot
+            callTracerRoot
               [oracleFrame defaultOracle, revertedProcess, successfulProcess]
           paired =
-            blockscoutRoot
+            callTracerRoot
               [ oracleFrame defaultOracle
               , revertedProcess
               , oracleFrame defaultOracle
@@ -237,16 +237,16 @@ spec = do
                       (oracleOutput defaultOracle)
               )
               (oracleFrame defaultOracle)
-      decode (blockscoutRoot [truncatedOracle, process])
+      decode (callTracerRoot [truncatedOracle, process])
         `shouldSatisfy` isLeft
-      decode (blockscoutRoot [invalidResult, process])
+      decode (callTracerRoot [invalidResult, process])
         `shouldSatisfy` isLeft
-      decode (blockscoutRoot [invalidFrozen, process])
+      decode (callTracerRoot [invalidFrozen, process])
         `shouldSatisfy` isLeft
-      decode (blockscoutRoot [invalidFad, process])
+      decode (callTracerRoot [invalidFad, process])
         `shouldSatisfy` isLeft
 
-    it "recursively traverses callTracer and Blockscout root objects" $ do
+    it "recursively traverses nested callTracer root objects" $ do
       let wrapper =
             callFrame
               externalAccount
@@ -293,7 +293,7 @@ spec = do
               "CALL"
               (processCalldata TradeOpen 10)
               [openSettlement 44]
-          trace = blockscoutRoot [spoofedProcess]
+          trace = callTracerRoot [spoofedProcess]
       decode trace `shouldBe` Right Map.empty
 
     it "ignores reverted process calls and their successful descendants" $ do
@@ -301,7 +301,7 @@ spec = do
             addError
               "execution reverted"
               (processFrame TradeOpen 11 $ openSettlement 55)
-      decode (blockscoutRoot [reverted]) `shouldBe` Right Map.empty
+      decode (callTracerRoot [reverted]) `shouldBe` Right Map.empty
 
     it "requires the process calldata to have canonical complete ABI words" $ do
       let tooShort =
@@ -456,7 +456,7 @@ spec = do
 
     it "rejects duplicate order evidence even when both executions agree" $ do
       let trace =
-            blockscoutRoot
+            callTracerRoot
               [ processFrame TradeOpen 17 $ openSettlement 1
               , processFrame TradeOpen 17 $ openSettlement 1
               ]
@@ -507,7 +507,7 @@ evidenceFor oracleFixture kind vpi frozenCloseSpread =
 
 fixture9202 :: Value
 fixture9202 =
-  blockscoutRoot
+  callTracerRoot
     [ processFrameWithOracleCalls
         oracle9202
         TradeClose
@@ -515,8 +515,8 @@ fixture9202 =
         [settlementFrameWithCalldata TradeClose liveClose9202]
     ]
 
-blockscoutRoot :: [Value] -> Value
-blockscoutRoot calls =
+callTracerRoot :: [Value] -> Value
+callTracerRoot calls =
   object
     [ "afterEVMTransfers" .= ([] :: [Value])
     , "calls" .= calls

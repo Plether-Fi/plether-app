@@ -69,13 +69,13 @@ is retry-safe expired. If the nonce advanced without an exact canonical
 inclusion event, its past outcome is unknown and non-retryable, but the local
 lane is released because the old nonce can no longer land.
 
-Blockscout supplies only a positive full-history event locator. An empty,
-missing, or failed explorer result is never evidence of absence. Every
-Blockscout hit must be verified by an exact, one-block
-`UserOperationEvent` query against the canonical RPC, including its hash,
-sender, transaction, and execution result. Third-party, RPC, or corrupt
-persisted-data failures fail closed; only the hash-bound protocol nonce or
-expiry proofs above can release a lane without a verified event.
+The backend routes `eth_getUserOperationReceipt` to the configured Alchemy
+RPC, including after a backend restart. A null receipt is only “not located”
+and never evidence of absence. Every positive receipt is independently
+verified against the exact hash, sender, EntryPoint, canonical transaction
+receipt and block hash, safe-head depth, and a unique `UserOperationEvent`.
+Mismatched or unavailable evidence fails closed; only the hash-bound protocol
+nonce or expiry proofs above can release a lane without a verified event.
 
 Legacy hash-only records cannot bind a nonce or validity deadline and never
 auto-expire. Storage migration converts old unverified terminal labels back to

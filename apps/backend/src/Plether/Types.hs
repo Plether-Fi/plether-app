@@ -7,6 +7,7 @@ module Plether.Types
   , module Plether.Types.Error
   , module Plether.Types.History
   , module Plether.Types.VaultPerformance
+  , module Plether.Types.VaultActivity
   ) where
 
 import Plether.Types.Api
@@ -17,3 +18,4 @@ import Plether.Types.Protocol
 import Plether.Types.Quote
 import Plether.Types.User
 import Plether.Types.VaultPerformance
+import Plether.Types.VaultActivity

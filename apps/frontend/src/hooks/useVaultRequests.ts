@@ -1,42 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { keccak256, padHex, toBytes, zeroAddress, type Address } from 'viem'
+import { Result } from 'better-result'
+import { zeroAddress, type Address } from 'viem'
 import { useReadContracts } from 'wagmi'
+import { perpsApi } from '../api/client'
 import { PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
 
-const BLOCKSCOUT_LOGS_URL = 'https://arbitrum-sepolia.blockscout.com/api'
-const DEFAULT_VAULT_DEPLOYMENT_BLOCK = 302_257_125
 const NEARBY_EPOCH_LOOKBACK = 4n
-const REQUEST_EVENT_TOPICS = [
-  {
-    topic: keccak256(toBytes('DepositRequested(address,address,uint256,uint256)')),
-    ownerTopic: 2,
-  },
-  {
-    topic: keccak256(toBytes('DepositRequest(address,address,uint256,address,uint256)')),
-    ownerTopic: 1,
-  },
-  {
-    topic: keccak256(toBytes('RedeemRequest(address,address,uint256,address,uint256)')),
-    ownerTopic: 1,
-  },
-] as const
 
 interface ContractResult {
   status: 'failure' | 'success'
   result?: unknown
-}
-
-interface BlockscoutLog {
-  topics?: string[]
-}
-
-interface BlockscoutLogsResponse {
-  status?: string
-  result?: BlockscoutLog[] | string
 }
 
 export interface VaultDepositRequest {
@@ -88,13 +65,6 @@ function asBoolean(value: unknown): boolean {
   return typeof value === 'boolean' ? value : false
 }
 
-function deploymentBlock(): number {
-  const configured = Number(import.meta.env.VITE_PERPS_VAULT_DEPLOYMENT_BLOCK)
-  return Number.isSafeInteger(configured) && configured >= 0
-    ? configured
-    : DEFAULT_VAULT_DEPLOYMENT_BLOCK
-}
-
 function cacheKey(controller: Address, isSenior: boolean): string {
   const vault = isSenior ? PERPS_ARBITRUM_SEPOLIA.seniorVault : PERPS_ARBITRUM_SEPOLIA.juniorVault
   return [
@@ -131,40 +101,62 @@ function writeCachedRequestIds(controller: Address, isSenior: boolean, requestId
 
 async function discoverRequestIds(
   controller: Address,
-  vaultAddress: Address,
+  isSenior: boolean,
   signal: AbortSignal
-): Promise<bigint[]> {
-  const controllerTopic = padHex(controller, { size: 32 })
-  const requestGroups = await Promise.all(REQUEST_EVENT_TOPICS.map(async ({ topic, ownerTopic }) => {
-    const params = new URLSearchParams({
-      module: 'logs',
-      action: 'getLogs',
-      fromBlock: String(deploymentBlock()),
-      toBlock: 'latest',
-      address: vaultAddress,
-      topic0: topic,
-      [`topic${String(ownerTopic)}`]: controllerTopic,
-      [`topic0_${String(ownerTopic)}_opr`]: 'and',
-    })
-    const response = await fetch(`${BLOCKSCOUT_LOGS_URL}?${params}`, { signal })
-    if (!response.ok) {
-      throw new Error(`Vault-request discovery failed with HTTP ${String(response.status)}.`)
+): Promise<{ requestIds: bigint[]; stale: boolean }> {
+  const requestIds: bigint[] = []
+  const seenCursors = new Set<string>()
+  let stale = false
+  let cursor: string | undefined
+  do {
+    const result = await perpsApi.getPerpsVaultRequestIds(
+      isSenior ? 'senior' : 'junior',
+      controller,
+      cursor,
+      250,
+      signal,
+    )
+    if (Result.isError(result)) throw result.error
+    const page = result.value.data
+    if (
+      page.tranche !== (isSenior ? 'senior' : 'junior')
+      || page.account.toLowerCase() !== controller.toLowerCase()
+      || !Number.isSafeInteger(page.confirmedThroughBlock)
+      || page.confirmedThroughBlock < 302_257_125
+      || typeof page.stale !== 'boolean'
+      || (page.nextCursor !== null && !/^\d+$/.test(page.nextCursor))
+      || page.requestIds.length > 250
+    ) {
+      throw new Error('Vault-request discovery returned inconsistent coverage.')
     }
-
-    const payload = await response.json() as BlockscoutLogsResponse
-    if (!Array.isArray(payload.result)) {
-      if (payload.status === '0' && typeof payload.result === 'string') return []
-      throw new Error('Vault-request discovery returned an invalid response.')
+    let previousId: bigint | undefined
+    for (const value of page.requestIds) {
+      if (!/^\d+$/.test(value)) throw new Error('Vault-request discovery returned an invalid request ID.')
+      const requestId = BigInt(value)
+      if (
+        (previousId !== undefined && requestId >= previousId)
+        || (cursor !== undefined && requestId >= BigInt(cursor))
+      ) {
+        throw new Error('Vault-request discovery returned out-of-order request IDs.')
+      }
+      requestIds.push(requestId)
+      previousId = requestId
     }
-
-    return payload.result.flatMap((log) => {
-      const requestTopic = log.topics?.[3]
-      if (!requestTopic || !/^0x[0-9a-fA-F]{64}$/.test(requestTopic)) return []
-      return [BigInt(requestTopic)]
-    })
-  }))
-
-  return requestGroups.flat()
+    if (
+      page.nextCursor !== null
+      && (
+        page.requestIds.length === 0
+        || page.nextCursor !== page.requestIds.at(-1)
+        || seenCursors.has(page.nextCursor)
+      )
+    ) {
+      throw new Error('Vault-request discovery returned an invalid pagination cursor.')
+    }
+    stale ||= page.stale
+    if (page.nextCursor !== null) seenCursors.add(page.nextCursor)
+    cursor = page.nextCursor ?? undefined
+  } while (cursor !== undefined)
+  return { requestIds, stale }
 }
 
 export function useVaultRequests({
@@ -172,18 +164,17 @@ export function useVaultRequests({
   isSenior,
   currentEpoch,
 }: UseVaultRequestsOptions) {
-  const vaultAddress = isSenior
-    ? PERPS_ARBITRUM_SEPOLIA.seniorVault
-    : PERPS_ARBITRUM_SEPOLIA.juniorVault
   const [cachedRequestIds, setCachedRequestIds] = useState<bigint[]>([])
   const [eventRequestIds, setEventRequestIds] = useState<bigint[]>([])
   const [discoveryStatus, setDiscoveryStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [discoveryStale, setDiscoveryStale] = useState(false)
   const [discoveryNonce, setDiscoveryNonce] = useState(0)
 
   useEffect(() => {
     setCachedRequestIds(controller ? readCachedRequestIds(controller, isSenior) : [])
     setEventRequestIds([])
     setDiscoveryStatus(controller ? 'loading' : 'idle')
+    setDiscoveryStale(false)
   }, [controller, isSenior])
 
   useEffect(() => {
@@ -191,9 +182,10 @@ export function useVaultRequests({
     const abortController = new AbortController()
     setDiscoveryStatus('loading')
 
-    void discoverRequestIds(controller, vaultAddress, abortController.signal)
-      .then((requestIds) => {
+    void discoverRequestIds(controller, isSenior, abortController.signal)
+      .then(({ requestIds, stale }) => {
         setEventRequestIds(requestIds)
+        setDiscoveryStale(stale)
         setCachedRequestIds((currentRequestIds) => {
           const merged = [...currentRequestIds, ...requestIds]
           writeCachedRequestIds(controller, isSenior, merged)
@@ -209,7 +201,7 @@ export function useVaultRequests({
     return () => {
       abortController.abort()
     }
-  }, [controller, discoveryNonce, isSenior, vaultAddress])
+  }, [controller, discoveryNonce, isSenior])
 
   const requestIds = useMemo(() => {
     const ids = new Set([...cachedRequestIds, ...eventRequestIds].map(String))
@@ -324,6 +316,7 @@ export function useVaultRequests({
     redeemRequests,
     isLoading: Boolean(controller) && (isLoading || discoveryStatus === 'loading'),
     discoveryError: discoveryStatus === 'error',
+    discoveryStale,
     refresh,
   }
 }

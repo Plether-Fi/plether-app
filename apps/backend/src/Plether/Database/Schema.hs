@@ -4748,7 +4748,8 @@ pendingPerpsExecutionEvidenceSql =
   \  WHERE o.chain_id = ? AND o.order_router = ? \
   \    AND o.terminal_status = 'Executed' \
   \    AND (o.oracle_derivation_version IS DISTINCT FROM ? \
-  \      OR o.execution_economics_version IS DISTINCT FROM ?) \
+  \      OR o.execution_economics_version IS NULL \
+  \      OR o.execution_economics_version < ?) \
   \    AND (o.execution_evidence_last_attempt_at IS NULL \
   \      OR o.execution_evidence_last_attempt_at < NOW() - INTERVAL '5 minutes')\
   \), recent AS (\

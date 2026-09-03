@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Control.Concurrent (forkIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -9,6 +10,11 @@ import Plether.Config (Config (..), PerpsCandleWriteMode (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (validateCompetitionReleaseManifest)
 import Plether.Database.Schema (ensurePerpsHistorySchema)
+import Plether.Database.VaultActivity
+  ( VaultActivityDeployment (..)
+  , ensureVaultActivitySchema
+  )
+import Plether.Ethereum.Client (newClient)
 import Plether.Logging (field, logError, logInfo)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
@@ -25,6 +31,11 @@ import Plether.Perps.HistoryIndexer
   , runPerpsIndexer
   , validatePerpsIndexerReleaseConfig
   )
+import Plether.Vaults.ActivityIndexer
+  ( VaultActivityIndexerConfig (..)
+  , startVaultActivityIndexer
+  , verifyVaultActivityBindings
+  )
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
@@ -37,7 +48,6 @@ data WorkerArgs = WorkerArgs
   , waPollSeconds :: Int
   , waStartBlock :: Maybe Integer
   , waRpcUrls :: Maybe [Text]
-  , waTraceApiUrl :: Maybe Text
   , waAddresses :: PerpsAddresses
   }
   deriving (Show)
@@ -125,14 +135,6 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
           , crmPletherOracle = paPletherOracle addresses
           , crmIndexerStartBlock = startBlock
           }
-      traceApiUrl = case waTraceApiUrl args of
-        Just value
-          | T.null (T.strip value) -> Nothing
-          | otherwise -> Just $ T.strip value
-        Nothing
-          | cfgPerpsChainId cfg == 421614 ->
-              Just "https://arbitrum-sepolia.blockscout.com/api/v2"
-          | otherwise -> Nothing
       indexerName =
         perpsIndexerNameForRelease
           (cfgPerpsChainId cfg)
@@ -141,7 +143,6 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
       indexerCfg =
         PerpsIndexerConfig
           { picRpcUrls = rpcUrls
-          , picTraceApiUrl = traceApiUrl
           , picChainId = cfgPerpsChainId cfg
           , picAddresses = addresses
           , picStartBlock = startBlock
@@ -179,7 +180,9 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
       manager <- newManager tlsManagerSettings
       pool <- newDbPool dbUrl
       case invocation of
-        IndexerOptions.PerpsIndexerLoop -> withDb pool ensurePerpsHistorySchema
+        IndexerOptions.PerpsIndexerLoop -> do
+          withDb pool ensurePerpsHistorySchema
+          withDb pool ensureVaultActivitySchema
         IndexerOptions.PerpsIndexerReplay _ -> pure ()
       whenReleaseBound cfg releaseManifest $ \boundManifest ->
         withDb pool $ \conn ->
@@ -198,8 +201,35 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
         , field "indexer_name" indexerName
         , field "order_lifecycle_book" $ paOrderLifecycleBook addresses
         , field "rpc_provider_count" $ maybe 1 length $ waRpcUrls args
-        , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
+        , field "trace_provider" ("alchemy_debug_traceTransaction" :: Text)
         ]
+      case invocation of
+        IndexerOptions.PerpsIndexerLoop -> do
+          vaultClient <- newClient $ cfgPerpsRpcUrl cfg
+          let vaultDeployment =
+                VaultActivityDeployment
+                  { vadChainId = cfgPerpsChainId cfg
+                  , vadHousePool = cfgVaultHistoryHousePoolAddress cfg
+                  , vadSeniorVault = cfgVaultHistorySeniorVaultAddress cfg
+                  , vadJuniorVault = cfgVaultHistoryJuniorVaultAddress cfg
+                  , vadDeploymentBlock = cfgVaultHistoryDeploymentBlock cfg
+                  }
+              vaultIndexerCfg =
+                VaultActivityIndexerConfig
+                  { vaicDeployment = vaultDeployment
+                  , vaicAssetAddress = cfgPerpsUsdc cfg
+                  , vaicConfirmations = cfgVaultHistoryConfirmations cfg
+                  -- The vault loop has an independent cadence and range budget;
+                  -- Perps history replay/tuning must not throttle this worker.
+                  , vaicBatchSize = 5_000
+                  , vaicPollIntervalMicros = 12_000_000
+                  }
+          -- Binding failures are startup failures, rather than silent failures in
+          -- the independently supervised vault-indexer thread.
+          verifyVaultActivityBindings vaultClient vaultIndexerCfg
+          _ <- forkIO $ startVaultActivityIndexer vaultClient pool vaultIndexerCfg
+          pure ()
+        IndexerOptions.PerpsIndexerReplay _ -> pure ()
       runPerpsIndexer manager pool indexerCfg
 
 whenReleaseBound
@@ -258,7 +288,6 @@ loadEnvArgs :: IO [(String, String)]
 loadEnvArgs = do
   pairs <- traverse readEnv
     [ "PERPS_INDEXER_RPC_URLS"
-    , "PERPS_INDEXER_TRACE_API_URL"
     , "PERPS_CHAIN_ID"
     , "PERPS_CANDLE_WRITE_MODE"
     , "PERPS_INDEXER_START_BLOCK"
@@ -293,11 +322,6 @@ parseWorkerArgs addressDefaults env args =
         case firstJust (lookupFlag "--rpc-urls" args) (lookup "PERPS_INDEXER_RPC_URLS" env) of
           Just value -> Just $ splitRpcUrls $ T.pack value
           Nothing -> Nothing
-    , waTraceApiUrl =
-        T.pack
-          <$> firstJust
-            (lookupFlag "--trace-api-url" args)
-            (lookup "PERPS_INDEXER_TRACE_API_URL" env)
     , waAddresses =
         applyPerpsAddressEnvironment addressDefaults env
     }

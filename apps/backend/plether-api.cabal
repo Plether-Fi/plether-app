@@ -30,10 +30,12 @@ library
         Plether.Types.Quote
         Plether.Types.Perps
         Plether.Types.VaultPerformance
+        Plether.Types.VaultActivity
         Plether.Types.Error
         Plether.Handlers.Protocol
         Plether.Handlers.Perps
         Plether.Handlers.VaultPerformance
+        Plether.Handlers.VaultActivity
         Plether.Handlers.User
         Plether.Handlers.Quote
         Plether.Ethereum.Client
@@ -61,6 +63,7 @@ library
         Plether.Utils.Numeric
         Plether.Database
         Plether.Database.VaultPerformance
+        Plether.Database.VaultActivity
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
@@ -76,6 +79,7 @@ library
         Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
         Plether.Vaults.PerformanceIndexer
+        Plether.Vaults.ActivityIndexer
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
@@ -219,6 +223,21 @@ executable plether-perps-indexer
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-provider-preflight
+    import:           warnings
+    main-is:          ProviderPreflight.hs
+    build-depends:
+        aeson >= 2.1,
+        base >= 4.17 && < 5,
+        bytestring >= 0.11,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 executable plether-insights-worker
     import:           warnings
     main-is:          InsightsWorker.hs
@@ -319,6 +338,7 @@ test-suite plether-api-test
         Plether.Insights.Registration.WalletSpec
         Plether.Insights.SnapshotWorkerSpec
         Plether.Vaults.PerformanceIndexerSpec
+        Plether.Vaults.ActivityIndexerSpec
         Plether.Types.ProtocolSpec
         Plether.Types.PerpsSpec
     build-depends:
@@ -358,6 +378,8 @@ test-suite plether-api-integration-test
         Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec
+        Plether.Vaults.ActivityDatabaseSpec
+        Plether.Vaults.ActivityIndexerIntegrationSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

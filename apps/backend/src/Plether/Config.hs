@@ -95,7 +95,6 @@ data Config = Config
   , cfgVaultHistorySeniorVaultAddress :: Text
   , cfgVaultHistoryJuniorVaultAddress :: Text
   , cfgVaultHistoryDeploymentBlock :: Integer
-  , cfgVaultHistoryRpcUrl :: Text
   , cfgVaultHistoryConfirmations :: Integer
   , cfgInsightsCompetitionRules :: CompetitionRules
   , cfgInsightsCompetitionReleaseManifest :: CompetitionReleaseManifest
@@ -532,7 +531,6 @@ loadConfig = do
       vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
       vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
       vaultHistoryDeploymentBlockStr <- fromMaybe "302257125" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
-      mVaultHistoryRpcUrl <- lookupEnv "VAULT_HISTORY_RPC_URL"
       vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
       mInsightsCompetitionSlug <- lookupEnv "INSIGHTS_ACTIVE_COMPETITION_SLUG"
       mInsightsCompetitionReleaseId <- lookupEnv "INSIGHTS_COMPETITION_RELEASE_ID"
@@ -723,6 +721,9 @@ loadConfig = do
               parseNonNegativeInteger
                 "VAULT_HISTORY_CONFIRMATIONS"
                 vaultHistoryConfirmationsStr
+            if confirmations /= 12
+              then Left "VAULT_HISTORY_CONFIRMATIONS must be exactly 12 for the reviewed Arbitrum Sepolia vault index"
+              else Right ()
             let addresses =
                   [ ("VAULT_HISTORY_HOUSE_POOL_ADDRESS", vaultHistoryHousePool)
                   , ("VAULT_HISTORY_SENIOR_VAULT_ADDRESS", vaultHistorySeniorVault)
@@ -731,11 +732,7 @@ loadConfig = do
             case [name | (name, address) <- addresses, not $ isCanonicalVaultAddress address] of
               invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
               [] ->
-                Right
-                  ( deploymentBlock
-                  , confirmations
-                  , fromMaybe (T.pack perpsRpcUrl) $ nonBlankText mVaultHistoryRpcUrl
-                  )
+                Right (deploymentBlock, confirmations)
 
           lpSettlementConfig = do
             mode <- resolveLpSettlementMode mLpSettlementMode mLpSettlementEnabled
@@ -886,7 +883,6 @@ loadConfig = do
           , Right
               ( vaultHistoryDeploymentBlock
                 , vaultHistoryConfirmations
-                , vaultHistoryRpcUrl
                 )
           , Right LpSettlementSettings {..}
           , Right (insightsCompetitionRules, resolvedRegistrationConfig)
@@ -939,7 +935,6 @@ loadConfig = do
                 , cfgVaultHistorySeniorVaultAddress = T.pack vaultHistorySeniorVault
                 , cfgVaultHistoryJuniorVaultAddress = T.pack vaultHistoryJuniorVault
                 , cfgVaultHistoryDeploymentBlock = vaultHistoryDeploymentBlock
-                , cfgVaultHistoryRpcUrl = vaultHistoryRpcUrl
                 , cfgVaultHistoryConfirmations = vaultHistoryConfirmations
                 , cfgInsightsCompetitionRules = insightsCompetitionRules
                 , cfgInsightsCompetitionReleaseManifest =

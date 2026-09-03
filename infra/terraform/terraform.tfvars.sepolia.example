@@ -5,10 +5,9 @@ posthog_project_token            = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
 posthog_otlp_host                = "eu.i.posthog.com"
 rpc_url                          = "https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
 perps_rpc_url                    = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
-# Public Blockscout RPC is archive-capable for the initial seven-day backfill.
-# Replace it with a private archive provider through this sensitive Terraform
-# variable if the public endpoint's rate limit is insufficient.
-vault_history_rpc_url            = "https://arbitrum-sepolia.blockscout.com/api/eth-rpc"
+# Vault history and activity use perps_rpc_url. Terraform retains the old
+# vault-history-rpc-url SecureString without consuming or rotating its value
+# until the separate post-soak removal apply.
 keeper_private_key               = "0xYOUR_KEEPER_PRIVATE_KEY"
 lp_settlement_private_key         = "" # Set a unique funded key before observe/execute.
 lp_settlement_signer_funding_confirmed = false # Set true only after funding and a successful keeper preflight.

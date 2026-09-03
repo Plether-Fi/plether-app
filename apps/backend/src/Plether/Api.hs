@@ -101,6 +101,11 @@ import Plether.Handlers.Insights
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Database (DbPool)
+import Plether.Database.VaultActivity (VaultActivityDeployment (..))
+import Plether.Handlers.VaultActivity
+  ( getVaultAccountRequestIds
+  , getVaultActivity
+  )
 import Plether.Handlers.TestnetFaucet
   ( claimTestnetFaucet
   )
@@ -508,6 +513,63 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
         Nothing ->
           handleServiceUnavailable $
             E.internalError "DATABASE_URL is not configured; vault performance history is unavailable"
+
+  get "/api/perps/vaults/activity" $ do
+    queryKeys <- currentQueryKeys
+    if not $ null queryKeys
+      then handleError $ E.invalidAmount "vault activity does not accept query parameters"
+      else case mPool of
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; vault activity is unavailable"
+        Just pool -> do
+          response <- liftIO $ getVaultActivity pool $ vaultActivityDeployment cfg
+          case response of
+            Just value -> handleResult $ Right value
+            Nothing ->
+              handleServiceUnavailable $
+                E.internalError "Vault activity is backfilling confirmed Alchemy logs"
+
+  get "/api/perps/vaults/:tranche/accounts/:address/request-ids" $ do
+    tranche <- T.toLower <$> pathParam "tranche"
+    account <- pathParam "address"
+    queryKeys <- currentQueryKeys
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    let knownQuery = all (`elem` ["limit", "cursor"]) queryKeys
+        uniqueQuery = countKey "limit" queryKeys <= 1 && countKey "cursor" queryKeys <= 1
+        parsedLimit = maybe (Just 100) parseStrictPositiveInt mLimit
+        parsedCursor = traverse parseStrictUnsignedInteger mCursor
+    case (tranche `elem` ["senior", "junior"], isStrictVaultAccountAddress account, knownQuery && uniqueQuery, parsedLimit, parsedCursor, mPool) of
+      (False, _, _, _, _, _) ->
+        handleError $ E.invalidAmount "tranche must be senior or junior"
+      (_, False, _, _, _, _) -> handleError $ E.invalidAddress account
+      (_, _, False, _, _, _) ->
+        handleError $ E.invalidAmount "only one limit and one cursor parameter are accepted"
+      (_, _, _, Just limit, Just cursor, Just pool)
+        | limit <= 250 -> do
+            response <-
+              liftIO $
+                getVaultAccountRequestIds
+                  pool
+                  (vaultActivityDeployment cfg)
+                  tranche
+                  account
+                  limit
+                  cursor
+            case response of
+              Just value -> handleResult $ Right value
+              Nothing ->
+                handleServiceUnavailable $
+                  E.internalError "Vault request discovery is backfilling confirmed Alchemy logs"
+        | otherwise -> handleError $ E.invalidAmount "limit must be between 1 and 250"
+      (_, _, _, Nothing, _, _) ->
+        handleError $ E.invalidAmount "limit must be an unsigned integer between 1 and 250"
+      (_, _, _, _, Nothing, _) ->
+        handleError $ E.invalidAmount "cursor must be an unsigned request ID"
+      (_, _, _, _, _, Nothing) ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; vault request discovery is unavailable"
 
   get "/api/perps/basket/history" $ do
     handlerStartedAt <- liftIO getMonotonicTimeNSec
@@ -995,6 +1057,37 @@ validateRouterParam Nothing = Just Nothing
 validateRouterParam (Just router)
   | isValidAddress router = Just $ Just router
   | otherwise = Nothing
+
+countKey :: Text -> [Text] -> Int
+countKey needle = length . filter (== needle)
+
+isStrictVaultAccountAddress :: Text -> Bool
+isStrictVaultAccountAddress value =
+  T.length value == 42 && "0x" `T.isPrefixOf` value && isValidAddress value
+
+parseStrictUnsignedInteger :: Text -> Maybe Integer
+parseStrictUnsignedInteger value
+  | not (T.null value) && T.all isAsciiDigit value = Just $ read $ T.unpack value
+  | otherwise = Nothing
+ where
+  isAsciiDigit character = character >= '0' && character <= '9'
+
+parseStrictPositiveInt :: Text -> Maybe Int
+parseStrictPositiveInt value = do
+  parsed <- parseStrictUnsignedInteger value
+  if parsed > 0 && parsed <= fromIntegral (maxBound :: Int)
+    then Just $ fromIntegral parsed
+    else Nothing
+
+vaultActivityDeployment :: Config -> VaultActivityDeployment
+vaultActivityDeployment cfg =
+  VaultActivityDeployment
+    { vadChainId = cfgPerpsChainId cfg
+    , vadHousePool = cfgVaultHistoryHousePoolAddress cfg
+    , vadSeniorVault = cfgVaultHistorySeniorVaultAddress cfg
+    , vadJuniorVault = cfgVaultHistoryJuniorVaultAddress cfg
+    , vadDeploymentBlock = cfgVaultHistoryDeploymentBlock cfg
+    }
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ \waiRequest -> Just $

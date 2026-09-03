@@ -1,11 +1,12 @@
 import { renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Result } from 'better-result'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { perpsApi } from '../../api/client'
 import { useVaultRequests } from '../useVaultRequests'
 
 const CONTROLLER = '0x1111111111111111111111111111111111111111' as const
 
 const mocks = vi.hoisted(() => ({
-  fetch: vi.fn(),
   refetch: vi.fn(),
   requestId: 0n,
   requestState: [
@@ -61,20 +62,35 @@ vi.mock('wagmi', () => ({
   },
 }))
 
-function successfulFetch(result: unknown[] = []) {
-  mocks.fetch.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ status: result.length > 0 ? '1' : '0', result }),
+function requestIdResponse(
+  requestIds: string[] = [],
+  tranche: 'senior' | 'junior' = 'junior',
+  nextCursor: string | null = null,
+  stale = false,
+) {
+  return Result.ok({
+    data: {
+      tranche,
+      account: CONTROLLER,
+      requestIds,
+      nextCursor,
+      confirmedThroughBlock: 302_300_000,
+      stale,
+    },
+    meta: {
+      cached: false,
+      blockNumber: 302_300_000,
+      chainId: 421_614,
+    },
   })
 }
 
 describe('useVaultRequests', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.restoreAllMocks()
     window.localStorage.clear()
-    vi.stubGlobal('fetch', mocks.fetch)
-    successfulFetch()
+    vi.spyOn(perpsApi, 'getPerpsVaultRequestIds')
+      .mockImplementation(async (tranche) => requestIdResponse([], tranche))
     mocks.requestId = 0n
     mocks.requestState = [
       '0x0000000000000000000000000000000000000000',
@@ -92,6 +108,10 @@ describe('useVaultRequests', () => {
       0n,
       false,
     ]
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('reads nearby deposit and redemption state from the public lens', async () => {
@@ -136,7 +156,7 @@ describe('useVaultRequests', () => {
     })
   })
 
-  it('restores an older claimable request discovered through event history', async () => {
+  it('restores an older claimable request discovered through the backend index', async () => {
     mocks.requestId = 300n
     mocks.requestState = [
       '0x0000000000000000000000000000000000000002',
@@ -154,14 +174,8 @@ describe('useVaultRequests', () => {
       0n,
       false,
     ]
-    successfulFetch([{
-      topics: [
-        `0x${'0'.repeat(64)}`,
-        `0x${'0'.repeat(24)}${CONTROLLER.slice(2)}`,
-        `0x${'0'.repeat(64)}`,
-        `0x${mocks.requestId.toString(16).padStart(64, '0')}`,
-      ],
-    }])
+    vi.mocked(perpsApi.getPerpsVaultRequestIds)
+      .mockResolvedValue(requestIdResponse(['300']))
 
     const { result } = renderHook(() => useVaultRequests({
       controller: CONTROLLER,
@@ -177,6 +191,36 @@ describe('useVaultRequests', () => {
       claimableAssets: 6_000_000n,
       matured: true,
     })
-    expect(mocks.fetch).toHaveBeenCalledTimes(3)
+    expect(perpsApi.getPerpsVaultRequestIds).toHaveBeenCalledWith(
+      'junior',
+      CONTROLLER,
+      undefined,
+      250,
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('paginates strictly and exposes stale confirmed discovery data', async () => {
+    vi.mocked(perpsApi.getPerpsVaultRequestIds)
+      .mockResolvedValueOnce(requestIdResponse(['400', '300'], 'junior', '300', true))
+      .mockResolvedValueOnce(requestIdResponse(['200'], 'junior'))
+
+    const { result } = renderHook(() => useVaultRequests({
+      controller: CONTROLLER,
+      isSenior: false,
+      currentEpoch: 500n,
+    }))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.discoveryError).toBe(false)
+    expect(result.current.discoveryStale).toBe(true)
+    expect(perpsApi.getPerpsVaultRequestIds).toHaveBeenNthCalledWith(
+      2,
+      'junior',
+      CONTROLLER,
+      '300',
+      250,
+      expect.any(AbortSignal),
+    )
   })
 })

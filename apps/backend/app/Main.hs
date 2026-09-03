@@ -12,6 +12,7 @@ import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
+import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
@@ -65,7 +66,7 @@ main = do
                 , field "order_lifecycle_book" $ cfgPerpsOrderLifecycleBook cfg
                 ]
         _ -> pure ()
-      vaultHistoryClient <- newClient (cfgVaultHistoryRpcUrl cfg)
+      let vaultHistoryClient = perpsClient
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           pool <- newDbPool dbUrl
@@ -73,6 +74,7 @@ main = do
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureTestnetFaucetSchema
           withDb pool ensureVaultPerformanceSchema
+          withDb pool ensureVaultActivitySchema
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn

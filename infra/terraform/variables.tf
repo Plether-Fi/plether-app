@@ -669,41 +669,59 @@ variable "perps_chain_id" {
   default = "421614"
 }
 
-variable "vault_history_rpc_url" {
-  type        = string
-  default     = ""
-  sensitive   = true
-  description = "Optional archive-capable Arbitrum RPC URL used for vault-history backfills. Empty falls back to perps_rpc_url."
-}
-
 variable "vault_history_house_pool_address" {
   type        = string
   default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
-  description = "HousePool deployment whose Senior and Junior vault performance is indexed."
+  description = "HousePool deployment whose Senior and Junior vault performance and canonical events are indexed."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_house_pool_address)) && lower(var.vault_history_house_pool_address) != "0x0000000000000000000000000000000000000000"
+    error_message = "vault_history_house_pool_address must be a nonzero Ethereum address."
+  }
 }
 
 variable "vault_history_senior_vault_address" {
   type        = string
   default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
-  description = "Senior TrancheVault deployment whose performance is indexed."
+  description = "Senior TrancheVault deployment whose performance, holders, and requests are indexed."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_senior_vault_address)) && lower(var.vault_history_senior_vault_address) != "0x0000000000000000000000000000000000000000"
+    error_message = "vault_history_senior_vault_address must be a nonzero Ethereum address."
+  }
 }
 
 variable "vault_history_junior_vault_address" {
   type        = string
   default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
-  description = "Junior TrancheVault deployment whose performance is indexed."
+  description = "Junior TrancheVault deployment whose performance, holders, and requests are indexed."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.vault_history_junior_vault_address)) && lower(var.vault_history_junior_vault_address) != "0x0000000000000000000000000000000000000000"
+    error_message = "vault_history_junior_vault_address must be a nonzero Ethereum address."
+  }
 }
 
 variable "vault_history_deployment_block" {
   type        = string
   default     = "302257125"
-  description = "First Arbitrum block eligible for the configured vault deployment's performance history."
+  description = "First Arbitrum block eligible for the configured vault deployment's performance and event history."
+
+  validation {
+    condition     = can(regex("^(0|[1-9][0-9]*)$", var.vault_history_deployment_block))
+    error_message = "vault_history_deployment_block must be a canonical unsigned decimal block number."
+  }
 }
 
 variable "vault_history_confirmations" {
   type        = string
   default     = "12"
-  description = "Blocks subtracted from the live Arbitrum head before vault-history checkpoints are sampled."
+  description = "Blocks subtracted from the live Arbitrum head before vault history and events are published."
+
+  validation {
+    condition     = var.vault_history_confirmations == "12"
+    error_message = "vault_history_confirmations must remain at the reviewed 12-block depth."
+  }
 }
 
 variable "perps_usdc" {
@@ -780,11 +798,13 @@ variable "perps_order_lifecycle_book" {
 
   validation {
     condition = (
-      var.environment != "sepolia"
-      || var.perps_order_lifecycle_book == ""
-      || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      var.perps_order_lifecycle_book == ""
+      || (
+        can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_order_lifecycle_book))
+        && lower(var.perps_order_lifecycle_book) != "0x0000000000000000000000000000000000000000"
+      )
     )
-    error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+    error_message = "perps_order_lifecycle_book must be empty or a nonzero Ethereum address."
   }
 }
 

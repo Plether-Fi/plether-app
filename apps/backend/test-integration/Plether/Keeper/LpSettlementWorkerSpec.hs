@@ -1236,7 +1236,6 @@ workerConfig mode =
     , cfgVaultHistorySeniorVaultAddress = seniorVault
     , cfgVaultHistoryJuniorVaultAddress = juniorVault
     , cfgVaultHistoryDeploymentBlock = 0
-    , cfgVaultHistoryRpcUrl = ""
     , cfgVaultHistoryConfirmations = 1
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = releaseManifest
