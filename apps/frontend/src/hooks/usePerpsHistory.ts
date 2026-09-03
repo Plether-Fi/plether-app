@@ -26,7 +26,7 @@ export interface PerpsOrderHistoryRow {
   pendingReason?: string
   executionMode?: string
   failedConstraint?: string
-  receiptEconomics?: BackendReceiptEconomics
+  receiptEconomics?: PerpsOrderReceiptEconomics
   executionPriceRaw?: bigint
   executionOraclePriceRaw?: bigint
   executionOracleFrozen?: boolean
@@ -42,6 +42,8 @@ export interface PerpsOrderHistoryRow {
 }
 
 export interface PerpsTradeHistoryRow {
+  orderId?: bigint
+  activityType?: string
   time: string
   market: string
   side: string
@@ -130,7 +132,7 @@ interface BackendOrderRow {
   executionMode?: string
   failedConstraint?: string
   receiptHash?: string
-  receiptEconomics?: BackendReceiptEconomics
+  receiptEconomics?: PerpsOrderReceiptEconomics
   executionPrice?: string
   executionOraclePrice?: string
   executionOracleFrozen?: boolean
@@ -148,7 +150,7 @@ interface BackendOrderRow {
   activityPnlUsdc?: string
 }
 
-interface BackendReceiptEconomics {
+export interface PerpsOrderReceiptEconomics {
   executionNotionalUsdc?: string
   realizedPnlUsdc?: string
   vpiUsdc?: string
@@ -387,6 +389,8 @@ function mapActivityRow(row: BackendActivityRow): PerpsTradeHistoryRow | undefin
   if (!txHash) return undefined
 
   return {
+    orderId: parseBigInt(row.orderId),
+    activityType: row.activityType,
     time: shortTime(row.timestamp),
     market: activityMarket(row.activityType),
     side: activitySide(row),

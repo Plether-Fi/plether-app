@@ -26,6 +26,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Surface | Component or story source | Coverage |
 | --- | --- | --- |
 | Position, order history and position-margin modal | `PerpsAccountPanel` | Current application components with deterministic fixtures |
+| Executed close reconciliation | `PerpsTradeTicket` | Current application component with deterministic executed-receipt evidence |
 | Market-phase banner | `PerpsMarketStatePanel` | Current application component with deterministic countdown text |
 | Vault overview, detail, position, activity and transaction previews | `VaultsDocumentation.stories.tsx` | Current production Vaults components with deterministic pool, history, account and request fixtures |
 
@@ -34,7 +35,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
 | `how-plether-works/how-pnl-is-calculated.md:75` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:542` | Transaction History close row | [Transaction History Close Result](http://localhost:6006/?path=/story/perps-account-panel--transaction-history-close-result) | Current component, illustrative values |
+| `how-plether-works/how-pnl-is-calculated.md:540` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 

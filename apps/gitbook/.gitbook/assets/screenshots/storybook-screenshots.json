@@ -89,15 +89,6 @@
       "storyPath": "/?path=/story/perps-account-panel--edit-position-margin"
     },
     {
-      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png",
-      "storyId": "perps-account-panel--transaction-history-close-result",
-      "dimensions": {
-        "height": 246,
-        "width": 1200
-      },
-      "storyPath": "/?path=/story/perps-account-panel--transaction-history-close-result"
-    },
-    {
       "asset": ".gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png",
       "storyId": "perps-market-state-panel--open-then-close-only",
       "dimensions": {
@@ -105,6 +96,15 @@
         "width": 496
       },
       "storyPath": "/?path=/story/perps-market-state-panel--open-then-close-only"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png",
+      "storyId": "perps-trade-ticket--executed",
+      "dimensions": {
+        "height": 1400,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--executed"
     }
   ]
 }

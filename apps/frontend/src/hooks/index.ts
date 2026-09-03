@@ -50,6 +50,12 @@ export {
 export { useMintFlow } from './useMintFlow'
 export { usePerpsMarket } from './usePerpsMarket'
 export { usePerpsAccount, type PerpsPendingOrder, type PerpsPosition } from './usePerpsAccount'
-export { usePerpsHistory, waitForPerpsOrderTerminal, type PerpsOrderHistoryRow, type PerpsTradeHistoryRow } from './usePerpsHistory'
+export {
+  usePerpsHistory,
+  waitForPerpsOrderTerminal,
+  type PerpsOrderHistoryRow,
+  type PerpsOrderReceiptEconomics,
+  type PerpsTradeHistoryRow,
+} from './usePerpsHistory'
 export { usePerpsTrading } from './usePerpsTrading'
 export { useSwitchToArbitrumSepolia } from './useSwitchToArbitrumSepolia'

@@ -5,8 +5,13 @@ import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsPositionSize, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import {
+  derivePerpsCloseReconciliation,
+  type PerpsCloseReconciliation,
+} from '../utils/perpsCloseReconciliation'
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { PerpsCloseReconciliationDetails } from './PerpsCloseReconciliationDetails'
 
 export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -50,6 +55,8 @@ interface TradeRow {
   size: ReactNode
   pnl?: ReactNode
   txHash?: string
+  closeOrder?: PerpsOrderHistoryRow
+  reconciliation?: PerpsCloseReconciliation
 }
 
 interface PerpsAccountPanelProps {
@@ -760,7 +767,56 @@ function OrdersView({
   )
 }
 
+function CloseExecutionDetails({ order }: { order: PerpsOrderHistoryRow }) {
+  return (
+    <section className="border border-brand-border/20 bg-app-bg p-4">
+      <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-content-secondary">
+        Execution
+      </h3>
+      <dl className="space-y-2 text-sm">
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Order ID</dt>
+          <dd className="font-mono text-xs text-content-primary">{order.orderId.toString()}</dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Position side</dt>
+          <dd className="text-content-primary">{order.side}</dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Final price</dt>
+          <dd className="text-content-primary">{order.price}</dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Order quantity</dt>
+          <dd className="text-content-primary">
+            {order.activitySizeDeltaRaw === undefined
+              ? '--'
+              : <TokenAmount amount={formatPerpsPositionSize(order.activitySizeDeltaRaw, 6)} token="plDXY" />}
+          </dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Executed exposure</dt>
+          <dd className="text-content-primary">
+            {order.size === '--' || order.size === 'Not executed'
+              ? order.size
+              : <TokenAmount amount={order.size} />}
+          </dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Commit tx</dt>
+          <dd><TxLink hash={order.commitTxHash} /></dd>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <dt className="text-content-secondary">Reveal tx</dt>
+          <dd><TxLink hash={order.revealTxHash} /></dd>
+        </div>
+      </dl>
+    </section>
+  )
+}
+
 function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
+  const [selectedRow, setSelectedRow] = useState<TradeRow | undefined>()
   if (rows.length === 0) return <EmptyState label="transaction history" />
 
   return (
@@ -781,6 +837,7 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
               <th className="py-3 font-medium">Price</th>
               <th className="py-3 font-medium">Size</th>
               <th className="py-3 font-medium">Result</th>
+              <th className="py-3 font-medium">Details</th>
               <th className="py-3 text-right font-medium">Tx</th>
             </tr>
           </thead>
@@ -793,12 +850,47 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
                 <td className="py-4">{row.price}</td>
                 <td className="py-4">{row.size}</td>
                 <td className="py-4">{row.pnl ?? '--'}</td>
+                <td className="py-3">
+                  {row.closeOrder ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setSelectedRow(row)
+                      }}
+                    >
+                      View breakdown
+                    </Button>
+                  ) : '--'}
+                </td>
                 <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <Modal
+        isOpen={selectedRow !== undefined}
+        onClose={() => {
+          setSelectedRow(undefined)
+        }}
+        title="Close reconciliation"
+        size="lg"
+        analyticsId="close_reconciliation_history"
+      >
+        {selectedRow?.closeOrder ? (
+          <div className="space-y-3">
+            <CloseExecutionDetails order={selectedRow.closeOrder} />
+            {selectedRow.reconciliation ? (
+              <PerpsCloseReconciliationDetails reconciliation={selectedRow.reconciliation} />
+            ) : (
+              <div className="border border-brand-border/20 bg-app-bg p-4 text-sm text-content-secondary">
+                Detailed close accounting unavailable
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   )
 }
@@ -926,15 +1018,31 @@ function AccountTabContent({
     commitTxHash: order.commitTxHash,
     revealTxHash: order.revealTxHash,
   }))
-  const liveTradeHistory = tradeHistory?.map((trade) => ({
-    time: trade.time,
-    market: trade.market,
-    side: trade.side,
-    price: trade.price,
-    size: trade.size === '--' ? '--' : <TokenAmount amount={trade.size} />,
-    pnl: trade.pnl === undefined ? undefined : <TokenAmount amount={trade.pnl} />,
-    txHash: trade.txHash,
-  }))
+  const liveTradeHistory = tradeHistory?.map((trade) => {
+    const closeOrderCandidates = orderHistory?.filter((order) => {
+      if (order.type !== 'Close' || order.status !== 'Executed') return false
+      if (trade.activityType !== undefined && trade.activityType !== 'Close') return false
+      if (trade.orderId !== undefined) return order.orderId === trade.orderId
+      return order.revealTxHash?.toLowerCase() === trade.txHash.toLowerCase()
+    }) ?? []
+    const closeOrder = trade.orderId !== undefined
+      ? closeOrderCandidates[0]
+      : closeOrderCandidates.length === 1
+        ? closeOrderCandidates[0]
+        : undefined
+
+    return {
+      time: trade.time,
+      market: trade.market,
+      side: trade.side,
+      price: trade.price,
+      size: trade.size === '--' ? '--' : <TokenAmount amount={trade.size} />,
+      pnl: trade.pnl === undefined ? undefined : <TokenAmount amount={trade.pnl} />,
+      txHash: trade.txHash,
+      closeOrder,
+      reconciliation: derivePerpsCloseReconciliation(closeOrder?.receiptEconomics),
+    }
+  })
 
   if (activeTab === 'position') {
     return (

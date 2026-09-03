@@ -131,7 +131,7 @@ The current `Commit Preview` lets you review:
 * VPI / Price impact
 * Estimated execution reward
 
-The current ticket does not show realized PnL, carry, released or remaining position margin, immediate payout, trader-claim changes, collateral seizure, bad debt, or the paid and waived portions of a frozen-close spread. Those values are calculated by the contract preview and final execution, but should not be treated as visible ticket fields.
+The **Commit Preview** does not present these estimates as final accounting. After execution, **Final Result** uses the executed order receipt to show realized PnL, carry, execution fee, signed VPI, frozen spread paid, net close result, Margin Account balance change, trader-claim change and any uncovered loss. It shows remaining position margin after a partial reduction and shows released margin only when the ticket captured an execution-bound pre-close margin snapshot with no earlier FIFO order.
 
 The shared preview component also renders open-position rows such as `Initial margin`, `Maintenance margin`, `Liquidation price` and `Contract side capacity`. On a close these can be `0`, `Unavailable` or otherwise not decision-relevant; do not interpret them as a complete post-close account projection.
 
@@ -342,7 +342,7 @@ A partial reduction must fund the complete spread.
 
 A terminal full close may waive only the uncollectible part of the frozen spread. Waived spread does not become bad debt, a trader claim or an LP receivable.
 
-Paid frozen spread belongs entirely to LPs. The onchain `FrozenCloseSpreadSettled` event records the assessed, paid and waived amounts. The current ticket shows only the estimated assessed spread.
+Paid frozen spread belongs entirely to LPs. The onchain `FrozenCloseSpreadSettled` event records the assessed, paid and waived amounts. Before commitment, the ticket shows the estimated assessed spread. After execution, **Final Result** always shows the paid amount and also shows assessed and waived amounts when any spread was waived.
 
 The active parameter is timelocked, must remain nonzero and cannot exceed `1,000 bps`. The value shown by the current onchain preview is authoritative.
 
@@ -466,14 +466,16 @@ If pool liquidity cannot cover the fresh `79.04 USDC` payment, the released `500
 
 After a partial reduction, use the **Position** panel to confirm remaining plDXY Perp exposure, unchanged entry price, updated leverage, liquidation price, unrealized PnL and cost of carry. Open `Edit Position Margin` if you need to inspect the remaining assigned position margin.
 
-The lifecycle window’s **Final Result** records final price, Order quantity, execution exposure, contract notional, the execution fee, VPI, confidence or estimated frozen-close spread, execution reward and transaction links. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. For a frozen close, treat the UI spread amount as an estimate: the executed transaction and onchain `FrozenCloseSpreadSettled` event are authoritative for the assessed, paid and waived amounts. **Transaction History** shows the realized close result. `Available to Trade` and any **Trader claim** are separate account views.
+The lifecycle window’s **Final Result** separates execution details from close accounting and account outcome. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. The close result shows realized PnL, carry, execution fee, the signed VPI charge or rebate, frozen spread paid and the net close result. When spread was waived, it also shows the assessed and waived amounts. The account outcome shows the receipt-backed Margin Account and trader-claim changes, any terminal uncovered loss, remaining margin after a partial reduction and execution-bound released margin when that snapshot is available.
+
+**Transaction History → Result** remains the gross realized price PnL. Select **View breakdown** on a matched executed close to open the same receipt-backed close result and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 
 After a full close, confirm:
 
 * The account has no active position.
 * All remaining position margin has been released.
 * The realized close result appears in **Transaction History**.
-* Final execution costs are recorded in the lifecycle window’s **Final Result** and onchain transaction. Any frozen-spread amount in **Final Result** is an estimate; use the executed transaction and `FrozenCloseSpreadSettled` event for the authoritative assessed, paid and waived amounts.
+* Final execution costs and any frozen-spread assessed, paid and waived amounts are recorded from the executed receipt in **Final Result** and remain available through **Transaction History → View breakdown**.
 * The Margin Account reflects released margin and any complete fresh payout funded immediately.
 * If pool liquidity cannot fund that complete fresh payout, it appears in full as a trader claim instead.
 * Remaining pending orders still match your intended exposure.

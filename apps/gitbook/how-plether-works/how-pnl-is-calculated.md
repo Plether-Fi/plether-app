@@ -523,23 +523,21 @@ A claim is not immediately withdrawable USDC.
 
 It becomes settleable once aggregate trader claims are fully covered by physical pool cash. Settlement credits the Trading Account’s Margin Account, after which the normal withdrawal process applies.
 
-### Current interface status
+### Reading the close reconciliation
 
-The current interface does not yet provide a complete net-close reconciliation in one view.
+For a supported executed reduction or close, **Final Result** shows three groups:
 
-In particular:
+* **Execution** — final price, Order quantity, execution exposure, Order ID and transactions.
+* **Close result** — realized PnL, carry, execution fee, signed VPI charge or rebate, frozen spread paid and **Net close result**. If any frozen spread was waived, assessed and waived amounts also appear.
+* **Account outcome** — Margin Account balance change, trader claim created or consumed, any uncovered terminal loss, remaining margin after a partial reduction and released margin when an execution-bound snapshot is available.
 
-* **Transaction History → Result** shows gross realized price PnL.
-* It is before close VPI, execution fee and carry.
-* The Final Result view shows fee and VPI lines but not complete net settlement.
-* Released margin is not presented separately.
-* Trader claim balance and **Settle Claim** appear in a separate **Trader claim** card under **Position**; the live card does not preflight aggregate coverage or show a separate settlement-status field.
-* **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization.
-* Portfolio value does not include a separate outstanding trader claim.
+Released margin is existing collateral becoming unlocked. It is shown separately for context and is not added to **Net close result**. If the receipt is legacy, incomplete, malformed or internally inconsistent, the execution details remain visible with **Detailed close accounting unavailable**; the interface does not substitute preview values or zeroes.
 
-A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
+**Transaction History → Result** still shows gross realized price PnL before close VPI, execution fee and carry. Select **View breakdown** on a matched executed close to open the same receipt-backed close and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 
-![Transaction History close row](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
+Trader claim balance and **Settle Claim** remain under **Position**. **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization, and Portfolio value does not include a separate outstanding trader claim.
+
+![Executed close reconciliation in Final Result](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png)
 
 ### The fixed range bounds gross PnL
 
