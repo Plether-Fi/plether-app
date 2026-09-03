@@ -1893,22 +1893,27 @@ function VaultActivitySection({
   const [activityPage, setActivityPage] = useState(0)
   const trancheName = tranche === 'senior' ? 'Senior' : 'Junior'
   const scopedHolders = useMemo(() => {
-    const claimedHolders = holders.flatMap((holder) => {
+    const attributedHolders = holders.flatMap((holder) => {
       const currentNavUsdc = tranche === 'senior'
         ? holder.seniorNavUsdc
         : holder.juniorNavUsdc
-      return currentNavUsdc > 0n ? [{ ...holder, currentNavUsdc }] : []
+      const attributedPercentage = tranche === 'senior'
+        ? holder.seniorShareOfAttributedValue
+        : holder.juniorShareOfAttributedValue
+      return currentNavUsdc > 0n ? [{ ...holder, currentNavUsdc, attributedPercentage }] : []
     })
-    const claimedNavUsdc = claimedHolders.reduce(
+    const attributedNavUsdc = attributedHolders.reduce(
       (total, holder) => total + holder.currentNavUsdc,
       0n,
     )
 
-    return claimedHolders.map((holder) => ({
+    return attributedHolders.map((holder) => ({
       ...holder,
-      shareOfVaultNav: claimedNavUsdc > 0n
-        ? Number(holder.currentNavUsdc * 1_000_000n / claimedNavUsdc) / 10_000
-        : 0,
+      shareOfVaultNav: holder.attributedPercentage ?? (
+        attributedNavUsdc > 0n
+          ? Number(holder.currentNavUsdc * 1_000_000n / attributedNavUsdc) / 10_000
+          : 0
+      ),
     })).sort((left, right) => (
       left.currentNavUsdc > right.currentNavUsdc
         ? -1
@@ -1958,8 +1963,10 @@ function VaultActivitySection({
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Holder distribution</h3>
               <p className="mt-1 max-w-2xl text-sm leading-5 text-content-secondary">
-                Share of the {trancheName} Vault value already moved into each wallet. Pending
-                deposits and shares still waiting to be moved are not included.
+                Share of the {trancheName} Vault represented by shares held in each wallet or
+                attributed to its deposit and withdrawal requests. Pending and refundable redeem
+                shares remain attributed until they become an asset claim; deposits awaiting
+                settlement and refundable deposit assets are not included.
               </p>
             </div>
             <span className="text-xs text-content-secondary">Largest wallet positions</span>
@@ -1969,7 +1976,7 @@ function VaultActivitySection({
             <div className="flex min-h-36 items-center justify-center"><Spinner /></div>
           ) : scopedHolders.length === 0 ? (
             <p className="p-6 text-sm text-content-secondary">
-              {isError ? 'Holder data is temporarily unavailable.' : 'No vault shares have been moved into user wallets yet.'}
+              {isError ? 'Holder data is temporarily unavailable.' : 'No attributed vault share positions are available yet.'}
             </p>
           ) : (
             <>
@@ -1980,7 +1987,7 @@ function VaultActivitySection({
                     <tr>
                       <th scope="col" className="px-5 py-3 font-medium">Holder</th>
                       <th scope="col" className="px-5 py-3 font-medium">Current value</th>
-                      <th scope="col" className="px-5 py-3 font-medium">% of wallet-held value</th>
+                      <th scope="col" className="px-5 py-3 font-medium">% of attributed value</th>
                     </tr>
                   </thead>
                   <tbody>

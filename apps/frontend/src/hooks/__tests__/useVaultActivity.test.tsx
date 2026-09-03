@@ -31,11 +31,24 @@ const response: ApiResponse<VaultActivity> = {
       lagBlocks: 0,
       lagSeconds: 0,
       lastSuccessfulPoll: 1_700_000_000,
+      shareAttribution: {
+        confirmedThroughBlock: 302_300_000,
+        confirmedThroughHash: `0x${'cc'.repeat(32)}`,
+        complete: true,
+        lastSuccessfulPoll: 1_700_000_000,
+      },
     },
     senior: {
-      holders: [{ address: HOLDER, shareBalance: '10' }],
+      holders: [{
+        address: HOLDER,
+        shareBalance: '10',
+        unclaimedDepositShares: '5',
+        withdrawalEscrowShares: '5',
+        totalAttributedShares: '20',
+      }],
       holderCount: 1,
       holdersTruncated: false,
+      totalAttributedShares: '20',
       activity: [{
         id: `${TX_A}-1`,
         tranche: 'senior',
@@ -54,9 +67,16 @@ const response: ApiResponse<VaultActivity> = {
       activityTruncated: false,
     },
     junior: {
-      holders: [{ address: HOLDER, shareBalance: '20' }],
+      holders: [{
+        address: HOLDER,
+        shareBalance: '20',
+        unclaimedDepositShares: '0',
+        withdrawalEscrowShares: '0',
+        totalAttributedShares: '20',
+      }],
       holderCount: 1,
       holdersTruncated: false,
+      totalAttributedShares: '20',
       activity: [{
         id: `${TX_B}-2`,
         tranche: 'junior',
@@ -113,9 +133,11 @@ describe('useVaultActivity', () => {
     await waitFor(() => expect(result.current.holders).toHaveLength(1))
     expect(result.current.holders[0]).toMatchObject({
       address: HOLDER,
-      seniorNavUsdc: 100n,
+      seniorNavUsdc: 200n,
       juniorNavUsdc: 100n,
-      currentNavUsdc: 200n,
+      currentNavUsdc: 300n,
+      seniorShareOfAttributedValue: 100,
+      juniorShareOfAttributedValue: 100,
     })
     expect(result.current.activity.map(({ amountUsdc, amountIsEstimate }) => ({
       amountUsdc,
@@ -130,8 +152,51 @@ describe('useVaultActivity', () => {
     })
     await waitFor(() => expect(result.current.isStale).toBe(true))
     expect(result.current.isError).toBe(false)
-    expect(result.current.holders[0]?.currentNavUsdc).toBe(200n)
+    expect(result.current.holders[0]?.currentNavUsdc).toBe(300n)
     expect(getActivity).toHaveBeenCalledTimes(3)
     client.clear()
+  })
+
+  it('uses the server total for truncated percentages and accepts legacy direct-share rows', async () => {
+    const attributed = JSON.parse(JSON.stringify(response)) as ApiResponse<VaultActivity>
+    attributed.data.senior.holderCount = 2
+    attributed.data.senior.holdersTruncated = true
+    attributed.data.senior.totalAttributedShares = '25'
+    vi.spyOn(perpsApi, 'getPerpsVaultActivity').mockResolvedValue(Result.ok(attributed))
+    const attributedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const attributedResult = renderHook(() => useVaultActivity({
+      seniorTotalAssets: 1_000n,
+      seniorEffectiveSupply: 100n,
+    }), { wrapper: wrapper(attributedClient) })
+
+    await waitFor(() => expect(attributedResult.result.current.holders).toHaveLength(1))
+    expect(attributedResult.result.current.holders[0]?.seniorShareOfAttributedValue).toBe(80)
+    attributedClient.clear()
+    vi.restoreAllMocks()
+
+    const legacy = JSON.parse(JSON.stringify(response)) as ApiResponse<VaultActivity>
+    delete legacy.data.coverage.shareAttribution
+    delete legacy.data.coverage.depositShareAttribution
+    delete legacy.data.senior.totalAttributedShares
+    delete legacy.data.junior.totalAttributedShares
+    for (const tranche of [legacy.data.senior, legacy.data.junior]) {
+      for (const holder of tranche.holders) {
+        delete holder.unclaimedDepositShares
+        delete holder.withdrawalEscrowShares
+        delete holder.totalAttributedShares
+      }
+    }
+    vi.spyOn(perpsApi, 'getPerpsVaultActivity').mockResolvedValue(Result.ok(legacy))
+    const legacyClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const legacyResult = renderHook(() => useVaultActivity({
+      seniorTotalAssets: 1_000n,
+      seniorEffectiveSupply: 100n,
+      juniorTotalAssets: 500n,
+      juniorEffectiveSupply: 100n,
+    }), { wrapper: wrapper(legacyClient) })
+
+    await waitFor(() => expect(legacyResult.result.current.holders).toHaveLength(1))
+    expect(legacyResult.result.current.holders[0]?.currentNavUsdc).toBe(200n)
+    legacyClient.clear()
   })
 })

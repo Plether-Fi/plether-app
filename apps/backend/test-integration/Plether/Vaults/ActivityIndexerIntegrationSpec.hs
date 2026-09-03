@@ -24,14 +24,17 @@ import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultActivityIndexerStateRow (..)
+  , VaultAttributedHolderRow (..)
+  , VaultDepositRequestKey (..)
   , VaultHolderRow (..)
   , ensureVaultActivitySchema
   , getVaultActivityIndexerState
+  , getVaultAttributedHolders
   , getVaultHolders
   , getVaultRequestIds
   , resetVaultActivityDeployment
   )
-import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
+import Plether.Ethereum.Abi (encodeAddress, encodeBool, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (newClient)
 import Plether.Utils.Hex (hexToInteger, intToHex)
 import Plether.Vaults.ActivityIndexer
@@ -43,6 +46,12 @@ import Plether.Vaults.ActivityIndexer
   , startVaultActivityIndexer
   , transferTopic
   , verifyVaultActivityBindings
+  )
+import Plether.Vaults.DepositAttributionIndexer
+  ( VaultDepositAttributionCycleResult (..)
+  , VaultDepositAttributionCycleStats (..)
+  , lpRequestStateCall
+  , runVaultDepositAttributionCycle
   )
 import System.Timeout (timeout)
 import Test.Hspec (Spec, describe, expectationFailure, it, shouldBe, shouldSatisfy)
@@ -66,11 +75,15 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
 
           first <- runVaultActivityIndexerCycle client pool indexerConfig
           assertCompleted first 12 2
+          attributed <- runVaultDepositAttributionCycle client pool indexerConfig
+          assertAttributionCompleted attributed 12 1
           withDb pool $ \conn -> do
             getVaultHolders conn deployment seniorVault 10
               `shouldReturnValue` [VaultHolderRow holderA 100]
             getVaultRequestIds conn deployment seniorVault holderA 10 Nothing
               `shouldReturnValue` [11]
+            getVaultAttributedHolders conn deployment seniorVault 10
+              `shouldReturnValue` [VaultAttributedHolderRow holderA 100 25 0 125]
           ranges <- fsLogRanges <$> readIORef stateRef
           ranges `shouldSatisfy` elem (seniorVault, 10, 12)
           ranges `shouldSatisfy` elem (seniorVault, 10, 11)
@@ -86,9 +99,16 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
             (state {fsReplacementBranch = True}, ())
           rebuilt <- runVaultActivityIndexerCycle client pool indexerConfig
           assertCompleted rebuilt 12 2
-          withDb pool $ \conn ->
+          withDb pool $ \conn -> do
             getVaultHolders conn deployment seniorVault 10
               `shouldReturnValue` [VaultHolderRow holderA 200]
+            getVaultAttributedHolders conn deployment seniorVault 10
+              `shouldReturnValue` []
+          reattributed <- runVaultDepositAttributionCycle client pool indexerConfig
+          assertAttributionCompleted reattributed 12 1
+          withDb pool $ \conn ->
+            getVaultAttributedHolders conn deployment seniorVault 10
+              `shouldReturnValue` [VaultAttributedHolderRow holderA 200 25 0 225]
 
           atomicModifyIORef' stateRef $ \state ->
             (state {fsHead = 25, fsMalformedAtThirteen = True}, ())
@@ -134,6 +154,21 @@ assertCompleted (VaultActivityCycleCompleted VaultActivityCycleStats {..}) expec
   vacrEventCount `shouldBe` expectedEvents
 assertCompleted result _ _ =
   expectationFailure $ "Expected a completed vault cycle, received " <> show result
+
+assertAttributionCompleted
+  :: VaultDepositAttributionCycleResult
+  -> Integer
+  -> Int
+  -> IO ()
+assertAttributionCompleted
+  (VaultDepositAttributionCycleCompleted VaultDepositAttributionCycleStats {..})
+  expectedBlock
+  expectedRequests = do
+    vdacrConfirmedThrough `shouldBe` expectedBlock
+    vdacrBackfillComplete `shouldBe` True
+    vdacrRequestsObserved `shouldBe` expectedRequests
+assertAttributionCompleted result _ _ =
+  expectationFailure $ "Expected a completed request share attribution cycle, received " <> show result
 
 withVaultIndexerDatabase :: Text -> (DbPool -> IO a) -> IO a
 withVaultIndexerDatabase databaseUrl action = do
@@ -191,7 +226,7 @@ dispatchRpc stateRef requestId methodName params = do
     "eth_chainId" -> pure $ rpcSuccess requestId $ String "0x66eee"
     "eth_getCode" -> pure $ rpcSuccess requestId $ String "0x01"
     "eth_call" ->
-      case callTargetAndData params >>= bindingResult of
+      case callTargetAndData params >>= bindingResult state of
         Just result -> pure $ rpcSuccess requestId $ String $ hexBytes result
         Nothing -> unexpected "unexpected eth_call"
     "eth_getBlockByNumber" ->
@@ -216,14 +251,40 @@ dispatchRpc stateRef requestId methodName params = do
     recordUnexpected stateRef message
     pure $ rpcError requestId (-32601) message
 
-bindingResult :: (Text, Text) -> Maybe BS.ByteString
-bindingResult (target, calldata)
+bindingResult :: FixtureState -> (Text, Text) -> Maybe BS.ByteString
+bindingResult _ (target, calldata)
   | target == housePool && calldata == callHex "seniorVault()" = Just $ encodeAddress seniorVault
   | target == housePool && calldata == callHex "juniorVault()" = Just $ encodeAddress juniorVault
   | target `elem` [seniorVault, juniorVault] && calldata == callHex "POOL()" = Just $ encodeAddress housePool
   | target `elem` [seniorVault, juniorVault] && calldata == callHex "asset()" = Just $ encodeAddress asset
   | target `elem` [seniorVault, juniorVault] && calldata == callHex "decimals()" = Just $ encodeUint256 9
+  | target == publicLens && calldata == callHex "HOUSE_POOL()" = Just $ encodeAddress housePool
+  | target == publicLens && calldata == requestStateCallHex = Just requestStateResult
   | otherwise = Nothing
+
+requestStateCallHex :: Text
+requestStateCallHex =
+  case lpRequestStateCall deployment (VaultDepositRequestKey seniorVault holderA 11) of
+    Right calldata -> hexBytes calldata
+    Left _ -> ""
+
+requestStateResult :: BS.ByteString
+requestStateResult = BS.concat
+  [ encodeAddress seniorVault
+  , encodeUint256 11
+  , encodeAddress holderA
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeUint256 50
+  , encodeUint256 25
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeUint256 0
+  , encodeBool False
+  ]
 
 callTargetAndData :: Value -> Maybe (Text, Text)
 callTargetAndData value =
@@ -355,6 +416,7 @@ indexerConfig =
   VaultActivityIndexerConfig
     { vaicDeployment = deployment
     , vaicAssetAddress = asset
+    , vaicPublicLensAddress = publicLens
     , vaicConfirmations = 12
     , vaicBatchSize = 5_000
     , vaicPollIntervalMicros = 12_000_000
@@ -363,10 +425,11 @@ indexerConfig =
 deployment :: VaultActivityDeployment
 deployment = VaultActivityDeployment 421_614 housePool seniorVault juniorVault 10
 
-housePool, seniorVault, juniorVault, asset, holderA, zeroAddress :: Text
+housePool, seniorVault, juniorVault, asset, publicLens, holderA, zeroAddress :: Text
 housePool = "0x0000000000000000000000000000000000001100"
 seniorVault = "0x0000000000000000000000000000000000001200"
 juniorVault = "0x0000000000000000000000000000000000001300"
 asset = "0x0000000000000000000000000000000000001400"
+publicLens = "0x0000000000000000000000000000000000001450"
 holderA = "0x0000000000000000000000000000000000001500"
 zeroAddress = "0x0000000000000000000000000000000000000000"

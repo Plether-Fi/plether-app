@@ -16,6 +16,7 @@ import Plether.Database.VaultActivity
   )
 import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Logging (field, logError, logInfo)
+import Plether.Perps.Release (perpsV2PublicLens)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , CompetitionRules (..)
@@ -35,6 +36,9 @@ import Plether.Vaults.ActivityIndexer
   ( VaultActivityIndexerConfig (..)
   , startVaultActivityIndexer
   , verifyVaultActivityBindings
+  )
+import Plether.Vaults.DepositAttributionIndexer
+  ( startVaultDepositAttributionIndexer
   )
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
@@ -225,6 +229,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
                 VaultActivityIndexerConfig
                   { vaicDeployment = vaultDeployment
                   , vaicAssetAddress = cfgPerpsUsdc cfg
+                  , vaicPublicLensAddress = perpsV2PublicLens
                   , vaicConfirmations = cfgVaultHistoryConfirmations cfg
                   -- The vault loop has an independent cadence and range budget;
                   -- Perps history replay/tuning must not throttle this worker.
@@ -235,6 +240,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
           -- the independently supervised vault-indexer thread.
           verifyVaultActivityBindings vaultClient vaultIndexerCfg
           _ <- forkIO $ startVaultActivityIndexer vaultClient pool vaultIndexerCfg
+          _ <- forkIO $ startVaultDepositAttributionIndexer vaultClient pool vaultIndexerCfg
           pure ()
         IndexerOptions.PerpsIndexerReplay _ -> pure ()
       runPerpsIndexer manager pool indexerCfg

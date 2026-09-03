@@ -316,6 +316,99 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
 }
 
+resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_heartbeat" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-request-share-attribution-heartbeat"
+  pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultRequestShareAttributionHeartbeat-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbeat_missing" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-heartbeat-missing"
+  alarm_description   = "No successful vault request-share-attribution heartbeat was observed for three minutes."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_heartbeat[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_heartbeat[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-request-share-attribution-lag"
+  pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.lag_seconds >= 0 }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultRequestShareAttributionLagSeconds-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.lag_seconds"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-lag"
+  alarm_description   = "Vault request-share attribution lag exceeded two minutes for three consecutive periods."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_lag[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_lag[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 120
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_backfill" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  name           = "plether-${var.environment}-vault-request-share-attribution-backfill"
+  pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.state = \"backfilling\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "VaultRequestShareAttributionBackfillIncomplete-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill" {
+  count = var.perps_chain_id == "421614" ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-backfill-incomplete"
+  alarm_description   = "Vault request-share attribution remained incomplete for ten minutes."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 10
+  datapoints_to_alarm = 10
+  metric_name         = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_backfill[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.vault_request_share_attribution_backfill[0].metric_transformation[0].namespace
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
@@ -380,8 +473,9 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
 
 locals {
   vault_indexer_failure_events = var.perps_chain_id == "421614" ? {
-    invariant = "vault_activity_indexer_iteration_failed"
-    trace     = "perps_indexer_execution_evidence_economics_failed"
+    invariant   = "vault_activity_indexer_iteration_failed"
+    attribution = "vault_request_share_attribution_iteration_failed"
+    trace       = "perps_indexer_execution_evidence_economics_failed"
   } : {}
 }
 

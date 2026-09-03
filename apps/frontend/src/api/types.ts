@@ -329,11 +329,31 @@ export interface VaultActivityCoverage {
   lagBlocks: number;
   lagSeconds: number;
   lastSuccessfulPoll: number;
+  shareAttribution?: {
+    confirmedThroughBlock: number;
+    confirmedThroughHash: string | null;
+    complete: boolean;
+    lastSuccessfulPoll: number;
+  };
+  /** Compatibility with an intermediate deposit-only backend rollout. */
+  depositShareAttribution?: {
+    confirmedThroughBlock: number;
+    confirmedThroughHash: string | null;
+    complete: boolean;
+    lastSuccessfulPoll: number;
+  };
 }
 
 export interface VaultActivityHolderRow {
   address: string;
+  /** Shares directly held by the address. */
   shareBalance: string;
+  /** Finalized deposit shares still held by the vault for this controller. */
+  unclaimedDepositShares?: string;
+  /** Pending or refundable redeem shares still held by the vault for this controller. */
+  withdrawalEscrowShares?: string;
+  /** Direct plus attributed deposit and withdrawal shares. */
+  totalAttributedShares?: string;
 }
 
 export interface VaultActivityRow {
@@ -355,6 +375,8 @@ export interface VaultActivityTrancheData {
   holders: VaultActivityHolderRow[];
   holderCount: number;
   holdersTruncated: boolean;
+  /** Exact denominator across all attributed holders, including truncated rows. */
+  totalAttributedShares?: string;
   activity: VaultActivityRow[];
   activityCount: number;
   activityTruncated: boolean;

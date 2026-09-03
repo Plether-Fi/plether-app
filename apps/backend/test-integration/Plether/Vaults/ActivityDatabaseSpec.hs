@@ -12,10 +12,16 @@ import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
+  , VaultAttributedHolderRow (..)
+  , VaultDepositRequestKey (..)
+  , VaultDepositRequestStateRow (..)
   , VaultHolderRow (..)
   , VaultRequestRow (..)
   , ensureVaultActivitySchema
   , getVaultActivityIndexerState
+  , getVaultAttributedHolderSummary
+  , getVaultAttributedHolders
+  , getVaultDepositRequestKeys
   , getVaultHolders
   , getVaultRequestIds
   , getVaultRequests
@@ -23,10 +29,15 @@ import Plether.Database.VaultActivity
   , insertVaultRequestExact
   , insertVaultShareTransferExact
   , recomputeVaultHolderBalance
+  , recomputeVaultAttributedHolderBalances
   , resetVaultActivityDeployment
   , setVaultActivityIndexerState
+  , setVaultDepositAttributionState
   , tryLockVaultActivityIndexer
+  , tryLockVaultDepositAttributionIndexer
   , unlockVaultActivityIndexer
+  , unlockVaultDepositAttributionIndexer
+  , upsertVaultDepositRequestStateExact
   )
 import Plether.Handlers.VaultActivity (getVaultActivity)
 import Plether.Types
@@ -91,6 +102,100 @@ vaultActivityDatabaseSpec databaseUrl =
           `shouldReturnValue` [300, 200]
         visible <- getVaultRequests conn deploymentA seniorVault 10
         map vrrEventName visible `shouldBe` ["RedeemRequest", "RedeemRequest", "DepositRequest"]
+        getVaultDepositRequestKeys conn deploymentA Nothing 13
+          `shouldReturnValue`
+            [ VaultDepositRequestKey seniorVault holderA 200
+            , VaultDepositRequestKey seniorVault holderA 300
+            , VaultDepositRequestKey seniorVault holderB 400
+            ]
+
+    it "combines direct and claimable deposit shares without counting pending or refundable deposits" $
+      withVaultDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertTransfer conn deploymentA seniorVault zeroAddress holderA 100 20 0
+        insertTransfer conn deploymentA seniorVault zeroAddress seniorVault 500 20 1
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderA 1 0 20 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderA 2 0 5 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 3 50 0 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 4 0 0 75
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 5 0 30 0
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 20 (blockHash 20)
+
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue`
+            [ VaultAttributedHolderRow holderA 100 25 0 125
+            , VaultAttributedHolderRow holderB 0 30 0 30
+            ]
+        getVaultAttributedHolderSummary conn deploymentA seniorVault
+          `shouldReturnValue` (2, 155)
+
+        -- Claiming transfers the same shares from vault escrow into the
+        -- controller wallet without changing the combined attributed total.
+        insertTransfer conn deploymentA seniorVault seniorVault holderB 30 21 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderB
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          (depositState seniorVault holderB 5 0 0 0)
+            { vdrsObservedBlock = 21
+            , vdrsObservedBlockHash = blockHash 21
+            }
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 21 (blockHash 21)
+
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue`
+            [ VaultAttributedHolderRow holderA 100 25 0 125
+            , VaultAttributedHolderRow holderB 30 0 0 30
+            ]
+        getVaultAttributedHolderSummary conn deploymentA seniorVault
+          `shouldReturnValue` (2, 155)
+
+    it "keeps queued and refundable withdrawals attributed until they become asset claims" $
+      withVaultDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertTransfer conn deploymentA seniorVault zeroAddress holderA 100 30 0
+        insertTransfer conn deploymentA seniorVault holderA seniorVault 40 31 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 6 40 0 False 31
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 31 (blockHash 31)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 40 100]
+
+        -- Once the redeem is funded, its value is an asset receivable and no
+        -- longer belongs in a share-distribution denominator.
+        insertTransfer conn deploymentA seniorVault seniorVault zeroAddress 40 32 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 6 0 0 False 32
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 32 (blockHash 32)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 0 60]
+
+        -- A later refundable redeem remains beneficially attributed until the
+        -- vault returns the shares to the controller wallet.
+        insertTransfer conn deploymentA seniorVault holderA seniorVault 20 33 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 7 0 20 True 33
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 33 (blockHash 33)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 40 0 20 60]
+
+        insertTransfer conn deploymentA seniorVault seniorVault holderA 20 34 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 7 0 0 False 34
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 34 (blockHash 34)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 0 60]
 
     it "isolates state, data rebuilds, and advisory leadership by deployment" $
       withVaultDatabase databaseUrl $ \pool -> do
@@ -100,6 +205,9 @@ vaultActivityDatabaseSpec databaseUrl =
           tryLockVaultActivityIndexer first `shouldReturnValue` True
           tryLockVaultActivityIndexer second `shouldReturnValue` False
           unlockVaultActivityIndexer first
+          tryLockVaultDepositAttributionIndexer first `shouldReturnValue` True
+          tryLockVaultDepositAttributionIndexer second `shouldReturnValue` False
+          unlockVaultDepositAttributionIndexer first
         withDb pool $ \conn -> do
           setState conn deploymentA 20
           setState conn deploymentB 30
@@ -117,6 +225,24 @@ vaultActivityDatabaseSpec databaseUrl =
           getVaultHolders conn deploymentA seniorVault 10 `shouldReturnValue` []
           getVaultHolders conn deploymentB seniorVault 10
             `shouldReturnValue` [VaultHolderRow holderB 200]
+
+    it "withholds the combined holder response until attribution has completed once" $
+      withVaultDatabase databaseUrl $ \pool -> do
+        withDb pool $ \conn ->
+          setVaultActivityIndexerState
+            conn deploymentA 20 (Just $ blockHash 20) (1_700_000_020 :: Integer)
+            20 (blockHash 20) (1_700_000_020 :: Integer) True
+        getVaultActivity pool deploymentA >>= (`shouldSatisfy` isNothing)
+
+        withDb pool $ \conn -> do
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA seniorVault 20 (blockHash 20)
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA juniorVault 20 (blockHash 20)
+          setVaultDepositAttributionState
+            conn deploymentA 20 (blockHash 20) (1_700_000_020 :: Integer) True
+        published <- getVaultActivity pool deploymentA
+        published `shouldSatisfy` (not . isNothing)
 
     it "serves a completed snapshot as explicitly stale while the index catches up" $
       withVaultDatabase databaseUrl $ \pool -> do
@@ -182,10 +308,65 @@ request eventName requestId blockNumber logIndex =
 
 setState :: Connection -> VaultActivityDeployment -> Integer -> IO ()
 setState conn targetDeployment blockNumber =
-  setVaultActivityIndexerState
-    conn targetDeployment blockNumber (Just $ blockHash blockNumber)
-    (1_700_000_000 + blockNumber) blockNumber (blockHash blockNumber)
-    (1_700_000_000 + blockNumber) True
+  do
+    setVaultActivityIndexerState
+      conn targetDeployment blockNumber (Just $ blockHash blockNumber)
+      (1_700_000_000 + blockNumber) blockNumber (blockHash blockNumber)
+      (1_700_000_000 + blockNumber) True
+    recomputeVaultAttributedHolderBalances
+      conn targetDeployment (vadSeniorVault targetDeployment) blockNumber (blockHash blockNumber)
+    recomputeVaultAttributedHolderBalances
+      conn targetDeployment (vadJuniorVault targetDeployment) blockNumber (blockHash blockNumber)
+    setVaultDepositAttributionState
+      conn targetDeployment blockNumber (blockHash blockNumber)
+      (1_700_000_000 + blockNumber) True
+
+depositState
+  :: Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> VaultDepositRequestStateRow
+depositState vault controller requestId pending claimable refundable =
+  VaultDepositRequestStateRow
+    { vdrsKey = VaultDepositRequestKey vault controller requestId
+    , vdrsPendingDepositAssets = pending
+    , vdrsClaimableDepositAssets = if claimable > 0 then claimable * 2 else 0
+    , vdrsClaimableDepositShares = claimable
+    , vdrsRefundableDepositAssets = refundable
+    , vdrsPendingRedeemShares = 0
+    , vdrsRefundableRedeemShares = 0
+    , vdrsRedeemRefundPending = False
+    , vdrsActive = pending > 0 || claimable > 0
+    , vdrsObservedBlock = 20
+    , vdrsObservedBlockHash = blockHash 20
+    }
+
+redeemState
+  :: Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Bool
+  -> Integer
+  -> VaultDepositRequestStateRow
+redeemState vault controller requestId pending refundable refundPending observedBlock =
+  VaultDepositRequestStateRow
+    { vdrsKey = VaultDepositRequestKey vault controller requestId
+    , vdrsPendingDepositAssets = 0
+    , vdrsClaimableDepositAssets = 0
+    , vdrsClaimableDepositShares = 0
+    , vdrsRefundableDepositAssets = 0
+    , vdrsPendingRedeemShares = pending
+    , vdrsRefundableRedeemShares = refundable
+    , vdrsRedeemRefundPending = refundPending
+    , vdrsActive = pending > 0 || refundable > 0 || refundPending
+    , vdrsObservedBlock = observedBlock
+    , vdrsObservedBlockHash = blockHash observedBlock
+    }
 
 shouldReturnValue :: (Eq a, Show a) => IO a -> a -> IO ()
 shouldReturnValue action expected = action >>= (`shouldBe` expected)
