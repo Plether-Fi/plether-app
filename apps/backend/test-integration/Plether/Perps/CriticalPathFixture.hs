@@ -414,6 +414,17 @@ terminalLogs branch evidence =
       0
       0
   , rpcLog
+      testRouter
+      [ orderExecutedTopic
+      , hexText $ encodeUint256 testOrderId
+      ]
+      (encodeUint256 $ efExecutionPrice evidence)
+      (bfTerminalTxHash branch)
+      terminalBlockNumber
+      (bfTerminalBlockHash branch)
+      0
+      1
+  , rpcLog
       testLifecycleBook
       [ orderFinalizedTopic
       , hexText $ encodeUint256 testOrderId
@@ -425,7 +436,7 @@ terminalLogs branch evidence =
       terminalBlockNumber
       (bfTerminalBlockHash branch)
       0
-      1
+      2
   ]
 
 committedLog :: BranchFixture -> Value
@@ -912,9 +923,13 @@ conflictingEvidence =
 executionTransactionInput :: BS.ByteString
 executionTransactionInput = executeOrderCall testOrderId []
 
-orderCommittedTopic, intentRegisteredTopic, orderFinalizedTopic, positionClosedTopic :: Text
+orderCommittedTopic, orderExecutedTopic, intentRegisteredTopic, orderFinalizedTopic, positionClosedTopic :: Text
 orderCommittedTopic =
   hexText $ keccak256Text "OrderCommitted(uint64,address,uint8)"
+
+orderExecutedTopic =
+  hexText $ keccak256Text "OrderExecuted(uint64,uint256)"
+
 intentRegisteredTopic =
   hexText $ keccak256Text
     "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"

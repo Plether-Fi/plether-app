@@ -303,7 +303,7 @@ setVaultActivityIndexerState conn deployment indexedBlock indexedHash indexedTim
     \deployment_block, last_indexed_block, last_indexed_block_hash, last_indexed_block_timestamp, \
     \safe_head_block, safe_head_block_hash, \
     \safe_head_timestamp, backfill_complete, last_success_at, updated_at) \
-    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) \
     \ON CONFLICT (chain_id, house_pool_address, senior_vault_address, junior_vault_address, deployment_block) DO UPDATE SET \
     \last_indexed_block = EXCLUDED.last_indexed_block, \
     \last_indexed_block_hash = EXCLUDED.last_indexed_block_hash, \

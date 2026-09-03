@@ -1106,8 +1106,10 @@ enrichPendingExecutionEvidence manager pool cfg reqIdRef = do
               peerOracleDerivationVersion candidate
                 /= Just executionOracleDerivationVersion
             needsEconomics =
-              peerExecutionEconomicsVersion candidate
-                /= Just executionEconomicsDerivationVersion
+              maybe
+                True
+                (< executionEconomicsDerivationVersion)
+                (peerExecutionEconomicsVersion candidate)
         traceResult <-
           cachedBy
             traceCacheRef
