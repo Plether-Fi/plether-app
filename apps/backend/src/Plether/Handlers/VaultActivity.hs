@@ -1,6 +1,7 @@
 module Plether.Handlers.VaultActivity
   ( getVaultActivity
   , getVaultAccountRequestIds
+  , vaultCoverageIsStale
   ) where
 
 import Data.Maybe (isJust)
@@ -149,7 +150,7 @@ coverageAt now state attributionState =
     , vacObservedSafeHeadBlock = vaisSafeHeadBlock state
     , vacObservedSafeHeadHash = vaisSafeHeadBlockHash state
     , vacComplete = complete
-    , vacStale = not complete || lagSeconds > 120 || pollAge > 180
+    , vacStale = vaultCoverageIsStale lagSeconds pollAge
     , vacLagBlocks = lagBlocks
     , vacLagSeconds = lagSeconds
     , vacLastSuccessfulPoll = min (vaisLastSuccessTimestamp state) (vdasLastSuccessTimestamp attributionState)
@@ -172,6 +173,13 @@ coverageAt now state attributionState =
   lagBlocks = max 0 $ vaisSafeHeadBlock state - confirmedBlock
   lagSeconds = max 0 $ vaisSafeHeadTimestamp state - confirmedTimestamp
   pollAge = max 0 $ now - min (vaisLastSuccessTimestamp state) (vdasLastSuccessTimestamp attributionState)
+
+-- Brief disagreement between the independently polled activity and attribution
+-- cursors is expected. Warn only when confirmed data or the workers are
+-- meaningfully late; initial backfills remain gated by the publishable checks.
+vaultCoverageIsStale :: Integer -> Integer -> Bool
+vaultCoverageIsStale lagSeconds pollAge =
+  lagSeconds > 120 || pollAge > 180
 
 holderRow :: VaultAttributedHolderRow -> VaultActivityHolder
 holderRow VaultAttributedHolderRow {..} =
