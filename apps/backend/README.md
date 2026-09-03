@@ -523,6 +523,8 @@ Local URLs:
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
 | `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
+| `RPC_AUTH_TOKEN` | No | - | Optional bearer token for `RPC_URL`; keeps provider credentials out of endpoint URLs |
+| `PERPS_RPC_AUTH_TOKEN` | No | - | Optional bearer token for `PERPS_RPC_URL`; intentionally separate from `RPC_AUTH_TOKEN` |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
@@ -556,7 +558,8 @@ Local URLs:
 | `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
 | `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
 | `AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR` | No | `0` | Actual sponsored gas-cost threshold logged once per hour; `0` disables it |
-| `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
+| `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval while pending orders exist |
+| `KEEPER_IDLE_POLL_SECONDS` | No | `5` | Keeper polling interval while its durable pending queue is empty; must be at least `KEEPER_POLL_SECONDS` |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
@@ -582,7 +585,7 @@ Local URLs:
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
-| `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
+| `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer delay after every successful iteration |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
 | `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |

@@ -40,7 +40,6 @@ module Plether.Handlers.Perps
 import Control.Exception (evaluate)
 import Control.Concurrent.STM
   ( atomically
-  , modifyTVar'
   , readTVar
   , writeTVar
   )
@@ -50,6 +49,7 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Either (isRight)
 import Data.List (sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -75,6 +75,7 @@ import Plether.Cache
   , CandlePageCacheValue (..)
   , CurrentCandleCacheValue (..)
   , SingleFlightSource (..)
+  , runSingleFlightCache
   , runSingleFlightCacheFreshTimed
   , runSingleFlightCacheTimed
   )
@@ -1500,11 +1501,12 @@ decodeValue label value =
     Aeson.Error err -> Left $ "Could not decode cached reveal " <> label <> ": " <> T.pack err
 
 getCachedLatestPythUpdate
-  :: DbPool
+  :: AppCache
+  -> DbPool
   -> EthClient
   -> Config
   -> IO (Either ApiError (ApiResponse PythUpdateResponse))
-getCachedLatestPythUpdate pool perpsClient cfg = do
+getCachedLatestPythUpdate cache pool perpsClient cfg = do
   mRow <- withDb pool getLatestPythUpdatePayload
   case mRow of
     Nothing ->
@@ -1512,10 +1514,13 @@ getCachedLatestPythUpdate pool perpsClient cfg = do
         E.networkError
           "No cached Pyth update payload is available yet. Keep plether-basket-worker --latest-loop running."
     Just row -> do
-      validation <- validateStoredPythUpdate perpsClient cfg Nothing row
-      pure $ case validation of
-        Left err -> Left err
-        Right admission -> Right $ mkResponse 0 (cfgChainId cfg) (puaPayload admission)
+      (_, validation) <-
+        runSingleFlightCache
+          (cacheStoredPythValidations cache)
+          (puprMinPublishTime row, puprMaxPublishTime row, puprFetchedAt row, puprSource row)
+          isRight
+          (fmap (fmap puaPayload) $ validateStoredPythUpdate perpsClient cfg Nothing row)
+      pure $ fmap (mkResponse 0 $ cfgChainId cfg) validation
 
 validateStoredPythUpdate
   :: EthClient
@@ -1642,85 +1647,72 @@ getPythUpdate
 getPythUpdate cache manager perpsClient cfg mPublishTime =
   case resolveHermesApiKey (cfgPythHermesUrl cfg) (cfgPythApiKey cfg) of
     Left err -> pure $ Left $ E.internalError err
-    Right apiKey -> runAuthenticated apiKey
+    Right apiKey -> do
+      (_, result) <-
+        case mPublishTime of
+          Nothing ->
+            runSingleFlightCache
+              (cachePythLatestUpdates cache)
+              ()
+              isRight
+              (loadAuthenticated apiKey)
+          Just publishTime ->
+            runSingleFlightCache
+              (cachePythHistoricalUpdates cache)
+              publishTime
+              isRight
+              (loadAuthenticated apiKey)
+      pure $ fmap (mkResponse 0 $ cfgChainId cfg) result
   where
-    runAuthenticated apiKey = do
+    loadAuthenticated apiKey = do
       now <- getPOSIXTime
-      mCached <- getCachedPyth now
-      case mCached of
-        Just cached -> pure $ Right $ mkResponse 0 (cfgChainId cfg) cached
+      mCooldown <- getRateLimitCooldown now
+      case mCooldown of
+        Just retryAfter -> pure $ Left $ E.rateLimitedWithDetails (Just $ BS8.pack $ show retryAfter)
         Nothing -> do
-          mCooldown <- getRateLimitCooldown now
-          case mCooldown of
-            Just retryAfter -> pure $ Left $ E.rateLimitedWithDetails (Just $ BS8.pack $ show retryAfter)
-            Nothing -> do
-              requestBase <- parseRequest $ T.unpack requestUrl
-              let request =
-                    setQueryString queryParams requestBase
-                      { requestHeaders = authHeaders apiKey <> requestHeaders requestBase
-                      }
-              response <- httpLbs request manager
-              let code = statusCode (responseStatus response)
-                  body = responseBody response
-              if code == 429
-                then do
-                  setRateLimitCooldown now (retryAfterHeader response)
-                  pure $ Left $ E.rateLimitedWithDetails (retryAfterHeader response)
-                else
-                  if code < 200 || code >= 300
-                    then pure $ Left $ E.networkError $ "Hermes returned HTTP " <> T.pack (show code) <> ": " <> previewBody body
-                    else do
-                      fetchedAt <- round <$> getPOSIXTime
-                      case decodePythUpdateForAdmission mPublishTime fetchedAt (cfgPythLatestMaxAgeSeconds cfg) body of
-                        Left err -> pure $ Left err
-                        Right admission -> do
-                          validation <-
-                            case mPublishTime of
-                              Nothing ->
-                                validatePythUpdateData
-                                  perpsClient
-                                  (cfgPerpsPletherOracle cfg)
-                                  (puaUpdateData admission)
-                                  (puaFeedIds admission)
-                                  (puaMinPublishTime admission)
-                                  (puaMaxPublishTime admission)
-                              -- The historical endpoint has no separate maximum;
-                              -- Hermes' returned maximum closes the requested window.
-                              Just _ ->
-                                validateUniquePythUpdateData
-                                  perpsClient
-                                  (cfgPerpsPletherOracle cfg)
-                                  (puaUpdateData admission)
-                                  (puaFeedIds admission)
-                                  (puaMinPublishTime admission)
-                                  (puaMaxPublishTime admission)
-                          case validation of
-                            Left err -> pure $ Left $ rpcErrorToApiError err
-                            Right () -> do
-                              let payload = puaPayload admission
-                              setCachedPyth now payload
-                              pure $ Right $ mkResponse 0 (cfgChainId cfg) payload
-
-    cacheKey =
-      maybe "latest" (T.pack . show) mPublishTime
-
-    cacheTtlSeconds :: POSIXTime
-    cacheTtlSeconds =
-      case mPublishTime of
-        Nothing -> 2
-        Just _ -> 10 * 60
-
-    getCachedPyth now =
-      atomically $ do
-        entries <- readTVar (cachePythUpdates cache)
-        pure $ case Map.lookup cacheKey entries of
-          Just (payload, cachedAt) | now - cachedAt <= cacheTtlSeconds -> Just payload
-          _ -> Nothing
-
-    setCachedPyth now payload =
-      atomically $
-        modifyTVar' (cachePythUpdates cache) $
-          Map.insert cacheKey (payload, now)
+          requestBase <- parseRequest $ T.unpack requestUrl
+          let request =
+                setQueryString queryParams requestBase
+                  { requestHeaders = authHeaders apiKey <> requestHeaders requestBase
+                  }
+          response <- httpLbs request manager
+          let code = statusCode (responseStatus response)
+              body = responseBody response
+          if code == 429
+            then do
+              setRateLimitCooldown now (retryAfterHeader response)
+              pure $ Left $ E.rateLimitedWithDetails (retryAfterHeader response)
+            else
+              if code < 200 || code >= 300
+                then pure $ Left $ E.networkError $ "Hermes returned HTTP " <> T.pack (show code) <> ": " <> previewBody body
+                else do
+                  fetchedAt <- round <$> getPOSIXTime
+                  case decodePythUpdateForAdmission mPublishTime fetchedAt (cfgPythLatestMaxAgeSeconds cfg) body of
+                    Left err -> pure $ Left err
+                    Right admission -> do
+                      validation <-
+                        case mPublishTime of
+                          Nothing ->
+                            validatePythUpdateData
+                              perpsClient
+                              (cfgPerpsPletherOracle cfg)
+                              (puaUpdateData admission)
+                              (puaFeedIds admission)
+                              (puaMinPublishTime admission)
+                              (puaMaxPublishTime admission)
+                          -- The historical endpoint has no separate maximum;
+                          -- Hermes' returned maximum closes the requested window.
+                          Just _ ->
+                            validateUniquePythUpdateData
+                              perpsClient
+                              (cfgPerpsPletherOracle cfg)
+                              (puaUpdateData admission)
+                              (puaFeedIds admission)
+                              (puaMinPublishTime admission)
+                              (puaMaxPublishTime admission)
+                      pure $ case validation of
+                        Left err -> Left $ rpcErrorToApiError err
+                        Right () -> Right $ puaPayload admission
 
     getRateLimitCooldown now =
       atomically $ do

@@ -51,7 +51,7 @@ import Plether.Database.Schema
   , markPerpsKeeperOrderExecuted
   , upsertPerpsKeeperOrderCommitted
   )
-import Plether.Ethereum.Client (EthClient (..))
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithManager)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
@@ -209,18 +209,16 @@ makeApiApplication manager pool config rpcUrl = do
   faucetGuardState <- newFaucetGuardState
   mainRequestId <- newIORef 1
   perpsRequestId <- newIORef 1
-  let client =
-        EthClient
-          { clientManager = manager
-          , clientRpcUrl = rpcUrl
-          , clientRequestId = mainRequestId
-          }
-      perpsClient =
-        EthClient
-          { clientManager = manager
-          , clientRpcUrl = rpcUrl
-          , clientRequestId = perpsRequestId
-          }
+  client <-
+    newClientWithManager
+      manager
+      mainRequestId
+      (RpcClientOptions rpcUrl Nothing "integration-api-core")
+  perpsClient <-
+    newClientWithManager
+      manager
+      perpsRequestId
+      (RpcClientOptions rpcUrl Nothing "integration-api-perps")
   scottyApp $
     app cache client perpsClient config (Just pool) manager proxyState faucetGuardState
 
@@ -444,6 +442,7 @@ testConfig :: Text -> Text -> Config
 testConfig databaseUrl rpcUrl =
   Config
     { cfgRpcUrl = rpcUrl
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = testChainId
     , cfgPort = 3001
     , cfgCorsOrigins = []
@@ -466,6 +465,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = rpcUrl
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
@@ -492,6 +492,7 @@ testConfig databaseUrl rpcUrl =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
+    , cfgKeeperIdlePollSeconds = 5
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2000

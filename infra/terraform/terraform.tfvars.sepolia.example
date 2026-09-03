@@ -3,8 +3,11 @@ expected_aws_account_id          = "932542905614"
 environment                      = "sepolia"
 posthog_project_token            = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
 posthog_otlp_host                = "eu.i.posthog.com"
-rpc_url                          = "https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
-perps_rpc_url                    = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
+rpc_url                          = "https://eth-sepolia.g.alchemy.com/v2"
+perps_rpc_url                    = "https://arb-sepolia.g.alchemy.com/v2"
+# Provision these SecureStrings outside Terraform; only their names enter state.
+rpc_auth_token_ssm_parameter_name       = "/plether/sepolia/rpc-auth-token"
+perps_rpc_auth_token_ssm_parameter_name = "/plether/sepolia/perps-rpc-auth-token"
 # Vault history and activity use perps_rpc_url. Terraform retains the old
 # vault-history-rpc-url SecureString without consuming or rotating its value
 # until the separate post-soak removal apply.
@@ -112,6 +115,8 @@ insights_snapshot_multicall_size              = "10"
 perps_oracle_updater_poll_seconds            = "30"
 perps_oracle_updater_max_payload_age_seconds = "50"
 basket_worker_poll_seconds     = "5"
+keeper_poll_seconds            = "1"
+keeper_idle_poll_seconds       = "5"
 liquidation_worker_poll_seconds     = "600"
 liquidation_worker_scan_batch_size  = "1000"
 liquidation_worker_multicall_size   = "10"

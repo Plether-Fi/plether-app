@@ -31,6 +31,7 @@ jobs:
       - name: Update Arbitrum Sepolia mark price from backend cache
         env:
           ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL }}
+          PERPS_RPC_AUTH_TOKEN: ${{ secrets.PERPS_RPC_AUTH_TOKEN }}
           PERPS_ORACLE_UPDATER_PRIVATE_KEY: ${{ secrets.PERPS_ORACLE_UPDATER_PRIVATE_KEY }}
           PERPS_ORACLE_UPDATER_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
           PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS: '120'

@@ -14,6 +14,12 @@ const WALLETCONNECT_PROJECT_ID =
   typeof envWalletConnectProjectId === 'string' && envWalletConnectProjectId.length > 0
     ? envWalletConnectProjectId
     : 'ac255192981643094de1bdfd0f501d55'
+function optionalRpcUrl(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+const MAINNET_RPC_URL = optionalRpcUrl(import.meta.env.VITE_MAINNET_RPC_URL)
+const SEPOLIA_RPC_URL = optionalRpcUrl(import.meta.env.VITE_SEPOLIA_RPC_URL)
 const envArbitrumSepoliaRpcUrl: unknown = import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL
 const ARBITRUM_SEPOLIA_RPC_URL =
   typeof envArbitrumSepoliaRpcUrl === 'string' && envArbitrumSepoliaRpcUrl.length > 0
@@ -76,8 +82,8 @@ const wagmiAdapter = new WagmiAdapter({
   projectId: WALLETCONNECT_PROJECT_ID,
   networks,
   transports: {
-    [mainnet.id]: http('https://eth-mainnet.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
-    [sepolia.id]: http('https://eth-sepolia.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
+    [mainnet.id]: http(MAINNET_RPC_URL),
+    [sepolia.id]: http(SEPOLIA_RPC_URL),
     [arbitrumSepolia.id]: http(ARBITRUM_SEPOLIA_RPC_URL),
     [anvil.id]: http('http://127.0.0.1:8545'),
   },

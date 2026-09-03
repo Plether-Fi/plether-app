@@ -5,7 +5,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import Plether.Config (Config (..), loadConfig)
 import Plether.Ethereum.Abi (encodeCall)
-import Plether.Ethereum.Client (CallParams (..), EthClient, ethCallAtBlock, newClient, rpcCall)
+import Plether.Ethereum.Client (CallParams (..), EthClient, RpcClientOptions (..), ethCallAtBlock, newClientWithOptions, rpcCall)
 import Plether.Ethereum.Rpc (RpcLog (..), ethChainId, ethGetLogs)
 import Plether.Logging (field, logError, logInfo)
 import Plether.Vaults.ActivityIndexer
@@ -22,7 +22,9 @@ main = do
   case loaded of
     Left err -> failPreflight err
     Right cfg -> do
-      client <- newClient $ cfgPerpsRpcUrl cfg
+      client <-
+        newClientWithOptions $
+          RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "provider-preflight"
       result <- runProviderPreflight client cfg
       case result of
         Left err -> failPreflight $ T.unpack err

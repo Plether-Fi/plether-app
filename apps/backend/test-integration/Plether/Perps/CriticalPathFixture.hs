@@ -208,6 +208,7 @@ testIndexerConfig :: ScriptedChain -> PerpsIndexerConfig
 testIndexerConfig chain =
   PerpsIndexerConfig
     { picRpcUrls = [fixtureRpcUrl chain]
+    , picRpcAuthToken = Nothing
     , picChainId = testChainId
     , picAddresses = testAddresses
     , picStartBlock = commitBlockNumber

@@ -13,6 +13,7 @@ import Plether.Database.Schema
   )
 import Plether.Keeper
   ( FreshPendingOrder (..)
+  , KeeperIterationActivity (..)
   , LifecycleRefreshAction (..)
   , LpSettlementDecision (..)
   , V2PreflightAction (..)
@@ -25,6 +26,7 @@ import Plether.Keeper
   , isLpSettlementObservationSafe
   , isOrderPastValidUntil
   , isOrderRevealReady
+  , keeperPollDelayMicros
   , isSameBlockMevGuardError
   , nextV2GasLimit
   , selectBatchCandidates
@@ -45,6 +47,14 @@ spec :: Spec
 spec = do
   keeperSource <- runIO loadKeeperSource
   let normalizedKeeperSource = T.unwords $ T.words keeperSource
+
+  describe "adaptive keeper pacing" $ do
+    it "uses the idle cadence only when no pending order exists" $ do
+      keeperPollDelayMicros 1 5 KeeperIdle `shouldBe` 5_000_000
+      keeperPollDelayMicros 1 5 KeeperPending `shouldBe` 1_000_000
+
+    it "keeps every delay positive" $
+      keeperPollDelayMicros 0 0 KeeperIdle `shouldBe` 1_000_000
 
   describe "LP epoch settlement call graph" $ do
     it "wires cached settlement only to HousePool with zero value" $ do

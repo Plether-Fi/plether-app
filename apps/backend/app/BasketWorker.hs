@@ -37,7 +37,7 @@ import Plether.Database.Schema
   , isHistoricalRevealPayload
   , promotePythPayloadSource
   )
-import Plether.Ethereum.Client (EthClient, RpcError (..), newClient)
+import Plether.Ethereum.Client (EthClient, RpcClientOptions (..), RpcError (..), newClientWithOptions)
 import Plether.Ethereum.Contracts.Perps
   ( orderSettlementWindow
   , parsePythUpdateData
@@ -139,7 +139,9 @@ runWorker args = do
             exitFailure
           Just dbUrl -> do
             manager <- newManager tlsManagerSettings
-            ethClient <- newClient (cfgPerpsRpcUrl cfg)
+            ethClient <-
+              newClientWithOptions $
+                RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "basket-worker"
             pool <- newDbPool dbUrl
             withDb pool $ \conn -> do
               ensureBasketSnapshotSchema conn

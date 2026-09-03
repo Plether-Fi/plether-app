@@ -1,5 +1,6 @@
 module Plether.Keeper
   ( KeeperMode (..)
+  , KeeperIterationActivity (..)
   , LpSettlementDecision (..)
   , FreshPendingOrder (..)
   , LifecycleRefreshAction (..)
@@ -25,6 +26,7 @@ module Plether.Keeper
   , V2PreflightAction (..)
   , assessSingleOrderPreflight
   , assessBatchOrderPreflight
+  , keeperPollDelayMicros
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -46,7 +48,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Bits ((.|.))
-import Data.List (sortOn)
+import Data.List (nub, sortOn)
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -115,6 +117,7 @@ import qualified Plether.Ethereum.Contracts.SettlementMonitor as SettlementMonit
 import Plether.Ethereum.Rpc
   ( TxReceipt (..)
   , RpcBlock (..)
+  , RpcLog (..)
   , ethBlockTimestamp
   , ethChainId
   , ethEstimateGas
@@ -123,6 +126,7 @@ import Plether.Ethereum.Rpc
   , ethGetBalance
   , ethGetBlockByNumber
   , ethGetLogs
+  , ethGetLogsForAddresses
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
   , ethGetTransactionReceipt
@@ -155,6 +159,20 @@ data KeeperMode
   = KeeperLoop
   | KeeperOnce
   deriving stock (Show, Eq)
+
+data KeeperIterationActivity
+  = KeeperIdle
+  | KeeperPending
+  deriving stock (Show, Eq)
+
+keeperPollDelayMicros :: Int -> Int -> KeeperIterationActivity -> Int
+keeperPollDelayMicros activeSeconds idleSeconds activity =
+  max 1 selectedSeconds * 1_000_000
+ where
+  selectedSeconds =
+    case activity of
+      KeeperIdle -> idleSeconds
+      KeeperPending -> activeSeconds
 
 data LpSettlementDecision
   = LpSettlementHeld
@@ -294,16 +312,18 @@ runOrderKeeperSession cfg pool client mode dryRun =
               KeeperLoop -> loop conn
   where
     loop conn = do
-      continue <- runKeeperIteration cfg conn client dryRun
-      when continue $ do
-        threadDelay (cfgKeeperPollSeconds cfg * 1_000_000)
-        loop conn
+      activity <- runKeeperIteration cfg conn client dryRun
+      threadDelay $
+        keeperPollDelayMicros
+          (cfgKeeperPollSeconds cfg)
+          (cfgKeeperIdlePollSeconds cfg)
+          activity
+      loop conn
 
-runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IO Bool
+runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IO KeeperIterationActivity
 runKeeperIteration cfg conn client dryRun = do
   indexNewLogs cfg conn client
   processQueueHead cfg conn client dryRun
-  pure True
 
 runLpSettlementWorker
   :: SettlementMonitor.SettlementCodeHashes
@@ -1867,25 +1887,14 @@ indexNewLogs cfg conn client = do
       if startBlock > confirmedLatest
         then pure ()
         else do
-          routerLogsResult <-
-            ethGetLogs
-              client
-              (cfgPerpsOrderRouter cfg)
-              Perps.perpsOrderTopics
-              startBlock
-              endBlock
-          lifecycleLogsResult <-
-            case cfgPerpsOrderLifecycleBook cfg of
-              Nothing -> pure $ Right []
-              Just lifecycleBook ->
-                ethGetLogs
-                  client
-                  lifecycleBook
-                  [Perps.intentRegisteredTopic, Perps.orderFinalizedTopic]
-                  startBlock
-                  endBlock
-          case (routerLogsResult, lifecycleLogsResult) of
-            (Left err, _) ->
+          let router = cfgPerpsOrderRouter cfg
+              lifecycleTopics = [Perps.intentRegisteredTopic, Perps.orderFinalizedTopic]
+              addresses = router : maybe [] pure (cfgPerpsOrderLifecycleBook cfg)
+              topics = nub $ Perps.perpsOrderTopics <> lifecycleTopics
+          logsResult <-
+            ethGetLogsForAddresses client addresses topics startBlock endBlock
+          case logsResult of
+            Left err ->
               logWarnEvery
                 60
                 "keeper_order_logs_fetch_failed"
@@ -1894,17 +1903,8 @@ indexNewLogs cfg conn client = do
                 , field "to_block" endBlock
                 , field "error" $ rpcErrorText err
                 ]
-            (_, Left err) ->
-              logWarnEvery
-                60
-                "keeper_order_lifecycle_logs_fetch_failed"
-                "Keeper could not fetch lifecycle-book logs"
-                [ field "from_block" startBlock
-                , field "to_block" endBlock
-                , field "error" $ rpcErrorText err
-                ]
-            (Right routerLogs, Right lifecycleLogs) -> do
-              let logs = routerLogs <> lifecycleLogs
+            Right unscopedLogs -> do
+              let logs = filter (isExpectedKeeperLog cfg) unscopedLogs
               forM_ (mapMaybe Perps.decodePerpsOrderEvent logs) (applyOrderEvent cfg conn client)
               setPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg) endBlock
               unless (null logs) $
@@ -1916,6 +1916,21 @@ indexNewLogs cfg conn client = do
                   , field "to_block" endBlock
                   , field "event_count" $ length logs
                   ]
+
+isExpectedKeeperLog :: Config -> RpcLog -> Bool
+isExpectedKeeperLog cfg logEntry =
+  case rpcLogTopics logEntry of
+    [] -> False
+    topic0 : _
+      | normalizedAddress == normalizeAddress (cfgPerpsOrderRouter cfg) ->
+          topic0 `elem` Perps.perpsOrderTopics
+      | Just lifecycleBook <- cfgPerpsOrderLifecycleBook cfg
+      , normalizedAddress == normalizeAddress lifecycleBook ->
+          topic0 `elem` [Perps.intentRegisteredTopic, Perps.orderFinalizedTopic]
+      | otherwise -> False
+ where
+  normalizedAddress = normalizeAddress $ rpcLogAddress logEntry
+  normalizeAddress = T.toLower . T.strip
 
 applyOrderEvent :: Config -> Connection -> EthClient -> Perps.PerpsOrderEvent -> IO ()
 applyOrderEvent cfg conn client = \case
@@ -1992,11 +2007,11 @@ readCommitMetadata cfg client orderId fallbackBlock = do
           pure Nothing
         Right commitTime -> pure $ Just (fallbackBlock, commitTime)
 
-processQueueHead :: Config -> Connection -> EthClient -> Bool -> IO ()
+processQueueHead :: Config -> Connection -> EthClient -> Bool -> IO KeeperIterationActivity
 processQueueHead cfg conn client dryRun = do
   pending <- getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) (cfgKeeperMaxBatchSize cfg)
   case pending of
-    [] -> pure ()
+    [] -> pure KeeperIdle
     headOrder : _ -> do
       settlementWindowResult <- Perps.orderSettlementWindow client (cfgPerpsPletherOracle cfg)
       chainNowResult <- ethLatestBlockTimestamp client
@@ -2017,6 +2032,7 @@ processQueueHead cfg conn client dryRun = do
             [ field "pending_order_count" $ length pending
             , field "error" $ T.intercalate "; " $ catMaybes errors
             ]
+      pure KeeperPending
 
 decideExecution
   :: Config

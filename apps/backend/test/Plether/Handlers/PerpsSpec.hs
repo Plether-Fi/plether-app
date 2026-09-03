@@ -1118,6 +1118,7 @@ rollupConfig :: Config
 rollupConfig =
   Config
     { cfgRpcUrl = ""
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = 11155111
     , cfgPort = 3001
     , cfgCorsOrigins = []
@@ -1140,6 +1141,7 @@ rollupConfig =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
@@ -1166,6 +1168,7 @@ rollupConfig =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
+    , cfgKeeperIdlePollSeconds = 5
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000

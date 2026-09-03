@@ -14,6 +14,7 @@ module Plether.Config
   , defaultPythLatestMaxAgeSeconds
   , maxPythLatestMaxAgeSeconds
   , validatePythLatestMaxAgeSeconds
+  , validateKeeperPollSeconds
   , parsePerpsCandleReadIntervals
   , parsePerpsCandleReadMode
   , parsePerpsCandleWriteMode
@@ -56,6 +57,7 @@ import Text.Read (readMaybe)
 
 data Config = Config
   { cfgRpcUrl :: Text
+  , cfgRpcAuthToken :: Maybe Text
   , cfgChainId :: Integer
   , cfgPort :: Int
   , cfgCorsOrigins :: [Text]
@@ -78,6 +80,7 @@ data Config = Config
   , cfgPerpsCandleLatenessSeconds :: Integer
   , cfgPerpsCandleFinalizationGraceSeconds :: Integer
   , cfgPerpsRpcUrl :: Text
+  , cfgPerpsRpcAuthToken :: Maybe Text
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
@@ -104,6 +107,7 @@ data Config = Config
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
+  , cfgKeeperIdlePollSeconds :: Int
   , cfgKeeperMaxBatchSize :: Int
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
@@ -445,6 +449,14 @@ validatePythLatestMaxAgeSeconds rawValue =
  where
  normalizedValue = T.unpack $ T.strip $ T.pack rawValue
 
+validateKeeperPollSeconds :: String -> String -> Either String (Int, Int)
+validateKeeperPollSeconds activeRaw idleRaw = do
+  active <- parseBoundedWholeNumber "KEEPER_POLL_SECONDS" 1 3_600 activeRaw
+  idle <- parseBoundedWholeNumber "KEEPER_IDLE_POLL_SECONDS" 1 3_600 idleRaw
+  if idle < active
+    then Left "KEEPER_IDLE_POLL_SECONDS must be greater than or equal to KEEPER_POLL_SECONDS"
+    else Right (active, idle)
+
 validateFaucetGuardConfig
   :: Maybe String
   -> Maybe String
@@ -492,6 +504,7 @@ loadConfig = do
   case mRpcUrl of
     Nothing -> pure $ Left "RPC_URL or PERPS_RPC_URL environment variable not set"
     Just rpcUrl -> do
+      mRpcAuthToken <- lookupEnv "RPC_AUTH_TOKEN"
       chainIdStr <- fromMaybe "11155111" <$> lookupEnv "CHAIN_ID"
       portStr <- fromMaybe "3001" <$> lookupEnv "PORT"
       corsStr <- fromMaybe "http://localhost:5173" <$> lookupEnv "CORS_ORIGINS"
@@ -514,6 +527,7 @@ loadConfig = do
       candleFinalizationGraceSecondsStr <-
         fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
+      mPerpsRpcAuthToken <- lookupEnv "PERPS_RPC_AUTH_TOKEN"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
       mPerpsUsdc <- lookupEnv "PERPS_USDC"
@@ -548,6 +562,7 @@ loadConfig = do
       faucetGlobalRequestsPerHourStr <- fromMaybe "200" <$> lookupEnv "FAUCET_GLOBAL_REQUESTS_PER_HOUR"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
+      keeperIdlePollSecondsStr <- fromMaybe "5" <$> lookupEnv "KEEPER_IDLE_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
@@ -598,7 +613,6 @@ loadConfig = do
           aaAccountRateLimit = fromMaybe 30 (readMaybe aaAccountRateLimitStr)
           aaMaxRequestBytes = fromMaybe 262144 (readMaybe aaMaxRequestBytesStr)
           aaSponsoredGasAlertWei = fromMaybe 0 (readMaybe aaSponsoredGasAlertWeiStr)
-          keeperPollSeconds = fromMaybe 1 (readMaybe keeperPollSecondsStr)
           keeperMaxBatchSize = fromMaybe 20 (readMaybe keeperMaxBatchSizeStr)
           keeperConfirmations = fromMaybe 1 (readMaybe keeperConfirmationsStr)
           keeperGasBufferBps = fromMaybe 2000 (readMaybe keeperGasBufferBpsStr)
@@ -820,6 +834,9 @@ loadConfig = do
                         , lpsMaxTxCostWei = maxTxCostWei
                         }
 
+          keeperPollConfig =
+            validateKeeperPollSeconds keeperPollSecondsStr keeperIdlePollSecondsStr
+
           competitionConfig = do
             rules <-
               validateInsightsCompetitionActivation
@@ -858,17 +875,19 @@ loadConfig = do
           , candleConfig
           , vaultHistoryConfig
           , lpSettlementConfig
+          , keeperPollConfig
           , competitionConfig
           , faucetGuardConfig
           )
         of
-        (Left err, _, _, _, _, _, _) -> pure $ Left err
-        (_, Left err, _, _, _, _, _) -> pure $ Left err
-        (_, _, Left err, _, _, _, _) -> pure $ Left err
-        (_, _, _, Left err, _, _, _) -> pure $ Left err
-        (_, _, _, _, Left err, _, _) -> pure $ Left err
-        (_, _, _, _, _, Left err, _) -> pure $ Left err
-        (_, _, _, _, _, _, Left err) -> pure $ Left err
+        (Left err, _, _, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -885,6 +904,7 @@ loadConfig = do
                 , vaultHistoryConfirmations
                 )
           , Right LpSettlementSettings {..}
+          , Right (keeperPollSeconds, keeperIdlePollSeconds)
           , Right (insightsCompetitionRules, resolvedRegistrationConfig)
           , Right resolvedFaucetGuardConfig
           ) -> do
@@ -896,6 +916,7 @@ loadConfig = do
                 Right $
                   Config
                 { cfgRpcUrl = T.pack rpcUrl
+                , cfgRpcAuthToken = nonBlankText mRpcAuthToken
                 , cfgChainId = chainId
                 , cfgPort = port
                 , cfgCorsOrigins = corsOrigins
@@ -918,6 +939,7 @@ loadConfig = do
                 , cfgPerpsCandleLatenessSeconds = candleLatenessSeconds
                 , cfgPerpsCandleFinalizationGraceSeconds = candleFinalizationGraceSeconds
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
+                , cfgPerpsRpcAuthToken = nonBlankText mPerpsRpcAuthToken
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
@@ -960,7 +982,8 @@ loadConfig = do
                 , cfgFaucetGuardConfig = resolvedFaucetGuardConfig
                 , cfgFaucetPrivateKey = nonBlankText mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
-                , cfgKeeperPollSeconds = max 1 keeperPollSeconds
+                , cfgKeeperPollSeconds = keeperPollSeconds
+                , cfgKeeperIdlePollSeconds = keeperIdlePollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps

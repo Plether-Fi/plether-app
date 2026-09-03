@@ -31,7 +31,7 @@ import Plether.Insights.Registration.Rotation
   , registrationKeyReferenceTotal
   , rotateRegistrationEmails
   )
-import Plether.Ethereum.Client (EthClient, newClient)
+import Plether.Ethereum.Client (EthClient, RpcClientOptions (..), newClientWithOptions)
 import Plether.Ethereum.Rpc (RpcBlock (..), ethGetBlockByNumber)
 import Plether.Utils.Address (isValidAddress)
 import System.Environment (getArgs)
@@ -48,7 +48,9 @@ main = do
         Nothing -> failWith "DATABASE_URL is required for plether-insights-admin"
         Just databaseUrl -> do
           pool <- newDbPool databaseUrl
-          perpsClient <- newClient $ cfgPerpsRpcUrl cfg
+          perpsClient <-
+            newClientWithOptions $
+              RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "insights-admin"
           withDb pool ensureTestnetFaucetSchema
           withDb pool $ \conn ->
             ensureInsightsSchema

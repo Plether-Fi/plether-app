@@ -894,8 +894,16 @@ estimateCall params = do
 isOrderLogQuery :: [Value] -> Bool
 isOrderLogQuery = \case
   [Object queryObject] ->
-    maybe False ((== normalize router) . normalize) $ textField "address" queryObject
+    case KeyMap.lookup (Key.fromText "address") queryObject of
+      Just (String address) -> normalize address == normalize router
+      Just (Array addresses) ->
+        any isRouterAddress (toList addresses)
+      _ -> False
   _ -> False
+ where
+  isRouterAddress = \case
+    String address -> normalize address == normalize router
+    _ -> False
 
 rpcMethodAndParams :: LBS.ByteString -> Maybe (Text, [Value])
 rpcMethodAndParams body = do
@@ -1197,6 +1205,7 @@ workerConfig :: LpSettlementMode -> Config
 workerConfig mode =
   Config
     { cfgRpcUrl = ""
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = 11155111
     , cfgPort = 0
     , cfgCorsOrigins = []
@@ -1219,6 +1228,7 @@ workerConfig mode =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = fixtureChainId
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
@@ -1245,6 +1255,7 @@ workerConfig mode =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 15
+    , cfgKeeperIdlePollSeconds = 15
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2_000

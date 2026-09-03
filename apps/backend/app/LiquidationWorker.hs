@@ -10,7 +10,7 @@ import Plether.Database.Schema
   , ensurePerpsLiquidationSchema
   , seedPerpsLiquidationCandidatesFromHistory
   )
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Ethereum.Transaction (deriveAddress)
 import Plether.LiquidationWorker
@@ -48,7 +48,9 @@ runMain = do
         Right derivedAddress -> pure derivedAddress
 
       workerCfg <- loadLiquidationWorkerConfig cfg privateKey
-      client <- newClient (cfgPerpsRpcUrl cfg)
+      client <-
+        newClientWithOptions $
+          RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "liquidation-worker"
       balanceResult <-
         checkLiveSignerBalance
           (lwaDryRun args)

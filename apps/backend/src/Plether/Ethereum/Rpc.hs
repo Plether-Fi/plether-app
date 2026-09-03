@@ -3,6 +3,7 @@ module Plether.Ethereum.Rpc
   , RpcBlock (..)
   , TxReceipt (..)
   , ethGetLogs
+  , ethGetLogsForAddresses
   , ethGetBlockByNumber
   , ethLatestBlock
   , ethBlockTimestamp
@@ -21,6 +22,7 @@ module Plether.Ethereum.Rpc
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
@@ -74,10 +76,32 @@ ethGetLogs
   -> Integer
   -> IO (Either RpcError [RpcLog])
 ethGetLogs client address topics fromBlock toBlock = do
+  ethGetLogsWithAddressFilter client (String address) topics fromBlock toBlock
+
+ethGetLogsForAddresses
+  :: EthClient
+  -> [Text]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError [RpcLog])
+ethGetLogsForAddresses _ [] _ _ _ =
+  pure $ Left $ RpcJsonError "eth_getLogs requires at least one address"
+ethGetLogsForAddresses client addresses topics fromBlock toBlock =
+  ethGetLogsWithAddressFilter client (Aeson.toJSON addresses) topics fromBlock toBlock
+
+ethGetLogsWithAddressFilter
+  :: EthClient
+  -> Value
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError [RpcLog])
+ethGetLogsWithAddressFilter client addressFilter topics fromBlock toBlock = do
   let topicValues = map (String . ("0x" <>) . TE.decodeUtf8 . B16.encode) topics
       params =
         [ object
-            [ "address" .= address
+            [ "address" .= addressFilter
             , "topics" .= [topicValues]
             , "fromBlock" .= ("0x" <> intToHex fromBlock)
             , "toBlock" .= ("0x" <> intToHex toBlock)

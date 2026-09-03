@@ -197,6 +197,7 @@ testConfig :: Config
 testConfig =
   Config
     { cfgRpcUrl = "https://eth-sepolia.example"
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = 11155111
     , cfgPort = 3001
     , cfgCorsOrigins = []
@@ -219,6 +220,7 @@ testConfig =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
@@ -245,6 +247,7 @@ testConfig =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
+    , cfgKeeperIdlePollSeconds = 5
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000

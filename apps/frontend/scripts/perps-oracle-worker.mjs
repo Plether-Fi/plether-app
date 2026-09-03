@@ -63,6 +63,13 @@ function requiredEnv(...names) {
   throw new Error(`${names.join(' or ')} is required`)
 }
 
+function rpcTransport(rpcUrl) {
+  const bearerToken = process.env.PERPS_RPC_AUTH_TOKEN
+  return http(rpcUrl, bearerToken
+    ? { fetchOptions: { headers: { Authorization: `Bearer ${bearerToken}` } } }
+    : undefined)
+}
+
 function optionalPrivateKey() {
   const value = process.env.PERPS_ORACLE_UPDATER_PRIVATE_KEY
   if (!value) return undefined
@@ -313,7 +320,7 @@ async function main() {
 
   const publicClient = createPublicClient({
     chain: arbitrumSepolia,
-    transport: http(rpcUrl),
+    transport: rpcTransport(rpcUrl),
   })
   const chainId = await publicClient.getChainId()
   if (chainId !== ARBITRUM_SEPOLIA_CHAIN_ID) {
@@ -325,7 +332,7 @@ async function main() {
     ? createWalletClient({
       account,
       chain: arbitrumSepolia,
-      transport: http(rpcUrl),
+      transport: rpcTransport(rpcUrl),
     })
     : undefined
 

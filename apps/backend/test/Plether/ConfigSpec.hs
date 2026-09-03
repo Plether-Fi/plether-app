@@ -19,6 +19,7 @@ import Plether.Config
   , validateLpSettlementChainId
   , validateLpSettlementPrivateKeyConfig
   , validateInsightsCompetitionActivation
+  , validateKeeperPollSeconds
   , validateFaucetGuardConfig
   , validatePerpsCandleModeCombination
   )
@@ -33,6 +34,12 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "keeper polling configuration" $ do
+    it "accepts an idle cadence at least as long as the active cadence" $ do
+      validateKeeperPollSeconds "1" "5" `shouldBe` Right (1, 5)
+      validateKeeperPollSeconds "5" "1" `shouldSatisfy` isLeft
+      validateKeeperPollSeconds "0" "5" `shouldSatisfy` isLeft
+
   describe "LP settlement configuration" $ do
     it "defaults to off and accepts only explicit rollout modes" $ do
       resolveLpSettlementMode Nothing Nothing `shouldBe` Right LpSettlementOff
@@ -108,6 +115,7 @@ spec = do
 
     it "redacts every configured secret from Config's Show instance" $ do
       let rpcSecret = "rpc-show-secret"
+          rpcAuthSecret = "rpc-auth-show-secret"
           databaseSecret = "database-show-secret"
           pythSecret = "pyth-show-secret"
           faucetSecret = "faucet-show-secret"
@@ -116,7 +124,9 @@ spec = do
           lpSettlementSecret = replicate 64 '2'
       withEnvironmentVariables
         [ ("RPC_URL", Just $ "https://rpc.example/" <> rpcSecret)
+        , ("RPC_AUTH_TOKEN", Just rpcAuthSecret)
         , ("PERPS_RPC_URL", Just $ "https://perps-rpc.example/" <> rpcSecret)
+        , ("PERPS_RPC_AUTH_TOKEN", Just $ rpcAuthSecret <> "-perps")
         , ("CHAIN_ID", Just "11155111")
         , ("PERPS_CHAIN_ID", Just "421614")
         , ("DATABASE_URL", Just $ "postgresql://user:" <> databaseSecret <> "@database.example/db")
@@ -150,6 +160,7 @@ spec = do
               mapM_
                 (rendered `shouldNotContain`)
                 [ rpcSecret
+                , rpcAuthSecret
                 , databaseSecret
                 , pythSecret
                 , faucetSecret

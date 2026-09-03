@@ -14,7 +14,7 @@ import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , ensureVaultActivitySchema
   )
-import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Logging (field, logError, logInfo)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
@@ -143,6 +143,11 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
       indexerCfg =
         PerpsIndexerConfig
           { picRpcUrls = rpcUrls
+          , picRpcAuthToken =
+              case rpcUrls of
+                primary : _
+                  | primary == cfgPerpsRpcUrl cfg -> cfgPerpsRpcAuthToken cfg
+                _ -> Nothing
           , picChainId = cfgPerpsChainId cfg
           , picAddresses = addresses
           , picStartBlock = startBlock
@@ -205,7 +210,9 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
         ]
       case invocation of
         IndexerOptions.PerpsIndexerLoop -> do
-          vaultClient <- newClient $ cfgPerpsRpcUrl cfg
+          vaultClient <-
+            newClientWithOptions $
+              RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "vault-indexer"
           let vaultDeployment =
                 VaultActivityDeployment
                   { vadChainId = cfgPerpsChainId cfg

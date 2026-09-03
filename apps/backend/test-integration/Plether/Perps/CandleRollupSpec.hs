@@ -3026,6 +3026,7 @@ candleApiConfig :: Text -> Config
 candleApiConfig databaseUrl =
   Config
     { cfgRpcUrl = ""
+    , cfgRpcAuthToken = Nothing
     , cfgChainId = 11_155_111
     , cfgPort = 3001
     , cfgCorsOrigins = []
@@ -3048,6 +3049,7 @@ candleApiConfig databaseUrl =
     , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
+    , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = testRouter
@@ -3074,6 +3076,7 @@ candleApiConfig databaseUrl =
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
+    , cfgKeeperIdlePollSeconds = 5
     , cfgKeeperMaxBatchSize = 20
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2_000

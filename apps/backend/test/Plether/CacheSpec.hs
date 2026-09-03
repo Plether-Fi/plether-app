@@ -9,13 +9,16 @@ import Control.Concurrent
   , tryTakeMVar
   )
 import Control.Exception (ErrorCall (..), throwIO, try)
-import Data.Either (isLeft)
+import Control.Monad (when)
+import Data.Either (isLeft, isRight)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Word (Word64)
 import Plether.Cache
-  ( SingleFlightCache
+  ( AppCache (..)
+  , SingleFlightCache
   , SingleFlightSource (..)
   , newConcurrentSingleFlightCache
+  , newAppCache
   , newRefreshingSingleFlightCache
   , newSingleFlightCache
   , runSingleFlightCache
@@ -23,6 +26,8 @@ import Plether.Cache
   , runSingleFlightCacheFreshTimed
   , runSingleFlightCacheTimed
   )
+import Plether.Types.Perps (PythUpdateResponse (..))
+import qualified Plether.Types.Error as Error
 import System.Timeout (timeout)
 import Test.Hspec
 
@@ -51,6 +56,137 @@ awaitMemory cache key expected = go (200 :: Int)
 
 spec :: Spec
 spec = describe "runSingleFlightCache" $ do
+  it "coalesces concurrent latest Pyth admissions in the application cache" $ do
+    appCache <- newAppCache
+    calls <- newIORef (0 :: Int)
+    started <- newEmptyMVar
+    release <- newEmptyMVar
+    firstResult <- newEmptyMVar
+    secondResult <- newEmptyMVar
+    let payload = PythUpdateResponse [] 1 [] "test"
+        load = do
+          atomicModifyIORef' calls $ \count -> (count + 1, ())
+          putMVar started ()
+          takeMVar release
+          pure $ Right payload
+        run = runSingleFlightCache (cachePythLatestUpdates appCache) () isRight load
+
+    _ <- forkIO $ run >>= putMVar firstResult
+    takeMVar started
+    _ <- forkIO $ run >>= putMVar secondResult
+    threadDelay 10_000
+    readIORef calls `shouldReturn` 1
+    putMVar release ()
+    (firstSource, _) <- takeMVar firstResult
+    (secondSource, _) <- takeMVar secondResult
+    firstSource `shouldBe` SingleFlightLoaded
+    secondSource `shouldBe` SingleFlightCoalesced
+
+  it "coalesces on-chain validation for one immutable stored-row fingerprint" $ do
+    appCache <- newAppCache
+    calls <- newIORef (0 :: Int)
+    started <- newEmptyMVar
+    release <- newEmptyMVar
+    firstResult <- newEmptyMVar
+    secondResult <- newEmptyMVar
+    let payload = PythUpdateResponse [] 1 [] "stored"
+        fingerprint = (10, 12, 20, "latest")
+        load = do
+          atomicModifyIORef' calls $ \count -> (count + 1, ())
+          putMVar started ()
+          takeMVar release
+          pure $ Right payload
+        run =
+          runSingleFlightCache
+            (cacheStoredPythValidations appCache)
+            fingerprint
+            isRight
+            load
+
+    _ <- forkIO $ run >>= putMVar firstResult
+    takeMVar started
+    _ <- forkIO $ run >>= putMVar secondResult
+    threadDelay 10_000
+    readIORef calls `shouldReturn` 1
+    putMVar release ()
+    fst <$> takeMVar firstResult `shouldReturn` SingleFlightLoaded
+    fst <$> takeMVar secondResult `shouldReturn` SingleFlightCoalesced
+
+  it "invalidates stored validation when any row-fingerprint field changes" $ do
+    appCache <- newAppCache
+    calls <- newIORef (0 :: Int)
+    let payload = PythUpdateResponse [] 1 [] "stored"
+        load = do
+          atomicModifyIORef' calls $ \count -> (count + 1, ())
+          pure $ Right payload
+        run key =
+          runSingleFlightCache
+            (cacheStoredPythValidations appCache)
+            key
+            isRight
+            load
+
+    fst <$> run (10, 12, 20, "latest") `shouldReturn` SingleFlightLoaded
+    fst <$> run (10, 12, 20, "latest") `shouldReturn` SingleFlightMemory
+    fst <$> run (10, 13, 20, "latest") `shouldReturn` SingleFlightLoaded
+    readIORef calls `shouldReturn` 2
+
+  it "bounds historical Pyth updates to 64 entries" $ do
+    appCache <- newAppCache
+    calls <- newIORef (0 :: Int)
+    let payload = PythUpdateResponse [] 1 [] "historical"
+        load = do
+          atomicModifyIORef' calls $ \count -> (count + 1, ())
+          pure $ Right payload
+        run key =
+          runSingleFlightCache
+            (cachePythHistoricalUpdates appCache)
+            key
+            isRight
+            load
+
+    mapM_ run [1 .. 65]
+    fst <$> run 1 `shouldReturn` SingleFlightLoaded
+    readIORef calls `shouldReturn` 66
+
+  it "coalesces a concurrent failed Pyth load and retries it afterward" $ do
+    appCache <- newAppCache
+    calls <- newIORef (0 :: Int)
+    started <- newEmptyMVar
+    release <- newEmptyMVar
+    firstResult <- newEmptyMVar
+    secondResult <- newEmptyMVar
+    let load = do
+          callNumber <- atomicModifyIORef' calls $ \count -> (count + 1, count + 1)
+          when (callNumber == 1) $ do
+            putMVar started ()
+            takeMVar release
+          pure $ Left $ Error.networkError "test failure"
+        run =
+          runSingleFlightCache
+            (cachePythLatestUpdates appCache)
+            ()
+            isRight
+            load
+
+    _ <- forkIO $ run >>= putMVar firstResult
+    takeMVar started
+    _ <- forkIO $ run >>= putMVar secondResult
+    threadDelay 10_000
+    readIORef calls `shouldReturn` 1
+    putMVar release ()
+    (firstSource, firstFailure) <- takeMVar firstResult
+    (secondSource, secondFailure) <- takeMVar secondResult
+    firstSource `shouldBe` SingleFlightLoaded
+    secondSource `shouldBe` SingleFlightCoalesced
+    firstFailure `shouldSatisfy` isLeft
+    secondFailure `shouldSatisfy` isLeft
+
+    (retrySource, retryFailure) <- run
+    retrySource `shouldBe` SingleFlightLoaded
+    retryFailure `shouldSatisfy` isLeft
+    readIORef calls `shouldReturn` 2
+
   it "reuses an accepted value until its TTL expires" $ do
     cache <- newIntCache 4 20_000_000
     calls <- newIORef (0 :: Int)

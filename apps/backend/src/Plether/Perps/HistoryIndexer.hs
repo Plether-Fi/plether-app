@@ -2,6 +2,7 @@ module Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
+  , IndexerIterationOutcome (..)
   , defaultPerpsAddresses
   , applyPerpsAddressEnvironment
   , perpsContractAddressesFor
@@ -10,6 +11,7 @@ module Plether.Perps.HistoryIndexer
   , perpsV2IndexerName
   , perpsIndexerNameForRelease
   , runPerpsIndexer
+  , indexerIterationDelayMicros
   , perpsEventTopics
   , parsePerpsLog
   , parseUsdcTransfer
@@ -57,7 +59,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Word (Word64)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
+import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -111,7 +115,12 @@ import Plether.Database.Schema
   , upsertPerpsOrderTerminal
   )
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
-import Plether.Ethereum.Client (EthClient (..), RpcError)
+import Plether.Ethereum.Client
+  ( RpcClientOptions (..)
+  , RpcError
+  , newClientWithManager
+  , rpcHttpExceptionText
+  )
 import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
@@ -129,6 +138,7 @@ import Plether.Perps.ExecutionTrace
   )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
 import Plether.Utils.Hex (hexToInteger, intToHex)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Timeout (timeout)
 
 data PerpsAddresses = PerpsAddresses
@@ -229,8 +239,24 @@ data PerpsIndexerMode
   | PerpsIndexerReplay ReplayOptions
   deriving stock (Show, Eq)
 
+data IndexerIterationOutcome
+  = IndexerProcessed
+  | IndexerCaughtUp
+  | IndexerFailed
+  deriving stock (Show, Eq)
+
+indexerIterationDelayMicros :: Int -> IndexerIterationOutcome -> Int
+indexerIterationDelayMicros configuredDelay outcome =
+  case outcome of
+    IndexerFailed -> boundedDelay * 2
+    IndexerProcessed -> boundedDelay
+    IndexerCaughtUp -> boundedDelay
+ where
+  boundedDelay = max 1 configuredDelay
+
 data PerpsIndexerConfig = PerpsIndexerConfig
   { picRpcUrls :: [Text]
+  , picRpcAuthToken :: Maybe Text
   , picChainId :: Integer
   , picAddresses :: PerpsAddresses
   , picStartBlock :: Integer
@@ -243,7 +269,34 @@ data PerpsIndexerConfig = PerpsIndexerConfig
   , picCandleLatenessSeconds :: Integer
   , picDeploymentEnvironment :: Maybe Text
   }
-  deriving stock (Show, Eq)
+  deriving stock (Eq)
+
+instance Show PerpsIndexerConfig where
+  show cfg =
+    "PerpsIndexerConfig {picRpcProviderCount = "
+      <> show (length $ picRpcUrls cfg)
+      <> ", picRpcAuthTokenConfigured = "
+      <> show (isJust $ picRpcAuthToken cfg)
+      <> ", picChainId = "
+      <> show (picChainId cfg)
+      <> ", picStartBlock = "
+      <> show (picStartBlock cfg)
+      <> ", picMode = "
+      <> show (picMode cfg)
+      <> "}"
+
+data RpcEndpoint = RpcEndpoint
+  { reUrl :: !Text
+  , reBearerToken :: !(Maybe Text)
+  }
+
+indexerRpcEndpoints :: PerpsIndexerConfig -> [RpcEndpoint]
+indexerRpcEndpoints cfg =
+  case picRpcUrls cfg of
+    [] -> []
+    primary : fallbacks ->
+      RpcEndpoint primary (picRpcAuthToken cfg)
+        : map (`RpcEndpoint` Nothing) fallbacks
 
 data RpcLog = RpcLog
   { rlAddress :: Text
@@ -373,7 +426,7 @@ runPerpsIndexer manager pool cfg =
             "perps_indexer_iteration_failed"
             "Perps indexer iteration failed"
             [field "error" $ show err]
-          threadDelay (picPollIntervalMicros cfg * 2)
+          threadDelay $ indexerIterationDelayMicros (picPollIntervalMicros cfg) IndexerFailed
         Right indexed -> do
           -- A successful poll is the volume-writer liveness primitive. Emit it
           -- even when the indexer is already caught up: quiet chains and
@@ -417,7 +470,10 @@ runPerpsIndexer manager pool cfg =
                         (volumeCoverage >>= rcFinalizedThrough)
                   , field "coverage_error" $ volumeCoverage >>= rcLastError
                   ]
-          when (not indexed) $ threadDelay (picPollIntervalMicros cfg)
+          threadDelay $
+            indexerIterationDelayMicros
+              (picPollIntervalMicros cfg)
+              (if indexed then IndexerProcessed else IndexerCaughtUp)
 
     runEvidenceLoop = forever $ do
       runEvidenceBatch
@@ -513,7 +569,7 @@ runBoundedReplay manager pool cfg replayOptions = do
   reqIdRef <- newIORef 1
   currentBlock <-
     requireRpc "eth_blockNumber(replay)" $
-      getReplayCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
+      getReplayCurrentBlockNumber manager (indexerRpcEndpoints cfg) reqIdRef
   let safeBlock = max 0 (currentBlock - picConfirmations cfg)
       fromBlock = roFromBlock validatedOptions
       toBlock = roToBlock validatedOptions
@@ -535,7 +591,7 @@ runBoundedReplay manager pool cfg replayOptions = do
     requireRpc "eth_getLogs(replay)" $
       getReplayLogs
         manager
-        (picRpcUrls cfg)
+        (indexerRpcEndpoints cfg)
         reqIdRef
         cfg
         fromBlock
@@ -560,11 +616,11 @@ runBoundedReplay manager pool cfg replayOptions = do
 
   endInfoBefore <-
     requireRpc "eth_getBlockByNumber(replay-end-before)" $
-      getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef toBlock
+      getReplayBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef toBlock
   blockInfos <- forM logBlockNumbers $ \blockNumber -> do
     blockInfo <-
       requireRpc "eth_getBlockByNumber(replay-log)" $
-        getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+        getReplayBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef blockNumber
     pure (blockNumber, blockInfo)
   let blockInfoByNumber = Map.fromList blockInfos
   validatedLogs <- forM orderedLogs $ \logEntry ->
@@ -579,7 +635,7 @@ runBoundedReplay manager pool cfg replayOptions = do
           Right () -> pure (logEntry, blockInfo)
   endInfo <-
     requireRpc "eth_getBlockByNumber(replay-end-after)" $
-      getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef toBlock
+      getReplayBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef toBlock
   unless
     (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
     (fail "Canonical replay end block changed while validating the exact range")
@@ -593,7 +649,7 @@ runBoundedReplay manager pool cfg replayOptions = do
         (parseConfiguredLog cfg logEntry)
     txInfo <-
       requireRpc "eth_getTransactionByHash(replay)" $
-        getReplayTransactionInfo manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+        getReplayTransactionInfo manager (indexerRpcEndpoints cfg) reqIdRef (rlTxHash logEntry)
     unless
       (normalizeHex (tiHash txInfo) == normalizeHex (rlTxHash logEntry))
       (fail "Replay transaction hash does not match its canonical log")
@@ -659,7 +715,7 @@ runBoundedReplay manager pool cfg replayOptions = do
         cursorHash
     cursorInfo <-
       requireRpc "eth_getBlockByNumber(replay-cursor)" $
-        getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef cursorBlock
+        getReplayBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef cursorBlock
     case validateIndexedBoundary cursorBlock persistedCursorHash cursorInfo of
       Left err -> fail $ T.unpack err
       Right () -> pure ()
@@ -820,7 +876,7 @@ validateReplayStateUnchanged cursorBefore cursorAfter coverageBefore coverageAft
 runOneRange :: Manager -> DbPool -> PerpsIndexerConfig -> Maybe Integer -> Maybe Integer -> IO Bool
 runOneRange manager pool cfg explicitFrom explicitTo = do
   reqIdRef <- newIORef 1
-  currentBlock <- requireRpc "eth_blockNumber" $ getCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
+  currentBlock <- requireRpc "eth_blockNumber" $ getCurrentBlockNumber manager (indexerRpcEndpoints cfg) reqIdRef
   let safeBlock = max 0 (currentBlock - picConfirmations cfg)
   (storedLastBlock, storedLastHash) <- withDb pool $ \conn ->
     getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
@@ -834,7 +890,7 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
     then pure False
     else do
       logs <- requireRpc "eth_getLogs" $
-        getLogs manager (picRpcUrls cfg) reqIdRef cfg startBlock endBlock
+        getLogs manager (indexerRpcEndpoints cfg) reqIdRef cfg startBlock endBlock
       forM_ logs $ \logEntry -> do
         either (fail . T.unpack) pure $
           validateReplayLogScope startBlock endBlock (perpsAddresses cfg) logEntry
@@ -855,10 +911,10 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
       -- write. Reading the end block on both sides of the per-block lookups
       -- detects a provider/fork switch during this snapshot.
       endInfoBefore <- requireRpc "eth_getBlockByNumber" $
-        getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+        getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef endBlock
       blockInfos <- forM logBlockNumbers $ \blockNumber -> do
         blockInfo <- requireRpc "eth_getBlockByNumber" $
-          getBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+          getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef blockNumber
         pure (blockNumber, blockInfo)
       let blockInfoByNumber = Map.fromList blockInfos
       validatedLogs <- forM orderedLogs $ \logEntry ->
@@ -872,13 +928,13 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
               Left err -> fail $ T.unpack err
               Right () -> pure (logEntry, blockInfo)
       endInfo <- requireRpc "eth_getBlockByNumber" $
-        getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+        getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef endBlock
       unless
         (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
         (fail "Canonical end block changed while validating the fetched log range")
 
       enrichedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
-        mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+        mTxFrom <- getTransactionFrom manager (indexerRpcEndpoints cfg) reqIdRef (rlTxHash logEntry)
         let parsedLog = parseConfiguredLog cfg logEntry
         tradeCosts <- case parsedLog of
           Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
@@ -925,7 +981,7 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         when certifiesCanonicalContinuity $
           forM_ currentCursorHash $ \persistedHash -> do
             boundaryInfo <- requireRpc "eth_getBlockByNumber(cursor-boundary)" $
-              getBlockByNumber manager (picRpcUrls cfg) reqIdRef (startBlock - 1)
+              getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef (startBlock - 1)
             case validateIndexedBoundary (startBlock - 1) persistedHash boundaryInfo of
               Left err -> fail $ T.unpack err
               Right () -> pure ()
@@ -1009,7 +1065,7 @@ verifyCursor :: Manager -> DbPool -> PerpsIndexerConfig -> IORef Integer -> Inte
 verifyCursor _ _ _ _ 0 _ = pure ()
 verifyCursor _ _ _ _ _ Nothing = pure ()
 verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
-  eBlock <- getBlockByNumber manager (picRpcUrls cfg) reqIdRef lastBlock
+  eBlock <- getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef lastBlock
   case eBlock of
     Right blockInfo | normalizeHex (biHash blockInfo) == normalizeHex storedHash -> pure ()
     Right _ -> rewind
@@ -1097,7 +1153,7 @@ enrichPendingExecutionEvidence manager pool cfg reqIdRef = do
       cachedBy
         transactionCacheRef
         (normalizeHex $ peerTerminalTxHash candidate)
-        (getTransactionInfo manager (picRpcUrls cfg) reqIdRef $ peerTerminalTxHash candidate)
+        (getTransactionInfo manager (indexerRpcEndpoints cfg) reqIdRef $ peerTerminalTxHash candidate)
     case txResult >>= validateExecutionTransaction candidate of
       Left err ->
         logExecutionEvidenceFailure candidate "transaction" err
@@ -1238,7 +1294,7 @@ deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
   rpcTrace <-
     rpcCallAny
       manager
-      (picRpcUrls cfg)
+      (indexerRpcEndpoints cfg)
       reqIdRef
       "debug_traceTransaction"
       [ String $ tiHash txInfo
@@ -1796,7 +1852,7 @@ getTradeCosts manager cfg reqIdRef logEntry parsed
           result <-
             rpcCallAny
               manager
-              (picRpcUrls cfg)
+              (indexerRpcEndpoints cfg)
               reqIdRef
               "eth_call"
               [ object
@@ -1831,7 +1887,7 @@ getReplayTradeCosts manager cfg reqIdRef logEntry parsed
           result <-
             rpcCallAny
               manager
-              (picRpcUrls cfg)
+              (indexerRpcEndpoints cfg)
               reqIdRef
               "eth_call"
               [ object
@@ -2080,7 +2136,7 @@ requireRpc label action = do
     Right value -> pure value
     Left err -> fail $ T.unpack $ label <> " failed: " <> err
 
-getCurrentBlockNumber :: Manager -> [Text] -> IORef Integer -> IO (Either Text Integer)
+getCurrentBlockNumber :: Manager -> [RpcEndpoint] -> IORef Integer -> IO (Either Text Integer)
 getCurrentBlockNumber manager rpcUrls reqIdRef = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_blockNumber" ([] :: [Value])
   pure $ case result of
@@ -2088,7 +2144,7 @@ getCurrentBlockNumber manager rpcUrls reqIdRef = do
     Right (String hex) -> Right $ hexToInteger $ strip0x hex
     Right _ -> Left "Expected hex string"
 
-getReplayCurrentBlockNumber :: Manager -> [Text] -> IORef Integer -> IO (Either Text Integer)
+getReplayCurrentBlockNumber :: Manager -> [RpcEndpoint] -> IORef Integer -> IO (Either Text Integer)
 getReplayCurrentBlockNumber manager rpcUrls reqIdRef = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_blockNumber" ([] :: [Value])
   pure $ result >>= parseReplayBlockNumber
@@ -2098,7 +2154,7 @@ parseReplayBlockNumber = \case
   String quantity -> parseCanonicalHexQuantity "block number" quantity
   _ -> Left "Replay block number response must be a canonical hex string"
 
-getBlockByNumber :: Manager -> [Text] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
+getBlockByNumber :: Manager -> [RpcEndpoint] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
 getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getBlockByNumber" [String $ "0x" <> intToHex blockNumber, Bool False]
   pure $ case result of
@@ -2112,7 +2168,7 @@ getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
     Right _ -> Left "Expected block object"
 
 getReplayBlockByNumber
-  :: Manager -> [Text] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
+  :: Manager -> [RpcEndpoint] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
 getReplayBlockByNumber manager rpcUrls reqIdRef expectedBlock = do
   result <-
     rpcCallAny
@@ -2154,7 +2210,7 @@ parseCanonicalHexQuantity label value = do
     (Left $ "Replay " <> label <> " is not a canonical hex quantity")
   pure $ hexToInteger $ T.drop 2 value
 
-getTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
+getTransactionInfo :: Manager -> [RpcEndpoint] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
 getTransactionInfo manager rpcUrls reqIdRef txHash = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
   pure $ case result of
@@ -2177,7 +2233,7 @@ getTransactionInfo manager rpcUrls reqIdRef txHash = do
     Right _ -> Left "Expected transaction object"
 
 getReplayTransactionInfo
-  :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
+  :: Manager -> [RpcEndpoint] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
 getReplayTransactionInfo manager rpcUrls reqIdRef txHash = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
   pure $ result >>= parseReplayTransactionInfo
@@ -2206,7 +2262,7 @@ parseReplayTransactionInfo = \case
   Null -> Left "Replay transaction was not found"
   _ -> Left "Replay transaction response must be a JSON object"
 
-getTransactionFrom :: Manager -> [Text] -> IORef Integer -> Text -> IO (Maybe Text)
+getTransactionFrom :: Manager -> [RpcEndpoint] -> IORef Integer -> Text -> IO (Maybe Text)
 getTransactionFrom manager rpcUrls reqIdRef txHash = do
   result <- getTransactionInfo manager rpcUrls reqIdRef txHash
   case result of
@@ -2250,20 +2306,19 @@ deriveExecutionOracleMidpoint
 deriveExecutionOracleMidpoint manager cfg reqIdRef updateData (minPublishTime, maxPublishTime) =
   case executionFeedIds of
     Left err -> pure $ Left err
-    Right feedIds -> tryRpcUrls (picRpcUrls cfg) feedIds []
+    Right feedIds -> tryRpcUrls (indexerRpcEndpoints cfg) feedIds []
   where
     tryRpcUrls [] _ errors =
       pure $
         Left $
           "All RPC providers failed to parse the signed execution oracle payload"
             <> if null errors then "" else ": " <> T.intercalate "; " (reverse errors)
-    tryRpcUrls (rpcUrl : remaining) feedIds errors = do
-      let client =
-            EthClient
-              { clientManager = manager
-              , clientRpcUrl = rpcUrl
-              , clientRequestId = reqIdRef
-              }
+    tryRpcUrls (RpcEndpoint {..} : remaining) feedIds errors = do
+      client <-
+        newClientWithManager
+          manager
+          reqIdRef
+          (RpcClientOptions reUrl reBearerToken "history-indexer")
       parsed <-
         parseUniquePythUpdateData
           client
@@ -2290,13 +2345,13 @@ executionFeedIds = traverse decodeFeedId basketComponents
 renderRpcError :: RpcError -> Text
 renderRpcError = T.pack . show
 
-getLogs :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
+getLogs :: Manager -> [RpcEndpoint] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
 getLogs manager rpcUrls reqIdRef cfg fromBlock toBlock = do
   perpsResult <- getLogsFor manager rpcUrls reqIdRef (perpsContractAddresses cfg) perpsEventTopics fromBlock toBlock
   transferResult <- getLogsFor manager rpcUrls reqIdRef [paUsdc $ picAddresses cfg] [transferTopic] fromBlock toBlock
   pure $ (<>) <$> perpsResult <*> transferResult
 
-getLogsFor :: Manager -> [Text] -> IORef Integer -> [Text] -> [ByteString] -> Integer -> Integer -> IO (Either Text [RpcLog])
+getLogsFor :: Manager -> [RpcEndpoint] -> IORef Integer -> [Text] -> [ByteString] -> Integer -> Integer -> IO (Either Text [RpcLog])
 getLogsFor manager rpcUrls reqIdRef addresses eventTopics fromBlock toBlock = do
   let topics = map (String . ("0x" <>) . bytesToHex) eventTopics
       filterObject = object
@@ -2312,7 +2367,7 @@ getLogsFor manager rpcUrls reqIdRef addresses eventTopics fromBlock toBlock = do
     Right _ -> Left "Expected logs array"
 
 getReplayLogs
-  :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
+  :: Manager -> [RpcEndpoint] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
 getReplayLogs = getLogs
 
 parseReplayLogEntry :: Value -> Either Text RpcLog
@@ -2398,13 +2453,13 @@ isLowerHexDigit :: Char -> Bool
 isLowerHexDigit value =
   (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
 
-rpcCallAny :: (Aeson.ToJSON params) => Manager -> [Text] -> IORef Integer -> Text -> params -> IO (Either Text Value)
+rpcCallAny :: (Aeson.ToJSON params) => Manager -> [RpcEndpoint] -> IORef Integer -> Text -> params -> IO (Either Text Value)
 rpcCallAny manager rpcUrls reqIdRef method params = tryUrls rpcUrls
   where
     tryUrls [] = pure $ Left "No RPC URLs configured"
-    tryUrls [url] = rpcCall manager url reqIdRef method params
-    tryUrls (url : rest) = do
-      result <- rpcCall manager url reqIdRef method params
+    tryUrls [endpoint] = rpcCall manager endpoint reqIdRef method params
+    tryUrls (endpoint : rest) = do
+      result <- rpcCall manager endpoint reqIdRef method params
       case result of
         Right value -> pure $ Right value
         Left err -> do
@@ -2418,8 +2473,9 @@ rpcCallAny manager rpcUrls reqIdRef method params = tryUrls rpcUrls
             ]
           tryUrls rest
 
-rpcCall :: (Aeson.ToJSON params) => Manager -> Text -> IORef Integer -> Text -> params -> IO (Either Text Value)
-rpcCall manager rpcUrl reqIdRef methodName params = do
+rpcCall :: (Aeson.ToJSON params) => Manager -> RpcEndpoint -> IORef Integer -> Text -> params -> IO (Either Text Value)
+rpcCall manager RpcEndpoint {..} reqIdRef methodName params = do
+  startedAt <- getMonotonicTimeNSec
   reqId <- nextId reqIdRef
   let payload = object
         [ "jsonrpc" .= ("2.0" :: Text)
@@ -2428,23 +2484,82 @@ rpcCall manager rpcUrl reqIdRef methodName params = do
         , "id" .= reqId
         ]
   eResult <- try @SomeException $ do
-    req <- parseRequest $ T.unpack rpcUrl
+    req <- parseRequest $ T.unpack reUrl
     let req' = req
           { method = "POST"
-          , requestHeaders = [("Content-Type", "application/json")]
+          , requestHeaders =
+              ("Content-Type", "application/json")
+                : maybe [] (\token -> [("Authorization", "Bearer " <> TE.encodeUtf8 token)]) reBearerToken
           , requestBody = RequestBodyLBS $ Aeson.encode payload
           , responseTimeout = responseTimeoutMicro rpcRequestTimeoutMicros
           }
     responseBody <$> httpLbs req' manager
-  case eResult of
-    Left err -> pure $ Left $ T.pack $ show err
-    Right body ->
-      case Aeson.decode body of
-        Just (Object obj) ->
-          case KM.lookup (Key.fromText "result") obj of
-            Just value -> pure $ Right value
-            Nothing -> pure $ Left $ "RPC error: " <> T.pack (show $ KM.lookup (Key.fromText "error") obj)
-        _ -> pure $ Left "Invalid JSON-RPC response"
+  let outcome =
+        case eResult of
+          Left err -> Left $ rpcHttpExceptionText err
+          Right body ->
+            case Aeson.decode body of
+              Just (Object obj) ->
+                case KM.lookup (Key.fromText "result") obj of
+                  Just value -> Right value
+                  Nothing -> Left $ "RPC error: " <> T.pack (show $ KM.lookup (Key.fromText "error") obj)
+              _ -> Left "Invalid JSON-RPC response"
+  finishedAt <- getMonotonicTimeNSec
+  recordIndexerRpcCall methodName (finishedAt - startedAt) (either (const True) (const False) outcome)
+  pure outcome
+
+data IndexerRpcMethodStats = IndexerRpcMethodStats
+  { irmsRequestCount :: !Integer
+  , irmsFailureCount :: !Integer
+  , irmsTotalDurationNs :: !Word64
+  , irmsMaxDurationNs :: !Word64
+  }
+
+data IndexerRpcMetrics = IndexerRpcMetrics
+  { irmWindowStartedAtNs :: !Word64
+  , irmMethods :: !(Map.Map Text IndexerRpcMethodStats)
+  }
+
+{-# NOINLINE indexerRpcMetrics #-}
+indexerRpcMetrics :: IORef IndexerRpcMetrics
+indexerRpcMetrics = unsafePerformIO $ do
+  startedAt <- getMonotonicTimeNSec
+  newIORef $ IndexerRpcMetrics startedAt Map.empty
+
+recordIndexerRpcCall :: Text -> Word64 -> Bool -> IO ()
+recordIndexerRpcCall methodName durationNs failed = do
+  nowNs <- getMonotonicTimeNSec
+  completedWindow <- atomicModifyIORef' indexerRpcMetrics $ \state ->
+    let previous =
+          Map.findWithDefault
+            (IndexerRpcMethodStats 0 0 0 0)
+            methodName
+            (irmMethods state)
+        updated =
+          previous
+            { irmsRequestCount = irmsRequestCount previous + 1
+            , irmsFailureCount = irmsFailureCount previous + if failed then 1 else 0
+            , irmsTotalDurationNs = irmsTotalDurationNs previous + durationNs
+            , irmsMaxDurationNs = max (irmsMaxDurationNs previous) durationNs
+            }
+        methods = Map.insert methodName updated (irmMethods state)
+     in if nowNs - irmWindowStartedAtNs state >= 60 * 1_000_000_000
+          then (IndexerRpcMetrics nowNs Map.empty, Just methods)
+          else (state {irmMethods = methods}, Nothing)
+  mapM_ emitSummary $ maybe [] Map.toList completedWindow
+ where
+  emitSummary (rpcMethodName, IndexerRpcMethodStats {..}) =
+    logInfo
+      "rpc_request_summary"
+      "Ethereum RPC request totals for the completed aggregation window"
+      [ field "rpc_role" ("history-indexer" :: Text)
+      , field "rpc_method" rpcMethodName
+      , field "request_count" irmsRequestCount
+      , field "failure_count" irmsFailureCount
+      , field "total_duration_ms" $ nsToMs irmsTotalDurationNs
+      , field "max_duration_ms" $ nsToMs irmsMaxDurationNs
+      ]
+  nsToMs value = (fromIntegral value :: Double) / 1_000_000
 
 nextId :: IORef Integer -> IO Integer
 nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)

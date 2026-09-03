@@ -7,14 +7,22 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Foldable (toList)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Network.HTTP.Types (status200)
-import Network.Wai (Application, responseLBS, strictRequestBody)
+import Network.HTTP.Types (status200, status500)
+import Network.Wai (Application, requestHeaders, responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber, newClient)
+import Plether.Ethereum.Client
+  ( EthClient
+  , RpcClientOptions (..)
+  , RpcError (..)
+  , ethBlockNumber
+  , newClient
+  , newClientWithOptions
+  )
 import Plether.Ethereum.Contracts.SettlementMonitor
   ( SettlementDeployment (..)
   , SettlementCodeHashes (..)
@@ -178,6 +186,78 @@ spec =
         result <- ethGetLogs client housePool [] 100 101
         result `shouldSatisfy` isRpcJsonError
 
+    it "encodes a multi-address log filter and sends bearer authentication" $ do
+      captured <- newIORef Nothing
+      let application request respond = do
+            body <- strictRequestBody request
+            writeIORef captured $ Just (lookup "Authorization" $ requestHeaders request, body)
+            respond $
+              responseLBS
+                status200
+                [("Content-Type", "application/json")]
+                (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Integer), "result" .= ([] :: [Value])])
+      testWithApplication (pure application) $ \port -> do
+        client <-
+          newClientWithOptions $
+            RpcClientOptions
+              ("http://127.0.0.1:" <> T.pack (show port))
+              (Just "rpc-secret")
+              "rpc-test"
+        ethGetLogsForAddresses client [router, engine] [] 100 101
+          `shouldReturn` Right []
+      capturedRequest <- readIORef captured
+      case capturedRequest of
+        Nothing -> expectationFailure "RPC server did not receive a request"
+        Just (authorization, body) -> do
+          authorization `shouldBe` Just "Bearer rpc-secret"
+          rpcLogFilterAddresses body `shouldBe` Just [router, engine]
+
+    it "keeps the singleton eth_getLogs address filter wire-compatible" $ do
+      captured <- newIORef Nothing
+      let application request respond = do
+            body <- strictRequestBody request
+            writeIORef captured $ Just body
+            respond $
+              responseLBS
+                status200
+                [("Content-Type", "application/json")]
+                (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Integer), "result" .= ([] :: [Value])])
+      testWithApplication (pure application) $ \port -> do
+        client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+        ethGetLogs client router [] 100 101 `shouldReturn` Right []
+      capturedBody <- readIORef captured
+      (capturedBody >>= rpcLogFilterAddress) `shouldBe` Just router
+
+    it "redacts endpoint and bearer credentials from RPC client diagnostics" $ do
+      let rendered =
+            show $
+              RpcClientOptions
+                "https://eth-sepolia.g.alchemy.com/v2/fake"
+                (Just "bearer-secret")
+                "rpc-test"
+      rendered `shouldNotContain` "/v2/fake"
+      rendered `shouldNotContain` "bearer-secret"
+      rendered `shouldContain` "rpc-test"
+
+    it "does not copy bearer credentials into HTTP failure diagnostics" $ do
+      let application _ respond =
+            respond $ responseLBS status500 [] "provider failure"
+      result <- testWithApplication (pure application) $ \port -> do
+        client <-
+          newClientWithOptions $
+            RpcClientOptions
+              ("http://127.0.0.1:" <> T.pack (show port))
+              (Just "bearer-secret")
+              "rpc-test"
+        ethBlockNumber client
+      show result `shouldNotContain` "bearer-secret"
+      result `shouldBe` Left (RpcHttpError "statusCode = 500")
+
+    it "rejects an empty multi-address filter before making a request" $
+      withRpcClient $ \client -> do
+        result <- ethGetLogsForAddresses client [] [] 100 101
+        result `shouldSatisfy` isRpcJsonError
+
     it "rejects malformed general JSON-RPC quantities instead of decoding them as zero" $
       withRpcResult "eth_chainId" (String "0xnot-hex") $ \client -> do
         result <- ethChainId client
@@ -273,6 +353,29 @@ rpcFirstParam body = do
     first : _ -> Just first
     [] -> Nothing
   pure first
+
+rpcLogFilterAddresses :: LBS.ByteString -> Maybe [Text]
+rpcLogFilterAddresses body = do
+  Object value <- decode body
+  Array params <- KeyMap.lookup (Key.fromText "params") value
+  Object filterObject <- case toList params of
+    [singleFilter] -> Just singleFilter
+    _ -> Nothing
+  Array addresses <- KeyMap.lookup (Key.fromText "address") filterObject
+  traverse asString (toList addresses)
+ where
+  asString (String address) = Just address
+  asString _ = Nothing
+
+rpcLogFilterAddress :: LBS.ByteString -> Maybe Text
+rpcLogFilterAddress body = do
+  Object value <- decode body
+  Array params <- KeyMap.lookup (Key.fromText "params") value
+  Object filterObject <- case toList params of
+    [singleFilter] -> Just singleFilter
+    _ -> Nothing
+  String address <- KeyMap.lookup (Key.fromText "address") filterObject
+  pure address
 
 isExpectedEstimateGasRequest :: LBS.ByteString -> Bool
 isExpectedEstimateGasRequest body =

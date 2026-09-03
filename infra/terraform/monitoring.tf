@@ -55,6 +55,115 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "rpc_request_count" {
+  name           = "plether-${var.environment}-rpc-request-count"
+  pattern        = "{ $.event = \"rpc_request_summary\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "RpcRequestCount-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.request_count"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "rpc_failure_count" {
+  name           = "plether-${var.environment}-rpc-failure-count"
+  pattern        = "{ $.event = \"rpc_request_summary\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "RpcFailureCount-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.failure_count"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "rpc_request_attribution" {
+  name           = "plether-${var.environment}-rpc-request-attribution"
+  pattern        = "{ $.event = \"rpc_request_summary\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "RpcRequestCountByRole-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.request_count"
+    dimensions = {
+      RpcMethod = "$.rpc_method"
+      RpcRole   = "$.rpc_role"
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
+  alarm_name          = "plether-${var.environment}-rpc-request-rate-warning"
+  alarm_description   = "Ethereum RPC traffic exceeded the steady-state 15k request/hour warning threshold for two hours."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].namespace
+  period              = 3600
+  statistic           = "Sum"
+  threshold           = 15000
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
+  alarm_name          = "plether-${var.environment}-rpc-request-rate-critical"
+  alarm_description   = "Ethereum RPC traffic exceeded 25k requests in one hour."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].namespace
+  period              = 3600
+  statistic           = "Sum"
+  threshold           = 25000
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
+resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
+  alarm_name          = "plether-${var.environment}-rpc-failure-rate"
+  alarm_description   = "Ethereum RPC failures exceeded one percent in an hour containing at least 100 requests."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  metric_query {
+    id          = "failure_rate"
+    expression  = "IF(requests >= 100, 100 * failures / requests, 0)"
+    label       = "RPC failure percentage"
+    return_data = true
+  }
+
+  metric_query {
+    id          = "requests"
+    return_data = false
+
+    metric {
+      metric_name = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].name
+      namespace   = aws_cloudwatch_log_metric_filter.rpc_request_count.metric_transformation[0].namespace
+      period      = 3600
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id          = "failures"
+    return_data = false
+
+    metric {
+      metric_name = aws_cloudwatch_log_metric_filter.rpc_failure_count.metric_transformation[0].name
+      namespace   = aws_cloudwatch_log_metric_filter.rpc_failure_count.metric_transformation[0].namespace
+      period      = 3600
+      stat        = "Sum"
+    }
+  }
+}
+
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
   count = var.lp_settlement_mode != "off" ? 1 : 0
 
