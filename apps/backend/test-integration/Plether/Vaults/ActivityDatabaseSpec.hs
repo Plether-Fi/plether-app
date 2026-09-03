@@ -8,6 +8,7 @@ import Data.Maybe (isNothing)
 import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.VaultActivity
@@ -244,15 +245,21 @@ vaultActivityDatabaseSpec databaseUrl =
         published <- getVaultActivity pool deploymentA
         published `shouldSatisfy` (not . isNothing)
 
-    it "serves a completed snapshot as explicitly stale while the index catches up" $
+    it "serves a completed snapshot without warning for normal polling drift" $
       withVaultDatabase databaseUrl $ \pool -> do
+        now <- floor <$> getPOSIXTime
         withDb pool $ \conn -> do
-          setState conn deploymentA 20
           setVaultActivityIndexerState
-            conn deploymentA 20 (Just $ blockHash 20) (1_700_000_020 :: Integer)
-            30 (blockHash 30) (1_700_000_030 :: Integer) False
+            conn deploymentA 20 (Just $ blockHash 20) (now - 10)
+            30 (blockHash 30) now False
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA seniorVault 20 (blockHash 20)
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA juniorVault 20 (blockHash 20)
+          setVaultDepositAttributionState
+            conn deploymentA 20 (blockHash 20) (now - 10) True
         published <- getVaultActivity pool deploymentA
-        fmap (vacStale . varCoverage . respData) published `shouldBe` Just True
+        fmap (vacStale . varCoverage . respData) published `shouldBe` Just False
 
 withVaultDatabase :: Text -> (DbPool -> IO a) -> IO a
 withVaultDatabase databaseUrl action = do

@@ -308,6 +308,7 @@ test-suite plether-api-test
         Plether.Indexer.EventsSpec
         Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.PerpsSpec
+        Plether.Handlers.VaultActivitySpec
         Plether.Handlers.VaultPerformanceSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
