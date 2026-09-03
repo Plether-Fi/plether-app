@@ -73,7 +73,10 @@ export interface SponsoredOperationRecoverySnapshot {
       }
     | {
         kind: 'not-safe-yet'
-    }
+      }
+    | {
+        kind: 'inconclusive'
+      }
 }
 
 export interface ObservedUserOperationInclusion {

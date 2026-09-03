@@ -39,8 +39,8 @@ data TradeExecutionEvidence = TradeExecutionEvidence
   }
   deriving stock (Show, Eq)
 
--- | Extract execution economics from a geth @callTracer@ or Blockscout
--- @raw-trace@ response. Evidence is accepted only along the authenticated
+-- | Extract execution economics from a geth-compatible @callTracer@ response.
+-- Evidence is accepted only along the authenticated
 -- OrderRouter -> Engine -> SettlementSidecar call path and is bound to the
 -- corresponding OrderRouter -> PletherOracle response by execution price,
 -- publish time, and trace occurrence.

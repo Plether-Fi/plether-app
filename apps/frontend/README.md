@@ -114,11 +114,11 @@ verified deadline is retry-safe expired. An advanced nonce without a verified
 event releases the lane as outcome unknown and non-retryable because the old
 nonce cannot land.
 
-Blockscout is only a positive event locator: empty or missing results never
-prove absence, and every hit is verified by an exact one-block canonical RPC
-`UserOperationEvent` query. Third-party, RPC, and corrupt-data failures remain
-locked unless the verified protocol nonce/expiry proof resolves future
-execution. Legacy hash-only records and old diagnostic terminal labels are
+The backend's Alchemy receipt lookup locates historical UserOperations. Every
+receipt is independently bound to the exact hash, sender, EntryPoint,
+transaction receipt, safe block, and unique canonical `UserOperationEvent`.
+Null receipts are not treated as retry authorization, and provider or corrupt-
+data failures remain inconclusive. Legacy hash-only records and old diagnostic terminal labels are
 re-locked by storage migration, backfilled into their directly addressed lane
 head while holding that lane's browser lock, and never auto-expire. Each one
 instead exposes a force-release escape hatch warning that the old action may

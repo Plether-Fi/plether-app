@@ -4,11 +4,10 @@ module Plether.Perps.CriticalPathFixture
   , ScriptedChain
   , withScriptedChain
   , fixtureRpcUrl
-  , fixtureTraceApiUrl
   , setCanonicalBranch
   , setTraceAvailable
   , setTraceEvidence
-  , getRawTraceRequestCount
+  , getDebugTraceRequestCount
   , getUnexpectedRequests
   , assertNoUnexpectedRequests
   , testIndexerConfig
@@ -64,16 +63,13 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Network.HTTP.Types
   ( ResponseHeaders
-  , methodGet
   , methodPost
   , status200
   , status404
-  , status503
   )
 import Network.Wai
   ( Application
   , Request
-  , Response
   , pathInfo
   , requestMethod
   , responseLBS
@@ -138,7 +134,7 @@ data FixtureState = FixtureState
 data ScriptedChain = ScriptedChain
   { scBaseUrl :: Text
   , scState :: IORef FixtureState
-  , scRawTraceRequestCount :: IORef Int
+  , scDebugTraceRequestCount :: IORef Int
   , scUnexpectedRequests :: IORef [Text]
   }
 
@@ -151,26 +147,23 @@ withScriptedChain action = do
         , fsTraceAvailable = False
         , fsTraceEvidence = evidenceA
         }
-  rawTraceCountRef <- newIORef 0
+  debugTraceCountRef <- newIORef 0
   unexpectedRef <- newIORef []
   testWithApplication
-    (pure $ fixtureApplication stateRef rawTraceCountRef unexpectedRef)
+    (pure $ fixtureApplication stateRef debugTraceCountRef unexpectedRef)
     $ \port ->
       let chain =
             ScriptedChain
               { scBaseUrl =
                   "http://127.0.0.1:" <> Text.pack (show port)
               , scState = stateRef
-              , scRawTraceRequestCount = rawTraceCountRef
+              , scDebugTraceRequestCount = debugTraceCountRef
               , scUnexpectedRequests = unexpectedRef
               }
        in action chain
 
 fixtureRpcUrl :: ScriptedChain -> Text
 fixtureRpcUrl chain = scBaseUrl chain <> "/rpc"
-
-fixtureTraceApiUrl :: ScriptedChain -> Text
-fixtureTraceApiUrl chain = scBaseUrl chain <> "/api/v2"
 
 setCanonicalBranch :: ScriptedChain -> CanonicalBranch -> IO ()
 setCanonicalBranch chain branch =
@@ -196,8 +189,8 @@ setTraceEvidence chain evidence =
   atomicModifyIORef' (scState chain) $ \state ->
     (state {fsTraceEvidence = evidence}, ())
 
-getRawTraceRequestCount :: ScriptedChain -> IO Int
-getRawTraceRequestCount = readIORef . scRawTraceRequestCount
+getDebugTraceRequestCount :: ScriptedChain -> IO Int
+getDebugTraceRequestCount = readIORef . scDebugTraceRequestCount
 
 getUnexpectedRequests :: ScriptedChain -> IO [Text]
 getUnexpectedRequests chain =
@@ -215,7 +208,6 @@ testIndexerConfig :: ScriptedChain -> PerpsIndexerConfig
 testIndexerConfig chain =
   PerpsIndexerConfig
     { picRpcUrls = [fixtureRpcUrl chain]
-    , picTraceApiUrl = Just $ fixtureTraceApiUrl chain
     , picChainId = testChainId
     , picAddresses = testAddresses
     , picStartBlock = commitBlockNumber
@@ -234,24 +226,16 @@ fixtureApplication
   -> IORef Int
   -> IORef [Text]
   -> Application
-fixtureApplication stateRef rawTraceCountRef unexpectedRef request respond
+fixtureApplication stateRef debugTraceCountRef unexpectedRef request respond
   | requestMethod request == methodPost
       && pathInfo request == ["rpc"] = do
       body <- strictRequestBody request
-      response <- handleRpc stateRef unexpectedRef body
+      response <- handleRpc stateRef debugTraceCountRef unexpectedRef body
       respond $
         responseLBS
           status200
           jsonHeaders
           (Aeson.encode response)
-  | requestMethod request == methodGet
-      && take 2 (pathInfo request) == ["api", "v2"] =
-      handleTrace
-        stateRef
-        rawTraceCountRef
-        unexpectedRef
-        request
-        respond
   | otherwise = do
       recordUnexpected
         unexpectedRef
@@ -268,10 +252,11 @@ fixtureApplication stateRef rawTraceCountRef unexpectedRef request respond
 
 handleRpc
   :: IORef FixtureState
+  -> IORef Int
   -> IORef [Text]
   -> Lazy.ByteString
   -> IO Value
-handleRpc stateRef unexpectedRef body =
+handleRpc stateRef debugTraceCountRef unexpectedRef body =
   case Aeson.eitherDecode body of
     Left err -> do
       recordUnexpected
@@ -289,7 +274,7 @@ handleRpc stateRef unexpectedRef body =
         Just (String methodName) -> do
           state <- readIORef stateRef
           dispatchResult <-
-            dispatchRpc unexpectedRef state methodName params
+            dispatchRpc debugTraceCountRef unexpectedRef state methodName params
           pure $
             case dispatchResult of
               RpcSuccess result -> rpcSuccess requestId result
@@ -306,12 +291,13 @@ data RpcDispatchResult
   | RpcFailure Int Text
 
 dispatchRpc
-  :: IORef [Text]
+  :: IORef Int
+  -> IORef [Text]
   -> FixtureState
   -> Text
   -> Value
   -> IO RpcDispatchResult
-dispatchRpc unexpectedRef state methodName params =
+dispatchRpc debugTraceCountRef unexpectedRef state methodName params =
   case methodName of
     "eth_blockNumber" ->
       checkedParams unexpectedRef methodName emptyParams params $
@@ -356,10 +342,17 @@ dispatchRpc unexpectedRef state methodName params =
                 == Just (String "callTracer")
               && KeyMap.lookup (Key.fromText "timeout") options
                 == Just (String "20s") ->
-              pure $
-                RpcFailure
-                  (-32601)
-                  "debug_traceTransaction intentionally unavailable"
+              do
+                _ <-
+                  atomicModifyIORef' debugTraceCountRef $ \count ->
+                    (count + 1, count + 1)
+                if fsTraceAvailable state
+                  then pure $ RpcSuccess $ executionTrace state
+                  else
+                    pure $
+                      RpcFailure
+                        (-32601)
+                        "debug_traceTransaction intentionally unavailable"
         _ -> unexpectedRpc unexpectedRef methodName params
     _ -> unexpectedRpc unexpectedRef methodName params
 
@@ -388,57 +381,6 @@ unexpectedRpc unexpectedRef methodName params = do
         <> Text.pack (show params)
     )
   pure $ RpcFailure (-32602) "unexpected fixture request"
-
-handleTrace
-  :: IORef FixtureState
-  -> IORef Int
-  -> IORef [Text]
-  -> Request
-  -> (Response -> IO a)
-  -> IO a
-handleTrace stateRef rawTraceCountRef unexpectedRef request respond = do
-  _ <-
-    atomicModifyIORef' rawTraceCountRef $ \count ->
-      (count + 1, count + 1)
-  state <- readIORef stateRef
-  case pathInfo request of
-    ["api", "v2", "transactions", txHash, "raw-trace"]
-      | isCanonicalTerminalHash state txHash ->
-          if fsTraceAvailable state
-            then
-              respond $
-                responseLBS
-                  status200
-                  jsonHeaders
-                  (Aeson.encode $ executionTrace state)
-            else
-              respond $
-                responseLBS
-                  status503
-                  jsonHeaders
-                  ( Aeson.encode $
-                      object ["error" .= ("trace not indexed yet" :: Text)]
-                  )
-      | otherwise -> do
-          recordUnexpected
-            unexpectedRef
-            ("raw trace requested for noncanonical transaction " <> txHash)
-          respond $
-            responseLBS
-              status404
-              jsonHeaders
-              (Aeson.encode $ object ["error" .= ("not found" :: Text)])
-    _ -> do
-      recordUnexpected
-        unexpectedRef
-        ( "unexpected trace API path /"
-            <> Text.intercalate "/" (pathInfo request)
-        )
-      respond $
-        responseLBS
-          status404
-          jsonHeaders
-          (Aeson.encode $ object ["error" .= ("not found" :: Text)])
 
 branchLogs :: FixtureState -> [Value]
 branchLogs state =

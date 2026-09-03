@@ -94,6 +94,7 @@ runScenario
   -> IO ()
 runScenario manager pool apiApplication chain = do
   seedFastKeeperTerminal pool
+  setTraceAvailable chain True
 
   -- V1 keeper state is deliberately ignored. The V2 wait endpoint only
   -- returns lifecycle-backed indexed history with a client intent identity.
@@ -101,10 +102,10 @@ runScenario manager pool apiApplication chain = do
   assertPath fastWait ["data", "timedOut"] $ Bool True
   assertPath fastWait ["data", "order"] Null
 
-  -- The canonical V2 intent and finalization receipt are sufficient terminal
-  -- evidence. No Router terminal event or execution trace is consulted.
+  -- Finalization identity comes from canonical V2 lifecycle evidence, while
+  -- exact execution economics are enriched through Alchemy callTracer output.
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 0
+  getDebugTraceRequestCount chain `shouldReturnValue` 1
   (terminalOrder, waitOrder) <-
     getOrderFromBothEndpoints apiApplication
   forM_ [terminalOrder, waitOrder] $ \order -> do
@@ -124,7 +125,7 @@ runScenario manager pool apiApplication chain = do
 
   -- Re-indexing is idempotent and cannot mutate the canonical receipt.
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 0
+  getDebugTraceRequestCount chain `shouldReturnValue` 1
   stableOrder <- getFirstOrder apiApplication
   stableOrder `shouldBe` terminalOrder
 
@@ -175,7 +176,7 @@ runScenario manager pool apiApplication chain = do
   -- Canonical replacement B is accepted and enriched independently.
   setCanonicalBranch chain TerminalB
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 0
+  getDebugTraceRequestCount chain `shouldReturnValue` 2
   (replacementOrder, replacementWaitOrder) <-
     getOrderFromBothEndpoints apiApplication
   forM_ [replacementOrder, replacementWaitOrder] $ \order -> do
@@ -482,7 +483,6 @@ testConfig databaseUrl rpcUrl =
     , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
     , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgVaultHistoryDeploymentBlock = 0
-    , cfgVaultHistoryRpcUrl = rpcUrl
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest

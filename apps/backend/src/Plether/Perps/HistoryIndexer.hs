@@ -231,7 +231,6 @@ data PerpsIndexerMode
 
 data PerpsIndexerConfig = PerpsIndexerConfig
   { picRpcUrls :: [Text]
-  , picTraceApiUrl :: Maybe Text
   , picChainId :: Integer
   , picAddresses :: PerpsAddresses
   , picStartBlock :: Integer
@@ -1248,21 +1247,7 @@ deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
       ]
   case rpcTrace >>= decodeTrace of
     Right evidence -> pure $ Right evidence
-    Left rpcErr ->
-      case picTraceApiUrl cfg of
-        Nothing -> pure $ Left rpcErr
-        Just traceApiUrl -> do
-          explorerTrace <- fetchBlockscoutTrace manager traceApiUrl (tiHash txInfo)
-          pure $
-            case explorerTrace >>= decodeTrace of
-              Right evidence -> Right evidence
-              Left explorerErr ->
-                Left $
-                  "RPC call trace failed ("
-                    <> rpcErr
-                    <> "); trace API fallback failed ("
-                    <> explorerErr
-                    <> ")"
+    Left rpcErr -> pure $ Left $ "Alchemy RPC call trace failed: " <> rpcErr
   where
     decodeTrace trace = do
       validateCanonicalTraceRoot txInfo trace
@@ -1286,27 +1271,6 @@ validateCanonicalTraceRoot txInfo = \case
     unless (decodeHex traceInput == tiInput txInfo) $
       Left "Trace root calldata does not match the canonical transaction"
   _ -> Left "Trace root must be an object"
-
-fetchBlockscoutTrace :: Manager -> Text -> Text -> IO (Either Text Value)
-fetchBlockscoutTrace manager traceApiUrl txHash = do
-  let url =
-        T.dropWhileEnd (== '/') traceApiUrl
-          <> "/transactions/"
-          <> normalizeHex txHash
-          <> "/raw-trace"
-  eResult <- try @SomeException $ do
-    baseRequest <- parseRequest $ T.unpack url
-    let request =
-          baseRequest
-            { responseTimeout = responseTimeoutMicro traceRequestTimeoutMicros
-            }
-    responseBody <$> httpLbs request manager
-  pure $ case eResult of
-    Left err -> Left $ T.pack $ show err
-    Right body ->
-      case Aeson.eitherDecode body of
-        Left err -> Left $ "Invalid trace API JSON response: " <> T.pack err
-        Right value -> Right value
 
 evidenceForOrder
   :: Integer
@@ -1336,9 +1300,6 @@ logExecutionEvidenceFailure candidate component err =
 
 executionEvidenceBatchSize :: Int
 executionEvidenceBatchSize = 5
-
-traceRequestTimeoutMicros :: Int
-traceRequestTimeoutMicros = 20_000_000
 
 executionOracleDerivationVersion, executionOraclePayloadDerivationVersion, executionEconomicsDerivationVersion :: Int
 executionOracleDerivationVersion = 2

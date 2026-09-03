@@ -84,6 +84,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     perps_chain_id                 = var.perps_chain_id
     perps_house_pool               = var.perps_house_pool
     perps_order_router             = var.perps_order_router
+    perps_order_lifecycle_book     = var.perps_order_lifecycle_book
     perps_cfd_engine               = var.perps_cfd_engine
     perps_plether_oracle           = var.perps_plether_oracle
     perps_senior_vault             = var.perps_senior_vault
@@ -100,6 +101,15 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
   }
 
   lifecycle {
+    precondition {
+      condition = (
+        var.environment != "sepolia"
+        || var.perps_order_lifecycle_book == ""
+        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      )
+      error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+    }
+
     precondition {
       condition = {
         for setting in local.keeper_environment : setting.name => setting.value

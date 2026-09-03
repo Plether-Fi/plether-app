@@ -41,6 +41,9 @@ import type {
   PerpsRevealPayload,
   PerpsMarketStats,
   VaultHistory,
+  VaultActivity,
+  VaultActivityTrancheName,
+  VaultRequestIdsPage,
   TestnetFaucetClaim,
 } from './types';
 
@@ -542,6 +545,31 @@ export class PlethApiClient {
         credentials: 'omit',
         signal,
       }
+    );
+  }
+
+  async getPerpsVaultActivity(
+    signal?: AbortSignal
+  ): Promise<Result<ApiResponse<VaultActivity>, PlethApiError>> {
+    return fetchApi<VaultActivity>(this.config, '/perps/vaults/activity', {
+      credentials: 'omit',
+      signal,
+    });
+  }
+
+  async getPerpsVaultRequestIds(
+    tranche: VaultActivityTrancheName,
+    address: string,
+    cursor?: string,
+    limit = 250,
+    signal?: AbortSignal
+  ): Promise<Result<ApiResponse<VaultRequestIdsPage>, PlethApiError>> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor !== undefined) params.set('cursor', cursor);
+    return fetchApi<VaultRequestIdsPage>(
+      this.config,
+      `/perps/vaults/${tranche}/accounts/${address}/request-ids?${params.toString()}`,
+      { credentials: 'omit', signal }
     );
   }
 

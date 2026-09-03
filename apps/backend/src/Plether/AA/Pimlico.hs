@@ -339,6 +339,8 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
                         Left failure -> respondFailure (rrId rpcRequest) failure
                         Right () -> relay rpcRequest
   where
+    relay request
+      | rrMethod request == GetUserOperationReceipt = relayAlchemyReceipt request
     relay request =
       case injectSponsorshipPolicy aaCfg request of
         Left failure -> respondFailure (rrId request) failure
@@ -357,13 +359,52 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
                   now
                   trustedIp
                   upstreamValue
-              when (rrMethod request == GetUserOperationReceipt) $
-                liftRecordReceiptCost proxyState aaCfg now request upstreamValue
               setHeader "Content-Type" "application/json"
               setHeader "Cache-Control" "no-store"
               maybe (pure ()) (setHeader "Retry-After" . TL.fromStrict) retryAfter
               status upstreamStatus
               json upstreamValue
+
+    relayAlchemyReceipt request = do
+      result <-
+        liftIO $
+          rpcCall
+            perpsClient
+            "eth_getUserOperationReceipt"
+            (toJSON $ rrParams request)
+      case result of
+        Left _ ->
+          respondFailure (rrId request) $
+            ProxyFailure
+              status200
+              (-32603)
+              "Alchemy receipt lookup failed"
+              "UPSTREAM_UNAVAILABLE"
+              True
+        Right receipt
+          | receipt == Null || isObject receipt -> do
+              let response =
+                    object
+                      [ "jsonrpc" .= ("2.0" :: Text)
+                      , "id" .= rrId request
+                      , "result" .= receipt
+                      ]
+              liftRecordReceiptCost proxyState aaCfg now request response
+              setHeader "Content-Type" "application/json"
+              setHeader "Cache-Control" "no-store"
+              status status200
+              json response
+          | otherwise ->
+              respondFailure (rrId request) $
+                ProxyFailure
+                  status200
+                  (-32603)
+                  "Alchemy returned an invalid receipt response"
+                  "UPSTREAM_INVALID_RESPONSE"
+                  False
+
+    isObject (Object _) = True
+    isObject _ = False
 
 parseRpcRequest :: Value -> Either ProxyFailure RpcRequest
 parseRpcRequest (Array _) =
@@ -482,8 +523,7 @@ isRecoveryReadAuthorized proxyState now trustedIp request =
 recoveryReadHash :: RpcRequest -> Maybe Text
 recoveryReadHash request
   | rrMethod request `elem`
-      [ GetUserOperationReceipt
-      , GetUserOperationByHash
+      [ GetUserOperationByHash
       , GetUserOperationStatus
       ] =
       case rrParams request of

@@ -314,9 +314,9 @@ Notes:
   operational replay. It lacks the protected workflow's range, topology,
   digest, deadline, cancellation, and cleanup guardrails.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
-- Exact execution economics use `debug_traceTransaction`; on Arbitrum Sepolia the
-  indexer falls back to the public Blockscout raw-trace API. Override or disable
-  that fallback with `PERPS_INDEXER_TRACE_API_URL`.
+- Exact execution economics use Alchemy `debug_traceTransaction` through
+  `PERPS_INDEXER_RPC_URLS`. Trace failures remain non-authoritative pending
+  evidence and are surfaced to monitoring.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
 - Every activity row retains the normalized emitting contract address. Re-indexing
   safely fills this provenance for matching legacy rows; rows whose emitter cannot
@@ -531,7 +531,6 @@ Local URLs:
 | `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `302257125` | Earliest block eligible for the configured vault deployment's history |
 | `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
-| `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
@@ -581,7 +580,6 @@ Local URLs:
 | `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
-| `PERPS_INDEXER_TRACE_API_URL` | No | Arbitrum Sepolia Blockscout on chain `421614` | Raw call-trace fallback used to persist exact execution VPI and frozen-close spread; set blank to disable |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
@@ -605,11 +603,16 @@ Local URLs:
 | `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
 | `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
 
-For Terraform deployments, `vault_history_rpc_url` is stored as a SecureString
-and injected only into the API task. Leave it empty to use `PERPS_RPC_URL` for
-both current and historical reads; Sepolia's example uses Blockscout's public
-archive-capable endpoint so the initial seven-day backfill does not require a
-credential in source control.
+Vault performance history, vault activity, UserOperation receipt recovery, and
+transaction tracing all use the server-side Alchemy `PERPS_RPC_URL` (or the
+explicit server-only Perps RPC list). Run `plether-provider-preflight` before a
+rollout to verify archive calls, vault logs, Bundler receipts, and Debug support.
+The command is read-only and does not acquire an indexer lock or mutate the
+database:
+
+```bash
+cabal run plether-provider-preflight
+```
 
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set
@@ -695,6 +698,9 @@ the backend alert is a receipt-based secondary signal.
 | `GET /api/perps/accounts/:address/orders` | Indexed Perps order history |
 | `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
 | `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
+| `GET /api/perps/vaults/history?range=7d&interval=3600` | Alchemy-backed historical vault performance |
+| `GET /api/perps/vaults/activity` | Confirmed holder balances and newest deposit/withdraw requests for both tranches; returns `503` until the first full backfill |
+| `GET /api/perps/vaults/:tranche/accounts/:address/request-ids?limit=&cursor=` | Confirmed request IDs newest-first for Public Lens hydration; limit defaults to 100 and is capped at 250 |
 | `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration; both query parameters are required exactly once |
 | `GET /api/perps/basket/candles?interval=&cursor=` | Finalized OHLCV rollups in a fixed 500-bucket window ending at the exclusive cursor |
 | `GET /api/perps/basket/candles/current?interval=` | Mutable current OHLCV candle and dataset generation |
@@ -833,8 +839,8 @@ See [the LP settlement keeper runbook](../../docs/runbooks/lp-settlement-keeper.
 for the Sepolia activation, cost-cap, alarm, manual-review, and rollback procedure.
 
 The critical-path gate runs the real Perps history indexer and HTTP API against
-PostgreSQL and an in-process scripted chain. It covers delayed trace evidence,
-Blockscout fallback, finalized-value stability, stale evidence guards, stale
+PostgreSQL and an in-process scripted chain. It covers delayed Alchemy trace
+evidence, finalized-value stability, stale evidence guards, stale
 keeper suppression, and canonical reorg replacement. In CI, its PostgreSQL
 prerequisites are mandatory; missing configuration or an unexpected RPC request
 fails the job rather than silently skipping it.

@@ -93,6 +93,9 @@ export async function resolveProtocolOperation(input: {
     if (snapshot.userOperationEvidence.kind === 'not-safe-yet') {
       return undefined
     }
+    if (snapshot.userOperationEvidence.kind === 'inconclusive') {
+      return undefined
+    }
 
     if (operationNonce !== undefined) {
       // Once this nonce has advanced, a missing exact event cannot distinguish

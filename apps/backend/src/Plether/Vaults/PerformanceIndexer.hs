@@ -431,8 +431,8 @@ rpcOrFail context action = do
     Left err -> fail $ context <> ": " <> show err
     Right value -> pure value
 
--- Public archive RPCs can transiently report an indexed historical block as
--- missing. Retrying the individual lookup avoids abandoning an otherwise
+-- Archive RPCs can transiently report an indexed historical block as missing.
+-- Retrying the individual lookup avoids abandoning an otherwise
 -- healthy 169-checkpoint reconciliation and waiting for the next poll cycle.
 retryRpcResult :: Int -> IO (Either e a) -> IO (Either e a)
 retryRpcResult retries action = do
@@ -443,9 +443,8 @@ retryRpcResult retries action = do
       retryRpcResult (retries - 1) action
     _ -> pure result
 
--- The public Blockscout archive endpoint is deliberately rate-limited. Pace
--- the binary-search reads so a full seven-day backfill completes in one pass
--- instead of repeatedly exhausting the provider's burst allowance.
+-- Pace binary-search reads so a full seven-day backfill stays within the
+-- server-side provider's burst allowance.
 pacedArchiveBlockLookup :: EthClient -> Integer -> IO (Either RpcError RpcBlock)
 pacedArchiveBlockLookup client blockNumber =
   pacedRpcResult $ ethGetBlockByNumber client blockNumber

@@ -156,12 +156,17 @@ spec = do
               requestMethod
               [String $ "0x" <> T.toUpper (T.drop 2 userOperationHash)]
               KM.empty
-          recoveryMethods =
-            [ GetUserOperationReceipt
-            , GetUserOperationByHash
+          protectedRecoveryMethods =
+            [ GetUserOperationByHash
             , GetUserOperationStatus
             ]
 
+      isRecoveryReadAuthorized
+        proxyState
+        now
+        trustedIp
+        (recoveryRequest GetUserOperationReceipt)
+        `shouldReturn` True
       mapM_
         (\requestMethod ->
           isRecoveryReadAuthorized
@@ -171,7 +176,7 @@ spec = do
             (recoveryRequest requestMethod)
             `shouldReturn` False
         )
-        recoveryMethods
+        protectedRecoveryMethods
       recordSubmittedOperation
         proxyState
         now
@@ -186,13 +191,13 @@ spec = do
             (recoveryRequest requestMethod)
             `shouldReturn` True
         )
-        recoveryMethods
+        protectedRecoveryMethods
       isRecoveryReadAuthorized
         proxyState
         now
         "203.0.113.11"
         (recoveryRequest GetUserOperationReceipt)
-        `shouldReturn` False
+        `shouldReturn` True
       mapM_
         (\requestMethod ->
           isRecoveryReadAuthorized
@@ -202,7 +207,7 @@ spec = do
             (recoveryRequest requestMethod)
             `shouldReturn` False
         )
-        recoveryMethods
+        protectedRecoveryMethods
       isRecoveryReadAuthorized
         proxyState
         now
@@ -436,7 +441,6 @@ testConfig =
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
     , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
     , cfgVaultHistoryDeploymentBlock = 0
-    , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = testReleaseManifest

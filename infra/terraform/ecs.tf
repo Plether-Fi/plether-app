@@ -118,13 +118,6 @@ locals {
     }
   ] : []
 
-  vault_history_rpc_secret = trimspace(var.vault_history_rpc_url) != "" ? [
-    {
-      name      = "VAULT_HISTORY_RPC_URL"
-      valueFrom = aws_ssm_parameter.vault_history_rpc_url[0].arn
-    }
-  ] : []
-
   # Declassifying key presence exposes no secret material and lets defaults-off
   # task definitions omit the signer env entirely, as required by Config.
   lp_settlement_private_key_secret = nonsensitive(var.lp_settlement_private_key != "") ? [
@@ -324,7 +317,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -783,6 +776,11 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
       { name = "CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "VAULT_HISTORY_HOUSE_POOL_ADDRESS", value = var.vault_history_house_pool_address },
+      { name = "VAULT_HISTORY_SENIOR_VAULT_ADDRESS", value = var.vault_history_senior_vault_address },
+      { name = "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", value = var.vault_history_junior_vault_address },
+      { name = "VAULT_HISTORY_DEPLOYMENT_BLOCK", value = var.vault_history_deployment_block },
+      { name = "VAULT_HISTORY_CONFIRMATIONS", value = var.vault_history_confirmations },
       { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },
@@ -1051,6 +1049,11 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
         { name = "CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "VAULT_HISTORY_HOUSE_POOL_ADDRESS", value = var.vault_history_house_pool_address },
+        { name = "VAULT_HISTORY_SENIOR_VAULT_ADDRESS", value = var.vault_history_senior_vault_address },
+        { name = "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", value = var.vault_history_junior_vault_address },
+        { name = "VAULT_HISTORY_DEPLOYMENT_BLOCK", value = var.vault_history_deployment_block },
+        { name = "VAULT_HISTORY_CONFIRMATIONS", value = var.vault_history_confirmations },
         { name = "PERPS_USDC", value = var.perps_usdc },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
         { name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book },

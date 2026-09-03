@@ -219,6 +219,7 @@ interface VaultActivityViewState {
   activity: VaultOverviewActivityItem[]
   isLoading: boolean
   isError: boolean
+  isStale?: boolean
 }
 
 interface VaultRequestsViewState {
@@ -226,6 +227,7 @@ interface VaultRequestsViewState {
   redeemRequests: VaultRedeemRequest[]
   isLoading: boolean
   discoveryError: boolean
+  discoveryStale: boolean
   refresh: () => void
 }
 
@@ -1877,6 +1879,7 @@ function VaultActivitySection({
   scrollMarginTop,
   isLoading,
   isError,
+  isStale,
 }: {
   holders: VaultHolderDistribution[]
   activity: VaultOverviewActivityItem[]
@@ -1884,6 +1887,7 @@ function VaultActivitySection({
   scrollMarginTop?: number
   isLoading: boolean
   isError: boolean
+  isStale?: boolean
 }) {
   const [holderPage, setHolderPage] = useState(0)
   const [activityPage, setActivityPage] = useState(0)
@@ -1944,6 +1948,11 @@ function VaultActivitySection({
       </div>
 
       <div className="space-y-6">
+        {isStale ? (
+          <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-content-secondary">
+            Vault activity is temporarily stale. The last confirmed holder and request data remains visible while the backend catches up.
+          </p>
+        ) : null}
         <div className="border border-brand-border/30 bg-surface-panel">
           <div className="flex flex-col gap-2 border-b border-brand-border/25 p-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -3093,6 +3102,7 @@ export function ActivityTab({
   redeemRequests,
   requestsLoading,
   requestDiscoveryError,
+  requestDiscoveryStale,
   onRefreshRequests,
   onSwitchNetwork,
 }: {
@@ -3105,6 +3115,7 @@ export function ActivityTab({
   redeemRequests: VaultRedeemRequest[]
   requestsLoading: boolean
   requestDiscoveryError: boolean
+  requestDiscoveryStale: boolean
   onRefreshRequests: () => void
   onSwitchNetwork: () => void
 }) {
@@ -3540,10 +3551,14 @@ export function ActivityTab({
         )}
       </section>
 
-      {requestDiscoveryError ? (
-        <Alert variant="warning" title="Older activity is unavailable">
-          The app still checks your latest pending activity. Retry to restore older unfinished
-          deposits and withdrawals from the block explorer.
+      {requestDiscoveryError || requestDiscoveryStale ? (
+        <Alert
+          variant="warning"
+          title={requestDiscoveryError ? 'Older activity could not refresh' : 'Older activity is temporarily stale'}
+        >
+          {requestDiscoveryError
+            ? 'The app keeps the last discovered request IDs and still checks nearby epochs. Retry to refresh older unfinished deposits and withdrawals.'
+            : 'The app is showing the last confirmed request IDs while Plether’s vault index catches up.'}
           <Button
             type="button"
             variant="secondary"
@@ -5100,6 +5115,7 @@ export function VaultDetailView({
               redeemRequests={vaultRequests.redeemRequests}
               requestsLoading={vaultRequests.isLoading}
               requestDiscoveryError={vaultRequests.discoveryError}
+              requestDiscoveryStale={vaultRequests.discoveryStale}
               onRefreshRequests={vaultRequests.refresh}
               onSwitchNetwork={onSwitchNetwork}
             />
@@ -5136,6 +5152,7 @@ export function VaultDetailView({
         scrollMarginTop={sectionScrollOffset}
         isLoading={vaultActivity.isLoading}
         isError={vaultActivity.isError}
+        isStale={vaultActivity.isStale}
       />
     </div>
   )

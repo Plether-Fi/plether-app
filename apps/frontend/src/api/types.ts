@@ -316,6 +316,66 @@ export interface VaultHistory {
   junior: VaultHistoryTranche;
 }
 
+export type VaultActivityTrancheName = 'senior' | 'junior';
+export type VaultActivityKindName = 'deposit' | 'withdraw';
+
+export interface VaultActivityCoverage {
+  confirmedThroughBlock: number;
+  confirmedThroughHash: string | null;
+  observedSafeHeadBlock: number;
+  observedSafeHeadHash: string | null;
+  complete: boolean;
+  stale: boolean;
+  lagBlocks: number;
+  lagSeconds: number;
+  lastSuccessfulPoll: number;
+}
+
+export interface VaultActivityHolderRow {
+  address: string;
+  shareBalance: string;
+}
+
+export interface VaultActivityRow {
+  id: string;
+  tranche: VaultActivityTrancheName;
+  kind: VaultActivityKindName;
+  account: string;
+  requestId: string;
+  rawAssets: string | null;
+  rawShares: string | null;
+  timestamp: number;
+  blockNumber: number;
+  transactionIndex: number;
+  logIndex: number;
+  transactionHash: string;
+}
+
+export interface VaultActivityTrancheData {
+  holders: VaultActivityHolderRow[];
+  holderCount: number;
+  holdersTruncated: boolean;
+  activity: VaultActivityRow[];
+  activityCount: number;
+  activityTruncated: boolean;
+}
+
+export interface VaultActivity {
+  deployment: VaultHistoryDeployment & { deploymentBlock: number };
+  coverage: VaultActivityCoverage;
+  senior: VaultActivityTrancheData;
+  junior: VaultActivityTrancheData;
+}
+
+export interface VaultRequestIdsPage {
+  tranche: VaultActivityTrancheName;
+  account: string;
+  requestIds: string[];
+  nextCursor: string | null;
+  confirmedThroughBlock: number;
+  stale: boolean;
+}
+
 export interface TestnetFaucetClaim {
   address: string;
   amount: string;

@@ -28,11 +28,17 @@ resource "aws_ssm_parameter" "perps_rpc_url" {
 }
 
 resource "aws_ssm_parameter" "vault_history_rpc_url" {
-  count = trimspace(var.vault_history_rpc_url) != "" ? 1 : 0
+  # Retain the legacy SecureString through the first Alchemy-only soak without
+  # keeping a second provider URL in Terraform's active configuration surface.
+  count = var.environment == "sepolia" ? 1 : 0
 
   name  = "/plether/${var.environment}/vault-history-rpc-url"
   type  = "SecureString"
-  value = var.vault_history_rpc_url
+  value = var.perps_rpc_url
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 resource "aws_ssm_parameter" "keeper_private_key" {

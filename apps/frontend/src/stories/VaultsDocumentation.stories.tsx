@@ -267,6 +267,7 @@ const emptyRequests = {
   redeemRequests: [],
   isLoading: false,
   discoveryError: false,
+  discoveryStale: false,
   refresh: noop,
 } satisfies VaultRequestsViewState
 
@@ -308,6 +309,7 @@ const pendingRequests = {
   ],
   isLoading: false,
   discoveryError: false,
+  discoveryStale: false,
   refresh: noop,
 } satisfies VaultRequestsViewState
 
@@ -396,6 +398,7 @@ export const Position: Story = {
         redeemRequests={[]}
         requestsLoading={false}
         requestDiscoveryError={false}
+        requestDiscoveryStale={false}
         onRefreshRequests={noop}
         onSwitchNetwork={noop}
       />
@@ -422,6 +425,7 @@ export const PendingActivity: Story = {
         redeemRequests={pendingRequests.redeemRequests}
         requestsLoading={false}
         requestDiscoveryError={false}
+        requestDiscoveryStale={false}
         onRefreshRequests={noop}
         onSwitchNetwork={noop}
       />

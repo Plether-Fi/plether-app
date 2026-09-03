@@ -7,6 +7,8 @@ import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
+import Plether.Vaults.ActivityDatabaseSpec (vaultActivityDatabaseSpec)
+import Plether.Vaults.ActivityIndexerIntegrationSpec (vaultActivityIndexerIntegrationSpec)
 import System.Environment (lookupEnv)
 import System.Exit (die)
 import Test.Hspec (hspec)
@@ -24,6 +26,8 @@ main = do
         candleRollupSpec $ T.pack value
         insightsDatabaseSpec $ T.pack value
         registrationDatabaseSpec $ T.pack value
+        vaultActivityDatabaseSpec $ T.pack value
+        vaultActivityIndexerIntegrationSpec $ T.pack value
     Nothing
       | required ->
           die

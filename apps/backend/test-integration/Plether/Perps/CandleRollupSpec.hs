@@ -3065,7 +3065,6 @@ candleApiConfig databaseUrl =
     , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
     , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
     , cfgVaultHistoryDeploymentBlock = 0
-    , cfgVaultHistoryRpcUrl = ""
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
