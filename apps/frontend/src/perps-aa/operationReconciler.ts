@@ -2,14 +2,14 @@ import type { Hex } from 'viem'
 import type {
   ManagedUserOperationReceipt,
   PerpsAaSmartAccountRuntime,
-  PimlicoUserOperationStatus,
+  BundlerUserOperationStatus,
 } from './runtimeContext'
 import { UserOperationReceiptNotSafeError } from './runtimeContext'
 
-export type PimlicoReconciliationOutcome =
+export type UserOperationReconciliationOutcome =
   | {
       kind: 'pending'
-      status: PimlicoUserOperationStatus
+      status: BundlerUserOperationStatus
       transactionHash: Hex | null
     }
   | {
@@ -32,7 +32,7 @@ export type PimlicoReconciliationOutcome =
 function outcomeFromReceipt(
   receipt: ManagedUserOperationReceipt
 ): Extract<
-  PimlicoReconciliationOutcome,
+  UserOperationReconciliationOutcome,
   { kind: 'confirmed' | 'terminal' }
 > {
   if (
@@ -111,11 +111,11 @@ async function getExactReceipt(input: {
   }
 }
 
-export async function reconcilePimlicoUserOperation(input: {
+export async function reconcileUserOperation(input: {
   runtime: PerpsAaSmartAccountRuntime
   userOperationHash: Hex
-}): Promise<PimlicoReconciliationOutcome> {
-  // The exact receipt is authoritative and must win over stale Pimlico status
+}): Promise<UserOperationReconciliationOutcome> {
+  // The exact receipt is authoritative and must win over stale bundler status
   // data. Only a typed not-found result permits status/expiry reconciliation;
   // transport, decoding, and account-mismatch failures stay fail-closed.
   const exactReceipt = await getExactReceipt(input)
@@ -146,3 +146,7 @@ export async function reconcilePimlicoUserOperation(input: {
     transactionHash: status.transactionHash,
   }
 }
+
+export type PimlicoReconciliationOutcome = UserOperationReconciliationOutcome
+/** @deprecated Use reconcileUserOperation. */
+export const reconcilePimlicoUserOperation = reconcileUserOperation

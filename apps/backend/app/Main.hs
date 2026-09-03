@@ -5,11 +5,13 @@ import Control.Monad (when)
 import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Plether.AA.Gateway (nativeGatewayIssuanceError, newNativeGatewayState)
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
@@ -27,6 +29,7 @@ import Plether.Vaults.PerformanceIndexer
   ( VaultPerformanceIndexerConfig (..)
   , startVaultPerformanceIndexer
   )
+import System.Exit (exitFailure)
 import Web.Scotty (middleware, scotty)
 
 main :: IO ()
@@ -39,6 +42,7 @@ main = do
         "api_configuration_invalid"
         "API configuration is invalid"
         [field "error" err]
+        >> exitFailure
     Right cfg -> do
       manager <- newManager tlsManagerSettings
       perpsClient <-
@@ -76,6 +80,7 @@ main = do
           withDb pool ensureTestnetFaucetSchema
           withDb pool ensureVaultPerformanceSchema
           withDb pool ensureVaultActivitySchema
+          withDb pool ensureAaSponsorshipSchema
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
@@ -173,6 +178,14 @@ main = do
       cache <- newAppCache
       pimlicoProxyState <- newPimlicoProxyState
       faucetGuardState <- newFaucetGuardState
+      nativeGatewayState <- newNativeGatewayState manager cfg perpsClient
+      case nativeGatewayIssuanceError nativeGatewayState of
+        Just _ ->
+          logWarn
+            "aa_native_issuance_unavailable"
+            "Native AA startup attestation failed; affected methods remain fail-closed"
+            [field "failure_class" ("startup-attestation" :: String)]
+        Nothing -> pure ()
       requestLogging <- newRequestLoggingMiddleware
       logInfo
         "api_started"
@@ -184,4 +197,4 @@ main = do
         ]
       scotty (cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState
+        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState

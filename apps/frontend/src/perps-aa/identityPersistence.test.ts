@@ -55,6 +55,30 @@ describe('Perps identity persistence', () => {
     ).toEqual({ status: 'found', identity })
   })
 
+  it('round-trips an identity created from a supported v2 manifest', () => {
+    const storage = memoryStorage()
+    const identity = {
+      ...sponsoredIdentity(),
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+    }
+
+    expect(writePersistedPerpsIdentity(storage, identity)).toEqual({ ok: true })
+    expect(
+      readPersistedPerpsIdentity(storage, identity.chainId, ownerAddress)
+    ).toEqual({ status: 'found', identity })
+  })
+
+  it('rejects identities from unsupported future manifest versions', () => {
+    const identity = { ...sponsoredIdentity() }
+    delete (identity as Partial<typeof identity>).schemaVersion
+    expect(() => createPersistedPerpsIdentity({
+      ...identity,
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v3',
+    } as Omit<typeof identity, 'schemaVersion'>)).toThrow(
+      /manifestVersion is unsupported/
+    )
+  })
+
   it('fails closed on malformed stored identity JSON', () => {
     const storage = memoryStorage()
     storage.setItem(

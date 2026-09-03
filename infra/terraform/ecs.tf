@@ -32,6 +32,13 @@ locals {
     "0xc4c886a6f1d7cb22c833ac1b29f29da43afbccd1",
   ]
 
+  aa_proxy_origin_token_rejected_values = [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  ]
+
   effective_pyth_api_key_ssm_parameter_name = var.pyth_api_key_ssm_parameter_name != null ? trimspace(var.pyth_api_key_ssm_parameter_name) : (
     var.environment == "sepolia" ? "/plether/sepolia/pyth-api-key" : ""
   )
@@ -145,7 +152,14 @@ locals {
     }
   ] : []
 
-  aa_proxy_secrets = var.provision_aa_proxy ? [
+  aa_gateway_origin_secret = local.aa_gateway_enabled ? [
+    {
+      name      = "AA_PROXY_ORIGIN_TOKEN"
+      valueFrom = aws_ssm_parameter.aa_proxy_origin_token[0].arn
+    }
+  ] : []
+
+  pimlico_proxy_secrets = var.provision_aa_proxy ? [
     {
       name      = "PIMLICO_API_KEY"
       valueFrom = aws_ssm_parameter.pimlico_api_key[0].arn
@@ -153,10 +167,6 @@ locals {
     {
       name      = "PIMLICO_SPONSORSHIP_POLICY_ID"
       valueFrom = aws_ssm_parameter.pimlico_sponsorship_policy_id[0].arn
-    },
-    {
-      name      = "AA_PROXY_ORIGIN_TOKEN"
-      valueFrom = aws_ssm_parameter.aa_proxy_origin_token[0].arn
     }
   ] : []
 
@@ -218,6 +228,44 @@ locals {
     ] : []
   )
 
+  native_aa_secrets = local.native_aa_backend_configured ? [
+    {
+      name      = "AA_RECONCILER_SECONDARY_RPC_URL"
+      valueFrom = local.aa_reconciler_secondary_rpc_url_parameter_arn
+    }
+  ] : []
+
+  aa_proxy_secrets = concat(
+    local.aa_gateway_origin_secret,
+    local.pimlico_proxy_secrets,
+    local.native_aa_secrets,
+  )
+
+  native_aa_environment = local.native_aa_backend_configured ? [
+    { name = "AWS_REGION", value = var.aws_region },
+    { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
+    { name = "AA_NATIVE_SUBMISSION_ENABLED", value = tostring(var.enable_native_aa_submission) },
+    { name = "AA_NATIVE_CANARY_OWNERS", value = var.aa_native_canary_owners },
+    { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = tostring(var.aa_native_global_rollout_enabled) },
+    { name = "AA_ALTO_RPC_URL", value = "http://${aws_lb.alto[0].dns_name}" },
+    { name = "AA_PAYMASTER_ADDRESS", value = var.aa_paymaster_address },
+    { name = "AA_PAYMASTER_POLICY_ID", value = var.aa_paymaster_policy_id },
+    { name = "AA_PAYMASTER_SIGNER_ADDRESS", value = var.aa_paymaster_signer_address },
+    { name = "AA_PAYMASTER_KMS_KEY_ID", value = aws_kms_key.aa_paymaster_signer[0].arn },
+    { name = "AA_PAYMASTER_ACCOUNT_CODE_HASH", value = var.aa_paymaster_account_code_hash },
+    { name = "AA_PAYMASTER_CODE_HASH", value = var.aa_paymaster_code_hash },
+    { name = "AA_PAYMASTER_VALIDITY_SECONDS", value = var.aa_paymaster_validity_seconds },
+    { name = "AA_PAYMASTER_VERIFICATION_GAS_LIMIT", value = var.aa_paymaster_verification_gas_limit },
+    { name = "AA_PAYMASTER_POST_OP_GAS_LIMIT", value = var.aa_paymaster_post_op_gas_limit },
+    { name = "AA_PAYMASTER_MAX_COST_WEI", value = var.aa_paymaster_max_cost_wei },
+    { name = "AA_PAYMASTER_ACCOUNT_OUTSTANDING_WEI", value = var.aa_paymaster_account_outstanding_wei },
+    { name = "AA_PAYMASTER_CLIENT_OUTSTANDING_WEI", value = var.aa_paymaster_client_outstanding_wei },
+    { name = "AA_PAYMASTER_GLOBAL_OUTSTANDING_WEI", value = var.aa_paymaster_global_outstanding_wei },
+    { name = "AA_PAYMASTER_ACCOUNT_HOURLY_WEI", value = var.aa_paymaster_account_hourly_wei },
+    { name = "AA_PAYMASTER_GLOBAL_HOURLY_WEI", value = var.aa_paymaster_global_hourly_wei },
+    { name = "AA_PAYMASTER_GLOBAL_DAILY_WEI", value = var.aa_paymaster_global_daily_wei },
+    { name = "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE", value = var.aa_paymaster_final_rate_limit_per_minute },
+  ] : []
   posthog_log_configuration = {
     logDriver = "awsfirelens"
     options = {
@@ -293,12 +341,20 @@ resource "aws_ecs_task_definition" "api" {
   network_mode             = "awsvpc"
   cpu                      = var.api_container_cpu
   memory                   = var.api_container_memory
-  execution_role_arn       = aws_iam_role.ecs_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task.arn
+  execution_role_arn       = aws_iam_role.api_execution.arn
+  task_role_arn            = aws_iam_role.api_task.arn
   enable_fault_injection   = false
   tags                     = {}
 
-  depends_on = [terraform_data.perps_candle_rollout_guard]
+  depends_on = [
+    aws_iam_role_policy.api_execution_aa_reconciler_secondary_rpc_kms,
+    aws_iam_role_policy.api_execution_ssm,
+    aws_iam_role_policy_attachment.api_execution,
+    aws_iam_role_policy.api_paymaster_kms_key_metadata,
+    aws_iam_role_policy.api_paymaster_kms_signer,
+    aws_iam_role_policy.api_task_firelens_cloudwatch,
+    terraform_data.perps_candle_rollout_guard,
+  ]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -366,7 +422,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.insights_registration_environment, local.insights_competition_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -385,19 +441,26 @@ resource "aws_ecs_task_definition" "api" {
     }
 
     precondition {
-      condition = !var.provision_aa_proxy || (
-        trimspace(var.pimlico_api_key) != ""
-        && trimspace(var.pimlico_sponsorship_policy_id) != ""
-        && trimspace(var.aa_proxy_origin_token) != ""
+      condition = !local.aa_gateway_enabled || (
+        can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
+        && !contains(local.aa_proxy_origin_token_rejected_values, var.aa_proxy_origin_token)
         && trimspace(var.alb_certificate_arn) != ""
         && trimspace(var.api_hostname) != ""
       )
-      error_message = "Provisioning the managed AA proxy requires its three credentials, an HTTPS ALB certificate, and the certificate-backed API hostname."
+      error_message = "Provisioning either AA gateway requires a generated 64-character lowercase hexadecimal origin credential that is not a known placeholder, an HTTPS ALB certificate, and the certificate-backed API hostname."
     }
 
     precondition {
-      condition     = !var.enable_aa_sponsorship || var.provision_aa_proxy
-      error_message = "AA sponsorship cannot be enabled unless the proxy credentials are provisioned."
+      condition = !var.provision_aa_proxy || (
+        trimspace(var.pimlico_api_key) != ""
+        && trimspace(var.pimlico_sponsorship_policy_id) != ""
+      )
+      error_message = "Provisioning the legacy Pimlico AA proxy requires its API key and sponsorship policy ID."
+    }
+
+    precondition {
+      condition     = !var.enable_aa_sponsorship || local.aa_gateway_enabled
+      error_message = "AA sponsorship cannot be enabled unless a legacy or self-hosted AA gateway is provisioned."
     }
 
     precondition {
@@ -490,8 +553,11 @@ resource "aws_ecs_service" "api" {
   health_check_grace_period_seconds = 300
 
   network_configuration {
-    subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.ecs.id]
+    subnets = aws_subnet.public[*].id
+    security_groups = concat(
+      [aws_security_group.ecs.id],
+      local.self_hosted_aa_resource_count == 1 ? [aws_security_group.api_alto_client[0].id] : []
+    )
     assign_public_ip = true
   }
 

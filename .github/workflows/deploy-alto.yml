@@ -1,0 +1,2609 @@
+name: Deploy Alto
+run-name: Alto / ${{ inputs.action }} / ${{ inputs.environment }} / ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+      action:
+        description: Deploy Alto, bootstrap its simulation contracts while dark, or roll back to a reviewed revision
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - bootstrap-simulations
+          - rollback
+      rollback_task_definition:
+        description: Exact ACTIVE plether-sepolia-alto task-definition ARN or family:revision (rollback only)
+        required: false
+        default: ''
+        type: string
+      utility_gas_cushion_wei:
+        description: Extra utility-wallet balance above the worst-case executor refill principal
+        required: true
+        default: '5000000000000000'
+        type: string
+      api_hostname:
+        description: Optional public API hostname for an authenticated end-to-end smoke test
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: plether-alto-mutation-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  ADMIN_ENVIRONMENT: alto-admin-sepolia
+  DOCKER_CLI_EXPERIMENTAL: enabled
+  TARGET_ENV: ${{ inputs.environment }}
+  ALTO_ACTION: ${{ inputs.action }}
+  ECS_CLUSTER: plether-sepolia
+  ECS_SERVICE: plether-alto
+  TASK_FAMILY: plether-sepolia-alto
+  ECR_REPOSITORY: plether-alto-sepolia
+  LOG_ROUTER_REPOSITORY: plether-otel-log-router-sepolia
+  ALTO_TARGET_GROUP: plether-sepolia-alto
+  ALTO_CONTAINER: plether-alto
+  ALTO_TMP_INIT_CONTAINER: alto-tmp-init
+  LOG_ROUTER_CONTAINER: otel-log-router
+  ALTO_UPSTREAM_REPOSITORY: ghcr.io/pimlicolabs/alto
+  ALTO_UPSTREAM_IMAGE: ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d
+  ALTO_UPSTREAM_DIGEST: sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d
+  ALTO_MIRROR_TAG: v1.2.7-arm64-28cee87ea6b5
+  ALTO_ENTRYPOINT: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+  ALTO_DETERMINISTIC_DEPLOYER: '0x4e59b44847b379578588920cA78FbF26c0B4956C'
+  ALTO_RPC_METHODS: eth_supportedEntryPoints,eth_estimateUserOperationGas,eth_sendUserOperation,eth_getUserOperationByHash,eth_getUserOperationReceipt,pimlico_getUserOperationGasPrice,pimlico_getUserOperationStatus
+  ALTO_HEALTH_COMMAND: >-
+    node -e "fetch('http://127.0.0.1:3000/health').then(async r=>{if(!r.ok||(await r.text())!=='OK')process.exit(1)}).catch(()=>process.exit(1))"
+
+jobs:
+  protected-environment-preflight:
+    name: Require pre-provisioned protected environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+
+    steps:
+      - name: Verify protected environment and master-only policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Alto administration must be dispatched from master."
+            exit 1
+          fi
+
+          environment_file="$RUNNER_TEMP/alto-admin-environment.json"
+          branch_policy_file="$RUNNER_TEMP/alto-admin-branch-policies.json"
+          if ! gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" \
+              > "$environment_file"; then
+            echo "::error title=Admin environment unavailable::Provision and protect $ADMIN_ENVIRONMENT before dispatching this workflow."
+            exit 1
+          fi
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+
+          if ! jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+              '.name == $name
+               and .can_admins_bypass == false
+               and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+               and .deployment_branch_policy.custom_branch_policies == true' \
+              "$environment_file" >/dev/null \
+              || ! jq --exit-status \
+                '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+                "$branch_policy_file" >/dev/null; then
+            echo "::error title=Unsafe Alto environment::$ADMIN_ENVIRONMENT must disable administrator bypass, require an independent reviewer, and allow exactly the master branch."
+            exit 1
+          fi
+
+      - name: Record secret-safe dispatch fingerprint
+        env:
+          ACTION: ${{ inputs.action }}
+          API_HOSTNAME: ${{ inputs.api_hostname }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ROLLBACK_TASK_DEFINITION: ${{ inputs.rollback_task_definition }}
+          UTILITY_GAS_CUSHION_WEI: ${{ inputs.utility_gas_cushion_wei }}
+        run: |
+          set -euo pipefail
+
+          fingerprint=$(jq -cn \
+            --arg action "$ACTION" \
+            --arg api_hostname "$API_HOSTNAME" \
+            --arg environment "$ENVIRONMENT" \
+            --arg rollback_task_definition "$ROLLBACK_TASK_DEFINITION" \
+            --arg utility_gas_cushion_wei "$UTILITY_GAS_CUSHION_WEI" \
+            '{schema:1, action:$action, apiHostname:$api_hostname,
+              environment:$environment,
+              rollbackTaskDefinition:$rollback_task_definition,
+              utilityGasCushionWei:$utility_gas_cushion_wei}' \
+            | sha256sum | cut -d' ' -f1)
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          echo "Dispatch input fingerprint: sha256:$fingerprint"
+          echo "Dispatch input fingerprint: \`sha256:$fingerprint\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: protected-environment-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: alto-admin-sepolia
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+      id-token: write
+    env:
+      EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+    outputs:
+      entrypoint_simulation_contract_v8: ${{ steps.bootstrap_simulations.outputs.entrypoint_simulation_contract_v8 }}
+      pimlico_simulation_contract: ${{ steps.bootstrap_simulations.outputs.pimlico_simulation_contract }}
+
+    steps:
+      - name: Revalidate protected environment before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          environment_file="$RUNNER_TEMP/alto-admin-environment-recheck.json"
+          branch_policy_file="$RUNNER_TEMP/alto-admin-branch-policies-recheck.json"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" \
+            > "$environment_file"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+          jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
+          [ "$GITHUB_REF" = "refs/heads/master" ]
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Enable ARM64 emulation for verified image checks
+        if: inputs.action != 'rollback'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: arm64
+
+      - name: Validate infrastructure and Alto runtime configuration
+        id: preflight
+        env:
+          ROLLBACK_TASK_DEFINITION: ${{ inputs.rollback_task_definition }}
+          AWS_MAX_ATTEMPTS: '3'
+          AWS_PAGER: ''
+          AWS_RETRY_MODE: standard
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$TARGET_ENV" != "sepolia" ]; then
+            echo "::error::Alto deployment is restricted to Sepolia."
+            exit 1
+          fi
+          case "$ALTO_ACTION" in
+            deploy|bootstrap-simulations)
+              if [ -n "$ROLLBACK_TASK_DEFINITION" ]; then
+                echo "::error::rollback_task_definition is accepted only with the rollback action."
+                exit 1
+              fi
+              ;;
+            rollback)
+              if [ -z "$ROLLBACK_TASK_DEFINITION" ] \
+                  || [[ ! "$ROLLBACK_TASK_DEFINITION" =~ :[1-9][0-9]*$ ]]; then
+                echo "::error::The rollback action requires an explicit task-definition ARN or family:revision ending in a non-zero revision."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported Alto workflow action."
+              exit 1
+              ;;
+          esac
+
+          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong AWS target::AWS_DEPLOY_ROLE_ARN, AWS_ACCOUNT_ID, and AWS_REGION in the protected alto-admin-sepolia environment must identify the exact approved deployment boundary."
+            exit 1
+          fi
+          aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" "$LOG_ROUTER_REPOSITORY" \
+            --no-cli-pager >/dev/null
+
+          service_file="$RUNNER_TEMP/alto-service.json"
+          task_definition_file="$RUNNER_TEMP/alto-current-task-definition.json"
+
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0]' \
+            --output json \
+            --no-cli-pager > "$service_file"
+
+          if ! jq -e \
+              --arg cluster "$ECS_CLUSTER" \
+              --arg service "$ECS_SERVICE" \
+              '. != null
+               and .status == "ACTIVE"
+               and .serviceName == $service
+               and (.clusterArn | endswith("/" + $cluster))
+               and .platformVersion == "1.4.0"
+               and (.desiredCount == 0 or .desiredCount == 1)
+               and .runningCount == .desiredCount
+               and .pendingCount == 0
+               and .deploymentConfiguration.minimumHealthyPercent == 0
+               and .deploymentConfiguration.maximumPercent == 100
+               and .deploymentConfiguration.deploymentCircuitBreaker.enable == true
+               and .deploymentConfiguration.deploymentCircuitBreaker.rollback == true
+               and (.networkConfiguration.awsvpcConfiguration.subnets | type == "array" and length > 0)
+               and (.networkConfiguration.awsvpcConfiguration.securityGroups | type == "array" and length > 0)
+               and .networkConfiguration.awsvpcConfiguration.assignPublicIp == "ENABLED"
+               and ([.deployments[] | select(.status == "PRIMARY")] | length) == 1
+               and ([.deployments[] | select(.status != "PRIMARY")] | length) == 0' \
+              "$service_file" >/dev/null; then
+            echo "::error title=Alto ECS preflight failed::The service must be ACTIVE, stable at desired/running count 0 or 1, use its reviewed public-IP awsvpc network, and have circuit-breaker rollback plus stop-before-start deployment (0/100)."
+            exit 1
+          fi
+
+          desired_count=$(jq -r '.desiredCount' "$service_file")
+          if [ "$ALTO_ACTION" = "bootstrap-simulations" ] && [ "$desired_count" -ne 0 ]; then
+            echo "::error title=Alto bootstrap refused::Simulation contracts may be bootstrapped only while the Alto service is dark at desired/running count 0."
+            exit 1
+          fi
+          if [ "$ALTO_ACTION" = "bootstrap-simulations" ]; then
+            bootstrap_family="${TASK_FAMILY}-simulation-bootstrap"
+            bootstrap_task_count=0
+            for desired_status in PENDING RUNNING; do
+              matching_tasks=$(aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --family "$bootstrap_family" \
+                --desired-status "$desired_status" \
+                --query 'taskArns' \
+                --output json \
+                --no-cli-pager)
+              bootstrap_task_count=$((bootstrap_task_count + $(jq 'length' <<< "$matching_tasks")))
+            done
+            if [ "$bootstrap_task_count" -ne 0 ]; then
+              echo "::error title=Alto bootstrap refused::A prior simulation-bootstrap task is still pending or running; stop and inspect it before retrying."
+              exit 1
+            fi
+
+            bootstrap_definitions=$(aws ecs list-task-definitions \
+              --family-prefix "$bootstrap_family" \
+              --status ACTIVE \
+              --sort DESC \
+              --query taskDefinitionArns \
+              --output json \
+              --no-cli-pager)
+            if ! jq --exit-status --arg family "$bootstrap_family" \
+                '([.[]?
+                   | select((split("task-definition/")[1] | split(":")[0]) == $family)]
+                  | length) == 0' \
+                <<< "$bootstrap_definitions" >/dev/null; then
+              echo "::error title=Alto bootstrap refused::A prior ACTIVE simulation-bootstrap task definition remains; inspect its WorkflowOwner tag and reconcile it before retrying."
+              exit 1
+            fi
+          fi
+
+          previous_task_definition=$(jq -r '.taskDefinition' "$service_file")
+          source_task_definition=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query taskDefinition.taskDefinitionArn \
+            --output text \
+            --no-cli-pager)
+          aws ecs describe-task-definition \
+            --task-definition "$source_task_definition" \
+            --query taskDefinition \
+            --output json \
+            --no-cli-pager > "$task_definition_file"
+
+          if ! jq -e \
+              --arg account "$actual_account_id" \
+              --arg region "$AWS_REGION" \
+              --arg family "$TASK_FAMILY" \
+              --arg alto "$ALTO_CONTAINER" \
+              --arg tmp_init "$ALTO_TMP_INIT_CONTAINER" \
+              --arg router "$LOG_ROUTER_CONTAINER" \
+              --arg entrypoint "${ALTO_ENTRYPOINT,,}" \
+              --arg deterministic_deployer "${ALTO_DETERMINISTIC_DEPLOYER,,}" \
+              --arg execution_role "arn:aws:iam::$actual_account_id:role/plether-sepolia-alto-execution" \
+              --arg rpc_methods "$ALTO_RPC_METHODS" \
+              --arg task_role "arn:aws:iam::$actual_account_id:role/plether-sepolia-alto-task" \
+              --arg health_command "$ALTO_HEALTH_COMMAND" \
+              '
+              def container($name): [.containerDefinitions[] | select(.name == $name)];
+              def environment($definition):
+                ($definition.environment // [])
+                | map({key: .name, value: .value})
+                | from_entries;
+              def secret_names($definition):
+                ($definition.secrets // []) | map(.name);
+              def reviewed_environment_names:
+                [
+                  "ALTO_ENTRYPOINTS",
+                  "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS",
+                  "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8",
+                  "ALTO_PIMLICO_SIMULATION_CONTRACT",
+                  "ALTO_DEPLOY_SIMULATIONS_CONTRACT",
+                  "ALTO_CHAIN_TYPE",
+                  "ALTO_PORT",
+                  "ALTO_API_VERSION",
+                  "ALTO_DEFAULT_API_VERSION",
+                  "ALTO_RPC_METHODS",
+                  "ALTO_SAFE_MODE",
+                  "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION",
+                  "ALTO_ENABLE_DEBUG_ENDPOINTS",
+                  "ALTO_ENABLE_CORS",
+                  "ALTO_WEBSOCKET",
+                  "ALTO_JSON",
+                  "ALTO_LOG_LEVEL",
+                  "HOME",
+                  "TMPDIR",
+                  "ALTO_BUNDLE_MODE",
+                  "ALTO_EXPIRATION_CHECK",
+                  "ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP",
+                  "ALTO_ENABLE_HORIZONTAL_SCALING",
+                  "ALTO_ENABLE_REDIS_RECEIPT_CACHE",
+                  "ALTO_BLOCK_TIME",
+                  "ALTO_MAX_BLOCK_RANGE",
+                  "ALTO_TIMEOUT",
+                  "ALTO_GAS_PRICE_REFRESH_INTERVAL",
+                  "ALTO_ARBITRUM_BASE_FEE_MULTIPLIER",
+                  "ALTO_RECEIPT_CACHE_TTL",
+                  "ALTO_BALANCE_OVERRIDE",
+                  "ALTO_CODE_OVERRIDE_SUPPORT",
+                  "ALTO_MAX_EXECUTORS",
+                  "ALTO_MIN_EXECUTOR_BALANCE",
+                  "ALTO_REFILLING_WALLETS",
+                  "ALTO_UTILITY_WALLET_MONITOR",
+                  "ALTO_UTILITY_WALLET_MONITOR_INTERVAL",
+                  "ALTO_EXECUTOR_REFILL_INTERVAL",
+                  "ALTO_MAX_GAS_PER_USER_OP",
+                  "ALTO_MAX_GAS_PER_BUNDLE"
+                ];
+
+              .family == $family
+              and .status == "ACTIVE"
+              and (.taskDefinitionArn | startswith("arn:aws:ecs:" + $region + ":" + $account + ":task-definition/" + $family + ":"))
+              and .networkMode == "awsvpc"
+              and (.requiresCompatibilities | index("FARGATE") != null)
+              and .runtimePlatform.cpuArchitecture == "ARM64"
+              and .runtimePlatform.operatingSystemFamily == "LINUX"
+              and .executionRoleArn == $execution_role
+              and .taskRoleArn == $task_role
+              and (.containerDefinitions | length) == 3
+              and (container($alto) | length) == 1
+              and (container($tmp_init) | length) == 1
+              and (container($router) | length) == 1
+              and (container($alto)[0]) as $alto_definition
+              | (container($tmp_init)[0]) as $tmp_init_definition
+              | (container($router)[0]) as $router_definition
+              | (environment($alto_definition)) as $environment
+              | (secret_names($alto_definition)) as $secret_names
+              | $alto_definition.essential == true
+                and (($alto_definition.environment // [])
+                     | map(.name)
+                     | length == (unique | length))
+                and ((($alto_definition.environment // []) | map(.name) | sort)
+                     == (reviewed_environment_names | sort))
+                and (($alto_definition.environmentFiles // []) | length == 0)
+                and $alto_definition.readonlyRootFilesystem == true
+                and $alto_definition.user == "1000:1000"
+                and $alto_definition.entryPoint == ["node", "/app/src/esm/cli/alto.js"]
+                and $alto_definition.command == ["run"]
+                and $alto_definition.linuxParameters.initProcessEnabled == true
+                and (($alto_definition.linuxParameters.capabilities.drop // []) == ["ALL"])
+                and (($alto_definition.portMappings // []) | length == 1)
+                and ([($alto_definition.portMappings // [])[] | select(.containerPort == 3000 and .protocol == "tcp")] | length) == 1
+                and (($alto_definition.mountPoints // []) | length == 1)
+                and ([($alto_definition.mountPoints // [])[]
+                      | select(.sourceVolume == "alto-tmp"
+                               and .containerPath == "/tmp"
+                               and .readOnly == false)] | length) == 1
+                and (($alto_definition.systemControls // []) | length == 0)
+                and (($alto_definition.volumesFrom // []) | length == 0)
+                and ((.volumes // []) | length == 1)
+                and ([.volumes[] | select(.name == "alto-tmp")] | length) == 1
+                and $alto_definition.healthCheck.command == ["CMD-SHELL", $health_command]
+                and $alto_definition.healthCheck.interval == 30
+                and $alto_definition.healthCheck.timeout == 5
+                and $alto_definition.healthCheck.retries == 3
+                and $alto_definition.healthCheck.startPeriod == 90
+                and (($alto_definition.dependsOn // []) | sort_by([.containerName, .condition]))
+                    == ([
+                          {containerName: $tmp_init, condition: "SUCCESS"},
+                          {containerName: $router, condition: "START"}
+                        ] | sort_by([.containerName, .condition]))
+                and $alto_definition.logConfiguration.logDriver == "awsfirelens"
+                and $alto_definition.logConfiguration.options.Name == "opentelemetry"
+                and $alto_definition.logConfiguration.options.logs_body_key == "$message"
+                and $tmp_init_definition.essential == false
+                and $tmp_init_definition.readonlyRootFilesystem == true
+                and $tmp_init_definition.user == "0:0"
+                and $tmp_init_definition.entryPoint == ["/bin/sh", "-c"]
+                and $tmp_init_definition.command == ["chmod 1777 /tmp"]
+                and $tmp_init_definition.linuxParameters.initProcessEnabled == true
+                and (($tmp_init_definition.linuxParameters.capabilities.drop // []) == ["ALL"])
+                and (($tmp_init_definition.mountPoints // []) | length == 1)
+                and ([($tmp_init_definition.mountPoints // [])[]
+                      | select(.sourceVolume == "alto-tmp"
+                               and .containerPath == "/tmp"
+                               and .readOnly == false)] | length) == 1
+                and (($tmp_init_definition.portMappings // []) | length == 0)
+                and (($tmp_init_definition.systemControls // []) | length == 0)
+                and (($tmp_init_definition.volumesFrom // []) | length == 0)
+                and (($tmp_init_definition.environment // []) | length == 0)
+                and (($tmp_init_definition.environmentFiles // []) | length == 0)
+                and (($tmp_init_definition.secrets // []) | length == 0)
+                and (($tmp_init_definition.image // "") | length > 0)
+                and $router_definition.firelensConfiguration.type == "fluentbit"
+                and $router_definition.firelensConfiguration.options."enable-ecs-log-metadata" == "true"
+                and $router_definition.firelensConfiguration.options."config-file-type" == "file"
+                and $router_definition.firelensConfiguration.options."config-file-value" == "/fluent-bit/etc/otel-enrichment.conf"
+                and ([($router_definition.environment // [])[]
+                      | select(.name == "CLOUDWATCH_LOG_GROUP"
+                               and ((.value // "") | length > 0))] | length) == 1
+                and (($router_definition.image // "") | length > 0)
+                and (($environment.ALTO_ENTRYPOINTS // "") | ascii_downcase) == $entrypoint
+                and (($environment.ALTO_DETERMINISTIC_DEPLOYER_ADDRESS // "") | ascii_downcase) == $deterministic_deployer
+                and ([($alto_definition.environment // [])[]
+                      | select(.name == "ALTO_DEPLOY_SIMULATIONS_CONTRACT")] | length) == 1
+                and ([($alto_definition.environment // [])[]
+                      | select(
+                          .name == "ALTO_DEPLOY_SIMULATIONS_CONTRACT"
+                          or .name == "ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP"
+                          or .name == "ALTO_REFILLING_WALLETS"
+                          or .name == "ALTO_UTILITY_WALLET_MONITOR"
+                          or .name == "ALTO_BUNDLE_MODE")
+                      | .name] | sort)
+                    == ([
+                          "ALTO_BUNDLE_MODE",
+                          "ALTO_DEPLOY_SIMULATIONS_CONTRACT",
+                          "ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP",
+                          "ALTO_REFILLING_WALLETS",
+                          "ALTO_UTILITY_WALLET_MONITOR"
+                        ] | sort)
+                and $environment.ALTO_DEPLOY_SIMULATIONS_CONTRACT == "false"
+                and $environment.ALTO_CHAIN_TYPE == "arbitrum"
+                and $environment.ALTO_PORT == "3000"
+                and $environment.ALTO_API_VERSION == "v1"
+                and $environment.ALTO_DEFAULT_API_VERSION == "v1"
+                and $environment.ALTO_RPC_METHODS == $rpc_methods
+                and $environment.ALTO_SAFE_MODE == "false"
+                and $environment.ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION == "false"
+                and $environment.ALTO_ENABLE_DEBUG_ENDPOINTS == "false"
+                and $environment.ALTO_ENABLE_CORS == "false"
+                and $environment.ALTO_WEBSOCKET == "false"
+                and $environment.ALTO_JSON == "true"
+                and $environment.ALTO_LOG_LEVEL == "info"
+                and $environment.HOME == "/tmp"
+                and $environment.TMPDIR == "/tmp"
+                and $environment.ALTO_BUNDLE_MODE == "auto"
+                and $environment.ALTO_EXPIRATION_CHECK == "true"
+                and $environment.ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP == "false"
+                and $environment.ALTO_ENABLE_HORIZONTAL_SCALING == "false"
+                and $environment.ALTO_ENABLE_REDIS_RECEIPT_CACHE == "false"
+                and $environment.ALTO_BLOCK_TIME == "1000"
+                and $environment.ALTO_MAX_BLOCK_RANGE == "500"
+                and $environment.ALTO_TIMEOUT == "60000"
+                and $environment.ALTO_GAS_PRICE_REFRESH_INTERVAL == "5"
+                and $environment.ALTO_ARBITRUM_BASE_FEE_MULTIPLIER == "150"
+                and $environment.ALTO_RECEIPT_CACHE_TTL == "60000"
+                and $environment.ALTO_BALANCE_OVERRIDE == "true"
+                and $environment.ALTO_CODE_OVERRIDE_SUPPORT == "true"
+                and $environment.ALTO_MAX_EXECUTORS == "4"
+                and $environment.ALTO_REFILLING_WALLETS == "true"
+                and $environment.ALTO_UTILITY_WALLET_MONITOR == "true"
+                and $environment.ALTO_UTILITY_WALLET_MONITOR_INTERVAL == "15000"
+                and $environment.ALTO_EXECUTOR_REFILL_INTERVAL == "1200"
+                and (($environment.ALTO_MIN_EXECUTOR_BALANCE // "") | test("^[1-9][0-9]*$"))
+                and (($environment.ALTO_MAX_GAS_PER_USER_OP // "") | test("^[1-9][0-9]*$"))
+                and (($environment.ALTO_MAX_GAS_PER_BUNDLE // "") | test("^[1-9][0-9]*$"))
+                and (($environment.ALTO_MAX_GAS_PER_BUNDLE | tonumber)
+                     >= ($environment.ALTO_MAX_GAS_PER_USER_OP | tonumber))
+                and ($secret_names | length) == ($secret_names | unique | length)
+                and all($secret_names[];
+                  . == "ALTO_RPC_URL"
+                  or . == "ALTO_EXECUTOR_PRIVATE_KEYS"
+                  or . == "ALTO_UTILITY_PRIVATE_KEY"
+                  or . == "ALTO_SEND_TRANSACTION_RPC_URL")
+                and ($secret_names | index("ALTO_RPC_URL") != null)
+                and ($secret_names | index("ALTO_EXECUTOR_PRIVATE_KEYS") != null)
+                and ($secret_names | index("ALTO_UTILITY_PRIVATE_KEY") != null)
+                and all(($alto_definition.secrets // [])[];
+                  ((.valueFrom // "") | type == "string" and length > 0))
+              ' "$task_definition_file" >/dev/null; then
+            echo "::error title=Alto task-definition preflight failed::Apply the reviewed Sepolia Alto Terraform topology before deploying an image."
+            exit 1
+          fi
+
+          secret_ref() {
+            local secret_name=$1
+            jq -er \
+              --arg container "$ALTO_CONTAINER" \
+              --arg secret "$secret_name" \
+              '.containerDefinitions[]
+               | select(.name == $container)
+               | .secrets[]
+               | select(.name == $secret)
+               | .valueFrom' \
+              "$task_definition_file"
+          }
+
+          secret_value_base64() {
+            local secret_name=$1
+            local parameter_ref
+            parameter_ref=$(secret_ref "$secret_name")
+            aws ssm get-parameter \
+              --name "$parameter_ref" \
+              --with-decryption \
+              --output json \
+              --no-cli-pager \
+              | jq -er '.Parameter.Value | strings | @base64'
+          }
+
+          environment_value() {
+            local environment_name=$1
+            jq -er \
+              --arg container "$ALTO_CONTAINER" \
+              --arg environment "$environment_name" \
+              '.containerDefinitions[]
+               | select(.name == $container)
+               | .environment[]
+               | select(.name == $environment)
+               | .value' \
+              "$task_definition_file"
+          }
+
+          validate_https_url() {
+            local label=$1
+            local url=$2
+            local authority
+            authority=${url#https://}
+            authority=${authority%%/*}
+            authority=${authority%%\?*}
+            authority=${authority%%\#*}
+            if [[ ! "$url" =~ ^https://[^[:space:]]+$ ]] \
+                || [[ "$authority" == *"@"* ]] \
+                || { [[ "$authority" == *":"* ]] \
+                     && [[ ! "$authority" =~ ^[A-Za-z0-9.-]+:443$ ]]; } \
+                || { [[ "$authority" != *":"* ]] \
+                     && [[ ! "$authority" =~ ^[A-Za-z0-9.-]+$ ]]; }; then
+              echo "::error title=Alto secret preflight failed::${label} must be a non-empty HTTPS URL on port 443, without credentials or whitespace."
+              exit 1
+            fi
+          }
+
+          decode_secret() {
+            printf '%s' "$1" | base64 --decode
+          }
+
+          decoded_secret_size() {
+            printf '%s' "$1" | base64 --decode | wc -c | tr -d '[:space:]'
+          }
+
+          mask_secret() {
+            local value=$1
+            value=${value//'%'/'%25'}
+            value=${value//$'\r'/'%0D'}
+            value=${value//$'\n'/'%0A'}
+            printf '::add-mask::%s\n' "$value"
+          }
+
+          rpc_call() {
+            local url=$1
+            local method=$2
+            local params=$3
+            curl \
+              --silent \
+              --show-error \
+              --fail-with-body \
+              --proto '=https' \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg method "$method" --argjson params "$params" \
+                '{jsonrpc:"2.0", id:1, method:$method, params:$params}')" \
+              "$url"
+          }
+
+          assert_chain_id() {
+            local label=$1
+            local url=$2
+            local response
+            response=$(rpc_call "$url" eth_chainId '[]')
+            if ! jq -e '.error == null and ((.result // "") | ascii_downcase) == "0x66eee"' \
+                <<< "$response" >/dev/null; then
+              echo "::error title=Alto RPC preflight failed::${label} did not report Arbitrum Sepolia chain ID 421614."
+              exit 1
+            fi
+          }
+
+          assert_deployed_code() {
+            local label=$1
+            local url=$2
+            local address=$3
+            local response
+            response=$(rpc_call "$url" eth_getCode "$(jq -nc --arg address "$address" '[$address, "latest"]')")
+            if ! jq -e \
+                '.error == null
+                 and ((.result // "") | test("^0x[0-9a-fA-F]+$"))
+                 and ((.result // "") | ascii_downcase) != "0x"
+                 and ((.result // "") | ascii_downcase) != "0x0"' \
+                <<< "$response" >/dev/null; then
+              echo "::error title=Alto RPC preflight failed::No deployed bytecode was returned for ${label}."
+              exit 1
+            fi
+          }
+
+          assert_rpc_override_capabilities() {
+            local address='0x000000000000000000000000000000000000dead'
+            local slot='0x0000000000000000000000000000000000000000000000000000000000000000'
+            local slot_value='0x0000000000000000000000000000000000000000000000000000000000005678'
+            local override_code='0x30316000540160005260206000f3'
+            local params
+            local response
+            local expected_result
+            params=$(jq -nc \
+              --arg address "$address" \
+              --arg code "$override_code" \
+              --arg slot "$slot" \
+              --arg slot_value "$slot_value" \
+              '[
+                {to: $address, data: "0x"},
+                "latest",
+                {
+                  ($address): {
+                    code: $code,
+                    balance: "0x1234",
+                    stateDiff: {($slot): $slot_value}
+                  }
+                }
+              ]')
+            response=$(rpc_call "$rpc_url" eth_call "$params")
+            expected_result="0x$(printf '0%.0s' {1..60})68ac"
+            if ! jq -e \
+                --arg expected "${expected_result,,}" \
+                '.error == null and ((.result // "") | ascii_downcase) == $expected' \
+                <<< "$response" >/dev/null; then
+              echo "::error title=Alto RPC capability preflight failed::ALTO_RPC_URL must support code, balance, and stateDiff overrides together at latest."
+              exit 1
+            fi
+          }
+
+          assert_gas_price_rpc_capabilities() {
+            local latest_block
+            local fee_history
+            local gas_price
+
+            latest_block=$(rpc_call "$rpc_url" eth_getBlockByNumber '["latest", false]')
+            if ! jq -e \
+                '.error == null
+                 and (.result | type == "object")
+                 and ((.result.baseFeePerGas // "")
+                      | test("^0x0*[1-9a-fA-F][0-9a-fA-F]*$"))' \
+                <<< "$latest_block" >/dev/null; then
+              echo "::error title=Alto gas-price RPC preflight failed::The latest block must include a valid non-zero baseFeePerGas."
+              exit 1
+            fi
+
+            fee_history=$(rpc_call "$rpc_url" eth_feeHistory '["0xa", "latest", [20]]')
+            if ! jq -e \
+                '.error == null
+                 and (.result | type == "object")
+                 and ((.result.oldestBlock // "") | test("^0x[0-9a-fA-F]+$"))
+                 and (.result.baseFeePerGas | type == "array" and length == 11)
+                 and all(.result.baseFeePerGas[]; test("^0x[0-9a-fA-F]+$"))
+                 and any(.result.baseFeePerGas[]; test("^0x0*[1-9a-fA-F][0-9a-fA-F]*$"))
+                 and (.result.gasUsedRatio | type == "array" and length == 10)
+                 and all(.result.gasUsedRatio[]; type == "number" and . >= 0 and . <= 1)
+                 and (.result.reward | type == "array" and length == 10)
+                 and all(.result.reward[];
+                   type == "array"
+                   and length == 1
+                   and all(.[]; test("^0x[0-9a-fA-F]+$")))' \
+                <<< "$fee_history" >/dev/null; then
+              echo "::error title=Alto gas-price RPC preflight failed::eth_feeHistory did not return the required ten-block base-fee, utilization, and reward shape."
+              exit 1
+            fi
+
+            gas_price=$(rpc_call "$rpc_url" eth_gasPrice '[]')
+            if ! jq -e \
+                '.error == null
+                 and ((.result // "") | test("^0x0*[1-9a-fA-F][0-9a-fA-F]*$"))' \
+                <<< "$gas_price" >/dev/null; then
+              echo "::error title=Alto gas-price RPC preflight failed::eth_gasPrice must return a valid non-zero quantity."
+              exit 1
+            fi
+          }
+
+          export LC_ALL=C
+          rpc_url_base64=$(secret_value_base64 ALTO_RPC_URL)
+          executor_keys_base64=$(secret_value_base64 ALTO_EXECUTOR_PRIVATE_KEYS)
+          utility_key_base64=$(secret_value_base64 ALTO_UTILITY_PRIVATE_KEY)
+          rpc_url=$(decode_secret "$rpc_url_base64")
+          executor_keys=$(decode_secret "$executor_keys_base64")
+          utility_key=$(decode_secret "$utility_key_base64")
+
+          if [ "$(decoded_secret_size "$rpc_url_base64")" -ne "${#rpc_url}" ]; then
+            echo "::error title=Alto secret preflight failed::ALTO_RPC_URL must not contain trailing line breaks."
+            exit 1
+          fi
+          validate_https_url ALTO_RPC_URL "$rpc_url"
+          if [ "$(decoded_secret_size "$executor_keys_base64")" -ne "${#executor_keys}" ] \
+              || [[ ! "$executor_keys" =~ ^0x[0-9a-f]{64}(,0x[0-9a-f]{64}){3}$ ]]; then
+            echo "::error title=Alto secret preflight failed::ALTO_EXECUTOR_PRIVATE_KEYS must be exactly four comma-separated, lowercase, 0x-prefixed 32-byte hexadecimal keys without whitespace or line breaks."
+            exit 1
+          fi
+          if [ "$(decoded_secret_size "$utility_key_base64")" -ne "${#utility_key}" ] \
+              || [[ ! "$utility_key" =~ ^0x[0-9a-f]{64}$ ]]; then
+            echo "::error title=Alto secret preflight failed::ALTO_UTILITY_PRIVATE_KEY must be exactly one lowercase, 0x-prefixed 32-byte hexadecimal key without whitespace or line breaks."
+            exit 1
+          fi
+          declare -A seen_executor_keys=()
+          IFS=',' read -r -a executor_key_values <<< "$executor_keys"
+          for executor_key in "${executor_key_values[@]}"; do
+            normalized_key="${executor_key#0x}"
+            normalized_key="${normalized_key,,}"
+            if [ "$normalized_key" = "$(printf '0%.0s' {1..64})" ]; then
+              echo "::error title=Alto secret preflight failed::Executor private keys must be non-zero."
+              exit 1
+            fi
+            if [ -n "${seen_executor_keys[$normalized_key]:-}" ]; then
+              echo "::error title=Alto secret preflight failed::Executor private keys must be unique."
+              exit 1
+            fi
+            seen_executor_keys[$normalized_key]=true
+          done
+          normalized_utility_key="${utility_key#0x}"
+          normalized_utility_key="${normalized_utility_key,,}"
+          if [ "$normalized_utility_key" = "$(printf '0%.0s' {1..64})" ] \
+              || [ -n "${seen_executor_keys[$normalized_utility_key]:-}" ]; then
+            echo "::error title=Alto secret preflight failed::The utility private key must be non-zero and distinct from every executor key."
+            exit 1
+          fi
+          mask_secret "$rpc_url"
+          mask_secret "$executor_keys"
+          mask_secret "$utility_key"
+
+          entrypoint=$(environment_value ALTO_ENTRYPOINTS)
+          for configured_address in "$entrypoint"; do
+            if [[ ! "$configured_address" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+                || [ "${configured_address,,}" = "0x0000000000000000000000000000000000000000" ]; then
+              echo "::error title=Alto task-definition preflight failed::EntryPoint and simulation contract values must be non-zero Ethereum addresses."
+              exit 1
+            fi
+          done
+          if [ "${entrypoint,,}" != "${ALTO_ENTRYPOINT,,}" ]; then
+            echo "::error title=Alto task-definition preflight failed::The configured EntryPoint is not the approved EntryPoint v0.8 address."
+            exit 1
+          fi
+
+          assert_chain_id ALTO_RPC_URL "$rpc_url"
+          assert_rpc_override_capabilities
+          assert_gas_price_rpc_capabilities
+          assert_deployed_code 'EntryPoint v0.8' "$rpc_url" "$entrypoint"
+          assert_deployed_code 'universal deterministic deployer' "$rpc_url" "$ALTO_DETERMINISTIC_DEPLOYER"
+
+          if [ "$ALTO_ACTION" != "bootstrap-simulations" ]; then
+            simulation_v8=$(environment_value ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8)
+            pimlico_simulation=$(environment_value ALTO_PIMLICO_SIMULATION_CONTRACT)
+            for configured_address in "$simulation_v8" "$pimlico_simulation"; do
+              if [[ ! "$configured_address" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+                  || [ "${configured_address,,}" = "0x0000000000000000000000000000000000000000" ]; then
+                echo "::error title=Alto task-definition preflight failed::Simulation contract values must be non-zero Ethereum addresses for deploy and rollback."
+                exit 1
+              fi
+            done
+            assert_deployed_code 'EntryPoint simulation contract v0.8' "$rpc_url" "$simulation_v8"
+            assert_deployed_code 'Pimlico simulation contract' "$rpc_url" "$pimlico_simulation"
+          fi
+
+          send_rpc_secret_count=$(jq \
+            --arg container "$ALTO_CONTAINER" \
+            '[.containerDefinitions[]
+              | select(.name == $container)
+              | .secrets[]
+              | select(.name == "ALTO_SEND_TRANSACTION_RPC_URL")] | length' \
+            "$task_definition_file")
+          if [ "$send_rpc_secret_count" -eq 1 ]; then
+            send_rpc_url_base64=$(secret_value_base64 ALTO_SEND_TRANSACTION_RPC_URL)
+            send_rpc_url=$(decode_secret "$send_rpc_url_base64")
+            if [ "$(decoded_secret_size "$send_rpc_url_base64")" -ne "${#send_rpc_url}" ]; then
+              echo "::error title=Alto secret preflight failed::ALTO_SEND_TRANSACTION_RPC_URL must not contain trailing line breaks."
+              exit 1
+            fi
+            validate_https_url ALTO_SEND_TRANSACTION_RPC_URL "$send_rpc_url"
+            mask_secret "$send_rpc_url"
+            assert_chain_id ALTO_SEND_TRANSACTION_RPC_URL "$send_rpc_url"
+            unset send_rpc_url send_rpc_url_base64
+          fi
+
+          unset executor_key executor_key_values executor_keys executor_keys_base64 normalized_key
+          unset normalized_utility_key seen_executor_keys utility_key utility_key_base64
+          unset rpc_url rpc_url_base64
+          echo "previous_task_definition=$previous_task_definition" >> "$GITHUB_OUTPUT"
+          echo "source_task_definition=$source_task_definition" >> "$GITHUB_OUTPUT"
+          echo "task_definition_file=$task_definition_file" >> "$GITHUB_OUTPUT"
+          echo "service_file=$service_file" >> "$GITHUB_OUTPUT"
+          echo "rpc_parameter_ref=$(secret_ref ALTO_RPC_URL)" >> "$GITHUB_OUTPUT"
+          echo "executor_keys_parameter_ref=$(secret_ref ALTO_EXECUTOR_PRIVATE_KEYS)" >> "$GITHUB_OUTPUT"
+          echo "utility_key_parameter_ref=$(secret_ref ALTO_UTILITY_PRIVATE_KEY)" >> "$GITHUB_OUTPUT"
+          echo "desired_count=$desired_count" >> "$GITHUB_OUTPUT"
+
+      - name: Pull, verify, mirror, and scan Alto image
+        if: inputs.action != 'rollback'
+        id: alto_image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          digest_length=${#ALTO_UPSTREAM_DIGEST}
+          if [ "$digest_length" -ne 71 ] \
+              || [ "$ALTO_UPSTREAM_IMAGE" != "$ALTO_UPSTREAM_REPOSITORY:v1.2.7@$ALTO_UPSTREAM_DIGEST" ]; then
+            echo "::error::The approved Alto SHA-256 image digest is malformed."
+            exit 1
+          fi
+
+          source_root_manifest="$RUNNER_TEMP/alto-source-root-manifest.json"
+          source_image_manifest="$RUNNER_TEMP/alto-source-image-manifest.json"
+          docker manifest inspect "$ALTO_UPSTREAM_IMAGE" > "$source_root_manifest"
+          if jq -e '.manifests | type == "array"' "$source_root_manifest" >/dev/null 2>&1; then
+            mapfile -t arm64_digests < <(jq -r \
+              '.manifests[]
+               | select(.platform.os == "linux" and .platform.architecture == "arm64")
+               | .digest' \
+              "$source_root_manifest")
+            if [ "${#arm64_digests[@]}" -ne 1 ] \
+                || [[ ! "${arm64_digests[0]}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::The approved Alto manifest list must contain exactly one Linux/ARM64 image."
+              exit 1
+            fi
+            selected_source_image="$ALTO_UPSTREAM_REPOSITORY@${arm64_digests[0]}"
+            docker manifest inspect "$selected_source_image" > "$source_image_manifest"
+          else
+            selected_source_image="$ALTO_UPSTREAM_IMAGE"
+            cp "$source_root_manifest" "$source_image_manifest"
+          fi
+
+          if ! jq -e \
+              '.schemaVersion == 2
+               and (.config.digest | test("^sha256:[0-9a-f]{64}$"))
+               and (.config.size | type == "number")
+               and (.layers | type == "array" and length > 0)
+               and all(.layers[];
+                 (.digest | test("^sha256:[0-9a-f]{64}$"))
+                 and (.size | type == "number"))' \
+              "$source_image_manifest" >/dev/null; then
+            echo "::error::Could not resolve a canonical image manifest from the approved Alto source identity."
+            exit 1
+          fi
+
+          docker pull --platform linux/arm64 "$selected_source_image"
+          image_platform=$(docker image inspect \
+            --format '{{.Os}}/{{.Architecture}}' \
+            "$selected_source_image")
+          if [ "$image_platform" != "linux/arm64" ]; then
+            echo "::error::Expected the approved Alto image to be linux/arm64, got ${image_platform}."
+            exit 1
+          fi
+          if ! docker run \
+              --rm \
+              --platform linux/arm64 \
+              --network none \
+              --read-only \
+              --user 0:0 \
+              --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --entrypoint /bin/sh \
+              "$selected_source_image" \
+              -c 'command -v chmod >/dev/null'; then
+            echo "::error::The approved Alto image cannot initialize the shared Fargate scratch volume with /bin/sh and chmod."
+            exit 1
+          fi
+
+          mirror_image="$ECR_REGISTRY/$ECR_REPOSITORY:$ALTO_MIRROR_TAG"
+          image_error="$RUNNER_TEMP/alto-image-lookup.error"
+          if existing_digest=$(aws ecr describe-images \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="$ALTO_MIRROR_TAG" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text \
+              --no-cli-pager 2> "$image_error"); then
+            if [[ ! "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error title=Immutable Alto mirror conflict::${ALTO_MIRROR_TAG} resolved to a malformed ECR digest."
+              exit 1
+            fi
+            echo "The immutable Alto mirror tag already exists; verifying its image content."
+          elif grep -Fq ImageNotFoundException "$image_error"; then
+            docker tag "$selected_source_image" "$mirror_image"
+            docker push "$mirror_image"
+          else
+            sed 's/^/AWS ECR error: /' "$image_error" >&2
+            exit 1
+          fi
+
+          mirrored_digest=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$ALTO_MIRROR_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text \
+            --no-cli-pager)
+          if [[ ! "$mirrored_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::The immutable Alto tag did not resolve to a valid ECR digest."
+            exit 1
+          fi
+
+          ecr_manifest_response=$(aws ecr batch-get-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageDigest="$mirrored_digest" \
+            --accepted-media-types \
+              application/vnd.oci.image.manifest.v1+json \
+              application/vnd.docker.distribution.manifest.v2+json \
+            --output json \
+            --no-cli-pager)
+          if ! jq -e '.failures == [] and (.images | length) == 1' \
+              <<< "$ecr_manifest_response" >/dev/null; then
+            echo "::error::ECR did not return exactly one image manifest for the immutable Alto tag."
+            exit 1
+          fi
+          ecr_image_manifest="$RUNNER_TEMP/alto-ecr-image-manifest.json"
+          jq -er '.images[0].imageManifest' <<< "$ecr_manifest_response" > "$ecr_image_manifest"
+
+          manifest_identity='{
+            config: {
+              digest: .config.digest,
+              size: .config.size
+            },
+            orderedLayers: [
+              .layers[] | {
+                digest: .digest,
+                size: .size
+              }
+            ]
+          }'
+          if ! diff -u \
+              <(jq -S "$manifest_identity" "$source_image_manifest") \
+              <(jq -S "$manifest_identity" "$ecr_image_manifest"); then
+            echo "::error title=Immutable Alto mirror conflict::The ECR tag does not have the approved ARM64 config and ordered layer digest/size identity. Descriptor media types are intentionally ignored across registries."
+            exit 1
+          fi
+
+          scan_error="$RUNNER_TEMP/alto-image-scan.error"
+          if ! aws ecr start-image-scan \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-id imageDigest="$mirrored_digest" \
+              --no-cli-pager >/dev/null 2> "$scan_error"; then
+            if ! grep -Eq 'LimitExceededException|ScanAlreadyExistsException' "$scan_error"; then
+              sed 's/^/AWS ECR scan error: /' "$scan_error" >&2
+              exit 1
+            fi
+          fi
+          aws ecr wait image-scan-complete \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$mirrored_digest" \
+            --no-cli-pager
+          scan_findings=$(aws ecr describe-image-scan-findings \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$mirrored_digest" \
+            --output json \
+            --no-cli-pager)
+          critical_findings=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' \
+            <<< "$scan_findings")
+          if [ "$critical_findings" -ne 0 ]; then
+            echo "::error title=Alto image scan failed::The approved image currently has ${critical_findings} critical ECR scan finding(s)."
+            exit 1
+          fi
+
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
+          echo "digest=$mirrored_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve immutable log-router image
+        if: inputs.action != 'rollback'
+        id: log_router_image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          log_router_digest=$(aws ecr describe-images \
+            --repository-name "$LOG_ROUTER_REPOSITORY" \
+            --image-ids imageTag=latest \
+            --query 'imageDetails[0].imageDigest' \
+            --output text \
+            --no-cli-pager)
+          if [[ ! "$log_router_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not resolve a valid immutable digest for the Sepolia log-router image."
+            exit 1
+          fi
+          log_router_image="$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY@$log_router_digest"
+          docker pull --platform linux/arm64 "$log_router_image"
+          if [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$log_router_image")" != "linux/arm64" ]; then
+            echo "::error::The immutable Sepolia log-router image is not Linux/ARM64."
+            exit 1
+          fi
+          echo "image=$log_router_image" >> "$GITHUB_OUTPUT"
+
+      - name: Validate runtime bytecode and wallet funding
+        if: inputs.action == 'deploy' || inputs.action == 'bootstrap-simulations'
+        env:
+          ALTO_IMAGE: ${{ steps.alto_image.outputs.image }}
+          EXECUTOR_KEYS_PARAMETER_REF: ${{ steps.preflight.outputs.executor_keys_parameter_ref }}
+          RPC_PARAMETER_REF: ${{ steps.preflight.outputs.rpc_parameter_ref }}
+          TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
+          UTILITY_GAS_CUSHION_WEI: ${{ inputs.utility_gas_cushion_wei }}
+          UTILITY_KEY_PARAMETER_REF: ${{ steps.preflight.outputs.utility_key_parameter_ref }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export LC_ALL=C
+
+          if [[ ! "$UTILITY_GAS_CUSHION_WEI" =~ ^[0-9]+$ ]] \
+              || [ "$UTILITY_GAS_CUSHION_WEI" = "0" ]; then
+            echo "::error::utility_gas_cushion_wei must be a positive base-10 integer."
+            exit 1
+          fi
+
+          get_secret_base64() {
+            local parameter_ref=$1
+            aws ssm get-parameter \
+              --name "$parameter_ref" \
+              --with-decryption \
+              --output json \
+              --no-cli-pager \
+              | jq -er '.Parameter.Value | strings | @base64'
+          }
+
+          mask_secret() {
+            local value=$1
+            value=${value//'%'/'%25'}
+            value=${value//$'\r'/'%0D'}
+            value=${value//$'\n'/'%0A'}
+            printf '::add-mask::%s\n' "$value"
+          }
+
+          rpc_url_base64=$(get_secret_base64 "$RPC_PARAMETER_REF")
+          executor_keys_base64=$(get_secret_base64 "$EXECUTOR_KEYS_PARAMETER_REF")
+          utility_key_base64=$(get_secret_base64 "$UTILITY_KEY_PARAMETER_REF")
+          rpc_url=$(printf '%s' "$rpc_url_base64" | base64 --decode)
+          executor_keys=$(printf '%s' "$executor_keys_base64" | base64 --decode)
+          utility_key=$(printf '%s' "$utility_key_base64" | base64 --decode)
+          mask_secret "$rpc_url"
+
+          runtime_code_hashes=$(
+            printf '%s\n' "$rpc_url" | docker run \
+              --rm \
+              --interactive \
+              --platform linux/arm64 \
+              --read-only \
+              --workdir /app \
+              --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --entrypoint node \
+              "$ALTO_IMAGE" \
+              --input-type=module \
+              --eval '
+                import { keccak256 } from "viem";
+
+                let input = "";
+                for await (const chunk of process.stdin) input += chunk;
+                const rpcUrl = input.replace(/\n$/, "");
+                if (!rpcUrl || rpcUrl.includes("\n") || rpcUrl.includes("\r")) {
+                  throw new Error("invalid RPC input");
+                }
+
+                const contracts = [
+                  {
+                    label: "EntryPoint",
+                    address: "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+                    expectedHash: "0xe3f30f78ae55058acdefea00952c8e44f2263215cf720fe1b27b6f148add0278",
+                  },
+                  {
+                    label: "account factory",
+                    address: "0x13E9ed32155810FDbd067D4522C492D6f68E5944",
+                    expectedHash: "0xa2e635152a61e180383c7afc045620b7461ef6f43ba27d592262513106b991b7",
+                  },
+                  {
+                    label: "account implementation",
+                    address: "0x28426d752372d68d34340bd94390950dce3c9ec3",
+                    expectedHash: "0x689a90eff03926a12aedad2fc6d4fdbcbdd9ffac86e7d0d70ce6355961305c74",
+                  },
+                ];
+
+                async function rpc(method, params) {
+                  let response;
+                  try {
+                    response = await fetch(rpcUrl, {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+                    });
+                  } catch {
+                    throw new Error("runtime bytecode RPC request failed");
+                  }
+                  if (!response.ok) throw new Error(`runtime bytecode RPC HTTP ${response.status}`);
+                  let payload;
+                  try {
+                    payload = await response.json();
+                  } catch {
+                    throw new Error("runtime bytecode RPC returned invalid JSON");
+                  }
+                  if (payload.error) throw new Error("runtime bytecode RPC returned an error");
+                  return payload.result;
+                }
+
+                for (const contract of contracts) {
+                  const code = await rpc("eth_getCode", [contract.address, "latest"]);
+                  if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(code)) {
+                    throw new Error(`${contract.label} returned invalid or empty runtime bytecode`);
+                  }
+                  if (keccak256(code).toLowerCase() !== contract.expectedHash) {
+                    throw new Error(`${contract.label} runtime bytecode hash mismatch`);
+                  }
+                }
+
+                process.stdout.write(JSON.stringify({ verifiedRuntimeCodeHashes: contracts.length }));
+              '
+          )
+          if ! jq -e '.verifiedRuntimeCodeHashes == 3' \
+              <<< "$runtime_code_hashes" >/dev/null; then
+            echo "::error::The pinned Alto image did not verify all approved runtime bytecode hashes."
+            exit 1
+          fi
+          echo "Runtime bytecode hash gate passed for EntryPoint, account factory, and account implementation."
+
+          IFS=',' read -r -a executor_key_values <<< "$executor_keys"
+          if [ "${#executor_key_values[@]}" -ne 4 ]; then
+            echo "::error::The executor key parameter changed after preflight."
+            exit 1
+          fi
+          for executor_key in "${executor_key_values[@]}"; do
+            mask_secret "$executor_key"
+          done
+          mask_secret "$utility_key"
+
+          wallet_addresses=$(
+            {
+              printf '%s\n' "$executor_keys"
+              printf '%s\n' "$utility_key"
+            } | docker run \
+              --rm \
+              --interactive \
+              --platform linux/arm64 \
+              --network none \
+              --read-only \
+              --workdir /app \
+              --cap-drop ALL \
+              --security-opt no-new-privileges \
+              --entrypoint node \
+              "$ALTO_IMAGE" \
+              --input-type=module \
+              --eval '
+                import { privateKeyToAccount } from "viem/accounts";
+                let input = "";
+                for await (const chunk of process.stdin) input += chunk;
+                const lines = input.replace(/\n$/, "").split("\n");
+                if (lines.length !== 2) throw new Error("invalid key input");
+                const executorKeys = lines[0].split(",");
+                if (executorKeys.length !== 4) throw new Error("invalid executor count");
+                const executors = executorKeys.map((key) => privateKeyToAccount(key).address);
+                const utility = privateKeyToAccount(lines[1]).address;
+                process.stdout.write(JSON.stringify({ executors, utility }));
+              '
+          )
+          if ! jq -e \
+              '(.executors | type == "array" and length == 4)
+               and all(.executors[]; test("^0x[0-9a-fA-F]{40}$"))
+               and (.utility | test("^0x[0-9a-fA-F]{40}$"))
+               and ((.executors + [.utility]) | length == (unique | length))' \
+              <<< "$wallet_addresses" >/dev/null; then
+            echo "::error::The verified Alto image did not derive five distinct wallet addresses."
+            exit 1
+          fi
+
+          min_executor_balance=$(jq -er \
+            --arg container "$ALTO_CONTAINER" \
+            '.containerDefinitions[]
+             | select(.name == $container)
+             | .environment[]
+             | select(.name == "ALTO_MIN_EXECUTOR_BALANCE")
+             | .value' \
+            "$TASK_DEFINITION_FILE")
+          if [[ ! "$min_executor_balance" =~ ^[0-9]+$ ]] \
+              || [ "$min_executor_balance" = "0" ]; then
+            echo "::error::ALTO_MIN_EXECUTOR_BALANCE must be a positive base-10 integer."
+            exit 1
+          fi
+
+          funding_payload=$(
+            {
+              printf '%s\n' "$ALTO_ACTION"
+              printf '%s\n' "$rpc_url"
+              printf '%s\n' "$min_executor_balance"
+              printf '%s\n' "$UTILITY_GAS_CUSHION_WEI"
+              printf '%s\n' "$wallet_addresses"
+            } | node --input-type=module --eval '
+              let input = "";
+              for await (const chunk of process.stdin) input += chunk;
+              const lines = input.replace(/\n$/, "").split("\n");
+              if (lines.length !== 5) throw new Error("invalid funding-gate input");
+              const [action, rpcUrl, minimumText, cushionText, addressesText] = lines;
+              if (!/^[0-9]+$/.test(minimumText) || !/^[0-9]+$/.test(cushionText)) {
+                throw new Error("invalid decimal funding threshold");
+              }
+              const minimum = BigInt(minimumText);
+              const cushion = BigInt(cushionText);
+              if (minimum <= 0n || cushion <= 0n) throw new Error("funding thresholds must be positive");
+              const addresses = JSON.parse(addressesText);
+
+              async function rpc(method, params) {
+                const response = await fetch(rpcUrl, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+                });
+                if (!response.ok) throw new Error(`RPC HTTP ${response.status}`);
+                const payload = await response.json();
+                if (payload.error) throw new Error(`RPC ${payload.error.code ?? "error"}`);
+                return payload.result;
+              }
+
+              const balances = [];
+              for (const address of [...addresses.executors, addresses.utility]) {
+                const value = await rpc("eth_getBalance", [address, "latest"]);
+                if (!/^0x[0-9a-fA-F]+$/.test(value)) throw new Error("invalid balance response");
+                balances.push(BigInt(value));
+              }
+
+              const executorBalances = balances.slice(0, 4);
+              const utilityBalance = balances[4];
+              const refillTarget = (6n * minimum) / 5n;
+              const worstCasePrincipal = (11n * (4n * refillTarget)) / 10n;
+              const requiredUtility = action === "deploy"
+                ? worstCasePrincipal + cushion
+                : cushion;
+              if (action === "deploy") {
+                executorBalances.forEach((balance, index) => {
+                  if (balance < minimum) throw new Error(`executor ${index + 1} is below minimum`);
+                });
+              }
+              if (utilityBalance < requiredUtility) {
+                throw new Error("utility wallet is below the required principal plus cushion");
+              }
+              process.stdout.write(JSON.stringify({
+                executorCount: executorBalances.length,
+                requiredUtilityWei: requiredUtility.toString(),
+                worstCasePrincipalWei: worstCasePrincipal.toString(),
+              }));
+            '
+          )
+          if ! jq -e '.executorCount == 4 and (.requiredUtilityWei | test("^[0-9]+$"))' \
+              <<< "$funding_payload" >/dev/null; then
+            echo "::error::The wallet funding gate did not produce a valid result."
+            exit 1
+          fi
+          echo "Wallet funding gate passed for four executor wallets and one utility wallet."
+
+          unset executor_key executor_key_values executor_keys executor_keys_base64
+          unset rpc_url rpc_url_base64 utility_key utility_key_base64 wallet_addresses
+
+      - name: Bootstrap simulation contracts from a one-off dark task
+        if: inputs.action == 'bootstrap-simulations'
+        id: bootstrap_simulations
+        env:
+          ALTO_IMAGE: ${{ steps.alto_image.outputs.image }}
+          LOG_ROUTER_IMAGE: ${{ steps.log_router_image.outputs.image }}
+          RPC_PARAMETER_REF: ${{ steps.preflight.outputs.rpc_parameter_ref }}
+          REGISTRATION_OWNER: alto-b-${{ github.run_id }}-${{ github.run_attempt }}
+          SERVICE_FILE: ${{ steps.preflight.outputs.service_file }}
+          TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          bootstrap_family="${TASK_FAMILY}-simulation-bootstrap"
+          registration_file="$RUNNER_TEMP/alto-bootstrap-task-definition.json"
+          task_definition_state="$RUNNER_TEMP/alto-bootstrap-task-definition-arn"
+          task_state="$RUNNER_TEMP/alto-bootstrap-task-arn"
+          owner_state="$RUNNER_TEMP/alto-bootstrap-owner"
+          # One value is deliberately shared by ECS clientToken, startedBy,
+          # and the ownership tag. startedBy has the narrowest 36-byte bound.
+          if [[ ! "$REGISTRATION_OWNER" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+            echo "::error title=Unsafe bootstrap owner::The generated workflow owner is invalid."
+            exit 1
+          fi
+          printf '%s\n' "$REGISTRATION_OWNER" > "$owner_state"
+
+          jq \
+            --arg family "$bootstrap_family" \
+            --arg alto_container "$ALTO_CONTAINER" \
+            --arg alto_image "$ALTO_IMAGE" \
+            --arg tmp_init_container "$ALTO_TMP_INIT_CONTAINER" \
+            --arg router_container "$LOG_ROUTER_CONTAINER" \
+            --arg router_image "$LOG_ROUTER_IMAGE" \
+            --arg owner "$REGISTRATION_OWNER" \
+            '
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt
+            )
+            | .family = $family
+            | .containerDefinitions |= map(
+                if .name == $alto_container then
+                  .image = $alto_image
+                  | .environment |= map(
+                      if .name == "ALTO_DEPLOY_SIMULATIONS_CONTRACT" then
+                        .value = "true"
+                      elif .name == "ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP" then
+                        .value = "false"
+                      elif .name == "ALTO_REFILLING_WALLETS" then
+                        .value = "false"
+                      elif .name == "ALTO_UTILITY_WALLET_MONITOR" then
+                        .value = "false"
+                      elif .name == "ALTO_BUNDLE_MODE" then
+                        .value = "manual"
+                      else
+                        .
+                      end
+                    )
+                elif .name == $tmp_init_container then
+                  .image = $alto_image
+                elif .name == $router_container then
+                  .image = $router_image
+                else
+                  .
+                end
+              )
+            | .tags = [
+                {key: "Capability", value: "simulation-bootstrap"},
+                {key: "WorkflowOwner", value: $owner}
+              ]
+            ' "$TASK_DEFINITION_FILE" > "$registration_file"
+
+          normalize_bootstrap_source='def normalize:
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt,
+              .tags
+            )
+            | .family = "<bootstrap-family>"
+            | .containerDefinitions |= map(
+                .image = "<deployment-image>"
+                | if .name == "plether-alto" then
+                    .environment |= map(
+                      if .name == "ALTO_DEPLOY_SIMULATIONS_CONTRACT"
+                          or .name == "ALTO_FLUSH_STUCK_TRANSACTIONS_DURING_STARTUP"
+                          or .name == "ALTO_REFILLING_WALLETS"
+                          or .name == "ALTO_UTILITY_WALLET_MONITOR"
+                          or .name == "ALTO_BUNDLE_MODE" then
+                        .value = "<bootstrap-safety-override>"
+                      else
+                        .
+                      end
+                    )
+                  else
+                    .
+                  end
+              );
+            normalize'
+          if ! diff -u \
+              <(jq -S "$normalize_bootstrap_source" "$TASK_DEFINITION_FILE") \
+              <(jq -S "$normalize_bootstrap_source" "$registration_file"); then
+            echo "::error::The bootstrap task changed reviewed configuration beyond family, immutable images, and the five exact simulation-bootstrap safety overrides."
+            exit 1
+          fi
+
+          : > "$RUNNER_TEMP/alto-bootstrap-registration-attempted"
+          registration_result="$RUNNER_TEMP/alto-bootstrap-registration-result.json"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs register-task-definition \
+              --cli-input-json "file://$registration_file" \
+              --output json \
+              --no-cli-pager > "$registration_result"; then
+            echo "::error title=Ambiguous bootstrap registration::Cleanup will search only for this workflow's exact WorkflowOwner tag."
+            exit 1
+          fi
+          bootstrap_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$registration_result")
+          if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
+            echo "::error title=Unsafe bootstrap definition::ECS returned a malformed simulation-bootstrap task-definition ARN."
+            exit 1
+          fi
+          printf '%s\n' "$bootstrap_task_definition" > "$task_definition_state"
+
+          registered_definition_file="$RUNNER_TEMP/alto-bootstrap-registered-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$bootstrap_task_definition" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$registered_definition_file"
+          if ! jq --exit-status \
+              --arg arn "$bootstrap_task_definition" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '.taskDefinition.taskDefinitionArn == $arn
+               and .taskDefinition.status == "ACTIVE"
+               and .taskDefinition.family == "plether-sepolia-alto-simulation-bootstrap"
+               and (.tags | sort_by(.key)) == ([
+                 {key:"Capability", value:"simulation-bootstrap"},
+                 {key:"WorkflowOwner", value:$owner}
+               ] | sort_by(.key))' \
+              "$registered_definition_file" >/dev/null; then
+            echo "::error title=Unsafe bootstrap definition::ECS did not preserve the exact workflow ownership tags."
+            exit 1
+          fi
+
+          if ! jq -e \
+              '.networkConfiguration.awsvpcConfiguration
+               | (.subnets | type == "array" and length > 0)
+                 and (.securityGroups | type == "array" and length > 0)
+                 and .assignPublicIp == "ENABLED"' \
+              "$SERVICE_FILE" >/dev/null; then
+            echo "::error::The Alto service does not expose a usable awsvpc network configuration for the bootstrap task."
+            exit 1
+          fi
+          network_configuration=$(jq -c \
+            '{awsvpcConfiguration:
+                (.networkConfiguration.awsvpcConfiguration
+                 | {subnets, securityGroups, assignPublicIp})}' \
+            "$SERVICE_FILE")
+
+          bootstrap_started_ms=$(($(date +%s) * 1000))
+          : > "$RUNNER_TEMP/alto-bootstrap-run-attempted"
+          run_result_file="$RUNNER_TEMP/alto-bootstrap-run-task.json"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs run-task \
+              --cluster "$ECS_CLUSTER" \
+              --launch-type FARGATE \
+              --platform-version 1.4.0 \
+              --count 1 \
+              --client-token "$REGISTRATION_OWNER" \
+              --started-by "$REGISTRATION_OWNER" \
+              --network-configuration "$network_configuration" \
+              --task-definition "$bootstrap_task_definition" \
+              --enable-ecs-managed-tags \
+              --tags \
+                "key=Capability,value=simulation-bootstrap" \
+                "key=WorkflowOwner,value=$REGISTRATION_OWNER" \
+              --output json \
+              --no-cli-pager > "$run_result_file"; then
+            echo "::error title=Ambiguous bootstrap start::Cleanup will search only for this workflow's exact started-by value."
+            exit 1
+          fi
+          bootstrap_task=$(jq -r '.tasks[0].taskArn // empty' "$run_result_file")
+          if [ -n "$bootstrap_task" ]; then
+            printf '%s\n' "$bootstrap_task" > "$task_state"
+          fi
+          if ! jq -e \
+              --arg definition "$bootstrap_task_definition" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '.failures == []
+               and (.tasks | length) == 1
+               and .tasks[0].taskDefinitionArn == $definition
+               and .tasks[0].startedBy == $owner
+               and .tasks[0].launchType == "FARGATE"
+               and .tasks[0].platformVersion == "1.4.0"
+               and ((.tasks[0].overrides.containerOverrides // []) | length) == 0' \
+              "$run_result_file" >/dev/null; then
+            echo "::error title=Alto bootstrap failed::ECS did not start exactly one bootstrap task."
+            exit 1
+          fi
+
+          log_group=$(jq -er \
+            --arg router "$LOG_ROUTER_CONTAINER" \
+            '.containerDefinitions[]
+             | select(.name == $router)
+             | .environment[]
+             | select(.name == "CLOUDWATCH_LOG_GROUP")
+             | .value' \
+            "$TASK_DEFINITION_FILE")
+          simulation_record=''
+          for attempt in {1..40}; do
+            log_events=$(aws logs filter-log-events \
+              --log-group-name "$log_group" \
+              --start-time "$bootstrap_started_ms" \
+              --filter-pattern '"Contracts used for simulation"' \
+              --output json \
+              --no-cli-pager)
+            simulation_record=$(jq -rc \
+              --arg task "$bootstrap_task" \
+              '[.events[].message
+                | fromjson?
+                | select((.ecs_task_arn // "") == $task)
+                | select((.msg // .message // "") == "Contracts used for simulation")]
+               | .[-1] // empty' \
+              <<< "$log_events")
+            if [ -n "$simulation_record" ]; then
+              break
+            fi
+
+            task_status=$(aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "$bootstrap_task" \
+              --query 'tasks[0].lastStatus' \
+              --output text \
+              --no-cli-pager)
+            if [ "$task_status" = "STOPPED" ]; then
+              echo "::error title=Alto bootstrap failed::The one-off task stopped before emitting its simulation-contract record."
+              exit 1
+            fi
+            if [ "$attempt" -eq 40 ]; then
+              echo "::error title=Alto bootstrap timed out::No task-scoped simulation-contract record appeared in CloudWatch within ten minutes."
+              exit 1
+            fi
+            sleep 15
+          done
+
+          entrypoint_simulation_contract_v8=$(jq -er '.entrypointSimulationContractV8' \
+            <<< "$simulation_record")
+          pimlico_simulation_contract=$(jq -er '.pimlicoSimulationContract' \
+            <<< "$simulation_record")
+          for deployed_address in \
+              "$entrypoint_simulation_contract_v8" \
+              "$pimlico_simulation_contract"; do
+            if [[ ! "$deployed_address" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+                || [ "${deployed_address,,}" = "0x0000000000000000000000000000000000000000" ]; then
+              echo "::error title=Alto bootstrap failed::The bootstrap log did not contain two valid non-zero simulation-contract addresses."
+              exit 1
+            fi
+          done
+
+          rpc_url_base64=$(aws ssm get-parameter \
+            --name "$RPC_PARAMETER_REF" \
+            --with-decryption \
+            --output json \
+            --no-cli-pager \
+            | jq -er '.Parameter.Value | strings | @base64')
+          rpc_url=$(printf '%s' "$rpc_url_base64" | base64 --decode)
+          masked_rpc_url=${rpc_url//'%'/'%25'}
+          masked_rpc_url=${masked_rpc_url//$'\r'/'%0D'}
+          masked_rpc_url=${masked_rpc_url//$'\n'/'%0A'}
+          printf '::add-mask::%s\n' "$masked_rpc_url"
+          unset masked_rpc_url rpc_url_base64
+
+          assert_bootstrap_code() {
+            local label=$1
+            local address=$2
+            local response
+            response=$(curl \
+              --silent \
+              --show-error \
+              --fail-with-body \
+              --proto '=https' \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg address "$address" \
+                '{jsonrpc:"2.0", id:1, method:"eth_getCode", params:[$address, "latest"]}')" \
+              "$rpc_url")
+            if ! jq -e \
+                '.error == null
+                 and ((.result // "") | test("^0x[0-9a-fA-F]+$"))
+                 and ((.result // "") | ascii_downcase) != "0x"
+                 and ((.result // "") | ascii_downcase) != "0x0"' \
+                <<< "$response" >/dev/null; then
+              echo "::error title=Alto bootstrap verification failed::No deployed bytecode was returned for ${label}."
+              exit 1
+            fi
+          }
+          assert_bootstrap_code 'EntryPoint simulation contract v0.8' \
+            "$entrypoint_simulation_contract_v8"
+          assert_bootstrap_code 'Pimlico simulation contract' \
+            "$pimlico_simulation_contract"
+          unset rpc_url
+
+          bootstrap_result=$(jq -cn \
+            --arg task_arn "$bootstrap_task" \
+            --arg entrypoint_simulation_contract_v8 "$entrypoint_simulation_contract_v8" \
+            --arg pimlico_simulation_contract "$pimlico_simulation_contract" \
+            '{schema:1,
+              taskArn:$task_arn,
+              entrypointSimulationContractV8:$entrypoint_simulation_contract_v8,
+              pimlicoSimulationContract:$pimlico_simulation_contract}')
+          printf 'ALTO_BOOTSTRAP_RESULT=%s\n' "$bootstrap_result"
+
+          echo "entrypoint_simulation_contract_v8=$entrypoint_simulation_contract_v8" >> "$GITHUB_OUTPUT"
+          echo "pimlico_simulation_contract=$pimlico_simulation_contract" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Alto simulation-contract bootstrap'
+            echo
+            echo '| Terraform variable | Deployed address |'
+            echo '| --- | --- |'
+            echo "| \`alto_entrypoint_simulation_contract_v8\` | \`${entrypoint_simulation_contract_v8}\` |"
+            echo "| \`alto_pimlico_simulation_contract\` | \`${pimlico_simulation_contract}\` |"
+            echo
+            echo 'Copy these independently verified addresses into the Sepolia Terraform inputs, apply with the service still dark, then run the deploy action.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop and deregister simulation bootstrap task
+        if: always() && inputs.action == 'bootstrap-simulations'
+        env:
+          REGISTRATION_OWNER: alto-b-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          bootstrap_family="${TASK_FAMILY}-simulation-bootstrap"
+          task_state="$RUNNER_TEMP/alto-bootstrap-task-arn"
+          task_definition_state="$RUNNER_TEMP/alto-bootstrap-task-definition-arn"
+          owner_state="$RUNNER_TEMP/alto-bootstrap-owner"
+          cleanup_failed=false
+
+          if [ -s "$owner_state" ] && [ "$(<"$owner_state")" != "$REGISTRATION_OWNER" ]; then
+            echo "::error title=Unsafe bootstrap cleanup owner::The persisted workflow owner does not match this run."
+            exit 1
+          fi
+
+          task_arns=()
+          if [ -s "$task_state" ]; then
+            task_arns+=("$(<"$task_state")")
+          elif [ -e "$RUNNER_TEMP/alto-bootstrap-run-attempted" ]; then
+            running_file="$RUNNER_TEMP/alto-bootstrap-cleanup-running.json"
+            if aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --started-by "$REGISTRATION_OWNER" \
+                --output json \
+                --no-cli-pager > "$running_file"; then
+              mapfile -t discovered < <(jq -r '.taskArns[]?' "$running_file")
+              task_arns+=("${discovered[@]}")
+            else
+              cleanup_failed=true
+            fi
+
+            stopped_file="$RUNNER_TEMP/alto-bootstrap-cleanup-stopped.json"
+            if aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --family "$bootstrap_family" \
+                --desired-status STOPPED \
+                --max-results 100 \
+                --output json \
+                --no-cli-pager > "$stopped_file"; then
+              mapfile -t stopped_candidates < <(jq -r '.taskArns[]?' "$stopped_file")
+              for ((offset = 0; offset < ${#stopped_candidates[@]}; offset += 100)); do
+                batch=("${stopped_candidates[@]:offset:100}")
+                described_file="$RUNNER_TEMP/alto-bootstrap-cleanup-stopped-$offset.json"
+                if aws ecs describe-tasks \
+                    --cluster "$ECS_CLUSTER" \
+                    --tasks "${batch[@]}" \
+                    --include TAGS \
+                    --output json \
+                    --no-cli-pager > "$described_file"; then
+                  mapfile -t discovered < <(jq -r --arg owner "$REGISTRATION_OWNER" \
+                    '.tasks[]?
+                     | select(.startedBy == $owner)
+                     | select([.tags[]? | select(.key == "WorkflowOwner" and .value == $owner)] | length == 1)
+                     | .taskArn' "$described_file")
+                  task_arns+=("${discovered[@]}")
+                else
+                  cleanup_failed=true
+                fi
+              done
+            else
+              cleanup_failed=true
+            fi
+          fi
+
+          if [ "${#task_arns[@]}" -gt 0 ]; then
+            mapfile -t task_arns < <(printf '%s\n' "${task_arns[@]}" | awk 'NF' | sort -u)
+          fi
+          if [ "${#task_arns[@]}" -gt 1 ]; then
+            echo "::error title=Duplicate bootstrap tasks::More than one task bears this workflow's exact owner; stopping all owned tasks and failing cleanup."
+            cleanup_failed=true
+          fi
+
+          for bootstrap_task in "${task_arns[@]}"; do
+            if [[ ! "$bootstrap_task" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task/ ]]; then
+              echo "::error title=Unsafe bootstrap cleanup target::Refusing to stop a malformed task ARN."
+              cleanup_failed=true
+              continue
+            fi
+            task_file="$RUNNER_TEMP/alto-bootstrap-cleanup-task.json"
+            if ! aws ecs describe-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --tasks "$bootstrap_task" \
+                --include TAGS \
+                --output json \
+                --no-cli-pager > "$task_file" \
+                || ! jq --exit-status \
+                  --arg task "$bootstrap_task" \
+                  --arg owner "$REGISTRATION_OWNER" \
+                  --arg family "$bootstrap_family" \
+                  '(.failures | length) == 0
+                   and (.tasks | length) == 1
+                   and .tasks[0].taskArn == $task
+                   and .tasks[0].startedBy == $owner
+                   and (.tasks[0].taskDefinitionArn
+                        | split("task-definition/")[1]
+                        | split(":")[0]) == $family
+                   and ([.tasks[0].tags[]?
+                         | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                  "$task_file" >/dev/null; then
+              echo "::error title=Unsafe bootstrap cleanup target::Refusing to stop a task outside this workflow's exact owner and family."
+              cleanup_failed=true
+              continue
+            fi
+            if [ "$(jq -r '.tasks[0].lastStatus' "$task_file")" != "STOPPED" ]; then
+              if ! aws ecs stop-task \
+                  --cluster "$ECS_CLUSTER" \
+                  --task "$bootstrap_task" \
+                  --reason 'Protected simulation-contract bootstrap completed or failed' \
+                  --no-cli-pager >/dev/null; then
+                echo "::error::Could not stop the simulation-bootstrap task during cleanup."
+                cleanup_failed=true
+                continue
+              fi
+              if ! aws ecs wait tasks-stopped \
+                  --cluster "$ECS_CLUSTER" \
+                  --tasks "$bootstrap_task" \
+                  --no-cli-pager; then
+                echo "::error::The simulation-bootstrap task did not reach STOPPED during cleanup."
+                cleanup_failed=true
+              fi
+            fi
+          done
+
+          definition_arns=()
+          if [ -s "$task_definition_state" ]; then
+            definition_arns+=("$(<"$task_definition_state")")
+          elif [ -e "$RUNNER_TEMP/alto-bootstrap-registration-attempted" ]; then
+            definitions_file="$RUNNER_TEMP/alto-bootstrap-cleanup-definitions.json"
+            if aws ecs list-task-definitions \
+                --family-prefix "$bootstrap_family" \
+                --status ACTIVE \
+                --sort DESC \
+                --output json \
+                --no-cli-pager > "$definitions_file"; then
+              while IFS= read -r candidate; do
+                candidate_file="$RUNNER_TEMP/alto-bootstrap-cleanup-definition-${candidate##*:}.json"
+                if aws ecs describe-task-definition \
+                    --task-definition "$candidate" \
+                    --include TAGS \
+                    --output json \
+                    --no-cli-pager > "$candidate_file" \
+                    && jq --exit-status \
+                      --arg owner "$REGISTRATION_OWNER" \
+                      --arg family "$bootstrap_family" \
+                      '.taskDefinition.family == $family
+                       and ([.tags[]?
+                             | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                      "$candidate_file" >/dev/null; then
+                  definition_arns+=("$candidate")
+                fi
+              done < <(jq -r --arg family "$bootstrap_family" \
+                '.taskDefinitionArns[]?
+                 | select((split("task-definition/")[1] | split(":")[0]) == $family)' \
+                "$definitions_file")
+            else
+              cleanup_failed=true
+            fi
+          fi
+
+          if [ "${#definition_arns[@]}" -gt 0 ]; then
+            mapfile -t definition_arns < <(printf '%s\n' "${definition_arns[@]}" | awk 'NF' | sort -u)
+          fi
+          if [ "${#definition_arns[@]}" -gt 1 ]; then
+            echo "::error title=Duplicate bootstrap definitions::More than one ACTIVE revision bears this workflow's exact owner; deregistering all owned revisions and failing cleanup."
+            cleanup_failed=true
+          fi
+
+          for bootstrap_task_definition in "${definition_arns[@]}"; do
+            if [[ ! "$bootstrap_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto-simulation-bootstrap:[1-9][0-9]*$ ]]; then
+              echo "::error title=Unsafe bootstrap deregistration target::Refusing to deregister a malformed task-definition ARN."
+              cleanup_failed=true
+              continue
+            fi
+            definition_file="$RUNNER_TEMP/alto-bootstrap-cleanup-definition.json"
+            if ! aws ecs describe-task-definition \
+                --task-definition "$bootstrap_task_definition" \
+                --include TAGS \
+                --output json \
+                --no-cli-pager > "$definition_file" \
+                || ! jq --exit-status \
+                  --arg arn "$bootstrap_task_definition" \
+                  --arg owner "$REGISTRATION_OWNER" \
+                  --arg family "$bootstrap_family" \
+                  '.taskDefinition.taskDefinitionArn == $arn
+                   and .taskDefinition.status == "ACTIVE"
+                   and .taskDefinition.family == $family
+                   and ([.tags[]?
+                         | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                  "$definition_file" >/dev/null; then
+              echo "::error title=Unsafe bootstrap deregistration target::Refusing to deregister a definition outside this workflow's exact owner and family."
+              cleanup_failed=true
+              continue
+            fi
+            if ! aws ecs deregister-task-definition \
+                --task-definition "$bootstrap_task_definition" \
+                --no-cli-pager >/dev/null; then
+              echo "::error::Could not deregister the temporary simulation-bootstrap task definition."
+              cleanup_failed=true
+              continue
+            fi
+            if ! aws ecs describe-task-definition \
+                --task-definition "$bootstrap_task_definition" \
+                --query taskDefinition.status \
+                --output text \
+                --no-cli-pager | grep -qx INACTIVE; then
+              echo "::error::The temporary simulation-bootstrap task definition did not become INACTIVE."
+              cleanup_failed=true
+            fi
+          done
+
+          if [ "$cleanup_failed" = true ]; then
+            exit 1
+          fi
+
+      - name: Register task definition and deploy stop-before-start
+        if: inputs.action == 'deploy'
+        id: rollout
+        env:
+          ALTO_IMAGE: ${{ steps.alto_image.outputs.image }}
+          LOG_ROUTER_IMAGE: ${{ steps.log_router_image.outputs.image }}
+          PREVIOUS_TASK_DEFINITION: ${{ steps.preflight.outputs.previous_task_definition }}
+          REGISTRATION_OWNER: alto-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REGISTRATION_OWNER" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+            echo "::error title=Unsafe deployment owner::The generated workflow owner is invalid."
+            exit 1
+          fi
+          printf '%s\n' "$REGISTRATION_OWNER" > "$RUNNER_TEMP/alto-deploy-owner"
+
+          registration_file="$RUNNER_TEMP/alto-task-definition-registration.json"
+          jq \
+            --arg alto_container "$ALTO_CONTAINER" \
+            --arg alto_image "$ALTO_IMAGE" \
+            --arg tmp_init_container "$ALTO_TMP_INIT_CONTAINER" \
+            --arg router_container "$LOG_ROUTER_CONTAINER" \
+            --arg router_image "$LOG_ROUTER_IMAGE" \
+            --arg owner "$REGISTRATION_OWNER" \
+            '
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt
+            )
+            | .containerDefinitions |= map(
+                if .name == $alto_container or .name == $tmp_init_container then
+                  .image = $alto_image
+                elif .name == $router_container then
+                  .image = $router_image
+                else
+                  .
+                end
+              )
+            | .tags = [
+                {key: "Capability", value: "alto-deployment"},
+                {key: "WorkflowOwner", value: $owner}
+              ]
+            ' "$TASK_DEFINITION_FILE" > "$registration_file"
+
+          normalize_registration='del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt,
+              .tags
+            )
+            | .containerDefinitions |= map(.image = "<deployment-image>")'
+          if ! diff -u \
+              <(jq -S "$normalize_registration" "$TASK_DEFINITION_FILE") \
+              <(jq -S "$normalize_registration" "$registration_file"); then
+            echo "::error::The rendered task definition changed reviewed task configuration beyond the three reviewed container image fields."
+            exit 1
+          fi
+
+          registration_result="$RUNNER_TEMP/alto-task-definition-registration-result.json"
+          : > "$RUNNER_TEMP/alto-deploy-registration-attempted"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs register-task-definition \
+              --cli-input-json "file://$registration_file" \
+              --output json \
+              --no-cli-pager > "$registration_result"; then
+            echo "::error title=Ambiguous Alto registration::Inspect the exact Alto family for a revision tagged with this workflow owner before retrying."
+            exit 1
+          fi
+          new_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$registration_result")
+          if [[ ! "$new_task_definition" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-alto:[1-9][0-9]*$ ]]; then
+            echo "::error title=Unsafe Alto definition::ECS returned a malformed Alto task-definition ARN."
+            exit 1
+          fi
+          printf '%s\n' "$new_task_definition" > "$RUNNER_TEMP/alto-deploy-task-definition-arn"
+          registered_file="$RUNNER_TEMP/alto-task-definition-registered.json"
+          aws ecs describe-task-definition \
+            --task-definition "$new_task_definition" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$registered_file"
+          if ! jq --exit-status \
+              --arg arn "$new_task_definition" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '.taskDefinition.taskDefinitionArn == $arn
+               and .taskDefinition.status == "ACTIVE"
+               and .taskDefinition.family == "plether-sepolia-alto"
+               and (.tags | sort_by(.key)) == ([
+                 {key:"Capability", value:"alto-deployment"},
+                 {key:"WorkflowOwner", value:$owner}
+               ] | sort_by(.key))' \
+              "$registered_file" >/dev/null; then
+            echo "::error title=Unsafe Alto definition::ECS did not preserve the exact deployment ownership tags."
+            exit 1
+          fi
+          echo "new_task_definition=$new_task_definition" >> "$GITHUB_OUTPUT"
+          echo "mutation_started=true" >> "$GITHUB_OUTPUT"
+          echo "rollout_started_ms=$(($(date +%s) * 1000))" >> "$GITHUB_OUTPUT"
+
+          deployed_task_definition=$(aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$new_task_definition" \
+            --query service.taskDefinition \
+            --output text \
+            --no-cli-pager)
+          if [ "$deployed_task_definition" != "$new_task_definition" ]; then
+            echo "::error::ECS did not accept the newly registered Alto task definition."
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/alto-deploy-definition-selected"
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --no-cli-pager
+
+      - name: Validate and deploy explicit rollback revision
+        if: inputs.action == 'rollback'
+        id: explicit_rollback
+        env:
+          CURRENT_TASK_DEFINITION: ${{ steps.preflight.outputs.previous_task_definition }}
+          CURRENT_TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ROLLBACK_TASK_DEFINITION: ${{ inputs.rollback_task_definition }}
+        run: |
+          set -euo pipefail
+
+          candidate_file="$RUNNER_TEMP/alto-rollback-task-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$ROLLBACK_TASK_DEFINITION" \
+            --query taskDefinition \
+            --output json \
+            --no-cli-pager > "$candidate_file"
+          candidate_arn=$(jq -r '.taskDefinitionArn' "$candidate_file")
+          if [ "$candidate_arn" = "$CURRENT_TASK_DEFINITION" ]; then
+            echo "::error::The requested rollback revision is already deployed."
+            exit 1
+          fi
+          if ! jq -e \
+              --arg family "$TASK_FAMILY" \
+              '.family == $family
+               and .status == "ACTIVE"
+               and .runtimePlatform.cpuArchitecture == "ARM64"
+               and .runtimePlatform.operatingSystemFamily == "LINUX"' \
+              "$candidate_file" >/dev/null; then
+            echo "::error::The rollback target must be an ACTIVE ARM64/Linux revision from the Alto task family."
+            exit 1
+          fi
+
+          normalize_reviewed_definition='del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt
+            )
+            | .containerDefinitions |= map(.image = "<deployment-image>")'
+          if ! diff -u \
+              <(jq -S "$normalize_reviewed_definition" "$CURRENT_TASK_DEFINITION_FILE") \
+              <(jq -S "$normalize_reviewed_definition" "$candidate_file"); then
+            echo "::error title=Unsafe Alto rollback refused::The candidate differs from the current reviewed task topology outside container image fields."
+            exit 1
+          fi
+
+          candidate_alto_image=$(jq -er \
+            --arg container "$ALTO_CONTAINER" \
+            '.containerDefinitions[] | select(.name == $container) | .image' \
+            "$candidate_file")
+          candidate_tmp_init_image=$(jq -er \
+            --arg container "$ALTO_TMP_INIT_CONTAINER" \
+            '.containerDefinitions[] | select(.name == $container) | .image' \
+            "$candidate_file")
+          candidate_router_image=$(jq -er \
+            --arg container "$LOG_ROUTER_CONTAINER" \
+            '.containerDefinitions[] | select(.name == $container) | .image' \
+            "$candidate_file")
+
+          validate_repository_digest_image() {
+            local label=$1
+            local repository=$2
+            local image=$3
+            local expected_prefix="$ECR_REGISTRY/$repository@sha256:"
+            if [[ "$image" != "$expected_prefix"* ]]; then
+              echo "::error title=Unsafe Alto rollback refused::${label} must use an immutable digest from ${repository}."
+              exit 1
+            fi
+            local digest="sha256:${image#"$expected_prefix"}"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error title=Unsafe Alto rollback refused::${label} contains a malformed image digest."
+              exit 1
+            fi
+            aws ecr describe-images \
+              --repository-name "$repository" \
+              --image-ids imageDigest="$digest" \
+              --no-cli-pager >/dev/null
+          }
+          validate_repository_digest_image Alto "$ECR_REPOSITORY" "$candidate_alto_image"
+          validate_repository_digest_image Alto-tmp-init "$ECR_REPOSITORY" "$candidate_tmp_init_image"
+          validate_repository_digest_image log-router "$LOG_ROUTER_REPOSITORY" "$candidate_router_image"
+          approved_alto_digest=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$ALTO_MIRROR_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text \
+            --no-cli-pager)
+          if [ "$candidate_alto_image" != "$ECR_REGISTRY/$ECR_REPOSITORY@$approved_alto_digest" ]; then
+            echo "::error title=Unsafe Alto rollback refused::The candidate Alto image is not the approved immutable v1.2.7 mirror."
+            exit 1
+          fi
+          if [ "$candidate_tmp_init_image" != "$candidate_alto_image" ]; then
+            echo "::error title=Unsafe Alto rollback refused::The scratch-volume init container must use the exact approved Alto image digest."
+            exit 1
+          fi
+
+          docker pull --platform linux/arm64 "$candidate_alto_image"
+          docker pull --platform linux/arm64 "$candidate_router_image"
+          if [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate_alto_image")" != "linux/arm64" ] \
+              || [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate_router_image")" != "linux/arm64" ]; then
+            echo "::error title=Unsafe Alto rollback refused::Both candidate images must resolve to Linux/ARM64."
+            exit 1
+          fi
+
+          echo "new_task_definition=$candidate_arn" >> "$GITHUB_OUTPUT"
+          echo "mutation_started=true" >> "$GITHUB_OUTPUT"
+          echo "rollout_started_ms=$(($(date +%s) * 1000))" >> "$GITHUB_OUTPUT"
+          deployed_task_definition=$(aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$candidate_arn" \
+            --query service.taskDefinition \
+            --output text \
+            --no-cli-pager)
+          if [ "$deployed_task_definition" != "$candidate_arn" ]; then
+            echo "::error::ECS did not accept the explicitly validated rollback revision."
+            exit 1
+          fi
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --no-cli-pager
+
+      - name: Verify ECS and internal target health
+        if: inputs.action != 'bootstrap-simulations' && steps.preflight.outputs.desired_count == '1'
+        env:
+          NEW_TASK_DEFINITION: ${{ steps.rollout.outputs.new_task_definition || steps.explicit_rollback.outputs.new_task_definition }}
+          ROLLOUT_STARTED_MS: ${{ steps.rollout.outputs.rollout_started_ms || steps.explicit_rollback.outputs.rollout_started_ms }}
+          TASK_DEFINITION_FILE: ${{ steps.preflight.outputs.task_definition_file }}
+        run: |
+          set -euo pipefail
+
+          service_file="$RUNNER_TEMP/alto-deployed-service.json"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0]' \
+            --output json \
+            --no-cli-pager > "$service_file"
+          if ! jq -e \
+              --arg task_definition "$NEW_TASK_DEFINITION" \
+              '.status == "ACTIVE"
+               and .desiredCount == 1
+               and .runningCount == 1
+               and .pendingCount == 0
+               and .taskDefinition == $task_definition
+               and ([.deployments[]
+                     | select(.status == "PRIMARY"
+                              and .taskDefinition == $task_definition
+                              and .runningCount == 1
+                              and (.rolloutState // "COMPLETED") == "COMPLETED")] | length) == 1' \
+              "$service_file" >/dev/null; then
+            echo "::error title=Alto ECS health check failed::The new single-active deployment is not stable."
+            exit 1
+          fi
+
+          mapfile -t task_arns < <(aws ecs list-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --service-name "$ECS_SERVICE" \
+            --desired-status RUNNING \
+            --query taskArns[] \
+            --output text \
+            --no-cli-pager | tr '\t' '\n' | sed '/^None$/d; /^$/d')
+          if [ "${#task_arns[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one running Alto task."
+            exit 1
+          fi
+          if ! aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "${task_arns[0]}" \
+              --output json \
+              --no-cli-pager \
+              | jq -e \
+                --arg task_definition "$NEW_TASK_DEFINITION" \
+                --arg container "$ALTO_CONTAINER" \
+                '.failures == []
+                 and (.tasks | length) == 1
+                 and .tasks[0].taskDefinitionArn == $task_definition
+                 and .tasks[0].lastStatus == "RUNNING"
+                 and .tasks[0].healthStatus == "HEALTHY"
+                 and ([.tasks[0].containers[]
+                       | select(.name == $container
+                                and .lastStatus == "RUNNING"
+                                and .healthStatus == "HEALTHY")] | length) == 1' >/dev/null; then
+            echo "::error title=Alto ECS health check failed::The running task or Alto container is not healthy."
+            exit 1
+          fi
+
+          target_group_arn=$(aws elbv2 describe-target-groups \
+            --names "$ALTO_TARGET_GROUP" \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text \
+            --no-cli-pager)
+          target_health=$(aws elbv2 describe-target-health \
+            --target-group-arn "$target_group_arn" \
+            --output json \
+            --no-cli-pager)
+          healthy_targets=$(jq '[.TargetHealthDescriptions[] | select(.TargetHealth.State == "healthy")] | length' \
+              <<< "$target_health")
+          unhealthy_targets=$(jq '[.TargetHealthDescriptions[] | select(.TargetHealth.State == "unhealthy")] | length' \
+            <<< "$target_health")
+          if [ "$healthy_targets" -ne 1 ] || [ "$unhealthy_targets" -ne 0 ]; then
+            echo "::error title=Alto target health check failed::Expected exactly one healthy target and no unhealthy targets."
+            exit 1
+          fi
+
+          log_group=$(jq -er \
+            --arg router "$LOG_ROUTER_CONTAINER" \
+            '.containerDefinitions[]
+             | select(.name == $router)
+             | .environment[]
+             | select(.name == "CLOUDWATCH_LOG_GROUP")
+             | .value' \
+            "$TASK_DEFINITION_FILE")
+          task_logs=''
+          task_log_seen=false
+          for attempt in {1..12}; do
+            task_logs=$(aws logs filter-log-events \
+              --log-group-name "$log_group" \
+              --start-time "$ROLLOUT_STARTED_MS" \
+              --filter-pattern '{ $.container_name = "plether-alto" }' \
+              --output json \
+              --no-cli-pager)
+            task_log_count=$(jq \
+              --arg task "${task_arns[0]}" \
+              '[.events[].message
+                | fromjson?
+                | select((.ecs_task_arn // "") == $task)] | length' \
+              <<< "$task_logs")
+            if [ "$task_log_count" -gt 0 ]; then
+              task_log_seen=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$task_log_seen" != true ]; then
+            echo "::error title=Alto wallet gate inconclusive::No task-scoped Alto record reached the shared CloudWatch log group after rollout."
+            exit 1
+          fi
+
+          sleep 10
+          task_logs=$(aws logs filter-log-events \
+            --log-group-name "$log_group" \
+            --start-time "$ROLLOUT_STARTED_MS" \
+            --filter-pattern '{ $.container_name = "plether-alto" }' \
+            --output json \
+            --no-cli-pager)
+          startup_fault_count=$(jq \
+            --arg task "${task_arns[0]}" \
+            '[.events[].message
+              | fromjson?
+              | select((.ecs_task_arn // "") == $task)
+              | . as $record
+              | (($record.msg // $record.message // "")) as $message
+              | select(
+                  ($record.level == "error"
+                   and $record.module == "validate-and-refill-wallets"
+                   and ($message == "utility wallet has insufficient balance to refill wallets"
+                        or $message == "No gas price available"))
+                  or ($record.level == "error"
+                      and $record.module == "root"
+                      and ($message == "Error during initial wallet validation and refill"
+                           or $message == "Error during scheduled wallet validation and refill"))
+                  or ($record.level == "warn"
+                      and $message == "executor has insufficient funds")
+                  or ($record.level == "error"
+                      and $record.module == "utility_wallet_monitor"
+                      and $message == "Failed to update utility wallet balance metrics")
+                  or ($record.level == "error"
+                      and $record.module == "gas_price_manager"
+                      and ($message == "Error during gas price initialization"
+                           or $message == "Error updating gas prices in interval")))]
+             | length' \
+            <<< "$task_logs")
+          if [ "$startup_fault_count" -ne 0 ]; then
+            echo "::error title=Alto runtime readiness gate failed::The new task emitted ${startup_fault_count} exact gas-price or utility/executor fault record(s); the service will be rolled back."
+            exit 1
+          fi
+
+      - name: Report dark service update
+        if: inputs.action != 'bootstrap-simulations' && steps.preflight.outputs.desired_count == '0'
+        run: |
+          if [ "$ALTO_ACTION" = "deploy" ]; then
+            detail='The immutable Alto task revision is registered on the stopped service.'
+          else
+            detail='The validated rollback revision is selected on the stopped service.'
+          fi
+          echo "::notice title=Alto revision staged::${detail} Set Terraform alto_desired_count to 1 to start it and run the health/public smoke checks."
+
+      - name: Verify optional public AA route
+        if: inputs.action != 'bootstrap-simulations' && steps.preflight.outputs.desired_count == '1' && inputs.api_hostname != ''
+        env:
+          APPROVED_API_ORIGIN: ${{ vars.SEPOLIA_BACKEND_URL }}
+          API_HOSTNAME: ${{ inputs.api_hostname }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [[ ! "$API_HOSTNAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] \
+              || [[ "$API_HOSTNAME" != *.* ]] \
+              || [[ "$API_HOSTNAME" == *..* ]]; then
+            echo "::error::api_hostname must be a bare DNS hostname without a scheme, port, path, or whitespace."
+            exit 1
+          fi
+          approved_api_origin=${APPROVED_API_ORIGIN%/}
+          if [ "$approved_api_origin" != "https://${API_HOSTNAME}" ]; then
+            echo "::error::api_hostname must exactly match the hostname in the approved SEPOLIA_BACKEND_URL repository variable."
+            exit 1
+          fi
+          unset approved_api_origin
+
+          api_task_definition=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services plether-api \
+            --query 'services[0].taskDefinition' \
+            --output text \
+            --no-cli-pager)
+          api_definition_file="$RUNNER_TEMP/alto-api-task-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$api_task_definition" \
+            --query taskDefinition.containerDefinitions \
+            --output json \
+            --no-cli-pager > "$api_definition_file"
+          if ! jq -e \
+              '[.[]
+                | select(.name == "plether-api")
+                | .secrets[]
+                | select(.name == "AA_PROXY_ORIGIN_TOKEN")
+                | select((.valueFrom // "") | length > 0)] | length == 1' \
+              "$api_definition_file" >/dev/null; then
+            echo "::error::The deployed API task does not contain exactly one AA origin-token secret reference."
+            exit 1
+          fi
+          origin_token_ref=$(jq -r \
+            '.[]
+             | select(.name == "plether-api")
+             | .secrets[]
+             | select(.name == "AA_PROXY_ORIGIN_TOKEN")
+             | .valueFrom' \
+            "$api_definition_file")
+          origin_token=$(aws ssm get-parameter \
+            --name "$origin_token_ref" \
+            --with-decryption \
+            --query Parameter.Value \
+            --output text \
+            --no-cli-pager)
+          if [ -z "$origin_token" ] || [ "$origin_token" = "None" ]; then
+            echo "::error::The AA origin-token parameter resolved to an empty value."
+            exit 1
+          fi
+          if [[ "$origin_token" == *$'\n'* || "$origin_token" == *$'\r'* ]]; then
+            echo "::error::The AA origin-token parameter contains an invalid line break."
+            exit 1
+          fi
+          masked_origin_token=${origin_token//'%'/'%25'}
+          masked_origin_token=${masked_origin_token//$'\r'/'%0D'}
+          masked_origin_token=${masked_origin_token//$'\n'/'%0A'}
+          printf '::add-mask::%s\n' "$masked_origin_token"
+          unset masked_origin_token
+
+          smoke_url="https://${API_HOSTNAME}/api/aa/rpc"
+          request_body='{"jsonrpc":"2.0","id":1,"method":"eth_supportedEntryPoints","params":[]}'
+          gas_price_request_body='{"jsonrpc":"2.0","id":2,"method":"pimlico_getUserOperationGasPrice","params":[]}'
+          unauthenticated_body="$RUNNER_TEMP/alto-unauthenticated-smoke.json"
+          authenticated_body="$RUNNER_TEMP/alto-authenticated-smoke.json"
+          gas_price_body="$RUNNER_TEMP/alto-gas-price-smoke.json"
+
+          unauthenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$unauthenticated_body" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 203.0.113.10' \
+            --data "$request_body" \
+            "$smoke_url")
+          if [ "$unauthenticated_status" != "403" ]; then
+            echo "::error title=AA origin boundary smoke test failed::An unauthenticated request returned HTTP ${unauthenticated_status}, expected 403."
+            exit 1
+          fi
+
+          authenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$authenticated_body" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 203.0.113.10' \
+            --header "X-Plether-AA-Proxy-Token: $origin_token" \
+            --data "$request_body" \
+            "$smoke_url")
+          if [ "$authenticated_status" != "200" ] \
+              || ! jq -e \
+                --arg entrypoint "${ALTO_ENTRYPOINT,,}" \
+                '.error == null
+                 and (.result | type == "array")
+                 and any(.result[]; ascii_downcase == $entrypoint)' \
+                "$authenticated_body" >/dev/null; then
+            echo "::error title=Alto public smoke test failed::The authenticated eth_supportedEntryPoints request did not return the approved EntryPoint."
+            exit 1
+          fi
+
+          gas_price_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$gas_price_body" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 203.0.113.10' \
+            --header "X-Plether-AA-Proxy-Token: $origin_token" \
+            --data "$gas_price_request_body" \
+            "$smoke_url")
+          unset origin_token
+          if [ "$gas_price_status" != "200" ] \
+              || ! jq -e \
+                '.error == null
+                 and (.result | type == "object")
+                 and (.result as $result
+                      | all(["slow", "standard", "fast"][];
+                          ($result[.] | type == "object")
+                          and (($result[.].maxFeePerGas // "")
+                               | test("^0x0*[1-9a-fA-F][0-9a-fA-F]*$"))
+                          and (($result[.].maxPriorityFeePerGas // "")
+                               | test("^0x[0-9a-fA-F]+$"))))' \
+                "$gas_price_body" >/dev/null; then
+            echo "::error title=Alto public gas-price smoke failed::The authenticated pimlico_getUserOperationGasPrice request did not return valid slow, standard, and fast tiers."
+            exit 1
+          fi
+
+      - name: Roll back failed Alto rollout
+        if: failure() && (steps.rollout.outputs.mutation_started == 'true' || steps.explicit_rollback.outputs.mutation_started == 'true')
+        env:
+          PREVIOUS_TASK_DEFINITION: ${{ steps.preflight.outputs.previous_task_definition }}
+          FAILED_TASK_DEFINITION: ${{ steps.rollout.outputs.new_task_definition || steps.explicit_rollback.outputs.new_task_definition }}
+        run: |
+          set -euo pipefail
+
+          echo "Rolling back ${FAILED_TASK_DEFINITION} to ${PREVIOUS_TASK_DEFINITION}."
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$PREVIOUS_TASK_DEFINITION" \
+            --no-cli-pager >/dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --no-cli-pager
+          echo "::warning title=Alto rollout rolled back::The service was restored to ${PREVIOUS_TASK_DEFINITION}; investigate the failed rollout before retrying."
+
+      - name: Reconcile an unselected owned deployment revision
+        if: always() && inputs.action == 'deploy'
+        env:
+          REGISTRATION_OWNER: alto-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          attempted_state="$RUNNER_TEMP/alto-deploy-registration-attempted"
+          selected_state="$RUNNER_TEMP/alto-deploy-definition-selected"
+          owner_state="$RUNNER_TEMP/alto-deploy-owner"
+          registered_state="$RUNNER_TEMP/alto-deploy-task-definition-arn"
+          if [ ! -e "$attempted_state" ] || [ -e "$selected_state" ]; then
+            exit 0
+          fi
+          if [ ! -s "$owner_state" ] || [ "$(<"$owner_state")" != "$REGISTRATION_OWNER" ]; then
+            echo "::error title=Unsafe Alto cleanup owner::The persisted workflow owner is missing or does not match this run."
+            exit 1
+          fi
+
+          cleanup_failed=false
+          definition_arns=()
+          if [ -s "$registered_state" ]; then
+            definition_arns+=("$(<"$registered_state")")
+          else
+            definitions_file="$RUNNER_TEMP/alto-deploy-cleanup-definitions.json"
+            if aws ecs list-task-definitions \
+                --family-prefix "$TASK_FAMILY" \
+                --status ACTIVE \
+                --sort DESC \
+                --output json \
+                --no-cli-pager > "$definitions_file"; then
+              while IFS= read -r candidate; do
+                candidate_file="$RUNNER_TEMP/alto-deploy-cleanup-candidate-${candidate##*:}.json"
+                if aws ecs describe-task-definition \
+                    --task-definition "$candidate" \
+                    --include TAGS \
+                    --output json \
+                    --no-cli-pager > "$candidate_file" \
+                    && jq --exit-status \
+                      --arg owner "$REGISTRATION_OWNER" \
+                      --arg family "$TASK_FAMILY" \
+                      '.taskDefinition.family == $family
+                       and .taskDefinition.status == "ACTIVE"
+                       and ([.tags[]?
+                             | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                      "$candidate_file" >/dev/null; then
+                  definition_arns+=("$candidate")
+                fi
+              done < <(jq -r --arg family "$TASK_FAMILY" \
+                '.taskDefinitionArns[]?
+                 | select((split("task-definition/")[1] | split(":")[0]) == $family)' \
+                "$definitions_file")
+            else
+              cleanup_failed=true
+            fi
+          fi
+
+          if [ "${#definition_arns[@]}" -gt 0 ]; then
+            mapfile -t definition_arns < <(printf '%s\n' "${definition_arns[@]}" | awk 'NF' | sort -u)
+          fi
+          if [ "${#definition_arns[@]}" -gt 1 ]; then
+            echo "::error title=Duplicate Alto deployment definitions::More than one ACTIVE revision bears this workflow's exact owner; deregistering only unselected owned revisions and failing cleanup."
+            cleanup_failed=true
+          fi
+
+          service_file="$RUNNER_TEMP/alto-deploy-cleanup-service.json"
+          if ! aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --output json \
+              --no-cli-pager > "$service_file" \
+              || ! jq --exit-status --arg service "$ECS_SERVICE" \
+                '(.failures | length) == 0
+                 and (.services | length) == 1
+                 and .services[0].serviceName == $service
+                 and .services[0].status == "ACTIVE"' \
+                "$service_file" >/dev/null; then
+            echo "::error title=Alto deployment cleanup inconclusive::Could not establish the service's currently selected task definition."
+            exit 1
+          fi
+          selected_definition=$(jq -er '.services[0].taskDefinition' "$service_file")
+
+          for definition_arn in "${definition_arns[@]}"; do
+            expected_definition_prefix="arn:aws:ecs:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:task-definition/plether-sepolia-alto:"
+            definition_revision=${definition_arn#"$expected_definition_prefix"}
+            if [ "$definition_revision" = "$definition_arn" ] \
+                || [[ ! "$definition_revision" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error title=Unsafe Alto deregistration target::Refusing to deregister a malformed task-definition ARN."
+              cleanup_failed=true
+              continue
+            fi
+            definition_file="$RUNNER_TEMP/alto-deploy-cleanup-definition.json"
+            if ! aws ecs describe-task-definition \
+                --task-definition "$definition_arn" \
+                --include TAGS \
+                --output json \
+                --no-cli-pager > "$definition_file" \
+                || ! jq --exit-status \
+                  --arg arn "$definition_arn" \
+                  --arg owner "$REGISTRATION_OWNER" \
+                  --arg family "$TASK_FAMILY" \
+                  '.taskDefinition.taskDefinitionArn == $arn
+                   and .taskDefinition.status == "ACTIVE"
+                   and .taskDefinition.family == $family
+                   and ([.tags[]?
+                         | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                  "$definition_file" >/dev/null; then
+              echo "::error title=Unsafe Alto deregistration evidence::The candidate is not an ACTIVE revision owned by this exact workflow."
+              cleanup_failed=true
+              continue
+            fi
+            if [ "$definition_arn" = "$selected_definition" ]; then
+              echo "::error title=Alto deployment cleanup requires recovery::The response-lost revision is currently selected by the service; verify or roll it back before deregistration."
+              cleanup_failed=true
+              continue
+            fi
+            if ! aws ecs deregister-task-definition \
+                --task-definition "$definition_arn" \
+                --no-cli-pager >/dev/null \
+                || ! aws ecs describe-task-definition \
+                  --task-definition "$definition_arn" \
+                  --query taskDefinition.status \
+                  --output text \
+                  --no-cli-pager | grep -qx INACTIVE; then
+              cleanup_failed=true
+            fi
+          done
+
+          if [ "$cleanup_failed" = true ]; then
+            echo "::error title=Alto deployment cleanup incomplete::Reconcile this workflow's exact owned revision before retrying."
+            exit 1
+          fi

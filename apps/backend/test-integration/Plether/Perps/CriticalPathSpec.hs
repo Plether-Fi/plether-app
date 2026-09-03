@@ -34,6 +34,7 @@ import Network.Wai.Test
   , runSession
   , setPath
   )
+import Plether.AA.Gateway (newNativeGatewayState)
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
@@ -219,8 +220,9 @@ makeApiApplication manager pool config rpcUrl = do
       manager
       perpsRequestId
       (RpcClientOptions rpcUrl Nothing "integration-api-perps")
+  nativeGatewayState <- newNativeGatewayState manager config perpsClient
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState
+    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =
@@ -489,6 +491,7 @@ testConfig databaseUrl rpcUrl =
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

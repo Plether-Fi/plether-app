@@ -6,7 +6,10 @@ import {
   type Hex,
 } from 'viem'
 import { executeSponsoredPerpsAction } from '../execution'
-import type { PerpsAaDeploymentManifest } from '../manifest'
+import type {
+  PerpsAaDeploymentManifestV1,
+  PerpsAaDeploymentManifestV2,
+} from '../manifest'
 import {
   cancelSponsoredOperationRequest,
   forceUnlockLegacySponsoredOperation,
@@ -24,6 +27,12 @@ import type {
   PerpsAaSmartAccountRuntime,
 } from '../runtimeContext'
 import { UserOperationReceiptNotSafeError } from '../runtimeContext'
+import {
+  PLETHER_PAYMASTER_POLICY_ID,
+  PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
+  PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
+  PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
+} from '../paymasterValidity'
 
 const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
@@ -56,6 +65,8 @@ const FACTORY =
   '0x13E9ed32155810FDbd067D4522C492D6f68E5944' as Address
 const PAYMASTER =
   '0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402' as Address
+const PLETHER_PAYMASTER =
+  '0x1234567890123456789012345678901234567890' as Address
 const TARGET = '0x3333333333333333333333333333333333333333' as Address
 const USER_OPERATION_HASH = `0x${'44'.repeat(32)}` as Hex
 const OTHER_USER_OPERATION_HASH = `0x${'55'.repeat(32)}` as Hex
@@ -100,8 +111,8 @@ function paymasterData(): Hex {
 }
 
 function manifest(
-  input: Partial<PerpsAaDeploymentManifest> = {}
-): PerpsAaDeploymentManifest {
+  input: Partial<PerpsAaDeploymentManifestV1> = {}
+): PerpsAaDeploymentManifestV1 {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
     chainId: 421614,
@@ -131,6 +142,23 @@ function manifest(
   }
 }
 
+function v2Manifest(): PerpsAaDeploymentManifestV2 {
+  const common = { ...manifest() } as Partial<PerpsAaDeploymentManifestV1>
+  delete common.version
+  delete common.pimlicoRpcUrl
+  return {
+    ...common as Omit<
+      PerpsAaDeploymentManifestV1,
+      'version' | 'pimlicoRpcUrl'
+    >,
+    version: 'perps-aa-arbitrum-sepolia-v2',
+    bundlerRpcUrl: '/api/perps/v1/aa/rpc',
+    paymasterRpcUrl: '/api/perps/v1/aa/rpc',
+    paymasterAddress: PLETHER_PAYMASTER,
+    paymasterVersion: 'plether-verifying-v1',
+  }
+}
+
 function operation(): ManagedUserOperation {
   return {
     sender: ACCOUNT,
@@ -148,6 +176,24 @@ function operation(): ManagedUserOperation {
     paymasterVerificationGasLimit: 6n,
     paymasterPostOpGasLimit: 7n,
     signature: '0xdeadbeef',
+  }
+}
+
+function pletherOperation(): ManagedUserOperation {
+  return {
+    ...operation(),
+    paymaster: PLETHER_PAYMASTER,
+    paymasterData: concatHex([
+      numberToHex(SPONSORSHIP_VALID_UNTIL, { size: 6 }),
+      numberToHex(SPONSORSHIP_VALID_UNTIL - 300n, { size: 6 }),
+      numberToHex(1_000_000n, { size: 16 }),
+      PLETHER_PAYMASTER_POLICY_ID,
+      PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
+      `0x${'44'.repeat(65)}`,
+    ]),
+    paymasterVerificationGasLimit:
+      PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
+    paymasterPostOpGasLimit: PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
   }
 }
 
@@ -208,6 +254,7 @@ function statefulLockManager(): {
 }
 
 function runtime(input: {
+  prepareUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['prepareUserOperation']
   signUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['signUserOperation']
   getUserOperationHash?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationHash']
   sendUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
@@ -226,7 +273,8 @@ function runtime(input: {
     smartAccount: {
       accountAddress: ACCOUNT,
       entryPoint: ENTRY_POINT,
-      prepareUserOperation: vi.fn(async () => operation()),
+      prepareUserOperation: input.prepareUserOperation ??
+        vi.fn(async () => operation()),
       signUserOperation: input.signUserOperation ??
         vi.fn(async (value) => value),
       getUserOperationHash: input.getUserOperationHash ??
@@ -309,6 +357,7 @@ describe('executeSponsoredPerpsAction', () => {
           paymasterData: paymasterData(),
         },
       })
+      expect(pendingOperation.sponsorshipAuthority).toBeUndefined()
       expect(JSON.parse(globalThis.localStorage.getItem(
         `${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`
       )!)).toMatchObject({
@@ -411,6 +460,61 @@ describe('executeSponsoredPerpsAction', () => {
     })
 
     expect(signUserOperation).toHaveBeenCalledOnce()
+  })
+
+  it('journals and submits the exact Plether-sponsored v2 operation', async () => {
+    const preparedOperation = pletherOperation()
+    const signUserOperation = vi.fn(async (value) => value)
+    const sendUserOperation = vi.fn(async (value) => {
+      expect(value).toEqual(preparedOperation)
+      const pendingOperation =
+        useSponsoredOperationStore.getState().operations[0]!
+      expect(pendingOperation).toMatchObject({
+        status: 'submitting',
+        userOperationHash: USER_OPERATION_HASH,
+        sponsorshipAuthority: {
+          version: 1,
+          paymasterAddress: PLETHER_PAYMASTER,
+          validUntil: SPONSORSHIP_VALID_UNTIL.toString(),
+        },
+        signedUserOperation: {
+          paymaster: PLETHER_PAYMASTER,
+          paymasterData: preparedOperation.paymasterData,
+        },
+      })
+      expect(JSON.parse(globalThis.localStorage.getItem(
+        `${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`
+      )!)).toMatchObject({
+        version: 1,
+        operation: {
+          id: pendingOperation.id,
+          userOperationHash: USER_OPERATION_HASH,
+          sponsorshipAuthority: {
+            version: 1,
+            paymasterAddress: PLETHER_PAYMASTER,
+            validUntil: SPONSORSHIP_VALID_UNTIL.toString(),
+          },
+        },
+      })
+      return USER_OPERATION_HASH
+    })
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: v2Manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({
+        prepareUserOperation: vi.fn(async () => preparedOperation),
+        signUserOperation,
+        sendUserOperation,
+      }),
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(signUserOperation).toHaveBeenCalledWith(preparedOperation)
+    expect(sendUserOperation).toHaveBeenCalledOnce()
   })
 
   it('resolves at exact successful inclusion and leaves safe confirmation to recovery', async () => {
@@ -1266,6 +1370,25 @@ describe('executeSponsoredPerpsAction', () => {
     expect(
       useSponsoredOperationStore.getState().operations[0]?.userOperationHash
     ).toBeUndefined()
+  })
+
+  it('does not accept a legacy Pimlico envelope for a new v2 operation', async () => {
+    const managedRuntime = runtime()
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: v2Manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: managedRuntime,
+    })).rejects.toMatchObject({
+      reason: 'SPONSOR_UNAVAILABLE',
+      retryable: false,
+    })
+
+    expect(managedRuntime.smartAccount.signUserOperation)
+      .not.toHaveBeenCalled()
+    expect(managedRuntime.smartAccount.sendUserOperation)
+      .not.toHaveBeenCalled()
   })
 
   it('keeps a confirmed operation terminal if local authorization cleanup fails', async () => {

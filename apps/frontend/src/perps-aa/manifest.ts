@@ -1,23 +1,33 @@
 import { getAddress, isAddress, type Address } from 'viem'
 
+export const PERPS_AA_MANIFEST_V1_PATTERN =
+  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
 export const PERPS_AA_MANIFEST_V2_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v2$/
+export const PERPS_AA_MANIFEST_SUPPORTED_PATTERN =
+  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v(?:1|2)$/
 
 export const PERPS_ENTRY_POINT_V08 =
   getAddress('0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108')
 export const PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY =
   getAddress('0x13E9ed32155810FDbd067D4522C492D6f68E5944')
+export const PERPS_AA_LEGACY_RPC_PATH = '/api/perps/v1/aa/pimlico'
+export const PERPS_AA_NATIVE_RPC_PATH = '/api/perps/v1/aa/rpc'
 
 export type PerpsSmartAccountMode = 'simple'
 export type PerpsEntryPointVersion = '0.8'
 export type PerpsSmartAccountVersion = 'permissionless-simple-v0.8'
+export type PerpsAaManifestV1Version = `perps-aa-${string}-v1`
+export type PerpsAaManifestV2Version = `perps-aa-${string}-v2`
+export type PerpsAaManifestVersion =
+  | PerpsAaManifestV1Version
+  | PerpsAaManifestV2Version
+export type PerpsPaymasterVersion = 'plether-verifying-v1'
 
-export interface PerpsAaDeploymentManifest {
-  version: string
+interface PerpsAaDeploymentManifestBase {
   chainId: number
   entryPoint: Address
   entryPointVersion: PerpsEntryPointVersion
-  pimlicoRpcUrl: string
   smartAccountMode: PerpsSmartAccountMode
   smartAccountVersion: PerpsSmartAccountVersion
   smartAccountIndex: string
@@ -37,12 +47,34 @@ export interface PerpsAaDeploymentManifest {
   sponsorshipEnabled: boolean
 }
 
-const MANIFEST_V2_KEYS = [
+// V1 names the legacy RPC schema, not the deployment generation. During the
+// provider migration the current bounded-v2 deployment continues to use the
+// reviewed Pimlico proxy until its manifest switches atomically to the native
+// key set.
+export interface PerpsAaDeploymentManifestV1
+  extends PerpsAaDeploymentManifestBase {
+  version: PerpsAaManifestVersion
+  pimlicoRpcUrl: string
+}
+
+export interface PerpsAaDeploymentManifestV2
+  extends PerpsAaDeploymentManifestBase {
+  version: PerpsAaManifestV2Version
+  bundlerRpcUrl: string
+  paymasterRpcUrl: string
+  paymasterAddress: Address
+  paymasterVersion: PerpsPaymasterVersion
+}
+
+export type PerpsAaDeploymentManifest =
+  | PerpsAaDeploymentManifestV1
+  | PerpsAaDeploymentManifestV2
+
+const COMMON_MANIFEST_KEYS = [
   'version',
   'chainId',
   'entryPoint',
   'entryPointVersion',
-  'pimlicoRpcUrl',
   'smartAccountMode',
   'smartAccountVersion',
   'smartAccountIndex',
@@ -60,6 +92,23 @@ const MANIFEST_V2_KEYS = [
   'transactionExplorerUrlTemplate',
   'testnetFaucet',
   'sponsorshipEnabled',
+] as const
+const MANIFEST_V1_KEYS = [
+  ...COMMON_MANIFEST_KEYS,
+  'pimlicoRpcUrl',
+] as const
+const MANIFEST_V2_KEYS = [
+  ...COMMON_MANIFEST_KEYS,
+  'bundlerRpcUrl',
+  'paymasterRpcUrl',
+  'paymasterAddress',
+  'paymasterVersion',
+] as const
+const NATIVE_MANIFEST_FIELDS = [
+  'bundlerRpcUrl',
+  'paymasterRpcUrl',
+  'paymasterAddress',
+  'paymasterVersion',
 ] as const
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`
@@ -214,17 +263,16 @@ function parseWebUrl(value: unknown, field: string): string {
   return stringValue
 }
 
-function parseRpcUrl(value: unknown, field: string): string {
+function parseRpcUrl(
+  value: unknown,
+  field: string,
+  expectedPath: string
+): string {
   const stringValue = parseNonEmptyString(value, field)
-  if (
-    !stringValue.startsWith('/api/perps/v1/aa/') ||
-    stringValue.startsWith('//') ||
-    stringValue.includes('#') ||
-    stringValue.includes('?')
-  ) {
+  if (stringValue !== expectedPath) {
     invalid(
       field,
-      'must be a same-origin /api/perps/v1/aa/ path without query parameters or fragments'
+      `must equal the reviewed same-origin endpoint "${expectedPath}"`
     )
   }
   return stringValue
@@ -272,6 +320,38 @@ function parseSmartAccountVersion(
   return 'permissionless-simple-v0.8'
 }
 
+function parsePaymasterVersion(value: unknown): PerpsPaymasterVersion {
+  if (value !== 'plether-verifying-v1') {
+    invalid('paymasterVersion', 'must be "plether-verifying-v1"')
+  }
+  return 'plether-verifying-v1'
+}
+
+export function isPerpsAaManifestV2(
+  manifest: PerpsAaDeploymentManifest
+): manifest is PerpsAaDeploymentManifestV2 {
+  // The suffix identifies the bounded deployment generation, so the current
+  // v2 deployment may still carry the legacy Pimlico schema. Native routing
+  // is selected only by the parser-validated native field set.
+  return 'bundlerRpcUrl' in manifest
+}
+
+export function bundlerRpcUrlForManifest(
+  manifest: PerpsAaDeploymentManifest
+): string {
+  return isPerpsAaManifestV2(manifest)
+    ? manifest.bundlerRpcUrl
+    : manifest.pimlicoRpcUrl
+}
+
+export function paymasterRpcUrlForManifest(
+  manifest: PerpsAaDeploymentManifest
+): string {
+  return isPerpsAaManifestV2(manifest)
+    ? manifest.paymasterRpcUrl
+    : manifest.pimlicoRpcUrl
+}
+
 export function parsePerpsAaManifest(
   value: unknown
 ): PerpsAaDeploymentManifest {
@@ -281,13 +361,22 @@ export function parsePerpsAaManifest(
     ])
   }
   const version = parseNonEmptyString(value.version, 'version')
-  if (!PERPS_AA_MANIFEST_V2_PATTERN.test(version)) {
+  const isV1 = PERPS_AA_MANIFEST_V1_PATTERN.test(version)
+  const isV2 = PERPS_AA_MANIFEST_V2_PATTERN.test(version)
+  if (!isV1 && !isV2) {
     invalid(
       'version',
-      'must identify a bounded V2 manifest (perps-aa-<network>-v2)'
+      'must identify a supported v1 or v2 manifest (perps-aa-<network>-v1|v2)'
     )
   }
-  assertExactKeys(value, MANIFEST_V2_KEYS)
+  const hasNativeFields = NATIVE_MANIFEST_FIELDS.some(
+    (field) => field in value
+  )
+  const usesNativeShape = isV2 && hasNativeFields
+  assertExactKeys(
+    value,
+    usesNativeShape ? MANIFEST_V2_KEYS : MANIFEST_V1_KEYS
+  )
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
@@ -322,8 +411,7 @@ export function parsePerpsAaManifest(
     )
   }
 
-  return {
-    version,
+  const commonManifest: PerpsAaDeploymentManifestBase = {
     chainId: parseChainId(value.chainId),
     entryPoint: parsePinnedAddress(
       value.entryPoint,
@@ -331,7 +419,6 @@ export function parsePerpsAaManifest(
       PERPS_ENTRY_POINT_V08
     ),
     entryPointVersion: parseEntryPointVersion(value.entryPointVersion),
-    pimlicoRpcUrl: parseRpcUrl(value.pimlicoRpcUrl, 'pimlicoRpcUrl'),
     smartAccountMode,
     smartAccountVersion: parseSmartAccountVersion(
       value.smartAccountVersion
@@ -386,6 +473,38 @@ export function parsePerpsAaManifest(
       value.sponsorshipEnabled,
       'sponsorshipEnabled'
     ),
+  }
+
+  if (!usesNativeShape) {
+    return {
+      ...commonManifest,
+      version: version as PerpsAaManifestVersion,
+      pimlicoRpcUrl: parseRpcUrl(
+        value.pimlicoRpcUrl,
+        'pimlicoRpcUrl',
+        PERPS_AA_LEGACY_RPC_PATH
+      ),
+    }
+  }
+
+  return {
+    ...commonManifest,
+    version: version as PerpsAaManifestV2Version,
+    bundlerRpcUrl: parseRpcUrl(
+      value.bundlerRpcUrl,
+      'bundlerRpcUrl',
+      PERPS_AA_NATIVE_RPC_PATH
+    ),
+    paymasterRpcUrl: parseRpcUrl(
+      value.paymasterRpcUrl,
+      'paymasterRpcUrl',
+      PERPS_AA_NATIVE_RPC_PATH
+    ),
+    paymasterAddress: parseAddress(
+      value.paymasterAddress,
+      'paymasterAddress'
+    ),
+    paymasterVersion: parsePaymasterVersion(value.paymasterVersion),
   }
 }
 

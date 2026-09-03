@@ -3,6 +3,7 @@ import { InvalidPerpsActionError } from "./errors.js";
 export const PAYMASTER_HEADER_BYTES = 52;
 export const PLETHER_PAYMASTER_DATA_BYTES = 157;
 export const PLETHER_PAYMASTER_AND_DATA_BYTES = 209;
+export const DEFAULT_MAX_VALIDITY_WINDOW_SECONDS = 600n;
 const UINT128_MAX = (1n << 128n) - 1n;
 function quantity(value, label) {
     const parsed = typeof value === "bigint" ? value : hexToBigInt(value);
@@ -41,6 +42,12 @@ export function normalizePaymasterResponse(response, fallback) {
     if (fallback && parsed.paymaster !== fallback.paymaster) {
         throw new InvalidPerpsActionError("Final sponsorship response cannot change the paymaster selected by the stub.");
     }
+    if (fallback &&
+        (parsed.paymasterVerificationGasLimit !==
+            fallback.paymasterVerificationGasLimit ||
+            parsed.paymasterPostOpGasLimit !== fallback.paymasterPostOpGasLimit)) {
+        throw new InvalidPerpsActionError("Final sponsorship response cannot change paymaster gas limits after estimation.");
+    }
     return parsed;
 }
 /**
@@ -67,5 +74,44 @@ export function parsePaymasterAndData(paymasterAndData) {
         accountCodeHash: slice(paymasterAndData, 112, 144),
         signature: slice(paymasterAndData, 144, 209),
     };
+}
+/** Applies the chain-manifest profile after structurally parsing a Plether envelope. */
+export function validatePletherPaymasterEnvelope(envelope, profile) {
+    if (envelope.paymaster !== getAddress(profile.paymaster)) {
+        throw new InvalidPerpsActionError("Sponsorship response uses an unapproved paymaster.");
+    }
+    if (envelope.policyId.toLowerCase() !== profile.policyId.toLowerCase()) {
+        throw new InvalidPerpsActionError("Sponsorship response uses an unapproved policy.");
+    }
+    if (envelope.accountCodeHash.toLowerCase() !==
+        profile.accountCodeHash.toLowerCase()) {
+        throw new InvalidPerpsActionError("Sponsorship response uses an unapproved account runtime.");
+    }
+    if (envelope.validUntil === 0n || envelope.validUntil <= envelope.validAfter) {
+        throw new InvalidPerpsActionError("Sponsorship response has an invalid validity window.");
+    }
+    const maximumWindow = profile.maxValidityWindowSeconds;
+    if (maximumWindow <= 0n ||
+        maximumWindow > DEFAULT_MAX_VALIDITY_WINDOW_SECONDS) {
+        throw new InvalidPerpsActionError("Paymaster profile maximum validity window must be between 1 and 600 seconds.");
+    }
+    if (envelope.validUntil - envelope.validAfter > maximumWindow) {
+        throw new InvalidPerpsActionError("Sponsorship response validity window exceeds the approved maximum.");
+    }
+    if (profile.paymasterVerificationGasLimit <= 0n ||
+        profile.paymasterVerificationGasLimit > UINT128_MAX) {
+        throw new InvalidPerpsActionError("Paymaster profile verification gas must fit a nonzero uint128.");
+    }
+    if (envelope.paymasterVerificationGasLimit !==
+        profile.paymasterVerificationGasLimit) {
+        throw new InvalidPerpsActionError("Sponsorship response changed the approved paymaster verification gas.");
+    }
+    if (profile.paymasterPostOpGasLimit !== 0n) {
+        throw new InvalidPerpsActionError("Plether paymaster profile must use zero postOp gas.");
+    }
+    if (envelope.paymasterPostOpGasLimit !== profile.paymasterPostOpGasLimit) {
+        throw new InvalidPerpsActionError("Sponsorship response changed the approved paymaster postOp gas.");
+    }
+    return envelope;
 }
 //# sourceMappingURL=paymaster.js.map

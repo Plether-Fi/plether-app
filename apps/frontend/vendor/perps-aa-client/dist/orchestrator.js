@@ -1,6 +1,6 @@
 import { getAddress } from "viem";
 import { InvalidPerpsActionError, PerpsClientError, mapPerpsExecutionError, } from "./errors.js";
-import { normalizePaymasterResponse } from "./paymaster.js";
+import { normalizePaymasterResponse, validatePletherPaymasterEnvelope, } from "./paymaster.js";
 /**
  * Executes the ERC-7677/ERC-4337 sequence in signature-safe order. The final
  * paymaster data is installed before the owner signs the UserOperation.
@@ -17,6 +17,13 @@ export async function sendSponsoredAction(input) {
                 userMessage: "Switch back to the smart account that owns this perps account.",
             });
         }
+        if (input.chainId !== input.paymasterProfile.chainId) {
+            throw new InvalidPerpsActionError("Action chain does not match the approved paymaster profile.");
+        }
+        if (getAddress(input.account.entryPoint) !==
+            getAddress(input.paymasterProfile.entryPoint)) {
+            throw new InvalidPerpsActionError("Smart-account EntryPoint does not match the approved paymaster profile.");
+        }
         if (input.waitForReceipt && !input.bundler.waitForUserOperationReceipt) {
             throw new InvalidPerpsActionError("waitForReceipt requires a bundler receipt adapter.");
         }
@@ -30,13 +37,13 @@ export async function sendSponsoredAction(input) {
             calls: input.action.calls,
         }));
         status("requesting-stub");
-        const stub = normalizePaymasterResponse(await input.sponsor.getPaymasterStubData({
+        const stub = validatePletherPaymasterEnvelope(normalizePaymasterResponse(await input.sponsor.getPaymasterStubData({
             chainId: input.chainId,
             entryPoint: input.account.entryPoint,
             account: adapterAccount,
             action: input.action.kind,
             operation,
-        }));
+        })), input.paymasterProfile);
         operation = input.account.applyPaymaster(operation, stub);
         status("estimating");
         const estimate = await input.bundler.estimateUserOperationGas({
@@ -45,21 +52,29 @@ export async function sendSponsoredAction(input) {
         });
         operation = input.account.applyGasEstimate(operation, estimate);
         status("requesting-sponsorship");
-        const sponsorship = normalizePaymasterResponse(await input.sponsor.getPaymasterData({
+        const sponsorship = validatePletherPaymasterEnvelope(normalizePaymasterResponse(await input.sponsor.getPaymasterData({
             chainId: input.chainId,
             entryPoint: input.account.entryPoint,
             account: adapterAccount,
             action: input.action.kind,
             operation,
-        }), stub);
+        }), stub), input.paymasterProfile);
         operation = input.account.applyPaymaster(operation, sponsorship);
         status("awaiting-signature");
         const signedOperation = await input.account.signUserOperation(operation);
+        status("journaling");
+        const expectedUserOperationHash = await input.journalSignedUserOperation({
+            operation: signedOperation,
+            entryPoint: input.account.entryPoint,
+        });
         status("submitting");
         const userOperationHash = await input.bundler.sendUserOperation({
             operation: signedOperation,
             entryPoint: input.account.entryPoint,
         });
+        if (userOperationHash.toLowerCase() !== expectedUserOperationHash.toLowerCase()) {
+            throw new InvalidPerpsActionError("Bundler returned a UserOperation hash that does not match the journaled operation.");
+        }
         if (!input.waitForReceipt)
             return { userOperationHash };
         status("confirming");

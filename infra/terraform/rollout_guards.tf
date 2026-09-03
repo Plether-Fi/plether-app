@@ -29,6 +29,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
   input = {
     environment                    = var.environment
     api_desired_count              = var.api_desired_count
+    perps_order_lifecycle_book     = var.perps_order_lifecycle_book
     write_mode                     = var.perps_candle_write_mode
     read_mode                      = var.perps_candle_read_mode
     read_intervals                 = var.perps_candle_read_intervals
@@ -48,6 +49,15 @@ resource "terraform_data" "perps_candle_rollout_guard" {
   }
 
   lifecycle {
+    precondition {
+      condition = (
+        var.environment != "sepolia"
+        || var.perps_order_lifecycle_book == ""
+        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+      )
+      error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+    }
+
     precondition {
       condition = (
         length(local.perps_candle_read_interval_tokens) == 0
@@ -268,6 +278,278 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
         || try(tonumber(var.lp_settlement_max_tx_cost_wei) > 0, false)
       )
       error_message = "LP settlement execute mode requires lp_settlement_max_tx_cost_wei greater than zero."
+    }
+  }
+}
+
+resource "terraform_data" "self_hosted_aa_guard" {
+  input = {
+    environment                                 = var.environment
+    aws_region                                  = var.aws_region
+    perps_chain_id                              = var.perps_chain_id
+    provision_self_hosted_aa                    = var.provision_self_hosted_aa
+    configure_native_aa_backend                 = var.configure_native_aa_backend
+    enable_native_aa_sponsorship                = var.enable_native_aa_sponsorship
+    enable_native_aa_submission                 = var.enable_native_aa_submission
+    aa_native_canary_owners                     = var.aa_native_canary_owners
+    aa_native_global_rollout                    = var.aa_native_global_rollout_enabled
+    alto_desired_count                          = var.alto_desired_count
+    aa_reconciler_desired_count                 = var.aa_reconciler_desired_count
+    aa_reconciler_start_block                   = var.aa_reconciler_start_block
+    aa_reconciler_start_block_hash              = var.aa_reconciler_start_block_hash
+    aa_reconciler_secondary_rpc_url_kms_key_arn = var.aa_reconciler_secondary_rpc_url_kms_key_arn
+    alto_upstream_image                         = var.alto_upstream_image
+    alto_entrypoint_address                     = var.alto_entrypoint_address
+    aa_paymaster_address                        = var.aa_paymaster_address
+    aa_paymaster_signer_address                 = var.aa_paymaster_signer_address
+    aa_paymaster_policy_id                      = var.aa_paymaster_policy_id
+    aa_paymaster_account_code_hash              = var.aa_paymaster_account_code_hash
+    aa_paymaster_code_hash                      = var.aa_paymaster_code_hash
+  }
+
+  lifecycle {
+    precondition {
+      condition     = !var.provision_self_hosted_aa || var.aws_region == "ap-southeast-1"
+      error_message = "The reviewed self-hosted AA stack is pinned to aws_region=ap-southeast-1."
+    }
+
+    precondition {
+      condition = var.aa_reconciler_secondary_rpc_url_kms_key_arn == "" || startswith(
+        var.aa_reconciler_secondary_rpc_url_kms_key_arn,
+        "arn:aws:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:key/"
+      )
+      error_message = "aa_reconciler_secondary_rpc_url_kms_key_arn must identify a customer-managed key in the exact Terraform AWS account and region."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        var.environment == "sepolia"
+        && var.perps_chain_id == "421614"
+      )
+      error_message = "The self-hosted AA stack is provisioned only for Arbitrum Sepolia (environment=sepolia, perps_chain_id=421614)."
+    }
+
+    precondition {
+      condition = var.alto_desired_count == 0 || (
+        var.provision_self_hosted_aa
+        && var.environment == "sepolia"
+      )
+      error_message = "alto_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+    }
+
+    precondition {
+      condition = var.aa_reconciler_desired_count == 0 || (
+        var.provision_self_hosted_aa
+        && var.environment == "sepolia"
+      )
+      error_message = "aa_reconciler_desired_count can be nonzero only for the provisioned Sepolia self-hosted AA stack."
+    }
+
+    precondition {
+      condition = !var.configure_native_aa_backend || (
+        var.provision_self_hosted_aa
+        && var.environment == "sepolia"
+        && var.alto_desired_count == 1
+        && var.aa_reconciler_desired_count == 1
+      )
+      error_message = "configure_native_aa_backend=true requires the Sepolia self-hosted stack with both Alto and the AA reconciler running at desired_count=1."
+    }
+
+    precondition {
+      condition     = !var.enable_native_aa_sponsorship || var.configure_native_aa_backend
+      error_message = "Native sponsorship issuance cannot be enabled until configure_native_aa_backend=true."
+    }
+
+    precondition {
+      condition     = !var.enable_native_aa_submission || var.configure_native_aa_backend
+      error_message = "Native submission cannot be enabled until configure_native_aa_backend=true."
+    }
+
+    precondition {
+      condition     = !var.enable_native_aa_sponsorship || var.enable_native_aa_submission
+      error_message = "Native sponsorship issuance requires native submission to remain enabled so freshly signed UserOperations can be sent."
+    }
+
+    precondition {
+      condition     = !var.enable_native_aa_sponsorship || var.aa_native_canary_owners != ""
+      error_message = "Native sponsorship issuance requires a nonempty canary-owner allowlist for the reviewed Sepolia profile; global rollout is not approved."
+    }
+
+    precondition {
+      condition     = !var.aa_native_global_rollout_enabled
+      error_message = "aa_native_global_rollout_enabled must remain false: global native-AA rollout is blocked for the reviewed Sepolia profile while Alto safe mode is disabled and final sponsorship is unsigned."
+    }
+
+    precondition {
+      condition = var.aa_native_canary_owners == "" || (
+        length(distinct(split(",", lower(var.aa_native_canary_owners)))) == length(split(",", var.aa_native_canary_owners))
+      )
+      error_message = "aa_native_canary_owners must not contain duplicate addresses."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        var.alto_upstream_image == "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+        && lower(var.alto_entrypoint_address) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+      )
+      error_message = "Self-hosted AA must use the reviewed Alto v1.2.7 ARM64 digest and ERC-4337 EntryPoint v0.8 address."
+    }
+
+    precondition {
+      condition = var.alto_desired_count == 0 || (
+        var.alto_entrypoint_simulation_contract_v8 == trimspace(var.alto_entrypoint_simulation_contract_v8)
+        && var.alto_pimlico_simulation_contract == trimspace(var.alto_pimlico_simulation_contract)
+        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.alto_entrypoint_simulation_contract_v8)))
+        && lower(trimspace(var.alto_entrypoint_simulation_contract_v8)) != "0x0000000000000000000000000000000000000000"
+        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.alto_pimlico_simulation_contract)))
+        && lower(trimspace(var.alto_pimlico_simulation_contract)) != "0x0000000000000000000000000000000000000000"
+      )
+      error_message = "Scaling Alto above zero requires nonzero 20-byte addresses for both reviewed simulation contracts."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        startswith(trimspace(var.alto_rpc_url_ssm_parameter_name), "/plether/sepolia/")
+        && startswith(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "/plether/sepolia/")
+        && startswith(trimspace(var.alto_utility_private_key_ssm_parameter_name), "/plether/sepolia/")
+        && (
+          trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name) == ""
+          || startswith(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "/plether/sepolia/")
+        )
+      )
+      error_message = "All external Alto SecureStrings must be scoped under /plether/sepolia/."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/sepolia/")
+        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/sepolia/perps-rpc-url"
+        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != trimspace(var.alto_rpc_url_ssm_parameter_name)
+      )
+      error_message = "The reconciler secondary RPC SecureString must be under /plether/sepolia/ and use a parameter distinct from both primary reconciliation/Perps RPC and Alto RPC; operators must also choose an independently operated provider."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        length(distinct(compact([
+          trimspace(var.alto_rpc_url_ssm_parameter_name),
+          trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name),
+          trimspace(var.alto_executor_private_keys_ssm_parameter_name),
+          trimspace(var.alto_utility_private_key_ssm_parameter_name),
+          ]))) == length(compact([
+          trimspace(var.alto_rpc_url_ssm_parameter_name),
+          trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name),
+          trimspace(var.alto_executor_private_keys_ssm_parameter_name),
+          trimspace(var.alto_utility_private_key_ssm_parameter_name),
+        ]))
+      )
+      error_message = "Alto RPC, optional send-RPC, executor-key, and utility-key SSM parameter names must be distinct."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || try(
+        can(regex("^[1-9][0-9]*$", var.alto_min_executor_balance_wei))
+        && can(regex("^[1-9][0-9]*$", var.alto_max_gas_per_user_operation))
+        && can(regex("^[1-9][0-9]*$", var.alto_max_gas_per_bundle))
+        && tonumber(var.alto_max_gas_per_user_operation) <= tonumber(var.alto_max_gas_per_bundle),
+        false
+      )
+      error_message = "Alto balance/gas limits must be positive decimal integers and max gas per UserOperation must not exceed max gas per bundle."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        (var.alto_container_cpu == 256 && contains([512, 1024, 2048], var.alto_container_memory))
+        || (var.alto_container_cpu == 512 && contains([1024, 2048, 3072, 4096], var.alto_container_memory))
+        || (var.alto_container_cpu == 1024 && contains([2048, 3072, 4096, 5120, 6144, 7168, 8192], var.alto_container_memory))
+        || (var.alto_container_cpu == 2048 && var.alto_container_memory >= 4096 && var.alto_container_memory <= 16384 && var.alto_container_memory % 1024 == 0)
+        || (var.alto_container_cpu == 4096 && var.alto_container_memory >= 8192 && var.alto_container_memory <= 30720 && var.alto_container_memory % 1024 == 0)
+      )
+      error_message = "alto_container_cpu and alto_container_memory must be a supported Fargate CPU/memory combination."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || (
+        (var.aa_reconciler_container_cpu == 256 && contains([512, 1024, 2048], var.aa_reconciler_container_memory))
+        || (var.aa_reconciler_container_cpu == 512 && contains([1024, 2048, 3072, 4096], var.aa_reconciler_container_memory))
+        || (var.aa_reconciler_container_cpu == 1024 && contains([2048, 3072, 4096, 5120, 6144, 7168, 8192], var.aa_reconciler_container_memory))
+      )
+      error_message = "aa_reconciler_container_cpu and aa_reconciler_container_memory must be a supported small Fargate CPU/memory combination."
+    }
+
+    precondition {
+      condition = var.aa_reconciler_desired_count == 0 || try(
+        can(regex("^[1-9][0-9]*$", var.aa_reconciler_start_block))
+        && var.aa_reconciler_start_block_hash == trimspace(var.aa_reconciler_start_block_hash)
+        && can(regex("^0x[0-9a-f]{64}$", var.aa_reconciler_start_block_hash))
+        && var.aa_reconciler_start_block_hash != "0x0000000000000000000000000000000000000000000000000000000000000000"
+        && can(regex("^[1-9][0-9]*$", var.aa_reconciler_poll_seconds))
+        && tonumber(var.aa_reconciler_poll_seconds) <= 60
+        && can(regex("^[1-9][0-9]*$", var.aa_reconciler_batch_blocks))
+        && tonumber(var.aa_reconciler_batch_blocks) <= 10000
+        && can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
+        && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
+        && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 3600
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_min_deposit_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_global_outstanding_wei))
+        && tonumber(var.aa_paymaster_min_deposit_wei) >= tonumber(var.aa_paymaster_global_outstanding_wei)
+        && var.aa_paymaster_address == trimspace(var.aa_paymaster_address)
+        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.aa_paymaster_address)))
+        && lower(trimspace(var.aa_paymaster_address)) != "0x0000000000000000000000000000000000000000"
+        && var.aa_paymaster_code_hash == trimspace(var.aa_paymaster_code_hash)
+        && can(regex("^0x[0-9a-f]{64}$", var.aa_paymaster_code_hash))
+        && var.aa_paymaster_code_hash != "0x0000000000000000000000000000000000000000000000000000000000000000",
+        false
+      )
+      error_message = "Running the AA reconciler requires a positive start block, its canonical lowercase nonzero block hash, the canonical lowercase nonzero deployed-paymaster runtime hash, a minimum EntryPoint deposit at least as large as the native global outstanding-liability cap, poll seconds in 1..60, batch blocks in 1..10000, max safe-head lag in 60..3600 seconds, and a nonzero paymaster address."
+    }
+
+    precondition {
+      condition = !var.configure_native_aa_backend || (
+        var.aa_paymaster_address == trimspace(var.aa_paymaster_address)
+        && var.aa_paymaster_signer_address == trimspace(var.aa_paymaster_signer_address)
+        && var.aa_paymaster_policy_id == trimspace(var.aa_paymaster_policy_id)
+        && var.aa_paymaster_account_code_hash == trimspace(var.aa_paymaster_account_code_hash)
+        && var.aa_paymaster_code_hash == trimspace(var.aa_paymaster_code_hash)
+        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.aa_paymaster_address)))
+        && lower(trimspace(var.aa_paymaster_address)) != "0x0000000000000000000000000000000000000000"
+        && can(regex("^0x[0-9A-Fa-f]{40}$", trimspace(var.aa_paymaster_signer_address)))
+        && lower(trimspace(var.aa_paymaster_signer_address)) != "0x0000000000000000000000000000000000000000"
+        && can(regex("^0x[0-9A-Fa-f]{64}$", trimspace(var.aa_paymaster_policy_id)))
+        && lower(trimspace(var.aa_paymaster_policy_id)) == "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3"
+        && can(regex("^0x[0-9A-Fa-f]{64}$", trimspace(var.aa_paymaster_account_code_hash)))
+        && lower(trimspace(var.aa_paymaster_account_code_hash)) == "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9"
+        && can(regex("^0x[0-9a-f]{64}$", var.aa_paymaster_code_hash))
+        && var.aa_paymaster_code_hash != "0x0000000000000000000000000000000000000000000000000000000000000000"
+      )
+      error_message = "Native AA backend configuration requires nonzero paymaster/signer addresses, a nonzero deployed-paymaster code hash, the reviewed policy ID, and the reviewed SimpleAccount proxy runtime-code hash."
+    }
+
+    precondition {
+      condition = !var.configure_native_aa_backend || try(
+        can(regex("^[1-9][0-9]*$", var.aa_paymaster_validity_seconds))
+        && tonumber(var.aa_paymaster_validity_seconds) >= 1
+        && tonumber(var.aa_paymaster_validity_seconds) <= 570
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_verification_gas_limit))
+        && can(regex("^[0-9]+$", var.aa_paymaster_post_op_gas_limit))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_max_cost_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_account_outstanding_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_client_outstanding_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_global_outstanding_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_account_hourly_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_global_hourly_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_global_daily_wei))
+        && can(regex("^[1-9][0-9]*$", var.aa_paymaster_final_rate_limit_per_minute))
+        && tonumber(var.aa_paymaster_final_rate_limit_per_minute) <= 60
+        && tonumber(var.aa_paymaster_max_cost_wei) <= tonumber(var.aa_paymaster_account_outstanding_wei)
+        && tonumber(var.aa_paymaster_max_cost_wei) <= tonumber(var.aa_paymaster_client_outstanding_wei)
+        && tonumber(var.aa_paymaster_account_outstanding_wei) <= tonumber(var.aa_paymaster_global_outstanding_wei)
+        && tonumber(var.aa_paymaster_client_outstanding_wei) <= tonumber(var.aa_paymaster_global_outstanding_wei)
+        && tonumber(var.aa_paymaster_account_hourly_wei) <= tonumber(var.aa_paymaster_global_hourly_wei)
+        && tonumber(var.aa_paymaster_global_hourly_wei) <= tonumber(var.aa_paymaster_global_daily_wei),
+        false
+      )
+      error_message = "Native paymaster limits must be canonical decimal integers with validity 1..570, final issuance rate 1..60, positive budgets/gas (post-op may be zero), and ordered per-operation/account-or-client/global caps."
     }
   }
 }

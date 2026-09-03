@@ -2,7 +2,9 @@ module Plether.AA.Pimlico
   ( PimlicoProxyState
   , PimlicoMethod (..)
   , RpcRequest (..)
+  , ParsedUserOperation (..)
   , SmartCall (..)
+  , ProxyFailure (..)
   , newPimlicoProxyState
   , handlePimlicoProxy
   , parseRpcRequest
@@ -17,6 +19,19 @@ module Plether.AA.Pimlico
   , resolveUndeployedTradingAccountAtBlock
   , OwnedTradingAccountFailure (..)
   , resolveOwnedTradingAccountAtBlock
+  , verifyAccountIdentity
+  , verifyAccountIdentityAtBlock
+  , entryPointAddress
+  , dummySignature
+  , readBoundedRequestBody
+  , validateClientIp
+  , constantTimeTextEq
+  , respondFailure
+  , invalidRequest
+  , invalidParams
+  , policyDenied
+  , unavailable
+  , rateLimited
   ) where
 
 import Control.Concurrent.STM
@@ -28,7 +43,7 @@ import Control.Concurrent.STM
   , writeTVar
   )
 import Control.Concurrent.Async (Concurrently (..), runConcurrently)
-import Control.Exception (try)
+import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
@@ -83,6 +98,12 @@ import Network.HTTP.Types.Status
   )
 import qualified Network.Wai as Wai
 import Plether.Config (AaConfig (..), Config (..))
+import Plether.AA.ClientKey (pseudonymousClientKey)
+import Plether.Database (DbPool, withDb)
+import Plether.Database.AaSponsorship
+  ( isRecoveryOperationAuthorized
+  , recordRecoveryOperation
+  )
 import Plether.Ethereum.Abi
   ( encodeAddress
   , encodeCall
@@ -90,8 +111,10 @@ import Plether.Ethereum.Abi
   )
 import Plether.Ethereum.Client
   ( CallParams (..)
+  , BlockTag (..)
   , EthClient
-  , ethCall
+  , ethCallAt
+  , renderBlockTag
   , rpcCall
   )
 import Plether.Utils.Hex (intToHex)
@@ -214,8 +237,9 @@ handlePimlicoProxy
   -> Config
   -> EthClient
   -> Manager
+  -> Maybe DbPool
   -> ActionM ()
-handlePimlicoProxy proxyState cfg perpsClient manager =
+handlePimlicoProxy proxyState cfg perpsClient manager mPool =
   case cfgAaConfig cfg of
     Nothing ->
       respondFailure Null $
@@ -281,6 +305,7 @@ handlePimlicoProxy proxyState cfg perpsClient manager =
                                     aaCfg
                                     perpsClient
                                     manager
+                                    mPool
                                     now
                                     trustedIp
                                     rpcRequest
@@ -291,15 +316,16 @@ handleAuthenticatedRequest
   -> AaConfig
   -> EthClient
   -> Manager
+  -> Maybe DbPool
   -> UTCTime
   -> Text
   -> RpcRequest
   -> ActionM ()
-handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedIp rpcRequest
+handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager mPool now trustedIp rpcRequest
   | cfgPerpsChainId cfg /= 421614 =
       respondFailure (rrId rpcRequest) $
         unavailable "SPONSOR_UNAVAILABLE" "The backend Perps chain is not supported"
-  | isIssuanceMethod (rrMethod rpcRequest) && not (aaSponsorshipEnabled aaCfg) =
+  | isSponsorshipIssuanceMethod (rrMethod rpcRequest) && not (aaSponsorshipEnabled aaCfg) =
       respondFailure (rrId rpcRequest) $
         unavailable "PAYMASTER_PAUSED" "Managed gas sponsorship is disabled"
   | otherwise =
@@ -309,8 +335,20 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
           case mUserOperation of
             Nothing -> do
               recoveryReadAuthorized <-
-                liftIO $
-                  isRecoveryReadAuthorized proxyState now trustedIp rpcRequest
+                liftIO $ do
+                  memoryAuthorized <-
+                    isRecoveryReadAuthorized proxyState now trustedIp rpcRequest
+                  durableAuthorized <-
+                    case (mPool, recoveryReadHash rpcRequest) of
+                      (Just pool, Just operationHash) -> do
+                        let clientKey =
+                              pseudonymousClientKey (aaProxyOriginToken aaCfg) trustedIp
+                        result <- try @SomeException $
+                          withDb pool $ \conn ->
+                            isRecoveryOperationAuthorized conn operationHash clientKey "pimlico"
+                        pure $ either (const False) id result
+                      _ -> pure False
+                  pure $ memoryAuthorized || durableAuthorized
               if recoveryReadAuthorized
                 then relay rpcRequest
                 else
@@ -354,11 +392,24 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
             Left failure -> respondFailure (rrId request) failure
             Right (upstreamStatus, upstreamValue, retryAfter) -> do
               when (rrMethod request == SendUserOperation) $
-                liftRecordSubmittedOperation
-                  proxyState
-                  now
-                  trustedIp
-                  upstreamValue
+                do
+                  liftRecordSubmittedOperation
+                    proxyState
+                    now
+                    trustedIp
+                    upstreamValue
+                  case (mPool, submittedUserOperationHash upstreamValue) of
+                    (Just pool, Just operationHash) ->
+                      do
+                        _ <- liftIO $ try @SomeException $
+                          withDb pool $ \conn ->
+                            recordRecoveryOperation
+                              conn
+                              operationHash
+                              (pseudonymousClientKey (aaProxyOriginToken aaCfg) trustedIp)
+                              "pimlico"
+                        pure ()
+                    _ -> pure ()
               setHeader "Content-Type" "application/json"
               setHeader "Cache-Control" "no-store"
               maybe (pure ()) (setHeader "Retry-After" . TL.fromStrict) retryAfter
@@ -884,10 +935,25 @@ verifyAccountIdentity
   :: EthClient
   -> ParsedUserOperation
   -> IO (Either ProxyFailure Text)
-verifyAccountIdentity client operation =
+verifyAccountIdentity client = verifyAccountIdentityAt client Latest
+
+verifyAccountIdentityAtBlock
+  :: EthClient
+  -> Integer
+  -> ParsedUserOperation
+  -> IO (Either ProxyFailure Text)
+verifyAccountIdentityAtBlock client blockNumber =
+  verifyAccountIdentityAt client $ BlockNumber blockNumber
+
+verifyAccountIdentityAt
+  :: EthClient
+  -> BlockTag
+  -> ParsedUserOperation
+  -> IO (Either ProxyFailure Text)
+verifyAccountIdentityAt client blockTag operation =
   case puoFactoryOwner operation of
     Just owner -> verifyCounterfactual owner
-    Nothing -> verifyDeployedAccountIdentity client sender
+    Nothing -> verifyDeployedAccountIdentityAt client blockTag sender
   where
     sender = puoSender operation
 
@@ -896,13 +962,14 @@ verifyAccountIdentity client operation =
         runConcurrently $
           (,,)
             <$> Concurrently
-              ( readContractAddress
+              ( readContractAddressAt
                   client
+                  blockTag
                   simpleAccountFactory
                   selectorAccountImplementation
               )
-            <*> Concurrently (readCode client sender)
-            <*> Concurrently (readFactoryAddress client owner)
+            <*> Concurrently (readCodeAt client blockTag sender)
+            <*> Concurrently (readFactoryAddressAt client blockTag owner)
       pure $ do
         implementation <- factoryImplementation
         unless (implementation == simpleAccountImplementation) $
@@ -1085,7 +1152,14 @@ verifyDeployedAccountIdentity
   :: EthClient
   -> Text
   -> IO (Either ProxyFailure Text)
-verifyDeployedAccountIdentity client sender = do
+verifyDeployedAccountIdentity client = verifyDeployedAccountIdentityAt client Latest
+
+verifyDeployedAccountIdentityAt
+  :: EthClient
+  -> BlockTag
+  -> Text
+  -> IO (Either ProxyFailure Text)
+verifyDeployedAccountIdentityAt client blockTag sender = do
   ( factoryImplementation
     , code
     , ownerResult
@@ -1096,20 +1170,21 @@ verifyDeployedAccountIdentity client sender = do
       runConcurrently $
         (,,,,,)
           <$> Concurrently
-            ( readContractAddress
+            ( readContractAddressAt
                 client
+                blockTag
                 simpleAccountFactory
                 selectorAccountImplementation
             )
-          <*> Concurrently (readCode client sender)
+          <*> Concurrently (readCodeAt client blockTag sender)
           <*> Concurrently
-            (readContractAddress client sender selectorOwner)
+            (readContractAddressAt client blockTag sender selectorOwner)
           <*> Concurrently
-            (readContractAddress client sender selectorEntryPoint)
+            (readContractAddressAt client blockTag sender selectorEntryPoint)
           <*> Concurrently
-            (readStorageWord client sender erc1967ImplementationSlot)
+            (readStorageWordAt client blockTag sender erc1967ImplementationSlot)
           <*> Concurrently
-            (readStorageWord client sender erc1967BeaconSlot)
+            (readStorageWordAt client blockTag sender erc1967BeaconSlot)
   case factoryImplementation of
     Left failure -> pure $ Left failure
     Right implementation
@@ -1119,7 +1194,7 @@ verifyDeployedAccountIdentity client sender = do
           case ownerResult of
             Left failure -> pure $ Left failure
             Right owner -> do
-              expected <- readFactoryAddress client owner
+              expected <- readFactoryAddressAt client blockTag owner
               pure $ do
                 accountCode <- code
                 expectedSender <- expected
@@ -1139,9 +1214,17 @@ verifyDeployedAccountIdentity client sender = do
                 Right owner
 
 readFactoryAddress :: EthClient -> Text -> IO (Either ProxyFailure Text)
-readFactoryAddress client owner =
-  readContractAddress
+readFactoryAddress client = readFactoryAddressAt client Latest
+
+readFactoryAddressAt
+  :: EthClient
+  -> BlockTag
+  -> Text
+  -> IO (Either ProxyFailure Text)
+readFactoryAddressAt client blockTag owner =
+  readContractAddressAt
     client
+    blockTag
     simpleAccountFactory
     (encodeCall "getAddress(address,uint256)" [encodeAddress owner, encodeUint256 0])
 
@@ -1150,8 +1233,16 @@ readContractAddress
   -> Text
   -> ByteString
   -> IO (Either ProxyFailure Text)
-readContractAddress client target calldata = do
-  result <- ethCall client $ CallParams target calldata
+readContractAddress client = readContractAddressAt client Latest
+
+readContractAddressAt
+  :: EthClient
+  -> BlockTag
+  -> Text
+  -> ByteString
+  -> IO (Either ProxyFailure Text)
+readContractAddressAt client blockTag target calldata = do
+  result <- ethCallAt client (CallParams target calldata) blockTag
   pure $ case result of
     Left _ -> Left $ accountValidationUnavailable
     Right word ->
@@ -1160,31 +1251,41 @@ readContractAddress client target calldata = do
         Right value -> Right value
 
 readCode :: EthClient -> Text -> IO (Either ProxyFailure ByteString)
-readCode client account = do
-  result <- rpcCall client "eth_getCode" $ toJSON [String account, String "latest"]
-  pure $ case result of
-    Left _ -> Left accountValidationUnavailable
-    Right (String value) ->
-      maybe
-        (Left accountValidationUnavailable)
-        Right
-        (decodeHex value)
-    Right _ -> Left accountValidationUnavailable
+readCode client = readCodeAt client Latest
 
-readStorageWord
+readCodeAt :: EthClient -> BlockTag -> Text -> IO (Either ProxyFailure ByteString)
+readCodeAt client blockTag account =
+  case renderBlockTag blockTag of
+    Left _ -> pure $ Left accountValidationUnavailable
+    Right renderedTag -> do
+      result <- rpcCall client "eth_getCode" $ toJSON [String account, String renderedTag]
+      pure $ case result of
+        Left _ -> Left accountValidationUnavailable
+        Right (String value) ->
+          maybe
+            (Left accountValidationUnavailable)
+            Right
+            (decodeHex value)
+        Right _ -> Left accountValidationUnavailable
+
+readStorageWordAt
   :: EthClient
+  -> BlockTag
   -> Text
   -> Text
   -> IO (Either ProxyFailure Text)
-readStorageWord client account slot = do
-  result <-
-    rpcCall client "eth_getStorageAt" $
-      toJSON [String account, String slot, String "latest"]
-  pure $ case result of
-    Left _ -> Left accountValidationUnavailable
-    Right (String value)
-      | isFixedHexBytes 32 value -> Right $ T.toLower value
-    _ -> Left accountValidationUnavailable
+readStorageWordAt client blockTag account slot =
+  case renderBlockTag blockTag of
+    Left _ -> pure $ Left accountValidationUnavailable
+    Right renderedTag -> do
+      result <-
+        rpcCall client "eth_getStorageAt" $
+          toJSON [String account, String slot, String renderedTag]
+      pure $ case result of
+        Left _ -> Left accountValidationUnavailable
+        Right (String value)
+          | isFixedHexBytes 32 value -> Right $ T.toLower value
+        _ -> Left accountValidationUnavailable
 
 forwardUpstream
   :: Manager
@@ -1405,6 +1506,10 @@ isIssuanceMethod method =
            , EstimateUserOperationGas
            , SendUserOperation
            ]
+
+isSponsorshipIssuanceMethod :: PimlicoMethod -> Bool
+isSponsorshipIssuanceMethod method =
+  method `elem` [GetPaymasterStubData, GetPaymasterData]
 
 respondFailure :: Value -> ProxyFailure -> ActionM ()
 respondFailure requestId failure = do

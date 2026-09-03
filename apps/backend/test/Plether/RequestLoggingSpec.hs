@@ -34,6 +34,12 @@ spec = describe "Plether.RequestLogging" $ do
       normalizeRouteSegments ["api", "aa", "status"]
         `shouldBe` "/api/aa/status"
 
+    it "normalizes both exact account-abstraction gateway routes" $ do
+      normalizeRouteSegments ["api", "aa", "pimlico"]
+        `shouldBe` "/api/aa/pimlico"
+      normalizeRouteSegments ["api", "aa", "rpc"]
+        `shouldBe` "/api/aa/rpc"
+
     it "normalizes dynamic competition slugs and wallet addresses" $ do
       normalizeRouteSegments
         [ "api"

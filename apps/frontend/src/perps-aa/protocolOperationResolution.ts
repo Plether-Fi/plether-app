@@ -1,6 +1,9 @@
 import { isAddressEqual, type Hex } from 'viem'
 import type { SponsoredOperation } from './operationStore'
-import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
+import {
+  authorityBoundSponsorshipValidUntil,
+  pimlicoSponsorshipValidUntil,
+} from './paymasterValidity'
 import { readPersistedManagedUserOperation } from './persistedUserOperation'
 import type {
   ManagedUserOperation,
@@ -71,10 +74,17 @@ export async function resolveProtocolOperation(input: {
     )
     const operationNonce = signedOperation?.nonce
     const validUntil = signedOperation
-      ? pimlicoSponsorshipValidUntil(
-          signedOperation.paymaster,
-          signedOperation.paymasterData
-        )
+      ? input.operation.sponsorshipAuthority !== undefined
+        ? authorityBoundSponsorshipValidUntil(
+            input.operation.sponsorshipAuthority,
+            signedOperation
+          )
+        : input.runtime.sponsorshipValidUntil
+          ? input.runtime.sponsorshipValidUntil(signedOperation)
+          : pimlicoSponsorshipValidUntil(
+              signedOperation.paymaster,
+              signedOperation.paymasterData
+            )
       : undefined
 
     const snapshot = await input.runtime.getRecoverySnapshot(
