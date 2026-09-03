@@ -18,14 +18,16 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultActivityIndexerStateRow (..)
-  , VaultHolderRow (..)
+  , VaultAttributedHolderRow (..)
+  , VaultDepositAttributionStateRow (..)
   , VaultRequestRow (..)
-  , countVaultHolders
-  , countVaultRequests
+  , countVaultRequestsThrough
   , getVaultActivityIndexerState
-  , getVaultHolders
+  , getVaultAttributedHolderSummary
+  , getVaultAttributedHolders
+  , getVaultDepositAttributionState
   , getVaultRequestIds
-  , getVaultRequests
+  , getVaultRequestsThrough
   )
 import Plether.Types (ApiResponse, mkResponse)
 import Plether.Types.VaultActivity
@@ -35,6 +37,7 @@ import Plether.Types.VaultActivity
   , VaultActivityItem (..)
   , VaultActivityResponse (..)
   , VaultActivityTrancheData (..)
+  , VaultDepositAttributionCoverage (..)
   , VaultRequestIdsResponse (..)
   )
 
@@ -52,34 +55,38 @@ getVaultActivity pool deployment = do
   now <- floor <$> getPOSIXTime
   withDb pool $ \conn -> withVaultActivityReadSnapshot conn $ do
     mState <- getVaultActivityIndexerState conn deployment
-    case mState of
-      Just state | isPublishable state -> do
-        senior <- trancheData conn "senior" $ vadSeniorVault deployment
-        junior <- trancheData conn "junior" $ vadJuniorVault deployment
-        let coverage = coverageAt now state
-        pure $
-          Just $
-            mkResponse
-              (vaisLastIndexedBlock state)
-              (vadChainId deployment)
-              VaultActivityResponse
-                { varDeployment = deploymentIdentity deployment
-                , varCoverage = coverage
-                , varSenior = senior
-                , varJunior = junior
-                }
+    mAttributionState <- getVaultDepositAttributionState conn deployment
+    case (mState, mAttributionState) of
+      (Just state, Just attributionState)
+        | isPublishable state && isAttributionPublishable attributionState -> do
+            let coverage = coverageAt now state attributionState
+                confirmedBlock = vacConfirmedThroughBlock coverage
+            senior <- trancheData conn confirmedBlock "senior" $ vadSeniorVault deployment
+            junior <- trancheData conn confirmedBlock "junior" $ vadJuniorVault deployment
+            pure $
+              Just $
+                mkResponse
+                  (vacConfirmedThroughBlock coverage)
+                  (vadChainId deployment)
+                  VaultActivityResponse
+                    { varDeployment = deploymentIdentity deployment
+                    , varCoverage = coverage
+                    , varSenior = senior
+                    , varJunior = junior
+                    }
       _ -> pure Nothing
  where
-  trancheData conn tranche vault = do
-    holders <- getVaultHolders conn deployment vault activityLimit
-    holderCount <- countVaultHolders conn deployment vault
-    requests <- getVaultRequests conn deployment vault activityLimit
-    requestCount <- countVaultRequests conn deployment vault
+  trancheData conn confirmedBlock tranche vault = do
+    holders <- getVaultAttributedHolders conn deployment vault activityLimit
+    (holderCount, totalAttributedShares) <- getVaultAttributedHolderSummary conn deployment vault
+    requests <- getVaultRequestsThrough conn deployment vault confirmedBlock activityLimit
+    requestCount <- countVaultRequestsThrough conn deployment vault confirmedBlock
     pure $
       VaultActivityTrancheData
         { vatHolders = map holderRow holders
         , vatHolderCount = fromIntegral holderCount
         , vatHoldersTruncated = holderCount > fromIntegral activityLimit
+        , vatTotalAttributedShares = totalAttributedShares
         , vatActivity = map (activityRow tranche) requests
         , vatActivityCount = fromIntegral requestCount
         , vatActivityTruncated = requestCount > fromIntegral activityLimit
@@ -104,7 +111,7 @@ getVaultAccountRequestIds pool deployment tranche account requestedLimit cursor 
         found <- getVaultRequestIds conn deployment vault account (limit + 1) cursor
         let page = take limit found
             nextCursor = if length found > limit then lastMaybe page else Nothing
-            coverage = coverageAt now state
+            stale = activityStateStale now state
         pure $
           Just $
             mkResponse
@@ -116,7 +123,7 @@ getVaultAccountRequestIds pool deployment tranche account requestedLimit cursor 
                 , vrirRequestIds = page
                 , vrirNextCursor = nextCursor
                 , vrirConfirmedThroughBlock = vaisLastIndexedBlock state
-                , vrirStale = vacStale coverage
+                , vrirStale = stale
                 }
       _ -> pure Nothing
 
@@ -130,27 +137,49 @@ deploymentIdentity VaultActivityDeployment {..} =
     , vaidDeploymentBlock = vadDeploymentBlock
     }
 
-coverageAt :: Integer -> VaultActivityIndexerStateRow -> VaultActivityCoverage
-coverageAt now state =
+coverageAt
+  :: Integer
+  -> VaultActivityIndexerStateRow
+  -> VaultDepositAttributionStateRow
+  -> VaultActivityCoverage
+coverageAt now state attributionState =
   VaultActivityCoverage
-    { vacConfirmedThroughBlock = vaisLastIndexedBlock state
-    , vacConfirmedThroughHash = vaisLastIndexedBlockHash state
+    { vacConfirmedThroughBlock = confirmedBlock
+    , vacConfirmedThroughHash = confirmedHash
     , vacObservedSafeHeadBlock = vaisSafeHeadBlock state
     , vacObservedSafeHeadHash = vaisSafeHeadBlockHash state
     , vacComplete = complete
     , vacStale = not complete || lagSeconds > 120 || pollAge > 180
     , vacLagBlocks = lagBlocks
     , vacLagSeconds = lagSeconds
-    , vacLastSuccessfulPoll = vaisLastSuccessTimestamp state
+    , vacLastSuccessfulPoll = min (vaisLastSuccessTimestamp state) (vdasLastSuccessTimestamp attributionState)
+    , vacDepositShareAttribution =
+        VaultDepositAttributionCoverage
+          { vdacConfirmedThroughBlock = vdasConfirmedThroughBlock attributionState
+          , vdacConfirmedThroughHash = vdasConfirmedThroughBlockHash attributionState
+          , vdacComplete = attributionComplete
+          , vdacLastSuccessfulPoll = vdasLastSuccessTimestamp attributionState
+          }
     }
  where
-  complete = vaisLastIndexedBlock state >= vaisSafeHeadBlock state
-  lagBlocks = max 0 $ vaisSafeHeadBlock state - vaisLastIndexedBlock state
-  lagSeconds = max 0 $ vaisSafeHeadTimestamp state - vaisLastIndexedBlockTimestamp state
-  pollAge = max 0 $ now - vaisLastSuccessTimestamp state
+  confirmedBlock = min (vaisLastIndexedBlock state) (vdasConfirmedThroughBlock attributionState)
+  (confirmedHash, confirmedTimestamp)
+    | vdasConfirmedThroughBlock attributionState <= vaisLastIndexedBlock state =
+        (vdasConfirmedThroughBlockHash attributionState, vdasConfirmedThroughBlockTimestamp attributionState)
+    | otherwise = (vaisLastIndexedBlockHash state, vaisLastIndexedBlockTimestamp state)
+  attributionComplete = vdasConfirmedThroughBlock attributionState >= vaisSafeHeadBlock state
+  complete = vaisLastIndexedBlock state >= vaisSafeHeadBlock state && attributionComplete
+  lagBlocks = max 0 $ vaisSafeHeadBlock state - confirmedBlock
+  lagSeconds = max 0 $ vaisSafeHeadTimestamp state - confirmedTimestamp
+  pollAge = max 0 $ now - min (vaisLastSuccessTimestamp state) (vdasLastSuccessTimestamp attributionState)
 
-holderRow :: VaultHolderRow -> VaultActivityHolder
-holderRow VaultHolderRow {..} = VaultActivityHolder vhrAddress vhrShareBalance
+holderRow :: VaultAttributedHolderRow -> VaultActivityHolder
+holderRow VaultAttributedHolderRow {..} =
+  VaultActivityHolder
+    vahrAddress
+    vahrShareBalance
+    vahrUnclaimedDepositShares
+    vahrTotalAttributedShares
 
 activityRow :: Text -> VaultRequestRow -> VaultActivityItem
 activityRow tranche VaultRequestRow {..} =
@@ -180,6 +209,17 @@ isPublishable state =
   vaisBackfillComplete state
     && isJust (vaisLastIndexedBlockHash state)
     && isJust (vaisSafeHeadBlockHash state)
+
+isAttributionPublishable :: VaultDepositAttributionStateRow -> Bool
+isAttributionPublishable state =
+  vdasBackfillComplete state
+    && isJust (vdasConfirmedThroughBlockHash state)
+
+activityStateStale :: Integer -> VaultActivityIndexerStateRow -> Bool
+activityStateStale now state =
+  vaisLastIndexedBlock state < vaisSafeHeadBlock state
+    || max 0 (vaisSafeHeadTimestamp state - vaisLastIndexedBlockTimestamp state) > 120
+    || max 0 (now - vaisLastSuccessTimestamp state) > 180
 
 withVaultActivityReadSnapshot :: Connection -> IO value -> IO value
 withVaultActivityReadSnapshot =

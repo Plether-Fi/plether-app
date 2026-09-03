@@ -45,6 +45,8 @@ export interface VaultHolderDistribution {
   shareOfVaultNav: number
   seniorNavUsdc: bigint
   juniorNavUsdc: bigint
+  seniorShareOfAttributedValue?: number
+  juniorShareOfAttributedValue?: number
 }
 
 export interface VaultOverviewActivityItem {
@@ -89,9 +91,28 @@ function parseHolder(
   tranche: VaultActivityTranche,
   address: string,
   shareBalance: string,
+  unclaimedDepositShares?: string,
+  totalAttributedShares?: string,
 ): RawVaultHolder | undefined {
-  const balance = parseUnsignedInteger(shareBalance)
-  if (!isAddress(address) || balance === undefined || balance <= 0n) return undefined
+  const directBalance = parseUnsignedInteger(shareBalance)
+  const hasAttributionFields = unclaimedDepositShares !== undefined || totalAttributedShares !== undefined
+  if (
+    !isAddress(address)
+    || directBalance === undefined
+    || (hasAttributionFields && (unclaimedDepositShares === undefined || totalAttributedShares === undefined))
+  ) return undefined
+  const unclaimedBalance = unclaimedDepositShares === undefined
+    ? 0n
+    : parseUnsignedInteger(unclaimedDepositShares)
+  const balance = totalAttributedShares === undefined
+    ? directBalance
+    : parseUnsignedInteger(totalAttributedShares)
+  if (
+    unclaimedBalance === undefined
+    || balance === undefined
+    || balance <= 0n
+    || balance !== directBalance + unclaimedBalance
+  ) return undefined
   return { address: normalizeAddress(address), balance, tranche }
 }
 
@@ -135,7 +156,9 @@ function parseRequest(
 function normalizeActivity(payload: BackendVaultActivity): {
   holders: RawVaultHolder[]
   requests: RawVaultRequest[]
+  holderShareTotals: Partial<Record<VaultActivityTranche, bigint>>
 } {
+  const holderShareTotals: Partial<Record<VaultActivityTranche, bigint>> = {}
   const holders = (['senior', 'junior'] as const).flatMap((tranche) => {
     const data = payload[tranche]
     if (
@@ -146,11 +169,35 @@ function normalizeActivity(payload: BackendVaultActivity): {
     ) {
       throw new Error('Vault activity returned inconsistent holder coverage.')
     }
-    return data.holders.map(({ address, shareBalance }) => {
-      const holder = parseHolder(tranche, address, shareBalance)
+    const parsed = data.holders.map(({
+      address,
+      shareBalance,
+      unclaimedDepositShares,
+      totalAttributedShares,
+    }) => {
+      const holder = parseHolder(
+        tranche,
+        address,
+        shareBalance,
+        unclaimedDepositShares,
+        totalAttributedShares,
+      )
       if (!holder) throw new Error('Vault activity returned a malformed holder row.')
       return holder
     })
+    if (data.totalAttributedShares !== undefined) {
+      const total = parseUnsignedInteger(data.totalAttributedShares)
+      const returnedTotal = parsed.reduce((sum, holder) => sum + holder.balance, 0n)
+      if (
+        total === undefined
+        || total < returnedTotal
+        || (!data.holdersTruncated && total !== returnedTotal)
+      ) {
+        throw new Error('Vault activity returned an inconsistent attributed share total.')
+      }
+      holderShareTotals[tranche] = total
+    }
+    return parsed
   })
   const requests = (['senior', 'junior'] as const).flatMap((tranche) => {
     const data = payload[tranche]
@@ -175,7 +222,7 @@ function normalizeActivity(payload: BackendVaultActivity): {
       return request
     })
   })
-  return { holders, requests }
+  return { holders, requests, holderShareTotals }
 }
 
 async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActivity> {
@@ -192,6 +239,7 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
     throw new Error('Vault activity belongs to a different contract deployment.')
   }
   const coverage = payload.coverage
+  const attribution = coverage.depositShareAttribution
   if (
     !Number.isSafeInteger(coverage.confirmedThroughBlock)
     || !Number.isSafeInteger(coverage.observedSafeHeadBlock)
@@ -206,6 +254,15 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
     || coverage.complete !== (coverage.confirmedThroughBlock >= coverage.observedSafeHeadBlock)
     || (coverage.confirmedThroughHash !== null && !isHash(coverage.confirmedThroughHash))
     || (coverage.observedSafeHeadHash !== null && !isHash(coverage.observedSafeHeadHash))
+    || (attribution !== undefined && (
+      !Number.isSafeInteger(attribution.confirmedThroughBlock)
+      || attribution.confirmedThroughBlock < VAULT_DEPLOYMENT_BLOCK
+      || attribution.confirmedThroughBlock > coverage.observedSafeHeadBlock
+      || !Number.isSafeInteger(attribution.lastSuccessfulPoll)
+      || attribution.lastSuccessfulPoll < 0
+      || attribution.complete !== (attribution.confirmedThroughBlock >= coverage.observedSafeHeadBlock)
+      || (attribution.confirmedThroughHash !== null && !isHash(attribution.confirmedThroughHash))
+    ))
   ) {
     throw new Error('Vault activity returned inconsistent canonical coverage.')
   }
@@ -245,12 +302,19 @@ export function useVaultActivity({
     retry: 1,
   })
   const normalized = useMemo(
-    () => query.data ? normalizeActivity(query.data) : { holders: [], requests: [] },
+    () => query.data
+      ? normalizeActivity(query.data)
+      : { holders: [], requests: [], holderShareTotals: {} },
     [query.data],
   )
 
   const holders = useMemo<VaultHolderDistribution[]>(() => {
-    const values = new Map<Address, { senior: bigint; junior: bigint }>()
+    const values = new Map<Address, {
+      senior: bigint
+      junior: bigint
+      seniorShares: bigint
+      juniorShares: bigint
+    }>()
     for (const holder of normalized.holders) {
       const vaultAddress = holder.tranche === 'senior'
         ? PERPS_ARBITRUM_SEPOLIA.seniorVault
@@ -260,12 +324,22 @@ export function useVaultActivity({
         ? sharesToAssets(holder.balance, seniorTotalAssets, seniorEffectiveSupply)
         : sharesToAssets(holder.balance, juniorTotalAssets, juniorEffectiveSupply)
       if (currentNav === undefined || currentNav <= 0n) continue
-      const existing = values.get(holder.address) ?? { senior: 0n, junior: 0n }
+      const existing = values.get(holder.address) ?? {
+        senior: 0n,
+        junior: 0n,
+        seniorShares: 0n,
+        juniorShares: 0n,
+      }
       existing[holder.tranche] += currentNav
+      existing[holder.tranche === 'senior' ? 'seniorShares' : 'juniorShares'] += holder.balance
       values.set(holder.address, existing)
     }
 
     const totalVaultNav = (seniorTotalAssets ?? 0n) + (juniorTotalAssets ?? 0n)
+    const fallbackSeniorShares = [...values.values()].reduce((sum, value) => sum + value.seniorShares, 0n)
+    const fallbackJuniorShares = [...values.values()].reduce((sum, value) => sum + value.juniorShares, 0n)
+    const seniorAttributedShares = normalized.holderShareTotals.senior ?? fallbackSeniorShares
+    const juniorAttributedShares = normalized.holderShareTotals.junior ?? fallbackJuniorShares
     return [...values.entries()].map(([address, value]) => {
       const currentNavUsdc = value.senior + value.junior
       return {
@@ -276,6 +350,12 @@ export function useVaultActivity({
           : 0,
         seniorNavUsdc: value.senior,
         juniorNavUsdc: value.junior,
+        seniorShareOfAttributedValue: seniorAttributedShares > 0n
+          ? Number(value.seniorShares * 1_000_000n / seniorAttributedShares) / 10_000
+          : 0,
+        juniorShareOfAttributedValue: juniorAttributedShares > 0n
+          ? Number(value.juniorShares * 1_000_000n / juniorAttributedShares) / 10_000
+          : 0,
       }
     }).sort((left, right) => (
       left.currentNavUsdc > right.currentNavUsdc
@@ -285,6 +365,7 @@ export function useVaultActivity({
   }, [
     juniorEffectiveSupply,
     juniorTotalAssets,
+    normalized.holderShareTotals,
     normalized.holders,
     seniorEffectiveSupply,
     seniorTotalAssets,

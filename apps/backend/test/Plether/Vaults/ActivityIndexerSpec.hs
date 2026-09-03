@@ -9,8 +9,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
+  , VaultDepositRequestKey (..)
+  , VaultDepositRequestStateRow (..)
   , VaultRequestRow (..)
   )
+import Plether.Ethereum.Abi (encodeAddress, encodeBool, encodeCall, encodeUint256)
 import Plether.Ethereum.Rpc (RpcLog (..))
 import Plether.Ethereum.Client (RpcError (..))
 import Plether.Vaults.ActivityIndexer
@@ -22,6 +25,10 @@ import Plether.Vaults.ActivityIndexer
   , parseVaultLog
   , redeemRequestTopic
   , transferTopic
+  )
+import Plether.Vaults.DepositAttributionIndexer
+  ( decodeLpRequestState
+  , lpRequestStateCall
   )
 import Test.Hspec
 
@@ -91,6 +98,73 @@ spec = describe "vault activity ABI decoding" $ do
     isProviderLogRangeLimit (RpcHttpError "StatusCodeException statusCode = 413")
       `shouldBe` True
 
+  it "encodes and strictly decodes pinned Public Lens deposit attribution" $ do
+    let key = VaultDepositRequestKey seniorVault ownerAddress 77
+        call =
+          encodeCall
+            "getLpRequestState(bool,uint256,address)"
+            [encodeBool True, encodeUint256 77, encodeAddress ownerAddress]
+        response = BS.concat
+          [ encodeAddress seniorVault
+          , word 77
+          , encodeAddress ownerAddress
+          , word 10
+          , word 11
+          , word 12
+          , word 13
+          , word 14
+          , word 15
+          , word 16
+          , word 17
+          , word 18
+          , word 19
+          , encodeBool False
+          ]
+        expected =
+          VaultDepositRequestStateRow
+            { vdrsKey = key
+            , vdrsPendingDepositAssets = 10
+            , vdrsClaimableDepositAssets = 12
+            , vdrsClaimableDepositShares = 13
+            , vdrsRefundableDepositAssets = 18
+            , vdrsActive = True
+            , vdrsObservedBlock = 123
+            , vdrsObservedBlockHash = blockHash
+            }
+    lpRequestStateCall deployment key `shouldBe` Right call
+    decodeLpRequestState key 123 blockHash response `shouldBe` Right expected
+    decodeLpRequestState key 123 blockHash (BS.take (BS.length response - 1) response)
+      `shouldSatisfy` isLeft
+    decodeLpRequestState key 123 blockHash (replaceWord 1 78 response)
+      `shouldSatisfy` isLeft
+    decodeLpRequestState key 123 blockHash (replaceWord 13 2 response)
+      `shouldSatisfy` isLeft
+
+  it "keeps pending and refundable deposits out of attributed shares" $ do
+    let key = VaultDepositRequestKey juniorVault ownerAddress 88
+        response pendingAssets claimable refundable = BS.concat
+          [ encodeAddress juniorVault
+          , word 88
+          , encodeAddress ownerAddress
+          , word pendingAssets
+          , word 0
+          , word 0
+          , word claimable
+          , word 0
+          , word 0
+          , word 0
+          , word 0
+          , word refundable
+          , word 0
+          , encodeBool False
+          ]
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 50 0 0)
+      `shouldBe` Right True
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 0 0 50)
+      `shouldBe` Right False
+    fmap vdrsClaimableDepositShares (decodeLpRequestState key 123 blockHash $ response 50 0 0)
+      `shouldBe` Right 0
+
   it "keeps runtime and static canonical vault schemas aligned" $ do
     runtime <- readFile "src/Plether/Database/VaultActivity.hs"
     static <- readFile "schema.sql"
@@ -100,6 +174,9 @@ spec = describe "vault activity ABI decoding" $ do
         static `shouldContain` ("CREATE TABLE IF NOT EXISTS " <> table)
       )
       [ "vault_activity_indexer_state"
+      , "vault_deposit_attribution_state"
+      , "vault_deposit_request_states"
+      , "vault_attributed_holder_balances"
       , "vault_canonical_logs"
       , "vault_share_transfers"
       , "vault_holder_balances"
@@ -121,6 +198,12 @@ isRequest eventName controller owner requestId amount = \case
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _ = False
+
+replaceWord :: Int -> Integer -> BS.ByteString -> BS.ByteString
+replaceWord index value bytes =
+  BS.take (index * 32) bytes
+    <> word value
+    <> BS.drop ((index + 1) * 32) bytes
 
 baseLog :: BS.ByteString -> [BS.ByteString] -> [BS.ByteString] -> RpcLog
 baseLog topic indexed values =
@@ -167,3 +250,6 @@ ownerAddress = "0x4444444444444444444444444444444444444444"
 secondAddress = "0x5555555555555555555555555555555555555555"
 unknownAddress = "0x6666666666666666666666666666666666666666"
 zeroAddress = "0x0000000000000000000000000000000000000000"
+
+blockHash :: Text
+blockHash = "0x" <> T.replicate 64 "a"

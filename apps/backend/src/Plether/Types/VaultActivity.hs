@@ -1,6 +1,7 @@
 module Plether.Types.VaultActivity
   ( VaultActivityDeploymentIdentity (..)
   , VaultActivityCoverage (..)
+  , VaultDepositAttributionCoverage (..)
   , VaultActivityHolder (..)
   , VaultActivityItem (..)
   , VaultActivityTrancheData (..)
@@ -40,6 +41,7 @@ data VaultActivityCoverage = VaultActivityCoverage
   , vacLagBlocks :: Integer
   , vacLagSeconds :: Integer
   , vacLastSuccessfulPoll :: Integer
+  , vacDepositShareAttribution :: VaultDepositAttributionCoverage
   }
   deriving stock (Eq, Show)
 
@@ -55,11 +57,31 @@ instance ToJSON VaultActivityCoverage where
       , "lagBlocks" .= vacLagBlocks
       , "lagSeconds" .= vacLagSeconds
       , "lastSuccessfulPoll" .= vacLastSuccessfulPoll
+      , "depositShareAttribution" .= vacDepositShareAttribution
+      ]
+
+data VaultDepositAttributionCoverage = VaultDepositAttributionCoverage
+  { vdacConfirmedThroughBlock :: Integer
+  , vdacConfirmedThroughHash :: Maybe Text
+  , vdacComplete :: Bool
+  , vdacLastSuccessfulPoll :: Integer
+  }
+  deriving stock (Eq, Show)
+
+instance ToJSON VaultDepositAttributionCoverage where
+  toJSON VaultDepositAttributionCoverage {..} =
+    object
+      [ "confirmedThroughBlock" .= vdacConfirmedThroughBlock
+      , "confirmedThroughHash" .= vdacConfirmedThroughHash
+      , "complete" .= vdacComplete
+      , "lastSuccessfulPoll" .= vdacLastSuccessfulPoll
       ]
 
 data VaultActivityHolder = VaultActivityHolder
   { vahAddress :: Text
   , vahShareBalance :: Integer
+  , vahUnclaimedDepositShares :: Integer
+  , vahTotalAttributedShares :: Integer
   }
   deriving stock (Eq, Show)
 
@@ -68,6 +90,8 @@ instance ToJSON VaultActivityHolder where
     object
       [ "address" .= vahAddress
       , "shareBalance" .= show vahShareBalance
+      , "unclaimedDepositShares" .= show vahUnclaimedDepositShares
+      , "totalAttributedShares" .= show vahTotalAttributedShares
       ]
 
 data VaultActivityItem = VaultActivityItem
@@ -107,6 +131,7 @@ data VaultActivityTrancheData = VaultActivityTrancheData
   { vatHolders :: [VaultActivityHolder]
   , vatHolderCount :: Integer
   , vatHoldersTruncated :: Bool
+  , vatTotalAttributedShares :: Integer
   , vatActivity :: [VaultActivityItem]
   , vatActivityCount :: Integer
   , vatActivityTruncated :: Bool
@@ -119,6 +144,7 @@ instance ToJSON VaultActivityTrancheData where
       [ "holders" .= vatHolders
       , "holderCount" .= vatHolderCount
       , "holdersTruncated" .= vatHoldersTruncated
+      , "totalAttributedShares" .= show vatTotalAttributedShares
       , "activity" .= vatActivity
       , "activityCount" .= vatActivityCount
       , "activityTruncated" .= vatActivityTruncated

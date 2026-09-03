@@ -2406,6 +2406,78 @@ CREATE TABLE IF NOT EXISTS vault_activity_indexer_state (
 ALTER TABLE vault_activity_indexer_state
     ADD COLUMN IF NOT EXISTS last_indexed_block_timestamp BIGINT NOT NULL DEFAULT 0;
 
+-- Public Lens snapshots that attribute finalized-but-unclaimed deposit shares
+-- to their request controller. This cursor is independent from log ingestion so
+-- transient Lens failures cannot stop canonical vault event indexing.
+CREATE TABLE IF NOT EXISTS vault_deposit_attribution_state (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    senior_vault_address VARCHAR(42) NOT NULL,
+    junior_vault_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    confirmed_through_block NUMERIC(78,0) NOT NULL,
+    confirmed_through_block_hash VARCHAR(66),
+    confirmed_through_block_timestamp BIGINT NOT NULL DEFAULT 0,
+    backfill_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    last_success_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, house_pool_address, senior_vault_address, junior_vault_address, deployment_block),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND confirmed_through_block >= 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (senior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (junior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (confirmed_through_block_hash IS NULL OR confirmed_through_block_hash ~ '^0x[0-9a-f]{64}$')
+);
+
+CREATE TABLE IF NOT EXISTS vault_deposit_request_states (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    controller_address VARCHAR(42) NOT NULL,
+    request_id NUMERIC(78,0) NOT NULL,
+    pending_deposit_assets NUMERIC(78,0) NOT NULL,
+    claimable_deposit_assets NUMERIC(78,0) NOT NULL,
+    claimable_deposit_shares NUMERIC(78,0) NOT NULL,
+    refundable_deposit_assets NUMERIC(78,0) NOT NULL,
+    is_active BOOLEAN NOT NULL,
+    observed_block NUMERIC(78,0) NOT NULL,
+    observed_block_hash VARCHAR(66) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id),
+    CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND observed_block >= 0),
+    CHECK (pending_deposit_assets >= 0 AND claimable_deposit_assets >= 0 AND claimable_deposit_shares >= 0 AND refundable_deposit_assets >= 0),
+    CHECK (is_active = (pending_deposit_assets > 0 OR claimable_deposit_shares > 0)),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (controller_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (observed_block_hash ~ '^0x[0-9a-f]{64}$')
+);
+CREATE INDEX IF NOT EXISTS idx_vault_deposit_request_states_active
+    ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, is_active, vault_address, controller_address, request_id);
+CREATE INDEX IF NOT EXISTS idx_vault_deposit_request_states_attribution
+    ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, vault_address, controller_address, claimable_deposit_shares);
+
+CREATE TABLE IF NOT EXISTS vault_attributed_holder_balances (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    deployment_block NUMERIC(78,0) NOT NULL,
+    vault_address VARCHAR(42) NOT NULL,
+    holder_address VARCHAR(42) NOT NULL,
+    share_balance NUMERIC(78,0) NOT NULL,
+    unclaimed_deposit_shares NUMERIC(78,0) NOT NULL,
+    total_attributed_shares NUMERIC(78,0) NOT NULL,
+    observed_block NUMERIC(78,0) NOT NULL,
+    observed_block_hash VARCHAR(66) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, holder_address),
+    CHECK (share_balance >= 0 AND unclaimed_deposit_shares >= 0 AND total_attributed_shares > 0),
+    CHECK (total_attributed_shares = share_balance + unclaimed_deposit_shares),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (holder_address ~ '^0x[0-9a-f]{40}$' AND observed_block_hash ~ '^0x[0-9a-f]{64}$')
+);
+CREATE INDEX IF NOT EXISTS idx_vault_attributed_holder_balances_rank
+    ON vault_attributed_holder_balances(chain_id, house_pool_address, deployment_block, vault_address, total_attributed_shares DESC, holder_address);
+
 CREATE TABLE IF NOT EXISTS vault_canonical_logs (
     chain_id NUMERIC(78,0) NOT NULL,
     house_pool_address VARCHAR(42) NOT NULL,

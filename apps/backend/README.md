@@ -702,7 +702,7 @@ the backend alert is a receipt-based secondary signal.
 | `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
 | `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
 | `GET /api/perps/vaults/history?range=7d&interval=3600` | Alchemy-backed historical vault performance |
-| `GET /api/perps/vaults/activity` | Confirmed holder balances and newest deposit/withdraw requests for both tranches; returns `503` until the first full backfill |
+| `GET /api/perps/vaults/activity` | Confirmed direct plus settled-but-unclaimed deposit share attribution and newest deposit/withdraw requests for both tranches; returns `503` until both canonical and attribution backfills complete |
 | `GET /api/perps/vaults/:tranche/accounts/:address/request-ids?limit=&cursor=` | Confirmed request IDs newest-first for Public Lens hydration; limit defaults to 100 and is capped at 250 |
 | `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration; both query parameters are required exactly once |
 | `GET /api/perps/basket/candles?interval=&cursor=` | Finalized OHLCV rollups in a fixed 500-bucket window ending at the exclusive cursor |

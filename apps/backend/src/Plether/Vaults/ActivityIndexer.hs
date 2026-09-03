@@ -70,6 +70,7 @@ import Plether.Logging (field, logErrorEvery, logInfo, logInfoEvery, logWarn)
 data VaultActivityIndexerConfig = VaultActivityIndexerConfig
   { vaicDeployment :: VaultActivityDeployment
   , vaicAssetAddress :: Text
+  , vaicPublicLensAddress :: Text
   , vaicConfirmations :: Integer
   , vaicBatchSize :: Integer
   , vaicPollIntervalMicros :: Int
@@ -175,7 +176,7 @@ verifyVaultActivityBindings client cfg = do
     fail "Vault activity Senior and Junior vault addresses must differ"
   unless (vaicConfirmations cfg == 12) $
     fail "Vault activity indexer requires the reviewed 12-confirmation depth"
-  forM_ [vadHousePool deployment, vadSeniorVault deployment, vadJuniorVault deployment] $ \contract -> do
+  forM_ [vadHousePool deployment, vadSeniorVault deployment, vadJuniorVault deployment, vaicPublicLensAddress cfg] $ \contract -> do
     bytecode <- rpcOrFail "read vault activity contract bytecode" $ ethGetCode client contract
     when (BS.null bytecode) $ fail "Vault activity configured contract has no deployed bytecode"
   requireAddressBinding
@@ -188,6 +189,11 @@ verifyVaultActivityBindings client cfg = do
     (vadHousePool deployment)
     "juniorVault()"
     (vadJuniorVault deployment)
+  requireAddressBinding
+    "Public Lens HOUSE_POOL()"
+    (vaicPublicLensAddress cfg)
+    "HOUSE_POOL()"
+    (vadHousePool deployment)
   forM_ [vadSeniorVault deployment, vadJuniorVault deployment] $ \vault -> do
     requireAddressBinding "vault POOL()" vault "POOL()" $ vadHousePool deployment
     requireAddressBinding "vault asset()" vault "asset()" $ vaicAssetAddress cfg
@@ -203,6 +209,7 @@ verifyVaultActivityBindings client cfg = do
     , field "senior_vault" $ vadSeniorVault deployment
     , field "junior_vault" $ vadJuniorVault deployment
     , field "asset" $ vaicAssetAddress cfg
+    , field "public_lens" $ vaicPublicLensAddress cfg
     ]
  where
   deployment = vaicDeployment cfg

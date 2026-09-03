@@ -12,10 +12,15 @@ import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
+  , VaultAttributedHolderRow (..)
+  , VaultDepositRequestKey (..)
+  , VaultDepositRequestStateRow (..)
   , VaultHolderRow (..)
   , VaultRequestRow (..)
   , ensureVaultActivitySchema
   , getVaultActivityIndexerState
+  , getVaultAttributedHolderSummary
+  , getVaultAttributedHolders
   , getVaultHolders
   , getVaultRequestIds
   , getVaultRequests
@@ -23,10 +28,15 @@ import Plether.Database.VaultActivity
   , insertVaultRequestExact
   , insertVaultShareTransferExact
   , recomputeVaultHolderBalance
+  , recomputeVaultAttributedHolderBalances
   , resetVaultActivityDeployment
   , setVaultActivityIndexerState
+  , setVaultDepositAttributionState
   , tryLockVaultActivityIndexer
+  , tryLockVaultDepositAttributionIndexer
   , unlockVaultActivityIndexer
+  , unlockVaultDepositAttributionIndexer
+  , upsertVaultDepositRequestStateExact
   )
 import Plether.Handlers.VaultActivity (getVaultActivity)
 import Plether.Types
@@ -92,6 +102,52 @@ vaultActivityDatabaseSpec databaseUrl =
         visible <- getVaultRequests conn deploymentA seniorVault 10
         map vrrEventName visible `shouldBe` ["RedeemRequest", "RedeemRequest", "DepositRequest"]
 
+    it "combines direct and claimable deposit shares without counting pending or refundable deposits" $
+      withVaultDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertTransfer conn deploymentA seniorVault zeroAddress holderA 100 20 0
+        insertTransfer conn deploymentA seniorVault zeroAddress seniorVault 500 20 1
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderA 1 0 20 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderA 2 0 5 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 3 50 0 0
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 4 0 0 75
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          depositState seniorVault holderB 5 0 30 0
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 20 (blockHash 20)
+
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue`
+            [ VaultAttributedHolderRow holderA 100 25 125
+            , VaultAttributedHolderRow holderB 0 30 30
+            ]
+        getVaultAttributedHolderSummary conn deploymentA seniorVault
+          `shouldReturnValue` (2, 155)
+
+        -- Claiming transfers the same shares from vault escrow into the
+        -- controller wallet without changing the combined attributed total.
+        insertTransfer conn deploymentA seniorVault seniorVault holderB 30 21 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderB
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          (depositState seniorVault holderB 5 0 0 0)
+            { vdrsObservedBlock = 21
+            , vdrsObservedBlockHash = blockHash 21
+            }
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 21 (blockHash 21)
+
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue`
+            [ VaultAttributedHolderRow holderA 100 25 125
+            , VaultAttributedHolderRow holderB 30 0 30
+            ]
+        getVaultAttributedHolderSummary conn deploymentA seniorVault
+          `shouldReturnValue` (2, 155)
+
     it "isolates state, data rebuilds, and advisory leadership by deployment" $
       withVaultDatabase databaseUrl $ \pool -> do
         initial <- getVaultActivity pool deploymentA
@@ -100,6 +156,9 @@ vaultActivityDatabaseSpec databaseUrl =
           tryLockVaultActivityIndexer first `shouldReturnValue` True
           tryLockVaultActivityIndexer second `shouldReturnValue` False
           unlockVaultActivityIndexer first
+          tryLockVaultDepositAttributionIndexer first `shouldReturnValue` True
+          tryLockVaultDepositAttributionIndexer second `shouldReturnValue` False
+          unlockVaultDepositAttributionIndexer first
         withDb pool $ \conn -> do
           setState conn deploymentA 20
           setState conn deploymentB 30
@@ -117,6 +176,24 @@ vaultActivityDatabaseSpec databaseUrl =
           getVaultHolders conn deploymentA seniorVault 10 `shouldReturnValue` []
           getVaultHolders conn deploymentB seniorVault 10
             `shouldReturnValue` [VaultHolderRow holderB 200]
+
+    it "withholds the combined holder response until attribution has completed once" $
+      withVaultDatabase databaseUrl $ \pool -> do
+        withDb pool $ \conn ->
+          setVaultActivityIndexerState
+            conn deploymentA 20 (Just $ blockHash 20) (1_700_000_020 :: Integer)
+            20 (blockHash 20) (1_700_000_020 :: Integer) True
+        getVaultActivity pool deploymentA >>= (`shouldSatisfy` isNothing)
+
+        withDb pool $ \conn -> do
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA seniorVault 20 (blockHash 20)
+          recomputeVaultAttributedHolderBalances
+            conn deploymentA juniorVault 20 (blockHash 20)
+          setVaultDepositAttributionState
+            conn deploymentA 20 (blockHash 20) (1_700_000_020 :: Integer) True
+        published <- getVaultActivity pool deploymentA
+        published `shouldSatisfy` (not . isNothing)
 
     it "serves a completed snapshot as explicitly stale while the index catches up" $
       withVaultDatabase databaseUrl $ \pool -> do
@@ -182,10 +259,38 @@ request eventName requestId blockNumber logIndex =
 
 setState :: Connection -> VaultActivityDeployment -> Integer -> IO ()
 setState conn targetDeployment blockNumber =
-  setVaultActivityIndexerState
-    conn targetDeployment blockNumber (Just $ blockHash blockNumber)
-    (1_700_000_000 + blockNumber) blockNumber (blockHash blockNumber)
-    (1_700_000_000 + blockNumber) True
+  do
+    setVaultActivityIndexerState
+      conn targetDeployment blockNumber (Just $ blockHash blockNumber)
+      (1_700_000_000 + blockNumber) blockNumber (blockHash blockNumber)
+      (1_700_000_000 + blockNumber) True
+    recomputeVaultAttributedHolderBalances
+      conn targetDeployment (vadSeniorVault targetDeployment) blockNumber (blockHash blockNumber)
+    recomputeVaultAttributedHolderBalances
+      conn targetDeployment (vadJuniorVault targetDeployment) blockNumber (blockHash blockNumber)
+    setVaultDepositAttributionState
+      conn targetDeployment blockNumber (blockHash blockNumber)
+      (1_700_000_000 + blockNumber) True
+
+depositState
+  :: Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> VaultDepositRequestStateRow
+depositState vault controller requestId pending claimable refundable =
+  VaultDepositRequestStateRow
+    { vdrsKey = VaultDepositRequestKey vault controller requestId
+    , vdrsPendingDepositAssets = pending
+    , vdrsClaimableDepositAssets = if claimable > 0 then claimable * 2 else 0
+    , vdrsClaimableDepositShares = claimable
+    , vdrsRefundableDepositAssets = refundable
+    , vdrsActive = pending > 0 || claimable > 0
+    , vdrsObservedBlock = 20
+    , vdrsObservedBlockHash = blockHash 20
+    }
 
 shouldReturnValue :: (Eq a, Show a) => IO a -> a -> IO ()
 shouldReturnValue action expected = action >>= (`shouldBe` expected)

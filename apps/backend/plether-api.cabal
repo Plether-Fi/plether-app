@@ -80,6 +80,7 @@ library
         Plether.Insights.SnapshotWorker
         Plether.Vaults.PerformanceIndexer
         Plether.Vaults.ActivityIndexer
+        Plether.Vaults.DepositAttributionIndexer
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
