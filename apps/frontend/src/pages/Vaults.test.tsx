@@ -756,6 +756,24 @@ describe('Vaults page', () => {
     const chart = screen.getByRole('img', {
       name: 'Senior Vault interactive seven-day share price chart',
     })
+    const chartContainer = chart.parentElement
+    const bounds = (left: number, top: number, width: number, height: number) => ({
+      x: left,
+      y: top,
+      top,
+      right: left + width,
+      bottom: top + height,
+      left,
+      width,
+      height,
+      toJSON: () => ({}),
+    }) as DOMRect
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(function chartBounds() {
+        if (this === chart) return bounds(120, 220, 760, 256)
+        if (this === chartContainer) return bounds(100, 200, 800, 280)
+        return bounds(0, 0, 0, 0)
+      })
     expect(chart.querySelector('[data-vault-chart-axis="x"]')).toBeInTheDocument()
     expect(chart.querySelector('[data-vault-chart-axis="y"]')).toBeInTheDocument()
     expect(screen.getAllByText('7d realized APY').length).toBeGreaterThanOrEqual(1)
@@ -766,12 +784,16 @@ describe('Vaults page', () => {
 
     fireEvent.focus(chart)
     expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'left')
+    expect(parseFloat(screen.getByRole('status').style.left)).toBeCloseTo(90.27, 1)
     fireEvent.keyDown(chart, { key: 'Home' })
     expect(screen.getByText('0.00% since start')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'right')
     fireEvent.keyDown(chart, { key: 'ArrowRight' })
     expect(screen.getByText('+0.05% since start')).toBeInTheDocument()
-    fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 620 })
+    fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 860 })
     expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
+    rectSpy.mockRestore()
   })
 
   it('formats a near-zero negative APY without showing negative zero', () => {

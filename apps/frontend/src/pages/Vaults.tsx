@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { formatUnits, parseUnits, zeroAddress, type Address } from 'viem'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { Link, useParams } from 'react-router-dom'
@@ -2769,6 +2777,52 @@ function formatChartTimestamp(timestamp: number): string {
   })
 }
 
+type ChartTooltipPlacement = 'above' | 'below' | 'left' | 'right'
+
+function chartTooltipPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { placement: ChartTooltipPlacement; left: string; top: string; transform: string } {
+  const horizontalPosition = x / width
+  const verticalPosition = y / height
+  const left = `${String(horizontalPosition * 100)}%`
+  const top = `${String(verticalPosition * 100)}%`
+
+  if (horizontalPosition <= 0.34) {
+    return {
+      placement: 'right',
+      left,
+      top,
+      transform: `translate(12px, ${verticalPosition <= 0.5 ? '0' : '-100%'})`,
+    }
+  }
+
+  if (horizontalPosition >= 0.66) {
+    return {
+      placement: 'left',
+      left,
+      top,
+      transform: `translate(calc(-100% - 12px), ${verticalPosition <= 0.5 ? '0' : '-100%'})`,
+    }
+  }
+
+  return verticalPosition <= 0.5
+    ? {
+        placement: 'below',
+        left,
+        top,
+        transform: 'translate(-50%, 12px)',
+      }
+    : {
+        placement: 'above',
+        left,
+        top,
+        transform: 'translate(-50%, calc(-100% - 12px))',
+      }
+}
+
 function PerformanceChart({
   tranche,
   performance,
@@ -2777,6 +2831,15 @@ function PerformanceChart({
   performance: CompleteVaultPerformance
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const [tooltipAnchor, setTooltipAnchor] = useState<{
+    activeIndex: number
+    x: number
+    y: number
+    width: number
+    height: number
+  } | null>(null)
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const chartSvgRef = useRef<SVGSVGElement>(null)
   const width = 640
   const height = 240
   const plot = { left: 62, right: 18, top: 18, bottom: 38 }
@@ -2793,10 +2856,69 @@ function PerformanceChart({
     `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
   )).join(' ')
   const active = activeIndex === null ? undefined : coordinates[activeIndex]
+  const activeX = active?.x
+  const activeY = active?.y
+  const measuredTooltipAnchor = tooltipAnchor?.activeIndex === activeIndex
+    ? tooltipAnchor
+    : undefined
+  const activeTooltipPosition = active
+    ? chartTooltipPosition(
+        measuredTooltipAnchor?.x ?? active.x,
+        measuredTooltipAnchor?.y ?? active.y,
+        measuredTooltipAnchor?.width ?? width,
+        measuredTooltipAnchor?.height ?? height,
+      )
+    : undefined
   const startingPrice = performance.points[0].sharePrice
   const activeReturn = active ? active.point.sharePrice / startingPrice - 1 : undefined
   const yTicks = [domain.max, (domain.min + domain.max) / 2, domain.min]
   const xTicks = [domainStart, domainStart + SEVEN_DAYS_SECONDS / 2, performance.periodEnd]
+
+  useLayoutEffect(() => {
+    if (activeX === undefined || activeY === undefined || activeIndex === null) return
+
+    const updateTooltipAnchor = () => {
+      const container = chartContainerRef.current
+      const svg = chartSvgRef.current
+      if (!container || !svg) return
+
+      const containerBounds = container.getBoundingClientRect()
+      const svgBounds = svg.getBoundingClientRect()
+      if (
+        containerBounds.width <= 0
+        || containerBounds.height <= 0
+        || svgBounds.width <= 0
+        || svgBounds.height <= 0
+      ) return
+
+      const scale = Math.min(svgBounds.width / width, svgBounds.height / height)
+      const renderedWidth = width * scale
+      const renderedHeight = height * scale
+
+      setTooltipAnchor({
+        activeIndex,
+        x: svgBounds.left - containerBounds.left + (svgBounds.width - renderedWidth) / 2 + activeX * scale,
+        y: svgBounds.top - containerBounds.top + (svgBounds.height - renderedHeight) / 2 + activeY * scale,
+        width: containerBounds.width,
+        height: containerBounds.height,
+      })
+    }
+
+    updateTooltipAnchor()
+    window.addEventListener('resize', updateTooltipAnchor)
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(updateTooltipAnchor)
+    if (resizeObserver) {
+      if (chartContainerRef.current) resizeObserver.observe(chartContainerRef.current)
+      if (chartSvgRef.current) resizeObserver.observe(chartSvgRef.current)
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateTooltipAnchor)
+      resizeObserver?.disconnect()
+    }
+  }, [activeIndex, activeX, activeY])
 
   function selectNearestPoint(clientX: number, element: SVGSVGElement) {
     const bounds = element.getBoundingClientRect()
@@ -2845,8 +2967,9 @@ function PerformanceChart({
         </span>
       </div>
 
-      <div className="relative p-3 sm:p-5">
+      <div ref={chartContainerRef} className="relative p-3 sm:p-5">
         <svg
+          ref={chartSvgRef}
           viewBox="0 0 640 240"
           className="h-56 w-full sm:h-64"
           aria-label={`${tranche.name} interactive seven-day share price chart`}
@@ -2960,12 +3083,16 @@ function PerformanceChart({
             </g>
           ) : null}
         </svg>
-        {active ? (
+        {active && activeTooltipPosition ? (
           <div
-            className="pointer-events-none absolute top-3 z-10 min-w-44 -translate-x-1/2 border border-brand-border/40 bg-app-bg px-3 py-2 shadow-xl sm:top-5"
+            className="pointer-events-none absolute z-10 w-44 max-w-[calc(100%-1.5rem)] border border-brand-border/40 bg-app-bg px-3 py-2 shadow-xl"
             style={{
-              left: `${String((Math.min(width - 90, Math.max(90, active.x)) / width) * 100)}%`,
+              left: activeTooltipPosition.left,
+              top: activeTooltipPosition.top,
+              transform: activeTooltipPosition.transform,
             }}
+            data-vault-chart-tooltip
+            data-placement={activeTooltipPosition.placement}
             role="status"
             aria-live="polite"
           >
