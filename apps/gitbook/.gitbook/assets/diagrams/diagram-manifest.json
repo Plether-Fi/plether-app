@@ -48,7 +48,7 @@
       "title": "Close settlement and liquidity flow",
       "source": "how-plether-works/settlement-liquidity-and-trader-claims.md",
       "asset": ".gitbook/assets/diagrams/settlement-liquidity-flow.svg",
-      "alt": "Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement."
+      "alt": "Flowchart showing margin release, positive close settlement, liquidity pool funding, trader claims and zero-or-negative settlement."
     },
     {
       "title": "Claim and collateral collection order",
@@ -57,9 +57,9 @@
       "alt": "Collection order from execution fee to base close obligation and frozen-close spread."
     },
     {
-      "title": "HousePool tranche waterfall",
-      "source": "how-plether-works/the-housepool-and-tranche-waterfall.md",
-      "asset": ".gitbook/assets/diagrams/housepool-tranche-waterfall.svg",
+      "title": "Liquidity pool tranche waterfall",
+      "source": "how-plether-works/the-liquidity-pool-and-tranche-waterfall.md",
+      "asset": ".gitbook/assets/diagrams/liquidity-pool-tranche-waterfall.svg",
       "alt": "Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior."
     },
     {
@@ -102,7 +102,7 @@
       "title": "Claim-settlement funding path",
       "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
       "asset": ".gitbook/assets/diagrams/claim-settlement-funding-path.svg",
-      "alt": "Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account."
+      "alt": "Funding path from the liquidity pool through the Margin Clearinghouse to the trader Margin Account."
     },
     {
       "title": "Wallet authorization and Trading Account ownership",

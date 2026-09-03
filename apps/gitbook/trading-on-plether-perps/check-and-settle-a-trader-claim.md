@@ -1,6 +1,6 @@
 # Check and settle a trader claim
 
-A trader claim records USDC[^usdc] owed to the **Trading Account** when the HousePool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
+A trader claim records USDC[^usdc] owed to the **Trading Account** when the liquidity pool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
 
 Claims can arise from:
 
@@ -8,7 +8,7 @@ Claims can arise from:
 * A profitable full close
 * A positive residual after liquidation
 
-The position action still completes. Released position margin follows the normal account settlement path, while the unfunded HousePool payment is recorded separately as a trader claim.
+The position action still completes. Released position margin follows the normal account settlement path, while the unfunded payment from the liquidity pool is recorded separately as a trader claim.
 
 ![Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal.](../.gitbook/assets/diagrams/trader-claim-lifecycle.svg)
 
@@ -16,12 +16,12 @@ The position action still completes. Released position margin follows the normal
 
 Plether calculates the fresh trader payout after applying the position’s realized PnL[^pnl], execution fee, signed VPI[^vpi], carry[^carry] and any applicable frozen-close spread.
 
-Existing position margin remains separate from this calculation. The claim covers only the fresh payment that requires HousePool cash.
+Existing position margin remains separate from this calculation. The claim covers only the fresh payment that requires pool cash.
 
 Fresh payouts follow an all-or-nothing rule:
 
-* The complete fresh payout is credited immediately when sufficient free HousePool cash is available.
-* The complete fresh payout becomes a trader claim when the HousePool cannot fund it immediately.
+* The complete fresh payout is credited immediately when sufficient free pool cash is available.
+* The complete fresh payout becomes a trader claim when the liquidity pool cannot fund it immediately.
 
 Plether does not divide a fresh payout between an immediate credit and a new claim.
 
@@ -29,7 +29,7 @@ For example:
 
 ```
 Position margin released:            2,000 USDC
-Fresh HousePool-funded payout:         500 USDC
+Fresh pool-funded payout:         500 USDC
 Cash available for fresh payouts:      300 USDC
 ```
 
@@ -65,15 +65,15 @@ Claims are included in the protocol’s liability and LP-withdrawal[^lp] account
 
 ### When a claim becomes available to settle
 
-Claim settlement becomes available when recognized HousePool assets cover all outstanding trader claims:
+Claim settlement becomes available when recognized pool assets cover all outstanding trader claims:
 
 ```
-Recognized HousePool assets
+Recognized pool assets
 ≥
 Total outstanding trader claims
 ```
 
-Recognized assets are the HousePool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL[^tvl] may differ from the amount used by the settlement check.
+Recognized assets are the pool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL[^tvl] may differ from the amount used by the settlement check.
 
 The test applies to aggregate claims rather than one account at a time.
 
@@ -83,10 +83,10 @@ Assume:
 Your claim:                            600 USDC
 Another account’s claim:              400 USDC
 Total outstanding claims:           1,000 USDC
-Recognized HousePool assets:           900 USDC
+Recognized pool assets:           900 USDC
 ```
 
-Although the HousePool could physically cover your individual `600 USDC` claim, neither claim can settle because aggregate coverage is short by `100 USDC`.
+Although the liquidity pool could physically cover your individual `600 USDC` claim, neither claim can settle because aggregate coverage is short by `100 USDC`.
 
 If recognized assets later reach `1,000 USDC`, both claims become available.
 
@@ -94,7 +94,7 @@ If you settle first:
 
 ```
 Your claim paid:                       600 USDC
-HousePool assets remaining:            400 USDC
+Pool assets remaining:            400 USDC
 Outstanding claims remaining:          400 USDC
 ```
 
@@ -124,7 +124,7 @@ A different wallet cannot authorize settlement for that Trading Account. The spo
 
 Confirm the active Trading Account and the complete claim balance shown on the card.
 
-The card does not pre-approve settlement or show aggregate HousePool coverage. Liquidity can change between loading the page and operation confirmation, and the contract performs the final check when the operation executes.
+The card does not pre-approve settlement or show aggregate pool coverage. Liquidity can change between loading the page and operation confirmation, and the contract performs the final check when the operation executes.
 
 #### 3. Select Settle Claim
 
@@ -154,7 +154,7 @@ After confirmation:
 * Available to Trade and Withdrawable should be recalculated.
 * Any carry associated with an open position should be updated.
 
-![Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
+![Funding path from the liquidity pool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
 The sponsored settlement operation does not transfer USDC directly to the owner wallet.
 
@@ -229,7 +229,7 @@ If your claim balance falls without a claim-settlement transaction, review the a
 
 #### Settlement liquidity is insufficient
 
-Recognized HousePool assets remain below aggregate trader claims. Your complete claim stays recorded until coverage returns.
+Recognized pool assets remain below aggregate trader claims. Your complete claim stays recorded until coverage returns.
 
 #### Insufficient liquidity transaction error
 
@@ -271,7 +271,7 @@ At execution:
 ```
 Position margin released:            2,000 USDC
 Fresh trader payout:                   800 USDC
-Recognized HousePool assets:         45,000 USDC
+Recognized pool assets:         45,000 USDC
 Existing aggregate claims:           44,500 USDC
 Cash free above existing claims:        500 USDC
 ```
@@ -283,7 +283,7 @@ After execution:
 ```
 Trader claim balance:                  800 USDC
 Total outstanding claims:           45,300 USDC
-Recognized HousePool assets:        45,000 USDC
+Recognized pool assets:        45,000 USDC
 ```
 
 Settlement remains unavailable because claims exceed recognized assets by `300 USDC`.
@@ -295,17 +295,17 @@ After the trader selects **Settle Claim**:
 ```
 Trader claim balance:                    0 USDC
 Margin Account credit:                +800 USDC
-HousePool assets remaining:         44,500 USDC
+Pool assets remaining:         44,500 USDC
 Outstanding claims remaining:       44,500 USDC
 ```
 
 The remaining claims continue to be fully covered.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^tvl]: Total value locked, the headline value of assets deposited in a protocol.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

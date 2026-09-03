@@ -402,7 +402,7 @@ New vault deposits are unavailable while the interface cannot obtain live pricin
 
 The trader frozen-close spread and the tranche-specific LP withdrawal surcharge are different charges:
 
-* A collected trader spread becomes LP-owned HousePool revenue and never protocol treasury revenue.
+* A collected trader spread becomes LP-owned pool revenue and never protocol treasury revenue.
 * An LP withdrawal surcharge remains inside the tranche in which it was charged.
 * A trader spread waived on a terminal full close is not LP revenue or bad debt.
 
@@ -434,7 +434,7 @@ When trader liabilities require a mark and the available mark exceeds the frozen
 
 If there are no open trader liabilities requiring mark-to-market accounting, freshness may not be required solely for LP reconciliation. All other tranche, liquidity and lifecycle restrictions still apply.
 
-Frozen mode keeps LP exits available under bounded conditions. It does not make liquidity unlimited or remove the HousePool’s withdrawal firewall.
+Frozen mode keeps LP exits available under bounded conditions. It does not make liquidity unlimited or remove the liquidity pool’s withdrawal firewall.
 
 ### Holiday closures
 
@@ -478,7 +478,7 @@ Calendar mode and oracle freshness are not the only controls. Other protocol ove
 | Overlay                         | Main effect                                                                                                                                     |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Router paused                   | Blocks new opening and increase commitments; reductions, queued execution, liquidations and mark updates remain available where otherwise valid |
-| HousePool paused                | Blocks new LP deposits; eligible LP withdrawals and trader operations are evaluated separately                                                  |
+| Liquidity pool paused                | Blocks new LP deposits; eligible LP withdrawals and trader operations are evaluated separately                                                  |
 | Degraded mode                   | Blocks new trader risk and new LP deposits; otherwise-eligible LP withdrawal requests can still queue, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears the mode |
 | Trading inactive or configuring | The market is not yet active for new trader risk                                                                                                |
 | Oracle stale                    | Blocks actions requiring a valid current or bounded-frozen price                                                                                |
@@ -586,8 +586,8 @@ The purpose is not to pretend the FX market remains open. It is to keep the prot
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^utc]: Coordinated Universal Time, the time standard used by the protocol schedule.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^bps]: Basis points; 100 bps equals 1%.

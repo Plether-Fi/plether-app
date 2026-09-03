@@ -500,7 +500,7 @@ export const WithdrawalPreview: Story = {
   ),
 }
 
-export const RiskAndHousePool: Story = {
+export const RiskAndLiquidityPool: Story = {
   render: () => (
     <PageFrame maxWidth="max-w-6xl">
       <div className="mb-4">

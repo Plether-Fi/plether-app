@@ -2,7 +2,7 @@
 
 > **An LP deposit goes through a verified Senior or Junior Vault.**
 >
-> The trader `Deposit` action funds a Trading Account's Margin Account. It does not provide HousePool liquidity and does not issue LP shares.
+> The trader `Deposit` action funds a Trading Account's Margin Account. It does not provide pool liquidity and does not issue LP shares.
 
 Plether liquidity-provider (LP)[^lp] deposits are queued and processed hourly. Submitting a deposit moves USDC[^usdc] into the selected tranche[^tranche] vault, but it does not immediately put vault shares in your wallet.
 
@@ -34,7 +34,7 @@ The two deposit systems have different purposes:
 | **USDC source** | Connected owner wallet | Trading Account balance, with an owner-wallet shortfall transfer when needed |
 | **Destination** | Selected tranche-vault queue | Trading Account's Margin Account |
 | **What the user receives** | A queued deposit, followed by vault shares after processing | Trading collateral and fee balance |
-| **Purpose** | Underwrite HousePool liabilities | Fund trading collateral and fees |
+| **Purpose** | Underwrite pool liabilities | Fund trading collateral and fees |
 | **Gas policy** | Owner wallet pays network gas | Eligible Trading Account actions can be sponsored |
 
 Depositing to the Margin Account does not later convert the balance into vault shares. Read [Your Margin Account](../trading-on-plether-perps/your-margin-account.md) if you are unsure which balance you are viewing.
@@ -64,9 +64,9 @@ Verify all of the following:
 * **Vault address:** the official address for that exact tranche
 * **Approval spender:** the selected tranche vault
 
-The spender must not be the HousePool, Margin Clearinghouse, Trading Account, owner wallet or an address supplied only through an unverified message or link.
+The spender must not be the liquidity pool, Margin Clearinghouse, Trading Account, owner wallet or an address supplied only through an unverified message or link.
 
-Do not make a plain MockUSDC transfer to the HousePool or tranche vault. Use the application's deposit flow so `requestDeposit` creates the queue accounting needed for processing, cancellation and share delivery.
+Do not make a plain MockUSDC transfer to the liquidity pool or tranche vault. Use the application's deposit flow so `requestDeposit` creates the queue accounting needed for processing, cancellation and share delivery.
 
 ### 4. Check deposit availability and timing
 
@@ -195,5 +195,5 @@ Before confirming:
 
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement; the current testnet uses MockUSDC with no claim on real dollars.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.

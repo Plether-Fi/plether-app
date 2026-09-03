@@ -4,7 +4,7 @@
 
 When an LP[^lp] deposit becomes active, the selected vault issues ERC-4626[^erc4626] shares. Senior shares use the `psLP` symbol; Junior shares use `pjLP`.
 
-Each share represents a proportional claim on one tranche[^tranche] of the HousePool. Its USDC[^usdc] value can rise or fall as the pool earns revenue, pays traders and allocates losses through the Senior–Junior waterfall.
+Each share represents a proportional claim on one tranche[^tranche] of the liquidity pool. Its USDC[^usdc] value can rise or fall as the pool earns revenue, pays traders and allocates losses through the Senior–Junior waterfall.
 
 > **Use the Vaults page for LP actions and performance**
 >
@@ -28,9 +28,9 @@ Current position value
 = vault shares held × current value per share
 ```
 
-HousePool/LP-owned revenue and losses normally change tranche principal without changing the number of shares you hold. Your return therefore appears as a change in USDC value per share. There is no separate periodic interest payment to harvest.
+LP-owned revenue and losses normally change tranche principal without changing the number of shares you hold. Your return therefore appears as a change in USDC value per share. There is no separate periodic interest payment to harvest.
 
-The exact conversion follows ERC-4626 rounding, Plether's virtual-share protections and, for Junior, accrued maintenance-fee shares in effective supply. A share is an accounting claim on its tranche—not an unconditional claim on the same fraction of the HousePool's raw wallet balance.
+The exact conversion follows ERC-4626 rounding, Plether's virtual-share protections and, for Junior, accrued maintenance-fee shares in effective supply. A share is an accounting claim on its tranche—not an unconditional claim on the same fraction of the liquidity pool's raw wallet balance.
 
 All deposits enter the hourly queue. The deposit request escrows USDC first; the final number of shares is fixed when eligible hourly settlement processes the batch. Processed shares already participate in vault performance while they are held as a claim in vault escrow. The holder then uses **Move shares to wallet** as a separate transaction.
 
@@ -41,14 +41,14 @@ Potential sources of LP-owned value include:
 | Source | How it affects LP economics |
 | --- | --- |
 | **Collectible marked trader losses** | Can increase accounting NAV up to the collateral- and claim-capped amount represented by Terminal NAV; they do not add physical withdrawal cash before collection |
-| **Collected trader losses** | Add physical HousePool USDC when realized and collected |
+| **Collected trader losses** | Add physical USDC to the liquidity pool when realized and collected |
 | **Realized carry**[^carry] | Compensates LPs for bounded payout capacity committed through time |
-| **Positive VPI**[^vpi] | A trader-to-HousePool charge for increasing directional imbalance |
+| **Positive VPI**[^vpi] | A charge paid by a trader to the liquidity pool for increasing directional imbalance |
 | **Paid frozen-close spread** | Compensates LPs for eligible voluntary closes executed during `oracleFrozen` |
 | **Temporary withdrawal pricing fee** | Tranche value retained when an eligible withdrawal is funded while live market pricing is unavailable |
-| **Other authorized trading revenue** | Enters HousePool accounting before the tranche waterfall allocates it |
+| **Other authorized trading revenue** | Enters pool accounting before the tranche waterfall allocates it |
 
-These sources are variable. They can be smaller than HousePool losses during the same period.
+These sources are variable. They can be smaller than pool losses during the same period.
 
 A frozen-close spread counts only when it is retained or collected. Any portion waived on an eligible terminal full close is uncollected revenue. It is not an LP receivable, protocol revenue or bad debt.
 
@@ -57,14 +57,14 @@ A frozen-close spread counts only when it is retained or collected. Any portion 
 LP value can fall through:
 
 * profits paid or owed to traders;
-* negative VPI rebates funded by the HousePool;
+* negative VPI rebates funded by the liquidity pool;
 * liquidation shortfalls and bad debt;
 * losses caused by oracle, smart-contract, stablecoin, governance or operational failures;
 * the Senior target coupon, when viewed from Junior;
 * the Junior annual vault fee, paid by issuing fee shares and diluting existing Junior holders;
-* other losses applied through HousePool reconciliation.
+* other losses applied through pool reconciliation.
 
-Trader claims are liabilities of the HousePool and rank ahead of LP withdrawals. They are not LP revenue and cannot be reused as backing for another position.
+Trader claims are liabilities of the liquidity pool and rank ahead of LP withdrawals. They are not LP revenue and cannot be reused as backing for another position.
 
 High carry, VPI or spread revenue should never be read without the liability side of the pool. LPs earn because their capital stands behind trader payouts.
 
@@ -81,13 +81,13 @@ High carry, VPI or spread revenue should never be read without the liability sid
 | **Waived frozen-close spread** | Uncollected amount; not an LP receivable |
 | **A new LP deposit** | New principal exchanged for shares; not yield earned by existing LPs |
 
-The Senior target coupon also does not create new HousePool revenue. It reallocates existing value from Junior principal to Senior principal.
+The Senior target coupon also does not create new pool revenue. It reallocates existing value from Junior principal to Senior principal.
 
 See [**Trading costs: fees, carry and VPI**](../how-plether-works/trading-costs-fees-carry-and-vpi.md) for the complete destination of each trader-side charge.
 
 ### How the waterfall allocates the result
 
-HousePool reconciliation first determines the value economically distributable to LPs after protected obligations are accounted for. That result then moves through the tranche waterfall.
+Pool reconciliation first determines the value economically distributable to LPs after protected obligations are accounted for. That result then moves through the tranche waterfall.
 
 When reconciliation applies a loss:
 
@@ -101,9 +101,9 @@ When reconciliation applies LP-owned value:
 
 Separately, the configured Senior target coupon transfers available Junior principal to Senior. The transfer is capped by what Junior can fund. An unpaid amount does not accumulate as debt.
 
-This is why the two share prices can move differently even though both vaults underwrite the same HousePool.
+This is why the two share prices can move differently even though both vaults underwrite the same liquidity pool.
 
-For the high-water-mark rules, coupon checkpointing and full allocation mechanics, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md).
+For the high-water-mark rules, coupon checkpointing and full allocation mechanics, see [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
 ### Terminal NAV and physical liquidity are different
 
@@ -111,7 +111,7 @@ Plether uses the same exact signed, collateral-capped Terminal NAV snapshot for 
 
 * Marked trader gains reduce distributable LP value because they are potential pool liabilities.
 * Marked trader losses can increase distributable LP value only up to the collectible amount capped by pledged collateral and eligible same-account claims.
-* That positive marked receivable is accounting value, not physical HousePool USDC, so it does not increase free withdrawal liquidity until collected.
+* That positive marked receivable is accounting value, not physical USDC held by the liquidity pool, so it does not increase free withdrawal liquidity until collected.
 
 Deposit and withdrawal quotes can still differ because ERC-4626 uses different rounding directions and the frozen-oracle fee applies only to withdrawal funding. Every ordinary entry uses the hourly deposit queue so an eligible batch is priced from one reconciled snapshot.
 
@@ -138,7 +138,7 @@ Senior and Junior share prices are not directly comparable. A lower numerical pr
 
 Plether can remain solvent while having less free cash than LPs collectively want to withdraw.
 
-Before funding an LP withdrawal, the withdrawal firewall reserves physical HousePool USDC for:
+Before funding an LP withdrawal, the withdrawal firewall reserves physical USDC held by the liquidity pool for:
 
 * maximum bounded liability on remaining trader positions;
 * the configured liability-scaled settlement buffer;
@@ -185,7 +185,7 @@ Withdrawals use the same hourly cadence. A request escrows the selected shares, 
 Before interpreting a gain or loss, ask:
 
 1. Which tranche do the shares belong to?
-2. Did HousePool trading revenue or trader payouts change during the period?
+2. Did pool trading revenue or trader payouts change during the period?
 3. Was Senior being restored toward its high-water mark?
 4. How much target coupon moved from Junior to Senior?
 5. Does the interface have the complete deployment-matched seven-day history, and what do **7d return** and **7d realized APY** actually measure?
@@ -194,10 +194,10 @@ Before interpreting a gain or loss, ask:
 
 Continue to [**Read your LP position and pool health**](read-your-lp-position-and-pool-health.md) for the operational metrics and [**LP risks and safeguards**](lp-risks-and-safeguards.md) for the failure modes behind them.
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.

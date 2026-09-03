@@ -107,7 +107,7 @@ export function PerpsClaimPanel({
         <div className="px-5 pb-5 pt-2">
           {status === 'waiting' ? (
             <p className="border border-brand-orange/30 bg-brand-orange/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-              Aggregate HousePool assets do not yet cover all outstanding trader claims. The claim remains recorded but cannot be used as margin or withdrawn.
+              Aggregate pool assets do not yet cover all outstanding trader claims. The claim remains recorded but cannot be used as margin or withdrawn.
             </p>
           ) : null}
           {status === 'available' ? (

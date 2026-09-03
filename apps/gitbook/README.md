@@ -28,7 +28,7 @@ The market is basket-derived. It is not a wrapped futures contract or a tokenize
 1. Deposit USDC into your Margin Account.
 2. Authorize the Trading Account action; Plether submits the eligible sponsored operation that commits the binding order.
 3. A keeper[^keeper] executes the order against the eligible Pyth observation under the active market-state policy. Live execution uses the first eligible post-commit observation.
-4. The HousePool takes the other side of the position.
+4. The liquidity pool takes the other side of the position.
 5. Profit, loss, fees, and remaining margin are accounted for in USDC.
 
 Orders enter a global first-in, first-out queue and cannot be cancelled after commitment.
@@ -39,17 +39,17 @@ During live execution, the price comes from a post-commit oracle update—not a 
 
 Plether uses a bounded market price. This makes the maximum modeled payout of every position calculable before the protocol accepts it.
 
-Before a trade can increase risk, the protocol checks whether the HousePool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout plus the configured liability-scaled settlement buffer. If it does not, the trade is rejected.
+Before a trade can increase risk, the protocol checks whether the liquidity pool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout plus the configured liability-scaled settlement buffer. If it does not, the trade is rejected.
 
 Plether does not forcibly reduce an unrelated profitable position to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim is not erased, but its settlement may be delayed until sufficient cash is available.
+Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim is not erased, but its settlement may be delayed until sufficient cash is available.
 
 Bounded liability does not remove risk. Traders can still be liquidated, and liquidity providers can still lose capital. It makes the obligation measurable before the protocol takes it on.
 
 ### Where liquidity comes from
 
-Liquidity providers deposit USDC into the HousePool through two tranches[^tranche]:
+Liquidity providers deposit USDC into the liquidity pool through two tranches[^tranche]:
 
 * The **Senior tranche** targets a coupon funded from available Junior value and has last-loss priority. The target is not guaranteed, and Senior capital can still be impaired after Junior capital is exhausted.
 * The **Junior tranche** absorbs losses first and receives the residual upside after Senior obligations have been accounted for.
@@ -86,6 +86,6 @@ Onchain finance already runs on dollars. Plether makes the dollar itself a marke
 [^dex]: Decentralized exchange, an onchain venue for trading without a traditional centralized intermediary.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fx]: Foreign exchange, the market for trading one currency against another.

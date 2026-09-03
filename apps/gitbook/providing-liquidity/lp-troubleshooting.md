@@ -15,7 +15,7 @@ Liquidity-provider (LP)[^lp] actions can stop before submission, during an owner
 5. Check **Expected processing**, the final-five-minute cutoff, holder cooldown, oracle[^oracle] state, **Hourly processing paused**, **Safety restrictions** and **New withdrawal funding**.
 6. Refresh the application and compare its values with onchain balances, events and request state.
 
-Never send USDC directly to the HousePool. Never approve the HousePool, Margin Clearinghouse or an unknown contract when the intended spender is a Tranche Vault.
+Never send USDC directly to the liquidity pool. Never approve the liquidity pool, Margin Clearinghouse or an unknown contract when the intended spender is a Tranche Vault.
 
 ### Identify the balance or request
 
@@ -87,7 +87,7 @@ The action panel shows a specific reason whenever possible. Common causes are:
 * The amount is below the displayed vault deposit minimum.
 * Required live data or the latest share estimate is unavailable.
 
-Read both the reason and **Available again** message. Do not bypass a disabled action by transferring USDC directly to the vault or HousePool.
+Read both the reason and **Available again** message. Do not bypass a disabled action by transferring USDC directly to the vault or liquidity pool.
 
 ### My approval or deposit request failed
 
@@ -254,7 +254,7 @@ Senior can also lose value after Junior is exhausted. Check **Current Senior cap
 
 Read each metric as a separate question:
 
-* **Total pool funds** is canonical physically backed pool depth: the smaller of raw HousePool assets and accounted assets, excluding quarantined excess; it is not necessarily the literal token balance.
+* **Total pool funds** is canonical physically backed pool depth: the smaller of raw pool assets and accounted assets, excluding quarantined excess; it is not necessarily the literal token balance.
 * **Available liquidity** is cash remaining after protected amounts.
 * **Reserved for trader withdrawals** is set aside ahead of LP funding.
 * **Current value** is the accounting value of the wallet-held vault shares.
@@ -293,8 +293,8 @@ Collect:
 
 Never share a private key, seed phrase or unrelated wallet signature.
 
-For the complete operational path, return to [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md). For the canonical mechanics, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md).
+For the complete operational path, return to [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md). For the canonical mechanics, see [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.

@@ -170,8 +170,8 @@ export const PoolLiquidity: Story = {
         <DetailsPanel
           eyebrow="Market header · metric guide"
           title="What Pool liquidity represents"
-          description="Pool liquidity is free HousePool USDC after protected reserves. It is not total HousePool assets, total tranche NAV, or a promise that every LP can withdraw."
-          footer="The capacities and minimums move with HousePool liquidity, open interest, risk limits, and the current market state."
+          description="Pool liquidity is USDC available after protected reserves. It is not total pool assets, total vault value, or a promise that every LP can withdraw."
+          footer="The capacities and minimums move with pool liquidity, open interest, risk limits, and the current market state."
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard label="Long capacity" value={<TokenAmount amount="953.33" />} />

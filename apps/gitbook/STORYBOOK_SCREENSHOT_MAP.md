@@ -61,11 +61,11 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | --- | --- | --- | --- |
 | `how-plether-works/settlement-liquidity-and-trader-claims.md:308` | Claim balance, aggregate coverage, settlement availability and flat-account Margin Account destination | [Available to Settle](http://localhost:6006/?path=/story/documentation-trader-claims--available-to-settle) | Documentation prototype of the flat-account branch; the article states that open-position settlement credits PnL pledge and the live card does not preflight aggregate coverage |
 
-## HousePool and tranche waterfall
+## Liquidity pool and tranche waterfall
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/the-housepool-and-tranche-waterfall.md:553` | Current Vaults withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
+| `how-plether-works/the-liquidity-pool-and-tranche-waterfall.md:553` | Current Vaults withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
 
 ## LP quickstart
 
@@ -78,7 +78,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
 | `providing-liquidity/deposit-liquidity.md:103` | Deposit preview for a queued Senior or Junior Vault deposit | [Deposit Preview](http://localhost:6006/?path=/story/documentation-vaults--deposit-preview) | Current production component, illustrative values |
-| `providing-liquidity/lp-risks-and-safeguards.md:13` | Junior Vault risk safeguards and shared pool status | [Risk and House Pool](http://localhost:6006/?path=/story/documentation-vaults--risk-and-house-pool) | Documentation composition of current production components, illustrative values |
+| `providing-liquidity/lp-risks-and-safeguards.md:13` | Junior Vault risk safeguards and shared pool status | [Risk and Liquidity Pool](http://localhost:6006/?path=/story/documentation-vaults--risk-and-liquidity-pool) | Documentation composition of current production components, illustrative values |
 | `providing-liquidity/lp-troubleshooting.md:144` | Pending deposit and withdrawal records with their current actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Documentation composition of the current production component, illustrative values |
 | `providing-liquidity/manage-a-pending-deposit.md:20` | Pending deposit records with their expected processing time, status and available actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Documentation composition of the current production component, illustrative values |
 | `providing-liquidity/read-your-lp-position-and-pool-health.md:30` | Senior Vault Your position view with active shares and the current empty pending-request state | [Position](http://localhost:6006/?path=/story/documentation-vaults--position) | Documentation composition of the current production component, illustrative values |
@@ -89,7 +89,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/open-or-increase-a-position.md:413` | Updated position beside its terminal order record | [Executed Position and Order History](http://localhost:6006/?path=/story/documentation-open-or-increase-position--executed-position-and-order-history) | Current components, illustrative values |
+| `trading-on-plether-perps/open-or-increase-a-position.md:416` | Updated position beside its terminal order record | [Executed Position and Order History](http://localhost:6006/?path=/story/documentation-open-or-increase-position--executed-position-and-order-history) | Current components, illustrative values |
 
 ## Read your position and account health
 

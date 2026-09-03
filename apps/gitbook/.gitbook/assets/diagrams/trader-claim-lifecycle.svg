@@ -4,7 +4,7 @@
 <svg role="img" aria-labelledby="trader-claim-lifecycle-title trader-claim-lifecycle-description" focusable="false" width="292pt" height="893pt"
  viewBox="0.00 0.00 292.00 893.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <title id="trader-claim-lifecycle-title">Trader-claim lifecycle</title>
-<desc id="trader-claim-lifecycle-description">A complete fresh payout that cannot be funded immediately is recorded in full as a claim. Once HousePool coverage returns, the owner authorizes sponsored settlement to the Margin Account and may then withdraw.</desc>
+<desc id="trader-claim-lifecycle-description">A complete fresh payout that cannot be funded immediately is recorded in full as a claim. Once pool coverage returns, the owner authorizes sponsored settlement to the Margin Account and may then withdraw.</desc>
 <style>text { font-family: "Uncut Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }</style>
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(27.36 865.5)">
 <title>diagram</title>
@@ -53,10 +53,10 @@
 <!-- n4 -->
 <g id="node4" class="node">
 <title>n4</title>
-<g id="a_node4"><a xlink:title="Aggregate HousePool cash coverage returns">
-<polygon fill="#12372c" stroke="#00ff99" stroke-width="1.6" points="223.8,-488.8 13.5,-488.8 13.5,-432.64 223.8,-432.64 223.8,-488.8"/>
-<text xml:space="preserve" text-anchor="middle" x="118.65" y="-464.47" font-family="Arial" font-size="15.00" fill="#fff5f9">Aggregate HousePool cash</text>
-<text xml:space="preserve" text-anchor="middle" x="118.65" y="-446.47" font-family="Arial" font-size="15.00" fill="#fff5f9">coverage returns</text>
+<g id="a_node4"><a xlink:title="Aggregate pool cash coverage returns">
+<polygon fill="#12372c" stroke="#00ff99" stroke-width="1.6" points="234.68,-488.8 2.62,-488.8 2.62,-432.64 234.68,-432.64 234.68,-488.8"/>
+<text xml:space="preserve" text-anchor="middle" x="118.65" y="-464.47" font-family="Arial" font-size="15.00" fill="#fff5f9">Aggregate pool cash coverage</text>
+<text xml:space="preserve" text-anchor="middle" x="118.65" y="-446.47" font-family="Arial" font-size="15.00" fill="#fff5f9">returns</text>
 </a>
 </g>
 </g>

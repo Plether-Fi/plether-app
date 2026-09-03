@@ -527,7 +527,7 @@ describe('Vaults page', () => {
     expect(screen.queryByText('Risk position')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Read: How the shared pool protects Senior and Junior vaults' })).toHaveAttribute(
       'href',
-      'https://docs.plether.com/how-plether-works/the-housepool-and-tranche-waterfall',
+      'https://docs.plether.com/how-plether-works/the-liquidity-pool-and-tranche-waterfall',
     )
     const timelocks = screen.getByRole('table', { name: 'Delayed settings changes' })
     expect(within(timelocks).getByText('Pool risk settings')).toBeInTheDocument()

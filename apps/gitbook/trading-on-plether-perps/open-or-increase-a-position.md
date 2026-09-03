@@ -108,7 +108,7 @@ Execution-time contract notional is used for:
 * The execution fee
 * Minimum-order validation
 * Margin calculations
-* HousePool capacity and solvency checks
+* Pool capacity and solvency checks
 
 The trade ticket calculates an estimate using current market data. That commit-time estimate is also used to quote and reserve the execution reward. Execution recalculates contract notional for the other checks using the order’s resolved price; the already-reserved reward does not change.
 
@@ -203,7 +203,7 @@ A slippage miss ends the order. Resubmission requires a new commitment.
 
 ### 5. Review the preview
 
-The review uses current account, oracle and HousePool data. Its summary identifies the direction and whether the action opens or increases a position.
+The review uses current account, oracle and liquidity pool data. Its summary identifies the direction and whether the action opens or increases a position.
 
 The current `Commit Preview` shows:
 
@@ -366,7 +366,7 @@ Other conditions end the order:
 | Initial margin requirement fails           | Order fails                         |
 | Resulting position falls below the minimum | Order fails                         |
 | Directional skew limit is exceeded         | Order fails                         |
-| HousePool solvency capacity is exceeded    | Order fails                         |
+| Pool solvency capacity is exceeded              | Order fails                         |
 | Degraded mode is entered before execution  | Order fails                         |
 | Maximum order age passes                   | Order expires and can be cleaned up |
 
@@ -426,7 +426,7 @@ Carry begins on a new position after execution. An increased position starts its
 | Position too small                | Added contract notional and resulting position minimum |
 | Initial margin requirement failed | Submitted margin, fees, VPI and total account equity   |
 | Skew limit exceeded               | Current LONG USD and SHORT USD imbalance               |
-| Solvency or capacity limit        | Available HousePool backing                            |
+| Solvency or capacity limit        | Available pool backing                            |
 | Too many pending orders           | Open Orders and the current account limit              |
 | Slippage exceeded                 | Execution limit and resolved confidence-adjusted price |
 | Oracle execution unavailable      | Oracle status, pending timer and finalization data     |
@@ -449,10 +449,10 @@ Carry begins on a new position after execution. An increased position starts its
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.

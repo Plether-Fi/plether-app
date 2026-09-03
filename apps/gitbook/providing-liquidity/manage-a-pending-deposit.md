@@ -76,9 +76,9 @@ When LP settlement is enabled, a healthy keeper monitors eligible hourly work an
 
 When processing succeeds, the protocol:
 
-1. reconciles HousePool and tranche accounting;
+1. reconciles liquidity pool and tranche accounting;
 2. determines the batch share conversion;
-3. moves the accepted USDC into the HousePool; and
+3. moves the accepted USDC into the liquidity pool; and
 4. creates the depositor's share allocation in vault custody.
 
 Depositors processed together use the same batch accounting. The final share amount can differ from the request estimate because the tranche share price and pool economics can change before processing.
@@ -118,7 +118,7 @@ The processed shares already participate in vault performance while held in vaul
 
 Moving shares into the wallet starts or restarts the one-hour withdrawal cooldown for the owner's entire position in that vault. Until the countdown ends, those shares cannot be transferred or used for a withdrawal request.
 
-The delivery transaction does not create a separate interest payment. Senior targeted return, HousePool revenue and losses are reflected through the value of the vault shares.
+The delivery transaction does not create a separate interest payment. Senior targeted return, pool revenue and losses are reflected through the value of the vault shares.
 
 ### 5. Recover a refundable deposit
 
@@ -181,9 +181,9 @@ Confirm one terminal owner outcome:
 
 **Deposit submitted**, an expected processing timestamp or **Shares ready** alone does not mean every owner action is complete.
 
-For how the resulting position gains or loses value, continue to [Understand LP returns and share value](understand-lp-returns-and-share-value.md). For the complete accounting model, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md).
+For how the resulting position gains or loses value, continue to [Understand LP returns and share value](understand-lp-returns-and-share-value.md). For the complete accounting model, see [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.

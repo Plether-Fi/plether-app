@@ -6,7 +6,7 @@ The distinction matters:
 
 * The oracle price determines entry, exit and directional PnL[^pnl].
 * The execution fee is the protocol-designated charge for completed trades.
-* VPI[^vpi] prices the change in HousePool imbalance.
+* VPI[^vpi] prices the change in pool imbalance.
 * The frozen-close spread compensates LPs[^lp] when a voluntary close settles during `oracleFrozen`.
 * Carry[^carry] pays LPs for capital committed through time.
 * The execution reward pays whoever processes the delayed order.
@@ -25,10 +25,10 @@ That sponsorship is separate from the trade’s USDC economics:
 | -------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
 | **Sponsored network gas**        | Network native token  | Plether pays for an eligible sponsored operation                               |
 | **Execution fee**                | USDC                  | Trader is assessed the protocol-designated fee after successful execution       |
-| **VPI**                          | USDC                  | Trader pays or receives value against the HousePool                             |
-| **Carry**                        | USDC                  | Trader pays the HousePool over time                                             |
+| **VPI**                          | USDC                  | Trader pays or receives value against the liquidity pool                             |
+| **Carry**                        | USDC                  | Trader pays the liquidity pool over time                                             |
 | **Order execution reward**       | USDC                  | Trading Account reserves it for the order executor or clearer                   |
-| **Frozen-close spread**          | USDC                  | Trader pays the HousePool when applicable                                       |
+| **Frozen-close spread**          | USDC                  | Trader pays the liquidity pool when applicable                                       |
 | **Direct oracle-update costs**   | Native token          | A permissionless contract caller pays unless that exact operation is sponsored  |
 
 Gas sponsorship does not make trading free. It removes the owner wallet’s native-gas prerequisite for eligible actions; it does not remove margin requirements, trading costs, losses or settlement obligations.
@@ -42,9 +42,9 @@ See [Gas-sponsored trading and your Plether Trading Account](../trading-on-pleth
 | Item                         | When it applies                                             | Economic destination                        |
 | ---------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
 | Protocol execution fee       | Successful open, increase, reduction or voluntary close     | Protocol treasury when cash-credited        |
-| VPI                          | Successful position-size change                             | Trader ↔ HousePool                          |
-| Frozen-close spread          | Voluntary reduction or close executed during `oracleFrozen` | HousePool; entirely LP-owned                |
-| Carry                        | Continuously while LP capital supports a position           | HousePool                                   |
+| VPI                          | Successful position-size change                             | Trader ↔ liquidity pool                          |
+| Frozen-close spread          | Voluntary reduction or close executed during `oracleFrozen` | Liquidity pool; entirely LP-owned                |
+| Carry                        | Continuously while LP capital supports a position           | Liquidity pool                                   |
 | Order execution reward       | Reserved in USDC when an order is committed                 | Order executor or clearer                   |
 | Liquidation bounty           | Successful liquidation                                      | Liquidation keeper                          |
 | Oracle confidence adjustment | Opens, live/FAD voluntary closes and liquidations           | Changes execution or liquidation price; not a separate fee |
@@ -91,11 +91,11 @@ Adding position margin without changing size does not incur an execution fee or 
 
 The fee is based on the actual executed amount and price—not the number shown when the order was first committed. Use the live onchain rate surfaced by the interface rather than a rate from a static example.
 
-The fee is protocol-designated, but terminal settlement remains physical-cash-first. Only a fee collected from trader collateral or funded from available HousePool cash is credited to treasury margin. Any amount that cannot be cash-credited under trader-payout and claim seniority is not recorded as a protocol receivable or as LP bad debt.
+The fee is protocol-designated, but terminal settlement remains physical-cash-first. Only a fee collected from trader collateral or funded from available pool cash is credited to treasury margin. Any amount that cannot be cash-credited under trader-payout and claim seniority is not recorded as a protocol receivable or as LP bad debt.
 
 ### Virtual Price Impact
 
-Virtual Price Impact, or VPI, prices how a trade changes the directional liability carried by the HousePool.
+Virtual Price Impact, or VPI, prices how a trade changes the directional liability carried by the liquidity pool.
 
 It is “virtual” because Plether does not move the oracle price or execute through an AMM[^amm]. VPI is settled as a separate USDC adjustment.
 
@@ -111,7 +111,7 @@ Skew cost(K)
 Where:
 
 * `K` is the absolute USDC-valued difference between aggregate LONG USD and SHORT USD open interest;
-* `L` is current HousePool depth, implemented as total pool assets;
+* `L` is current pool depth, implemented as total pool assets;
 * `k` is the configured VPI factor.
 
 The skew[^skew] is valued using the raw basket price `B`.
@@ -129,7 +129,7 @@ Therefore:
 * Negative VPI is a rebate.
 * Zero VPI means the modeled skew cost did not change.
 
-Positive VPI is a HousePool inflow. Negative VPI is funded by the HousePool, subject to the position-lifecycle rules below.
+Positive VPI is a liquidity pool inflow. Negative VPI is funded by the liquidity pool, subject to the position-lifecycle rules below.
 
 ### Direction alone does not determine VPI
 
@@ -155,7 +155,7 @@ The same applies to closes:
 * closing exposure on the dominant side can reduce skew;
 * closing exposure on the smaller side can increase skew.
 
-VPI is unrelated to whether the trader is profitable. It depends on the trade’s effect on HousePool concentration.
+VPI is unrelated to whether the trader is profitable. It depends on the trade’s effect on pool concentration.
 
 ### Why VPI is quadratic
 
@@ -165,7 +165,7 @@ That means:
 
 * moving away from balance becomes progressively more expensive;
 * the same order has more impact when the market is already heavily imbalanced;
-* deeper HousePool capital reduces the cost of a given imbalance.
+* deeper pool capital reduces the cost of a given imbalance.
 
 Under unchanged price, pool depth and market state, splitting one large order into smaller orders does not avoid VPI. Each movement along the curve adds back to the same total change.
 
@@ -235,7 +235,7 @@ If closing it would generate an `$80` rebate, the realized close rebate is limit
 
 Conversely, if opening produced a provisional `$40` rebate, the close must reconcile at least that `$40` before the closed exposure can complete its lifecycle.
 
-The position can still profit from directional movement. The clamp only prevents rebate-only extraction from the HousePool.
+The position can still profit from directional movement. The clamp only prevents rebate-only extraction from the liquidity pool.
 
 ### VPI and the frozen-close spread
 
@@ -338,7 +338,7 @@ The spread is selected by the market state at execution, not commitment. A close
 
 Plether does not transfer funding payments between LONG USD and SHORT USD traders.
 
-Instead, carry compensates LPs for the part of a position’s bounded maximum payout financed by the HousePool.
+Instead, carry compensates LPs for the part of a position’s bounded maximum payout financed by the liquidity pool.
 
 Both directions can pay carry at the same time.
 
@@ -382,7 +382,7 @@ Plether tracks the total borrow base separately for LONG USD and SHORT USD.
 ```
 Side utilization
 = min(
-    total same-side borrow base ÷ HousePool assets,
+    total same-side borrow base ÷ pool assets,
     100%
   )
 ```
@@ -417,7 +417,7 @@ Assigned position margin:       $5,000
 Position borrow base:          $20,000
 
 Total same-side borrow base:  $500,000
-HousePool assets:           $1,000,000
+Pool assets:           $1,000,000
 Side utilization:                  50%
 
 Illustrative base rate:             10%
@@ -442,7 +442,7 @@ Plether does not.
 
 LONG USD and SHORT USD use separate carry indexes. If both sides have non-zero LP-backed borrow bases, both sides can accrue positive carry simultaneously.
 
-A balanced open-interest chart therefore does not imply zero carry. Each side may still be using HousePool capital to support bounded payout capacity.
+A balanced open-interest chart therefore does not imply zero carry. Each side may still be using pool capital to support bounded payout capacity.
 
 ### Carry accrues continuously
 
@@ -479,7 +479,7 @@ Relevant actions include:
 * adding position margin;
 * depositing or withdrawing account USDC;
 * changing collateral reservations;
-* changing HousePool assets;
+* changing pool assets;
 * changing carry-related parameters.
 
 This prevents retroactive repricing.
@@ -504,7 +504,7 @@ Unsettled carry continues reducing account equity.
 
 A deposit can therefore be used partly to pay existing carry in the same transaction. Similarly, if carry reaches assigned position margin, the position’s LP-backed borrow base can increase, raising future carry all else equal.
 
-Realized carry enters the HousePool as LP trading revenue.
+Realized carry enters the liquidity pool as LP trading revenue.
 
 ### How additional margin affects carry
 
@@ -726,15 +726,15 @@ Treat the commit preview as an estimate. The onchain result and updated clearing
 
 ### What LPs receive
 
-Positive VPI, realized carry and every retained or collected dollar of frozen-close spread are HousePool trading revenue owned by LPs.
+Positive VPI, realized carry and every retained or collected dollar of frozen-close spread are pool trading revenue owned by LPs.
 
-Negative VPI is a HousePool outflow. A waived frozen-close spread is uncollected revenue—not LP revenue, protocol revenue or bad debt.
+Negative VPI is a liquidity pool outflow. A waived frozen-close spread is uncollected revenue—not LP revenue, protocol revenue or bad debt.
 
 Trader profits, claims and bad debt can also offset or exceed VPI, spread and carry income.
 
 A cash-credited protocol execution fee belongs to the protocol treasury. An uncredited amount is not a treasury receivable or LP revenue. The order execution reward normally belongs to its executor or clearer[^keeper]; if liquidation clears the pending order first, the reserved reward is forfeited to the protocol treasury. Neither should be presented as direct LP yield.
 
-Once revenue enters the HousePool, tranche[^tranche] accounting determines its allocation:
+Once revenue enters the liquidity pool, tranche[^tranche] accounting determines its allocation:
 
 * senior claims receive waterfall priority;
 * junior capital absorbs first loss;
@@ -774,7 +774,7 @@ Before closing, distinguish:
 ### The central distinction
 
 * **Execution fees** are protocol-designated charges for completed trades; only cash-credited amounts reach the treasury.
-* **VPI** prices the trade’s change in HousePool imbalance.
+* **VPI** prices the trade’s change in pool imbalance.
 * **Carry** pays LPs for bounded payout capacity committed through time.
 * **Frozen-close spreads** compensate LPs for voluntary exits executed against bounded stale oracle data.
 * **Execution rewards** pay keepers to process the delayed-order queue.
@@ -786,8 +786,8 @@ The oracle decides the price. Fees, VPI, carry and any frozen-close spread decid
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

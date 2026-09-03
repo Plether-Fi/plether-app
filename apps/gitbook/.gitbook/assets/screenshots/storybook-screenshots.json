@@ -10,7 +10,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png",
       "storyId": "documentation-lp-interface-prototype--deposit-preview",
       "dimensions": {
-        "height": 814,
+        "height": 902,
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-lp-interface-prototype--deposit-preview"
@@ -19,7 +19,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png",
       "storyId": "documentation-lp-interface-prototype--overview",
       "dimensions": {
-        "height": 936,
+        "height": 942,
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-lp-interface-prototype--overview"
@@ -367,13 +367,13 @@
       "storyPath": "/?path=/story/documentation-vaults--position"
     },
     {
-      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-house-pool.png",
-      "storyId": "documentation-vaults--risk-and-house-pool",
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-liquidity-pool.png",
+      "storyId": "documentation-vaults--risk-and-liquidity-pool",
       "dimensions": {
-        "height": 883,
-        "width": 624
+        "height": 1749,
+        "width": 1200
       },
-      "storyPath": "/?path=/story/documentation-vaults--risk-and-house-pool"
+      "storyPath": "/?path=/story/documentation-vaults--risk-and-liquidity-pool"
     },
     {
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--senior-vault-detail.png",

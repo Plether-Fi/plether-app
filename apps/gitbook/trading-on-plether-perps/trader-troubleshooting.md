@@ -89,7 +89,7 @@ Common causes include:
 * The account already holds a position in the opposite direction.
 * The account has reached its pending-order limit.
 * The requested direction exceeds the current skew[^skew] limit.
-* The HousePool cannot admit the additional maximum liability.
+* The liquidity pool cannot admit the additional maximum liability.
 * The market is close-only.
 * The account has an open position and the protocol is in degraded mode.
 * New risk commitments are paused.
@@ -109,7 +109,7 @@ A reverted sponsored commitment rolls back the complete action. No order, margin
 
 ![Disabled Review error states](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--disabled-review-messages.png)
 
-See [**Open or increase a position**](open-or-increase-a-position.md), [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md) and [**Solvency at a glance**](../how-plether-works/the-housepool-and-tranche-waterfall.md#solvency-at-a-glance).
+See [**Open or increase a position**](open-or-increase-a-position.md), [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md) and [**Solvency at a glance**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#solvency-at-a-glance).
 
 ### I cannot reduce or close
 
@@ -343,7 +343,7 @@ Try:
 * Adding collateral
 * Reducing or closing the position
 
-Trader withdrawals are paid from the Margin Clearinghouse. HousePool payout liquidity and trader-claim coverage do not determine ordinary Margin Account withdrawals.
+Trader withdrawals are paid from the Margin Clearinghouse. Pool payout liquidity and trader-claim coverage do not determine ordinary Margin Account withdrawals.
 
 A reverted withdrawal leaves the account balance unchanged.
 
@@ -403,7 +403,7 @@ Available to Trade excludes:
 
 Carry can also reduce the balance when an account action checkpoints it.
 
-Unrealized profit can contribute to Portfolio value before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh HousePool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on HousePool settlement liquidity.
+Unrealized profit can contribute to Portfolio value before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
 
 ### My liquidation price or account health changed
 
@@ -472,7 +472,7 @@ See [**Market states and oracle closures**](../how-plether-works/market-states-a
 Settlement requires:
 
 ```
-Recognized HousePool assets
+Recognized pool assets
 ≥
 Total outstanding trader claims
 ```
@@ -528,7 +528,7 @@ Never share a seed phrase, private key or wallet recovery code.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.

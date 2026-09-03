@@ -2,7 +2,7 @@
 
 > **Supply the balance sheet behind the market.**
 
-Plether liquidity providers deposit USDC[^usdc] through the **Senior Vault** or **Junior Vault**. Their capital becomes part of the HousePool, which stands behind trader profits and other protocol liabilities.
+Plether liquidity providers deposit USDC[^usdc] through the **Senior Vault** or **Junior Vault**. Their capital becomes part of the liquidity pool, which stands behind trader profits and other protocol liabilities.
 
 In return, LPs[^lp] receive vault shares whose value reflects their tranche's share of pool revenue and losses. This is underwriting capital, not a savings balance: share value can rise or fall, and not all share value is necessarily withdrawable at once.
 
@@ -16,9 +16,9 @@ In return, LPs[^lp] receive vault shares whose value reflects their tranche's sh
 
 `Owner-wallet USDC → queued vault deposit → eligible hourly settlement → active, claimable shares in vault custody → Move shares to wallet → wallet-held position → queued withdrawal → eligible hourly funding → claimable USDC → owner wallet`
 
-Never send USDC directly to the HousePool. Deposit only through the verified Senior or Junior Vault surfaced by the official application and active deployment metadata.
+Never send USDC directly to the liquidity pool. Deposit only through the verified Senior or Junior Vault surfaced by the official application and active deployment metadata.
 
-For the protocol-level model, read [The HousePool and tranche waterfall](how-plether-works/the-housepool-and-tranche-waterfall.md).
+For the protocol-level model, read [The liquidity pool and tranche waterfall](how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
 ### Before you begin
 
@@ -37,7 +37,7 @@ MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed f
 
 ### 1. Choose Senior or Junior
 
-Both tranches supply the same HousePool, but they occupy different positions in its waterfall.
+Both tranches supply the same liquidity pool, but they occupy different positions in its waterfall.
 
 |                         | Senior Vault                                      | Junior Vault                                                 |
 | ----------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
@@ -111,7 +111,7 @@ Proceed only when the selected vault's deposit action is enabled.
 2. Enter the amount held by the connected owner wallet.
 3. Select `Review deposit`.
 4. Verify **USDC to deposit**, **Estimated shares received**, **Current share price**, **Processing** and **Expected processing**. When complete history is available, the preview also shows **7d realized APY**. Confirm the `Wallet balance` shown on the amount form separately.
-5. Confirm that the approval spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
+5. Confirm that the approval spender is the selected **Tranche Vault**, not the liquidity pool, Margin Clearinghouse or an unknown contract.
 6. Select `Confirm deposit`. If approval is required, the wallet first shows `Approve USDC` and then `Queue deposit`; confirm only the expected owner-wallet transactions.
 7. Keep the application open until the modal reports that the request was submitted, then use `View activity` or open **Your position**.
 
@@ -175,9 +175,9 @@ Before you approve anything:
 Trader liabilities rank ahead of LP withdrawals; see [Settlement liquidity and trader claims](how-plether-works/settlement-liquidity-and-trader-claims.md) for the rationale.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.

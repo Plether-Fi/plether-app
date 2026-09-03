@@ -1,6 +1,6 @@
 # Read your LP position and pool health
 
-An LP[^lp] position is a balance of Senior or Junior vault shares. Those shares record a proportional claim on one tranche[^tranche] of the HousePool. They are not a fixed USDC[^usdc] balance, and a positive position value does not guarantee that the same amount can be withdrawn immediately.
+An LP[^lp] position is a balance of Senior or Junior vault shares. Those shares record a proportional claim on one tranche[^tranche] of the liquidity pool. They are not a fixed USDC[^usdc] balance, and a positive position value does not guarantee that the same amount can be withdrawn immediately.
 
 Read the page as three separate questions:
 
@@ -35,13 +35,13 @@ Senior and Junior are separate ERC-4626[^erc4626] vaults with separate share sup
 
 | | Senior | Junior |
 | --- | --- | --- |
-| **Return profile** | Targeted return funded from available Junior value | Residual HousePool return |
+| **Return profile** | Targeted return funded from available Junior value | Residual return from the liquidity pool |
 | **Loss order** | Absorbs losses after Junior reaches zero | Absorbs losses first |
 | **Revenue order** | Restored toward its protected balance before Junior receives new residual revenue | Receives residual revenue after Senior priority |
 | **Withdrawal priority** | Funded before Junior | Funded after Senior |
 | **Annual maintenance fee** | None; the current card shows **Zero fees** | The live **Annual vault fee** is paid by issuing new pjLP shares, which dilutes existing holders |
 
-Always confirm the vault name, share symbol and linked vault address before acting. psLP and pjLP are not interchangeable, even though both tranches supply the same HousePool.
+Always confirm the vault name, share symbol and linked vault address before acting. psLP and pjLP are not interchangeable, even though both tranches supply the same liquidity pool.
 
 ### Read the headline values
 
@@ -110,7 +110,7 @@ Plether uses one exact signed, collateral-capped Terminal NAV snapshot for entry
 
 A share price can therefore fall. A historical increase, a targeted Senior return or a displayed APY[^apy] does not guarantee future performance.
 
-For the complete allocation rules, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md#the-waterfall) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md#what-lps-receive).
+For the complete allocation rules, see [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#the-waterfall) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md#what-lps-receive).
 
 ### Current value is not immediately withdrawable USDC
 
@@ -161,7 +161,7 @@ The **Shared pool status** panel uses these exact labels:
 
 | Label | How to read it |
 | --- | --- |
-| **Total pool funds** | Canonical physically backed pool depth: `min(raw assets, accounted assets)`, excluding quarantined excess. It is not necessarily the literal HousePool token balance. |
+| **Total pool funds** | Canonical physically backed pool depth: `min(raw assets, accounted assets)`, excluding quarantined excess. It is not necessarily the liquidity pool's literal token balance. |
 | **Available liquidity** | Pool cash left after protected amounts; this is before applying your share balance and request state. |
 | **Reserved for trader withdrawals** | USDC set aside for trader payouts and other protected payments. |
 | **Trading revenue awaiting distribution** | Collected value not yet assigned through tranche accounting. |
@@ -315,9 +315,9 @@ When planning an exit, continue to [Withdraw liquidity](withdraw-liquidity.md). 
 
 The distinction to remember is simple: **shares measure an accounting claim; the hourly request state and available liquidity determine when cash can move to the wallet.**
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.
