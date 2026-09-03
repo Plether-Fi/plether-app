@@ -29,3 +29,11 @@ spec =
       runtime `shouldContain` "block_hash ~ '^0x[0-9a-f]{64}$'"
       static `shouldContain` "epoch_timestamp >= 0 AND epoch_timestamp % 3600 = 0"
       static `shouldContain` "block_hash ~ '^0x[0-9a-f]{64}$'"
+
+    it "persists mark freshness and migrates legacy snapshot tables" $ do
+      runtime <- readFile "src/Plether/Database/VaultPerformance.hs"
+      static <- readFile "schema.sql"
+      runtime `shouldContain` "mark_fresh BOOLEAN NOT NULL"
+      runtime `shouldContain` "ADD COLUMN IF NOT EXISTS mark_fresh BOOLEAN"
+      runtime `shouldContain` "mark_fresh = EXCLUDED.mark_fresh"
+      static `shouldContain` "mark_fresh BOOLEAN NOT NULL"

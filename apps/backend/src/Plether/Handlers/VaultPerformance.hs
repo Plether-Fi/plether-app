@@ -1,6 +1,7 @@
 module Plether.Handlers.VaultPerformance
   ( getVaultPerformanceHistory
   , buildVaultPerformanceHistoryAt
+  , carryForwardStaleSnapshots
   , computeVaultPerformance
   , hasCompleteVaultPerformanceCoverageAt
   , latestEligibleVaultPerformanceEpoch
@@ -54,7 +55,7 @@ getVaultPerformanceHistory pool deployment@VaultPerformanceDeployment {..} = do
       vpdHousePool
       vpdSeniorVault
       vpdJuniorVault
-      (vaultPerformancePointCount + 1)
+      (vaultPerformancePointCount * 2)
   now <- floor <$> getPOSIXTime
   let history = buildVaultPerformanceHistoryAt now deployment rows
       responseBlock =
@@ -110,9 +111,39 @@ deploymentRowsAt
   -> [VaultPerformanceSnapshotRow]
 deploymentRowsAt now deployment =
   keepLatest vaultPerformancePointCount
+    . carryForwardStaleSnapshots
     . sortOn vpsEpochTimestamp
     . filter ((<= latestEligibleVaultPerformanceEpoch now) . vpsEpochTimestamp)
     . filter (matchesDeployment deployment)
+
+-- | Stale HousePool previews intentionally omit mark-dependent PnL. Preserve
+-- their hourly timestamp and freshness status, but publish the last coherent
+-- fresh valuation instead of turning that safety fallback into a chart move.
+-- Leading stale rows without a known fresh predecessor are omitted.
+carryForwardStaleSnapshots
+  :: [VaultPerformanceSnapshotRow]
+  -> [VaultPerformanceSnapshotRow]
+carryForwardStaleSnapshots = go Nothing
+ where
+  go _ [] = []
+  go previousFresh (row : rows) =
+    case vpsMarkFresh row of
+      Just True -> row : go (Just row) rows
+      Just False ->
+        case previousFresh of
+          Just fresh -> carryValuation fresh row : go previousFresh rows
+          Nothing -> go Nothing rows
+      Nothing -> go previousFresh rows
+
+  carryValuation fresh stale =
+    stale
+      { vpsSeniorTotalAssets = vpsSeniorTotalAssets fresh
+      , vpsSeniorTotalSupply = vpsSeniorTotalSupply fresh
+      , vpsSeniorSharePriceWad = vpsSeniorSharePriceWad fresh
+      , vpsJuniorTotalAssets = vpsJuniorTotalAssets fresh
+      , vpsJuniorTotalSupply = vpsJuniorTotalSupply fresh
+      , vpsJuniorSharePriceWad = vpsJuniorSharePriceWad fresh
+      }
 
 matchesDeployment :: VaultPerformanceDeployment -> VaultPerformanceSnapshotRow -> Bool
 matchesDeployment VaultPerformanceDeployment {..} VaultPerformanceSnapshotRow {..} =
@@ -150,6 +181,7 @@ hasCompleteVaultPerformanceCoverageAt now deployment rows =
       && vpsBlockTimestamp <= vpsEpochTimestamp
       && vpsBlockNumber >= 0
       && not (T.null vpsBlockHash)
+      && isJust vpsMarkFresh
       && vpsSeniorTotalAssets >= 0
       && vpsSeniorTotalSupply > 0
       && vpsSeniorSharePriceWad >= 0
@@ -216,6 +248,7 @@ seniorPoint VaultPerformanceSnapshotRow {..} =
   VaultPerformancePoint
     { vppTimestamp = vpsBlockTimestamp
     , vppBlockNumber = vpsBlockNumber
+    , vppMarkFresh = vpsMarkFresh == Just True
     , vppSharePrice = vpsSeniorSharePriceWad
     , vppTotalAssets = vpsSeniorTotalAssets
     , vppTotalSupply = vpsSeniorTotalSupply
@@ -226,6 +259,7 @@ juniorPoint VaultPerformanceSnapshotRow {..} =
   VaultPerformancePoint
     { vppTimestamp = vpsBlockTimestamp
     , vppBlockNumber = vpsBlockNumber
+    , vppMarkFresh = vpsMarkFresh == Just True
     , vppSharePrice = vpsJuniorSharePriceWad
     , vppTotalAssets = vpsJuniorTotalAssets
     , vppTotalSupply = vpsJuniorTotalSupply

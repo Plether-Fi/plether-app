@@ -39,6 +39,7 @@ data VaultPerformanceSnapshotRow = VaultPerformanceSnapshotRow
   , vpsBlockNumber :: Integer
   , vpsBlockHash :: Text
   , vpsBlockTimestamp :: Integer
+  , vpsMarkFresh :: Maybe Bool
   , vpsSeniorTotalAssets :: Integer
   , vpsSeniorTotalSupply :: Integer
   , vpsSeniorSharePriceWad :: Integer
@@ -57,6 +58,7 @@ instance FromRow VaultPerformanceSnapshotRow where
       <*> field
       <*> field
       <*> numericIntegerField
+      <*> field
       <*> field
       <*> field
       <*> numericIntegerField
@@ -92,6 +94,7 @@ instance ToRow VaultPerformanceSnapshotRow where
       , vpsBlockNumber
       , T.toLower $ T.strip vpsBlockHash
       , vpsBlockTimestamp
+      , vpsMarkFresh
       , vpsSeniorTotalAssets
       , vpsSeniorTotalSupply
       , vpsSeniorSharePriceWad
@@ -112,6 +115,7 @@ ensureVaultPerformanceSchema conn = do
     \block_number NUMERIC(78,0) NOT NULL,\
     \block_hash VARCHAR(66) NOT NULL,\
     \block_timestamp BIGINT NOT NULL,\
+    \mark_fresh BOOLEAN NOT NULL,\
     \senior_total_assets NUMERIC(78,0) NOT NULL,\
     \senior_total_supply NUMERIC(78,0) NOT NULL,\
     \senior_share_price_wad NUMERIC(78,0) NOT NULL,\
@@ -139,6 +143,12 @@ ensureVaultPerformanceSchema conn = do
     \CHECK (junior_total_supply >= 0),\
     \CHECK (junior_share_price_wad >= 0)\
     \)"
+  -- Existing installations predate mark freshness. Leave legacy rows NULL so
+  -- the indexer can distinguish and resample them; every new/upserted row
+  -- carries an observed boolean.
+  _ <- execute_ conn
+    "ALTER TABLE vault_performance_snapshots \
+    \ADD COLUMN IF NOT EXISTS mark_fresh BOOLEAN"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_vault_performance_deployment_epoch \
     \ON vault_performance_snapshots \
@@ -152,16 +162,17 @@ upsertVaultPerformanceSnapshot conn row = do
   _ <- execute conn
     "INSERT INTO vault_performance_snapshots (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
-    \epoch_timestamp, block_number, block_hash, block_timestamp,\
+    \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
     \senior_total_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad\
-    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address, epoch_timestamp\
     \) DO UPDATE SET \
     \block_number = EXCLUDED.block_number,\
     \block_hash = EXCLUDED.block_hash,\
     \block_timestamp = EXCLUDED.block_timestamp,\
+    \mark_fresh = EXCLUDED.mark_fresh,\
     \senior_total_assets = EXCLUDED.senior_total_assets,\
     \senior_total_supply = EXCLUDED.senior_total_supply,\
     \senior_share_price_wad = EXCLUDED.senior_share_price_wad,\
@@ -186,12 +197,12 @@ getVaultPerformanceSnapshots
 getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault limit =
   query conn
     "SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
-    \epoch_timestamp, block_number, block_hash, block_timestamp,\
+    \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
     \senior_total_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad \
     \FROM (\
     \  SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
-    \  epoch_timestamp, block_number, block_hash, block_timestamp,\
+    \  epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
     \  senior_total_assets, senior_total_supply, senior_share_price_wad,\
     \  junior_total_assets, junior_total_supply, junior_share_price_wad \
     \  FROM vault_performance_snapshots \

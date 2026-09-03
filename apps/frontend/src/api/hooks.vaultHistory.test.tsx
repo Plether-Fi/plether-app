@@ -33,6 +33,7 @@ const completeHistory: ApiResponse<VaultHistory> = {
       points: [{
         timestamp: 1_700_000_000,
         blockNumber: '1000000',
+        markFresh: true,
         sharePrice: '1007500000000000000',
         totalAssets: '402670000000000',
         totalSupply: '399673697270',
@@ -44,6 +45,7 @@ const completeHistory: ApiResponse<VaultHistory> = {
       points: [{
         timestamp: 1_700_000_000,
         blockNumber: '1000000',
+        markFresh: true,
         sharePrice: '643400000000000000',
         totalAssets: '102920000000000',
         totalSupply: '159962698165',

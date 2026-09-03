@@ -293,6 +293,8 @@ export interface VaultHistoryCoverage {
 export interface VaultHistoryPoint {
   timestamp: number;
   blockNumber: string;
+  /** Whether this hourly observation used a fresh protocol mark; false values carry the last fresh valuation. */
+  markFresh: boolean;
   /** Fee-free accounting assets per share as a raw 1e18-scaled integer. */
   sharePrice: string;
   totalAssets: string;

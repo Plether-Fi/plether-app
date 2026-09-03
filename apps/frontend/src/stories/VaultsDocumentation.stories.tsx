@@ -145,6 +145,7 @@ function historyPoint(
     sharePrice: sharePrice.toString(),
     totalAssets: totalAssets.toString(),
     totalSupply: totalSupply.toString(),
+    markFresh: true,
   }
 }
 

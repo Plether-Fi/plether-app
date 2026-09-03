@@ -1058,6 +1058,7 @@ function formatSharePrice(value: number | undefined): ReactNode {
 interface VaultChartPoint {
   timestamp: number
   blockNumber: string
+  markFresh: boolean
   sharePrice: number
 }
 
@@ -1110,6 +1111,7 @@ function normalizeHistoryPoints(points: VaultHistoryPoint[]): VaultChartPoint[] 
     byTimestamp.set(point.timestamp, {
       timestamp: point.timestamp,
       blockNumber: point.blockNumber,
+      markFresh: point.markFresh,
       sharePrice,
     })
   })
@@ -3102,6 +3104,11 @@ function PerformanceChart({
             <p className="mt-1 text-sm font-semibold text-content-primary">
               {formatHistorySharePrice(active.point.sharePrice)}
             </p>
+            {!active.point.markFresh ? (
+              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-orange">
+                Last fresh valuation
+              </p>
+            ) : null}
             <p className={`mt-1 text-xs font-semibold ${
               performanceTone(activeReturn ?? 0) === 'positive'
                 ? 'text-positive'
@@ -3160,7 +3167,7 @@ function PerformanceTab({
         <DetailMetric
           label="Current share price"
           value={formatHistorySharePrice(lastPoint.sharePrice)}
-          detail={formatChartTimestamp(lastPoint.timestamp)}
+          detail={`${formatChartTimestamp(lastPoint.timestamp)}${lastPoint.markFresh ? '' : ' · last fresh valuation'}`}
         />
       </div>
 

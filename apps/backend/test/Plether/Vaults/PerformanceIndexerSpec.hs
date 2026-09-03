@@ -67,6 +67,9 @@ spec = do
       snapshotNeedsRepair sampleRow ((block 5) {rpcBlockTimestamp = 49}) `shouldBe` True
       snapshotNeedsRepair sampleRow ((block 5) {rpcBlockTimestamp = 61}) `shouldBe` True
 
+    it "resamples legacy checkpoints without observed freshness" $
+      snapshotNeedsRepair (sampleRow {vpsMarkFresh = Nothing}) (block 5) `shouldBe` True
+
   describe "snapshot reconciliation control" $ do
     it "keeps a canonical checkpoint idempotently without another upsert" $ do
       decideSnapshotReconciliation (Just sampleRow) (Just $ block 5)
@@ -132,6 +135,7 @@ sampleRow =
     , vpsBlockNumber = 5
     , vpsBlockHash = canonicalHash
     , vpsBlockTimestamp = 50
+    , vpsMarkFresh = Just True
     , vpsSeniorTotalAssets = 100
     , vpsSeniorTotalSupply = 100
     , vpsSeniorSharePriceWad = 10 ^ (18 :: Integer)

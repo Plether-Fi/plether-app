@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS vault_performance_snapshots (
     block_number NUMERIC(78,0) NOT NULL,
     block_hash VARCHAR(66) NOT NULL,
     block_timestamp BIGINT NOT NULL,
+    mark_fresh BOOLEAN NOT NULL,
     senior_total_assets NUMERIC(78,0) NOT NULL,
     senior_total_supply NUMERIC(78,0) NOT NULL,
     senior_share_price_wad NUMERIC(78,0) NOT NULL,

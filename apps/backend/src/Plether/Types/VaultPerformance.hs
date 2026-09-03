@@ -76,6 +76,7 @@ instance ToJSON VaultPerformanceCoverage where
 data VaultPerformancePoint = VaultPerformancePoint
   { vppTimestamp :: Integer
   , vppBlockNumber :: Integer
+  , vppMarkFresh :: Bool
   , vppSharePrice :: Integer
   , vppTotalAssets :: Integer
   , vppTotalSupply :: Integer
@@ -87,6 +88,7 @@ instance ToJSON VaultPerformancePoint where
     object
       [ "timestamp" .= vppTimestamp
       , "blockNumber" .= show vppBlockNumber
+      , "markFresh" .= vppMarkFresh
       , "sharePrice" .= show vppSharePrice
       , "totalAssets" .= show vppTotalAssets
       , "totalSupply" .= show vppTotalSupply

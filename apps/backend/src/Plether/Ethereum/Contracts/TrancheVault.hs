@@ -27,9 +27,10 @@ data TrancheVaultSnapshot = TrancheVaultSnapshot
 vaultSharePriceProbe :: Integer
 vaultSharePriceProbe = 10 ^ (27 :: Integer)
 
-trancheVaultSnapshotCalls :: Text -> Text -> [Call]
-trancheVaultSnapshotCalls seniorVault juniorVault =
-  concatMap callsFor [seniorVault, juniorVault]
+trancheVaultSnapshotCalls :: Text -> Text -> Text -> [Call]
+trancheVaultSnapshotCalls housePool seniorVault juniorVault =
+  Call housePool True (encodeCall "getPoolLiquidityView()" [])
+    : concatMap callsFor [seniorVault, juniorVault]
  where
   callsFor vault =
     [ Call vault True $ encodeCall "totalAssets()" []
@@ -68,18 +69,37 @@ decodeVaultDecimalsResults results =
 
 decodeTrancheVaultSnapshotResults
   :: [CallResult]
-  -> Either Text (TrancheVaultSnapshot, TrancheVaultSnapshot)
+  -> Either Text (Bool, TrancheVaultSnapshot, TrancheVaultSnapshot)
 decodeTrancheVaultSnapshotResults results =
   case results of
-    [seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] ->
-      (,)
-        <$> decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
+    [poolLiquidity, seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] ->
+      (,,)
+        <$> decodePoolMarkFresh poolLiquidity
+        <*> decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
         <*> decodeTranche "Junior" juniorAssets juniorSupply juniorConverted
     _ ->
       Left $
         "Vault snapshot Multicall returned "
           <> T.pack (show $ length results)
-          <> " results; expected 6"
+          <> " results; expected 7"
+
+-- getPoolLiquidityView() is twelve static ABI words. `markFresh` is word 9
+-- (zero-based), after the nine monetary fields. Validate the canonical bool
+-- encoding rather than accepting arbitrary nonzero values.
+decodePoolMarkFresh :: CallResult -> Either Text Bool
+decodePoolMarkFresh CallResult {..}
+  | not resultSuccess = Left "HousePool getPoolLiquidityView subcall failed"
+  | BS.length resultData /= poolLiquidityViewLength =
+      Left $
+        "HousePool getPoolLiquidityView returned "
+          <> T.pack (show $ BS.length resultData)
+          <> " bytes; expected "
+          <> T.pack (show poolLiquidityViewLength)
+  | encoded == 0 = Right False
+  | encoded == 1 = Right True
+  | otherwise = Left "HousePool getPoolLiquidityView returned a non-canonical markFresh bool"
+ where
+  encoded = decodeUint256 $ BS.take abiWordLength $ BS.drop (9 * abiWordLength) resultData
 
 decodeTranche
   :: Text
@@ -123,3 +143,6 @@ usdcScale = 10 ^ (6 :: Integer)
 
 abiWordLength :: Int
 abiWordLength = 32
+
+poolLiquidityViewLength :: Int
+poolLiquidityViewLength = 12 * abiWordLength
