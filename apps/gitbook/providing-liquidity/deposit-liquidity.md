@@ -100,7 +100,7 @@ The review modal shows the USDC to deposit, estimated shares, current share pric
 
 The estimate is not a locked conversion rate. Tranche accounting and trader outcomes can change before processing. Deposits do not pay the frozen-oracle withdrawal surcharge; if live pricing is unavailable, deposit activation waits until the entry gates clear.
 
-![Deposit preview for a queued Senior or Junior Vault deposit.](../.gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png)
+![Deposit preview for a queued Senior or Junior Vault deposit](../.gitbook/assets/screenshots/storybook-documentation-vaults--deposit-preview.png)
 
 ### 6. Confirm the transactions
 

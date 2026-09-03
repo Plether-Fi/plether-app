@@ -305,9 +305,7 @@ Claim settlement requires authorization from the Trading Account’s owner walle
 
 If the account still has an open position, carry is checkpointed before the claim credit changes its PnL pledge. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due. Only a flat account receives the settlement as free balance.
 
-![Trader claim with aggregate coverage, settlement availability, the flat-account Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
-
-Aggregate coverage is enforced onchain. The screenshot is an illustrative documentation prototype of the flat-account branch; a claim settled while a position remains open credits PnL pledge instead. The current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
+Aggregate coverage is enforced onchain. A claim settled while a position remains open credits PnL pledge instead of free Margin Account balance. The current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
 
 ### A claim is not position collateral
 

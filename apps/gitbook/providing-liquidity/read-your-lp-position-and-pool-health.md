@@ -27,7 +27,7 @@ The detail page uses this navigation:
 
 **Performance** is conditional. If the app cannot verify a complete seven-day history for the active deployment, it omits the section rather than presenting partial history as a valid return.
 
-![Senior Vault Your position view with active shares and the current empty pending-request state.](../.gitbook/assets/screenshots/storybook-documentation-vaults--position.png)
+![Senior Vault Your position view with active shares and the current empty pending-request state](../.gitbook/assets/screenshots/storybook-documentation-vaults--position.png)
 
 ### Start with the selected tranche
 
@@ -140,7 +140,7 @@ Trader claims are protected ahead of Senior as well as Junior. “Senior” desc
 
 ### Read the detail Overview
 
-![Senior Vault Overview with its current value, share-price context and operating rules.](../.gitbook/assets/screenshots/storybook-documentation-vaults--senior-vault-detail.png)
+![Senior Vault Overview with current value, share-price context and operating rules](../.gitbook/assets/screenshots/storybook-documentation-vaults--senior-overview-section.png)
 
 The **How this vault works** panel shows operational terms rather than a return guarantee:
 

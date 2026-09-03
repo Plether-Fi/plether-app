@@ -413,8 +413,6 @@ The difference reflects the adverse oracle confidence adjustment shown in the tr
 
 Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed[^lp] borrow base.
 
-![Executed position paired with its matching Order History record](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--executed-position-and-order-history.png)
-
 ### Why an opening or increase may be unavailable
 
 | Message or condition              | What to check                                          |

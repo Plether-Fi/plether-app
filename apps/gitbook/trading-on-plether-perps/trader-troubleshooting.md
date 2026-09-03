@@ -107,8 +107,6 @@ Adjust the size, leverage or margin according to the displayed reason. Market-st
 
 A reverted sponsored commitment rolls back the complete action. No order, margin reservation or execution-reward reservation remains.
 
-![Disabled Review error states](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--disabled-review-messages.png)
-
 See [**Open or increase a position**](open-or-increase-a-position.md), [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md) and [**Solvency at a glance**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#solvency-at-a-glance).
 
 ### I cannot reduce or close

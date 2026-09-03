@@ -10,7 +10,7 @@ Plether uses solvency checks, a Senior–Junior waterfall, conservative accounti
 >
 > The current test configuration targets Arbitrum Sepolia and uses the connected owner wallet. LP approvals, deposits, withdrawals, cancellations, claims and refunds are ordinary wallet transactions. They are not Plether Trading Account-sponsored actions and require Arbitrum Sepolia ETH for gas.
 
-![Junior Vault risk safeguards and shared pool status.](../.gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-liquidity-pool.png)
+![Current Junior Vault overview section with pool status and safeguards](../.gitbook/assets/screenshots/storybook-documentation-vaults--junior-overview-section.png)
 
 ### Start with the economic risk
 

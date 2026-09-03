@@ -204,7 +204,7 @@ Adding margin is immediate and bypasses the delayed order queue. It remains avai
 
 Position margin leaves the assigned bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remainder. Close settlement can then consume some or all of that released amount before any balance remains free.
 
-![Current Edit Position Margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to Trade and Withdrawable
 

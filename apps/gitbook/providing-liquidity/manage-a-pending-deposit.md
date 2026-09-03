@@ -17,7 +17,7 @@ Aggregate deposit quote rounds to zero → Epoch rejected → Refund available �
 
 There is no user-facing `Finalize epoch` step. The settlement path is permissionless, and an enabled, healthy keeper[^keeper] can submit eligible hourly processing.
 
-![Pending deposit records with their expected processing time, status and available actions.](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
+![Pending deposit records with their expected processing time, status and available actions](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
 
 ### Understand hourly processing
 

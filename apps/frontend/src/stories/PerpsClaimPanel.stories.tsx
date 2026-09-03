@@ -110,7 +110,7 @@ export const CompletedFullClose: Story = {
               label: 'Net settlement',
               amount: '+350.00',
               tone: 'positive',
-              detail: 'Fresh pool-funded payout after costs',
+              detail: 'Fresh HousePool-funded payout after costs',
             },
           ]}
           fundingItems={[
@@ -135,7 +135,7 @@ export const CompletedFullClose: Story = {
           ]}
           message={(
             <>
-              The released margin was credited immediately. Because the liquidity pool could not fund the complete fresh
+              The released margin was credited immediately. Because the HousePool could not fund the complete fresh
               <strong className="font-semibold text-content-primary"> 350.00 USDC </strong>
               payout, none of it was paid immediately; the full amount became a trader claim.
             </>

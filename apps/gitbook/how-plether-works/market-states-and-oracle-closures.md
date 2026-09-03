@@ -515,7 +515,7 @@ Check the oracle freshness indicator as well:
 * `updated … ago`
 * `checking backend for a fresh update`
 
-![Open-market countdown](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
+![Open followed by the three-hour close-only runway](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
 
 The weekly countdown is an interface estimate, not a protocol state transition. The onchain `fadWindow` and `oracleFrozen` flags are authoritative, including around configured holiday closures or if an interface countdown does not match the deployed calendar.
 

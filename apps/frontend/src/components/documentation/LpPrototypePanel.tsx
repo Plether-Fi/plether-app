@@ -75,7 +75,7 @@ function ViewHeader({ view }: { view: LpPrototypeView }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 border-b border-brand-border/20 px-5 py-4">
       <div>
-        <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">Liquidity pool</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">HousePool</div>
         <h2 className="mt-1 text-xl font-semibold text-content-primary">{title}</h2>
       </div>
       <div className="text-right">
@@ -153,7 +153,7 @@ function OverviewView() {
   return (
     <>
       <div className="grid gap-3 md:grid-cols-3">
-        <Metric label="Total pool funds" value={<TokenAmount amount="6 300 000" />} />
+        <Metric label="Canonical HousePool assets" value={<TokenAmount amount="6 300 000" />} />
         <Metric
           label="Maximum live trader liability"
           value={<TokenAmount amount="4 550 000" />}
@@ -242,7 +242,7 @@ function VaultVerification() {
         <span className="material-symbols-outlined !text-[14px]">open_in_new</span>
       </a>
       <div className="mt-2 text-xs leading-5 text-content-secondary">
-        Approval spender: Senior Tranche Vault, not the liquidity pool or Margin Account.
+        Approval spender: Senior Tranche Vault, not the HousePool or Margin Account.
       </div>
     </div>
   )

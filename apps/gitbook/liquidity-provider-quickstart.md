@@ -90,7 +90,7 @@ Open `Vaults`. The overview shows **Total pool funds**, **Reserved funds**, **Av
 
 Select **Explore Senior Vault** or **Explore Junior Vault**. The vault page is organized into **Overview**, **Performance**, **Your position** and **Activity**. **Performance** appears when the complete seven-day history for the active deployment is available.
 
-![Vaults overview with current pool liquidity and Senior and Junior Vault cards.](.gitbook/assets/screenshots/storybook-documentation-vaults--overview.png)
+![Vaults overview with current pool liquidity and Senior and Junior Vault cards](.gitbook/assets/screenshots/storybook-documentation-vaults--overview.png)
 
 Before entering an amount, check the live values for:
 

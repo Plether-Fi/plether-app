@@ -49,7 +49,7 @@ Exposure that exists only as a pending opening order cannot be reduced yet. Wait
 
 Risk-reducing close orders remain available during normal trading, FAD-only[^fad] close windows, `oracleFrozen`, degraded mode and router pause. Usable oracle[^oracle] data, execution-reward backing and the ordinary close validations are still required.
 
-![Open position and close context](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Existing position fields before composing a reduction](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### 1. Choose the amount in the trade ticket
 

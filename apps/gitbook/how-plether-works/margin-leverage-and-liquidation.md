@@ -161,7 +161,7 @@ Leverage is also a snapshot. It can change because:
 
 Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
 
-![Current Position annotations](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Depositing USDC versus adding position margin
 
@@ -198,7 +198,7 @@ Direct position-margin removal is not supported.
 
 Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
-![Position and Edit Position Margin modal](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 

@@ -41,7 +41,7 @@ The position panel contains:
 | **Unrealized PnL**      | Price PnL between entry and the current mark                          |
 | **Cost of carry**       | Persisted unpaid carry plus carry accrued since the last checkpoint   |
 
-![Complete Current Position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Direction
 
@@ -207,7 +207,7 @@ Depositing new USDC into the Margin Account adds collateral and increases accoun
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
-![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Read the Margin Account
 

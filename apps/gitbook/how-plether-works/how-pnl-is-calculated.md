@@ -72,7 +72,7 @@ The distinction matters because **plDXY Perp exposure** and **Entry notional[^no
 
 The interface handles the conversion into contract quantity. For understanding PnL, the important variable is `Q`: the amount of index exposure whose value changes with price.
 
-![Complete Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Gross PnL
 
@@ -246,8 +246,6 @@ Plether treats the two sides conservatively:
 * Unrealized trader losses are not treated as spendable pool assets.
 
 Settlement is what turns PnL into cash movement, a trader claim or bad debt.
-
-![Unrealized PnL metric and settlement context](../.gitbook/assets/screenshots/storybook-documentation-metric-details--unrealized-pnl.png)
 
 ### Entry price after increasing a position
 
@@ -541,7 +539,7 @@ In particular:
 
 A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
 
-![Close row and gross Result](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
+![Transaction History close row](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
 
 ### The fixed range bounds gross PnL
 

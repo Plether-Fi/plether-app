@@ -379,15 +379,37 @@ export const SeniorVaultDetail: Story = {
   ),
 }
 
+export const SeniorOverviewSection: Story = {
+  render: () => (
+    <PageFrame maxWidth="max-w-6xl">
+      <OverviewTab
+        tranche={VAULT_TRANCHES.senior}
+        liveData={snapshot.tranches.senior}
+        snapshot={snapshot}
+        isConnected
+        epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
+      />
+    </PageFrame>
+  ),
+}
+
+export const JuniorOverviewSection: Story = {
+  render: () => (
+    <PageFrame maxWidth="max-w-6xl">
+      <OverviewTab
+        tranche={VAULT_TRANCHES.junior}
+        liveData={snapshot.tranches.junior}
+        snapshot={snapshot}
+        isConnected
+        epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
+      />
+    </PageFrame>
+  ),
+}
+
 export const Position: Story = {
   render: () => (
     <PageFrame maxWidth="max-w-5xl">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-          Senior Vault
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold text-content-primary">Your position</h1>
-      </div>
       <ActivityTab
         tranche={VAULT_TRANCHES.senior}
         liveData={snapshot.tranches.senior}
@@ -409,12 +431,6 @@ export const Position: Story = {
 export const PendingActivity: Story = {
   render: () => (
     <PageFrame maxWidth="max-w-5xl">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-          Senior Vault
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold text-content-primary">Your pending activity</h1>
-      </div>
       <ActivityTab
         tranche={VAULT_TRANCHES.senior}
         liveData={snapshot.tranches.senior}
@@ -434,14 +450,7 @@ export const PendingActivity: Story = {
 }
 
 function ModalCanvas() {
-  return (
-    <div className="min-h-screen bg-app-bg p-8">
-      <div className="mx-auto grid max-w-4xl gap-5 opacity-60 md:grid-cols-2">
-        <div className="h-56 border border-brand-border/30 bg-surface-panel" />
-        <div className="h-56 border border-brand-border/30 bg-surface-panel" />
-      </div>
-    </div>
-  )
+  return <div className="min-h-screen bg-app-bg" />
 }
 
 export const DepositPreview: Story = {
@@ -497,27 +506,5 @@ export const WithdrawalPreview: Story = {
         onSubmit={noop}
       />
     </>
-  ),
-}
-
-export const RiskAndLiquidityPool: Story = {
-  render: () => (
-    <PageFrame maxWidth="max-w-6xl">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
-          Junior Vault details
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold text-content-primary">
-          Risk, safeguards, and shared pool status
-        </h1>
-      </div>
-      <OverviewTab
-        tranche={VAULT_TRANCHES.junior}
-        liveData={snapshot.tranches.junior}
-        snapshot={snapshot}
-        isConnected
-        epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
-      />
-    </PageFrame>
   ),
 }

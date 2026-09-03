@@ -141,7 +141,7 @@ Moving shares to the wallet starts or restarts the one-hour withdrawal cooldown 
 
 A confirmed **Queue withdrawal** transaction locks the estimated shares. It does not send USDC to the wallet.
 
-![Pending deposit and withdrawal records with their current actions.](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
+![Pending deposit and withdrawal records with their current actions](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
 
 Before the expected processing time, the request shows **Pending** and can show **Cancel withdrawal**. After that time:
 
