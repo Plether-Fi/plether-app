@@ -110,12 +110,6 @@ const mocks = vi.hoisted(() => ({
   scrollIntoView: vi.fn(),
 }))
 
-vi.mock('@reown/appkit/react', () => ({
-  useAppKit: () => ({
-    open: mocks.appKitOpen,
-  }),
-}))
-
 vi.mock('wagmi', () => ({
   useAccount: () => mocks.account,
   useChainId: () => mocks.chainId,
@@ -137,7 +131,7 @@ vi.mock('wagmi', () => ({
 }))
 
 vi.mock('../config/wagmi', () => ({
-  syncAppKitModalStyleOverrides: vi.fn(),
+  openAppKit: mocks.appKitOpen,
 }))
 
 vi.mock('../api', () => ({

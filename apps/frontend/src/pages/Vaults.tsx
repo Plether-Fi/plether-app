@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { useAppKit } from '@reown/appkit/react'
 import { formatUnits, parseUnits, zeroAddress, type Address } from 'viem'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { Link, useParams } from 'react-router-dom'
@@ -13,7 +12,7 @@ import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { Alert, Badge, Button, DocsLink, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
-import { syncAppKitModalStyleOverrides } from '../config/wagmi'
+import { openAppKit } from '../config/wagmi'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_ABI,
@@ -5187,7 +5186,6 @@ export function Vaults() {
   const { trancheId } = useParams()
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
-  const { open } = useAppKit()
   const {
     switchToArbitrumSepolia,
     isSwitching,
@@ -5204,9 +5202,7 @@ export function Vaults() {
 
   function openWallet() {
     clearSwitchError()
-    syncAppKitModalStyleOverrides()
-    void open()
-    syncAppKitModalStyleOverrides()
+    void openAppKit()
   }
 
   if (trancheId && !selectedTranche) {
