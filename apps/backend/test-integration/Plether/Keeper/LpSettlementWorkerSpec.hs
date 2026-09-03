@@ -894,8 +894,16 @@ estimateCall params = do
 isOrderLogQuery :: [Value] -> Bool
 isOrderLogQuery = \case
   [Object queryObject] ->
-    maybe False ((== normalize router) . normalize) $ textField "address" queryObject
+    case KeyMap.lookup (Key.fromText "address") queryObject of
+      Just (String address) -> normalize address == normalize router
+      Just (Array addresses) ->
+        any isRouterAddress (toList addresses)
+      _ -> False
   _ -> False
+ where
+  isRouterAddress = \case
+    String address -> normalize address == normalize router
+    _ -> False
 
 rpcMethodAndParams :: LBS.ByteString -> Maybe (Text, [Value])
 rpcMethodAndParams body = do
