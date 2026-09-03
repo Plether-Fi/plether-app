@@ -41,7 +41,7 @@ The position panel contains:
 | **Unrealized PnL**      | Price PnL between entry and the current mark                          |
 | **Cost of carry**       | Persisted unpaid carry plus carry accrued since the last checkpoint   |
 
-![Complete Current Position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Direction
 
@@ -207,7 +207,7 @@ Depositing new USDC into the Margin Account adds collateral and increases accoun
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
-![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Read the Margin Account
 
@@ -364,7 +364,7 @@ A failed close still pays the execution reward. Review health again before submi
 
 ### Trader claims
 
-A trader claim is a HousePool obligation awaiting physical settlement.
+A trader claim is a pool obligation awaiting physical settlement.
 
 Until settled, it remains outside:
 
@@ -632,6 +632,6 @@ The separate `250 USDC` trader claim does not enter these calculations. Once set
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

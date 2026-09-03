@@ -81,7 +81,7 @@ The post-trade check includes the applicable execution fee, VPI[^vpi] adjustment
 The protocol also verifies that:
 
 * the resulting position is not immediately liquidatable;
-* the HousePool can cover its bounded maximum liability;
+* the liquidity pool can cover its bounded maximum liability;
 * the resulting market imbalance remains within protocol limits.
 
 Initial margin rates and bounty parameters are protocol settings. Use the live onchain values rather than values from static examples.
@@ -161,7 +161,7 @@ Leverage is also a snapshot. It can change because:
 
 Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
 
-![Current Position annotations](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Depositing USDC versus adding position margin
 
@@ -198,7 +198,7 @@ Direct position-margin removal is not supported.
 
 Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
-![Position and Edit Position Margin modal](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 
@@ -370,7 +370,7 @@ An account can be liquidatable while it still has positive equity. Maintenance m
 After carry, applicable adjustments and the liquidation bounty:
 
 * a positive residual is preserved for the trader;
-* reachable collateral, including released position margin, is preserved up to the trader’s positive residual; if any additional HousePool-funded payout cannot be funded in full, that complete fresh payout is recorded as a trader claim;
+* reachable collateral, including released position margin, is preserved up to the trader’s positive residual; if any additional pool-funded payout cannot be funded in full, that complete fresh payout is recorded as a trader claim;
 * an existing trader claim may be netted against a terminal shortfall;
 * only the remaining uncovered loss becomes bad debt borne by the LP waterfall.
 
@@ -448,9 +448,9 @@ The fixed `0.00–2.00` range bounds directional price PnL for a fixed position.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.

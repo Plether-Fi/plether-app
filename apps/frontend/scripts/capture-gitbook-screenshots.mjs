@@ -204,13 +204,40 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
   const storyUrl = `${baseUrl}/iframe.html?id=${storyId}&viewMode=story`
   try {
     await page.goto(storyUrl, { waitUntil: 'networkidle', timeout: 60_000 })
-    await page.waitForFunction(() => {
-      const root = document.querySelector('#storybook-root')
-      return root && root.children.length > 0
-    }, { timeout: 30_000 })
+    try {
+      await page.waitForFunction(() => {
+        const root = document.querySelector('#storybook-root')
+        return root && root.children.length > 0
+      }, { timeout: 30_000 })
+    } catch (error) {
+      const diagnostics = [
+        ...browserErrors.map((message) => `browser: ${message}`),
+        ...failedRequests.map((message) => `request: ${message}`),
+      ].join('\n')
+      throw new Error(
+        `Story ${storyId} did not render.${diagnostics ? `\n${diagnostics}` : ''}`,
+        { cause: error }
+      )
+    }
     await page.evaluate(async () => {
       await document.fonts.ready
     })
+    const iconFontState = await page.evaluate(() => {
+      const icon = document.querySelector('.material-symbols-outlined')
+      return {
+        hasIcon: Boolean(icon),
+        family: icon ? window.getComputedStyle(icon).fontFamily : '',
+        fontStatus: document.fonts.status,
+      }
+    })
+    if (iconFontState.hasIcon && (
+      !iconFontState.family.includes('Material Symbols Outlined')
+      || iconFontState.fontStatus !== 'loaded'
+    )) {
+      throw new Error(
+        `Material Symbols did not load for ${storyId}: ${JSON.stringify(iconFontState)}`
+      )
+    }
     await page.addStyleTag({
       content: `
         *,
@@ -289,15 +316,20 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
       }
     })
 
+    const viewport = page.viewportSize()
+    const useFullPage = clip === undefined
+      || viewport === null
+      || clip.y + clip.height > viewport.height
+
     await page.screenshot({
       animations: 'disabled',
-      clip,
-      fullPage: clip === undefined,
+      clip: useFullPage ? undefined : clip,
+      fullPage: useFullPage,
       path: outputPath,
       type: 'png',
     })
 
-    const dimensions = clip === undefined
+    const dimensions = useFullPage
       ? await page.evaluate(() => ({
           height: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
           width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
@@ -378,6 +410,23 @@ async function syncDocumentation(records) {
   return { replacements, retainedSupportInstructions }
 }
 
+async function pruneUnusedScreenshots(storyIds) {
+  const expectedFilenames = new Set(storyIds.map(safeStoryFilename))
+  const entries = await fs.readdir(outputDirectory, { withFileTypes: true })
+  let removed = 0
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    if (!entry.name.startsWith('storybook-') || !entry.name.endsWith('.png')) continue
+    if (expectedFilenames.has(entry.name)) continue
+
+    await fs.unlink(path.join(outputDirectory, entry.name))
+    removed += 1
+  }
+
+  return removed
+}
+
 async function main() {
   const manifest = await fs.readFile(manifestPath, 'utf8')
   const records = parseManifest(manifest)
@@ -441,6 +490,9 @@ async function main() {
   }
 
   const syncResult = await syncDocumentation(captureRecords)
+  const prunedAssets = requestedStoryIds.size === 0
+    ? await pruneUnusedScreenshots(uniqueStoryIds)
+    : 0
   const outputIndex = requestedStoryIds.size > 0
     ? await mergeSelectiveCaptureIndex(
         records,
@@ -452,13 +504,14 @@ async function main() {
         mappedReferences: records.length,
         uniqueStories: uniqueStoryIds.length,
         manifestReferencesUpdated: manifestSyncResult.updatedReferences,
+        prunedAssets,
         ...syncResult,
         captures,
       }
   await fs.writeFile(outputIndexPath, `${JSON.stringify(outputIndex, null, 2)}\n`)
 
   process.stdout.write(
-    `Generated ${captures.length.toString()} PNGs; replaced ${syncResult.replacements.toString()} placeholders; retained ${syncResult.retainedSupportInstructions.toString()} support instructions.\n`
+    `Generated ${captures.length.toString()} PNGs; pruned ${prunedAssets.toString()} unused PNGs; replaced ${syncResult.replacements.toString()} placeholders; retained ${syncResult.retainedSupportInstructions.toString()} support instructions.\n`
   )
 }
 

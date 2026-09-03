@@ -90,7 +90,7 @@ The underlying commitment call can fail for:
 | Insufficient initial margin      | Size and margin would create excessive leverage                                                 |
 | Opposing position                | The account already has exposure in the other direction                                         |
 | Skew limit                       | The requested direction would exceed the current skew boundary                                  |
-| Solvency limit                   | The HousePool cannot admit the requested maximum liability                                      |
+| Solvency limit                   | The liquidity pool cannot admit the requested maximum liability                                      |
 | Close-only or frozen market      | New exposure is unavailable in the current market state                                         |
 | Degraded mode                    | New risk is blocked                                                                             |
 | Router pause or pool restriction | Risk-increasing commits are temporarily unavailable                                             |
@@ -352,7 +352,7 @@ An open or increase can be rejected because:
 * Fees, VPI or accrued carry drain the usable margin.
 * Initial margin is insufficient.
 * Current skew[^skew] exceeds the admitted limit.
-* HousePool solvency capacity is insufficient.
+* Pool solvency capacity is insufficient.
 * The protocol entered degraded mode.
 * Earlier terminal settlement consumed margin reserved for the order.
 
@@ -428,7 +428,7 @@ The result can change through:
 * Execution fees and VPI at the final price
 * Earlier orders changing account exposure
 * Earlier orders changing market skew
-* HousePool liability or solvency changes
+* Pool liability or solvency changes
 * Margin being consumed during terminal settlement
 * FAD or frozen-market activation
 * Degraded mode
@@ -485,7 +485,7 @@ Open Orders are read from onchain state, while Order History is indexed separate
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.

@@ -271,7 +271,7 @@ OPEN
     A[Close executes] --> B[Release margin assigned to the closed portion]
     A --> C[Calculate net close settlement]
 
-    C -->|Positive| D{Can the HousePool fund the full amount?}
+    C -->|Positive| D{Can the liquidity pool fund the full amount?}
     D -->|Yes| E[Credit the full amount to the Margin Account]
     D -->|No| F[Record the full amount as a trader claim]
 
@@ -284,14 +284,14 @@ OPEN
     J --> K[Then record only base-obligation bad debt and waive uncollectible frozen spread]`,
     filename: 'settlement-liquidity-flow.svg',
     title: 'Close settlement and liquidity flow',
-    alt: 'Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement.',
-    description: 'A close releases assigned margin and calculates settlement. Positive settlement becomes Margin Account credit or a trader claim depending on HousePool cash after existing claims; zero or negative settlement collects reachable collateral, nets a same-account claim, and records only genuine base-obligation bad debt.',
+    alt: 'Flowchart showing margin release, positive close settlement, liquidity pool funding, trader claims and zero-or-negative settlement.',
+    description: 'A close releases assigned margin and calculates settlement. Positive settlement becomes Margin Account credit or a trader claim depending on pool cash after existing claims; zero or negative settlement collects reachable collateral, nets a same-account claim, and records only genuine base-obligation bad debt.',
     rankdir: 'TB',
     nodes: [
       node('close', 'Close executes', 'start'),
       node('release', 'Release margin assigned to the closed portion', 'success'),
       node('calculate', 'Calculate net close settlement'),
-      node('funding', 'Can the HousePool fund the full amount after existing claims?', 'decision'),
+      node('funding', 'Can the liquidity pool fund the full amount after existing claims?', 'decision'),
       node('credit', 'Credit the full amount to the Margin Account', 'success'),
       node('claim', 'Record the full amount as a trader claim', 'warning'),
       node('later', 'Settle later when aggregate claims are fully covered', 'sponsored'),
@@ -326,23 +326,23 @@ OPEN
     description: 'A trader claim is not collateral. Reachable collateral is applied to the execution fee, base close obligation and frozen-close spread in that order.',
   }),
   {
-    sourcePath: 'how-plether-works/the-housepool-and-tranche-waterfall.md',
+    sourcePath: 'how-plether-works/the-liquidity-pool-and-tranche-waterfall.md',
     sourceLanguage: 'mermaid',
     source: `flowchart TD
-    A["HousePool value after trader liabilities"] --> B{"Revenue or loss?"}
+    A["Liquidity pool value after trader liabilities"] --> B{"Revenue or loss?"}
 
     B -->|"Loss"| C["Junior absorbs first"]
     C --> D["Senior absorbs only the remainder"]
 
     B -->|"Revenue"| E["Restore impaired Senior to its high-water mark"]
     E --> F["Residual revenue goes to Junior"]`,
-    filename: 'housepool-tranche-waterfall.svg',
-    title: 'HousePool tranche waterfall',
+    filename: 'liquidity-pool-tranche-waterfall.svg',
+    title: 'Liquidity pool tranche waterfall',
     alt: 'Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.',
-    description: 'After trader liabilities, HousePool losses are absorbed by Junior and then Senior, while revenue first restores impaired Senior capital and then belongs to Junior.',
+    description: 'After trader liabilities, pool losses are absorbed by Junior and then Senior, while revenue first restores impaired Senior capital and then belongs to Junior.',
     rankdir: 'TB',
     nodes: [
-      node('value', 'HousePool value after trader liabilities', 'pool'),
+      node('value', 'Liquidity pool value after trader liabilities', 'pool'),
       node('outcome', 'Revenue or loss?', 'decision'),
       node('juniorLoss', 'Junior absorbs first', 'danger'),
       node('seniorLoss', 'Senior absorbs only the remainder', 'danger'),
@@ -454,7 +454,7 @@ Coupon:       Junior NAV → Senior`,
     source: `Position settles
 → Fresh payout cannot be funded in full
 → Trader claim is recorded
-→ Aggregate HousePool cash coverage returns
+→ Aggregate pool cash coverage returns
 → Owner wallet authorizes settlement
 → Sponsored Trading Account operation confirms
 → USDC is credited to the Margin Account
@@ -462,12 +462,12 @@ Coupon:       Junior NAV → Senior`,
     filename: 'trader-claim-lifecycle.svg',
     title: 'Trader-claim lifecycle',
     alt: 'Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal.',
-    description: 'A complete fresh payout that cannot be funded immediately is recorded in full as a claim. Once HousePool coverage returns, the owner authorizes sponsored settlement to the Margin Account and may then withdraw.',
+    description: 'A complete fresh payout that cannot be funded immediately is recorded in full as a claim. Once pool coverage returns, the owner authorizes sponsored settlement to the Margin Account and may then withdraw.',
     labels: [
       'Position settles',
       'Fresh payout cannot be funded in full',
       'Trader claim is recorded',
-      'Aggregate HousePool cash coverage returns',
+      'Aggregate pool cash coverage returns',
       'Owner wallet authorizes settlement',
       'Sponsored Trading Account operation confirms',
       'USDC is credited to the Margin Account',
@@ -478,14 +478,14 @@ Coupon:       Junior NAV → Senior`,
   }),
   linearDiagram({
     sourcePath: 'trading-on-plether-perps/check-and-settle-a-trader-claim.md',
-    source: `HousePool
+    source: `Liquidity pool
 → Margin Clearinghouse
 → Your Margin Account`,
     filename: 'claim-settlement-funding-path.svg',
     title: 'Claim-settlement funding path',
-    alt: 'Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account.',
-    description: 'Claim settlement moves covered HousePool cash through the Margin Clearinghouse and credits the claim-owning Trading Account’s Margin Account.',
-    labels: ['HousePool', 'Margin Clearinghouse', 'Your Margin Account'],
+    alt: 'Funding path from the liquidity pool through the Margin Clearinghouse to the trader Margin Account.',
+    description: 'Claim settlement moves covered pool cash through the Margin Clearinghouse and credits the claim-owning Trading Account’s Margin Account.',
+    labels: ['Liquidity pool', 'Margin Clearinghouse', 'Your Margin Account'],
     kinds: ['pool', 'neutral', 'account'],
     rankdir: 'LR',
   }),

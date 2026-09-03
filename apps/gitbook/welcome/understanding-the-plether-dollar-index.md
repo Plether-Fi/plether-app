@@ -283,7 +283,7 @@ Positions opened away from 1.00 use the remaining distance to their correspondin
 
 The cap makes every position’s maximum gross directional payout calculable.
 
-Before accepting additional exposure, Plether can determine the largest amount the HousePool could owe if the market moves fully in the trader’s favor. If the pool cannot support that obligation, the trade is rejected.
+Before accepting additional exposure, Plether can determine the largest amount the liquidity pool could owe if the market moves fully in the trader’s favor. If the pool cannot support that obligation, the trade is rejected.
 
 This is the foundation of Plether’s bounded-liability model.
 
@@ -330,7 +330,7 @@ The exact schedule and available actions are documented under **Market hours and
 
 ### Why LPs should understand the index
 
-Liquidity providers do not choose LONG USD or SHORT USD. The HousePool backs the aggregate positions opened by traders.
+Liquidity providers do not choose LONG USD or SHORT USD. The liquidity pool backs the aggregate positions opened by traders.
 
 The direction and size of those positions determine which dollar moves create liabilities for the pool:
 
@@ -381,4 +381,4 @@ Users should rely on the active oracle configuration and deployment reference ra
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.

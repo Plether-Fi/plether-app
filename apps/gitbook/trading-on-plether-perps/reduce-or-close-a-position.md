@@ -49,7 +49,7 @@ Exposure that exists only as a pending opening order cannot be reduced yet. Wait
 
 Risk-reducing close orders remain available during normal trading, FAD-only[^fad] close windows, `oracleFrozen`, degraded mode and router pause. Usable oracle[^oracle] data, execution-reward backing and the ordinary close validations are still required.
 
-![Open position and close context](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Existing position fields before composing a reduction](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### 1. Choose the amount in the trade ticket
 
@@ -116,7 +116,7 @@ When the selector is available, choosing `Infinity` for Max slippage shows `Mark
 
 ### 3. Review the close preview
 
-The preview estimates the order using the current account, oracle and HousePool state. Execution recalculates it after all earlier FIFO[^fifo] orders have been processed.
+The preview estimates the order using the current account, oracle and pool state. Execution recalculates it after all earlier FIFO[^fifo] orders have been processed.
 
 The current `Commit Preview` lets you review:
 
@@ -348,7 +348,7 @@ The active parameter is timelocked, must remain nonzero and cannot exceed `1,000
 
 ### Immediate payout or trader claim
 
-When a close produces a fresh payment from the HousePool, Plether checks physical settlement liquidity after reserving cash for existing trader claims.
+When a close produces a fresh payment from the liquidity pool, Plether checks physical settlement liquidity after reserving cash for existing trader claims.
 
 The fresh payment follows one complete path:
 
@@ -357,7 +357,7 @@ The fresh payment follows one complete path:
 
 A new payment is not split between immediate settlement and a claim.
 
-Released position margin comes from the trader’s existing collateral. After losses and costs have been deducted, the remainder returns to the free Margin Account independently of HousePool payout liquidity.
+Released position margin comes from the trader’s existing collateral. After losses and costs have been deducted, the remainder returns to the free Margin Account independently of liquidity pool payout liquidity.
 
 A trader claim remains outside Available to Trade, account equity and Withdrawable until it is settled. Settlement credits the Margin Account; withdrawal remains a separate action.
 
@@ -460,7 +460,7 @@ Position margin:               1,500 USDC
 
 The execution reward reserved at commitment is separate from these figures.
 
-If HousePool liquidity cannot cover the fresh `79.04 USDC` payment, the released `500 USDC` returns to the Margin Account and `79.04 USDC` becomes a trader claim.
+If pool liquidity cannot cover the fresh `79.04 USDC` payment, the released `500 USDC` returns to the Margin Account and `79.04 USDC` becomes a trader claim.
 
 ### Check the result
 
@@ -475,7 +475,7 @@ After a full close, confirm:
 * The realized close result appears in **Transaction History**.
 * Final execution costs are recorded in the lifecycle window’s **Final Result** and onchain transaction. Any frozen-spread amount in **Final Result** is an estimate; use the executed transaction and `FrozenCloseSpreadSettled` event for the authoritative assessed, paid and waived amounts.
 * The Margin Account reflects released margin and any complete fresh payout funded immediately.
-* If HousePool liquidity cannot fund that complete fresh payout, it appears in full as a trader claim instead.
+* If pool liquidity cannot fund that complete fresh payout, it appears in full as a trader claim instead.
 * Remaining pending orders still match your intended exposure.
 
 ### Before confirming
@@ -494,10 +494,10 @@ After a full close, confirm:
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^bps]: Basis points; 100 bps equals 1%.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

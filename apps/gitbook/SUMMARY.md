@@ -44,6 +44,6 @@
 * [How PnL is calculated](how-plether-works/how-pnl-is-calculated.md)
 * [Margin, leverage and liquidation](how-plether-works/margin-leverage-and-liquidation.md)
 * [Trading costs: fees, carry and VPI](how-plether-works/trading-costs-fees-carry-and-vpi.md)
-* [The HousePool and tranche waterfall](how-plether-works/the-housepool-and-tranche-waterfall.md)
+* [The liquidity pool and tranche waterfall](how-plether-works/the-liquidity-pool-and-tranche-waterfall.md)
 * [Market states and oracle closures](how-plether-works/market-states-and-oracle-closures.md)
 * [Settlement liquidity and trader claims](how-plether-works/settlement-liquidity-and-trader-claims.md)

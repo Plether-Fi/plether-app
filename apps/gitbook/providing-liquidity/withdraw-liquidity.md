@@ -78,7 +78,7 @@ Conceptually:
 
 ```
 Available LP liquidity
-= physical HousePool assets
+= physical pool assets
 − protected trader and protocol reserves
 ```
 
@@ -93,7 +93,7 @@ After protected obligations are accounted for:
 
 This is why Junior can show positive share value while a matured request remains **Waiting for USDC**. Senior priority is relative, not a guaranteed Senior payout at the first eligible hour.
 
-For the complete accounting model, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall).
+For the complete accounting model, see [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#the-withdrawal-firewall).
 
 ### 5. Check the one-hour cooldown
 
@@ -114,7 +114,7 @@ Several states affect submission and processing differently.
 | State | New withdrawal request | Funding at hourly processing | Existing actions |
 | --- | --- | --- | --- |
 | **Hourly processing paused** | Still allowed when the holder limit and quote permit | No new USDC is allocated until processing resumes | Ready funds can be moved; eligible requests can be cancelled; returnable funds or shares can be claimed |
-| **HousePool safety pause** | Still allowed when the holder limit and quote permit | Follow **New withdrawal funding** and the request status | The pause blocks new deposits, not the protective withdrawal controls by itself |
+| **Liquidity-pool safety pause** | Still allowed when the holder limit and quote permit | Follow **New withdrawal funding** and the request status | The pause blocks new deposits, not the protective withdrawal controls by itself |
 | **Safety restrictions active** (degraded mode) | Still allowed by the interface when the holder limit and quote permit | No new USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode | Deposit requests are blocked; already-funded withdrawal actions remain available |
 | **Live pricing unavailable** (`oracleFrozen`) | Can remain available under the bounded frozen-pricing rules | The current quote can include a temporary tranche-specific fee; later fee or price changes affect the final USDC from the fixed queued shares | Deposits are unavailable; wait for live pricing when the withdrawal is not urgent |
 
@@ -136,7 +136,7 @@ A close-only trading schedule does not by itself activate this fee. If accepted 
 
 ![Withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png)
 
-The request transaction targets the selected Tranche Vault and locks the quoted shares. Do not send shares to the HousePool, Margin Clearinghouse or an unknown contract.
+The request transaction targets the selected Tranche Vault and locks the quoted shares. Do not send shares to the liquidity pool, Margin Clearinghouse or an unknown contract.
 
 ### 8. Monitor or cancel the queued request
 
@@ -161,7 +161,7 @@ After each action, verify the transaction on Arbiscan, the remaining request sta
 
 ### If funding takes longer than expected
 
-Do not cancel and resubmit after the request has become **Waiting for USDC**; the ordinary cancellation action is no longer available. Funding can improve as trader liabilities are released, cash enters the HousePool or valid pricing returns. Paying a trader claim from existing HousePool cash reduces cash and the claim together; it does not by itself create net LP withdrawal liquidity.
+Do not cancel and resubmit after the request has become **Waiting for USDC**; the ordinary cancellation action is no longer available. Funding can improve as trader liabilities are released, cash enters the liquidity pool or valid pricing returns. Paying a trader claim from existing pool cash reduces cash and the claim together; it does not by itself create net LP withdrawal liquidity.
 
 There is no guaranteed funding date. Junior requests can wait longer because Senior is funded first. Use [**LP troubleshooting**](lp-troubleshooting.md) if the request status or available action does not match the expected lifecycle.
 
@@ -183,4 +183,4 @@ Before queuing:
 LP withdrawals can be delayed or partially funded; a zero-value remainder can be returned, and vault shares can lose value while a request waits. Review [**LP risks and safeguards**](lp-risks-and-safeguards.md) before treating tranche value as available cash.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.

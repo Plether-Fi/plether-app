@@ -10,7 +10,7 @@ export const DOCS_LINKS = {
     title: 'Why the raw basket moves opposite to the dollar',
   },
   poolLiquidity: {
-    href: `${DOCS_BASE_URL}/how-plether-works/the-housepool-and-tranche-waterfall`,
+    href: `${DOCS_BASE_URL}/how-plether-works/the-liquidity-pool-and-tranche-waterfall`,
     title: 'How the shared pool protects Senior and Junior vaults',
   },
   marketCostOfCarry: {

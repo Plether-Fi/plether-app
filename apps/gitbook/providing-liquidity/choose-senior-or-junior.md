@@ -7,7 +7,7 @@ Plether LPs[^lp] supply USDC[^usdc] through one of two ERC-4626[^erc4626] tranch
 * The **Senior Vault**, represented by `psLP` shares
 * The **Junior Vault**, represented by `pjLP` shares
 
-The vaults are different claims on the same HousePool. They are not separate strategies or separate pools of market risk.
+The vaults are different claims on the same liquidity pool. They are not separate strategies or separate pools of market risk.
 
 > **Use the Vaults page for LP actions**
 >
@@ -32,14 +32,14 @@ The vaults are different claims on the same HousePool. They are not separate str
 
 ### What choosing Senior means
 
-Senior is the last-loss LP tranche. Junior principal absorbs HousePool losses first. If a loss is larger than the remaining Junior principal, Senior principal also falls.
+Senior is the last-loss LP tranche. Junior principal absorbs pool losses first. If a loss is larger than the remaining Junior principal, Senior principal also falls.
 
 Senior receives a configured target coupon. That coupon is:
 
 * transferred from available Junior principal;
 * limited by the amount Junior can fund;
 * not a guaranteed APY[^apy];
-* not external yield or new HousePool revenue;
+* not external yield or new pool revenue;
 * not converted into an accumulating debt claim when it goes unpaid.
 
 When paid, coupon becomes part of Senior principal. While Senior is unimpaired, it also raises Senior's protected high-water mark. If Senior later falls below that mark, future reconciled LP-owned value restores Senior toward it before Junior receives more residual value.
@@ -53,13 +53,13 @@ Junior is the first-loss and residual-return tranche.
 Junior principal:
 
 * funds the Senior target coupon;
-* absorbs reconciled HousePool losses before Senior;
+* absorbs reconciled pool losses before Senior;
 * receives ordinary residual LP-owned value once any Senior impairment has been restored;
 * is funded only after matured Senior withdrawal demand is cleared, subject to free cash, Junior principal and the governed Senior-share ratio.
 
 This creates more variable economics. Junior may benefit more from residual trading revenue, but coupon transfers, the annual vault fee and losses can reduce its share value even while Senior remains unimpaired. The interface displays the live annual fee and accrued fee shares; issuing those fee shares dilutes existing Junior holders.
 
-A sufficiently large loss can reduce Junior accounting value to zero while Senior still retains value. Ordinary deposits cannot silently revive a wiped tranche; recovery requires reconciled HousePool/LP-owned value allocated through the waterfall or explicit recapitalization that preserves existing ownership rights. A positive marked receivable can affect NAV but is not withdrawal cash until collected.
+A sufficiently large loss can reduce Junior accounting value to zero while Senior still retains value. Ordinary deposits cannot silently revive a wiped tranche; recovery requires reconciled LP-owned value allocated through the waterfall or explicit recapitalization that preserves existing ownership rights. A positive marked receivable can affect NAV but is not withdrawal cash until collected.
 
 ### Decide by the outcome you must be able to accept
 
@@ -82,7 +82,7 @@ If you require guaranteed principal, a fixed return or access to all of your cap
 
 “Senior” describes priority relative to Junior. It does not place Senior ahead of traders.
 
-Before LP cash can leave, Plether reserves HousePool assets for bounded live-position liability, existing trader claims and other protected amounts. Trader claims rank ahead of both vaults.
+Before LP cash can leave, Plether reserves pool assets for bounded live-position liability, existing trader claims and other protected amounts. Trader claims rank ahead of both vaults.
 
 The remaining free LP liquidity is then allocated by tranche priority:
 
@@ -91,7 +91,7 @@ The remaining free LP liquidity is then allocated by tranche priority:
 
 Positive NAV[^nav] is therefore not a promise of immediate redemption. A Junior position can retain positive value while its current withdrawal capacity is zero. Senior can also have less withdrawable USDC than accounting value.
 
-See [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md) for the trader-priority rules and [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md) for the complete withdrawal firewall.
+See [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md) for the trader-priority rules and [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) for the complete withdrawal firewall.
 
 ### Review the live state before deciding
 
@@ -116,11 +116,11 @@ Treat **7d realized APY**, **7d return** and the share-price chart as historical
 * **“Junior has the higher displayed APY, so it is better.”** Return must be read alongside first-loss and withdrawal subordination.
 * **“A lower share price is cheaper.”** Senior and Junior have separate share supplies and accounting principals; their prices are not directly comparable.
 * **“Available liquidity is what I can withdraw.”** Pool-level liquidity is only one input to **Estimated withdrawal liquidity** and your holder-specific **Shares available to withdraw**.
-* **“Splitting between both vaults removes protocol risk.”** Both claims depend on the same HousePool, contracts, oracle and USDC.
+* **“Splitting between both vaults removes protocol risk.”** Both claims depend on the same liquidity pool, contracts, oracle and USDC.
 
-Before depositing, continue to [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md) and [**LP risks and safeguards**](lp-risks-and-safeguards.md). For the full accounting mechanics, use [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md) as the canonical reference.
+Before depositing, continue to [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md) and [**LP risks and safeguards**](lp-risks-and-safeguards.md). For the full accounting mechanics, use [**The liquidity pool and tranche waterfall**](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) as the canonical reference.
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.

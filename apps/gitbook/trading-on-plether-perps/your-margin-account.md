@@ -31,7 +31,7 @@ The current interface places related values in several locations:
 | **Withdrawable**            | Margin Account card                 | The maximum amount that can currently reach the owner wallet           |
 | **Position margin**         | `Edit Position Margin`              | USDC assigned to the open position                                     |
 | **Owner/Trading balances**  | Deposit or withdrawal modal         | USDC held outside the Margin Account                                   |
-| **Trader claim**            | Separate card, when a claim exists  | A HousePool obligation owed to the Trading Account                     |
+| **Trader claim**            | Separate card, when a claim exists  | A pool obligation owed to the Trading Account                     |
 
 Pending-order margin and reserved execution rewards are internal account buckets, but the current Margin Account card does not show their aggregate values. **Open Orders** shows which commitments are active.
 
@@ -57,7 +57,7 @@ Assigning margin or committing an order moves USDC between these buckets. The ac
 * Trading fees and VPI
 * Realized carry
 * Realized trading losses
-* HousePool payouts
+* Pool-funded payouts
 * Settled trader claims
 * Execution reward payments
 
@@ -204,7 +204,7 @@ Adding margin is immediate and bypasses the delayed order queue. It remains avai
 
 Position margin leaves the assigned bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remainder. Close settlement can then consume some or all of that released amount before any balance remains free.
 
-![Current Edit Position Margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
+![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to Trade and Withdrawable
 
@@ -285,11 +285,11 @@ Account movement
 + net close economics
 ```
 
-Released position margin follows separately. The complete fresh HousePool-funded payout is credited immediately when physical HousePool cash can cover it after protecting existing trader claims. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
+Released position margin follows separately. The complete fresh pool-funded payout is credited immediately when physical pool cash can cover it after protecting existing trader claims. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
 
 ### Trader claims
 
-A trader claim records a fixed USDC obligation owed to the Trading Account by the HousePool.
+A trader claim records a fixed USDC obligation owed to the Trading Account by the liquidity pool.
 
 While unsettled, the claim remains outside:
 
@@ -299,7 +299,7 @@ While unsettled, the claim remains outside:
 * Account health
 * Withdrawable
 
-Claim settlement becomes available once the HousePool has enough physical cash to cover aggregate trader claims. Settlement credits the account’s complete claim balance; partial claim servicing is unavailable.
+Claim settlement becomes available once the liquidity pool has enough physical cash to cover aggregate trader claims. Settlement credits the account’s complete claim balance; partial claim servicing is unavailable.
 
 The flow is:
 
@@ -347,7 +347,7 @@ Exposure:             unchanged
 
 Any carry accrued before the margin addition is collected first.
 
-When the position closes, its remaining margin is released separately. The complete fresh HousePool-funded payout is then either credited to the Margin Account or recorded in full as a trader claim, depending on HousePool settlement liquidity.
+When the position closes, its remaining margin is released separately. The complete fresh pool-funded payout is then either credited to the Margin Account or recorded in full as a trader claim, depending on pool settlement liquidity.
 
 ### Common account situations
 
@@ -363,9 +363,9 @@ When the position closes, its remaining margin is released separately. The compl
 | A pending close exists while health continues to decline                 | Exposure and carry remain active until the close executes                    |
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.

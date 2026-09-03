@@ -220,7 +220,7 @@ Sponsorship covers the operation that commits the order. Execution is a separate
 
 It covers eligible network gas. Execution fees, VPI, carry, execution rewards and the frozen-close spread continue to be accounted for in USDC.
 
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.

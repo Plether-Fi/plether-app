@@ -12,7 +12,7 @@ On the current Arbitrum Sepolia deployment, the connected owner wallet and its P
 
 `Trading Account MockUSDC → Margin Account → Sponsored order commitment → Open position → Closed settlement → Margin Account credit or trader claim → Owner wallet after withdrawal`
 
-Closing a position does not send funds directly to the owner wallet. Released margin and any fully funded fresh payout first credit the Trading Account’s Margin Account. If the HousePool cannot fund the complete fresh payout immediately, that payout is recorded in full as a trader claim and reaches the Margin Account only after claim settlement. You withdraw separately.
+Closing a position does not send funds directly to the owner wallet. Released margin and any fully funded fresh payout first credit the Trading Account’s Margin Account. If the liquidity pool cannot fund the complete fresh payout immediately, that payout is recorded in full as a trader claim and reaches the Margin Account only after claim settlement. You withdraw separately.
 
 ### Before you begin
 
@@ -257,11 +257,11 @@ A reduction or close is still:
 
 Partial reductions must satisfy the current minimum-order and remaining-position rules. A complete residual close may be permitted even when the remaining amount is below the ordinary minimum.
 
-When the close executes, released margin follows the normal Margin Account path. The complete fresh HousePool-funded payout is either credited to the Margin Account immediately in full or recorded in full as a trader claim. Neither outcome sends USDC directly to the owner wallet.
+When the close executes, released margin follows the normal Margin Account path. The complete fresh pool-funded payout is either credited to the Margin Account immediately in full or recorded in full as a trader claim. Neither outcome sends USDC directly to the owner wallet.
 
 > **Trader claims**
 >
-> In an exceptional cash-shortfall scenario, released position margin follows the normal account path, while the complete fresh HousePool-funded payout is either credited immediately in full or recorded in full as a **trader claim**. Plether never splits one fresh payout between an immediate credit and a new claim.
+> In an exceptional cash-shortfall scenario, released position margin follows the normal account path, while the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a **trader claim**. Plether never splits one fresh payout between an immediate credit and a new claim.
 >
 > A trader claim is a protocol liability owned by the Trading Account. It is not wallet USDC and cannot be treated as available margin until settled. See [**Check and settle a trader claim**](trading-on-plether-perps/check-and-settle-a-trader-claim.md) for the complete settlement process and liquidity conditions.
 
@@ -316,7 +316,7 @@ Before selecting `Confirm Commit`:
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.

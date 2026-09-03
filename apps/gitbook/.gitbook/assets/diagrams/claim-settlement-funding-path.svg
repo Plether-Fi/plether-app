@@ -4,7 +4,7 @@
 <svg role="img" aria-labelledby="claim-settlement-funding-path-title claim-settlement-funding-path-description" focusable="false" width="707pt" height="148pt"
  viewBox="0.00 0.00 707.00 148.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <title id="claim-settlement-funding-path-title">Claim-settlement funding path</title>
-<desc id="claim-settlement-funding-path-description">Claim settlement moves covered HousePool cash through the Margin Clearinghouse and credits the claim-owning Trading Account’s Margin Account.</desc>
+<desc id="claim-settlement-funding-path-description">Claim settlement moves covered pool cash through the Margin Clearinghouse and credits the claim-owning Trading Account’s Margin Account.</desc>
 <style>text { font-family: "Uncut Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }</style>
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(27.36 120.7)">
 <title>diagram</title>
@@ -13,10 +13,10 @@
 <!-- n1 -->
 <g id="node1" class="node">
 <title>n1</title>
-<g id="a_node1"><a xlink:title="HousePool">
+<g id="a_node1"><a xlink:title="Liquidity pool">
 <path fill="#3b212d" stroke="#ffab96" stroke-width="1.6" d="M180,-51.39C180,-54.02 139.66,-56.16 90,-56.16 40.34,-56.16 0,-54.02 0,-51.39 0,-51.39 0,-8.45 0,-8.45 0,-5.82 40.34,-3.68 90,-3.68 139.66,-3.68 180,-5.82 180,-8.45 180,-8.45 180,-51.39 180,-51.39"/>
 <path fill="none" stroke="#ffab96" stroke-width="1.6" d="M180,-51.39C180,-48.75 139.66,-46.62 90,-46.62 40.34,-46.62 0,-48.75 0,-51.39"/>
-<text xml:space="preserve" text-anchor="middle" x="90" y="-24.67" font-family="Arial" font-size="15.00" fill="#fff5f9">HousePool</text>
+<text xml:space="preserve" text-anchor="middle" x="90" y="-24.67" font-family="Arial" font-size="15.00" fill="#fff5f9">Liquidity pool</text>
 </a>
 </g>
 </g>

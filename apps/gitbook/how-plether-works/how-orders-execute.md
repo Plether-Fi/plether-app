@@ -177,7 +177,7 @@ This prevents a keeper from choosing orders based on:
 * Size
 * Expected profitability
 * Execution reward
-* Whether the result is favourable to the trader or the HousePool
+* Whether the result is favourable to the trader or the liquidity pool
 
 Several consecutive orders may be processed together, but batching does not change their order.
 
@@ -232,7 +232,7 @@ Plether distinguishes five different quantities.
 | Central index price | The neutral oracle-derived Plether Dollar Index value                                                   |
 | Execution price     | The policy-adjusted oracle price: adverse during live/FAD execution and unshifted for frozen voluntary closes |
 | Execution limit     | The trader’s acceptable-price boundary                                                                  |
-| VPI                 | A separate USDC charge or rebate based on HousePool imbalance                                           |
+| VPI                 | A separate USDC charge or rebate based on pool imbalance                                           |
 | Frozen-close spread | A separate LP-owned USDC charge on reduced notional for voluntary closes executed during `oracleFrozen` |
 
 The displayed Plether Dollar Index is:
@@ -315,7 +315,7 @@ It does not directly cap:
 * The execution reward
 * Network or oracle fees
 
-VPI depends on HousePool depth and directional imbalance when the order executes. It may therefore differ from the commitment preview even when the oracle price barely changes.
+VPI depends on pool depth and directional imbalance when the order executes. It may therefore differ from the commitment preview even when the oracle price barely changes.
 
 The frozen-close spread is a separate fixed settlement charge. The execution limit does not cap it or guarantee a maximum all-in close cost.
 
@@ -333,7 +333,7 @@ For an opening or increase, this includes:
 * Position-size rules
 * Directional imbalance
 * Available side capacity
-* HousePool solvency
+* Pool solvency
 * Current market mode
 
 For a reduction or close, settlement can include:
@@ -597,8 +597,8 @@ Plether does not promise instant execution. It provides rule-bound execution: gl
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.

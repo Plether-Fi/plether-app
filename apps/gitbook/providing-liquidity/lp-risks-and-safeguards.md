@@ -10,11 +10,11 @@ Plether uses solvency checks, a Senior–Junior waterfall, conservative accounti
 >
 > The current test configuration targets Arbitrum Sepolia and uses the connected owner wallet. LP approvals, deposits, withdrawals, cancellations, claims and refunds are ordinary wallet transactions. They are not Plether Trading Account-sponsored actions and require Arbitrum Sepolia ETH for gas.
 
-![Junior Vault risk safeguards and shared pool status.](../.gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-house-pool.png)
+![Current Junior Vault overview section with pool status and safeguards](../.gitbook/assets/screenshots/storybook-documentation-vaults--junior-overview-section.png)
 
 ### Start with the economic risk
 
-The HousePool is the USDC[^usdc] balance sheet behind Plether Perps[^perps]. LP[^lp] capital can be used to pay profitable traders, fund VPI[^vpi] rebates and absorb bad debt. Collectible marked or collected trader losses, collected carry[^carry], positive VPI, paid frozen-close spread, the LP remainder of a collected liquidation charge and temporary withdrawal pricing fees can add accounting or physical value to the pool or a tranche.
+The liquidity pool is the USDC[^usdc] balance sheet behind Plether Perps[^perps]. LP[^lp] capital can be used to pay profitable traders, fund VPI[^vpi] rebates and absorb bad debt. Collectible marked or collected trader losses, collected carry[^carry], positive VPI, paid frozen-close spread, the LP remainder of a collected liquidation charge and temporary withdrawal pricing fees can add accounting or physical value to the pool or a tranche.
 
 This creates a direct tradeoff:
 
@@ -23,7 +23,7 @@ This creates a direct tradeoff:
 * Senior and Junior take those changes in a different order, but neither tranche is protected from every loss.
 * Accounting value can remain positive while cash is unavailable to fund a withdrawal request.
 
-Read [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md) for the canonical accounting model.
+Read [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md) for the canonical accounting model.
 
 ### Safeguards are controls, not guarantees
 
@@ -31,11 +31,11 @@ Read [The HousePool and tranche waterfall](../how-plether-works/the-housepool-an
 | --- | --- | --- |
 | **Fixed `0.00–2.00` settlement range** | Makes the maximum modeled directional payout of the Plether index calculable | That component FX prices are bounded, or that non-directional losses and failures are bounded |
 | **Entry solvency check** | Rejects new trader exposure when effective backing would not cover the resulting maximum modeled liability plus the configured liability-scaled settlement buffer | That LP principal cannot decline, bad debt is impossible or every obligation is immediately payable |
-| **Physical-asset accounting** | Uses conservative HousePool assets and keeps unassigned transfers outside ordinary tranche value until reconciliation | That USDC remains worth one dollar or that token, chain and contract failures cannot occur |
+| **Physical-asset accounting** | Uses conservative pool assets and keeps unassigned transfers outside ordinary tranche value until reconciliation | That USDC remains worth one dollar or that token, chain and contract failures cannot occur |
 | **Terminal NAV reconciliation** | Uses one exact signed snapshot: marked gains reduce LP NAV and collectible marked losses can raise it only up to collateral and claim caps | That accounting NAV is physical withdrawal cash or an exact future receipt |
 | **Junior first-loss position** | Makes Junior absorb pool losses before Senior | Principal protection for Senior or a limit on Junior loss |
 | **Senior restoration priority** | Routes future reconciled LP-owned value toward an impaired Senior tranche before new residual value reaches Junior | That Senior will be restored or when restoration will occur |
-| **Protected liquidity** | Keeps cash reserved for trader withdrawals and other protected payments inside the HousePool | Immediate or unconditional LP withdrawals |
+| **Protected liquidity** | Keeps cash reserved for trader withdrawals and other protected payments inside the liquidity pool | Immediate or unconditional LP withdrawals |
 | **Hourly request processing** | Prices deposits and funds withdrawals at controlled hourly boundaries | A fixed request-time conversion, exact processing at the displayed time or sufficient cash for every withdrawal |
 | **Cancellation and recovery actions** | Let users use ordinary UI cancellation before processing or recover refundable USDC or zero-value share remainders | Ordinary cancellation after the processing boundary or automatic movement of ready assets into the owner wallet; the contract retains narrow mature-deposit escape paths for a rejected epoch, projected terminal wipe, Senior impairment or invalid Senior reservation |
 | **Temporary withdrawal pricing fee** | Retains value inside the selected tranche when an eligible withdrawal is funded without live pricing | Full compensation for external FX moves or action availability after accepted data becomes too old |
@@ -46,7 +46,7 @@ The fixed settlement range and solvency check are admission controls. If an admi
 
 ### Principal-loss risk differs by tranche
 
-Senior and Junior are tranche[^tranche] claims on the same HousePool, not isolated pools.
+Senior and Junior are tranche[^tranche] claims on the same liquidity pool, not isolated pools.
 
 | | Senior Vault | Junior Vault |
 | --- | --- | --- |
@@ -127,7 +127,7 @@ The cooldown is a holder-level restriction, not an accounting loss. **Current va
 
 ### Share value is not withdrawal liquidity
 
-An ERC-4626[^erc4626] share represents a proportional claim on one tranche's accounting value. It is not an unconditional claim on the same fraction of the HousePool's raw USDC balance.
+An ERC-4626[^erc4626] share represents a proportional claim on one tranche's accounting value. It is not an unconditional claim on the same fraction of the liquidity pool's raw USDC balance.
 
 Before LP cash can be allocated, Plether protects value for:
 
@@ -140,7 +140,7 @@ Trader claims rank ahead of both LP tranches. After those obligations determine 
 
 Read these current labels as distinct measurements:
 
-* **Total pool funds** — canonical physically backed pool depth: the smaller of raw HousePool assets and accounted assets, excluding quarantined excess; it is not an LP withdrawal limit.
+* **Total pool funds** — canonical physically backed pool depth: the smaller of raw pool assets and accounted assets, excluding quarantined excess; it is not an LP withdrawal limit.
 * **Reserved funds** or **Reserved for trader withdrawals** — protected amounts that are not free LP cash.
 * **Available liquidity** — pool cash after protected amounts.
 * **Current vault value** — accounting value of the selected tranche.
@@ -156,7 +156,7 @@ Plether uses one exact signed, collateral-capped Terminal NAV snapshot for entry
 
 * Marked trader gains reduce distributable LP value because they are potential pool liabilities.
 * Marked trader losses can increase LP value only up to the collectible amount backed by pledged collateral and eligible same-account claims.
-* That positive marked receivable is not physical HousePool cash and does not increase free withdrawal liquidity until collected.
+* That positive marked receivable is not physical pool cash and does not increase free withdrawal liquidity until collected.
 
 This keeps accounting share value distinct from the cash that can safely leave now.
 
@@ -168,7 +168,7 @@ Read [Understand LP returns and share value](understand-lp-returns-and-share-val
 
 ### Directional and model risk remain with LPs
 
-LPs do not select LONG USD or SHORT USD, but the HousePool takes the economic other side of aggregate trader exposure.
+LPs do not select LONG USD or SHORT USD, but the liquidity pool takes the economic other side of aggregate trader exposure.
 
 * A LONG USD-heavy market creates greater pool liability when the dollar index strengthens.
 * A SHORT USD-heavy market creates greater pool liability when the index weakens.
@@ -263,8 +263,8 @@ For the broader protocol risk model, read [Risks you should understand first](..
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.

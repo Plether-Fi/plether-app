@@ -161,7 +161,7 @@ A keeper's authority begins and ends with submitting calls that anyone may submi
 
 That is the core design: **open execution, constrained by onchain verification.**
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^pyth]: Plether's external price-data provider for the six currency feeds used to calculate its index.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.

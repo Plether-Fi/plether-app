@@ -34,7 +34,7 @@ This lets Plether calculate the maximum gross directional payout of every positi
 * LONG USD cannot accrue directional profit below a raw basket mark of 0.00.
 * SHORT USD cannot accrue directional profit above a raw basket mark of 2.00.
 
-Before accepting a trade that increases risk, Plether checks whether physically backed HousePool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability plus the configured liability-scaled settlement buffer.
+Before accepting a trade that increases risk, Plether checks whether physically backed pool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability plus the configured liability-scaled settlement buffer.
 
 This is an admission rule. It does not guarantee that:
 
@@ -49,7 +49,7 @@ This is an admission rule. It does not guarantee that:
 
 The solvency check depends on correct code, correct accounting, valid oracle[^oracle] data and functioning external infrastructure.
 
-A profitable close can complete even when its complete fresh HousePool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
+A profitable close can complete even when its complete fresh pool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient pool cash is available.
 
 ### No counterparty ADL does not mean no forced exit
 
@@ -70,9 +70,9 @@ The distinction is simple:
 
 | Event                                    | First affected                         | What happens next                                                                      |
 | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| A trader loses                           | The trader’s reachable USDC collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by HousePool capital |
-| A trader profits                         | Available HousePool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
-| The HousePool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
+| A trader loses                           | The trader’s reachable USDC collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by pool capital |
+| A trader profits                         | Available pool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
+| The liquidity pool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
 | A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new trader risk and new LP deposits; eligible LP withdrawal requests may still queue, but no new withdrawal USDC is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. |
 
@@ -101,7 +101,7 @@ A directionally correct position can still lose money if its gain does not excee
 
 Plether uses full liquidation rather than partial liquidation.
 
-Once a position becomes liquidatable, the entire position can be closed. Reachable collateral pays the trading loss and liquidation bounty. An existing claim belonging to the same Trading Account can then be netted against a terminal shortfall before any remainder becomes HousePool bad debt. Any positive residual remains attributable to the trader.
+Once a position becomes liquidatable, the entire position can be closed. Reachable collateral pays the trading loss and liquidation bounty. An existing claim belonging to the same Trading Account can then be netted against a terminal shortfall before any remainder becomes pool bad debt. Any positive residual remains attributable to the trader.
 
 There is no partial-liquidation process that reduces an oversized position and leaves the remainder open.
 
@@ -109,7 +109,7 @@ There is no partial-liquidation process that reduces an oversized position and l
 
 Do not assume that the margin figure displayed beside a position is always the maximum USDC that can be reached during terminal settlement.
 
-Plether uses account-level USDC accounting. Health is not calculated from assigned position margin alone: generic health and withdrawal checks include active position margin plus eligible free USDC belonging to the same account, while excluding other locked buckets. Terminal full-close and liquidation paths can reach additional eligible locked balances under explicit reservation rules before passing a deficit to the HousePool.
+Plether uses account-level USDC accounting. Health is not calculated from assigned position margin alone: generic health and withdrawal checks include active position margin plus eligible free USDC belonging to the same account, while excluding other locked buckets. Terminal full-close and liquidation paths can reach additional eligible locked balances under explicit reservation rules before passing a deficit to the liquidity pool.
 
 A trader claim is not generic collateral and cannot normally be reused as immediately spendable margin, although it can be netted under terminal settlement rules.
 
@@ -124,7 +124,7 @@ Carry can:
 * Reduce position equity over time
 * Bring a position closer to liquidation
 * Continue accruing while the oracle is stale or frozen
-* Change with HousePool utilization
+* Change with pool utilization
 * Change after timelocked risk-parameter updates
 * Affect both LONG USD and SHORT USD simultaneously
 
@@ -162,7 +162,7 @@ Execution and final trade economics depend on:
 * The protocol execution fee
 * The execution reward
 
-Virtual price impact depends on HousePool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
+Virtual price impact depends on pool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
 
 During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies. A partial close must settle the full spread; any uncollectible portion on a terminal full close is waived rather than converted into bad debt.
 
@@ -200,7 +200,7 @@ Traders are responsible for reducing exposure or adding collateral before the st
 
 A profitable close does not always produce immediately withdrawable USDC.
 
-Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
+Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
 
 A trader claim is:
 
@@ -240,7 +240,7 @@ This section summarizes the shared risk model. Before depositing, use [LP risks 
 
 ### LPs are the economic counterparty
 
-The HousePool backs trader payouts.
+The liquidity pool backs trader payouts.
 
 LP return is compensation for underwriting that liability. It is not risk-free yield and does not come from a guaranteed external revenue source.
 
@@ -267,7 +267,7 @@ Junior can be impaired or wiped out by:
 * Bad debt beyond reachable trader collateral
 * Senior coupon transfers
 * Oracle or accounting failures
-* Other losses affecting HousePool backing
+* Other losses affecting pool backing
 
 Junior receives residual upside because it occupies the first-loss position.
 
@@ -292,7 +292,7 @@ Senior capital can be impaired after Junior value is exhausted.
 
 ### Directional-skew risk
 
-LPs do not choose LONG USD or SHORT USD, but the HousePool takes the other side of aggregate trader exposure.
+LPs do not choose LONG USD or SHORT USD, but the liquidity pool takes the other side of aggregate trader exposure.
 
 If open positions become concentrated:
 
@@ -311,7 +311,7 @@ An LP share is not the same as immediately withdrawable USDC.
 Withdrawals depend on:
 
 * Holder cooldowns
-* Available HousePool cash
+* Available pool cash
 * Reserved trader liabilities
 * Outstanding trader claims
 * Current solvency
@@ -344,7 +344,7 @@ The settlement path is permissionless, and an enabled, healthy keeper can submit
 
 Plether uses one exact signed, collateral-capped Terminal NAV snapshot for both deposit and withdrawal accounting. Marked trader gains reduce LP NAV; marked trader losses can increase it only up to the collectible amount backed by pledged collateral and eligible same-account claims.
 
-That positive marked receivable is accounting value, not physical HousePool cash, and does not increase free withdrawal liquidity until collected. Deposit and withdrawal quotes can still differ because ERC-4626 rounds in different directions and the frozen-oracle fee applies only to withdrawal funding.
+That positive marked receivable is accounting value, not physical pool cash, and does not increase free withdrawal liquidity until collected. Deposit and withdrawal quotes can still differ because ERC-4626 rounds in different directions and the frozen-oracle fee applies only to withdrawal funding.
 
 A displayed share price or historical APY is not a guarantee of future redemption value.
 
@@ -576,18 +576,18 @@ Before interacting:
 3. Delayed oracle execution reduces price-selection risk. It does not remove delay, slippage or infrastructure risk.
 4. Junior absorbs LP losses first. Senior can still be impaired.
 5. Trader claims are senior obligations, but they may not be settled immediately.
-6. LP withdrawals depend on free, unencumbered HousePool cash.
+6. LP withdrawals depend on free, unencumbered pool cash.
 7. Non-upgradeable contracts can still contain defects.
 8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
 9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^fx]: Foreign exchange, the market for trading one currency against another.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^mev]: Maximal extractable value, value obtained by controlling transaction inclusion or ordering.
 [^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
 [^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.

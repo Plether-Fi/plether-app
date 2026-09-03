@@ -72,7 +72,7 @@ The distinction matters because **plDXY Perp exposure** and **Entry notional[^no
 
 The interface handles the conversion into contract quantity. For understanding PnL, the important variable is `Q`: the amount of index exposure whose value changes with price.
 
-![Complete Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
+![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Gross PnL
 
@@ -232,11 +232,11 @@ Positive unrealized PnL is not yet:
 
 * Credited to your Margin Account
 * Withdrawable to your wallet
-* Paid out of the HousePool
+* Paid out of the liquidity pool
 
 Negative unrealized PnL is not yet:
 
-* Collected as HousePool cash
+* Collected as pool cash
 * Realized LP[^lp] revenue
 * Final bad debt
 
@@ -246,8 +246,6 @@ Plether treats the two sides conservatively:
 * Unrealized trader losses are not treated as spendable pool assets.
 
 Settlement is what turns PnL into cash movement, a trader claim or bad debt.
-
-![Unrealized PnL metric and settlement context](../.gitbook/assets/screenshots/storybook-documentation-metric-details--unrealized-pnl.png)
 
 ### Entry price after increasing a position
 
@@ -497,7 +495,7 @@ Portfolio value is not the same as position margin, and Unrealized PnL does not 
 
 ### Profitable closes: cash or trader claim
 
-Released position margin is accounted for separately from the positive net close adjustment. For the complete fresh HousePool-funded payout, Plether checks whether sufficient unreserved cash is available.
+Released position margin is accounted for separately from the positive net close adjustment. For the complete fresh pool-funded payout, Plether checks whether sufficient unreserved cash is available.
 
 The fresh payout follows an all-or-nothing rule: it is either credited immediately in full or recorded in full as a trader claim. Plether does not split it between the two.
 
@@ -505,7 +503,7 @@ The fresh payout follows an all-or-nothing rule: it is either credited immediate
 
 If sufficient cash is available:
 
-1. The HousePool transfers the payout to the Margin Clearinghouse.
+1. The liquidity pool transfers the payout to the Margin Clearinghouse.
 2. The Trading Account’s Margin Account is credited.
 3. The trader may withdraw through the normal withdrawal flow.
 
@@ -518,12 +516,12 @@ If sufficient free cash is not available:
 1. The position still closes.
 2. None of the fresh payout is credited immediately.
 3. Plether records the complete fresh payout as a trader claim.
-4. The claim remains a senior HousePool liability.
+4. The claim remains a senior pool liability.
 5. LP withdrawals remain restricted around that liability.
 
 A claim is not immediately withdrawable USDC.
 
-It becomes settleable once aggregate trader claims are fully covered by physical HousePool cash. Settlement credits the Trading Account’s Margin Account, after which the normal withdrawal process applies.
+It becomes settleable once aggregate trader claims are fully covered by physical pool cash. Settlement credits the Trading Account’s Margin Account, after which the normal withdrawal process applies.
 
 ### Current interface status
 
@@ -541,7 +539,7 @@ In particular:
 
 A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
 
-![Close row and gross Result](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
+![Transaction History close row](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
 
 ### The fixed range bounds gross PnL
 
@@ -600,11 +598,11 @@ The central distinction is simple:
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^roi]: Return on investment, gain or loss expressed relative to the capital invested.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^fx]: Foreign exchange, the market for trading one currency against another.

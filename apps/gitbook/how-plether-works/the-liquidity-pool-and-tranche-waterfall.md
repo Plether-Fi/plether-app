@@ -1,10 +1,10 @@
-# The HousePool and tranche waterfall
+# The liquidity pool and tranche waterfall
 
-The HousePool is the USDC[^usdc] capital base behind Plether Perps[^perps].
+The liquidity pool is the USDC[^usdc] capital base behind Plether Perps[^perps].
 
 It does not set the market price. It does not operate an AMM[^amm] or match traders against one another. The oracle[^oracle] determines price.
 
-The HousePool has a narrower role:
+The liquidity pool has a narrower role:
 
 * underwrite bounded trader payouts;
 * receive collected trader losses, positive VPI[^vpi] and carry[^carry];
@@ -14,11 +14,11 @@ The HousePool has a narrower role:
 
 LPs[^lp] provide this capital through two ERC-4626[^erc4626] vaults: **Senior** and **Junior**.
 
-This page is the canonical reference for HousePool accounting and the tranche waterfall. For step-by-step LP actions, start with the [Liquidity provider quickstart](../liquidity-provider-quickstart.md) or the guides to [deposit liquidity](../providing-liquidity/deposit-liquidity.md), [manage a pending deposit](../providing-liquidity/manage-a-pending-deposit.md) and [withdraw liquidity](../providing-liquidity/withdraw-liquidity.md).
+This page is the canonical reference for pool accounting and the tranche waterfall. For step-by-step LP actions, start with the [Liquidity provider quickstart](../liquidity-provider-quickstart.md) or the guides to [deposit liquidity](../providing-liquidity/deposit-liquidity.md), [manage a pending deposit](../providing-liquidity/manage-a-pending-deposit.md) and [withdraw liquidity](../providing-liquidity/withdraw-liquidity.md).
 
 ### Capital before yield
 
-Core HousePool capital remains in USDC. It is not lent into an external yield protocol.
+Core pool capital remains in USDC. It is not lent into an external yield protocol.
 
 This avoids making Plether’s settlement capacity dependent on another protocol’s solvency or withdrawal liquidity precisely when cash may be needed most.
 
@@ -29,13 +29,13 @@ LP returns come from Plether’s internal economics:
 * collateral- and claim-capped collectible marked trader losses and collected trader losses;
 * the tranche waterfall, including the Junior-funded Senior target coupon.
 
-There is no separate yield reserve and no external base yield inside the HousePool.
+There is no separate yield reserve and no external base yield inside the liquidity pool.
 
-### What counts as HousePool capital
+### What counts as pool capital
 
 The protocol distinguishes between:
 
-* **Raw assets:** the literal USDC balance held by the HousePool.
+* **Raw assets:** the literal USDC balance held by the liquidity pool.
 * **Accounted assets:** USDC recognized as protocol-owned pool capital.
 * **Excess assets:** unsolicited USDC not yet assigned to protocol economics.
 * **Physical assets:** the conservative amount treated as actual backing.
@@ -71,7 +71,7 @@ Maximum bounded trader liability
 
 Plether uses the larger side because LONG USD and SHORT USD reach their theoretical maximum profits at opposite ends of the same settlement range.
 
-Before accepting more exposure, the protocol checks that effective HousePool backing covers the resulting bounded liability plus the configured liability-scaled settlement buffer.
+Before accepting more exposure, the protocol checks that effective pool backing covers the resulting bounded liability plus the configured liability-scaled settlement buffer.
 
 Effective backing must also account for existing trader claims. LP capital cannot simultaneously back a new position and cash-settle an existing obligation.
 
@@ -79,11 +79,11 @@ Effective backing must also account for existing trader claims. LP capital canno
 
 ### Senior and Junior at a glance
 
-Senior and Junior are different claims on the same HousePool—not separate pools.
+Senior and Junior are different claims on the same liquidity pool—not separate pools.
 
 |                     | Senior                                | Junior                           |
 | ------------------- | ------------------------------------- | -------------------------------- |
-| Return model        | Target coupon funded by Junior        | Residual HousePool return        |
+| Return model        | Target coupon funded by Junior        | Residual return from the liquidity pool |
 | Loss order          | After Junior is exhausted             | First loss                       |
 | Revenue order       | Restored to its high-water mark first | Receives residual revenue        |
 | Withdrawal priority | Matured requests funded before Junior | Funded after matured Senior demand, then capped by the Senior-share covenant |
@@ -98,7 +98,7 @@ Junior receives residual upside because it funds the Senior coupon and absorbs l
 
 ### The waterfall
 
-HousePool reconciliation first determines how much value is economically distributable to LPs.
+Pool reconciliation first determines how much value is economically distributable to LPs.
 
 Conceptually:
 
@@ -110,11 +110,11 @@ Distributable LP value
 − other protected claimant buckets
 ```
 
-The signed terminal price delta comes from one authenticated Terminal NAV snapshot. Marked trader profits reduce LP value. Collateral- and claim-capped marked trader losses can increase LP accounting value before close, but that receivable is not physical HousePool cash and cannot increase free withdrawal liquidity until collected.
+The signed terminal price delta comes from one authenticated Terminal NAV snapshot. Marked trader profits reduce LP value. Collateral- and claim-capped marked trader losses can increase LP accounting value before close, but that receivable is not physical pool cash and cannot increase free withdrawal liquidity until collected.
 
 The resulting reconciled LP-owned value or loss then passes through the waterfall:
 
-![Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.](../.gitbook/assets/diagrams/housepool-tranche-waterfall.svg)
+![Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.](../.gitbook/assets/diagrams/liquidity-pool-tranche-waterfall.svg)
 
 #### When reconciliation applies a loss
 
@@ -147,7 +147,7 @@ Coupon paid
 = min(coupon due, available Junior principal)
 ```
 
-The coupon is transferred from Junior principal to Senior principal. No new USDC enters the HousePool.
+The coupon is transferred from Junior principal to Senior principal. No new USDC enters the liquidity pool.
 
 If Junior cannot fund the full amount:
 
@@ -225,7 +225,7 @@ The figures are illustrative, not current protocol balances or rates.
 
 ### What creates LP revenue
 
-Potential HousePool inflows include:
+Potential pool inflows include:
 
 * collected trader losses;
 * positive VPI charges;
@@ -237,7 +237,7 @@ Potential outflows or losses include:
 
 * profitable trader settlements;
 * VPI rebates;
-* fresh liquidation residual payouts that must be funded by the HousePool;
+* fresh liquidation residual payouts that must be funded by the liquidity pool;
 * uncollectible trader losses and bad debt.
 
 The protocol execution fee is designated for the protocol treasury. Order execution rewards normally belong to the order executor or clearer[^keeper], while liquidation bounties belong to successful liquidators. If liquidation clears pending orders first, their reserved execution rewards are forfeited to the protocol treasury. None of these amounts should be presented as direct LP yield.
@@ -252,17 +252,17 @@ For LP reconciliation:
 
 * marked trader gains reduce distributable LP value as liabilities;
 * marked trader losses can increase distributable LP value only up to the amount the protocol can collect from pledged collateral and eligible same-account claims; and
-* that positive marked receivable changes NAV, but it is not physical HousePool USDC and does not increase free withdrawal liquidity until collected.
+* that positive marked receivable changes NAV, but it is not physical USDC held by the liquidity pool and does not increase free withdrawal liquidity until collected.
 
 The distinction is deliberate: share price can reflect a collectible marked receivable while the withdrawal firewall still limits exits to physical free cash.
 
 ### Trader claims rank ahead of LPs
 
-A profitable close can complete even if the HousePool cannot immediately fund the complete fresh payout. Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or recorded in full as a trader claim; Plether never splits it between the two.
+A profitable close can complete even if the liquidity pool cannot immediately fund the complete fresh payout. Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately or recorded in full as a trader claim; Plether never splits it between the two.
 
 Trader claims:
 
-* remain liabilities of the HousePool;
+* remain liabilities of the liquidity pool;
 * are reserved ahead of Senior and Junior withdrawals;
 * reduce effective solvency assets;
 * receive cash priority over discretionary LP withdrawals;
@@ -295,11 +295,11 @@ Senior and Junior have separate:
 
 The exact share conversion also includes ERC-4626 rounding, the protocol’s virtual-share protections and, for Junior, accrued maintenance-fee shares in effective supply.
 
-A tranche share is a claim on that tranche’s accounting value. It is not an unconditional claim on an equal fraction of the HousePool’s raw USDC balance.
+A tranche share is a claim on that tranche’s accounting value. It is not an unconditional claim on an equal fraction of the liquidity pool’s raw USDC balance.
 
 ### How deposit and withdrawal pricing use Terminal NAV
 
-Deposits and withdrawals reconcile against the same exact Terminal NAV snapshot. It combines physical HousePool assets, trader claims and the signed, collateral-capped terminal price delta for every open position. Marked trader profits reduce tranche NAV; collectible marked trader losses can increase NAV before collection.
+Deposits and withdrawals reconcile against the same exact Terminal NAV snapshot. It combines physical pool assets, trader claims and the signed, collateral-capped terminal price delta for every open position. Marked trader profits reduce tranche NAV; collectible marked trader losses can increase NAV before collection.
 
 That accounting value is distinct from withdrawal liquidity. A marked receivable can affect share price, but only physical USDC left after trader reserves and the settlement buffer can fund an exit. Deposit and withdrawal conversions can also differ because ERC-4626 rounds them in opposite directions, and the frozen-oracle surcharge applies only to withdrawal funding.
 
@@ -325,7 +325,7 @@ Before processing:
 
 Deposits and withdrawals become eligible at assigned hourly boundaries; actual processing can occur later. The contract uses the request transaction's block-inclusion timestamp: inclusion strictly before the five-minute cutoff targets the next boundary, while inclusion at or after the cutoff targets the following one. Signing or sending earlier is not enough if confirmation lands after the cutoff. Treat the confirmed onchain request target shown in its record as authoritative; the displayed time is an expectation, not a guarantee.
 
-LPs interact with the verified Senior or Junior vault. They do not deposit directly into internal HousePool accounting functions.
+LPs interact with the verified Senior or Junior vault. They do not deposit directly into internal pool accounting functions.
 
 #### Refund and exceptional mature cancellation
 
@@ -369,7 +369,7 @@ Before allocating cash to an LP withdrawal, Plether reserves cash for trader obl
 
 ```
 Free USDC
-= physical HousePool assets
+= physical pool assets
 − withdrawal reserves
 ```
 
@@ -382,7 +382,7 @@ Withdrawal reserves include:
 * unassigned assets;
 * any additional explicit protocol reserve.
 
-Only physically free USDC may leave the HousePool.
+Only physically free USDC may leave the liquidity pool.
 
 This withdrawal view is intentionally stricter than the check used to admit new trader risk.
 
@@ -421,7 +421,7 @@ Those checks determine how many shares can enter a request. The later USDC alloc
 Assume:
 
 ```
-Physical HousePool assets:  1,000,000 USDC
+Physical pool assets:  1,000,000 USDC
 Withdrawal reserves:          700,000 USDC
 Free USDC:                    300,000 USDC
 
@@ -509,7 +509,7 @@ On the current Arbitrum Sepolia deployment, the frozen-oracle withdrawal surchar
 
 ### Pause and degraded mode
 
-A HousePool pause blocks new deposits. It does not, by itself, block protective withdrawals.
+A pool pause blocks new deposits. It does not, by itself, block protective withdrawals.
 
 Degraded mode is different. It indicates that a realized terminal transition exposed insufficient effective pool solvency.
 
@@ -548,7 +548,7 @@ The Vaults interface provides `/vaults`, `/vaults/senior` and `/vaults/junior`. 
 
 Deposits and withdrawals use the connected owner wallet and are not covered by the trader gas-sponsorship flow. Keep enough Arbitrum Sepolia ETH for every approval, request, cancellation, claim or refund transaction.
 
-The visible **Deposit** and **Withdraw** actions on the Perps page still operate the Trading Account’s Margin Account. They are not HousePool LP actions.
+The visible **Deposit** and **Withdraw** actions on the Perps page still operate the Trading Account’s Margin Account. They are not liquidity-provider actions.
 
 ![Current Vaults withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png)
 
@@ -556,7 +556,7 @@ The visible **Deposit** and **Withdraw** actions on the Perps page still operate
 
 The current trader interface shows **Pool liquidity**.
 
-That value represents free HousePool USDC after protected reserves—not total HousePool assets, total tranche NAV or the amount every LP can withdraw.
+That value represents free USDC in the liquidity pool after protected reserves—not total pool assets, total tranche NAV or the amount every LP can withdraw.
 
 The interface’s supporting detail also shows:
 
@@ -564,7 +564,7 @@ The interface’s supporting detail also shows:
 * minimum order size;
 * minimum new position.
 
-These figures are not subdivisions of free HousePool USDC, and the capacity estimates do not guarantee that a particular order will pass every execution-time check.
+These figures are not subdivisions of free USDC in the liquidity pool, and the capacity estimates do not guarantee that a particular order will pass every execution-time check.
 
 ### Senior risks
 
@@ -596,20 +596,20 @@ Junior receives residual upside because it bears these subordinated obligations.
 
 Plether’s solvency model asks one central question:
 
-> After accounting for trader claims, does the HousePool have enough backing for the maximum modeled payout of its open positions and the configured settlement buffer?
+> After accounting for trader claims, does the liquidity pool have enough backing for the maximum modeled payout of its open positions and the configured settlement buffer?
 
 Solvency is not the same as liquidity. A protocol can remain solvent while temporarily lacking free cash for an immediate trader payout or LP withdrawal.
 
 #### 1. Start with effective backing
 
-Plether begins with the physical USDC backing recognized by the HousePool.
+Plether begins with the physical USDC backing recognized by the liquidity pool.
 
 Trader claims are then deducted because they are senior obligations already owed to traders:
 
 ```
 Effective backing
 = max(
-    physical HousePool assets
+    physical pool assets
     − aggregate trader claims,
     0
   )
@@ -652,7 +652,7 @@ The simplified withdrawal firewall is:
 ```
 Free LP liquidity
 = max(
-    physical HousePool assets
+    physical pool assets
     − maximum live liability
     − liability-scaled settlement buffer
     − aggregate trader claims
@@ -676,24 +676,24 @@ It is also not the same as tranche NAV. Withdrawal capacity asks how much cash c
 
 #### 4. Treat uncertain value conservatively
 
-Plether recognizes marked trader profits as liabilities. Collateral- and claim-capped marked trader losses can increase Terminal NAV before collection, but the resulting receivable is not spendable HousePool cash.
+Plether recognizes marked trader profits as liabilities. Collateral- and claim-capped marked trader losses can increase Terminal NAV before collection, but the resulting receivable is not spendable pool cash.
 
 This prevents LPs from withdrawing against accounting value that the protocol has not physically collected.
 
 The same principle explains how accumulated bad debt is treated:
 
-> Accumulated bad debt records trader value that Plether failed to collect. It is not deducted from physical assets a second time because the missing value never became HousePool cash.
+> Accumulated bad debt records trader value that Plether failed to collect. It is not deducted from physical assets a second time because the missing value never became pool cash.
 
 Bad debt is therefore protocol telemetry and a recapitalization target—not an additional withdrawal reserve or NAV deduction.
 
-Clearing bad debt improves live backing only because new USDC is transferred into the HousePool. Reducing the counter by itself would not create value.
+Clearing bad debt improves live backing only because new USDC is transferred into the liquidity pool. Reducing the counter by itself would not create value.
 
 ### Example
 
 Assume:
 
 ```
-Physical HousePool assets:      1,000,000 USDC
+Physical pool assets:      1,000,000 USDC
 Aggregate trader claims:          100,000 USDC
 
 Maximum LONG USD payout:          700,000 USDC
@@ -715,7 +715,7 @@ max(700,000, 500,000)
 = 700,000 USDC
 ```
 
-The `700,000 USDC` maximum liability requires a `1,750 USDC` settlement buffer. The HousePool therefore has:
+The `700,000 USDC` maximum liability requires a `1,750 USDC` settlement buffer. The liquidity pool therefore has:
 
 ```
 900,000 − 700,000 − 1,750
@@ -762,7 +762,7 @@ Degraded mode contains the problem. It does not guarantee that trader claims can
 | --- | --- |
 | **Solvency** | Are the remaining liabilities fully backed? |
 | **Settlement liquidity** | Can a trader be paid now? |
-| **Withdrawal liquidity** | How much cash can safely leave the HousePool? |
+| **Withdrawal liquidity** | How much cash can safely leave the liquidity pool? |
 | **Tranche waterfall** | Which LP capital absorbs a reconciled LP loss? |
 
 These checks use the same physical backing, but they answer different questions.
@@ -774,7 +774,7 @@ Before depositing:
 * Senior or Junior priority;
 * current tranche principal and share value;
 * Senior high-water mark and impairment status;
-* physical HousePool assets;
+* physical pool assets;
 * bounded trader liability;
 * outstanding trader claims;
 * free USDC;
@@ -795,13 +795,13 @@ After depositing:
 
 ### The central distinction
 
-The HousePool has three layers of obligation:
+The liquidity pool has three layers of obligation:
 
 1. Protect trader settlement liabilities.
 2. Apply Senior and Junior accounting priority.
 3. Allow LP withdrawals only from physically free USDC.
 
-Senior and Junior divide the residual economic claim on the HousePool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
+Senior and Junior divide the residual economic claim on the liquidity pool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
 
 Senior receives a Junior-funded target coupon and relative loss priority.
 
@@ -811,9 +811,9 @@ Junior receives residual upside and absorbs first loss.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

@@ -14,10 +14,10 @@ Plether separates the functions that many trading venues combine:
 | **Order sequencing**      | Binding, delayed FIFO queue                |
 | **Trade-cost adjustment** | Oracle confidence, virtual price impact and frozen-close spread |
 | **Trader collateral**     | Trading Account’s USDC Margin Account      |
-| **Settlement capital**    | USDC-funded HousePool                      |
+| **Settlement capital**    | USDC-funded liquidity pool                      |
 | **LP risk allocation**    | Senior and Junior tranches                 |
 
-The oracle supplies the market price. The HousePool supplies the balance sheet behind it.
+The oracle supplies the market price. The liquidity pool supplies the balance sheet behind it.
 
 ### One market, two directions
 
@@ -65,11 +65,11 @@ A large oracle move can still liquidate many positions at once. But those liquid
 
 ### Not an AMM
 
-The HousePool holds liquidity, but it is not an AMM[^amm].
+The liquidity pool holds liquidity, but it is not an AMM[^amm].
 
 Traders do not swap one asset for another through a reserve curve. LPs[^lp] do not quote the index price, and opening a position does not remove a LONG or SHORT token from pool inventory.
 
-The HousePool provides **settlement capacity**. It does not provide price discovery.
+The liquidity pool provides **settlement capacity**. It does not provide price discovery.
 
 Trading can still change:
 
@@ -103,11 +103,11 @@ Virtual price impact is applied separately to the trade’s economics. It does n
 
 The full process is covered in [How orders execute](how-orders-execute.md).
 
-### The HousePool is the economic counterparty
+### The liquidity pool is the economic counterparty
 
 A Plether trader does not face an individual LP or an opposite-direction trader.
 
-The **HousePool** is the economic counterparty to every position:
+The **liquidity pool** is the economic counterparty to every position:
 
 * When traders realize losses, collectible value enters pool economics.
 * When traders realize profits, the pool funds those profits.
@@ -115,14 +115,14 @@ The **HousePool** is the economic counterparty to every position:
 * When a trader receives a VPI rebate, the pool funds it.
 * When a trader pays positive VPI, it strengthens the pool.
 
-The HousePool is funded through the Senior and Junior LP vaults. Both tranches[^tranche] back the same market. One tranche does not back LONG USD while the other backs SHORT USD.
+The liquidity pool is funded through the Senior and Junior LP vaults. Both tranches[^tranche] back the same market. One tranche does not back LONG USD while the other backs SHORT USD.
 
 Their role is to decide how pool returns and losses are allocated:
 
 * Junior absorbs losses first and receives residual upside.
 * Senior receives a Junior-funded target coupon and absorbs losses after Junior is exhausted.
 
-The HousePool is not an emergency insurance fund added behind another counterparty. It is the primary balance sheet underwriting trader settlement.
+The liquidity pool is not an emergency insurance fund added behind another counterparty. It is the primary balance sheet underwriting trader settlement.
 
 ### Why the settlement range is fixed
 
@@ -146,7 +146,7 @@ Because those endpoints are known, Plether can calculate every position’s maxi
 At the market level, the engine tracks the aggregate maximum-profit envelope for each direction. In simplified form, new exposure is accepted only while:
 
 ```
-Effective HousePool backing after the trade
+Effective pool backing after the trade
 ≥ max(
     aggregate LONG USD maximum profit,
     aggregate SHORT USD maximum profit
@@ -204,18 +204,18 @@ Plether cannot debit assets sitting outside the protocol in the trader’s walle
 
 The simplified value flow is:
 
-| Event                 | Trader side                                      | HousePool side                                    |
+| Event                 | Trader side                                      | pool side                                    |
 | --------------------- | ------------------------------------------------ | ------------------------------------------------- |
 | **Deposit margin**    | USDC enters the Trading Account’s Margin Account | No change                                         |
 | **Commit order**      | An open reserves margin; every order reserves its execution reward | No change                                         |
 | **Open position**     | Position margin is locked and trade costs settle | Pool assumes a bounded payout liability           |
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
-| **Losing close**      | Reachable trader USDC is collected               | The LP-owned portion becomes HousePool value; the execution fee belongs to the treasury |
+| **Losing close**      | Reachable trader USDC is collected               | The LP-owned portion becomes liquidity pool value; the execution fee belongs to the treasury |
 | **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
 | **Carry realization** | Carry is collected from reachable collateral     | Realized carry becomes LP revenue                 |
 | **LP deposit**        | No change to trader margin                       | USDC enters through a tranche vault               |
 
-Protocol execution fees belong to the treasury rather than LPs. Order-execution rewards are funded from trader collateral rather than HousePool capital.
+Protocol execution fees belong to the treasury rather than LPs. Order-execution rewards are funded from trader collateral rather than pool capital.
 
 ### Unrealized PnL is not cash
 
@@ -244,7 +244,7 @@ A profitable close accounts for:
 * Frozen-close spread, when applicable
 * Released position margin
 
-Released position margin follows separately. If sufficient unreserved HousePool cash is available, the complete fresh HousePool-funded payout is credited to the Trading Account’s Margin Account.
+Released position margin follows separately. If sufficient unreserved pool cash is available, the complete fresh pool-funded payout is credited to the Trading Account’s Margin Account.
 
 It is not sent directly to the wallet. The trader withdraws separately.
 
@@ -252,7 +252,7 @@ If the pool cannot fund the complete fresh payout immediately, the position can 
 
 The claim:
 
-* Remains a senior HousePool liability
+* Remains a senior pool liability
 * Is excluded from LP-withdrawable value
 * Is not placed in a FIFO queue
 * Requires authorization from the Trading Account’s owner wallet
@@ -301,7 +301,7 @@ Plether manages that imbalance through three mechanisms.
 
 #### Capacity
 
-The protocol limits how much additional liability the HousePool may accept in each direction. An order can be rejected even when the trader has sufficient margin if the pool cannot safely underwrite it.
+The protocol limits how much additional liability the liquidity pool may accept in each direction. An order can be rejected even when the trader has sufficient margin if the pool cannot safely underwrite it.
 
 #### Virtual price impact
 
@@ -319,7 +319,7 @@ VPI affects the economics of the trade. It does not set the oracle index or move
 
 Carry is the ongoing cost of using LP capital to support a position’s bounded payout.
 
-It is not a payment transferred from LONG USD traders to SHORT USD traders, or vice versa. Both directions can pay carry at the same time when both use HousePool capital.
+It is not a payment transferred from LONG USD traders to SHORT USD traders, or vice versa. Both directions can pay carry at the same time when both use pool capital.
 
 Realized carry becomes LP revenue.
 
@@ -330,13 +330,13 @@ Perpetual designs vary, but the main structural differences are:
 |                              | Plether                                                       | Common perpetual model                                          |
 | ---------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
 | **Reference price**          | Six-currency external FX basket                               | Exchange index, order book or AMM reference                     |
-| **Counterparty**             | Tranched USDC HousePool                                       | Other traders, market makers or pooled AMM liquidity            |
+| **Counterparty**             | Tranched USDC liquidity pool                                       | Other traders, market makers or pooled AMM liquidity            |
 | **Execution**                | Delayed, binding FIFO orders                                  | Commonly immediate matching or pool execution                   |
 | **Price discovery**          | External oracle                                               | Often influenced by venue trading                               |
 | **Price impact**             | Separate VPI adjustment                                       | Often produced by order-book or AMM liquidity                   |
 | **Settlement range**         | Fixed between 0.00 and 2.00                                   | Often not bounded by an equivalent protocol-wide range          |
 | **Ongoing cost**             | Carry paid for LP-backed capital                              | Commonly side-to-side funding                                   |
-| **Net directional exposure** | HousePool can warehouse imbalance within limits               | Often balanced through traders or market makers                 |
+| **Net directional exposure** | Liquidity pool can warehouse imbalance within limits               | Often balanced through traders or market makers                 |
 | **Stress handling**          | Capacity limits, LP waterfall, claims and bad-debt accounting | May use insurance funds, socialized losses or auto-deleveraging |
 | **Liquidation execution**    | Settles against an external bounded mark                      | May require selling into an order book or AMM                   |
 
@@ -346,11 +346,11 @@ Plether separates three things:
 
 1. **The oracle defines the market.**
 2. **The delayed queue defines execution.**
-3. **The HousePool underwrites the result.**
+3. **The liquidity pool underwrites the result.**
 
-Traders post USDC margin and choose LONG USD or SHORT USD. The protocol calculates the position’s maximum possible profit inside the fixed settlement range. It accepts the order only if the HousePool can support the resulting liability.
+Traders post USDC margin and choose LONG USD or SHORT USD. The protocol calculates the position’s maximum possible profit inside the fixed settlement range. It accepts the order only if the liquidity pool can support the resulting liability.
 
-When the position settles, value moves between the Trading Account’s Margin Account and the HousePool. Junior and Senior LP capital determine how the pool absorbs the outcome.
+When the position settles, value moves between the Trading Account’s Margin Account and the liquidity pool. Junior and Senior LP capital determine how the pool absorbs the outcome.
 
 That is the Plether market model: **oracle-priced, margin-backed and bounded by design.**
 
@@ -359,9 +359,9 @@ That is the Plether market model: **oracle-priced, margin-backed and bounded by 
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^fx]: Foreign exchange, the market for trading one currency against another.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
