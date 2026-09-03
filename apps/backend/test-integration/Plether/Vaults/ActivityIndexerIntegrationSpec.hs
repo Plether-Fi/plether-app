@@ -83,7 +83,7 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
             getVaultRequestIds conn deployment seniorVault holderA 10 Nothing
               `shouldReturnValue` [11]
             getVaultAttributedHolders conn deployment seniorVault 10
-              `shouldReturnValue` [VaultAttributedHolderRow holderA 100 25 125]
+              `shouldReturnValue` [VaultAttributedHolderRow holderA 100 25 0 125]
           ranges <- fsLogRanges <$> readIORef stateRef
           ranges `shouldSatisfy` elem (seniorVault, 10, 12)
           ranges `shouldSatisfy` elem (seniorVault, 10, 11)
@@ -108,7 +108,7 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
           assertAttributionCompleted reattributed 12 1
           withDb pool $ \conn ->
             getVaultAttributedHolders conn deployment seniorVault 10
-              `shouldReturnValue` [VaultAttributedHolderRow holderA 200 25 225]
+              `shouldReturnValue` [VaultAttributedHolderRow holderA 200 25 0 225]
 
           atomicModifyIORef' stateRef $ \state ->
             (state {fsHead = 25, fsMalformedAtThirteen = True}, ())
@@ -168,7 +168,7 @@ assertAttributionCompleted
     vdacrBackfillComplete `shouldBe` True
     vdacrRequestsObserved `shouldBe` expectedRequests
 assertAttributionCompleted result _ _ =
-  expectationFailure $ "Expected a completed deposit attribution cycle, received " <> show result
+  expectationFailure $ "Expected a completed request share attribution cycle, received " <> show result
 
 withVaultIndexerDatabase :: Text -> (DbPool -> IO a) -> IO a
 withVaultIndexerDatabase databaseUrl action = do

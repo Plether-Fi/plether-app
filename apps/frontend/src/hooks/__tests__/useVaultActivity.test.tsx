@@ -31,7 +31,7 @@ const response: ApiResponse<VaultActivity> = {
       lagBlocks: 0,
       lagSeconds: 0,
       lastSuccessfulPoll: 1_700_000_000,
-      depositShareAttribution: {
+      shareAttribution: {
         confirmedThroughBlock: 302_300_000,
         confirmedThroughHash: `0x${'cc'.repeat(32)}`,
         complete: true,
@@ -43,11 +43,12 @@ const response: ApiResponse<VaultActivity> = {
         address: HOLDER,
         shareBalance: '10',
         unclaimedDepositShares: '5',
-        totalAttributedShares: '15',
+        withdrawalEscrowShares: '5',
+        totalAttributedShares: '20',
       }],
       holderCount: 1,
       holdersTruncated: false,
-      totalAttributedShares: '15',
+      totalAttributedShares: '20',
       activity: [{
         id: `${TX_A}-1`,
         tranche: 'senior',
@@ -70,6 +71,7 @@ const response: ApiResponse<VaultActivity> = {
         address: HOLDER,
         shareBalance: '20',
         unclaimedDepositShares: '0',
+        withdrawalEscrowShares: '0',
         totalAttributedShares: '20',
       }],
       holderCount: 1,
@@ -131,9 +133,9 @@ describe('useVaultActivity', () => {
     await waitFor(() => expect(result.current.holders).toHaveLength(1))
     expect(result.current.holders[0]).toMatchObject({
       address: HOLDER,
-      seniorNavUsdc: 150n,
+      seniorNavUsdc: 200n,
       juniorNavUsdc: 100n,
-      currentNavUsdc: 250n,
+      currentNavUsdc: 300n,
       seniorShareOfAttributedValue: 100,
       juniorShareOfAttributedValue: 100,
     })
@@ -150,7 +152,7 @@ describe('useVaultActivity', () => {
     })
     await waitFor(() => expect(result.current.isStale).toBe(true))
     expect(result.current.isError).toBe(false)
-    expect(result.current.holders[0]?.currentNavUsdc).toBe(250n)
+    expect(result.current.holders[0]?.currentNavUsdc).toBe(300n)
     expect(getActivity).toHaveBeenCalledTimes(3)
     client.clear()
   })
@@ -159,7 +161,7 @@ describe('useVaultActivity', () => {
     const attributed = JSON.parse(JSON.stringify(response)) as ApiResponse<VaultActivity>
     attributed.data.senior.holderCount = 2
     attributed.data.senior.holdersTruncated = true
-    attributed.data.senior.totalAttributedShares = '20'
+    attributed.data.senior.totalAttributedShares = '25'
     vi.spyOn(perpsApi, 'getPerpsVaultActivity').mockResolvedValue(Result.ok(attributed))
     const attributedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const attributedResult = renderHook(() => useVaultActivity({
@@ -168,17 +170,19 @@ describe('useVaultActivity', () => {
     }), { wrapper: wrapper(attributedClient) })
 
     await waitFor(() => expect(attributedResult.result.current.holders).toHaveLength(1))
-    expect(attributedResult.result.current.holders[0]?.seniorShareOfAttributedValue).toBe(75)
+    expect(attributedResult.result.current.holders[0]?.seniorShareOfAttributedValue).toBe(80)
     attributedClient.clear()
     vi.restoreAllMocks()
 
     const legacy = JSON.parse(JSON.stringify(response)) as ApiResponse<VaultActivity>
+    delete legacy.data.coverage.shareAttribution
     delete legacy.data.coverage.depositShareAttribution
     delete legacy.data.senior.totalAttributedShares
     delete legacy.data.junior.totalAttributedShares
     for (const tranche of [legacy.data.senior, legacy.data.junior]) {
       for (const holder of tranche.holders) {
         delete holder.unclaimedDepositShares
+        delete holder.withdrawalEscrowShares
         delete holder.totalAttributedShares
       }
     }

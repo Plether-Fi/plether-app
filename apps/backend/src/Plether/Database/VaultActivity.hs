@@ -135,6 +135,9 @@ data VaultDepositRequestStateRow = VaultDepositRequestStateRow
   , vdrsClaimableDepositAssets :: Integer
   , vdrsClaimableDepositShares :: Integer
   , vdrsRefundableDepositAssets :: Integer
+  , vdrsPendingRedeemShares :: Integer
+  , vdrsRefundableRedeemShares :: Integer
+  , vdrsRedeemRefundPending :: Bool
   , vdrsActive :: Bool
   , vdrsObservedBlock :: Integer
   , vdrsObservedBlockHash :: Text
@@ -154,6 +157,7 @@ data VaultAttributedHolderRow = VaultAttributedHolderRow
   { vahrAddress :: Text
   , vahrShareBalance :: Integer
   , vahrUnclaimedDepositShares :: Integer
+  , vahrWithdrawalEscrowShares :: Integer
   , vahrTotalAttributedShares :: Integer
   }
   deriving stock (Eq, Show)
@@ -162,6 +166,7 @@ instance FromRow VaultAttributedHolderRow where
   fromRow =
     VaultAttributedHolderRow
       <$> field
+      <*> decimalIntegerField
       <*> decimalIntegerField
       <*> decimalIntegerField
       <*> decimalIntegerField
@@ -270,6 +275,9 @@ ensureVaultActivitySchema conn = do
     \claimable_deposit_assets NUMERIC(78,0) NOT NULL,\
     \claimable_deposit_shares NUMERIC(78,0) NOT NULL,\
     \refundable_deposit_assets NUMERIC(78,0) NOT NULL,\
+    \pending_redeem_shares NUMERIC(78,0) NOT NULL,\
+    \refundable_redeem_shares NUMERIC(78,0) NOT NULL,\
+    \redeem_refund_pending BOOLEAN NOT NULL,\
     \is_active BOOLEAN NOT NULL,\
     \observed_block NUMERIC(78,0) NOT NULL,\
     \observed_block_hash VARCHAR(66) NOT NULL,\
@@ -277,7 +285,8 @@ ensureVaultActivitySchema conn = do
     \PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id),\
     \CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND observed_block >= 0),\
     \CHECK (pending_deposit_assets >= 0 AND claimable_deposit_assets >= 0 AND claimable_deposit_shares >= 0 AND refundable_deposit_assets >= 0),\
-    \CHECK (is_active = (pending_deposit_assets > 0 OR claimable_deposit_shares > 0)),\
+    \CHECK (pending_redeem_shares >= 0 AND refundable_redeem_shares >= 0),\
+    \CHECK (is_active = (pending_deposit_assets > 0 OR claimable_deposit_shares > 0 OR pending_redeem_shares > 0 OR refundable_redeem_shares > 0 OR redeem_refund_pending)),\
     \CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (controller_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (observed_block_hash ~ '^0x[0-9a-f]{64}$')\
@@ -287,7 +296,7 @@ ensureVaultActivitySchema conn = do
     \ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, is_active, vault_address, controller_address, request_id)"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_vault_deposit_request_states_attribution \
-    \ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, vault_address, controller_address, claimable_deposit_shares)"
+    \ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, vault_address, controller_address, claimable_deposit_shares, pending_redeem_shares, refundable_redeem_shares)"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS vault_attributed_holder_balances (\
     \chain_id NUMERIC(78,0) NOT NULL,\
@@ -297,13 +306,14 @@ ensureVaultActivitySchema conn = do
     \holder_address VARCHAR(42) NOT NULL,\
     \share_balance NUMERIC(78,0) NOT NULL,\
     \unclaimed_deposit_shares NUMERIC(78,0) NOT NULL,\
+    \withdrawal_escrow_shares NUMERIC(78,0) NOT NULL,\
     \total_attributed_shares NUMERIC(78,0) NOT NULL,\
     \observed_block NUMERIC(78,0) NOT NULL,\
     \observed_block_hash VARCHAR(66) NOT NULL,\
     \updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, holder_address),\
-    \CHECK (share_balance >= 0 AND unclaimed_deposit_shares >= 0 AND total_attributed_shares > 0),\
-    \CHECK (total_attributed_shares = share_balance + unclaimed_deposit_shares),\
+    \CHECK (share_balance >= 0 AND unclaimed_deposit_shares >= 0 AND withdrawal_escrow_shares >= 0 AND total_attributed_shares > 0),\
+    \CHECK (total_attributed_shares = share_balance + unclaimed_deposit_shares + withdrawal_escrow_shares),\
     \CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (holder_address ~ '^0x[0-9a-f]{40}$' AND observed_block_hash ~ '^0x[0-9a-f]{64}$')\
     \)"
@@ -536,7 +546,7 @@ setVaultDepositAttributionState conn deployment confirmedBlock confirmedHash con
     , confirmedTimestamp
     , complete
     )
-  unless (affected == 1) $ fail "Vault deposit attribution deployment identity changed"
+  unless (affected == 1) $ fail "Vault request share attribution deployment identity changed"
 
 resetVaultDepositAttribution :: Connection -> VaultActivityDeployment -> IO ()
 resetVaultDepositAttribution conn deployment = do
@@ -688,7 +698,7 @@ getVaultDepositRequestKeys conn deployment afterBlock throughBlock =
     Nothing -> query conn
       "SELECT DISTINCT vault_address, controller_address, request_id::TEXT \
       \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
-      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested') \
+      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest') \
       \AND block_number <= ? ORDER BY vault_address, controller_address, request_id"
       ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
       , address $ vadSeniorVault deployment, address $ vadJuniorVault deployment, throughBlock
@@ -696,7 +706,7 @@ getVaultDepositRequestKeys conn deployment afterBlock throughBlock =
     Just lowerBound -> query conn
       "SELECT DISTINCT vault_address, controller_address, request_id::TEXT \
       \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
-      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested') \
+      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest') \
       \AND block_number > ? AND block_number <= ? ORDER BY vault_address, controller_address, request_id"
       ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
       , address $ vadSeniorVault deployment, address $ vadJuniorVault deployment, lowerBound, throughBlock
@@ -724,11 +734,14 @@ upsertVaultDepositRequestStateExact conn deployment VaultDepositRequestStateRow 
   let VaultDepositRequestKey {..} = vdrsKey
   affected <- execute conn
     "INSERT INTO vault_deposit_request_states (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id, \
-    \pending_deposit_assets, claimable_deposit_assets, claimable_deposit_shares, refundable_deposit_assets, is_active, \
-    \observed_block, observed_block_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) \
+    \pending_deposit_assets, claimable_deposit_assets, claimable_deposit_shares, refundable_deposit_assets, \
+    \pending_redeem_shares, refundable_redeem_shares, redeem_refund_pending, is_active, \
+    \observed_block, observed_block_hash, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) \
     \ON CONFLICT (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id) DO UPDATE SET \
     \pending_deposit_assets = EXCLUDED.pending_deposit_assets, claimable_deposit_assets = EXCLUDED.claimable_deposit_assets, \
     \claimable_deposit_shares = EXCLUDED.claimable_deposit_shares, refundable_deposit_assets = EXCLUDED.refundable_deposit_assets, \
+    \pending_redeem_shares = EXCLUDED.pending_redeem_shares, refundable_redeem_shares = EXCLUDED.refundable_redeem_shares, \
+    \redeem_refund_pending = EXCLUDED.redeem_refund_pending, \
     \is_active = EXCLUDED.is_active, observed_block = EXCLUDED.observed_block, observed_block_hash = EXCLUDED.observed_block_hash, updated_at = NOW() \
     \WHERE vault_deposit_request_states.observed_block < EXCLUDED.observed_block OR (\
     \vault_deposit_request_states.observed_block = EXCLUDED.observed_block \
@@ -737,13 +750,17 @@ upsertVaultDepositRequestStateExact conn deployment VaultDepositRequestStateRow 
     \AND vault_deposit_request_states.claimable_deposit_assets = EXCLUDED.claimable_deposit_assets \
     \AND vault_deposit_request_states.claimable_deposit_shares = EXCLUDED.claimable_deposit_shares \
     \AND vault_deposit_request_states.refundable_deposit_assets = EXCLUDED.refundable_deposit_assets \
+    \AND vault_deposit_request_states.pending_redeem_shares = EXCLUDED.pending_redeem_shares \
+    \AND vault_deposit_request_states.refundable_redeem_shares = EXCLUDED.refundable_redeem_shares \
+    \AND vault_deposit_request_states.redeem_refund_pending = EXCLUDED.redeem_refund_pending \
     \AND vault_deposit_request_states.is_active = EXCLUDED.is_active)"
     ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
     , address vdrkVaultAddress, address vdrkController, vdrkRequestId
     , vdrsPendingDepositAssets, vdrsClaimableDepositAssets, vdrsClaimableDepositShares
-    , vdrsRefundableDepositAssets, vdrsActive, vdrsObservedBlock, T.toLower vdrsObservedBlockHash
+    , vdrsRefundableDepositAssets, vdrsPendingRedeemShares, vdrsRefundableRedeemShares
+    , vdrsRedeemRefundPending, vdrsActive, vdrsObservedBlock, T.toLower vdrsObservedBlockHash
     )
-  unless (affected == 1) $ fail "Conflicting or regressive vault deposit request observation"
+  unless (affected == 1) $ fail "Conflicting or regressive vault request share attribution observation"
 
 recomputeVaultAttributedHolderBalances
   :: Connection
@@ -764,23 +781,26 @@ recomputeVaultAttributedHolderBalances conn deployment vault observedBlock obser
     scope
   _ <- execute conn
     "INSERT INTO vault_attributed_holder_balances (chain_id, house_pool_address, deployment_block, vault_address, holder_address, \
-    \share_balance, unclaimed_deposit_shares, total_attributed_shares, observed_block, observed_block_hash, updated_at) \
+    \share_balance, unclaimed_deposit_shares, withdrawal_escrow_shares, total_attributed_shares, observed_block, observed_block_hash, updated_at) \
     \WITH direct_balances AS (\
     \SELECT holder_address, share_balance FROM vault_holder_balances \
     \WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? AND holder_address <> ?\
-    \), claimable_balances AS (\
-    \SELECT controller_address, SUM(claimable_deposit_shares) AS claimable_deposit_shares \
+    \), request_balances AS (\
+    \SELECT controller_address, SUM(claimable_deposit_shares) AS claimable_deposit_shares, \
+    \SUM(pending_redeem_shares + refundable_redeem_shares) AS withdrawal_escrow_shares \
     \FROM vault_deposit_request_states WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
-    \AND vault_address = ? AND controller_address <> ? AND claimable_deposit_shares > 0 GROUP BY controller_address\
+    \AND vault_address = ? AND controller_address <> ? \
+    \AND (claimable_deposit_shares > 0 OR pending_redeem_shares > 0 OR refundable_redeem_shares > 0) GROUP BY controller_address\
     \), attributed AS (\
-    \SELECT COALESCE(direct_balances.holder_address, claimable_balances.controller_address) AS holder_address, \
+    \SELECT COALESCE(direct_balances.holder_address, request_balances.controller_address) AS holder_address, \
     \COALESCE(direct_balances.share_balance, 0) AS share_balance, \
-    \COALESCE(claimable_balances.claimable_deposit_shares, 0) AS unclaimed_deposit_shares \
-    \FROM direct_balances FULL OUTER JOIN claimable_balances \
-    \ON direct_balances.holder_address = claimable_balances.controller_address\
-    \) SELECT ?, ?, ?, ?, holder_address, share_balance, unclaimed_deposit_shares, \
-    \share_balance + unclaimed_deposit_shares, ?, ?, NOW() FROM attributed \
-    \WHERE share_balance + unclaimed_deposit_shares > 0"
+    \COALESCE(request_balances.claimable_deposit_shares, 0) AS unclaimed_deposit_shares, \
+    \COALESCE(request_balances.withdrawal_escrow_shares, 0) AS withdrawal_escrow_shares \
+    \FROM direct_balances FULL OUTER JOIN request_balances \
+    \ON direct_balances.holder_address = request_balances.controller_address\
+    \) SELECT ?, ?, ?, ?, holder_address, share_balance, unclaimed_deposit_shares, withdrawal_escrow_shares, \
+    \share_balance + unclaimed_deposit_shares + withdrawal_escrow_shares, ?, ?, NOW() FROM attributed \
+    \WHERE share_balance + unclaimed_deposit_shares + withdrawal_escrow_shares > 0"
     ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault, address vault
     , vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault, address vault
     , vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault
@@ -852,9 +872,9 @@ getVaultAttributedHolders
   -> IO [VaultAttributedHolderRow]
 getVaultAttributedHolders conn deployment vault limit =
   query conn
-    "SELECT holder_address, share_balance::TEXT, unclaimed_deposit_shares::TEXT, total_attributed_shares::TEXT \
+    "SELECT holder_address, share_balance::TEXT, unclaimed_deposit_shares::TEXT, withdrawal_escrow_shares::TEXT, total_attributed_shares::TEXT \
     \FROM vault_attributed_holder_balances WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? \
-    \ORDER BY total_attributed_shares DESC, holder_address ASC LIMIT ?"
+    \ORDER BY vault_attributed_holder_balances.total_attributed_shares DESC, holder_address ASC LIMIT ?"
     ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault, max 0 limit )
 
 getVaultAttributedHolderSummary

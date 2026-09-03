@@ -37,7 +37,7 @@ import Plether.Types.VaultActivity
   , VaultActivityItem (..)
   , VaultActivityResponse (..)
   , VaultActivityTrancheData (..)
-  , VaultDepositAttributionCoverage (..)
+  , VaultShareAttributionCoverage (..)
   , VaultRequestIdsResponse (..)
   )
 
@@ -45,8 +45,8 @@ activityLimit :: Int
 activityLimit = 250
 
 -- | A missing result means the deployment has never completed its canonical
--- backfill and must remain unavailable. Once published, incomplete current
--- coverage is served with explicit stale metadata.
+-- and request-share-attribution backfills and must remain unavailable. Once
+-- published, incomplete current coverage is served with stale metadata.
 getVaultActivity
   :: DbPool
   -> VaultActivityDeployment
@@ -153,12 +153,12 @@ coverageAt now state attributionState =
     , vacLagBlocks = lagBlocks
     , vacLagSeconds = lagSeconds
     , vacLastSuccessfulPoll = min (vaisLastSuccessTimestamp state) (vdasLastSuccessTimestamp attributionState)
-    , vacDepositShareAttribution =
-        VaultDepositAttributionCoverage
-          { vdacConfirmedThroughBlock = vdasConfirmedThroughBlock attributionState
-          , vdacConfirmedThroughHash = vdasConfirmedThroughBlockHash attributionState
-          , vdacComplete = attributionComplete
-          , vdacLastSuccessfulPoll = vdasLastSuccessTimestamp attributionState
+    , vacShareAttribution =
+        VaultShareAttributionCoverage
+          { vsacConfirmedThroughBlock = vdasConfirmedThroughBlock attributionState
+          , vsacConfirmedThroughHash = vdasConfirmedThroughBlockHash attributionState
+          , vsacComplete = attributionComplete
+          , vsacLastSuccessfulPoll = vdasLastSuccessTimestamp attributionState
           }
     }
  where
@@ -179,6 +179,7 @@ holderRow VaultAttributedHolderRow {..} =
     vahrAddress
     vahrShareBalance
     vahrUnclaimedDepositShares
+    vahrWithdrawalEscrowShares
     vahrTotalAttributedShares
 
 activityRow :: Text -> VaultRequestRow -> VaultActivityItem

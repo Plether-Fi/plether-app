@@ -1964,8 +1964,9 @@ function VaultActivitySection({
               <h3 className="text-lg font-semibold text-content-primary">Holder distribution</h3>
               <p className="mt-1 max-w-2xl text-sm leading-5 text-content-secondary">
                 Share of the {trancheName} Vault represented by shares held in each wallet or
-                settled for that wallet and waiting to be claimed. Deposits awaiting settlement
-                are not included.
+                attributed to its deposit and withdrawal requests. Pending and refundable redeem
+                shares remain attributed until they become an asset claim; deposits awaiting
+                settlement and refundable deposit assets are not included.
               </p>
             </div>
             <span className="text-xs text-content-secondary">Largest wallet positions</span>

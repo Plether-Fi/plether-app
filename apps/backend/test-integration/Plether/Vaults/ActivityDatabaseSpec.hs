@@ -21,6 +21,7 @@ import Plether.Database.VaultActivity
   , getVaultActivityIndexerState
   , getVaultAttributedHolderSummary
   , getVaultAttributedHolders
+  , getVaultDepositRequestKeys
   , getVaultHolders
   , getVaultRequestIds
   , getVaultRequests
@@ -101,6 +102,12 @@ vaultActivityDatabaseSpec databaseUrl =
           `shouldReturnValue` [300, 200]
         visible <- getVaultRequests conn deploymentA seniorVault 10
         map vrrEventName visible `shouldBe` ["RedeemRequest", "RedeemRequest", "DepositRequest"]
+        getVaultDepositRequestKeys conn deploymentA Nothing 13
+          `shouldReturnValue`
+            [ VaultDepositRequestKey seniorVault holderA 200
+            , VaultDepositRequestKey seniorVault holderA 300
+            , VaultDepositRequestKey seniorVault holderB 400
+            ]
 
     it "combines direct and claimable deposit shares without counting pending or refundable deposits" $
       withVaultDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
@@ -122,8 +129,8 @@ vaultActivityDatabaseSpec databaseUrl =
 
         getVaultAttributedHolders conn deploymentA seniorVault 10
           `shouldReturnValue`
-            [ VaultAttributedHolderRow holderA 100 25 125
-            , VaultAttributedHolderRow holderB 0 30 30
+            [ VaultAttributedHolderRow holderA 100 25 0 125
+            , VaultAttributedHolderRow holderB 0 30 0 30
             ]
         getVaultAttributedHolderSummary conn deploymentA seniorVault
           `shouldReturnValue` (2, 155)
@@ -142,11 +149,53 @@ vaultActivityDatabaseSpec databaseUrl =
 
         getVaultAttributedHolders conn deploymentA seniorVault 10
           `shouldReturnValue`
-            [ VaultAttributedHolderRow holderA 100 25 125
-            , VaultAttributedHolderRow holderB 30 0 30
+            [ VaultAttributedHolderRow holderA 100 25 0 125
+            , VaultAttributedHolderRow holderB 30 0 0 30
             ]
         getVaultAttributedHolderSummary conn deploymentA seniorVault
           `shouldReturnValue` (2, 155)
+
+    it "keeps queued and refundable withdrawals attributed until they become asset claims" $
+      withVaultDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertTransfer conn deploymentA seniorVault zeroAddress holderA 100 30 0
+        insertTransfer conn deploymentA seniorVault holderA seniorVault 40 31 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 6 40 0 False 31
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 31 (blockHash 31)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 40 100]
+
+        -- Once the redeem is funded, its value is an asset receivable and no
+        -- longer belongs in a share-distribution denominator.
+        insertTransfer conn deploymentA seniorVault seniorVault zeroAddress 40 32 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 6 0 0 False 32
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 32 (blockHash 32)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 0 60]
+
+        -- A later refundable redeem remains beneficially attributed until the
+        -- vault returns the shares to the controller wallet.
+        insertTransfer conn deploymentA seniorVault holderA seniorVault 20 33 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 7 0 20 True 33
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 33 (blockHash 33)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 40 0 20 60]
+
+        insertTransfer conn deploymentA seniorVault seniorVault holderA 20 34 0
+        recomputeVaultHolderBalance conn deploymentA seniorVault holderA
+        recomputeVaultHolderBalance conn deploymentA seniorVault seniorVault
+        upsertVaultDepositRequestStateExact conn deploymentA $
+          redeemState seniorVault holderA 7 0 0 False 34
+        recomputeVaultAttributedHolderBalances conn deploymentA seniorVault 34 (blockHash 34)
+        getVaultAttributedHolders conn deploymentA seniorVault 10
+          `shouldReturnValue` [VaultAttributedHolderRow holderA 60 0 0 60]
 
     it "isolates state, data rebuilds, and advisory leadership by deployment" $
       withVaultDatabase databaseUrl $ \pool -> do
@@ -287,9 +336,36 @@ depositState vault controller requestId pending claimable refundable =
     , vdrsClaimableDepositAssets = if claimable > 0 then claimable * 2 else 0
     , vdrsClaimableDepositShares = claimable
     , vdrsRefundableDepositAssets = refundable
+    , vdrsPendingRedeemShares = 0
+    , vdrsRefundableRedeemShares = 0
+    , vdrsRedeemRefundPending = False
     , vdrsActive = pending > 0 || claimable > 0
     , vdrsObservedBlock = 20
     , vdrsObservedBlockHash = blockHash 20
+    }
+
+redeemState
+  :: Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Bool
+  -> Integer
+  -> VaultDepositRequestStateRow
+redeemState vault controller requestId pending refundable refundPending observedBlock =
+  VaultDepositRequestStateRow
+    { vdrsKey = VaultDepositRequestKey vault controller requestId
+    , vdrsPendingDepositAssets = 0
+    , vdrsClaimableDepositAssets = 0
+    , vdrsClaimableDepositShares = 0
+    , vdrsRefundableDepositAssets = 0
+    , vdrsPendingRedeemShares = pending
+    , vdrsRefundableRedeemShares = refundable
+    , vdrsRedeemRefundPending = refundPending
+    , vdrsActive = pending > 0 || refundable > 0 || refundPending
+    , vdrsObservedBlock = observedBlock
+    , vdrsObservedBlockHash = blockHash observedBlock
     }
 
 shouldReturnValue :: (Eq a, Show a) => IO a -> a -> IO ()

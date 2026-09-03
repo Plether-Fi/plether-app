@@ -98,7 +98,7 @@ spec = describe "vault activity ABI decoding" $ do
     isProviderLogRangeLimit (RpcHttpError "StatusCodeException statusCode = 413")
       `shouldBe` True
 
-  it "encodes and strictly decodes pinned Public Lens deposit attribution" $ do
+  it "encodes and strictly decodes pinned Public Lens request-share attribution" $ do
     let key = VaultDepositRequestKey seniorVault ownerAddress 77
         call =
           encodeCall
@@ -127,6 +127,9 @@ spec = describe "vault activity ABI decoding" $ do
             , vdrsClaimableDepositAssets = 12
             , vdrsClaimableDepositShares = 13
             , vdrsRefundableDepositAssets = 18
+            , vdrsPendingRedeemShares = 14
+            , vdrsRefundableRedeemShares = 19
+            , vdrsRedeemRefundPending = False
             , vdrsActive = True
             , vdrsObservedBlock = 123
             , vdrsObservedBlockHash = blockHash
@@ -140,9 +143,9 @@ spec = describe "vault activity ABI decoding" $ do
     decodeLpRequestState key 123 blockHash (replaceWord 13 2 response)
       `shouldSatisfy` isLeft
 
-  it "keeps pending and refundable deposits out of attributed shares" $ do
+  it "keeps deposit assets out while retaining pending and refundable redeem shares" $ do
     let key = VaultDepositRequestKey juniorVault ownerAddress 88
-        response pendingAssets claimable refundable = BS.concat
+        response pendingAssets claimable refundable pendingRedeem refundableRedeem refundPending = BS.concat
           [ encodeAddress juniorVault
           , word 88
           , encodeAddress ownerAddress
@@ -150,20 +153,28 @@ spec = describe "vault activity ABI decoding" $ do
           , word 0
           , word 0
           , word claimable
-          , word 0
+          , word pendingRedeem
           , word 0
           , word 0
           , word 0
           , word refundable
-          , word 0
-          , encodeBool False
+          , word refundableRedeem
+          , encodeBool refundPending
           ]
-    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 50 0 0)
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 50 0 0 0 0 False)
       `shouldBe` Right True
-    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 0 0 50)
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 0 0 50 0 0 False)
       `shouldBe` Right False
-    fmap vdrsClaimableDepositShares (decodeLpRequestState key 123 blockHash $ response 50 0 0)
+    fmap vdrsClaimableDepositShares (decodeLpRequestState key 123 blockHash $ response 50 0 0 0 0 False)
       `shouldBe` Right 0
+    fmap vdrsPendingRedeemShares (decodeLpRequestState key 123 blockHash $ response 0 0 0 25 0 False)
+      `shouldBe` Right 25
+    fmap vdrsRefundableRedeemShares (decodeLpRequestState key 123 blockHash $ response 0 0 0 0 30 False)
+      `shouldBe` Right 30
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ replaceWord 9 25 $ response 0 0 0 0 0 False)
+      `shouldBe` Right False
+    fmap vdrsActive (decodeLpRequestState key 123 blockHash $ response 0 0 0 0 0 True)
+      `shouldBe` Right True
 
   it "keeps runtime and static canonical vault schemas aligned" $ do
     runtime <- readFile "src/Plether/Database/VaultActivity.hs"

@@ -103,21 +103,21 @@ startVaultDepositAttributionIndexer client pool cfg =
           Nothing ->
             logErrorEvery
               60
-              "vault_deposit_attribution_iteration_failed"
-              "Vault deposit attribution iteration failed"
+              "vault_request_share_attribution_iteration_failed"
+              "Vault request share attribution iteration failed"
               [field "error" $ show err]
       Right VaultDepositAttributionCycleLeaderBusy -> pure ()
       Right VaultDepositAttributionCycleWaiting ->
         logInfoEvery
           60
-          "vault_deposit_attribution_heartbeat"
-          "Vault deposit attribution is waiting for canonical request backfill"
+          "vault_request_share_attribution_heartbeat"
+          "Vault request share attribution is waiting for canonical request backfill"
           [field "state" ("backfilling" :: Text)]
       Right (VaultDepositAttributionCycleCompleted completed) ->
         logInfoEvery
           60
-          "vault_deposit_attribution_heartbeat"
-          "Vault deposit attribution completed a pinned Public Lens poll"
+          "vault_request_share_attribution_heartbeat"
+          "Vault request share attribution completed a pinned Public Lens poll"
           [ field "state" $ if vdacrBackfillComplete completed then ("ready" :: Text) else "backfilling"
           , field "confirmed_through_block" $ vdacrConfirmedThrough completed
           , field "safe_head_block" $ vdacrSafeHead completed
@@ -165,9 +165,9 @@ runVaultDepositAttributionCycle client pool cfg =
     | vdasConfirmedThroughBlock row > vaisLastIndexedBlock activityState = reset conn row
     | otherwise =
         case vdasConfirmedThroughBlockHash row of
-          Nothing -> fail "Vault deposit attribution cursor is missing its canonical block hash"
+          Nothing -> fail "Vault request share attribution cursor is missing its canonical block hash"
           Just storedHash -> do
-            canonical <- rpcOrFail "verify vault deposit attribution cursor" $
+            canonical <- rpcOrFail "verify vault request share attribution cursor" $
               ethGetBlockByNumber client $ vdasConfirmedThroughBlock row
             if normalize storedHash == normalize (rpcBlockHash canonical)
               then pure state
@@ -175,8 +175,8 @@ runVaultDepositAttributionCycle client pool cfg =
    where
     reset targetConn cursorRow = do
       logWarn
-        "vault_deposit_attribution_reorg_detected"
-        "Vault deposit attribution cursor changed; rebuilding its deployment-scoped materialization"
+        "vault_request_share_attribution_reorg_detected"
+        "Vault request share attribution cursor changed; rebuilding its deployment-scoped materialization"
         [ field "mismatch_block" $ vdasConfirmedThroughBlock cursorRow
         , field "deployment_block" $ vadDeploymentBlock deployment
         ]
@@ -194,14 +194,14 @@ runVaultDepositAttributionCycle client pool cfg =
     let keys = Set.toAscList $ Set.fromList $ newKeys <> activeKeys
     observations <- fmap concat $ forM (chunksOf requestBatchSize keys) $ \batch ->
       mapConcurrently (readRequestState targetBlock targetHash) batch
-    canonicalAfter <- rpcOrFail "re-read vault deposit attribution block" $
+    canonicalAfter <- rpcOrFail "re-read vault request share attribution block" $
       ethGetBlockByNumber client targetBlock
     unless
       ( rpcBlockNumber canonicalAfter == targetBlock
           && normalize (rpcBlockHash canonicalAfter) == normalize targetHash
           && rpcBlockTimestamp canonicalAfter == targetTimestamp
       ) $
-      fail "Vault deposit attribution block changed during observation"
+      fail "Vault request share attribution block changed during observation"
     withTransactionMode
       TransactionMode
         { isolationLevel = RepeatableRead
@@ -211,9 +211,9 @@ runVaultDepositAttributionCycle client pool cfg =
       currentActivity <- getVaultActivityIndexerState conn deployment
       currentAttribution <- getVaultDepositAttributionState conn deployment
       unless (currentActivity == Just activityState) $
-        fail "Vault activity cursor changed before deposit attribution commit"
+        fail "Vault activity cursor changed before request share attribution commit"
       unless (currentAttribution == attributionState) $
-        fail "Vault deposit attribution cursor changed before commit"
+        fail "Vault request share attribution cursor changed before commit"
       mapM_ (upsertVaultDepositRequestStateExact conn deployment) observations
       recomputeVaultAttributedHolderBalances
         conn deployment (vadSeniorVault deployment) targetBlock targetHash
@@ -281,7 +281,9 @@ decodeLpRequestState key@VaultDepositRequestKey {..} observedBlock observedHash 
       pendingDepositAssets = uintAt 3
       claimableDepositAssets = uintAt 5
       claimableDepositShares = uintAt 6
+      pendingRedeemShares = uintAt 7
       refundableDepositAssets = uintAt 11
+      refundableRedeemShares = uintAt 12
       redeemRefundPending = uintAt 13
   unless (normalize vault == normalize vdrkVaultAddress) $
     Left "Public Lens LP request state returned a different vault"
@@ -298,7 +300,15 @@ decodeLpRequestState key@VaultDepositRequestKey {..} observedBlock observedHash 
       , vdrsClaimableDepositAssets = claimableDepositAssets
       , vdrsClaimableDepositShares = claimableDepositShares
       , vdrsRefundableDepositAssets = refundableDepositAssets
-      , vdrsActive = pendingDepositAssets > 0 || claimableDepositShares > 0
+      , vdrsPendingRedeemShares = pendingRedeemShares
+      , vdrsRefundableRedeemShares = refundableRedeemShares
+      , vdrsRedeemRefundPending = redeemRefundPending == 1
+      , vdrsActive =
+          pendingDepositAssets > 0
+            || claimableDepositShares > 0
+            || pendingRedeemShares > 0
+            || refundableRedeemShares > 0
+            || redeemRefundPending == 1
       , vdrsObservedBlock = observedBlock
       , vdrsObservedBlockHash = normalize observedHash
       }

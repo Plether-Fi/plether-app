@@ -1,7 +1,7 @@
 module Plether.Types.VaultActivity
   ( VaultActivityDeploymentIdentity (..)
   , VaultActivityCoverage (..)
-  , VaultDepositAttributionCoverage (..)
+  , VaultShareAttributionCoverage (..)
   , VaultActivityHolder (..)
   , VaultActivityItem (..)
   , VaultActivityTrancheData (..)
@@ -41,7 +41,7 @@ data VaultActivityCoverage = VaultActivityCoverage
   , vacLagBlocks :: Integer
   , vacLagSeconds :: Integer
   , vacLastSuccessfulPoll :: Integer
-  , vacDepositShareAttribution :: VaultDepositAttributionCoverage
+  , vacShareAttribution :: VaultShareAttributionCoverage
   }
   deriving stock (Eq, Show)
 
@@ -57,30 +57,31 @@ instance ToJSON VaultActivityCoverage where
       , "lagBlocks" .= vacLagBlocks
       , "lagSeconds" .= vacLagSeconds
       , "lastSuccessfulPoll" .= vacLastSuccessfulPoll
-      , "depositShareAttribution" .= vacDepositShareAttribution
+      , "shareAttribution" .= vacShareAttribution
       ]
 
-data VaultDepositAttributionCoverage = VaultDepositAttributionCoverage
-  { vdacConfirmedThroughBlock :: Integer
-  , vdacConfirmedThroughHash :: Maybe Text
-  , vdacComplete :: Bool
-  , vdacLastSuccessfulPoll :: Integer
+data VaultShareAttributionCoverage = VaultShareAttributionCoverage
+  { vsacConfirmedThroughBlock :: Integer
+  , vsacConfirmedThroughHash :: Maybe Text
+  , vsacComplete :: Bool
+  , vsacLastSuccessfulPoll :: Integer
   }
   deriving stock (Eq, Show)
 
-instance ToJSON VaultDepositAttributionCoverage where
-  toJSON VaultDepositAttributionCoverage {..} =
+instance ToJSON VaultShareAttributionCoverage where
+  toJSON VaultShareAttributionCoverage {..} =
     object
-      [ "confirmedThroughBlock" .= vdacConfirmedThroughBlock
-      , "confirmedThroughHash" .= vdacConfirmedThroughHash
-      , "complete" .= vdacComplete
-      , "lastSuccessfulPoll" .= vdacLastSuccessfulPoll
+      [ "confirmedThroughBlock" .= vsacConfirmedThroughBlock
+      , "confirmedThroughHash" .= vsacConfirmedThroughHash
+      , "complete" .= vsacComplete
+      , "lastSuccessfulPoll" .= vsacLastSuccessfulPoll
       ]
 
 data VaultActivityHolder = VaultActivityHolder
   { vahAddress :: Text
   , vahShareBalance :: Integer
   , vahUnclaimedDepositShares :: Integer
+  , vahWithdrawalEscrowShares :: Integer
   , vahTotalAttributedShares :: Integer
   }
   deriving stock (Eq, Show)
@@ -91,6 +92,7 @@ instance ToJSON VaultActivityHolder where
       [ "address" .= vahAddress
       , "shareBalance" .= show vahShareBalance
       , "unclaimedDepositShares" .= show vahUnclaimedDepositShares
+      , "withdrawalEscrowShares" .= show vahWithdrawalEscrowShares
       , "totalAttributedShares" .= show vahTotalAttributedShares
       ]
 

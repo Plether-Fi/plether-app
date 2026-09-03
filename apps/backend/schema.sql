@@ -2407,8 +2407,9 @@ ALTER TABLE vault_activity_indexer_state
     ADD COLUMN IF NOT EXISTS last_indexed_block_timestamp BIGINT NOT NULL DEFAULT 0;
 
 -- Public Lens snapshots that attribute finalized-but-unclaimed deposit shares
--- to their request controller. This cursor is independent from log ingestion so
--- transient Lens failures cannot stop canonical vault event indexing.
+-- plus pending/refundable redeem shares to their request controller. This
+-- cursor is independent from log ingestion so transient Lens failures cannot
+-- stop canonical vault event indexing.
 CREATE TABLE IF NOT EXISTS vault_deposit_attribution_state (
     chain_id NUMERIC(78,0) NOT NULL,
     house_pool_address VARCHAR(42) NOT NULL,
@@ -2440,6 +2441,9 @@ CREATE TABLE IF NOT EXISTS vault_deposit_request_states (
     claimable_deposit_assets NUMERIC(78,0) NOT NULL,
     claimable_deposit_shares NUMERIC(78,0) NOT NULL,
     refundable_deposit_assets NUMERIC(78,0) NOT NULL,
+    pending_redeem_shares NUMERIC(78,0) NOT NULL,
+    refundable_redeem_shares NUMERIC(78,0) NOT NULL,
+    redeem_refund_pending BOOLEAN NOT NULL,
     is_active BOOLEAN NOT NULL,
     observed_block NUMERIC(78,0) NOT NULL,
     observed_block_hash VARCHAR(66) NOT NULL,
@@ -2447,7 +2451,8 @@ CREATE TABLE IF NOT EXISTS vault_deposit_request_states (
     PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id),
     CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND observed_block >= 0),
     CHECK (pending_deposit_assets >= 0 AND claimable_deposit_assets >= 0 AND claimable_deposit_shares >= 0 AND refundable_deposit_assets >= 0),
-    CHECK (is_active = (pending_deposit_assets > 0 OR claimable_deposit_shares > 0)),
+    CHECK (pending_redeem_shares >= 0 AND refundable_redeem_shares >= 0),
+    CHECK (is_active = (pending_deposit_assets > 0 OR claimable_deposit_shares > 0 OR pending_redeem_shares > 0 OR refundable_redeem_shares > 0 OR redeem_refund_pending)),
     CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (controller_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (observed_block_hash ~ '^0x[0-9a-f]{64}$')
@@ -2455,7 +2460,7 @@ CREATE TABLE IF NOT EXISTS vault_deposit_request_states (
 CREATE INDEX IF NOT EXISTS idx_vault_deposit_request_states_active
     ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, is_active, vault_address, controller_address, request_id);
 CREATE INDEX IF NOT EXISTS idx_vault_deposit_request_states_attribution
-    ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, vault_address, controller_address, claimable_deposit_shares);
+    ON vault_deposit_request_states(chain_id, house_pool_address, deployment_block, vault_address, controller_address, claimable_deposit_shares, pending_redeem_shares, refundable_redeem_shares);
 
 CREATE TABLE IF NOT EXISTS vault_attributed_holder_balances (
     chain_id NUMERIC(78,0) NOT NULL,
@@ -2465,13 +2470,14 @@ CREATE TABLE IF NOT EXISTS vault_attributed_holder_balances (
     holder_address VARCHAR(42) NOT NULL,
     share_balance NUMERIC(78,0) NOT NULL,
     unclaimed_deposit_shares NUMERIC(78,0) NOT NULL,
+    withdrawal_escrow_shares NUMERIC(78,0) NOT NULL,
     total_attributed_shares NUMERIC(78,0) NOT NULL,
     observed_block NUMERIC(78,0) NOT NULL,
     observed_block_hash VARCHAR(66) NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, holder_address),
-    CHECK (share_balance >= 0 AND unclaimed_deposit_shares >= 0 AND total_attributed_shares > 0),
-    CHECK (total_attributed_shares = share_balance + unclaimed_deposit_shares),
+    CHECK (share_balance >= 0 AND unclaimed_deposit_shares >= 0 AND withdrawal_escrow_shares >= 0 AND total_attributed_shares > 0),
+    CHECK (total_attributed_shares = share_balance + unclaimed_deposit_shares + withdrawal_escrow_shares),
     CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (holder_address ~ '^0x[0-9a-f]{40}$' AND observed_block_hash ~ '^0x[0-9a-f]{64}$')
 );

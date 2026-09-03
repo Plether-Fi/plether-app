@@ -92,10 +92,13 @@ function parseHolder(
   address: string,
   shareBalance: string,
   unclaimedDepositShares?: string,
+  withdrawalEscrowShares?: string,
   totalAttributedShares?: string,
 ): RawVaultHolder | undefined {
   const directBalance = parseUnsignedInteger(shareBalance)
-  const hasAttributionFields = unclaimedDepositShares !== undefined || totalAttributedShares !== undefined
+  const hasAttributionFields = unclaimedDepositShares !== undefined
+    || withdrawalEscrowShares !== undefined
+    || totalAttributedShares !== undefined
   if (
     !isAddress(address)
     || directBalance === undefined
@@ -104,14 +107,18 @@ function parseHolder(
   const unclaimedBalance = unclaimedDepositShares === undefined
     ? 0n
     : parseUnsignedInteger(unclaimedDepositShares)
+  const withdrawalBalance = withdrawalEscrowShares === undefined
+    ? 0n
+    : parseUnsignedInteger(withdrawalEscrowShares)
   const balance = totalAttributedShares === undefined
     ? directBalance
     : parseUnsignedInteger(totalAttributedShares)
   if (
     unclaimedBalance === undefined
+    || withdrawalBalance === undefined
     || balance === undefined
     || balance <= 0n
-    || balance !== directBalance + unclaimedBalance
+    || balance !== directBalance + unclaimedBalance + withdrawalBalance
   ) return undefined
   return { address: normalizeAddress(address), balance, tranche }
 }
@@ -173,6 +180,7 @@ function normalizeActivity(payload: BackendVaultActivity): {
       address,
       shareBalance,
       unclaimedDepositShares,
+      withdrawalEscrowShares,
       totalAttributedShares,
     }) => {
       const holder = parseHolder(
@@ -180,6 +188,7 @@ function normalizeActivity(payload: BackendVaultActivity): {
         address,
         shareBalance,
         unclaimedDepositShares,
+        withdrawalEscrowShares,
         totalAttributedShares,
       )
       if (!holder) throw new Error('Vault activity returned a malformed holder row.')
@@ -239,7 +248,7 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
     throw new Error('Vault activity belongs to a different contract deployment.')
   }
   const coverage = payload.coverage
-  const attribution = coverage.depositShareAttribution
+  const attribution = coverage.shareAttribution ?? coverage.depositShareAttribution
   if (
     !Number.isSafeInteger(coverage.confirmedThroughBlock)
     || !Number.isSafeInteger(coverage.observedSafeHeadBlock)
