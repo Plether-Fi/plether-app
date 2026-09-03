@@ -439,7 +439,6 @@ export const FrozenOracleClose: Story = {
     initialCommittedIsFullClose: true,
     initialCommittedPositionVpiAccrued: 60n * USDC,
     initialFinalExecutionOracleFrozen: true,
-    initialFinalFrozenCloseSpreadUsdc: 3_750_000n,
     initialFinalVpiUsdc: -2_875_000n,
     currentPosition: executedPosition,
     currentPositionSide: 'long',

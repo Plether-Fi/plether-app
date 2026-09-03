@@ -239,6 +239,26 @@ const documentationMarketArgs = {
   executionFeeBps: 4n,
 }
 
+const executedFrozenCloseReceipt = {
+  executionNotionalUsdc: (8_062_240_000n).toString(),
+  realizedPnlUsdc: (390n * USDC).toString(),
+  vpiUsdc: (12n * USDC).toString(),
+  carryUsdc: (6n * USDC).toString(),
+  executionFeeUsdc: (4n * USDC).toString(),
+  frozenSpreadUsdc: (24n * USDC).toString(),
+  actionChargeAssessedUsdc: (42n * USDC).toString(),
+  actionChargeCollectedUsdc: (36n * USDC).toString(),
+  grossAccountDebitUsdc: (40n * USDC).toString(),
+  preSettlementBalanceUsdc: (2_450n * USDC).toString(),
+  postSettlementBalanceUsdc: (2_450n * USDC).toString(),
+  preTraderClaimBalanceUsdc: '0',
+  postTraderClaimBalanceUsdc: (350n * USDC).toString(),
+  postPositionSize: '0',
+  postPositionMarginUsdc: '0',
+  postPositionEquityUsdc: '0',
+  postLeverageBps: '0',
+}
+
 const meta: Meta<typeof PerpsTradeTicket> = {
   title: 'Perps/Trade Ticket',
   component: PerpsTradeTicket,
@@ -579,7 +599,7 @@ export const SelfExecuteFailed: Story = {
 }
 
 export const Executed: Story = {
-  name: 'Close Long · Finalized VPI Credit',
+  name: 'Close Long · Reconciled Frozen Close',
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'executed',
@@ -593,10 +613,14 @@ export const Executed: Story = {
     initialCommittedSizeDelta: POSITION_SIZE,
     initialFinalExecutionPrice: 98_320_000n,
     initialFinalExecutionOraclePrice: ORACLE_PRICE,
-    initialFinalExecutionOracleFrozen: false,
-    initialFinalExecutionEconomicsVersion: 1,
-    initialFinalVpiUsdc: -12_300_000n,
+    initialFinalExecutionOracleFrozen: true,
+    initialFinalExecutionEconomicsVersion: 2,
+    initialFinalReceiptEconomics: executedFrozenCloseReceipt,
+    initialFinalVpiUsdc: 12n * USDC,
+    initialCommittedPrePositionMarginUsdc: currentLongPosition.marginUsdc,
     currentPositionAmount: '0',
+    oracleFrozen: true,
+    marketPhase: 'close-only',
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -606,6 +630,13 @@ export const ExecutedWithVpiCharge: Story = {
   args: {
     ...Executed.args,
     initialFinalVpiUsdc: 4_250_000n,
+    initialFinalReceiptEconomics: {
+      ...executedFrozenCloseReceipt,
+      vpiUsdc: '4250000',
+      actionChargeAssessedUsdc: '34250000',
+      actionChargeCollectedUsdc: '28250000',
+      postTraderClaimBalanceUsdc: '357750000',
+    },
   },
   render: (args) => <TicketFrame {...args} />,
 }

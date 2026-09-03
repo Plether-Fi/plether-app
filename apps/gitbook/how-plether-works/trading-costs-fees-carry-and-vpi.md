@@ -683,14 +683,7 @@ For VPI:
 
 Positive values are displayed without a `+` sign. Small non-zero costs may appear as `0.0 USDC` because preview values are rounded.
 
-After execution, **Final Result** changes the labels to:
-
-* **Protocol execution fee**
-* **VPI / Price impact**
-* **Execution reward**
-* **Oracle confidence spread**
-
-If indexed execution data has not arrived, VPI remains labelled **Estimated VPI / Price impact**.
+After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread paid** and **Net close result**. Opening trades keep the existing execution summary.
 
 At contract level, close previews expose frozen-market settlement separately:
 
@@ -698,9 +691,7 @@ At contract level, close previews expose frozen-market settlement separately:
 * `frozenSpreadPaidUsdc` — amount retained or collected for LPs
 * `frozenSpreadWaivedUsdc` — waived
 
-A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record.
-
-If the active frontend does not yet display these fields, the onchain preview and event remain the authoritative breakdown.
+A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record. **Final Result** always shows **Frozen spread paid**. When the waived amount is nonzero, it also shows **Frozen spread assessed** and **Frozen spread waived**. Only the paid amount reduces **Net close result**.
 
 #### Two meanings of “Cost of carry”
 

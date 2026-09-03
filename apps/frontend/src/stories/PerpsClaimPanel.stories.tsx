@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ReactNode } from 'react'
 import { OperationStateCard } from '../components/PerpsTradingAccountPanel'
 import { PerpsClaimPanel } from '../components/PerpsClaimPanel'
-import { CloseSettlementReconciliationPanel } from '../components/documentation/CloseSettlementReconciliationPanel'
 
 const TRADING_ACCOUNT = '0x62A9c44fAbC68B6dE62059E827cE972bD09E6c18'
 
@@ -90,93 +89,5 @@ export const CloseCreatedClaim: Story = {
         />
       </div>
     </div>
-  ),
-}
-
-export const CompletedFullClose: Story = {
-  render: () => (
-    <div className="min-h-screen bg-app-bg p-4 md:p-8">
-      <div className="mx-auto max-w-6xl">
-        <CloseSettlementReconciliationPanel
-          settlementItems={[
-            { label: 'Realized price PnL', amount: '+390.00', tone: 'positive' },
-            { label: 'Signed VPI', amount: '-12.00', tone: 'negative' },
-            { label: 'Execution fee', amount: '-4.00', tone: 'negative' },
-            { label: 'Carry', amount: '-6.00', tone: 'negative' },
-            { label: 'Frozen spread assessed', amount: '24.00', tone: 'warning' },
-            { label: 'Frozen spread paid', amount: '-18.00', tone: 'negative' },
-            { label: 'Frozen spread waived', amount: '6.00', tone: 'warning' },
-            {
-              label: 'Net settlement',
-              amount: '+350.00',
-              tone: 'positive',
-              detail: 'Fresh HousePool-funded payout after costs',
-            },
-          ]}
-          fundingItems={[
-            {
-              label: 'Released margin',
-              amount: '+1 000.00',
-              tone: 'positive',
-              detail: 'Existing position collateral',
-            },
-            {
-              label: 'Immediate Margin Account credit',
-              amount: '+1 000.00',
-              tone: 'positive',
-              detail: 'Released margin only',
-            },
-            {
-              label: 'Trader claim created',
-              amount: '350.00',
-              tone: 'warning',
-              detail: 'Complete fresh payout recorded in full',
-            },
-          ]}
-          message={(
-            <>
-              The released margin was credited immediately. Because the HousePool could not fund the complete fresh
-              <strong className="font-semibold text-content-primary"> 350.00 USDC </strong>
-              payout, none of it was paid immediately; the full amount became a trader claim.
-            </>
-          )}
-          transactionHash="0x75c4000000000000000000000000000000000000000000000000000000001032"
-        />
-      </div>
-    </div>
-  ),
-}
-
-export const FrozenCloseResult: Story = {
-  render: () => (
-    <Frame>
-      <OperationStateCard
-        title="Frozen-market close executed"
-        stage="Final settlement"
-        message="The position closed successfully. The fixed frozen-market spread is reconciled separately from VPI, fees and carry."
-        tone="success"
-        identifierLabel="Finalization transaction"
-        identifier="0x8af100000000000000000000000000000000000000000000000000000000d0f2"
-        action={(
-          <dl className="border border-brand-border/20 bg-app-bg px-4 text-sm">
-            {[
-              ['Realized price PnL', '+390.00 USDC'],
-              ['VPI / Price impact', '-12.00 USDC'],
-              ['Frozen close spread assessed', '24.00 USDC'],
-              ['Frozen close spread paid to LPs', '-18.00 USDC'],
-              ['Frozen close spread waived', '6.00 USDC'],
-              ['Execution fee', '-4.00 USDC'],
-              ['Accrued carry', '-6.00 USDC'],
-              ['Net close settlement', '+350.00 USDC'],
-            ].map(([label, value]) => (
-              <div key={label} className="flex justify-between gap-4 border-b border-brand-border/15 py-2.5 last:border-b-0">
-                <dt className="text-content-secondary">{label}</dt>
-                <dd className="text-right font-semibold text-content-primary">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      />
-    </Frame>
   ),
 }

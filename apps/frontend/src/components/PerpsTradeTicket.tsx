@@ -18,7 +18,12 @@ import {
 import { PerpsOrderFundingShortfallError } from '../contracts/preparePerpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
-import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
+import type {
+  PerpsOrderHistoryRow,
+  PerpsOrderReceiptEconomics,
+  PerpsPendingOrder,
+  PerpsPosition,
+} from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
@@ -69,8 +74,10 @@ import {
   getPerpsOpenRevertMessage,
 } from '../utils/perpsErrors'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
+import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
+import { PerpsCloseReconciliationDetails } from './PerpsCloseReconciliationDetails'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
@@ -209,8 +216,9 @@ interface PerpsTradeTicketProps {
   initialFinalExecutionPrice?: bigint
   initialFinalExecutionOraclePrice?: bigint
   initialFinalExecutionOracleFrozen?: boolean
-  initialFinalFrozenCloseSpreadUsdc?: bigint
   initialFinalExecutionEconomicsVersion?: number
+  /** Static receipt evidence for deterministic finalized stories and tests. */
+  initialFinalReceiptEconomics?: PerpsOrderReceiptEconomics
   /** Static exact VPI evidence for deterministic stories and tests. */
   initialFinalVpiUsdc?: bigint
   /** Static committed VPI estimate for deterministic stories and tests. */
@@ -220,6 +228,8 @@ interface PerpsTradeTicketProps {
   /** Static full-close intent for deterministic finalized stories and tests. */
   initialCommittedIsFullClose?: boolean
   initialCommittedSizeDelta?: bigint
+  /** Static execution-bound position-margin snapshot for deterministic stories and tests. */
+  initialCommittedPrePositionMarginUsdc?: bigint
   initialFlowError?: string
   closePositionRequestId?: number
   currentPositionSide?: Direction
@@ -331,10 +341,6 @@ const VPI_PRICE_IMPACT_TOOLTIP =
   'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
 const CLOSE_VPI_TOOLTIP =
   'For a close or reduction, positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement after the lifetime VPI clamp. A credit is not sent directly to the owner wallet. The preview can change before execution.'
-const FINAL_CLOSE_VPI_TOOLTIP =
-  'This is the VPI settled for the close or reduction. Paid VPI was charged to the Margin Account; credited VPI was added to the Margin Account settlement after the lifetime VPI clamp, not sent directly to the owner wallet.'
-const FINAL_POSITION_VPI_BALANCE_TOOLTIP =
-  'This is the signed aggregate VPI balance on the position immediately before this close or reduction. It is shown with the transaction VPI so you can compare the lifetime position balance with the amount settled by this transaction. A full close leaves no remaining position VPI balance.'
 const POSITION_VPI_BALANCE_TOOLTIP =
   'The position\'s signed net VPI over its lifecycle. Net paid VPI can support a future closing credit. A provisional credit has already been added to settlement, remains excluded from risk equity, and may be reconciled on close. Partial-reduction limits are applied automatically to the VPI estimate.'
 const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
@@ -580,6 +586,13 @@ function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
     || order.vpiUsdcRaw === undefined
     || executionPrice === undefined
     || executionOracleFrozen === undefined
+  ) {
+    return false
+  }
+
+  if (
+    historyOrderIsClose(order) === true &&
+    derivePerpsCloseReconciliation(order.receiptEconomics) === undefined
   ) {
     return false
   }
@@ -1751,13 +1764,14 @@ export function PerpsTradeTicket({
   initialFinalExecutionPrice,
   initialFinalExecutionOraclePrice,
   initialFinalExecutionOracleFrozen,
-  initialFinalFrozenCloseSpreadUsdc,
   initialFinalExecutionEconomicsVersion,
+  initialFinalReceiptEconomics,
   initialFinalVpiUsdc,
   initialCommittedVpiUsdc,
   initialCommittedPositionVpiAccrued,
   initialCommittedIsFullClose,
   initialCommittedSizeDelta,
+  initialCommittedPrePositionMarginUsdc,
   initialFlowError,
   closePositionRequestId,
   currentPositionSide = 'long',
@@ -1858,10 +1872,11 @@ export function PerpsTradeTicket({
   const [finalExecutionOracleFrozen, setFinalExecutionOracleFrozen] = useState<boolean | undefined>(
     initialFinalExecutionOracleFrozen
   )
-  const [finalExecutionFrozenCloseSpreadUsdc, setFinalExecutionFrozenCloseSpreadUsdc] =
-    useState<bigint | undefined>(initialFinalFrozenCloseSpreadUsdc)
   const [finalExecutionEconomicsVersion, setFinalExecutionEconomicsVersion] =
     useState<number | undefined>(initialFinalExecutionEconomicsVersion)
+  const [finalReceiptEconomics, setFinalReceiptEconomics] = useState<PerpsOrderReceiptEconomics | undefined>(
+    initialFinalReceiptEconomics
+  )
   const [finalPostPositionSize, setFinalPostPositionSize] = useState<bigint | undefined>()
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>(initialFinalVpiUsdc)
   const [committedVpiUsdc, setCommittedVpiUsdc] = useState<bigint | undefined>(initialCommittedVpiUsdc)
@@ -1872,6 +1887,9 @@ export function PerpsTradeTicket({
     initialCommittedPositionVpiAccrued !== undefined
   )
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
+  const [committedPrePositionMarginUsdc, setCommittedPrePositionMarginUsdc] = useState<bigint | undefined>(
+    initialCommittedPrePositionMarginUsdc
+  )
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
@@ -2124,15 +2142,15 @@ export function PerpsTradeTicket({
           ? current
           : order.vpiUsdcRaw
       ))
-      setFinalExecutionFrozenCloseSpreadUsdc((current) => (
-        isSameTerminalOrder && order.frozenCloseSpreadUsdcRaw === undefined
-          ? current
-          : order.frozenCloseSpreadUsdcRaw
-      ))
       setFinalExecutionEconomicsVersion((current) => (
         isSameTerminalOrder && order.executionEconomicsVersion === undefined
           ? current
           : order.executionEconomicsVersion
+      ))
+      setFinalReceiptEconomics((current) => (
+        isSameTerminalOrder && order.receiptEconomics === undefined
+          ? current
+          : order.receiptEconomics
       ))
       const indexedPostPositionSize = historyPostPositionSize(order)
       setFinalPostPositionSize((current) => (
@@ -2144,8 +2162,8 @@ export function PerpsTradeTicket({
       setFinalExecutionPrice(undefined)
       setFinalExecutionOraclePrice(undefined)
       setFinalExecutionOracleFrozen(undefined)
-      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalReceiptEconomics(undefined)
       setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
     }
@@ -2217,8 +2235,8 @@ export function PerpsTradeTicket({
     setFinalExecutionPrice(undefined)
     setFinalExecutionOraclePrice(undefined)
     setFinalExecutionOracleFrozen(undefined)
-    setFinalExecutionFrozenCloseSpreadUsdc(undefined)
     setFinalExecutionEconomicsVersion(undefined)
+    setFinalReceiptEconomics(undefined)
     setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setFlowError(undefined)
@@ -2252,8 +2270,8 @@ export function PerpsTradeTicket({
       setFinalExecutionPrice(undefined)
       setFinalExecutionOraclePrice(undefined)
       setFinalExecutionOracleFrozen(undefined)
-      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalReceiptEconomics(undefined)
       setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
       setFlowError(deferredSafeConfirmationError.message)
@@ -3368,16 +3386,16 @@ export function PerpsTradeTicket({
     displayedCommittedSizeDelta
   )
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
+  const finalCloseReconciliation = finalIsClose
+    ? derivePerpsCloseReconciliation(
+        executedOrderHistoryRow?.receiptEconomics ?? finalReceiptEconomics,
+        { preExecutionPositionMarginUsdc: committedPrePositionMarginUsdc }
+      )
+    : undefined
   const finalExecutionEconomicsComplete = finalExecutionEconomicsVersion !== undefined
-  const finalVpiAction = formatTradeVpi(finalVpiUsdc, 'final')
   const finalVpiValue = !finalExecutionEconomicsComplete || finalVpiUsdc === undefined
     ? 'Unavailable'
-    : finalIsClose ? finalVpiAction.value : formatSignedUsdcNoPlus(finalVpiUsdc)
-  const finalUsesFrozenCloseSpread =
-    finalExecutionEconomicsComplete && finalExecutionOracleFrozen === true
-  const finalFrozenCloseSpreadValue = finalExecutionFrozenCloseSpreadUsdc === undefined
-    ? PREVIEW_UNAVAILABLE_VALUE
-    : formatUsdcRaw(finalExecutionFrozenCloseSpreadUsdc)
+    : formatSignedUsdcNoPlus(finalVpiUsdc)
   const committedVpiAction = formatTradeVpi(committedVpiUsdc, 'estimate')
   const committedPositionVpiBalance = formatVpiBalance(committedPositionVpiAccrued)
   const committedVpiRows: PreviewRow[] = [
@@ -3648,6 +3666,11 @@ export function PerpsTradeTicket({
     setCommittedVpiUsdc(previewVpiUsdc)
     setCommittedPositionVpiAccrued(previewPositionVpiAccrued)
     setCommittedShowsPositionVpiBalance(!isOpeningFromZero)
+    setCommittedPrePositionMarginUsdc(
+      isReducingCurrentPosition && !hasPendingOrderDependencies
+        ? currentPosition?.marginUsdc
+        : undefined
+    )
     debugPerpsCommit('ticket:confirm-click', {
       enableLiveTrading,
       isConnected,
@@ -3704,8 +3727,8 @@ export function PerpsTradeTicket({
       setFinalExecutionPrice(undefined)
       setFinalExecutionOraclePrice(undefined)
       setFinalExecutionOracleFrozen(undefined)
-      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
       setFinalExecutionEconomicsVersion(undefined)
+      setFinalReceiptEconomics(undefined)
       setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
       const applyIncludedCommit = (result: {
@@ -3741,8 +3764,8 @@ export function PerpsTradeTicket({
             setFinalExecutionPrice(undefined)
             setFinalExecutionOraclePrice(undefined)
             setFinalExecutionOracleFrozen(undefined)
-            setFinalExecutionFrozenCloseSpreadUsdc(undefined)
             setFinalExecutionEconomicsVersion(undefined)
+            setFinalReceiptEconomics(undefined)
             setFinalPostPositionSize(undefined)
             setFinalVpiUsdc(undefined)
             setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
@@ -3847,8 +3870,8 @@ export function PerpsTradeTicket({
         setFinalExecutionPrice(undefined)
         setFinalExecutionOraclePrice(undefined)
         setFinalExecutionOracleFrozen(undefined)
-        setFinalExecutionFrozenCloseSpreadUsdc(undefined)
         setFinalExecutionEconomicsVersion(undefined)
+        setFinalReceiptEconomics(undefined)
         setFinalPostPositionSize(undefined)
         setFinalVpiUsdc(undefined)
       }
@@ -3936,11 +3959,12 @@ export function PerpsTradeTicket({
     setFinalExecutionPrice(undefined)
     setFinalExecutionOraclePrice(undefined)
     setFinalExecutionOracleFrozen(undefined)
-    setFinalExecutionFrozenCloseSpreadUsdc(undefined)
     setFinalExecutionEconomicsVersion(undefined)
+    setFinalReceiptEconomics(undefined)
     setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setCommittedSizeDelta(undefined)
+    setCommittedPrePositionMarginUsdc(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
     setCommittedIsClose(undefined)
@@ -4980,6 +5004,11 @@ export function PerpsTradeTicket({
               />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
+                {finalIsClose ? (
+                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-content-secondary">
+                    Execution
+                  </div>
+                ) : null}
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
@@ -5004,43 +5033,23 @@ export function PerpsTradeTicket({
                         ? <TokenAmount amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
-                    ...(!finalIsClose
-                      ? [{ label: 'Margin posted', value: formatUsdc(marginNumber) }]
-                      : []),
-                    { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    finalUsesFrozenCloseSpread
-                      ? {
-                          label: 'Frozen close spread',
-                          value: finalFrozenCloseSpreadValue,
-                          tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
-                          tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
-                        }
-                      : {
-                          label: 'Oracle confidence spread',
-                          value: finalOracleConfidenceSpreadValue,
-                          tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
-                          tooltipDocsLink: DOCS_LINKS.oracleConfidence,
-                        },
-                    ...(finalIsClose && committedShowsPositionVpiBalance
-                      ? [{
-                          label: finalIsFullClose
-                            ? 'Position VPI before close'
-                            : 'Position VPI before reduction',
-                          ...committedPositionVpiBalance,
-                          tooltip: FINAL_POSITION_VPI_BALANCE_TOOLTIP,
-                          tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
-                        }]
-                      : []),
-                    {
-                      label: 'VPI',
-                      value: finalVpiValue,
-                      tone: finalIsClose && finalExecutionEconomicsComplete
-                        ? finalVpiAction.tone
-                        : undefined,
-                      tooltip: finalIsClose ? FINAL_CLOSE_VPI_TOOLTIP : VPI_PRICE_IMPACT_TOOLTIP,
-                      tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
-                    },
-                    { label: 'Execution reward', value: formatUsdc(keeperBounty) },
+                    ...(!finalIsClose ? [
+                      { label: 'Margin posted', value: formatUsdc(marginNumber) },
+                      { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
+                      {
+                        label: 'Oracle confidence spread',
+                        value: finalOracleConfidenceSpreadValue,
+                        tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
+                        tooltipDocsLink: DOCS_LINKS.oracleConfidence,
+                      },
+                      {
+                        label: 'VPI',
+                        value: finalVpiValue,
+                        tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+                        tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+                      },
+                      { label: 'Execution reward', value: formatUsdc(keeperBounty) },
+                    ] satisfies PreviewRow[] : []),
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },
                   ]}
@@ -5052,6 +5061,17 @@ export function PerpsTradeTicket({
                       ? 'Executed reduction exposure is the committed Order quantity valued at the final displayed price.'
                       : 'Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.'}
                 </p>
+                {finalIsClose ? (
+                  <div className="mt-4 border-t border-brand-border/20 pt-4">
+                    {finalCloseReconciliation ? (
+                      <PerpsCloseReconciliationDetails reconciliation={finalCloseReconciliation} />
+                    ) : (
+                      <div className="border border-brand-border/20 bg-surface-panel p-3 text-sm text-content-secondary">
+                        Detailed close accounting unavailable
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
               <Button
                 className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}

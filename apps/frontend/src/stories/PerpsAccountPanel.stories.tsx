@@ -127,6 +127,8 @@ const failedOrderHistory = [
 
 const closeTradeHistory = [
   {
+    orderId: 75n,
+    activityType: 'Close',
     time: '15:22',
     market: 'plDXY Perp',
     side: 'Close Long',
@@ -136,6 +138,42 @@ const closeTradeHistory = [
     txHash: '0x7500000000000000000000000000000000000000000000000000000000000001',
   },
 ] satisfies PerpsTradeHistoryRow[]
+
+const closeOrderHistory = [{
+  orderId: 75n,
+  time: '15:22',
+  market: 'plDXY Perp',
+  side: 'Long',
+  type: 'Close',
+  price: '1.0412',
+  size: '650',
+  status: 'Executed',
+  account: STORY_ADDRESS,
+  clientOrderId: `0x${'75'.repeat(32)}`,
+  commitTxHash: '0x7400000000000000000000000000000000000000000000000000000000000001',
+  revealTxHash: closeTradeHistory[0].txHash,
+  receiptHash: `0x${'76'.repeat(32)}`,
+  activitySizeDeltaRaw: 650n * 10n ** 18n,
+  receiptEconomics: {
+    executionNotionalUsdc: (650n * USDC).toString(),
+    realizedPnlUsdc: '75400000',
+    vpiUsdc: '2000000',
+    carryUsdc: '4000000',
+    executionFeeUsdc: '1000000',
+    frozenSpreadUsdc: '0',
+    actionChargeAssessedUsdc: '6000000',
+    actionChargeCollectedUsdc: '6000000',
+    grossAccountDebitUsdc: '7000000',
+    preSettlementBalanceUsdc: (1_000n * USDC).toString(),
+    postSettlementBalanceUsdc: '1068400000',
+    preTraderClaimBalanceUsdc: '0',
+    postTraderClaimBalanceUsdc: '0',
+    postPositionSize: '0',
+    postPositionMarginUsdc: '0',
+    postPositionEquityUsdc: '0',
+    postLeverageBps: '0',
+  },
+}] satisfies PerpsOrderHistoryRow[]
 
 const meta: Meta<typeof PerpsAccountPanel> = {
   title: 'Perps/Account Panel',
@@ -277,7 +315,12 @@ export const TransactionHistoryCloseResult: Story = {
   render: () => (
     <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto max-w-6xl">
-        <PerpsAccountPanel initialTab="tradeHistory" isConnected tradeHistory={closeTradeHistory} />
+        <PerpsAccountPanel
+          initialTab="tradeHistory"
+          isConnected
+          orderHistory={closeOrderHistory}
+          tradeHistory={closeTradeHistory}
+        />
       </div>
     </div>
   ),

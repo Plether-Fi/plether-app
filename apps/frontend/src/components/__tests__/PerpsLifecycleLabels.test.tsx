@@ -54,10 +54,48 @@ import {
 } from '../../perps-aa'
 import { PerpsOrderFundingShortfallError } from '../../contracts/preparePerpsOrderV2'
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
 const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
 const V2_RECEIPT_HASH = `0x${'34'.repeat(32)}` as `0x${string}`
+
+function closeReceiptEconomics({
+  realizedPnlUsdc,
+  vpiUsdc,
+  carryUsdc,
+  executionFeeUsdc,
+  preSettlementBalanceUsdc,
+  postSettlementBalanceUsdc,
+}: {
+  realizedPnlUsdc: bigint
+  vpiUsdc: bigint
+  carryUsdc: bigint
+  executionFeeUsdc: bigint
+  preSettlementBalanceUsdc: bigint
+  postSettlementBalanceUsdc: bigint
+}): PerpsOrderReceiptEconomics {
+  const actionChargeAssessedUsdc = carryUsdc + (vpiUsdc > 0n ? vpiUsdc : 0n)
+  return {
+    executionNotionalUsdc: '100000000000',
+    realizedPnlUsdc: realizedPnlUsdc.toString(),
+    vpiUsdc: vpiUsdc.toString(),
+    carryUsdc: carryUsdc.toString(),
+    executionFeeUsdc: executionFeeUsdc.toString(),
+    frozenSpreadUsdc: '0',
+    actionChargeAssessedUsdc: actionChargeAssessedUsdc.toString(),
+    actionChargeCollectedUsdc: actionChargeAssessedUsdc.toString(),
+    grossAccountDebitUsdc: (actionChargeAssessedUsdc + executionFeeUsdc).toString(),
+    preSettlementBalanceUsdc: preSettlementBalanceUsdc.toString(),
+    postSettlementBalanceUsdc: postSettlementBalanceUsdc.toString(),
+    preTraderClaimBalanceUsdc: '0',
+    postTraderClaimBalanceUsdc: '0',
+    postPositionSize: '0',
+    postPositionMarginUsdc: '0',
+    postPositionEquityUsdc: '0',
+    postLeverageBps: '0',
+  }
+}
 
 vi.mock('@reown/appkit/react', () => ({
   createAppKit: vi.fn(),
@@ -964,6 +1002,67 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Add margin')).toBeInTheDocument()
     expect(screen.getByText('Liquidated Long')).toBeInTheDocument()
     expect(screen.getByText('Liquidation reward 0.2')).toBeInTheDocument()
+  })
+
+  it('opens the receipt-backed close breakdown from transaction history', () => {
+    const revealTxHash = '0x7500000000000000000000000000000000000000000000000000000000000001' as const
+    const receiptEconomics = {
+      ...closeReceiptEconomics({
+        realizedPnlUsdc: 30_000_000n,
+        vpiUsdc: 2_000_000n,
+        carryUsdc: 4_000_000n,
+        executionFeeUsdc: 1_000_000n,
+        preSettlementBalanceUsdc: 100_000_000n,
+        postSettlementBalanceUsdc: 100_000_000n,
+      }),
+      postTraderClaimBalanceUsdc: '23000000',
+    }
+
+    render(
+      <PerpsAccountPanel
+        initialTab="tradeHistory"
+        isConnected
+        orderHistory={[{
+          orderId: 75n,
+          time: '15:22',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0412',
+          size: '650',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          commitTxHash: '0x7400000000000000000000000000000000000000000000000000000000000001',
+          revealTxHash,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics,
+          activitySizeDeltaRaw: 650n * 10n ** 18n,
+        }]}
+        tradeHistory={[{
+          orderId: 75n,
+          activityType: 'Close',
+          time: '15:22',
+          market: 'plDXY Perp',
+          side: 'Close Long',
+          price: '1.0412',
+          size: '650',
+          pnl: '+30',
+          txHash: revealTxHash,
+        }]}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'View breakdown' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Close reconciliation' })
+    expect(within(dialog).getByText('Execution')).toBeInTheDocument()
+    expect(within(dialog).getByText('Close result')).toBeInTheDocument()
+    expect(within(dialog).getByText('Account outcome')).toBeInTheDocument()
+    expect(within(dialog).getByText('Trader claim created')).toBeInTheDocument()
+    expect(within(dialog).getByText('Net close result').closest('div')?.querySelector('dd'))
+      .toHaveTextContent('+23')
+    expect(within(dialog).queryByText('Position margin released')).not.toBeInTheDocument()
   })
 
   it('fills current position and max with the exact plDXY order quantity', () => {
@@ -2381,6 +2480,14 @@ describe('perps lifecycle labels', () => {
       executionPriceRaw: 98_391_251n,
       executionMode: 'Live',
       receiptHash: V2_RECEIPT_HASH,
+      receiptEconomics: closeReceiptEconomics({
+        realizedPnlUsdc: 200_000_000n,
+        vpiUsdc: 182_822_887n,
+        carryUsdc: 10_000_000n,
+        executionFeeUsdc: 1_000_000n,
+        preSettlementBalanceUsdc: 1_000_000_000n,
+        postSettlementBalanceUsdc: 1_006_177_113n,
+      }),
       vpiUsdcRaw: 182_822_887n,
       executionEconomicsVersion: 2,
     }
@@ -2426,18 +2533,17 @@ describe('perps lifecycle labels', () => {
     })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
-    const vpiRow = within(finalResult!).getByText('VPI').closest('div')
-    expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
+    const vpiRow = within(finalResult!).getByText('VPI charge').closest('div')
+    expect(vpiRow?.querySelector('dd')).toHaveTextContent('-182.82')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
-      expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent('-182.82')
       expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
     }, { timeout: 4_000 })
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
-    const oracleSpreadRow = within(finalResult!).getByText('Oracle confidence spread').closest('div')
-    expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.0002%')
+    expect(within(finalResult!).queryByText('Oracle confidence spread')).not.toBeInTheDocument()
     perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
       new Promise(() => {})
     )
@@ -2458,8 +2564,7 @@ describe('perps lifecycle labels', () => {
     )
 
     await waitFor(() => {
-      expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
-      expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent('-182.82')
     })
     expect(onAccountRefresh).toHaveBeenCalledTimes(2)
   })
