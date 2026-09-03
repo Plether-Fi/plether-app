@@ -31,7 +31,7 @@ export function Layout({ children }: LayoutProps) {
         {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
       </div>
-      <main className={`w-full min-w-0 flex-grow px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10 ${hasMobileNav ? 'pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-10' : 'pb-8 lg:pb-10'} ${fullWidth ? '' : 'mx-auto max-w-7xl'}`}>
+      <main className={`w-full min-w-0 flex-grow px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10 ${hasMobileNav ? 'pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-10' : 'pb-8 lg:pb-10'} ${fullWidth ? '' : 'mx-auto max-w-7xl'}`}>
         {children}
       </main>
       <Footer />

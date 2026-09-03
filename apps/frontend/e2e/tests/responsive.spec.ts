@@ -108,6 +108,29 @@ async function expectPerpsLayout(page: Page, viewportWidth: number) {
 
   if (!instrumentBox || !tradeTicketBox || !chartBox || !accountBox) return
 
+  const instrumentMetrics = instrument.locator('[data-perps-instrument-stat]')
+  await expect(instrumentMetrics).toHaveCount(6)
+
+  if (viewportWidth >= 360 && viewportWidth < 640) {
+    const metricBoxes = await Promise.all(
+      [0, 1, 2, 3].map((index) => instrumentMetrics.nth(index).boundingBox())
+    )
+    const [firstMetric, secondMetric, thirdMetric, fourthMetric] = metricBoxes
+
+    expect(firstMetric).not.toBeNull()
+    expect(secondMetric).not.toBeNull()
+    expect(thirdMetric).not.toBeNull()
+    expect(fourthMetric).not.toBeNull()
+
+    if (firstMetric && secondMetric && thirdMetric && fourthMetric) {
+      expect(Math.abs(firstMetric.y - secondMetric.y)).toBeLessThanOrEqual(1)
+      expect(Math.abs(secondMetric.y - thirdMetric.y)).toBeLessThanOrEqual(1)
+      expect(secondMetric.x).toBeGreaterThan(firstMetric.x)
+      expect(thirdMetric.x).toBeGreaterThan(secondMetric.x)
+      expect(fourthMetric.y).toBeGreaterThan(firstMetric.y)
+    }
+  }
+
   if (viewportWidth < 1280) {
     expect(instrumentBox.y + instrumentBox.height).toBeLessThanOrEqual(
       tradeTicketBox.y

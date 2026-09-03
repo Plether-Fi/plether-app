@@ -19,12 +19,12 @@ export function Header() {
   const homePath = shouldHidePerps ? '/spot' : '/'
 
   return (
-    <header className="border-b border-brand-border/30 bg-surface-panel py-3 sm:py-4">
-      <div className="flex w-full min-w-0 items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
+    <header className="border-b border-brand-border/30 bg-surface-panel py-1.5 sm:py-4">
+      <div className="flex w-full min-w-0 items-center justify-between gap-2 px-2 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-4 lg:gap-10">
-          <Link to={homePath} className="flex shrink-0 items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
-            <img src="/logomark.svg" alt="Plether" className="h-8 w-8" />
-            <img src="/logotype.svg" alt="" aria-hidden="true" className="hidden h-7 w-auto min-[430px]:block" />
+          <Link to={homePath} className="flex shrink-0 items-center gap-2 px-1 py-0.5 transition-opacity hover:opacity-90 sm:gap-2.5">
+            <img src="/logomark.svg" alt="Plether" className="h-7 w-7 sm:h-8 sm:w-8" />
+            <img src="/logotype.svg" alt="" aria-hidden="true" className="hidden h-6 w-auto min-[340px]:block sm:h-7" />
           </Link>
 
           <nav className="hidden min-w-0 items-center gap-1 lg:flex">

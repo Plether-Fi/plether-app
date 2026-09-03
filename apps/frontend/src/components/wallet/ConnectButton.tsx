@@ -10,7 +10,7 @@ const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperation
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
-  'group inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-3 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] sm:px-4'
+  'group inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-2 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] sm:gap-2 sm:px-4'
 const SWITCH_NETWORK_BUTTON_CLASS =
   'group inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-2 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto xl:px-3'
 
@@ -58,10 +58,10 @@ export function ConnectButton() {
           clearSwitchError()
           void openAppKit()
         }}
-        className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
+        className={`${WALLET_BUTTON_CLASS} text-xs font-medium sm:text-sm`}
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
-        <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[430px]:inline">
+        <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[340px]:inline">
           Connect Wallet
         </span>
       </button>
