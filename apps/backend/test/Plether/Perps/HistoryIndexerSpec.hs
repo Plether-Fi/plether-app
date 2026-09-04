@@ -269,6 +269,7 @@ spec = do
               else if index == 10 then word 3
               else if index == 11 then word 2
               else if index == 14 then word 101_250_000
+              else if index == 19 then word 200_000
               else if index == 25 then word 4
               else word 0
             | index <- [0 :: Int .. 45]
@@ -282,10 +283,12 @@ spec = do
       parsePerpsLog
         (mkLog orderFinalizedTopic [word 42, addressTopic, clientOrderId] finalizedData)
         `shouldBeParsedAs` \case
-          ParsedOrderFinalized 42 account clientId receiptHash "Failed" "Slippage" "FAD" (Just "Action charge") 101_250_000 _ _ ->
+          ParsedOrderFinalized 42 account clientId receiptHash "Failed" "Slippage" "FAD" (Just "Action charge") 101_250_000 economics payload ->
             account == testAccount
               && clientId == clientOrderIdText
               && receiptHash == "0x" <> Text.replicate 32 "aa"
+              && textField "executionBountyUsdc" economics == Just "200000"
+              && textField "executionBountyUsdc" payload == Just "200000"
           _ -> False
 
     it "parses position lifecycle activity" $ do
@@ -425,6 +428,13 @@ replaceField :: Text -> Text -> Value -> Value
 replaceField name value = \case
   Object fields -> Object $ KeyMap.insert (Key.fromText name) (String value) fields
   other -> other
+
+textField :: Text -> Value -> Maybe Text
+textField name = \case
+  Object fields -> case KeyMap.lookup (Key.fromText name) fields of
+    Just (String value) -> Just value
+    _ -> Nothing
+  _ -> Nothing
 
 isRight :: Either a b -> Bool
 isRight = \case

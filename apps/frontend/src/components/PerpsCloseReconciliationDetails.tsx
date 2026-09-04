@@ -73,6 +73,7 @@ export function PerpsCloseReconciliationDetails({
   const vpiEffectUsdc = -reconciliation.vpiUsdc
   const carryEffectUsdc = -reconciliation.carryUsdc
   const executionFeeEffectUsdc = -reconciliation.executionFeeUsdc
+  const executionRewardEffectUsdc = -reconciliation.executionBountyUsdc
   const frozenSpreadEffectUsdc = -reconciliation.frozenSpreadPaidUsdc
   const traderClaimLabel = reconciliation.traderClaimChangeUsdc > 0n
     ? 'Trader claim created'
@@ -86,6 +87,7 @@ export function PerpsCloseReconciliationDetails({
         <ReconciliationRow label="Realized PnL" amount={reconciliation.realizedPnlUsdc} />
         <ReconciliationRow label="Carry" amount={carryEffectUsdc} />
         <ReconciliationRow label="Protocol execution fee" amount={executionFeeEffectUsdc} />
+        <ReconciliationRow label="Execution reward" amount={executionRewardEffectUsdc} />
         <ReconciliationRow
           label={reconciliation.vpiUsdc > 0n
             ? 'VPI charge'

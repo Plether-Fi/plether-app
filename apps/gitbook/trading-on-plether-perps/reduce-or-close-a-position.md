@@ -232,6 +232,7 @@ realized PnL
 − execution fee
 − accrued carry
 − frozen-close spread, when applicable
+− execution reward
 ```
 
 A negative signed VPI increases the settlement result.
@@ -243,7 +244,7 @@ Account movement at execution
 ≈ released position margin + net close settlement
 ```
 
-Losses and costs can consume some or all of the released margin. The execution reward was already reserved at commitment and is therefore outside this execution formula.
+Losses and costs can consume some or all of the released margin. The execution reward was reserved at commitment, then paid during terminal processing; the final receipt includes it so the close settlement reconciles to the account movement.
 
 Any reduction checkpoints carry accrued by the complete position through execution. After a partial reduction, the remaining position begins a new carry period using its reduced margin and LP-backed[^lp] borrow base.
 
@@ -433,20 +434,21 @@ Assume:
 Execution fee:   0.96 USDC
 VPI charge:         8 USDC
 Accrued carry:     12 USDC
+Execution reward: 0.20 USDC
 ```
 
 The execution settlement is:
 
 ```
 Net close settlement
-= 100 − 0.96 − 8 − 12
-= +79.04 USDC
+= 100 − 0.96 − 8 − 12 − 0.20
+= +78.84 USDC
 ```
 
 ```
 Account movement at execution
-= 500 + 79.04
-= +579.04 USDC
+= 500 + 78.84
+= +578.84 USDC
 ```
 
 The remaining position is approximately:
@@ -458,15 +460,15 @@ Entry price:                   1.0000
 Position margin:               1,500 USDC
 ```
 
-The execution reward reserved at commitment is separate from these figures.
+The execution reward reserved at commitment is shown separately in the close breakdown and included in the net close settlement.
 
-If pool liquidity cannot cover the fresh `79.04 USDC` payment, the released `500 USDC` returns to the Margin Account and `79.04 USDC` becomes a trader claim.
+If pool liquidity cannot cover the fresh `78.84 USDC` payment, the released `500 USDC` returns to the Margin Account and `78.84 USDC` becomes a trader claim.
 
 ### Check the result
 
 After a partial reduction, use the **Position** panel to confirm remaining plDXY Perp exposure, unchanged entry price, updated leverage, liquidation price, unrealized PnL and cost of carry. Open `Edit Position Margin` if you need to inspect the remaining assigned position margin.
 
-The lifecycle window’s **Final Result** separates execution details from close accounting and account outcome. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. The close result shows realized PnL, carry, execution fee, the signed VPI charge or rebate, frozen spread paid and the net close result. When spread was waived, it also shows the assessed and waived amounts. The account outcome shows the receipt-backed Margin Account and trader-claim changes, any terminal uncovered loss, remaining margin after a partial reduction and execution-bound released margin when that snapshot is available.
+The lifecycle window’s **Final Result** separates execution details from close accounting and account outcome. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. The close result shows realized PnL, carry, execution fee, execution reward, the signed VPI charge or rebate, frozen spread paid and the net close result. When spread was waived, it also shows the assessed and waived amounts. The account outcome shows the receipt-backed Margin Account and trader-claim changes, any terminal uncovered loss, remaining margin after a partial reduction and execution-bound released margin when that snapshot is available.
 
 **Transaction History → Result** remains the gross realized price PnL. Select **View breakdown** on a matched executed close to open the same receipt-backed close result and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 

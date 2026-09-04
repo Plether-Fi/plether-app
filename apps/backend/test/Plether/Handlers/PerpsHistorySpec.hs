@@ -69,6 +69,11 @@ spec = do
       queryContains perpsOrderBaseSelectSql "o.execution_vpi_usdc"
       queryContains perpsOrderBaseSelectSql "data->>'vpiUsdc'"
 
+    it "hydrates legacy receipt economics with the indexed execution bounty" $ do
+      queryContains perpsOrderBaseSelectSql "data->>'executionBountyUsdc'"
+      queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyUsdc'"
+      queryContains perpsOrderBaseSelectSql "e.event_name = 'IntentRegistered'"
+
     it "projects the canonical terminal event block hash" $ do
       queryContains perpsOrderBaseSelectSql "terminal_event.block_hash"
       queryContains perpsOrderBaseSelectSql "e.block_number = o.terminal_block_number"
@@ -116,7 +121,8 @@ spec = do
           , "terminalReason" .= ("Executed" :: String)
           , "executionMode" .= ("Live" :: String)
           , "receiptEconomics" .= object
-              [ "vpiUsdc" .= ("182822887" :: String)
+              [ "executionBountyUsdc" .= ("200000" :: String)
+              , "vpiUsdc" .= ("182822887" :: String)
               , "frozenSpreadUsdc" .= ("0" :: String)
               ]
           , "activityType" .= ("Close" :: String)
@@ -171,7 +177,8 @@ executedOrderRow =
     , porExecutionMode = Just "Live"
     , porFailedConstraint = Nothing
     , porReceiptEconomics = Just $ object
-        [ "vpiUsdc" .= ("182822887" :: String)
+        [ "executionBountyUsdc" .= ("200000" :: String)
+        , "vpiUsdc" .= ("182822887" :: String)
         , "frozenSpreadUsdc" .= ("0" :: String)
         ]
     , porCleanupActor = Nothing

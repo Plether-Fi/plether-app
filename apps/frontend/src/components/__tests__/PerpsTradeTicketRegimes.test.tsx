@@ -202,6 +202,7 @@ function closeTicket({
   const preSettlementBalanceUsdc = 1_000_000_000n
   const finalReceiptEconomics = {
     executionNotionalUsdc: '500000000',
+    executionBountyUsdc: '0',
     realizedPnlUsdc: realizedPnlUsdc.toString(),
     vpiUsdc: settledVpiUsdc.toString(),
     carryUsdc: carryUsdc.toString(),
@@ -593,6 +594,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(finalResult!).getByText('Frozen spread paid'))
       .toBeInTheDocument()
     expect(within(finalResult!).queryByText(/Estimated/i)).not.toBeInTheDocument()
+    expect(within(finalResult!).getByText('Execution reward')).toBeInTheDocument()
     expect(
       within(finalResult!).getByText('Frozen spread paid').closest('div')?.querySelector('dd')
     ).toHaveTextContent('-10')

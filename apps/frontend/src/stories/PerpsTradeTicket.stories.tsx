@@ -241,6 +241,7 @@ const documentationMarketArgs = {
 
 const executedFrozenCloseReceipt = {
   executionNotionalUsdc: (8_062_240_000n).toString(),
+  executionBountyUsdc: '0',
   realizedPnlUsdc: (390n * USDC).toString(),
   vpiUsdc: (12n * USDC).toString(),
   carryUsdc: (6n * USDC).toString(),

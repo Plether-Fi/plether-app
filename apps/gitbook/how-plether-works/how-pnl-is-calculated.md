@@ -364,6 +364,7 @@ Gross realized price PnL
 − Protocol execution fee
 − Accrued carry
 − Frozen-close spread, when applicable
+− Execution reward
 ```
 
 For VPI:
@@ -374,7 +375,7 @@ For VPI:
 
 Opening VPI and the opening execution fee are not subtracted again. They were already settled when the position opened or increased.
 
-The order execution reward is separate from this formula. It pays for resolving the delayed order and is not directional PnL.
+The order execution reward pays for resolving the delayed order. It is not directional PnL, but the executed amount is included in the final account result so that the result reconciles to the receipt-backed Margin Account change.
 
 #### Example net settlement
 
@@ -385,29 +386,30 @@ Gross realized PnL:       +390 USDC
 Close VPI charge:          −12 USDC
 Protocol execution fee:     −4 USDC
 Accrued carry:              −6 USDC
+Execution reward:           −1 USDC
 ```
 
 The net close adjustment is:
 
 ```
-390 − 12 − 4 − 6
-= +368 USDC
+390 − 12 − 4 − 6 − 1
+= +367 USDC
 ```
 
 If `1,000 USDC` of position margin is released, the accounting should show two separate entries:
 
 ```
 Margin released:         1,000 USDC
-Net close adjustment:     +368 USDC
+Net close adjustment:     +367 USDC
 ```
 
-The `1,000 USDC` is returned collateral. Only the `368 USDC` is the net result created by that close.
+The `1,000 USDC` is returned collateral. Only the `367 USDC` is the net result created by that close after its execution reward.
 
 A complete lifetime result would also account for:
 
 * Opening VPI
 * Opening execution fee
-* Opening and closing execution rewards
+* Opening and increase-order execution rewards
 * Any earlier increases or reductions
 * Any explicitly self-funded network or oracle-update costs; eligible sponsored network gas is paid by Plether
 
@@ -528,12 +530,12 @@ It becomes settleable once aggregate trader claims are fully covered by physical
 For a supported executed reduction or close, **Final Result** shows three groups:
 
 * **Execution** — final price, Order quantity, execution exposure, Order ID and transactions.
-* **Close result** — realized PnL, carry, execution fee, signed VPI charge or rebate, frozen spread paid and **Net close result**. If any frozen spread was waived, assessed and waived amounts also appear.
+* **Close result** — realized PnL, carry, execution fee, execution reward, signed VPI charge or rebate, frozen spread paid and **Net close result**. If any frozen spread was waived, assessed and waived amounts also appear.
 * **Account outcome** — Margin Account balance change, trader claim created or consumed, any uncovered terminal loss, remaining margin after a partial reduction and released margin when an execution-bound snapshot is available.
 
 Released margin is existing collateral becoming unlocked. It is shown separately for context and is not added to **Net close result**. If the receipt is legacy, incomplete, malformed or internally inconsistent, the execution details remain visible with **Detailed close accounting unavailable**; the interface does not substitute preview values or zeroes.
 
-**Transaction History → Result** still shows gross realized price PnL before close VPI, execution fee and carry. Select **View breakdown** on a matched executed close to open the same receipt-backed close and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
+**Transaction History → Result** still shows gross realized price PnL before close VPI, execution fee, execution reward and carry. Select **View breakdown** on a matched executed close to open the same receipt-backed close and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 
 Trader claim balance and **Settle Claim** remain under **Position**. **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization, and Portfolio value does not include a separate outstanding trader claim.
 

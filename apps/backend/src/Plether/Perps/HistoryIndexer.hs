@@ -1752,6 +1752,7 @@ parseOrderFinalized logEntry = do
           else Just $ failedConstraintName failedConstraintCode
       economics = object
         [ "executionNotionalUsdc" .= show (wordAt bytes 29)
+        , "executionBountyUsdc" .= show (wordAt bytes 19)
         , "realizedPnlUsdc" .= show (intWordAt bytes 30)
         , "vpiUsdc" .= show (intWordAt bytes 31)
         , "carryUsdc" .= show (intWordAt bytes 32)
@@ -1781,6 +1782,7 @@ parseOrderFinalized logEntry = do
         , "executionMode" .= mode
         , "failedConstraint" .= failedConstraint
         , "executionPrice" .= show executionPrice
+        , "executionBountyUsdc" .= show (wordAt bytes 19)
         , "economics" .= economics
         ]
   pure $

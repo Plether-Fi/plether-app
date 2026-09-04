@@ -2,6 +2,7 @@ import type { PerpsOrderReceiptEconomics } from '../hooks/usePerpsHistory'
 
 export interface PerpsCloseReconciliation {
   executionNotionalUsdc: bigint
+  executionBountyUsdc: bigint
   realizedPnlUsdc: bigint
   vpiUsdc: bigint
   carryUsdc: bigint
@@ -48,6 +49,7 @@ export function derivePerpsCloseReconciliation(
   if (receipt === undefined) return undefined
 
   const executionNotionalUsdc = parseReceiptInteger(receipt.executionNotionalUsdc)
+  const executionBountyUsdc = parseReceiptInteger(receipt.executionBountyUsdc)
   const realizedPnlUsdc = parseReceiptInteger(receipt.realizedPnlUsdc)
   const vpiUsdc = parseReceiptInteger(receipt.vpiUsdc)
   const carryUsdc = parseReceiptInteger(receipt.carryUsdc)
@@ -67,6 +69,7 @@ export function derivePerpsCloseReconciliation(
 
   if (
     executionNotionalUsdc === undefined ||
+    executionBountyUsdc === undefined ||
     realizedPnlUsdc === undefined ||
     vpiUsdc === undefined ||
     carryUsdc === undefined ||
@@ -89,6 +92,7 @@ export function derivePerpsCloseReconciliation(
 
   const unsignedValues = [
     executionNotionalUsdc,
+    executionBountyUsdc,
     executionFeeUsdc,
     frozenSpreadAssessedUsdc,
     actionChargeAssessedUsdc,
@@ -104,6 +108,7 @@ export function derivePerpsCloseReconciliation(
   ]
   if (unsignedValues.some((value) => value < 0n)) return undefined
   if (executionNotionalUsdc === 0n) return undefined
+  if (executionBountyUsdc > grossAccountDebitUsdc) return undefined
   if (actionChargeAssessedUsdc < frozenSpreadAssessedUsdc) return undefined
   if (actionChargeCollectedUsdc > actionChargeAssessedUsdc) return undefined
   if (
@@ -126,6 +131,7 @@ export function derivePerpsCloseReconciliation(
     - carryUsdc
     - executionFeeUsdc
     - frozenSpreadPaidUsdc
+    - executionBountyUsdc
   const marginAccountChangeUsdc = postSettlementBalanceUsdc - preSettlementBalanceUsdc
   const traderClaimChangeUsdc = postTraderClaimBalanceUsdc - preTraderClaimBalanceUsdc
   const observedValueChangeUsdc = marginAccountChangeUsdc + traderClaimChangeUsdc
@@ -161,6 +167,7 @@ export function derivePerpsCloseReconciliation(
 
   return {
     executionNotionalUsdc,
+    executionBountyUsdc,
     realizedPnlUsdc,
     vpiUsdc,
     carryUsdc,
