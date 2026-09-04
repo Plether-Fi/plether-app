@@ -1055,6 +1055,12 @@ export function usePerpsTrading() {
       abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
       functionName: 'outcome',
       args: [orderId],
+      // The ticket publishes terminal lifecycle reads immediately. Reading at
+      // the latest head can briefly expose a keeper execution from a block
+      // that the canonical indexer has not confirmed yet, making the UI jump
+      // to Finalized and then back to Waiting if that head is replaced. Keep
+      // this fast path monotonic by reading the RPC's safe head instead.
+      blockTag: 'safe',
     })
     const status = outcome.status
     if (
