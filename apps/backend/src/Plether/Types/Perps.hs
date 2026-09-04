@@ -98,6 +98,8 @@ data BasketCandle = BasketCandle
   , bcRawLowPrice :: Integer
   , bcRawClosePrice :: Integer
   , bcVolumeUsdc :: Maybe Integer
+  , bcLongFlowVolumeUsdc :: Maybe Integer
+  , bcShortFlowVolumeUsdc :: Maybe Integer
   , bcTradeCount :: Maybe Integer
   , bcSampleCount :: Integer
   , bcQuality :: Text
@@ -116,6 +118,8 @@ instance ToJSON BasketCandle where
       , "rawLowPrice" .= show bcRawLowPrice
       , "rawClosePrice" .= show bcRawClosePrice
       , "volumeUsdc" .= fmap show bcVolumeUsdc
+      , "longFlowVolumeUsdc" .= fmap show bcLongFlowVolumeUsdc
+      , "shortFlowVolumeUsdc" .= fmap show bcShortFlowVolumeUsdc
       , "tradeCount" .= bcTradeCount
       , "sampleCount" .= bcSampleCount
       , "quality" .= bcQuality

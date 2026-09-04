@@ -577,6 +577,8 @@ candleRowToApi BasketCandleRow {..} =
     , bcRawLowPrice = bcrRawLowPrice
     , bcRawClosePrice = bcrRawClosePrice
     , bcVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrVolumeNumerator
+    , bcLongFlowVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrLongFlowVolumeNumerator
+    , bcShortFlowVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrShortFlowVolumeNumerator
     , bcTradeCount = bcrTradeCount
     , bcSampleCount = fromIntegral bcrSampleCount
     , bcQuality = candleQualityText bcrQuality
@@ -799,7 +801,13 @@ validateCurrentVolume interval CandleCurrent {..}
         else Right ()
       case ccCandle of
         Just BasketCandleRow {..}
-          | isJust bcrVolumeNumerator || isJust bcrTradeCount || bcrVolumeComplete ->
+          | any isJust
+              [ bcrVolumeNumerator
+              , bcrLongFlowVolumeNumerator
+              , bcrShortFlowVolumeNumerator
+              , bcrTradeCount
+              ]
+              || bcrVolumeComplete ->
               Left "current candle exposes volume without usable coverage"
         _ -> Right ()
   | otherwise = do
@@ -880,6 +888,13 @@ validateHistoricalVolume requireVolume BasketCandleRow {..} =
     (Just _, Just _, True) -> Right ()
     _ -> Left "historical candle volume fields are inconsistent"
 
+directionalVolumes :: Maybe Integer -> Maybe Integer -> Maybe [Integer]
+directionalVolumes longFlow shortFlow =
+  case (longFlow, shortFlow) of
+    (Nothing, Nothing) -> Nothing
+    (Just longValue, Just shortValue) -> Just [longValue, shortValue]
+    _ -> Nothing
+
 validateAscendingRows :: [BasketCandleRow] -> Either Text ()
 validateAscendingRows rows
   | and $ zipWith (<) timestamps (drop 1 timestamps) = Right ()
@@ -898,6 +913,10 @@ validateCandleRow displayPriceCap requireComplete BasketCandleRow {..}
   | bcrSampleCount <= 0 = Left "candle sample count is not positive"
   | bcrRevision <= 0 = Left "candle revision is not positive"
   | maybe False (< 0) bcrVolumeNumerator = Left "candle volume is negative"
+  | any (maybe False (< 0)) rawDirectionalVolumes = Left "candle directional volume is negative"
+  | any isJust rawDirectionalVolumes && directionalVolumeValues == Nothing =
+      Left "candle directional-volume fields are inconsistent"
+  | directionalVolumeExceedsTotal = Left "candle directional volume exceeds total volume"
   | maybe False (< 0) bcrTradeCount = Left "candle trade count is negative"
   | bcrVolumeComplete && (not (isJust bcrVolumeNumerator) || not (isJust bcrTradeCount)) =
       Left "complete candle has unknown volume"
@@ -905,6 +924,16 @@ validateCandleRow displayPriceCap requireComplete BasketCandleRow {..}
   | otherwise = Right ()
   where
     prices = [bcrRawOpenPrice, bcrRawHighPrice, bcrRawLowPrice, bcrRawClosePrice]
+    rawDirectionalVolumes =
+      [ bcrLongFlowVolumeNumerator
+      , bcrShortFlowVolumeNumerator
+      ]
+    directionalVolumeValues =
+      directionalVolumes bcrLongFlowVolumeNumerator bcrShortFlowVolumeNumerator
+    directionalVolumeExceedsTotal =
+      case (bcrVolumeNumerator, directionalVolumeValues) of
+        (Just totalVolume, Just componentVolumes) -> sum componentVolumes > totalVolume
+        _ -> False
 
 coverageLagSeconds :: Integer -> Maybe Integer -> Integer
 coverageLagSeconds now = maybe (max 0 now) (max 0 . (now -))

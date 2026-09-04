@@ -48,6 +48,40 @@ export interface TradingViewBar {
   volume?: number
 }
 
+export interface TradingViewPineSeries {
+  adopt: (
+    sourceTime: TradingViewPineSeries,
+    targetTime: TradingViewPineSeries,
+    mode: number
+  ) => number
+}
+
+export interface TradingViewPineContext {
+  symbol: { time: number }
+  new_sym: (symbol: string, period: string) => void
+  new_var: (value: number) => TradingViewPineSeries
+  select_sym: (index: number) => void
+}
+
+export interface TradingViewPineJs {
+  Std: {
+    close: (context: TradingViewPineContext) => number
+    period: (context: TradingViewPineContext) => string
+    volume: (context: TradingViewPineContext) => number
+  }
+}
+
+export interface TradingViewCustomIndicatorInstance {
+  init: (context: TradingViewPineContext, inputCallback: () => unknown) => void
+  main: (context: TradingViewPineContext, inputCallback: () => unknown) => number[]
+}
+
+export interface TradingViewCustomIndicator {
+  name: string
+  metainfo: Record<string, unknown>
+  constructor: new () => TradingViewCustomIndicatorInstance
+}
+
 export interface TradingViewPeriodParams {
   from: number
   to: number
@@ -185,6 +219,9 @@ export interface TradingViewWidgetOptions {
   overrides: Record<string, string | number | boolean>
   settings_overrides: Record<string, string | number | boolean>
   studies_overrides: Record<string, string | number | boolean>
+  custom_indicators_getter?: (
+    pineJs: TradingViewPineJs
+  ) => Promise<TradingViewCustomIndicator[]>
 }
 
 export interface TradingViewWidget {
@@ -271,6 +308,11 @@ export interface TradingViewChart {
     point: TradingViewShapePoint,
     options: TradingViewCreateShapeOptions
   ) => Promise<TradingViewEntityId>
+  createStudy: (
+    name: string,
+    forceOverlay?: boolean,
+    lock?: boolean
+  ) => Promise<TradingViewEntityId | null>
   removeEntity: (entityId: TradingViewEntityId) => void
 }
 

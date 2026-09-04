@@ -10,6 +10,8 @@ function candle(overrides: Partial<PerpsBasketCandle> = {}): PerpsBasketCandle {
     rawLowPrice: '97000000',
     rawClosePrice: '99000000',
     volumeUsdc: '1250000',
+    longFlowVolumeUsdc: '750000',
+    shortFlowVolumeUsdc: '250000',
     tradeCount: 2,
     sampleCount: 3,
     quality: 'observed',

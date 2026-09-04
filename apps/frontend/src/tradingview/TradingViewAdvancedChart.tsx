@@ -28,6 +28,10 @@ import type {
   TradingViewWidget,
 } from './types'
 import { PLETHER_TRADINGVIEW_CUSTOM_THEMES } from './pletherTheme'
+import {
+  PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
+  getPletherCustomIndicators,
+} from './pletherDirectionalVolumeStudy'
 
 const APP_BACKGROUND = '#250917'
 const PANEL_BACKGROUND = '#3B212D'
@@ -94,8 +98,8 @@ const CHART_STYLE_OVERRIDES = {
   'mainSeriesProperties.baselineStyle.bottomLineColor': BRAND_ORANGE,
 } satisfies Record<string, string | number | boolean>
 const VOLUME_STUDY_OVERRIDES = {
-  'volume.volume.color.0': BRAND_ORANGE,
-  'volume.volume.color.1': POSITIVE_COLOR,
+  'volume.volume.color.0': BRAND_PEACH,
+  'volume.volume.color.1': BRAND_PEACH,
   'volume.volume.transparency': 20,
   'volume.volume ma.color': BRAND_PEACH,
   'volume.volume ma.transparency': 35,
@@ -378,6 +382,7 @@ export function TradingViewAdvancedChart({
             'header_quick_search',
             'display_market_status',
             'volume_force_overlay',
+            ...(useCandleApi ? ['create_volume_indicator_by_default'] : []),
           ],
           enabled_features: [
             'determine_first_data_request_size_using_visible_range',
@@ -398,6 +403,9 @@ export function TradingViewAdvancedChart({
           overrides: { ...CHART_STYLE_OVERRIDES },
           settings_overrides: { ...CHART_STYLE_OVERRIDES },
           studies_overrides: { ...VOLUME_STUDY_OVERRIDES },
+          ...(useCandleApi
+            ? { custom_indicators_getter: getPletherCustomIndicators }
+            : {}),
         })
         widgetRef.current = widget
         void Promise.all([widget.chartReady(), widget.headerReady()])
@@ -405,6 +413,15 @@ export function TradingViewAdvancedChart({
             if (cancelled) return
 
             const chart = widget.activeChart()
+            if (useCandleApi) {
+              void chart.createStudy(
+                PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
+                false,
+                true
+              ).catch(() => {
+                // Price remains useful if the optional direction pane cannot initialize.
+              })
+            }
             lastStableVisibleRange = chart.getVisibleRange()
             visibleRangeSubscription = chart.onVisibleRangeChanged()
             handleVisibleRangeChange = (range) => {

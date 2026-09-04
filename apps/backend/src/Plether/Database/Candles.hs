@@ -103,6 +103,8 @@ data BasketCandleRow = BasketCandleRow
   , bcrRevision :: Integer
   , bcrPriceComplete :: Bool
   , bcrVolumeNumerator :: Maybe Integer
+  , bcrLongFlowVolumeNumerator :: Maybe Integer
+  , bcrShortFlowVolumeNumerator :: Maybe Integer
   , bcrTradeCount :: Maybe Integer
   , bcrVolumeComplete :: Bool
   }
@@ -173,6 +175,8 @@ data BasketCandlePageSnapshotRow = BasketCandlePageSnapshotRow
   , bcpsrRevision :: Maybe Integer
   , bcpsrPriceComplete :: Maybe Bool
   , bcpsrVolumeNumerator :: Maybe Scientific
+  , bcpsrLongFlowVolumeNumerator :: Maybe Scientific
+  , bcpsrShortFlowVolumeNumerator :: Maybe Scientific
   , bcpsrTradeCount :: Maybe Integer
   , bcpsrVolumeComplete :: Maybe Bool
   }
@@ -209,6 +213,8 @@ data BasketCurrentCandleSnapshotRow = BasketCurrentCandleSnapshotRow
   , bccsrRevision :: Maybe Integer
   , bccsrPriceComplete :: Maybe Bool
   , bccsrVolumeNumerator :: Maybe Scientific
+  , bccsrLongFlowVolumeNumerator :: Maybe Scientific
+  , bccsrShortFlowVolumeNumerator :: Maybe Scientific
   , bccsrTradeCount :: Maybe Integer
   , bccsrVolumeComplete :: Maybe Bool
   }
@@ -543,7 +549,7 @@ ensureCandleActivityIndexPrerequisites conn = do
       \AND (SELECT COUNT(*) FROM information_schema.columns \
       \ WHERE table_schema = current_schema() AND table_name = 'perps_account_activity' \
       \ AND column_name IN ('chain_id','release_router','timestamp','size_delta','price',\
-      \                     'block_number','activity_type')) = 7"
+      \                     'block_number','activity_type','side')) = 8"
       () :: IO [Only Bool]
   case rows of
     [Only True] -> pure ()
@@ -1629,6 +1635,10 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
                 (Just volume, Just trades, True) ->
                   Right (Just $ scientificToInteger volume, Just trades)
                 _ -> Left "candle volume fields are inconsistent"
+            (longFlowVolume, shortFlowVolume) <-
+              decodeDirectionalVolumes
+                bcpsrLongFlowVolumeNumerator
+                bcpsrShortFlowVolumeNumerator
             Right $ Just BasketCandleRow
               { bcrBucketStart = bucketStart
               , bcrRawOpenPrice = rawOpenPrice
@@ -1640,6 +1650,8 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
               , bcrRevision = revision
               , bcrPriceComplete = priceComplete
               , bcrVolumeNumerator = volumeNumerator
+              , bcrLongFlowVolumeNumerator = longFlowVolume
+              , bcrShortFlowVolumeNumerator = shortFlowVolume
               , bcrTradeCount = tradeCount
               , bcrVolumeComplete = volumeComplete
               }
@@ -1656,6 +1668,8 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
     , (() <$ bcpsrRevision)
     , (() <$ bcpsrPriceComplete)
     , (() <$ bcpsrVolumeNumerator)
+    , (() <$ bcpsrLongFlowVolumeNumerator)
+    , (() <$ bcpsrShortFlowVolumeNumerator)
     , (() <$ bcpsrTradeCount)
     , (() <$ bcpsrVolumeComplete)
     ]
@@ -1685,6 +1699,21 @@ snapshotHeaderAbsent BasketCandlePageSnapshotRow {..} =
 
 allNothing :: [Maybe value] -> Bool
 allNothing = all $ maybe True (const False)
+
+decodeDirectionalVolumes
+  :: Maybe Scientific
+  -> Maybe Scientific
+  -> Either String (Maybe Integer, Maybe Integer)
+decodeDirectionalVolumes longFlow shortFlow =
+  case (longFlow, shortFlow) of
+    (Nothing, Nothing) ->
+      Right (Nothing, Nothing)
+    (Just longValue, Just shortValue) ->
+      Right
+        ( Just $ scientificToInteger longValue
+        , Just $ scientificToInteger shortValue
+        )
+    _ -> Left "candle directional-volume fields are inconsistent"
 
 getBasketCandleRange
   :: Connection
@@ -1928,6 +1957,10 @@ decodeCurrentSnapshotRow BasketCurrentCandleSnapshotRow {..}
                 (Just volume, Just trades, _) ->
                   Right (Just $ scientificToInteger volume, Just trades)
                 _ -> Left "current candle volume fields are inconsistent"
+            (longFlowVolume, shortFlowVolume) <-
+              decodeDirectionalVolumes
+                bccsrLongFlowVolumeNumerator
+                bccsrShortFlowVolumeNumerator
             Right $ Just BasketCandleRow
               { bcrBucketStart = bucketStart
               , bcrRawOpenPrice = rawOpenPrice
@@ -1939,6 +1972,8 @@ decodeCurrentSnapshotRow BasketCurrentCandleSnapshotRow {..}
               , bcrRevision = revision
               , bcrPriceComplete = priceComplete
               , bcrVolumeNumerator = volumeNumerator
+              , bcrLongFlowVolumeNumerator = longFlowVolume
+              , bcrShortFlowVolumeNumerator = shortFlowVolume
               , bcrTradeCount = tradeCount
               , bcrVolumeComplete = volumeComplete
               }
@@ -1955,6 +1990,8 @@ decodeCurrentSnapshotRow BasketCurrentCandleSnapshotRow {..}
     , (() <$ bccsrRevision)
     , (() <$ bccsrPriceComplete)
     , (() <$ bccsrVolumeNumerator)
+    , (() <$ bccsrLongFlowVolumeNumerator)
+    , (() <$ bccsrShortFlowVolumeNumerator)
     , (() <$ bccsrTradeCount)
     , (() <$ bccsrVolumeComplete)
     ]
@@ -2389,78 +2426,84 @@ instance FromRow BasketCandleRow where
     revision <- field
     priceComplete <- field
     volume <- fmap scientificToInteger <$> field
+    longFlowVolume <- fmap scientificToInteger <$> field
+    shortFlowVolume <- fmap scientificToInteger <$> field
     trades <- field
     volumeComplete <- field
     pure $ BasketCandleRow bucketStart openPrice highPrice lowPrice closePrice sampleCount
-      quality revision priceComplete volume trades volumeComplete
+      quality revision priceComplete volume longFlowVolume shortFlowVolume trades volumeComplete
 
 instance FromRow BasketCandlePageSnapshotRow where
-  fromRow =
-    BasketCandlePageSnapshotRow
-      <$> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
+  fromRow = do
+    bcpsrHeaderPresent <- field
+    bcpsrDefinitionPresent <- field
+    bcpsrSeriesId <- field
+    bcpsrConfigurationHash <- field
+    bcpsrDisplayPriceCap <- field
+    bcpsrEffectiveFrom <- field
+    bcpsrEffectiveTo <- field
+    bcpsrMetadataPresent <- field
+    bcpsrCoverageStart <- field
+    bcpsrCoverageEnd <- field
+    bcpsrFinalizedThrough <- field
+    bcpsrDatasetGeneration <- field
+    bcpsrCoverageComplete <- field
+    bcpsrVolumeCoverageStart <- field
+    bcpsrVolumeCoverageEnd <- field
+    bcpsrVolumeFinalizedThrough <- field
+    bcpsrVolumeCoverageComplete <- field
+    bcpsrEarlierBucket <- field
+    bcpsrCandlePresent <- field
+    bcpsrBucketStart <- field
+    bcpsrRawOpenPrice <- field
+    bcpsrRawHighPrice <- field
+    bcpsrRawLowPrice <- field
+    bcpsrRawClosePrice <- field
+    bcpsrSampleCount <- field
+    bcpsrQuality <- field
+    bcpsrRevision <- field
+    bcpsrPriceComplete <- field
+    bcpsrVolumeNumerator <- field
+    bcpsrLongFlowVolumeNumerator <- field
+    bcpsrShortFlowVolumeNumerator <- field
+    bcpsrTradeCount <- field
+    bcpsrVolumeComplete <- field
+    pure BasketCandlePageSnapshotRow {..}
 
 instance FromRow BasketCurrentCandleSnapshotRow where
-  fromRow =
-    BasketCurrentCandleSnapshotRow
-      <$> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
+  fromRow = do
+    bccsrDefinitionPresent <- field
+    bccsrSeriesId <- field
+    bccsrConfigurationHash <- field
+    bccsrDisplayPriceCap <- field
+    bccsrEffectiveFrom <- field
+    bccsrEffectiveTo <- field
+    bccsrMetadataPresent <- field
+    bccsrCoverageStart <- field
+    bccsrCoverageEnd <- field
+    bccsrFinalizedThrough <- field
+    bccsrDatasetGeneration <- field
+    bccsrCoverageComplete <- field
+    bccsrVolumeCoverageStart <- field
+    bccsrVolumeCoverageEnd <- field
+    bccsrVolumeFinalizedThrough <- field
+    bccsrVolumeCoverageComplete <- field
+    bccsrCandlePresent <- field
+    bccsrBucketStart <- field
+    bccsrRawOpenPrice <- field
+    bccsrRawHighPrice <- field
+    bccsrRawLowPrice <- field
+    bccsrRawClosePrice <- field
+    bccsrSampleCount <- field
+    bccsrQuality <- field
+    bccsrRevision <- field
+    bccsrPriceComplete <- field
+    bccsrVolumeNumerator <- field
+    bccsrLongFlowVolumeNumerator <- field
+    bccsrShortFlowVolumeNumerator <- field
+    bccsrTradeCount <- field
+    bccsrVolumeComplete <- field
+    pure BasketCurrentCandleSnapshotRow {..}
 
 parseCandleQuality :: Text -> CandleQuality
 parseCandleQuality = \case
@@ -2871,6 +2914,22 @@ basketCurrentCandleSnapshotSql =
   \ LEFT JOIN canonical_market market ON TRUE \
   \ WHERE price.coverage_start IS NOT NULL AND price.coverage_end IS NOT NULL \
   \ AND price.finalized_through IS NOT NULL\
+  \), directional_volume AS MATERIALIZED (\
+  \ SELECT \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 0) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 1) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS long_flow, \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 1) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 0) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS short_flow \
+  \ FROM input i JOIN metadata ON metadata.volume_usable \
+  \ JOIN perps_account_activity activity \
+  \  ON activity.chain_id = i.chain_id AND activity.release_router = i.release_router \
+  \  AND activity.timestamp >= (i.definition_at / i.interval_seconds) * i.interval_seconds \
+  \  AND activity.timestamp < (i.definition_at / i.interval_seconds) * i.interval_seconds \
+  \    + i.interval_seconds \
+  \ WHERE activity.activity_type IN ('Open', 'Close') \
+  \ AND activity.size_delta IS NOT NULL AND activity.price IS NOT NULL\
   \) SELECT \
   \ (definition.series_id IS NOT NULL), definition.series_id, \
   \ definition.configuration_hash, definition.display_price_cap, \
@@ -2889,6 +2948,14 @@ basketCurrentCandleSnapshotSql =
   \   AND price.bucket_start >= metadata.volume_coverage_start \
   \   AND price.bucket_start <= metadata.volume_coverage_end \
   \  THEN volume.volume_numerator END, \
+  \ CASE WHEN metadata.volume_usable AND volume.bucket_start IS NOT NULL \
+  \   AND COALESCE(directional_volume.long_flow, 0::numeric) \
+  \     + COALESCE(directional_volume.short_flow, 0::numeric) <= volume.volume_numerator \
+  \  THEN COALESCE(directional_volume.long_flow, 0::numeric) END, \
+  \ CASE WHEN metadata.volume_usable AND volume.bucket_start IS NOT NULL \
+  \   AND COALESCE(directional_volume.long_flow, 0::numeric) \
+  \     + COALESCE(directional_volume.short_flow, 0::numeric) <= volume.volume_numerator \
+  \  THEN COALESCE(directional_volume.short_flow, 0::numeric) END, \
   \ CASE WHEN metadata.volume_usable \
   \   AND price.bucket_start >= metadata.volume_coverage_start \
   \   AND price.bucket_start <= metadata.volume_coverage_end \
@@ -2911,7 +2978,8 @@ basketCurrentCandleSnapshotSql =
   \ AND price.bucket_start <= metadata.volume_coverage_end \
   \ AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
   \ AND volume.interval_seconds = i.interval_seconds \
-  \ AND volume.bucket_start = price.bucket_start"
+  \ AND volume.bucket_start = price.bucket_start \
+  \LEFT JOIN directional_volume ON TRUE"
 
 basketCandlePageSnapshotSql :: Query
 basketCandlePageSnapshotSql =
@@ -3013,6 +3081,23 @@ basketCandlePageSnapshotSql =
   \  LEAST(i.cursor, metadata.coverage_end, metadata.finalized_through) \
   \   AS effective_end \
   \ FROM metadata CROSS JOIN input i\
+  \), directional_volume AS MATERIALIZED (\
+  \ SELECT (activity.timestamp / i.interval_seconds) * i.interval_seconds AS bucket_start, \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 0) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 1) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS long_flow, \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 1) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 0) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS short_flow \
+  \ FROM input i JOIN bounds ON bounds.volume_usable \
+  \ JOIN perps_account_activity activity \
+  \  ON activity.chain_id = i.chain_id AND activity.release_router = i.release_router \
+  \  AND activity.timestamp >= GREATEST(bounds.effective_start, bounds.volume_coverage_start) \
+  \  AND activity.timestamp < LEAST(bounds.effective_end, bounds.volume_coverage_end, \
+  \    bounds.volume_finalized_through) \
+  \ WHERE activity.activity_type IN ('Open', 'Close') \
+  \ AND activity.size_delta IS NOT NULL AND activity.price IS NOT NULL \
+  \ GROUP BY activity.timestamp / i.interval_seconds\
   \) SELECT \
   \ header.present, \
   \ header.present AND definition.series_id IS NOT NULL, \
@@ -3039,7 +3124,8 @@ basketCandlePageSnapshotSql =
   \ candle.bucket_start, candle.raw_open_price, candle.raw_high_price, \
   \ candle.raw_low_price, candle.raw_close_price, candle.sample_count, \
   \ candle.quality, candle.revision, candle.price_complete, \
-  \ candle.volume_numerator, candle.trade_count, candle.volume_complete \
+  \ candle.volume_numerator, candle.long_flow, candle.short_flow, \
+  \ candle.trade_count, candle.volume_complete \
   \FROM (SELECT 1) singleton \
   \CROSS JOIN input i \
   \LEFT JOIN definition ON TRUE \
@@ -3068,6 +3154,18 @@ basketCandlePageSnapshotSql =
   \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
   \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
   \    AND COALESCE(volume.finalized, TRUE) \
+  \   THEN COALESCE(directional_volume.long_flow, 0::numeric) END AS long_flow, \
+  \  CASE WHEN bounds.volume_usable \
+  \    AND price.bucket_start >= bounds.volume_coverage_start \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \    AND COALESCE(volume.finalized, TRUE) \
+  \   THEN COALESCE(directional_volume.short_flow, 0::numeric) END AS short_flow, \
+  \  CASE WHEN bounds.volume_usable \
+  \    AND price.bucket_start >= bounds.volume_coverage_start \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \    AND COALESCE(volume.finalized, TRUE) \
   \   THEN COALESCE(volume.trade_count, 0) END AS trade_count, \
   \  bounds.volume_usable \
   \    AND price.bucket_start >= bounds.volume_coverage_start \
@@ -3086,6 +3184,8 @@ basketCandlePageSnapshotSql =
   \  AND volume.bucket_start < LEAST(bounds.effective_end, bounds.volume_coverage_end, \
   \   bounds.volume_finalized_through) \
   \  AND volume.bucket_start = price.bucket_start \
+  \ LEFT JOIN directional_volume \
+  \  ON directional_volume.bucket_start = price.bucket_start \
   \ WHERE bounds.coverage_complete AND bounds.effective_start < bounds.effective_end \
   \ AND price.series_id = definition.series_id \
   \ AND price.interval_seconds = i.interval_seconds \
@@ -3110,6 +3210,7 @@ nativeCandleRowsSql =
   \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
   \ AND COALESCE(v.finalized, TRUE) \
   \ THEN COALESCE(v.volume_numerator, 0::numeric) END, \
+  \NULL::numeric, NULL::numeric, \
   \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
   \ AND c.bucket_start + c.interval_seconds <= m.coverage_end \
   \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
@@ -3133,7 +3234,9 @@ candleRangeRowsSql :: Query
 candleRangeRowsSql =
   "SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
   \c.raw_close_price, c.sample_count, c.quality, c.revision, c.finalized, \
-  \COALESCE(v.volume_numerator, 0::numeric), COALESCE(v.trade_count, 0), \
+  \COALESCE(v.volume_numerator, 0::numeric), \
+  \NULL::numeric, NULL::numeric, \
+  \COALESCE(v.trade_count, 0), \
   \COALESCE(v.finalized, TRUE) \
   \FROM perps_basket_candles c \
   \LEFT JOIN perps_market_volume_rollups v \
@@ -3261,6 +3364,7 @@ currentCandleRowSql =
   \c.raw_close_price, c.sample_count, c.quality, c.revision, c.finalized, \
   \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
   \ AND c.bucket_start <= m.coverage_end THEN v.volume_numerator END, \
+  \NULL::numeric, NULL::numeric, \
   \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
   \ AND c.bucket_start <= m.coverage_end THEN v.trade_count END, \
   \m.usable AND c.bucket_start >= m.coverage_start \
