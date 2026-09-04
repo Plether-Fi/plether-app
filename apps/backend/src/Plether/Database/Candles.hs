@@ -3357,26 +3357,52 @@ combinedMetadataSql =
 
 currentCandleRowSql :: Query
 currentCandleRowSql =
-  "WITH volume_metadata AS (SELECT ?::boolean AS usable, \
-  \ ?::bigint AS coverage_start, ?::bigint AS coverage_end, \
-  \ ?::bigint AS finalized_through) \
+  "WITH input AS MATERIALIZED (SELECT ?::boolean AS volume_usable, \
+  \ ?::bigint AS volume_coverage_start, ?::bigint AS volume_coverage_end, \
+  \ ?::bigint AS volume_finalized_through, ?::bigint AS chain_id, \
+  \ ?::text AS release_router, ?::text AS series_id, \
+  \ ?::bigint AS interval_seconds, ?::bigint AS bucket_start), \
+  \directional_volume AS MATERIALIZED (\
+  \ SELECT \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 0) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 1) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS long_flow, \
+  \  FLOOR(SUM(CASE WHEN (activity.activity_type = 'Open' AND activity.side = 1) \
+  \    OR (activity.activity_type = 'Close' AND activity.side = 0) \
+  \    THEN ABS(activity.size_delta) * activity.price ELSE 0 END)) AS short_flow \
+  \ FROM input i JOIN perps_account_activity activity \
+  \  ON activity.chain_id = i.chain_id AND activity.release_router = i.release_router \
+  \  AND activity.timestamp >= i.bucket_start \
+  \  AND activity.timestamp < i.bucket_start + i.interval_seconds \
+  \ WHERE activity.activity_type IN ('Open', 'Close') \
+  \ AND activity.size_delta IS NOT NULL AND activity.price IS NOT NULL\
+  \) \
   \SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
   \c.raw_close_price, c.sample_count, c.quality, c.revision, c.finalized, \
-  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
-  \ AND c.bucket_start <= m.coverage_end THEN v.volume_numerator END, \
-  \NULL::numeric, NULL::numeric, \
-  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
-  \ AND c.bucket_start <= m.coverage_end THEN v.trade_count END, \
-  \m.usable AND c.bucket_start >= m.coverage_start \
-  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \CASE WHEN i.volume_usable AND c.bucket_start >= i.volume_coverage_start \
+  \ AND c.bucket_start <= i.volume_coverage_end THEN v.volume_numerator END, \
+  \CASE WHEN i.volume_usable AND v.bucket_start IS NOT NULL \
+  \ AND COALESCE(directional_volume.long_flow, 0::numeric) \
+  \   + COALESCE(directional_volume.short_flow, 0::numeric) <= v.volume_numerator \
+  \ THEN COALESCE(directional_volume.long_flow, 0::numeric) END, \
+  \CASE WHEN i.volume_usable AND v.bucket_start IS NOT NULL \
+  \ AND COALESCE(directional_volume.long_flow, 0::numeric) \
+  \   + COALESCE(directional_volume.short_flow, 0::numeric) <= v.volume_numerator \
+  \ THEN COALESCE(directional_volume.short_flow, 0::numeric) END, \
+  \CASE WHEN i.volume_usable AND c.bucket_start >= i.volume_coverage_start \
+  \ AND c.bucket_start <= i.volume_coverage_end THEN v.trade_count END, \
+  \i.volume_usable AND c.bucket_start >= i.volume_coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= i.volume_finalized_through \
   \ AND v.bucket_start IS NOT NULL AND v.finalized \
-  \FROM perps_basket_candles c CROSS JOIN volume_metadata m \
+  \FROM perps_basket_candles c CROSS JOIN input i \
   \LEFT JOIN perps_market_volume_rollups v \
-  \ ON m.usable AND c.bucket_start >= m.coverage_start \
-  \ AND c.bucket_start <= m.coverage_end \
-  \ AND v.chain_id = ? AND v.release_router = ? \
+  \ ON i.volume_usable AND c.bucket_start >= i.volume_coverage_start \
+  \ AND c.bucket_start <= i.volume_coverage_end \
+  \ AND v.chain_id = i.chain_id AND v.release_router = i.release_router \
   \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
-  \WHERE c.series_id = ? AND c.interval_seconds = ? AND c.bucket_start = ? LIMIT 1"
+  \LEFT JOIN directional_volume ON TRUE \
+  \WHERE c.series_id = i.series_id AND c.interval_seconds = i.interval_seconds \
+  \AND c.bucket_start = i.bucket_start LIMIT 1"
 
 priceMinuteUpsertSql :: Query
 priceMinuteUpsertSql =
