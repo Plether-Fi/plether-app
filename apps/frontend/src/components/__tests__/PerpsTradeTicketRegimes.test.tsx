@@ -429,7 +429,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
       .toHaveTextContent('Long plDXY Perp position closed')
     expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
-    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Closed position value')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Detailed close accounting unavailable')).toBeInTheDocument()
   })
@@ -589,6 +589,14 @@ describe('perps ticket oracle regime matrix', () => {
 
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
+    const accountingDisclosure = within(finalResult!).getByTestId('close-reconciliation-disclosure')
+    const accountingTrigger = within(accountingDisclosure).getByRole('button', {
+      name: /Detailed close accounting/,
+    })
+    expect(accountingTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(accountingTrigger).toHaveTextContent('Net')
+    fireEvent.click(accountingTrigger)
+    expect(accountingTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
       .not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Frozen spread paid'))
@@ -621,8 +629,11 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
-    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Closed position value')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
+    fireEvent.click(within(finalResult!).getByRole('button', {
+      name: /Detailed close accounting/,
+    }))
     const vpiRow = within(finalResult!).getByText(label).closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
     expect(within(finalResult!).getByText('Net close result')).toBeInTheDocument()
@@ -639,6 +650,7 @@ describe('perps ticket oracle regime matrix', () => {
     }
     const { unmount } = renderCloseTicket(input)
 
+    fireEvent.click(screen.getByRole('button', { name: /Detailed close accounting/ }))
     expect(screen.getByText('Position margin released').closest('div')?.querySelector('dd'))
       .toHaveTextContent('250')
     expect(screen.getByText('Remaining position margin').closest('div')?.querySelector('dd'))
@@ -647,6 +659,7 @@ describe('perps ticket oracle regime matrix', () => {
     unmount()
     renderCloseTicket({ ...input, includeMarginSnapshot: false })
 
+    fireEvent.click(screen.getByRole('button', { name: /Detailed close accounting/ }))
     expect(screen.queryByText('Position margin released')).not.toBeInTheDocument()
     expect(screen.getByText('Remaining position margin')).toBeInTheDocument()
   })

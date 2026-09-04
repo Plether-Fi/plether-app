@@ -766,7 +766,7 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByText(/Long plDXY Perp position reduced at/)).toBeInTheDocument()
     expect(screen.queryByText(/Long plDXY Perp position closed at/)).not.toBeInTheDocument()
-    expect(screen.getByText('Executed reduction exposure')).toBeInTheDocument()
+    expect(screen.getByText('Reduced position value')).toBeInTheDocument()
   })
 
   it('uses zero terminal post-position evidence to identify an actual full close', () => {
@@ -803,7 +803,7 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByText(/Long plDXY Perp position closed at/)).toBeInTheDocument()
     expect(screen.queryByText(/Long plDXY Perp position reduced at/)).not.toBeInTheDocument()
-    expect(screen.getByText('Executed close exposure')).toBeInTheDocument()
+    expect(screen.getByText('Closed position value')).toBeInTheDocument()
   })
 
   it('resets the review modal lifecycle when it closes', () => {
@@ -2535,6 +2535,9 @@ describe('perps lifecycle labels', () => {
     })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
+    fireEvent.click(within(finalResult!).getByRole('button', {
+      name: /Detailed close accounting/,
+    }))
     const vpiRow = within(finalResult!).getByText('VPI charge').closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent('-182.82')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
