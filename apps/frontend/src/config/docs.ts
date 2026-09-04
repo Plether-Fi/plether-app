@@ -13,6 +13,18 @@ export const DOCS_LINKS = {
     href: `${DOCS_BASE_URL}/how-plether-works/the-liquidity-pool-and-tranche-waterfall`,
     title: 'How the shared pool protects Senior and Junior vaults',
   },
+  lpReturns: {
+    href: `${DOCS_BASE_URL}/providing-liquidity/understand-lp-returns-and-share-value`,
+    title: 'Understand LP returns and share value',
+  },
+  lpRisks: {
+    href: `${DOCS_BASE_URL}/providing-liquidity/lp-risks-and-safeguards`,
+    title: 'LP risks and safeguards',
+  },
+  withdrawLiquidity: {
+    href: `${DOCS_BASE_URL}/providing-liquidity/withdraw-liquidity`,
+    title: 'Withdraw liquidity',
+  },
   marketCostOfCarry: {
     href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#cost-of-carry`,
     title: 'Cost of carry',
