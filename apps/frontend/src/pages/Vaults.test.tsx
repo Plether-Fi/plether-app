@@ -512,7 +512,8 @@ describe('Vaults page', () => {
     renderVaults('/vaults/senior')
 
     expect(screen.getAllByText('20M').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('10M psLP').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('10M').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('psLP').some((label) => label.classList.contains('border'))).toBe(true)
     expect(screen.getAllByLabelText('20,000,000 USDC').length).toBeGreaterThan(0)
     expect(screen.getAllByLabelText('10,000,000 psLP').length).toBeGreaterThan(0)
   })
@@ -962,8 +963,10 @@ describe('Vaults page', () => {
 
     expect(screen.getByText('Annual vault fee')).toBeInTheDocument()
     expect(screen.getByText('2.75%')).toBeInTheDocument()
-    expect(screen.getByText('Accrued fee shares')).toBeInTheDocument()
-    expect(screen.getByText('500 pjLP')).toBeInTheDocument()
+    const accruedFeeShares = screen.getByText('Accrued fee shares').closest('div')
+    expect(accruedFeeShares).not.toBeNull()
+    expect(within(accruedFeeShares!).getByText('500')).toBeInTheDocument()
+    expect(within(accruedFeeShares!).getByText('pjLP')).toHaveClass('border', 'font-mono')
     expect(screen.getByRole('link', { name: /0x0000.*0004/i })).toHaveAttribute(
       'href',
       'https://sepolia.arbiscan.io/address/0x0000000000000000000000000000000000000004',
@@ -1242,6 +1245,7 @@ describe('Vaults page', () => {
     expect(within(preview).getByText('Submitted')).toBeInTheDocument()
     expect(within(preview).getByText('7d realized APY')).toBeInTheDocument()
     expect(within(preview).getByText('+5.24%')).toBeInTheDocument()
+    expect(within(preview).getByText('psLP')).toHaveClass('border', 'font-mono')
     expect(mocks.quoteRefetch).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: 'Confirm deposit' }))
     expect(mocks.vaultReset).toHaveBeenCalledTimes(2)

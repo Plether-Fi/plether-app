@@ -1161,7 +1161,7 @@ function formatPositionShares(amount: bigint | undefined, token: string): ReactN
   const exactAmount = formatShares(amount)
   return (
     <span title={`${exactAmount} ${token}`} aria-label={`${exactAmount} ${token}`}>
-      {formatCompactShares(amount)} {token}
+      <TokenAmount amount={formatCompactShares(amount)} token={token} />
     </span>
   )
 }
@@ -2600,7 +2600,7 @@ export function OverviewTab({
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
             <DetailRow label="Asset" value="USDC" />
-            <DetailRow label="Vault share symbol" value={tranche.token} />
+            <DetailRow label="Vault share symbol" value={<TokenLabel token={tranche.token} />} />
             <DetailRow label="Processing" value="Every hour" />
             <DetailRow label="Network" value="Arbitrum Sepolia" />
             <DetailRow label="Deposits" value={depositMode} />
@@ -2641,7 +2641,12 @@ export function OverviewTab({
                   label="Accrued fee shares"
                   value={liveData.pendingMaintenanceFeeShares === undefined
                     ? 'Unavailable'
-                    : `${formatShares(liveData.pendingMaintenanceFeeShares)} ${tranche.token}`}
+                    : (
+                      <TokenAmount
+                        amount={formatShares(liveData.pendingMaintenanceFeeShares)}
+                        token={tranche.token}
+                      />
+                    )}
                 />
                 <DetailRow
                   label="Fee recipient"
@@ -4396,7 +4401,12 @@ export function VaultPreviewModal({
                 label={mode === 'withdraw' ? 'Estimated shares used' : 'Estimated shares received'}
                 value={estimatedShares === undefined
                   ? 'Latest estimate unavailable'
-                  : `${estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tranche.token}`}
+                  : (
+                    <TokenAmount
+                      amount={estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                      token={tranche.token}
+                    />
+                  )}
               />
               <PreviewRow label="Current share price" value={formatSharePrice(sharePrice)} />
               {performance ? (
@@ -4843,7 +4853,12 @@ function VaultActionPanel({
                   ? 'Updating estimate...'
                   : estimatedShares === undefined
                     ? '--'
-                    : `${estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tranche.token}`
+                    : (
+                      <TokenAmount
+                        amount={estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+                        token={tranche.token}
+                      />
+                    )
               }
             />
             {mode === 'deposit' ? (
@@ -5261,7 +5276,7 @@ export function VaultDetailView({
           <PoolStat
             label="Share price"
             value={formatSharePrice(liveData.sharePrice)}
-            subvalue={`1 ${tranche.token}`}
+            subvalue={<TokenAmount amount="1" token={tranche.token} />}
           />
           <PoolStat
             label="Estimated withdrawal liquidity"
