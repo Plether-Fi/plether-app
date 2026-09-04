@@ -296,11 +296,18 @@ export interface TradingViewVisibleRangeSubscription {
   unsubscribe: (context: object | null, callback: TradingViewVisibleRangeChangedCallback) => void
 }
 
+export interface TradingViewPane {
+  hasMainSeries: () => boolean
+  getHeight: () => number
+  setHeight: (height: number) => void
+}
+
 export interface TradingViewChart {
   resetData: () => void
   resolution: () => string
   symbol: () => string
   getVisibleRange: () => TradingViewVisibleTimeRange
+  getPanes: () => TradingViewPane[]
   setResolution: (resolution: TradingViewResolution) => Promise<boolean>
   onIntervalChanged: () => TradingViewIntervalSubscription
   onVisibleRangeChanged: () => TradingViewVisibleRangeSubscription
