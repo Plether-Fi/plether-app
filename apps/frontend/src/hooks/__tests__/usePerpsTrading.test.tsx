@@ -376,6 +376,14 @@ describe('usePerpsTrading', () => {
       failedConstraint: 2,
       receiptHash: `0x${'46'.repeat(32)}`,
     })
+    expect(mocks.readContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: ORDER_LIFECYCLE_BOOK,
+        functionName: 'outcome',
+        args: [12n],
+        blockTag: 'safe',
+      })
+    )
   })
 
   it('forwards managed sponsored operation status changes', async () => {
