@@ -3097,7 +3097,7 @@ basketCandlePageSnapshotSql =
   \    bounds.volume_finalized_through) \
   \ WHERE activity.activity_type IN ('Open', 'Close') \
   \ AND activity.size_delta IS NOT NULL AND activity.price IS NOT NULL \
-  \ GROUP BY activity.timestamp / i.interval_seconds\
+  \ GROUP BY (activity.timestamp / i.interval_seconds) * i.interval_seconds\
   \) SELECT \
   \ header.present, \
   \ header.present AND definition.series_id IS NOT NULL, \
