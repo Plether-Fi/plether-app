@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useId, useState } from 'react'
 import { formatPerpsUsdc, formatSignedPerpsUsdc } from '../utils/perps'
 import type { PerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { TokenAmount } from './ui'
@@ -157,6 +157,50 @@ export function PerpsCloseReconciliationDetails({
         <p className="text-xs leading-5 text-content-secondary">
           Released margin is existing collateral becoming unlocked; it is not PnL and is not added to the net close result.
         </p>
+      ) : null}
+    </div>
+  )
+}
+
+export function PerpsCloseReconciliationDisclosure({
+  reconciliation,
+  initiallyExpanded = false,
+}: {
+  reconciliation: PerpsCloseReconciliation
+  initiallyExpanded?: boolean
+}) {
+  const [isExpanded, setIsExpanded] = useState(initiallyExpanded)
+  const detailsId = useId()
+  const netTone = signedTone(reconciliation.netCloseResultUsdc)
+
+  return (
+    <div data-testid="close-reconciliation-disclosure">
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        aria-controls={detailsId}
+        className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-4 border border-brand-border/20 bg-surface-panel px-4 py-3 text-left transition-colors hover:border-brand-border/40 hover:bg-[#3B212D] focus-visible:border-brand-border/50"
+        onClick={() => {
+          setIsExpanded((expanded) => !expanded)
+        }}
+      >
+        <span className="text-sm font-semibold text-content-primary">
+          Detailed close accounting
+        </span>
+        <span className="flex shrink-0 items-center gap-2 text-sm">
+          <span className="text-xs text-content-secondary">Net</span>
+          <span className={amountToneClass(netTone)}>
+            <TokenAmount amount={formatSignedPerpsUsdc(reconciliation.netCloseResultUsdc)} />
+          </span>
+          <span aria-hidden="true" className="w-3 text-center text-content-secondary">
+            {isExpanded ? '−' : '+'}
+          </span>
+        </span>
+      </button>
+      {isExpanded ? (
+        <div id={detailsId} className="mt-3">
+          <PerpsCloseReconciliationDetails reconciliation={reconciliation} />
+        </div>
       ) : null}
     </div>
   )

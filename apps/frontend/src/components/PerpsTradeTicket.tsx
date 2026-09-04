@@ -77,7 +77,7 @@ import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMess
 import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
-import { PerpsCloseReconciliationDetails } from './PerpsCloseReconciliationDetails'
+import { PerpsCloseReconciliationDisclosure } from './PerpsCloseReconciliationDetails'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
@@ -5004,11 +5004,6 @@ export function PerpsTradeTicket({
               />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
-                {finalIsClose ? (
-                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-content-secondary">
-                    Execution
-                  </div>
-                ) : null}
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
@@ -5025,9 +5020,9 @@ export function PerpsTradeTicket({
                     },
                     {
                       label: finalIsFullClose
-                        ? 'Executed close exposure'
+                        ? 'Closed position value'
                         : finalIsClose
-                          ? 'Executed reduction exposure'
+                          ? 'Reduced position value'
                           : 'Execution plDXY Perp exposure',
                       value: finalExecutedDxyExposureUsdc === undefined
                         ? <TokenAmount amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
@@ -5054,17 +5049,15 @@ export function PerpsTradeTicket({
                     { label: 'Reveal tx', value: displayExecuteTxValue },
                   ]}
                 />
-                <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                  {finalIsFullClose
-                    ? 'Executed close exposure is the committed Order quantity valued at the final displayed price.'
-                    : finalIsClose
-                      ? 'Executed reduction exposure is the committed Order quantity valued at the final displayed price.'
-                      : 'Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.'}
-                </p>
+                {!finalIsClose ? (
+                  <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
+                    Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.
+                  </p>
+                ) : null}
                 {finalIsClose ? (
                   <div className="mt-4 border-t border-brand-border/20 pt-4">
                     {finalCloseReconciliation ? (
-                      <PerpsCloseReconciliationDetails reconciliation={finalCloseReconciliation} />
+                      <PerpsCloseReconciliationDisclosure reconciliation={finalCloseReconciliation} />
                     ) : (
                       <div className="border border-brand-border/20 bg-surface-panel p-3 text-sm text-content-secondary">
                         Detailed close accounting unavailable
