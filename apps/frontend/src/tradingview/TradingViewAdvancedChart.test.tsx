@@ -66,11 +66,22 @@ function installReadyFakeTradingView() {
     setTooltip: vi.fn(() => statusAdapter),
     setDropDownContent: vi.fn(() => statusAdapter),
   }
+  const mainPane = {
+    hasMainSeries: () => true,
+    getHeight: () => 400,
+    setHeight: vi.fn(),
+  }
+  const directionalVolumePane = {
+    hasMainSeries: () => false,
+    getHeight: () => 120,
+    setHeight: vi.fn(),
+  }
   const chart: TradingViewChart = {
     resetData: vi.fn(),
     resolution: () => resolution,
     symbol: () => 'PLETHER:PLDXY.P',
     getVisibleRange: () => ({ from: 1_800_000_000, to: 1_800_432_000 }),
+    getPanes: () => [mainPane, directionalVolumePane],
     setResolution: vi.fn(async (nextResolution) => {
       resolution = nextResolution
       return true
@@ -98,7 +109,7 @@ function installReadyFakeTradingView() {
   window.TradingView = {
     widget: FakeWidget as unknown as TradingViewNamespace['widget'],
   }
-  return { chart, widgetOptions: () => widgetOptions }
+  return { chart, directionalVolumePane, widgetOptions: () => widgetOptions }
 }
 
 describe('TradingViewAdvancedChart', () => {
@@ -123,6 +134,7 @@ describe('TradingViewAdvancedChart', () => {
         false,
         true
       )
+      expect(fakeTradingView.directionalVolumePane.setHeight).toHaveBeenCalledWith(60)
     })
     expect(fakeTradingView.widgetOptions()?.disabled_features)
       .toContain('create_volume_indicator_by_default')
@@ -216,6 +228,7 @@ describe('TradingViewAdvancedChart', () => {
         from: 1_800_000_000,
         to: 1_800_432_000,
       })),
+      getPanes: () => [],
       setResolution: vi.fn(async (resolution: TradingViewResolution) => {
         currentResolution = resolution
         intervalCallback?.(resolution, {})

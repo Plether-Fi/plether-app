@@ -35,5 +35,11 @@ describe('Plether directional-volume study', () => {
     expect(definition.metainfo.shortDescription).toBe(
       'Directional flow · Long + / Short −'
     )
+    expect(definition.metainfo.defaults).toMatchObject({
+      styles: {
+        long_flow: { plottype: 5 },
+        short_flow: { plottype: 5 },
+      },
+    })
   })
 })
