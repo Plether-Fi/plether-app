@@ -3560,7 +3560,7 @@ export function ActivityTab({
         {depositRequests.length > 0 ? (
           <div className="divide-y divide-brand-border/25">
             {depositRequests.map((request) => {
-              const directRedeemableShares = request.directRedeemableShares ?? 0n
+              const directRedeemableShares = request.directRedeemableShares
               const statusLabel = request.refundableAssets > 0n
                 ? 'Refund available'
                 : request.claimableShares > 0n
@@ -3618,7 +3618,7 @@ export function ActivityTab({
                         tone="positive"
                       />
                     ) : null}
-                    {request.claimableShares > 0n && request.directRedeemSupported ? (
+                    {request.claimableShares > 0n ? (
                       <RequestMetric
                         label="Direct withdrawal"
                         value={directRedeemableShares > 0n

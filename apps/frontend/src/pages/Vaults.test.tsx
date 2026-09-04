@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
     activationTimestamp?: number
     cooldownEndsAt?: bigint
     directRedeemableShares?: bigint
-    directRedeemSupported?: boolean
     pendingAssets: bigint
     pendingSharesEstimate: bigint
     claimableAssets: bigint
@@ -1163,7 +1162,6 @@ describe('Vaults page', () => {
       activationTimestamp: 1_800_021_720,
       cooldownEndsAt: 1_800_025_320n,
       directRedeemableShares: shares(12),
-      directRedeemSupported: true,
       pendingAssets: 0n,
       pendingSharesEstimate: 0n,
       claimableAssets: usdc(25),

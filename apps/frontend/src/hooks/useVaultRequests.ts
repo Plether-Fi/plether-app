@@ -11,18 +11,12 @@ import {
 
 const NEARBY_EPOCH_LOOKBACK = 4n
 
-interface ContractResult {
-  status: 'failure' | 'success'
-  result?: unknown
-}
-
 export interface VaultDepositRequest {
   requestId: bigint
   targetTimestamp: number
   activationTimestamp?: number
   cooldownEndsAt?: bigint
-  directRedeemableShares?: bigint
-  directRedeemSupported?: boolean
+  directRedeemableShares: bigint
   pendingAssets: bigint
   pendingSharesEstimate: bigint
   claimableAssets: bigint
@@ -47,11 +41,6 @@ interface UseVaultRequestsOptions {
   controller?: Address
   isSenior: boolean
   currentEpoch?: bigint
-}
-
-function readResult(data: readonly ContractResult[] | undefined, index: number): unknown {
-  const item = data?.[index]
-  return item?.status === 'success' ? item.result : undefined
 }
 
 function tupleValue(value: unknown, index: number, key: string): unknown {
@@ -240,7 +229,7 @@ export function useVaultRequests({
 
   const { data, isLoading, refetch } = useReadContracts({
     contracts,
-    allowFailure: true,
+    allowFailure: false,
     query: {
       enabled: Boolean(controller) && contracts.length > 0,
       refetchInterval: 60_000,
@@ -248,14 +237,13 @@ export function useVaultRequests({
   })
 
   const { depositRequests, redeemRequests } = useMemo(() => {
-    const results = data as readonly ContractResult[] | undefined
     const deposits: VaultDepositRequest[] = []
     const redeems: VaultRedeemRequest[] = []
 
     requestIds.forEach((requestId, index) => {
-      const result = readResult(results, index)
+      const result = data?.[index]
       if (result === undefined) return
-      const cooldownResult = readResult(results, requestIds.length + index)
+      const cooldownResult = data?.[requestIds.length + index]
       const pendingDepositAssets = asBigInt(tupleValue(result, 3, 'pendingDepositAssets'))
       const pendingDepositSharesEstimate = asBigInt(tupleValue(result, 4, 'pendingDepositSharesEstimate'))
       const claimableDepositAssets = asBigInt(tupleValue(result, 5, 'claimableDepositAssets'))
@@ -289,7 +277,6 @@ export function useVaultRequests({
           activationTimestamp: activationTime > 0n ? Number(activationTime) : undefined,
           cooldownEndsAt: cooldownEnd > 0n ? cooldownEnd : undefined,
           directRedeemableShares,
-          directRedeemSupported: cooldownResult !== undefined,
           pendingAssets: pendingDepositAssets,
           pendingSharesEstimate: pendingDepositSharesEstimate,
           claimableAssets: claimableDepositAssets,

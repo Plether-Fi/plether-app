@@ -9,7 +9,6 @@ const CONTROLLER = '0x1111111111111111111111111111111111111111' as const
 const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   requestId: 0n,
-  cooldownSupported: true,
   requestState: [
     '0x0000000000000000000000000000000000000000',
     0n,
@@ -39,6 +38,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('wagmi', () => ({
   useReadContracts: (args: unknown) => {
+    expect(args).toMatchObject({ allowFailure: false })
     const contracts = (args as {
       contracts: readonly {
         functionName: 'getLpDepositCooldownState' | 'getLpRequestState'
@@ -48,9 +48,6 @@ vi.mock('wagmi', () => ({
     return {
       data: contracts.map((contract) => {
         if (contract.functionName === 'getLpDepositCooldownState') {
-          if (!mocks.cooldownSupported) {
-            return { status: 'failure' as const, error: new Error('function unavailable') }
-          }
           return {
             status: 'success' as const,
             result: contract.args[1] === mocks.requestId
@@ -91,7 +88,7 @@ vi.mock('wagmi', () => ({
                 false,
               ],
         }
-      }),
+      }).map(({ result }) => result),
       isLoading: false,
       refetch: mocks.refetch,
     }
@@ -128,7 +125,6 @@ describe('useVaultRequests', () => {
     vi.spyOn(perpsApi, 'getPerpsVaultRequestIds')
       .mockImplementation(async (tranche) => requestIdResponse([], tranche))
     mocks.requestId = 0n
-    mocks.cooldownSupported = true
     mocks.requestState = [
       '0x0000000000000000000000000000000000000000',
       0n,
@@ -199,41 +195,6 @@ describe('useVaultRequests', () => {
       pendingShares: 5_000_000_000n,
       pendingAssetsEstimate: 10_000_000n,
       matured: false,
-    })
-  })
-
-  it('keeps deposit requests usable when the cooldown lens is not deployed', async () => {
-    mocks.cooldownSupported = false
-    mocks.requestId = 501n
-    mocks.requestState = [
-      '0x0000000000000000000000000000000000000001',
-      501n,
-      CONTROLLER,
-      0n,
-      0n,
-      25_000_000n,
-      12_000_000_000n,
-      0n,
-      0n,
-      0n,
-      0n,
-      0n,
-      0n,
-      false,
-    ]
-
-    const { result } = renderHook(() => useVaultRequests({
-      controller: CONTROLLER,
-      isSenior: true,
-      currentEpoch: 501n,
-    }))
-
-    await waitFor(() => expect(result.current.depositRequests).toHaveLength(1))
-    expect(result.current.depositRequests[0]).toMatchObject({
-      requestId: 501n,
-      claimableShares: 12_000_000_000n,
-      directRedeemableShares: 0n,
-      directRedeemSupported: false,
     })
   })
 
@@ -324,7 +285,6 @@ describe('useVaultRequests', () => {
       activationTimestamp: 1_800_000_000,
       cooldownEndsAt: 1_800_003_600n,
       directRedeemableShares: 6_000_000_000n,
-      directRedeemSupported: true,
     })
   })
 
