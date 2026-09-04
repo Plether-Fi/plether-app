@@ -5015,7 +5015,12 @@ perpsOrderBaseSelectSql =
   \o.execution_price, o.execution_vpi_usdc, o.execution_frozen_close_spread_usdc, o.execution_economics_version, \
   \o.execution_oracle_price, o.execution_oracle_frozen, o.oracle_min_publish_time, o.oracle_max_publish_time, \
   \o.oracle_derivation_version, o.client_order_id, o.receipt_hash, o.terminal_reason, o.pending_reason, \
-  \o.execution_mode, o.failed_constraint, o.receipt_economics, o.cleanup_actor, \
+  \o.execution_mode, o.failed_constraint, CASE \
+  \  WHEN o.receipt_economics IS NULL THEN NULL \
+  \  WHEN o.receipt_economics->>'executionBountyUsdc' IS NOT NULL THEN o.receipt_economics \
+  \  WHEN intent_event.execution_bounty_usdc IS NULL THEN o.receipt_economics \
+  \  ELSE o.receipt_economics || jsonb_build_object('executionBountyUsdc', intent_event.execution_bounty_usdc) \
+  \END, o.cleanup_actor, \
   \a.activity_type, a.size_delta, a.price, a.vpi_usdc, a.pnl_usdc, \
   \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
   \FROM perps_orders o \
@@ -5035,6 +5040,13 @@ perpsOrderBaseSelectSql =
   \    AND e.log_index < terminal_event.log_index \
   \  ORDER BY e.log_index DESC LIMIT 1\
   \) previous_terminal_event ON terminal_event.log_index IS NOT NULL \
+  \LEFT JOIN LATERAL (\
+  \  SELECT e.data->>'executionBountyUsdc' AS execution_bounty_usdc \
+  \  FROM perps_events e \
+  \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router AND e.order_id = o.order_id \
+  \    AND e.event_name = 'IntentRegistered' AND e.data->>'executionBountyUsdc' IS NOT NULL \
+  \  ORDER BY e.block_number DESC, e.tx_index DESC, e.log_index DESC LIMIT 1\
+  \) intent_event ON TRUE \
   \LEFT JOIN LATERAL (\
   \  SELECT activity_type, size_delta, price, (data->>'vpiUsdc')::numeric AS vpi_usdc, pnl_usdc \
   \  FROM perps_account_activity a \

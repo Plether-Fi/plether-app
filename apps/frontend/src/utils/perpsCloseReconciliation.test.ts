@@ -9,6 +9,7 @@ function receipt(
 ): PerpsOrderReceiptEconomics {
   return {
     executionNotionalUsdc: (1_000n * USDC).toString(),
+    executionBountyUsdc: '0',
     realizedPnlUsdc: (30n * USDC).toString(),
     vpiUsdc: (2n * USDC).toString(),
     carryUsdc: (4n * USDC).toString(),
@@ -38,6 +39,28 @@ describe('derivePerpsCloseReconciliation', () => {
       executionFeeUsdc: 1n * USDC,
       netCloseResultUsdc: 23n * USDC,
       marginAccountChangeUsdc: 23n * USDC,
+      traderClaimChangeUsdc: 0n,
+      uncoveredLossUsdc: 0n,
+    })
+  })
+
+  it('includes the finalized execution reward in the exact close result', () => {
+    expect(derivePerpsCloseReconciliation(receipt({
+      executionNotionalUsdc: '9925809400',
+      executionBountyUsdc: '200000',
+      realizedPnlUsdc: '-52382100',
+      vpiUsdc: '667142',
+      carryUsdc: '42',
+      executionFeeUsdc: '3970323',
+      actionChargeAssessedUsdc: '4637507',
+      actionChargeCollectedUsdc: '4637507',
+      grossAccountDebitUsdc: '57219607',
+      preSettlementBalanceUsdc: '14994820546',
+      postSettlementBalanceUsdc: '14937600939',
+    }))).toMatchObject({
+      executionBountyUsdc: 200_000n,
+      netCloseResultUsdc: -57_219_607n,
+      marginAccountChangeUsdc: -57_219_607n,
       traderClaimChangeUsdc: 0n,
       uncoveredLossUsdc: 0n,
     })
@@ -144,10 +167,12 @@ describe('derivePerpsCloseReconciliation', () => {
 
   it.each([
     undefined,
+    receipt({ executionBountyUsdc: undefined }),
     receipt({ realizedPnlUsdc: undefined }),
     receipt({ realizedPnlUsdc: 'not-a-number' }),
     receipt({ actionChargeCollectedUsdc: (7n * USDC).toString() }),
     receipt({ frozenSpreadUsdc: (7n * USDC).toString() }),
+    receipt({ executionBountyUsdc: (8n * USDC).toString() }),
     receipt({ postPositionMarginUsdc: (1n * USDC).toString() }),
     receipt({
       postPositionSize: (1n * 10n ** 18n).toString(),

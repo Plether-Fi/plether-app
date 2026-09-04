@@ -156,6 +156,7 @@ const closeOrderHistory = [{
   activitySizeDeltaRaw: 650n * 10n ** 18n,
   receiptEconomics: {
     executionNotionalUsdc: (650n * USDC).toString(),
+    executionBountyUsdc: '0',
     realizedPnlUsdc: '75400000',
     vpiUsdc: '2000000',
     carryUsdc: '4000000',

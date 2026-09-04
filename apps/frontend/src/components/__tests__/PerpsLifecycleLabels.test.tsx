@@ -78,6 +78,7 @@ function closeReceiptEconomics({
   const actionChargeAssessedUsdc = carryUsdc + (vpiUsdc > 0n ? vpiUsdc : 0n)
   return {
     executionNotionalUsdc: '100000000000',
+    executionBountyUsdc: '0',
     realizedPnlUsdc: realizedPnlUsdc.toString(),
     vpiUsdc: vpiUsdc.toString(),
     carryUsdc: carryUsdc.toString(),
@@ -1058,6 +1059,7 @@ describe('perps lifecycle labels', () => {
     const dialog = screen.getByRole('dialog', { name: 'Close reconciliation' })
     expect(within(dialog).getByText('Execution')).toBeInTheDocument()
     expect(within(dialog).getByText('Close result')).toBeInTheDocument()
+    expect(within(dialog).getByText('Execution reward')).toBeInTheDocument()
     expect(within(dialog).getByText('Account outcome')).toBeInTheDocument()
     expect(within(dialog).getByText('Trader claim created')).toBeInTheDocument()
     expect(within(dialog).getByText('Net close result').closest('div')?.querySelector('dd'))

@@ -554,6 +554,7 @@ Net close economics
 − signed close VPI
 − all pending carry
 − frozen-close spread, when applicable
+− execution reward
 ```
 
 A negative VPI is a rebate, so subtracting it increases the result—subject to the normal lifetime clamp.
@@ -580,22 +581,23 @@ Gross realized PnL:     +$1,200
 Execution fee:              $25
 VPI charge:                 $40
 Pending carry:              $75
+Execution reward:            $2
 ```
 
 Then:
 
 ```
 Net close economics
-= $1,200 − $25 − $40 − $75
-= $1,060
+= $1,200 − $25 − $40 − $75 − $2
+= $1,058
 ```
 
 If the close instead receives an eligible `$40` VPI rebate:
 
 ```
 Net close economics
-= $1,200 − $25 − (−$40) − $75
-= $1,140
+= $1,200 − $25 − (−$40) − $75 − $2
+= $1,138
 ```
 
 Any released position margin is added separately.
@@ -606,8 +608,8 @@ If the first close reduced `$10,000` of contract notional during `oracleFrozen`,
 
 ```
 Net close economics
-= $1,200 − $25 − $40 − $75 − $50
-= $1,010
+= $1,200 − $25 − $40 − $75 − $50 − $2
+= $1,008
 ```
 
 This assumes the entire spread is collectible. A terminal full close may show part of it as waived under the rules described above.
@@ -683,7 +685,7 @@ For VPI:
 
 Positive values are displayed without a `+` sign. Small non-zero costs may appear as `0.0 USDC` because preview values are rounded.
 
-After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread paid** and **Net close result**. Opening trades keep the existing execution summary.
+After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, **Execution reward**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread paid** and **Net close result**. Opening trades keep the existing execution summary.
 
 At contract level, close previews expose frozen-market settlement separately:
 
