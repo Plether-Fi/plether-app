@@ -2,6 +2,7 @@ import { act, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TradingViewAdvancedChart } from './TradingViewAdvancedChart'
+import { PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME } from './pletherDirectionalVolumeStudy'
 import type { PletherDxyDatafeedOptions } from './pletherDatafeed'
 import type {
   TradingViewChart,
@@ -77,6 +78,7 @@ function installReadyFakeTradingView() {
     onIntervalChanged: () => subscription,
     onVisibleRangeChanged: () => subscription,
     createShape: vi.fn(async () => 'liquidation-line'),
+    createStudy: vi.fn(async () => 'directional-volume-study'),
     removeEntity: vi.fn(),
   }
 
@@ -96,7 +98,7 @@ function installReadyFakeTradingView() {
   window.TradingView = {
     widget: FakeWidget as unknown as TradingViewNamespace['widget'],
   }
-  return { widgetOptions: () => widgetOptions }
+  return { chart, widgetOptions: () => widgetOptions }
 }
 
 describe('TradingViewAdvancedChart', () => {
@@ -116,7 +118,16 @@ describe('TradingViewAdvancedChart', () => {
     await waitFor(() => {
       expect(fakeTradingView.widgetOptions()).toBeDefined()
       expect(datafeedHarness.onVolumeCoverageChange).toBeTypeOf('function')
+      expect(fakeTradingView.chart.createStudy).toHaveBeenCalledWith(
+        PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
+        false,
+        true
+      )
     })
+    expect(fakeTradingView.widgetOptions()?.disabled_features)
+      .toContain('create_volume_indicator_by_default')
+    expect(fakeTradingView.widgetOptions()?.custom_indicators_getter)
+      .toBeTypeOf('function')
     expect(view.queryByText('Volume temporarily unavailable')).not.toBeInTheDocument()
 
     act(() => {
@@ -213,6 +224,7 @@ describe('TradingViewAdvancedChart', () => {
       onIntervalChanged: () => subscription,
       onVisibleRangeChanged: () => visibleRangeSubscription,
       createShape: vi.fn(async () => 'liquidation-line'),
+      createStudy: vi.fn(async () => 'directional-volume-study'),
       removeEntity: vi.fn(),
     }
     const remove = vi.fn()
@@ -270,6 +282,10 @@ describe('TradingViewAdvancedChart', () => {
     expect(widgetOptions?.disabled_features).not.toContain('timeframes_toolbar')
     expect(widgetOptions?.disabled_features).toContain('display_market_status')
     expect(widgetOptions?.disabled_features).toContain('volume_force_overlay')
+    expect(widgetOptions?.disabled_features).not.toContain('create_volume_indicator_by_default')
+    expect(widgetOptions?.custom_indicators_getter).toBeUndefined()
+    expect(widgetOptions?.studies_overrides['volume.volume.color.0']).toBe('#FFAB96')
+    expect(widgetOptions?.studies_overrides['volume.volume.color.1']).toBe('#FFAB96')
     expect(widgetOptions?.timeframe).toBe('5D')
     expect(widgetOptions?.enabled_features).toEqual(expect.arrayContaining([
       'determine_first_data_request_size_using_visible_range',
@@ -323,8 +339,8 @@ describe('TradingViewAdvancedChart', () => {
     })
     expect(widgetOptions?.settings_overrides).toEqual(widgetOptions?.overrides)
     expect(widgetOptions?.studies_overrides).toEqual({
-      'volume.volume.color.0': '#FF572D',
-      'volume.volume.color.1': '#00FF99',
+      'volume.volume.color.0': '#FFAB96',
+      'volume.volume.color.1': '#FFAB96',
       'volume.volume.transparency': 20,
       'volume.volume ma.color': '#FFAB96',
       'volume.volume ma.transparency': 35,

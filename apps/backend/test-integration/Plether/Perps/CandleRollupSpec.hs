@@ -1258,7 +1258,10 @@ candleRollupSpec databaseUrl =
           insertObservation connection "pre-volume-price" (baseTime + 5) 100 "signed_pyth" 100
           insertObservation connection "covered-volume-price" (baseTime + 905) 120 "signed_pyth" 100
           insertObservation connection "covered-zero-price" (baseTime + 1805) 140 "signed_pyth" 100
-          insertActivity connection "covered-page-volume" (baseTime + 905) 150 7 11 "Open"
+          insertActivity connection "covered-page-long-open" (baseTime + 905) 150 4 11 "Open"
+          setActivitySide connection "covered-page-long-open" 0
+          insertActivity connection "covered-page-long-close" (baseTime + 906) 151 3 11 "Close"
+          setActivitySide connection "covered-page-long-close" 0
           forM_ [baseTime - 55, baseTime + 5, baseTime + 905, baseTime + 1805] $ \timestamp ->
             recomputeBasketCandleHierarchy connection testSeries timestamp 0
           recomputeMarketVolumeHierarchy
@@ -1351,7 +1354,9 @@ candleRollupSpec databaseUrl =
           case ccCandle exactBoundaryCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Just 77
-              bcrTradeCount row `shouldBe` Just 1
+              bcrLongFlowVolumeNumerator row `shouldBe` Just 44
+              bcrShortFlowVolumeNumerator row `shouldBe` Just 33
+              bcrTradeCount row `shouldBe` Just 2
               bcrVolumeComplete row `shouldBe` False
             Nothing -> fail "Expected provisional volume at the live coverage terminal"
 
@@ -1363,6 +1368,10 @@ candleRollupSpec databaseUrl =
           partialVolume <- readNativePage cursor
           map bcrVolumeNumerator (cpCandles partialVolume)
             `shouldBe` [Nothing, Just 77, Nothing]
+          map bcrLongFlowVolumeNumerator (cpCandles partialVolume)
+            `shouldBe` [Nothing, Just 44, Nothing]
+          map bcrShortFlowVolumeNumerator (cpCandles partialVolume)
+            `shouldBe` [Nothing, Just 33, Nothing]
           map bcrVolumeComplete (cpCandles partialVolume)
             `shouldBe` [False, True, False]
           cpVolumeCoverageStart partialVolume `shouldBe` Just volumeCoverageStart
@@ -1373,7 +1382,9 @@ candleRollupSpec databaseUrl =
           case ccCandle coveredCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Just 77
-              bcrTradeCount row `shouldBe` Just 1
+              bcrLongFlowVolumeNumerator row `shouldBe` Just 44
+              bcrShortFlowVolumeNumerator row `shouldBe` Just 33
+              bcrTradeCount row `shouldBe` Just 2
               bcrVolumeComplete row `shouldBe` True
             Nothing -> fail "Expected the current price row inside usable volume coverage"
 
@@ -1386,8 +1397,12 @@ candleRollupSpec databaseUrl =
           assertPriceRows page
           map bcrVolumeNumerator (cpCandles page)
             `shouldBe` [Nothing, Just 77, Just 0]
+          map bcrLongFlowVolumeNumerator (cpCandles page)
+            `shouldBe` [Nothing, Just 44, Just 0]
+          map bcrShortFlowVolumeNumerator (cpCandles page)
+            `shouldBe` [Nothing, Just 33, Just 0]
           map bcrTradeCount (cpCandles page)
-            `shouldBe` [Nothing, Just 1, Just 0]
+            `shouldBe` [Nothing, Just 2, Just 0]
           map bcrVolumeComplete (cpCandles page)
             `shouldBe` [False, True, True]
           cpPreviousCursor page `shouldBe` Just baseTime
@@ -1426,7 +1441,7 @@ candleRollupSpec databaseUrl =
           map bcrVolumeNumerator (crCandles range)
             `shouldBe` [Just 77, Just 0]
           map bcrTradeCount (crCandles range)
-            `shouldBe` [Just 1, Just 0]
+            `shouldBe` [Just 2, Just 0]
           map bcrVolumeComplete (crCandles range)
             `shouldBe` [True, True]
           crCoverageStart range `shouldBe` Just volumeCoverageStart
@@ -3609,6 +3624,15 @@ insertActivity connection eventKey timestamp blockNumber sizeDelta price activit
     blockNumber
     timestamp
     (object ["integrationTest" .= True])
+
+setActivitySide :: Connection -> Text -> Int -> IO ()
+setActivitySide connection eventKey side = do
+  updated <-
+    execute
+      connection
+      "UPDATE perps_account_activity SET side = ? WHERE event_key = ?"
+      (side, "candle-rollup-integration:" <> eventKey)
+  updated `shouldBe` 1
 
 storedCandles
   :: Connection -> Integer -> Integer -> Integer -> IO [StoredCandle]

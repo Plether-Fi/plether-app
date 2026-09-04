@@ -11,6 +11,7 @@ import {
 } from '../api'
 import {
   PletherDxyDatafeed,
+  PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
   PERPS_CANDLE_MAX_HISTORY_PAGES,
   TRADINGVIEW_RESOLUTIONS,
   basketPointsToTradingViewBars,
@@ -18,6 +19,7 @@ import {
   historyRangeForRequest,
   isPerpsCandleApiEnabled,
   candlePageCursorForRequest,
+  perpsBasketCandlesToDirectionalVolumeBars,
   perpsBasketCandlesToTradingViewBars,
   secondsForTradingViewResolution,
   tradingViewResolutionForInterval,
@@ -82,6 +84,8 @@ function rawCandle(
     rawLowPrice: '97000000',
     rawClosePrice: '99000000',
     volumeUsdc: '1250000',
+    longFlowVolumeUsdc: '750000',
+    shortFlowVolumeUsdc: '250000',
     tradeCount: 2,
     sampleCount: 3,
     quality: 'observed',
@@ -174,6 +178,65 @@ describe('Plether TradingView datafeed', () => {
       close: 1.01,
       volume: 1.25,
     }])
+  })
+
+  it('encodes long- and short-direction notional as a separate TradingView series', () => {
+    expect(perpsBasketCandlesToDirectionalVolumeBars(
+      [
+        rawCandle(64_920),
+        rawCandle(64_980, {
+          longFlowVolumeUsdc: null,
+          shortFlowVolumeUsdc: null,
+        }),
+      ],
+      60
+    )).toEqual([
+      {
+        time: 64_920_000,
+        open: 0.75,
+        high: 0.75,
+        low: 0.75,
+        close: 0.75,
+        volume: 0.25,
+      },
+    ])
+  })
+
+  it('serves directional-volume history through the hidden study symbol', async () => {
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getCandlePage: async () => candlePage(90_000, [rawCandle(64_920)]),
+      }),
+      useCandleApi: true,
+    })
+
+    try {
+      const bars = await new Promise<TradingViewBar[]>((resolve, reject) => {
+        feed.getBars(
+          {
+            ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
+            name: 'plDXY.DirectionalVolume',
+          } as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+          resolve,
+          reject
+        )
+      })
+
+      expect(bars).toEqual([
+        {
+          time: 64_920_000,
+          open: 0.75,
+          high: 0.75,
+          low: 0.75,
+          close: 0.75,
+          volume: 0.25,
+        },
+      ])
+    } finally {
+      feed.destroy()
+    }
   })
 
   it('preserves unknown rollup volume instead of displaying it as proven zero', () => {
@@ -1197,6 +1260,44 @@ describe('Plether TradingView datafeed', () => {
       expect(getHistory).not.toHaveBeenCalled()
       expect(getLatest).not.toHaveBeenCalled()
       expect(getCandlePage).not.toHaveBeenCalled()
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('streams current long- and short-direction notional to the hidden study symbol', async () => {
+    const getCurrentCandle = vi.fn(async () => currentCandle(300, {
+      candle: rawCandle(64_800),
+    }))
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCurrentCandle }),
+      useCandleApi: true,
+      pollIntervalMs: 60_000,
+    })
+
+    try {
+      const bar = await new Promise<TradingViewBar>((resolve) => {
+        feed.subscribeBars(
+          {
+            ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
+            name: 'plDXY.DirectionalVolume',
+          } as TradingViewSymbolInfo,
+          '5',
+          resolve,
+          'directional-volume-current-listener',
+          () => undefined
+        )
+      })
+
+      expect(bar).toEqual({
+        time: 64_800_000,
+        open: 0.75,
+        high: 0.75,
+        low: 0.75,
+        close: 0.75,
+        volume: 0.25,
+      })
+      expect(getCurrentCandle).toHaveBeenCalledWith(300, expect.any(AbortSignal))
     } finally {
       feed.destroy()
     }

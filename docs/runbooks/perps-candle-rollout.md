@@ -588,9 +588,11 @@ aligned bucket for every canonical interval before publication.
 
 This operation does not backfill volume from old contracts. Native candles
 before the currently configured router's proven volume coverage must contain
-`volumeUsdc: null`, `tradeCount: null`, and `volumeComplete: false`. Within
-that current-router coverage, a missing volume row is a proven zero. Never run
-cross-release ingestion or substitute zero for unknown pre-router volume.
+`volumeUsdc: null`, `longFlowVolumeUsdc: null`,
+`shortFlowVolumeUsdc: null`, `tradeCount: null`, and
+`volumeComplete: false`. Within that current-router coverage, a missing volume
+row is a proven zero. Never run cross-release ingestion or substitute zero for
+unknown pre-router volume.
 
 ## Gate 5: deterministic reconciliation and soak
 
@@ -860,16 +862,19 @@ jq --exit-status --null-input \
     def candle_schema($expected_timestamp):
       . == null or
       (type == "object"
-       and keys == ["complete", "priceComplete", "quality", "rawClosePrice",
-                    "rawHighPrice", "rawLowPrice", "rawOpenPrice", "revision",
-                    "sampleCount", "timestamp", "tradeCount", "volumeComplete",
-                    "volumeUsdc"]
+       and keys == ["complete", "longFlowVolumeUsdc", "priceComplete", "quality",
+                    "rawClosePrice", "rawHighPrice", "rawLowPrice", "rawOpenPrice",
+                    "revision", "sampleCount", "shortFlowVolumeUsdc", "timestamp",
+                    "tradeCount", "volumeComplete", "volumeUsdc"]
        and (.timestamp | integer) and .timestamp == $expected_timestamp
        and ([.rawOpenPrice, .rawHighPrice, .rawLowPrice, .rawClosePrice]
             | all(type == "string" and test("^[1-9][0-9]*$")))
        and (.volumeUsdc == null
             or (.volumeUsdc
                 | type == "string" and test("^[0-9]+$")))
+       and ((.longFlowVolumeUsdc == null and .shortFlowVolumeUsdc == null)
+            or ([.longFlowVolumeUsdc, .shortFlowVolumeUsdc]
+                | all(type == "string" and test("^[0-9]+$"))))
        and (.tradeCount | optional_nonnegative_integer)
        and (.sampleCount | integer) and .sampleCount >= 0
        and (.revision | integer) and .revision >= 0

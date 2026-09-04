@@ -211,6 +211,14 @@ The current-candle endpoint returns a full OHLCV replacement with revision and
 source completeness. It does not participate in immutable historical
 pagination.
 
+Within proven volume coverage, candle responses also expose
+`longFlowVolumeUsdc` and `shortFlowVolumeUsdc`. Long flow is voluntary long
+opens plus short closes; short flow is voluntary short opens plus long closes.
+Liquidations are excluded from both because they are not a trader-chosen
+direction. The fields do not infer direction from a change in the external
+oracle price. The frontend uses them for a separate diverging directional-flow
+study while retaining `volumeUsdc` as total protocol activity.
+
 Both native responses bind nullable volume to `volumeChainId` and
 `volumeRouter` and expose that scope's trusted `volumeCoverageStart`,
 `volumeCoverageEnd`, `volumeFinalizedThrough`, and
@@ -293,8 +301,9 @@ mutable candle itself stays live and ignores unpublished desired revisions.
 Current-router volume is attached only for buckets inside complete, finalized
 volume coverage. Earlier price
 candles remain valid and expose
-`volumeUsdc: null`, `tradeCount: null`, and `volumeComplete: false`; the reader
-does not query or aggregate older contract releases. The existing candle-level
+`volumeUsdc: null`, `longFlowVolumeUsdc: null`,
+`shortFlowVolumeUsdc: null`, `tradeCount: null`, and `volumeComplete: false`;
+the reader does not query or aggregate older contract releases. The existing candle-level
 `complete` field remains the legacy conjunction
 `priceComplete && volumeComplete`; native availability is determined from
 page-level price coverage and `priceComplete`, not that combined field.

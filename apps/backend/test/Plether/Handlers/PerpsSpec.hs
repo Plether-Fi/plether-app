@@ -265,6 +265,8 @@ spec = do
       let priceOnlyRow =
             sampleCandleRow
               { bcrVolumeNumerator = Nothing
+              , bcrLongFlowVolumeNumerator = Nothing
+              , bcrShortFlowVolumeNumerator = Nothing
               , bcrTradeCount = Nothing
               , bcrVolumeComplete = False
               }
@@ -580,6 +582,8 @@ spec = do
               { cpCandles =
                   [ sampleCandleRow
                       { bcrVolumeNumerator = Nothing
+                      , bcrLongFlowVolumeNumerator = Nothing
+                      , bcrShortFlowVolumeNumerator = Nothing
                       , bcrTradeCount = Nothing
                       , bcrVolumeComplete = False
                       }
@@ -600,6 +604,13 @@ spec = do
         `shouldFailTextWith` "volume fields are inconsistent"
       validate sampleCandleRow {bcrPriceComplete = False}
         `shouldFailTextWith` "price is incomplete"
+      validate sampleCandleRow {bcrLongFlowVolumeNumerator = Nothing}
+        `shouldFailTextWith` "directional-volume fields are inconsistent"
+      validate sampleCandleRow {bcrShortFlowVolumeNumerator = Just (-1)}
+        `shouldFailTextWith` "directional volume is negative"
+      validate sampleCandleRow
+        { bcrVolumeNumerator = Just $ 600_000 * 10 ^ (20 :: Int) }
+        `shouldFailTextWith` "directional volume exceeds total volume"
 
     it "rejects historical prices at or above the immutable display cap" $ do
       let cap = 200_000_000
@@ -638,6 +649,8 @@ spec = do
                     sampleCandleRow
                     { bcrBucketStart = 30_000
                     , bcrVolumeNumerator = Nothing
+                    , bcrLongFlowVolumeNumerator = Nothing
+                    , bcrShortFlowVolumeNumerator = Nothing
                     , bcrTradeCount = Nothing
                     , bcrPriceComplete = False
                     , bcrVolumeComplete = False
@@ -888,6 +901,8 @@ spec = do
                     sampleCandleRow
                       { bcrBucketStart = 30_000
                       , bcrVolumeNumerator = Nothing
+                      , bcrLongFlowVolumeNumerator = Nothing
+                      , bcrShortFlowVolumeNumerator = Nothing
                       , bcrTradeCount = Nothing
                       , bcrVolumeComplete = False
                       }
@@ -918,6 +933,8 @@ spec = do
                       , bcrRawClosePrice = cap
                       , bcrPriceComplete = False
                       , bcrVolumeNumerator = Nothing
+                      , bcrLongFlowVolumeNumerator = Nothing
+                      , bcrShortFlowVolumeNumerator = Nothing
                       , bcrTradeCount = Nothing
                       , bcrVolumeComplete = False
                       }
@@ -1102,6 +1119,8 @@ sampleCandleRow =
     , bcrRevision = 1
     , bcrPriceComplete = True
     , bcrVolumeNumerator = Just $ 1_000_000 * 10 ^ (20 :: Int)
+    , bcrLongFlowVolumeNumerator = Just $ 400_000 * 10 ^ (20 :: Int)
+    , bcrShortFlowVolumeNumerator = Just $ 300_000 * 10 ^ (20 :: Int)
     , bcrTradeCount = Just 2
     , bcrVolumeComplete = True
     }

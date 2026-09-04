@@ -190,6 +190,10 @@ export interface PerpsBasketCandle {
   rawClosePrice: string;
   /** Null means the volume source has not proved coverage for this bucket. */
   volumeUsdc: string | null;
+  /** Notional flowing toward long exposure: long opens plus short closes. */
+  longFlowVolumeUsdc: string | null;
+  /** Notional flowing toward short exposure: short opens plus long closes. */
+  shortFlowVolumeUsdc: string | null;
   /** Null means trade-count coverage is unknown, which is distinct from zero. */
   tradeCount: number | null;
   sampleCount: number;

@@ -36,6 +36,7 @@ import type {
 } from './types'
 
 export const PLDXY_TRADINGVIEW_SYMBOL = 'PLETHER:PLDXY.P'
+export const PLDXY_DIRECTIONAL_VOLUME_SYMBOL = 'PLETHER:PLDXY.DIRECTIONAL_VOLUME'
 export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
   '1',
   '3',
@@ -84,6 +85,14 @@ const SYMBOL_INFO: TradingViewSymbolInfo = {
   has_empty_bars: false,
 }
 
+const DIRECTIONAL_VOLUME_SYMBOL_INFO: TradingViewSymbolInfo = {
+  ...SYMBOL_INFO,
+  name: 'plDXY.DirectionalVolume',
+  ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
+  description: 'plDXY Directional Volume',
+  pricescale: 100,
+}
+
 const DATAFEED_CONFIGURATION: TradingViewDatafeedConfiguration = {
   supported_resolutions: TRADINGVIEW_RESOLUTIONS,
   supports_marks: false,
@@ -117,6 +126,7 @@ export interface PletherChartDataSource {
 interface Subscription {
   listenerGuid: string
   resolution: TradingViewResolution
+  seriesKind: TradingViewSeriesKind
   onTick: (bar: TradingViewBar) => void
   onResetCacheNeeded: () => void
   timer?: ReturnType<typeof setInterval>
@@ -126,6 +136,8 @@ interface Subscription {
   requestControllers: Set<AbortController>
   currentBar?: TradingViewBar
 }
+
+type TradingViewSeriesKind = 'price' | 'directional-volume'
 
 interface VolumeSnapshot {
   byTime: Map<number, number>
@@ -442,6 +454,34 @@ export function perpsBasketCandlesToTradingViewBars(
   return [...barsByTime.values()].sort((left, right) => left.time - right.time)
 }
 
+export function perpsBasketCandlesToDirectionalVolumeBars(
+  candles: PerpsBasketCandle[],
+  intervalSeconds: PerpsCandleIntervalSeconds
+): TradingViewBar[] {
+  const barsByTime = new Map<number, TradingViewBar>()
+
+  for (const candle of candles) {
+    if (candle.timestamp % intervalSeconds !== 0) continue
+    const longFlow = parseOptionalMicroUsdc(candle.longFlowVolumeUsdc)
+    const shortFlow = parseOptionalMicroUsdc(candle.shortFlowVolumeUsdc)
+    if (longFlow === undefined || shortFlow === undefined) continue
+
+    const longFlowUsdc = microUsdcToHumanUsdc(longFlow)
+    const shortFlowUsdc = microUsdcToHumanUsdc(shortFlow)
+    const bar: TradingViewBar = {
+      time: candle.timestamp * 1000,
+      open: longFlowUsdc,
+      high: longFlowUsdc,
+      low: longFlowUsdc,
+      close: longFlowUsdc,
+      volume: shortFlowUsdc,
+    }
+    barsByTime.set(bar.time, bar)
+  }
+
+  return [...barsByTime.values()].sort((left, right) => left.time - right.time)
+}
+
 export function historyRangeForRequest(
   from: number,
   to: number,
@@ -554,6 +594,19 @@ function errorMessage(error: unknown): string {
 function matchesSymbol(symbolName: string): boolean {
   const normalized = symbolName.trim().toUpperCase()
   return normalized === PLDXY_TRADINGVIEW_SYMBOL || normalized === 'PLDXY.P' || normalized === 'PLDXY'
+}
+
+function matchesDirectionalVolumeSymbol(symbolName: string | undefined): boolean {
+  const normalized = symbolName?.trim().toUpperCase()
+  return normalized === PLDXY_DIRECTIONAL_VOLUME_SYMBOL ||
+    normalized === 'PLDXY.DIRECTIONALVOLUME'
+}
+
+function seriesKindForSymbol(symbolInfo: TradingViewSymbolInfo): TradingViewSeriesKind {
+  return matchesDirectionalVolumeSymbol(symbolInfo.ticker) ||
+    matchesDirectionalVolumeSymbol(symbolInfo.name)
+    ? 'directional-volume'
+    : 'price'
 }
 
 function searchResult(): TradingViewSearchResult {
@@ -692,6 +745,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     setTimeout(() => {
       if (matchesSymbol(symbolName)) {
         onResolve(SYMBOL_INFO)
+      } else if (matchesDirectionalVolumeSymbol(symbolName)) {
+        onResolve(DIRECTIONAL_VOLUME_SYMBOL_INFO)
       } else {
         onError(`Unknown symbol: ${symbolName}`)
       }
@@ -699,7 +754,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   }
 
   getBars(
-    _symbolInfo: TradingViewSymbolInfo,
+    symbolInfo: TradingViewSymbolInfo,
     resolution: TradingViewResolution,
     periodParams: { from: number; to: number; countBack: number; firstDataRequest: boolean },
     onResult: (bars: TradingViewBar[], metadata: { noData: boolean }) => void,
@@ -712,7 +767,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       return
     }
 
-    void this.runRequest((signal) => this.loadBars(resolution, periodParams, signal))
+    const seriesKind = seriesKindForSymbol(symbolInfo)
+    void this.runRequest((signal) => this.loadBars(resolution, periodParams, seriesKind, signal))
       .then((bars) => {
         setTimeout(() => {
           if (!this.destroyed) {
@@ -728,7 +784,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   }
 
   subscribeBars(
-    _symbolInfo: TradingViewSymbolInfo,
+    symbolInfo: TradingViewSymbolInfo,
     resolution: TradingViewResolution,
     onTick: (bar: TradingViewBar) => void,
     listenerGuid: string,
@@ -736,20 +792,24 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   ): void {
     this.unsubscribeBars(listenerGuid)
 
-    const primedCurrent = this.useCandleApi
+    const seriesKind = seriesKindForSymbol(symbolInfo)
+    const primedCurrent = this.useCandleApi && seriesKind === 'price'
       ? this.consumePrimedCurrentCandle(resolution)
       : undefined
 
     const subscription: Subscription = {
       listenerGuid,
       resolution,
+      seriesKind,
       onTick,
       onResetCacheNeeded: onResetCacheNeededCallback,
       polling: false,
       failureCount: 0,
       nextPollAt: 0,
       requestControllers: new Set(),
-      currentBar: primedCurrent?.bar ?? this.lastBars.get(resolution),
+      currentBar: primedCurrent?.bar ?? (
+        seriesKind === 'price' ? this.lastBars.get(resolution) : undefined
+      ),
     }
     this.subscriptions.set(listenerGuid, subscription)
     if (this.isDocumentVisible()) {
@@ -815,11 +875,14 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       countBack: number
       firstDataRequest: boolean
     },
+    seriesKind: TradingViewSeriesKind,
     signal?: AbortSignal
   ): Promise<TradingViewBar[]> {
     if (this.useCandleApi) {
-      return await this.loadCandleBars(resolution, periodParams, signal)
+      return await this.loadCandleBars(resolution, periodParams, seriesKind, signal)
     }
+
+    if (seriesKind === 'directional-volume') return []
 
     const intervalSeconds = secondsForTradingViewResolution(resolution)
     const range = historyRangeForRequest(
@@ -865,6 +928,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       countBack: number
       firstDataRequest: boolean
     },
+    seriesKind: TradingViewSeriesKind,
     signal?: AbortSignal
   ): Promise<TradingViewBar[]> {
     const getCandlePage = this.dataSource.getCandlePage
@@ -888,7 +952,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     const targetCount = Math.max(1, periodParams.countBack)
     const requestedToMs = periodParams.to * 1000
-    const shouldPrimeCurrent = periodParams.firstDataRequest &&
+    const shouldPrimeCurrent = seriesKind === 'price' &&
+      periodParams.firstDataRequest &&
       !this.initializedCandleIntervals.has(intervalSeconds) &&
       this.dataSource.getCurrentCandle !== undefined
     const currentCandleRequest = shouldPrimeCurrent
@@ -1006,11 +1071,14 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
         throw new Error('The Perps candle dataset changed while history was loading')
       }
 
-      for (const bar of perpsBasketCandlesToTradingViewBars(
-        page.candles,
-        intervalSeconds,
-        page.displayPriceCap
-      )) {
+      const pageBars = seriesKind === 'directional-volume'
+        ? perpsBasketCandlesToDirectionalVolumeBars(page.candles, intervalSeconds)
+        : perpsBasketCandlesToTradingViewBars(
+            page.candles,
+            intervalSeconds,
+            page.displayPriceCap
+          )
+      for (const bar of pageBars) {
         if (bar.time < requestedToMs) barsByTime.set(bar.time, bar)
       }
 
@@ -1063,11 +1131,16 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
           ) {
             this.publishVolumeCoverageState(intervalSeconds, currentVolumeCoverageState)
             const currentBar = currentResponse.candle
-              ? perpsBasketCandlesToTradingViewBars(
-                  [currentResponse.candle],
-                  intervalSeconds,
-                  currentResponse.displayPriceCap
-                ).at(0)
+              ? (seriesKind === 'directional-volume'
+                  ? perpsBasketCandlesToDirectionalVolumeBars(
+                      [currentResponse.candle],
+                      intervalSeconds
+                    )
+                  : perpsBasketCandlesToTradingViewBars(
+                      [currentResponse.candle],
+                      intervalSeconds,
+                      currentResponse.displayPriceCap
+                    )).at(0)
               : undefined
             if (currentBar && currentBar.time < requestedToMs) {
               barsByTime.set(currentBar.time, currentBar)
@@ -1081,17 +1154,25 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
         }
       }
     }
-    this.initializedCandleIntervals.add(intervalSeconds)
+    if (seriesKind === 'price') this.initializedCandleIntervals.add(intervalSeconds)
 
     const bars = [...barsByTime.values()]
       .sort((left, right) => left.time - right.time)
       .slice(-targetCount)
     const lastBar = bars.at(-1)
-    const previousLastBar = this.lastBars.get(resolution)
-    if (lastBar && (!previousLastBar || lastBar.time >= previousLastBar.time)) {
+    const previousLastBar = seriesKind === 'price' ? this.lastBars.get(resolution) : undefined
+    if (
+      seriesKind === 'price' &&
+      lastBar &&
+      (!previousLastBar || lastBar.time >= previousLastBar.time)
+    ) {
       this.lastBars.set(resolution, { ...lastBar })
     }
-    if (primedCurrentBar && bars.some((bar) => bar.time === primedCurrentBar.time)) {
+    if (
+      seriesKind === 'price' &&
+      primedCurrentBar &&
+      bars.some((bar) => bar.time === primedCurrentBar.time)
+    ) {
       this.primedCurrentCandles.set(resolution, {
         bar: { ...primedCurrentBar },
         primedAt: Date.now(),
@@ -1241,11 +1322,13 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     const candle = currentResponse.candle
     if (!candle) return
 
-    const bar = perpsBasketCandlesToTradingViewBars(
-      [candle],
-      intervalSeconds,
-      currentResponse.displayPriceCap
-    ).at(0)
+    const bar = (current.seriesKind === 'directional-volume'
+      ? perpsBasketCandlesToDirectionalVolumeBars([candle], intervalSeconds)
+      : perpsBasketCandlesToTradingViewBars(
+          [candle],
+          intervalSeconds,
+          currentResponse.displayPriceCap
+        )).at(0)
     if (!bar || (current.currentBar && bar.time < current.currentBar.time)) return
     const intervalMilliseconds = intervalSeconds * 1000
     if (
@@ -1259,7 +1342,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       this.requestCandleHistoryReset(intervalSeconds)
     }
     current.currentBar = { ...bar }
-    this.lastBars.set(current.resolution, { ...bar })
+    if (current.seriesKind === 'price') {
+      this.lastBars.set(current.resolution, { ...bar })
+    }
     this.scheduleTick(current, bar)
   }
 
