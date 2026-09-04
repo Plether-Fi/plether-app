@@ -97,6 +97,17 @@ describe('v1.2.0 vault ABI regression boundary', () => {
     expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'estimateMintAssets')).toBe(true)
     expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'DEPOSIT_COOLDOWN')).toBe(true)
     expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'lastDepositTime')).toBe(true)
+    expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'depositEpochActivationTime')).toBe(true)
+    expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'maxRequestRedeemFromClaimableDeposit')).toBe(true)
+    expect(outputComponents(PERPS_PUBLIC_LENS_ABI, 'getLpDepositCooldownState')).toEqual([
+      ['vault', 'address'],
+      ['requestId', 'uint256'],
+      ['controller', 'address'],
+      ['activationTime', 'uint256'],
+      ['cooldownEnd', 'uint256'],
+      ['remainingClaimableShares', 'uint256'],
+      ['directRedeemableShares', 'uint256'],
+    ])
   })
 })
 

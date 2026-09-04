@@ -96,17 +96,21 @@ vaultActivityDatabaseSpec databaseUrl =
         insertVaultRequestExact conn deploymentA $
           (request "DepositRequested" 400 12 0) {vrrController = holderB}
         insertVaultRequestExact conn deploymentA $ request "RedeemRequest" 300 13 0
+        insertVaultRequestExact conn deploymentA $
+          request "ClaimableDepositRedeemRequest" 500 14 0
 
-        getVaultRequestIds conn deploymentA seniorVault holderA 3 Nothing
-          `shouldReturnValue` [400, 300, 200]
+        getVaultRequestIds conn deploymentA seniorVault holderA 4 Nothing
+          `shouldReturnValue` [500, 400, 300, 200]
         getVaultRequestIds conn deploymentA seniorVault holderA 2 (Just 400)
           `shouldReturnValue` [300, 200]
         visible <- getVaultRequests conn deploymentA seniorVault 10
-        map vrrEventName visible `shouldBe` ["RedeemRequest", "RedeemRequest", "DepositRequest"]
-        getVaultDepositRequestKeys conn deploymentA Nothing 13
+        map vrrEventName visible
+          `shouldBe` ["ClaimableDepositRedeemRequest", "RedeemRequest", "RedeemRequest", "DepositRequest"]
+        getVaultDepositRequestKeys conn deploymentA Nothing 14
           `shouldReturnValue`
             [ VaultDepositRequestKey seniorVault holderA 200
             , VaultDepositRequestKey seniorVault holderA 300
+            , VaultDepositRequestKey seniorVault holderA 500
             , VaultDepositRequestKey seniorVault holderB 400
             ]
 

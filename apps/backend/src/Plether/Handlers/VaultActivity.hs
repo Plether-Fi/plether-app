@@ -1,6 +1,7 @@
 module Plether.Handlers.VaultActivity
   ( getVaultActivity
   , getVaultAccountRequestIds
+  , vaultRequestKind
   , vaultCoverageIsStale
   ) where
 
@@ -207,7 +208,12 @@ activityRow tranche VaultRequestRow {..} =
     , vaiTransactionHash = vrrTxHash
     }
  where
-  kind = if vrrEventName == "RedeemRequest" then "withdraw" else "deposit"
+  kind = vaultRequestKind vrrEventName
+
+vaultRequestKind :: Text -> Text
+vaultRequestKind eventName
+  | eventName `elem` ["RedeemRequest", "ClaimableDepositRedeemRequest"] = "withdraw"
+  | otherwise = "deposit"
 
 lastMaybe :: [a] -> Maybe a
 lastMaybe [] = Nothing

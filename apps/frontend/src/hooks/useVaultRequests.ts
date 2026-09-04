@@ -19,6 +19,10 @@ interface ContractResult {
 export interface VaultDepositRequest {
   requestId: bigint
   targetTimestamp: number
+  activationTimestamp?: number
+  cooldownEndsAt?: bigint
+  directRedeemableShares?: bigint
+  directRedeemSupported?: boolean
   pendingAssets: bigint
   pendingSharesEstimate: bigint
   claimableAssets: bigint
@@ -217,16 +221,26 @@ export function useVaultRequests({
   }, [cachedRequestIds, currentEpoch, eventRequestIds])
 
   const readController = controller ?? zeroAddress
-  const contracts = useMemo(() => requestIds.map((requestId) => ({
-    chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
-    address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
-    abi: PERPS_PUBLIC_LENS_ABI,
-    functionName: 'getLpRequestState' as const,
-    args: [isSenior, requestId, readController] as const,
-  })), [isSenior, readController, requestIds])
+  const contracts = useMemo(() => [
+    ...requestIds.map((requestId) => ({
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+      abi: PERPS_PUBLIC_LENS_ABI,
+      functionName: 'getLpRequestState' as const,
+      args: [isSenior, requestId, readController] as const,
+    })),
+    ...requestIds.map((requestId) => ({
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+      abi: PERPS_PUBLIC_LENS_ABI,
+      functionName: 'getLpDepositCooldownState' as const,
+      args: [isSenior, requestId, readController] as const,
+    })),
+  ], [isSenior, readController, requestIds])
 
   const { data, isLoading, refetch } = useReadContracts({
     contracts,
+    allowFailure: true,
     query: {
       enabled: Boolean(controller) && contracts.length > 0,
       refetchInterval: 60_000,
@@ -241,6 +255,7 @@ export function useVaultRequests({
     requestIds.forEach((requestId, index) => {
       const result = readResult(results, index)
       if (result === undefined) return
+      const cooldownResult = readResult(results, requestIds.length + index)
       const pendingDepositAssets = asBigInt(tupleValue(result, 3, 'pendingDepositAssets'))
       const pendingDepositSharesEstimate = asBigInt(tupleValue(result, 4, 'pendingDepositSharesEstimate'))
       const claimableDepositAssets = asBigInt(tupleValue(result, 5, 'claimableDepositAssets'))
@@ -252,6 +267,13 @@ export function useVaultRequests({
       const refundableDepositAssets = asBigInt(tupleValue(result, 11, 'refundableDepositAssets'))
       const refundableRedeemShares = asBigInt(tupleValue(result, 12, 'refundableRedeemShares'))
       const redeemRefundPending = asBoolean(tupleValue(result, 13, 'redeemRefundPending'))
+      const activationTime = asBigInt(tupleValue(cooldownResult, 3, 'activationTime'))
+      const cooldownEnd = asBigInt(tupleValue(cooldownResult, 4, 'cooldownEnd'))
+      const directRedeemableShares = asBigInt(tupleValue(
+        cooldownResult,
+        6,
+        'directRedeemableShares',
+      ))
       const matured = currentEpoch !== undefined && currentEpoch >= requestId
       const targetTimestamp = Number(requestId * 3_600n)
 
@@ -264,6 +286,10 @@ export function useVaultRequests({
         deposits.push({
           requestId,
           targetTimestamp,
+          activationTimestamp: activationTime > 0n ? Number(activationTime) : undefined,
+          cooldownEndsAt: cooldownEnd > 0n ? cooldownEnd : undefined,
+          directRedeemableShares,
+          directRedeemSupported: cooldownResult !== undefined,
           pendingAssets: pendingDepositAssets,
           pendingSharesEstimate: pendingDepositSharesEstimate,
           claimableAssets: claimableDepositAssets,

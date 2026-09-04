@@ -134,7 +134,7 @@ LP entry and exit use hourly vault processing:
 * Deposits and withdrawals whose transactions are included onchain strictly before the five-minute cutoff target the next processing window; inclusion at or after the cutoff rolls into the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so the confirmed request record is authoritative.
 * A processed deposit creates shares that the LP moves from vault escrow to the owner wallet.
 * A processed withdrawal creates USDC that the LP moves to the owner wallet. Senior requests are funded before Junior requests.
-* Vault delivery of processed shares, withdrawal cancellation and return of a zero-value remainder start or restart the wallet's one-hour withdrawal cooldown for that tranche. An ordinary wallet transfer propagates the sender's existing timestamp instead of starting a fresh hour.
+* Successful deposit activation starts a one-hour source cooldown. Claiming processed shares preserves that activation timestamp and cannot weaken a newer wallet cooldown; after expiry, an available direct route can queue the claimable lot for withdrawal without a wallet transfer. Withdrawal cancellation and return of a zero-value remainder restart the wallet cooldown. An ordinary wallet transfer propagates the sender's existing timestamp instead of starting a fresh hour.
 * Capital reserved for trader payouts or claims cannot fund LP withdrawals.
 * Processing can wait on free pool cash, solvency, oracle state, protocol health or an explicit hourly-processing pause.
 

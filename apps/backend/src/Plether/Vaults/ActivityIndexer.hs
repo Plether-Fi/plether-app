@@ -7,6 +7,7 @@ module Plether.Vaults.ActivityIndexer
   , transferTopic
   , depositRequestTopic
   , redeemRequestTopic
+  , claimableDepositRedeemRequestTopic
   , legacyDepositRequestedTopic
   , parseVaultLog
   , isProviderLogRangeLimit
@@ -116,10 +117,11 @@ data VaultActivityCycleStats = VaultActivityCycleStats
   }
   deriving stock (Eq, Show)
 
-transferTopic, depositRequestTopic, redeemRequestTopic, legacyDepositRequestedTopic :: BS.ByteString
+transferTopic, depositRequestTopic, redeemRequestTopic, claimableDepositRedeemRequestTopic, legacyDepositRequestedTopic :: BS.ByteString
 transferTopic = keccak256Text "Transfer(address,address,uint256)"
 depositRequestTopic = keccak256Text "DepositRequest(address,address,uint256,address,uint256)"
 redeemRequestTopic = keccak256Text "RedeemRequest(address,address,uint256,address,uint256)"
+claimableDepositRedeemRequestTopic = keccak256Text "ClaimableDepositRedeemRequest(address,uint256,uint256,address,uint256,uint256)"
 legacyDepositRequestedTopic = keccak256Text "DepositRequested(address,address,uint256,uint256)"
 
 vaultTopics :: [BS.ByteString]
@@ -127,6 +129,7 @@ vaultTopics =
   [ transferTopic
   , depositRequestTopic
   , redeemRequestTopic
+  , claimableDepositRedeemRequestTopic
   , legacyDepositRequestedTopic
   ]
 
@@ -443,6 +446,17 @@ parseVaultLog deployment timestamp entry = do
                 }
       | topic == depositRequestTopic -> parseRequest "DepositRequest" indexed
       | topic == redeemRequestTopic -> parseRequest "RedeemRequest" indexed
+      | topic == claimableDepositRedeemRequestTopic -> do
+          requireShape 3 96 indexed $ rpcLogData entry
+          controller <- topicAddress $ indexed !! 0
+          _depositRequestId <- topicInteger $ indexed !! 1
+          redeemRequestId <- topicInteger $ indexed !! 2
+          _sender <- dataAddress 0 $ rpcLogData entry
+          _assets <- dataWord 1 $ rpcLogData entry
+          shares <- dataWord 2 $ rpcLogData entry
+          pure $
+            ParsedVaultRequest $
+              envelope "ClaimableDepositRedeemRequest" vault controller controller redeemRequestId shares
       | topic == legacyDepositRequestedTopic -> do
           requireShape 3 32 indexed $ rpcLogData entry
           caller <- topicAddress $ indexed !! 0

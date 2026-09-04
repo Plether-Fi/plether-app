@@ -349,6 +349,16 @@ const LP_REQUEST_STATE_VIEW_COMPONENTS = [
   { name: 'redeemRefundPending', type: 'bool' },
 ] as const
 
+const LP_DEPOSIT_COOLDOWN_STATE_VIEW_COMPONENTS = [
+  { name: 'vault', type: 'address' },
+  { name: 'requestId', type: 'uint256' },
+  { name: 'controller', type: 'address' },
+  { name: 'activationTime', type: 'uint256' },
+  { name: 'cooldownEnd', type: 'uint256' },
+  { name: 'remainingClaimableShares', type: 'uint256' },
+  { name: 'directRedeemableShares', type: 'uint256' },
+] as const
+
 const POSITION_PROTECTION_VIEW_COMPONENTS = [
   { name: 'protectionId', type: 'uint64' },
   { name: 'parentOrderId', type: 'uint64' },
@@ -511,6 +521,17 @@ export const PERPS_PUBLIC_LENS_ABI = [
       { name: 'controller', type: 'address' },
     ],
     outputs: [{ name: 'viewData', type: 'tuple', components: LP_REQUEST_STATE_VIEW_COMPONENTS }],
+  },
+  {
+    type: 'function',
+    name: 'getLpDepositCooldownState',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'isSenior', type: 'bool' },
+      { name: 'requestId', type: 'uint256' },
+      { name: 'controller', type: 'address' },
+    ],
+    outputs: [{ name: 'viewData', type: 'tuple', components: LP_DEPOSIT_COOLDOWN_STATE_VIEW_COMPONENTS }],
   },
 ] as const
 

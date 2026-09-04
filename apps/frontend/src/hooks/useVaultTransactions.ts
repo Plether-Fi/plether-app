@@ -133,6 +133,37 @@ export function useVaultTransactions({
     })
   }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
+  const requestRedeemFromClaimableDeposit = useCallback((depositRequestId: bigint, shares: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Queueing claimable Plether Vault shares for withdrawal',
+      type: 'withdraw',
+      showModal: showTransactionModal,
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Queue withdrawal',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'requestRedeemFromClaimableDeposit',
+            args: [depositRequestId, shares, context.address],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'requestRedeemFromClaimableDeposit',
+            args: [depositRequestId, shares, context.address],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
+
   const cancelPendingDeposit = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
@@ -291,6 +322,7 @@ export function useVaultTransactions({
   return {
     requestDeposit,
     requestRedeem,
+    requestRedeemFromClaimableDeposit,
     cancelPendingDeposit,
     cancelRedeemRequest,
     claimDepositShares,

@@ -21,7 +21,7 @@ Before opening the withdrawal flow, confirm that you hold wallet shares in the i
 | Wallet-held Senior shares (`psLP`) | Yes, up to **Shares available to withdraw** |
 | Wallet-held Junior shares (`pjLP`) | Yes, up to **Shares available to withdraw** |
 | USDC in a queued deposit | No; it must be processed into shares or returned |
-| **Shares ready** from a processed deposit | Not until you select **Move shares to wallet** and the resulting cooldown ends |
+| **Shares ready** from a processed deposit | Yes after that deposit's activation-aged cooldown, through **Queue direct withdrawal** when shown; otherwise move the shares to the wallet |
 | Shares already locked in a queued withdrawal | No; monitor that request under **Pending withdrawals** |
 | USDC in the Trading Account's Margin Account | No; use the separate trader withdrawal flow |
 | MockUSDC in the owner wallet | It is already in the wallet and is not an LP position |
@@ -97,13 +97,14 @@ For the complete accounting model, see [**The liquidity pool and tranche waterfa
 
 ### 5. Check the one-hour cooldown
 
-The vault's **Move shares to wallet**, **Cancel withdrawal** and **Return shares to wallet** actions start or restart a one-hour withdrawal cooldown for the wallet's complete position in that tranche. This includes:
+Successful deposit activation starts a one-hour cooldown for that source deposit. **Move shares to wallet** preserves its activation timestamp and applies the later of that timestamp and the wallet's existing timestamp; it does not start a fresh hour or weaken a newer wallet cooldown.
 
-* selecting **Move shares to wallet** after a deposit is processed;
+Actions that return shares from a withdrawal to the wallet do restart the wallet-level cooldown for the complete position in that tranche. They include:
+
 * cancelling a queued withdrawal and returning its shares; and
 * selecting **Return shares to wallet** for a zero-value withdrawal remainder.
 
-During the cooldown, **Shares available to withdraw** is zero. The vault page shows **Available in** with a live countdown, and the action panel shows **Withdrawal cooldown active**.
+During the wallet cooldown, **Shares available to withdraw** is zero. The vault page shows **Available in** with a live countdown, and the action panel shows **Withdrawal cooldown active**. A claimable deposit uses its own activation-aged cooldown; when it has elapsed, **Queue direct withdrawal** can route shares from that single source deposit into the current withdrawal epoch without a wallet transfer or token approval.
 
 An ordinary wallet-to-wallet share transfer is possible only after the sender's cooldown and propagates that timestamp rather than starting a fresh one-hour period. Wait for the displayed countdown to reach zero before entering a new withdrawal amount. Queuing a withdrawal or moving funded USDC to the wallet does not itself return shares and should not be treated as a cooldown restart.
 

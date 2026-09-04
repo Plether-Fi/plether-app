@@ -5,7 +5,7 @@ Every accepted Plether liquidity-provider (LP)[^lp] deposit is queued for hourly
 The normal lifecycle is:
 
 ```text
-Queue deposit → Pending → Eligible hourly settlement → Shares ready → Move shares to wallet
+Queue deposit → Pending → Eligible hourly settlement and cooldown start → Shares ready → Move shares to wallet or Queue direct withdrawal after cooldown
 ```
 
 Two recovery outcomes are also possible:
@@ -33,7 +33,7 @@ The displayed time is an expectation, not a guaranteed completion time. Processi
 | --- | --- | --- | --- |
 | **Pending** | USDC in vault escrow | The expected processing time has not passed | Wait or **Cancel deposit** |
 | **Waiting for processing** | USDC in vault escrow | The expected time passed, but neither ready shares nor a refund exists yet | Wait and check live protocol status |
-| **Shares ready** | Processed shares held by the vault for you | The deposit is active and participates in vault performance | **Move shares to wallet** |
+| **Shares ready** | Processed shares held by the vault for you | The deposit is active, participates in vault performance and has an activation-aged cooldown | **Move shares to wallet**, or **Queue direct withdrawal** after cooldown when shown |
 | **Refund available** | Recoverable USDC held by the vault | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected | **Return USDC to wallet** |
 
 Pending USDC is not part of the active share balance. Once **Shares ready** appears, the allocation is active even though the shares have not yet been moved into the wallet.
@@ -103,7 +103,7 @@ Check:
 
 A delayed record does not imply that the deposit was lost, cancelled or ready to claim. It also does not create a user **Finalize** action. Wait for eligible settlement or for the interface to expose a terminal shares/refund state.
 
-### 4. Move ready shares to the wallet
+### 4. Move ready shares or queue a direct withdrawal
 
 When processing succeeds, the record changes to **Shares ready** and shows **Shares ready for wallet**.
 
@@ -116,7 +116,9 @@ The processed shares already participate in vault performance while held in vaul
 5. Wait for the transaction to confirm.
 6. Verify the wallet-held `psLP` or `pjLP` balance and updated position value.
 
-Moving shares into the wallet starts or restarts the one-hour withdrawal cooldown for the owner's entire position in that vault. Until the countdown ends, those shares cannot be transferred or used for a withdrawal request.
+The one-hour withdrawal cooldown began when processing activated this deposit. Moving shares into the wallet preserves that activation timestamp and cannot replace a newer wallet timestamp with an older one. Until the wallet countdown ends, wallet-held shares cannot be transferred or used for a withdrawal request.
+
+If the record shows **Queue direct withdrawal**, the source deposit's cooldown has elapsed. Confirming it moves shares from that one claimable deposit directly into the current withdrawal queue, with the same controller, without first transferring shares to the wallet or approving the vault. Each transaction acts on one source deposit record.
 
 The delivery transaction does not create a separate interest payment. Senior targeted return, pool revenue and losses are reflected through the value of the vault shares.
 
@@ -177,6 +179,7 @@ Confirm one terminal owner outcome:
 
 * **Cancelled:** escrowed USDC returned and no shares were created.
 * **Delivered:** ready shares were moved into the owner wallet.
+* **Directly queued:** ready shares entered a withdrawal request after their source cooldown without passing through the wallet.
 * **Refunded:** recoverable USDC was returned after processing could not complete the deposit.
 
 **Deposit submitted**, an expected processing timestamp or **Shares ready** alone does not mean every owner action is complete.

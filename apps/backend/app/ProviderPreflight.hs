@@ -9,7 +9,8 @@ import Plether.Ethereum.Client (CallParams (..), EthClient, RpcClientOptions (..
 import Plether.Ethereum.Rpc (RpcLog (..), ethChainId, ethGetLogs)
 import Plether.Logging (field, logError, logInfo)
 import Plether.Vaults.ActivityIndexer
-  ( depositRequestTopic
+  ( claimableDepositRedeemRequestTopic
+  , depositRequestTopic
   , legacyDepositRequestedTopic
   , redeemRequestTopic
   , transferTopic
@@ -121,7 +122,13 @@ readVaultLogs :: EthClient -> Config -> T.Text -> IO (Either T.Text [RpcLog])
 readVaultLogs client cfg vault = do
   let fromBlock = cfgVaultHistoryDeploymentBlock cfg
       toBlock = fromBlock + 4_999
-      topics = [transferTopic, depositRequestTopic, redeemRequestTopic, legacyDepositRequestedTopic]
+      topics =
+        [ transferTopic
+        , depositRequestTopic
+        , redeemRequestTopic
+        , claimableDepositRedeemRequestTopic
+        , legacyDepositRequestedTopic
+        ]
   result <- ethGetLogs client vault topics fromBlock toBlock
   pure $ case result of
     Left err -> Left $ "Vault eth_getLogs probe failed: " <> T.pack (show err)

@@ -35,7 +35,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
 | `how-plether-works/how-pnl-is-calculated.md:75` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:540` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
+| `how-plether-works/how-pnl-is-calculated.md:542` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 
@@ -72,7 +72,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | `providing-liquidity/manage-a-pending-deposit.md:20` | Pending deposit records with their expected processing time, status and available actions | [Pending Activity](http://localhost:6006/?path=/story/documentation-vaults--pending-activity) | Current production Vault activity view, illustrative values |
 | `providing-liquidity/read-your-lp-position-and-pool-health.md:30` | Senior Vault Your position view with active shares and the current empty pending-request state | [Position](http://localhost:6006/?path=/story/documentation-vaults--position) | Current production Vault activity view, illustrative values |
 | `providing-liquidity/read-your-lp-position-and-pool-health.md:143` | Senior Vault Overview with current value, share-price context and operating rules | [Senior Overview Section](http://localhost:6006/?path=/story/documentation-vaults--senior-overview-section) | Current production Vault overview section, illustrative values |
-| `providing-liquidity/withdraw-liquidity.md:137` | Withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
+| `providing-liquidity/withdraw-liquidity.md:138` | Withdrawal preview | [Withdrawal Preview](http://localhost:6006/?path=/story/documentation-vaults--withdrawal-preview) | Current production component, illustrative values |
 
 ## Read your position and account health
 

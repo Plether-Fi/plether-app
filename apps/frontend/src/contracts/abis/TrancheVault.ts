@@ -67,6 +67,23 @@ export const TRANCHE_VAULT_READ_ABI = [
   },
   {
     type: 'function',
+    name: 'depositEpochActivationTime',
+    stateMutability: 'view',
+    inputs: [{ name: 'requestId', type: 'uint256' }],
+    outputs: [{ name: 'activationTime', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxRequestRedeemFromClaimableDeposit',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'depositRequestId', type: 'uint256' },
+      { name: 'controller', type: 'address' },
+    ],
+    outputs: [{ name: 'maxShares', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'estimateDepositShares',
     stateMutability: 'view',
     inputs: [{ name: 'assets', type: 'uint256' }],
@@ -113,6 +130,17 @@ export const TRANCHE_VAULT_READ_ABI = [
       { name: 'owner', type: 'address' },
     ],
     outputs: [{ name: 'requestId', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'requestRedeemFromClaimableDeposit',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'depositRequestId', type: 'uint256' },
+      { name: 'shares', type: 'uint256' },
+      { name: 'controller', type: 'address' },
+    ],
+    outputs: [{ name: 'redeemRequestId', type: 'uint256' }],
   },
   {
     type: 'function',

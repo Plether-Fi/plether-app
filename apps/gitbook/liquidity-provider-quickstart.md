@@ -14,7 +14,7 @@ In return, LPs[^lp] receive vault shares whose value reflects their tranche's sh
 
 ### The LP flow in one line
 
-`Owner-wallet USDC → queued vault deposit → eligible hourly settlement → active, claimable shares in vault custody → Move shares to wallet → wallet-held position → queued withdrawal → eligible hourly funding → claimable USDC → owner wallet`
+`Owner-wallet USDC → queued vault deposit → eligible hourly settlement and cooldown start → active, claimable shares in vault custody → Move shares to wallet or Queue direct withdrawal after cooldown → eligible hourly funding → claimable USDC → owner wallet`
 
 Never send USDC directly to the liquidity pool. Deposit only through the verified Senior or Junior Vault surfaced by the official application and active deployment metadata.
 
@@ -29,7 +29,7 @@ You need:
 * MockUSDC held by the connected owner wallet
 * Enough Arbitrum Sepolia ETH for every required transaction
 * The official application and verified contract metadata for the active deployment
-* Time to monitor queued deposits and withdrawals through hourly processing and the separate wallet-claim step
+* Time to monitor queued deposits and withdrawals through hourly processing and any later wallet-claim or direct-withdrawal step
 
 The welcome faucet may fund the separate **Trading Account** rather than the owner wallet. A Trading Account balance cannot be approved for an owner-wallet LP deposit. Confirm which address holds the MockUSDC before you start.
 
@@ -119,9 +119,9 @@ The requested USDC moves into vault custody when the request is queued. The esti
 
 Every deposit follows this lifecycle:
 
-`Queue deposit → cancellable before processing → eligible hourly settlement → Shares ready → Move shares to wallet`
+`Queue deposit → cancellable before processing → eligible hourly settlement and cooldown start → Shares ready → Move shares to wallet or Queue direct withdrawal after cooldown`
 
-Once **Shares ready** appears, the deposit is active and already participates in vault performance, even before the shares are moved out of vault escrow. `Move shares to wallet` is a separate owner-wallet transaction. Moving those processed shares out of vault escrow starts or restarts the one-hour withdrawal cooldown for the entire position in that vault.
+Once **Shares ready** appears, the deposit is active and already participates in vault performance, even before the shares are moved out of vault escrow. Its one-hour withdrawal cooldown began when processing activated the deposit. `Move shares to wallet` preserves that activation timestamp and cannot weaken a newer cooldown already attached to the wallet. When **Queue direct withdrawal** is shown after the source deposit's cooldown, it can move that deposit's claimable shares straight into the current withdrawal queue without a wallet transfer or token approval.
 
 Withdrawals mirror that separation:
 
@@ -137,7 +137,7 @@ After queuing the deposit, and again after moving processed shares to the wallet
 * The event names the intended Senior or Junior Vault.
 * Owner-wallet USDC decreased by the expected amount.
 * **Pending deposits** shows the expected deposit reference, amount and processing time until eligible settlement processes it.
-* **Shares ready** appears after successful processing, followed by wallet-held shares after `Move shares to wallet` succeeds.
+* **Shares ready** appears after successful processing, followed by either wallet-held shares after `Move shares to wallet` or a new pending withdrawal after `Queue direct withdrawal` succeeds.
 * No active pending request remains for an amount already moved or returned.
 * **Current value**, **Shares available to withdraw** and **USDC ready for wallet** are treated as different values.
 

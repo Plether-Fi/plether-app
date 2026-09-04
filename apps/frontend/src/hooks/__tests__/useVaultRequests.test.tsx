@@ -9,6 +9,7 @@ const CONTROLLER = '0x1111111111111111111111111111111111111111' as const
 const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   requestId: 0n,
+  cooldownSupported: true,
   requestState: [
     '0x0000000000000000000000000000000000000000',
     0n,
@@ -25,37 +26,72 @@ const mocks = vi.hoisted(() => ({
     0n,
     false,
   ] as readonly unknown[],
+  cooldownState: [
+    '0x0000000000000000000000000000000000000000',
+    0n,
+    '0x0000000000000000000000000000000000000000',
+    0n,
+    0n,
+    0n,
+    0n,
+  ] as readonly unknown[],
 }))
 
 vi.mock('wagmi', () => ({
   useReadContracts: (args: unknown) => {
     const contracts = (args as {
-      contracts: readonly { args: readonly [boolean, bigint, `0x${string}`] }[]
+      contracts: readonly {
+        functionName: 'getLpDepositCooldownState' | 'getLpRequestState'
+        args: readonly [boolean, bigint, `0x${string}`]
+      }[]
     }).contracts
     return {
-      data: contracts.map((contract) => ({
-        status: 'success' as const,
-        result: contract.args[1] === mocks.requestId
-          ? mocks.requestState
-          : [
-              contract.args[0]
-                ? '0x0000000000000000000000000000000000000001'
-                : '0x0000000000000000000000000000000000000002',
-              contract.args[1],
-              contract.args[2],
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              false,
-            ],
-      })),
+      data: contracts.map((contract) => {
+        if (contract.functionName === 'getLpDepositCooldownState') {
+          if (!mocks.cooldownSupported) {
+            return { status: 'failure' as const, error: new Error('function unavailable') }
+          }
+          return {
+            status: 'success' as const,
+            result: contract.args[1] === mocks.requestId
+              ? mocks.cooldownState
+              : [
+                  contract.args[0]
+                    ? '0x0000000000000000000000000000000000000001'
+                    : '0x0000000000000000000000000000000000000002',
+                  contract.args[1],
+                  contract.args[2],
+                  0n,
+                  0n,
+                  0n,
+                  0n,
+                ],
+          }
+        }
+        return {
+          status: 'success' as const,
+          result: contract.args[1] === mocks.requestId
+            ? mocks.requestState
+            : [
+                contract.args[0]
+                  ? '0x0000000000000000000000000000000000000001'
+                  : '0x0000000000000000000000000000000000000002',
+                contract.args[1],
+                contract.args[2],
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                false,
+              ],
+        }
+      }),
       isLoading: false,
       refetch: mocks.refetch,
     }
@@ -92,6 +128,7 @@ describe('useVaultRequests', () => {
     vi.spyOn(perpsApi, 'getPerpsVaultRequestIds')
       .mockImplementation(async (tranche) => requestIdResponse([], tranche))
     mocks.requestId = 0n
+    mocks.cooldownSupported = true
     mocks.requestState = [
       '0x0000000000000000000000000000000000000000',
       0n,
@@ -107,6 +144,15 @@ describe('useVaultRequests', () => {
       0n,
       0n,
       false,
+    ]
+    mocks.cooldownState = [
+      '0x0000000000000000000000000000000000000000',
+      0n,
+      CONTROLLER,
+      0n,
+      0n,
+      0n,
+      0n,
     ]
   })
 
@@ -156,6 +202,41 @@ describe('useVaultRequests', () => {
     })
   })
 
+  it('keeps deposit requests usable when the cooldown lens is not deployed', async () => {
+    mocks.cooldownSupported = false
+    mocks.requestId = 501n
+    mocks.requestState = [
+      '0x0000000000000000000000000000000000000001',
+      501n,
+      CONTROLLER,
+      0n,
+      0n,
+      25_000_000n,
+      12_000_000_000n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      false,
+    ]
+
+    const { result } = renderHook(() => useVaultRequests({
+      controller: CONTROLLER,
+      isSenior: true,
+      currentEpoch: 501n,
+    }))
+
+    await waitFor(() => expect(result.current.depositRequests).toHaveLength(1))
+    expect(result.current.depositRequests[0]).toMatchObject({
+      requestId: 501n,
+      claimableShares: 12_000_000_000n,
+      directRedeemableShares: 0n,
+      directRedeemSupported: false,
+    })
+  })
+
   it('restores an older claimable request discovered through the backend index', async () => {
     mocks.requestId = 300n
     mocks.requestState = [
@@ -198,6 +279,53 @@ describe('useVaultRequests', () => {
       250,
       expect.any(AbortSignal),
     )
+  })
+
+  it('exposes settlement-aged cooldown state for direct redemption', async () => {
+    mocks.requestId = 400n
+    mocks.requestState = [
+      '0x0000000000000000000000000000000000000002',
+      400n,
+      CONTROLLER,
+      0n,
+      0n,
+      12_000_000n,
+      6_000_000_000n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      false,
+    ]
+    mocks.cooldownState = [
+      '0x0000000000000000000000000000000000000002',
+      400n,
+      CONTROLLER,
+      1_800_000_000n,
+      1_800_003_600n,
+      6_000_000_000n,
+      6_000_000_000n,
+    ]
+    vi.mocked(perpsApi.getPerpsVaultRequestIds)
+      .mockResolvedValue(requestIdResponse(['400']))
+
+    const { result } = renderHook(() => useVaultRequests({
+      controller: CONTROLLER,
+      isSenior: false,
+      currentEpoch: 500n,
+    }))
+
+    await waitFor(() => {
+      expect(result.current.depositRequests[0]?.requestId).toBe(400n)
+    })
+    expect(result.current.depositRequests[0]).toMatchObject({
+      activationTimestamp: 1_800_000_000,
+      cooldownEndsAt: 1_800_003_600n,
+      directRedeemableShares: 6_000_000_000n,
+      directRedeemSupported: true,
+    })
   })
 
   it('paginates strictly and exposes stale confirmed discovery data', async () => {

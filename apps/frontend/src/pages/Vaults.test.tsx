@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
   depositRequests: [] as {
     requestId: bigint
     targetTimestamp: number
+    activationTimestamp?: number
+    cooldownEndsAt?: bigint
+    directRedeemableShares?: bigint
+    directRedeemSupported?: boolean
     pendingAssets: bigint
     pendingSharesEstimate: bigint
     claimableAssets: bigint
@@ -108,6 +112,7 @@ const mocks = vi.hoisted(() => ({
   vaultClaimRedeemRefund: vi.fn(),
   vaultRequestDeposit: vi.fn(),
   vaultRequestRedeem: vi.fn(),
+  vaultRequestRedeemFromClaimableDeposit: vi.fn(),
   vaultReset: vi.fn(),
   scrollIntoView: vi.fn(),
 }))
@@ -166,6 +171,7 @@ vi.mock('../hooks', () => ({
   useVaultTransactions: () => ({
     requestDeposit: mocks.vaultRequestDeposit,
     requestRedeem: mocks.vaultRequestRedeem,
+    requestRedeemFromClaimableDeposit: mocks.vaultRequestRedeemFromClaimableDeposit,
     cancelPendingDeposit: mocks.vaultCancelPendingDeposit,
     cancelRedeemRequest: mocks.vaultCancelRedeemRequest,
     claimDepositShares: mocks.vaultClaimDepositShares,
@@ -949,7 +955,7 @@ describe('Vaults page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'withdraw' }))
     expect(screen.getByText('Withdrawal cooldown active')).toBeInTheDocument()
-    expect(screen.getByText(/Receiving more psLP shares in your wallet restarts this one-hour cooldown/i))
+    expect(screen.getByText(/Claimed deposit shares preserve the timestamp from activation/i))
       .toBeInTheDocument()
   })
 
@@ -1117,7 +1123,7 @@ describe('Vaults page', () => {
     expect(mocks.vaultClaimDepositShares).not.toHaveBeenCalled()
     const claimDepositFlow = screen.getByRole('dialog', { name: 'Move shares flow' })
     expect(within(claimDepositFlow).getByText(
-      /starts or restarts a one-hour cooldown for every psLP share/i
+      /cooldown began when the deposit became active/i
     )).toBeInTheDocument()
     fireEvent.click(within(claimDepositFlow).getByRole('button', { name: 'Move shares' }))
     expect(mocks.vaultClaimDepositShares).toHaveBeenCalledWith(500_002n)
@@ -1145,6 +1151,43 @@ describe('Vaults page', () => {
     const claimWithdrawalFlow = screen.getByRole('dialog', { name: 'Move USDC flow' })
     fireEvent.click(within(claimWithdrawalFlow).getByRole('button', { name: 'Move USDC' }))
     expect(mocks.vaultClaimRedeem).toHaveBeenCalledWith(500_003n, shares(5))
+  })
+
+  it('queues an activated deposit directly for withdrawal after its cooldown', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
+    mocks.depositRequests = [{
+      requestId: 500_006n,
+      targetTimestamp: 1_800_021_600,
+      activationTimestamp: 1_800_021_720,
+      cooldownEndsAt: 1_800_025_320n,
+      directRedeemableShares: shares(12),
+      directRedeemSupported: true,
+      pendingAssets: 0n,
+      pendingSharesEstimate: 0n,
+      claimableAssets: usdc(25),
+      claimableShares: shares(12),
+      refundableAssets: 0n,
+      matured: true,
+    }]
+
+    renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
+
+    expect(screen.getByText('Activated')).toBeInTheDocument()
+    expect(screen.getByText('Direct withdrawal')).toBeInTheDocument()
+    expect(screen.getByText('Available now')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Queue direct withdrawal' }))
+    expect(mocks.vaultRequestRedeemFromClaimableDeposit).not.toHaveBeenCalled()
+
+    const directWithdrawalFlow = screen.getByRole('dialog', { name: 'Queue withdrawal flow' })
+    expect(within(directWithdrawalFlow).getByText(/without entering your wallet/i)).toBeInTheDocument()
+    fireEvent.click(within(directWithdrawalFlow).getByRole('button', { name: 'Queue withdrawal' }))
+    expect(mocks.vaultRequestRedeemFromClaimableDeposit).toHaveBeenCalledWith(
+      500_006n,
+      shares(12),
+    )
   })
 
   it('reviews recovery, withdrawal cancellation, and share reclaim actions in the step flow', () => {
