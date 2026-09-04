@@ -18,7 +18,7 @@ import {
 } from '../api'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
-import { Alert, Badge, Button, DocsLink, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip } from '../components/ui'
+import { Alert, Badge, Button, DocsLink, InfoTooltip, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 import { openAppKit } from '../config/wagmi'
 import {
@@ -133,6 +133,122 @@ interface TrancheDefinition {
 interface ContractResult {
   status: 'failure' | 'success'
   result?: unknown
+}
+
+interface ShareValueFactor {
+  label: string
+  tooltip: string
+  docsLink: TooltipDocsLink
+}
+
+const SENIOR_SHARE_VALUE_FACTORS: {
+  increase: ShareValueFactor[]
+  reduce: ShareValueFactor[]
+} = {
+  increase: [
+    {
+      label: 'Targeted return funded by Junior',
+      tooltip: 'The Senior target coupon transfers available Junior principal to Senior. It is capped by what Junior can fund, and any unpaid amount does not accrue as debt.',
+      docsLink: DOCS_LINKS.poolLiquidity,
+    },
+    {
+      label: 'Recovery of earlier Senior losses',
+      tooltip: 'After Senior has been impaired, future reconciled LP-owned value restores it toward its protected high-water mark before Junior receives residual value.',
+      docsLink: DOCS_LINKS.poolLiquidity,
+    },
+    {
+      label: 'Frozen-price withdrawal surcharges',
+      tooltip: 'When an eligible withdrawal is funded using the permitted stored price while the oracle is frozen, the surcharge stays in Senior and benefits the remaining shares. It does not go to Plether or a keeper.',
+      docsLink: DOCS_LINKS.withdrawLiquidity,
+    },
+  ],
+  reduce: [
+    {
+      label: 'Trader profits and rebates after Junior is exhausted',
+      tooltip: 'Junior absorbs reconciled pool losses first. Senior principal falls only for the remainder left after Junior reaches zero.',
+      docsLink: DOCS_LINKS.poolLiquidity,
+    },
+    {
+      label: 'Liquidation shortfalls and bad debt after Junior is exhausted',
+      tooltip: 'Senior is exposed only when a reconciled loss is larger than the Junior principal available to absorb it.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Oracle, contract, or stablecoin losses after Junior is exhausted',
+      tooltip: 'A failure affects Senior share value only when it causes a recognized pool loss that remains after Junior has been exhausted.',
+      docsLink: DOCS_LINKS.lpRisks,
+    },
+  ],
+}
+
+const JUNIOR_SHARE_VALUE_FACTORS: {
+  increase: ShareValueFactor[]
+  reduce: ShareValueFactor[]
+} = {
+  increase: [
+    {
+      label: 'Collectible marked and collected trader losses',
+      tooltip: 'A collateral-capped collectible marked loss can increase accounting value before collection. Once collected, it also adds physical USDC to the pool.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Carry paid by traders to LPs',
+      tooltip: 'Carry compensates LPs for keeping bounded payout capacity available while a position remains open. It counts as LP value when realized and collected.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Positive VPI and paid frozen-close spreads',
+      tooltip: 'Positive VPI charges traders for increasing directional imbalance. A paid frozen-close spread compensates LPs for eligible closes while the oracle is frozen.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'LP share of collected liquidation fees',
+      tooltip: 'The liquidation keeper receives the bounty. The remaining collected liquidation charge is LP-owned and follows the waterfall, restoring any Senior impairment before Junior receives the residual.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Residual LP-owned revenue',
+      tooltip: 'Reconciled LP-owned value first restores an impaired Senior tranche toward its protected high-water mark. The remaining ordinary value becomes Junior principal.',
+      docsLink: DOCS_LINKS.poolLiquidity,
+    },
+    {
+      label: 'Frozen-price withdrawal surcharges',
+      tooltip: 'When an eligible withdrawal is funded using the permitted stored price while the oracle is frozen, the surcharge stays in Junior and benefits the remaining shares. It does not go to Plether or a keeper.',
+      docsLink: DOCS_LINKS.withdrawLiquidity,
+    },
+  ],
+  reduce: [
+    {
+      label: 'Trader profits paid or owed',
+      tooltip: 'Marked trader profits reduce distributable LP value as liabilities even before they are paid. Funded payouts and trader claims remain senior to both vaults.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'VPI rebates funded by the pool',
+      tooltip: 'When VPI favors the trader, the funded rebate is a liquidity-pool cost and can reduce Junior value through the waterfall.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Senior targeted return',
+      tooltip: 'The coupon reallocates available Junior principal to Senior. It is capped by what Junior can fund, but it can reduce Junior to zero.',
+      docsLink: DOCS_LINKS.poolLiquidity,
+    },
+    {
+      label: 'Liquidation shortfalls and bad debt',
+      tooltip: 'Junior absorbs reconciled pool losses before Senior. Uncollectible marked trader losses that were never counted as LP value are written off rather than charged to Junior.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Annual maintenance fee dilution',
+      tooltip: 'The fee is paid by adding fee shares to effective Junior supply. This dilutes each existing holder without transferring USDC out of Junior principal.',
+      docsLink: DOCS_LINKS.lpReturns,
+    },
+    {
+      label: 'Oracle, contract, or stablecoin losses',
+      tooltip: 'These failures reduce share value only when they cause a recognized loss. As the first-loss tranche, Junior absorbs that loss before Senior.',
+      docsLink: DOCS_LINKS.lpRisks,
+    },
+  ],
 }
 
 const VAULT_GOVERNANCE_TIMELOCKS = [
@@ -1502,6 +1618,9 @@ function MiniPerformanceChart({
   )).join(' ')
   const last = coordinates[coordinates.length - 1]
   const active = activeIndex === null ? undefined : coordinates[activeIndex]
+  const activeTooltipPosition = active
+    ? chartTooltipPosition(active.x, active.y, width, height)
+    : undefined
   const yTicks = [domain.max, (domain.min + domain.max) / 2, domain.min]
   const xTicks = [domainStart, domainStart + SEVEN_DAYS_SECONDS / 2, performance.periodEnd]
 
@@ -1626,14 +1745,18 @@ function MiniPerformanceChart({
           </g>
         ) : null}
       </svg>
-      {active ? (
+      {active && activeTooltipPosition ? (
         <div
           data-vault-chart-tooltip
-          className="pointer-events-none absolute top-1 z-10 min-w-36 -translate-x-1/2 border border-brand-border/40 bg-app-bg px-2.5 py-2 shadow-xl"
+          data-placement={activeTooltipPosition.placement}
+          className="pointer-events-none absolute z-10 min-w-36 max-w-[calc(100%-1rem)] border border-brand-border/40 bg-app-bg px-2.5 py-2 shadow-xl"
           style={{
-            left: `${String((Math.min(width - 76, Math.max(76, active.x)) / width) * 100)}%`,
+            left: activeTooltipPosition.left,
+            top: activeTooltipPosition.top,
+            transform: activeTooltipPosition.transform,
           }}
           role="status"
+          aria-live="polite"
         >
           <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-content-secondary">
             {formatChartTimestamp(active.point.timestamp)}
@@ -2781,6 +2904,20 @@ function formatChartTimestamp(timestamp: number): string {
 
 type ChartTooltipPlacement = 'above' | 'below' | 'left' | 'right'
 
+function chartViewportTransform(
+  renderedWidth: number,
+  renderedHeight: number,
+  viewBoxWidth: number,
+  viewBoxHeight: number,
+): { scale: number; xInset: number; yInset: number } {
+  const scale = Math.min(renderedWidth / viewBoxWidth, renderedHeight / viewBoxHeight)
+  return {
+    scale,
+    xInset: (renderedWidth - viewBoxWidth * scale) / 2,
+    yInset: (renderedHeight - viewBoxHeight * scale) / 2,
+  }
+}
+
 function chartTooltipPosition(
   x: number,
   y: number,
@@ -2842,8 +2979,8 @@ function PerformanceChart({
   } | null>(null)
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartSvgRef = useRef<SVGSVGElement>(null)
-  const width = 640
   const height = 240
+  const [width, setWidth] = useState(640)
   const plot = { left: 62, right: 18, top: 18, bottom: 38 }
   const plotWidth = width - plot.left - plot.right
   const plotHeight = height - plot.top - plot.bottom
@@ -2877,6 +3014,30 @@ function PerformanceChart({
   const xTicks = [domainStart, domainStart + SEVEN_DAYS_SECONDS / 2, performance.periodEnd]
 
   useLayoutEffect(() => {
+    const updateViewBoxWidth = () => {
+      const svg = chartSvgRef.current
+      if (!svg) return
+      const bounds = svg.getBoundingClientRect()
+      if (bounds.width <= 0 || bounds.height <= 0) return
+
+      const nextWidth = Math.round((height * bounds.width / bounds.height) * 100) / 100
+      setWidth((current) => Math.abs(current - nextWidth) < 0.01 ? current : nextWidth)
+    }
+
+    updateViewBoxWidth()
+    window.addEventListener('resize', updateViewBoxWidth)
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(updateViewBoxWidth)
+    if (resizeObserver && chartSvgRef.current) resizeObserver.observe(chartSvgRef.current)
+
+    return () => {
+      window.removeEventListener('resize', updateViewBoxWidth)
+      resizeObserver?.disconnect()
+    }
+  }, [height])
+
+  useLayoutEffect(() => {
     if (activeX === undefined || activeY === undefined || activeIndex === null) return
 
     const updateTooltipAnchor = () => {
@@ -2893,14 +3054,12 @@ function PerformanceChart({
         || svgBounds.height <= 0
       ) return
 
-      const scale = Math.min(svgBounds.width / width, svgBounds.height / height)
-      const renderedWidth = width * scale
-      const renderedHeight = height * scale
+      const viewport = chartViewportTransform(svgBounds.width, svgBounds.height, width, height)
 
       setTooltipAnchor({
         activeIndex,
-        x: svgBounds.left - containerBounds.left + (svgBounds.width - renderedWidth) / 2 + activeX * scale,
-        y: svgBounds.top - containerBounds.top + (svgBounds.height - renderedHeight) / 2 + activeY * scale,
+        x: svgBounds.left - containerBounds.left + viewport.xInset + activeX * viewport.scale,
+        y: svgBounds.top - containerBounds.top + viewport.yInset + activeY * viewport.scale,
         width: containerBounds.width,
         height: containerBounds.height,
       })
@@ -2920,12 +3079,13 @@ function PerformanceChart({
       window.removeEventListener('resize', updateTooltipAnchor)
       resizeObserver?.disconnect()
     }
-  }, [activeIndex, activeX, activeY])
+  }, [activeIndex, activeX, activeY, width])
 
   function selectNearestPoint(clientX: number, element: SVGSVGElement) {
     const bounds = element.getBoundingClientRect()
-    const viewBoxX = bounds.width > 0
-      ? ((clientX - bounds.left) / bounds.width) * width
+    const viewport = chartViewportTransform(bounds.width, bounds.height, width, height)
+    const viewBoxX = viewport.scale > 0
+      ? (clientX - bounds.left - viewport.xInset) / viewport.scale
       : clientX
     let nearestIndex = 0
     let nearestDistance = Number.POSITIVE_INFINITY
@@ -2972,7 +3132,7 @@ function PerformanceChart({
       <div ref={chartContainerRef} className="relative p-3 sm:p-5">
         <svg
           ref={chartSvgRef}
-          viewBox="0 0 640 240"
+          viewBox={`0 0 ${String(width)} ${String(height)}`}
           className="h-56 w-full sm:h-64"
           aria-label={`${tranche.name} interactive seven-day share price chart`}
           aria-describedby={`${tranche.id}-performance-summary`}
@@ -3104,11 +3264,6 @@ function PerformanceChart({
             <p className="mt-1 text-sm font-semibold text-content-primary">
               {formatHistorySharePrice(active.point.sharePrice)}
             </p>
-            {!active.point.markFresh ? (
-              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-orange">
-                Last fresh valuation
-              </p>
-            ) : null}
             <p className={`mt-1 text-xs font-semibold ${
               performanceTone(activeReturn ?? 0) === 'positive'
                 ? 'text-positive'
@@ -3141,6 +3296,9 @@ function PerformanceTab({
 }) {
   const firstPoint = performance.points[0]
   const lastPoint = performance.points[performance.points.length - 1]
+  const shareValueFactors = tranche.id === 'senior'
+    ? SENIOR_SHARE_VALUE_FACTORS
+    : JUNIOR_SHARE_VALUE_FACTORS
 
   return (
     <div className="space-y-6">
@@ -3167,31 +3325,30 @@ function PerformanceTab({
         <DetailMetric
           label="Current share price"
           value={formatHistorySharePrice(lastPoint.sharePrice)}
-          detail={`${formatChartTimestamp(lastPoint.timestamp)}${lastPoint.markFresh ? '' : ' · last fresh valuation'}`}
+          detail={formatChartTimestamp(lastPoint.timestamp)}
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-3 xl:grid-cols-2">
         <section className="border border-brand-border/30 bg-surface-panel p-5">
           <h3 className="text-lg font-semibold text-content-primary">What can increase share value</h3>
           <ul className="mt-4 space-y-3">
-            {(
-              tranche.id === 'senior'
-                ? [
-                    'Targeted returns funded by Junior capital',
-                    'Recovery of earlier losses from future pool revenue',
-                    'Temporary pricing fees retained by the vault, when active',
-                  ]
-                : [
-                    'Collected trader losses',
-                    'Trading fees paid for positions backed by vault funds',
-                    'Favorable price adjustments paid by traders to the pool',
-                    'Revenue remaining after Senior losses and targeted returns are covered',
-                  ]
-            ).map((item) => (
-              <li key={item} className="flex gap-2 text-sm leading-6 text-content-secondary">
-                <span className="material-symbols-outlined mt-0.5 text-lg text-positive">add_circle</span>
-                <span>{item}</span>
+            {shareValueFactors.increase.map((item) => (
+              <li key={item.label} className="flex gap-2 text-sm leading-6 text-content-secondary">
+                <span
+                  aria-hidden="true"
+                  className="material-symbols-outlined mt-0.5 text-lg text-positive"
+                >
+                  add_circle
+                </span>
+                <span className="min-w-0">
+                  {item.label}{' '}
+                  <InfoTooltip
+                    ariaLabel={`Learn more about ${item.label}`}
+                    content={item.tooltip}
+                    docsLink={item.docsLink}
+                  />
+                </span>
               </li>
             ))}
           </ul>
@@ -3200,23 +3357,22 @@ function PerformanceTab({
         <section className="border border-brand-border/30 bg-surface-panel p-5">
           <h3 className="text-lg font-semibold text-content-primary">What can reduce share value</h3>
           <ul className="mt-4 space-y-3">
-            {(
-              tranche.id === 'senior'
-                ? [
-                    'Trader profits and rebates after Junior is exhausted',
-                    'Unpaid trader losses or operational losses that reach Senior',
-                    'Other realized pool losses after Junior is exhausted',
-                  ]
-                : [
-                    'Profits and rebates paid to traders',
-                    'The Senior targeted return',
-                    'Liquidation shortfalls, unpaid losses, and other first-loss events',
-                    'Pricing, vault, or stablecoin failures',
-                  ]
-            ).map((item) => (
-              <li key={item} className="flex gap-2 text-sm leading-6 text-content-secondary">
-                <span className="material-symbols-outlined mt-0.5 text-lg text-brand-orange">remove_circle</span>
-                <span>{item}</span>
+            {shareValueFactors.reduce.map((item) => (
+              <li key={item.label} className="flex gap-2 text-sm leading-6 text-content-secondary">
+                <span
+                  aria-hidden="true"
+                  className="material-symbols-outlined mt-0.5 text-lg text-brand-orange"
+                >
+                  remove_circle
+                </span>
+                <span className="min-w-0">
+                  {item.label}{' '}
+                  <InfoTooltip
+                    ariaLabel={`Learn more about ${item.label}`}
+                    content={item.tooltip}
+                    docsLink={item.docsLink}
+                  />
+                </span>
               </li>
             ))}
           </ul>

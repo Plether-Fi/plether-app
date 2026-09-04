@@ -738,6 +738,11 @@ describe('Vaults page', () => {
     })
     fireEvent.pointerMove(seniorMiniChart, { pointerType: 'mouse', clientX: 291 })
     expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).toHaveTextContent('1.0005')
+    expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).toHaveAttribute('data-placement', 'below')
+    fireEvent.pointerMove(seniorMiniChart, { pointerType: 'mouse', clientX: 8 })
+    expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).toHaveAttribute('data-placement', 'right')
+    fireEvent.pointerMove(seniorMiniChart, { pointerType: 'mouse', clientX: 540 })
+    expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).toHaveAttribute('data-placement', 'left')
     fireEvent.pointerLeave(seniorMiniChart, { pointerType: 'mouse' })
     expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).not.toBeInTheDocument()
     expect(within(seniorCard).getByText(/seven-day share price changed \+0.10%/i)).toBeInTheDocument()
@@ -796,7 +801,73 @@ describe('Vaults page', () => {
     expect(screen.getByText('+0.05% since start')).toBeInTheDocument()
     fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 860 })
     expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
+    // This cursor remains closest to the first point after excluding the SVG's
+    // aspect-ratio gutter; mapping the full element width selects the middle point.
+    fireEvent.pointerMove(chart, { pointerType: 'mouse', clientX: 345 })
+    expect(screen.getByText('0.00% since start')).toBeInTheDocument()
+    fireEvent.resize(window)
+    expect(chart).toHaveAttribute('viewBox', '0 0 712.5 240')
+    expect(chart.querySelector('[data-vault-chart-axis="x"]')).toHaveAttribute('x2', '694.5')
     rectSpy.mockRestore()
+  })
+
+  it('explains accurate share-value factors with documentation links for both vaults', () => {
+    mocks.vaultHistory = completeHistoryFixture()
+
+    const seniorDetail = renderVaults('/vaults/senior')
+    const seniorIncreaseFactors = screen.getByRole('heading', {
+      name: 'What can increase share value',
+    }).closest('section') as HTMLElement
+    const seniorReduceFactors = screen.getByRole('heading', {
+      name: 'What can reduce share value',
+    }).closest('section') as HTMLElement
+    expect(seniorIncreaseFactors.parentElement).toHaveClass('gap-3')
+    expect(within(seniorIncreaseFactors).getByText('Targeted return funded by Junior')).toBeInTheDocument()
+    expect(within(seniorIncreaseFactors).getByText('Recovery of earlier Senior losses')).toBeInTheDocument()
+    expect(within(seniorIncreaseFactors).getByText('Frozen-price withdrawal surcharges')).toBeInTheDocument()
+    expect(within(seniorReduceFactors).getByText('Liquidation shortfalls and bad debt after Junior is exhausted')).toBeInTheDocument()
+    expect(within(seniorReduceFactors).queryByText(/Unpaid trader losses/i)).not.toBeInTheDocument()
+
+    fireEvent.focus(screen.getByLabelText(
+      'Learn more about Targeted return funded by Junior',
+    ))
+    const seniorTooltip = screen.getByRole('tooltip')
+    expect(seniorTooltip).toHaveTextContent(/capped by what Junior can fund/i)
+    expect(within(seniorTooltip).getByRole('link', {
+      name: 'Read: How the shared pool protects Senior and Junior vaults',
+    })).toHaveAttribute(
+      'href',
+      'https://docs.plether.com/how-plether-works/the-liquidity-pool-and-tranche-waterfall',
+    )
+
+    seniorDetail.unmount()
+    renderVaults('/vaults/junior')
+    const juniorIncreaseFactors = screen.getByRole('heading', {
+      name: 'What can increase share value',
+    }).closest('section') as HTMLElement
+    const juniorReduceFactors = screen.getByRole('heading', {
+      name: 'What can reduce share value',
+    }).closest('section') as HTMLElement
+    expect(within(juniorIncreaseFactors).getByText('Collectible marked and collected trader losses')).toBeInTheDocument()
+    expect(within(juniorIncreaseFactors).getByText('Carry paid by traders to LPs')).toBeInTheDocument()
+    expect(within(juniorIncreaseFactors).getByText('LP share of collected liquidation fees')).toBeInTheDocument()
+    expect(within(juniorIncreaseFactors).getByText('Frozen-price withdrawal surcharges')).toBeInTheDocument()
+    expect(within(juniorReduceFactors).getByText('Trader profits paid or owed')).toBeInTheDocument()
+    expect(within(juniorReduceFactors).getByText('Annual maintenance fee dilution')).toBeInTheDocument()
+    expect(within(juniorIncreaseFactors).queryByText(/Trading fees paid for positions/i)).not.toBeInTheDocument()
+
+    fireEvent.focus(screen.getByLabelText(
+      'Learn more about LP share of collected liquidation fees',
+    ))
+    const juniorTooltip = screen.getByRole('tooltip')
+    expect(juniorTooltip).toHaveTextContent(/keeper receives the bounty/i)
+    expect(juniorTooltip).not.toHaveTextContent(/protocol/i)
+    expect(within(juniorTooltip).getByRole('link', {
+      name: 'Read: Understand LP returns and share value',
+    })).toHaveAttribute(
+      'href',
+      'https://docs.plether.com/providing-liquidity/understand-lp-returns-and-share-value',
+    )
   })
 
   it('formats a near-zero negative APY without showing negative zero', () => {
@@ -812,7 +883,7 @@ describe('Vaults page', () => {
     expect(apyValue).not.toHaveTextContent('-0.00%')
   })
 
-  it('labels carried-forward performance observations when the hourly mark was stale', () => {
+  it('does not add redundant freshness labels to carried-forward performance observations', () => {
     const history = completeHistoryFixture()
     history.senior.points[history.senior.points.length - 1].markFresh = false
     mocks.vaultHistory = history
@@ -820,12 +891,14 @@ describe('Vaults page', () => {
     renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('button', { name: 'Performance' }))
 
-    expect(screen.getByText(/last fresh valuation/i)).toBeInTheDocument()
+    expect(screen.queryByText(/last fresh valuation/i)).not.toBeInTheDocument()
     const chart = screen.getByRole('img', {
       name: 'Senior Vault interactive seven-day share price chart',
     })
     fireEvent.focus(chart)
-    expect(screen.getAllByText('Last fresh valuation').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('status')).toHaveTextContent('1.001')
+    expect(screen.getByRole('status')).toHaveTextContent('+0.10% since start')
+    expect(screen.queryByText(/last fresh valuation/i)).not.toBeInTheDocument()
   })
 
   it('rejects otherwise complete history from a different deployment', () => {
