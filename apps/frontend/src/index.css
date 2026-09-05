@@ -100,11 +100,13 @@ select:not(:disabled) {
   background: #FFC0B0;
 }
 
-.basket-components-rail {
+.basket-components-rail,
+.vault-section-nav {
   scrollbar-width: none;
 }
 
-.basket-components-rail::-webkit-scrollbar {
+.basket-components-rail::-webkit-scrollbar,
+.vault-section-nav::-webkit-scrollbar {
   display: none;
   height: 0;
   width: 0;
