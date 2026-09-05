@@ -656,6 +656,24 @@ handleEthCall fixture params =
               && calldata == callHex "engine()" [] ->
               addressResult engine
           | normalize target == normalize router
+              && calldata == callHex "lifecycleBook()" [] ->
+              addressResult lifecycleBook
+          | normalize target == normalize router
+              && calldata == callHex "positionProtectionBook()" [] ->
+              addressResult protectionBook
+          | normalize target == normalize lifecycleBook
+              && calldata == callHex "CONFIG_SCHEMA_HASH()" [] ->
+              pure $ String $ bytesHex $ keccak256 "PletherExecutionConfigV3"
+          | normalize target == normalize lifecycleBook
+              && calldata == callHex "RECEIPT_TYPEHASH()" [] ->
+              pure $ String $ bytesHex $ keccak256 "PletherOrderReceiptV3(uint256 chainId,address book,address router,uint64 terminalBlock,uint64 terminalTime,OrderReceipt receipt)"
+          | normalize target `elem` map normalize [lifecycleBook, protectionBook]
+              && calldata == callHex "ROUTER()" [] ->
+              addressResult router
+          | normalize target `elem` map normalize [lifecycleBook, protectionBook]
+              && calldata == callHex "ENGINE()" [] ->
+              addressResult engine
+          | normalize target == normalize router
               && calldata == callHex "pletherOracle()" [] ->
               addressResult oracle
           | normalize target == normalize engine
@@ -1232,7 +1250,7 @@ workerConfig mode =
     , cfgPerpsChainId = fixtureChainId
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
-    , cfgPerpsOrderLifecycleBook = Nothing
+    , cfgPerpsOrderLifecycleBook = Just lifecycleBook
     , cfgPerpsCfdEngine = engine
     , cfgPerpsCfdEngineLens = lens
     , cfgPerpsCfdEngineSettlementSidecar = sidecar
@@ -1333,7 +1351,7 @@ runtimeCode :: Word8 -> BS.ByteString
 runtimeCode tag = BS.pack [0x60, tag, 0x60, 0x00, 0xf3]
 
 usdc, router, engine, lens, sidecar, clearinghouse, oracle, accountLens :: Text
-housePool, monitor, seniorVault, juniorVault :: Text
+housePool, monitor, seniorVault, juniorVault, lifecycleBook, protectionBook :: Text
 usdc = "0x1111111111111111111111111111111111111111"
 router = "0x2222222222222222222222222222222222222222"
 engine = "0x3333333333333333333333333333333333333333"
@@ -1346,3 +1364,5 @@ housePool = "0x9999999999999999999999999999999999999999"
 monitor = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 seniorVault = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 juniorVault = "0xcccccccccccccccccccccccccccccccccccccccc"
+lifecycleBook = "0xdddddddddddddddddddddddddddddddddddddddd"
+protectionBook = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
