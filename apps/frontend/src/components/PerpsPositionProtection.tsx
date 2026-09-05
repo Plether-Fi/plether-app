@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
@@ -84,21 +84,38 @@ export function PerpsPositionProtectionPanel({
   walletOnNetwork?: boolean
   onRetry: () => void
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
   if (id === 0n) return null
+  const latched = status === POSITION_PROTECTION_STATUS.Latched
+  const statusLabel = latched ? 'Waiting to retry'
+    : status === POSITION_PROTECTION_STATUS.Triggered ? 'Close queued'
+    : status === POSITION_PROTECTION_STATUS.PendingOpen ? 'Pending open'
+    : status === POSITION_PROTECTION_STATUS.Armed ? 'Active' : 'Resolving'
   return (
-    <section aria-label="Position protection" className="mb-4 rounded-lg border border-border p-4 text-sm">
-      <p>{positionProtectionMessage(id, status)}</p>
-      {linkedOrderId > 0n && <p className="mt-2">Latest close attempt: #{linkedOrderId.toString()}</p>}
-      {status === POSITION_PROTECTION_STATUS.Latched && <>
-        <p className="mt-2">Keepers retry expired attempts when execution is available. You can also queue a new attempt using your wallet; you pay network gas. Execution price and timing are not guaranteed.</p>
-        <button type="button" className="mt-3 underline" onClick={onRetry}
-          disabled={pending || !canRetry}>
-          {pending ? 'Queuing close attempt…' : 'Retry protection close'}
+    <section aria-label="Position protection" className="mb-4 border-b border-brand-border/20 pb-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <p className="text-content-secondary">SL/TP <span className={latched ? 'ml-2 text-[#FFAB96]' : 'ml-2 text-content-primary'}>{statusLabel}</span></p>
+        <button type="button" aria-expanded={expanded} aria-controls={detailsId}
+          className="cursor-pointer text-xs text-content-secondary underline underline-offset-4 hover:text-content-primary"
+          onClick={() => { setExpanded(!expanded) }}>
+          {expanded ? 'Hide details' : latched ? 'Details & retry' : 'Details'}
         </button>
-        {!walletOnNetwork && <p>Connect your wallet to Arbitrum Sepolia to retry.</p>}
-      </>}
-      {queuedOrderId !== undefined && <p role="status">Close attempt #{queuedOrderId.toString()} queued.</p>}
-      {error && <p role="alert" className="mt-2 text-warning">{error}</p>}
+      </div>
+      <div id={detailsId} hidden={!expanded} className="mt-3 space-y-2 text-xs leading-5 text-content-secondary">
+        <p>{positionProtectionMessage(id, status)}</p>
+        {linkedOrderId > 0n && <p className="mt-2">Latest close attempt: #{linkedOrderId.toString()}</p>}
+        {status === POSITION_PROTECTION_STATUS.Latched && <>
+          <p className="mt-2">Keepers retry expired attempts when execution is available. You can also queue a new attempt using your wallet; you pay network gas. Execution price and timing are not guaranteed.</p>
+          <button type="button" className="mt-3 cursor-pointer text-sm text-[#FFAB96] underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50" onClick={onRetry}
+            disabled={pending || !canRetry}>
+            {pending ? 'Queuing close attempt…' : 'Retry protection close'}
+          </button>
+          {!walletOnNetwork && <p>Connect your wallet to Arbitrum Sepolia to retry.</p>}
+        </>}
+        {queuedOrderId !== undefined && <p role="status">Close attempt #{queuedOrderId.toString()} queued.</p>}
+        {error && <p role="alert" className="mt-2 text-warning">{error}</p>}
+      </div>
     </section>
   )
 }

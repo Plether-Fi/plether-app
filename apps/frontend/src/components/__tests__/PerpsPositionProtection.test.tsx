@@ -28,6 +28,10 @@ describe('position protection status and retry', () => {
   it('shows the irreversible latch and queues a fresh nonpayable attempt', async () => {
     const refresh = vi.fn().mockResolvedValue(undefined)
     render(<PerpsPositionProtection id={7n} status={8} linkedOrderId={11n} onRefresh={refresh} />)
+    expect(screen.getByText('Waiting to retry')).toBeVisible()
+    expect(screen.getByText(/cannot be cancelled/)).not.toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry protection close' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Details & retry' }))
     expect(screen.getByText(/cannot be cancelled/)).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Retry protection close' }))
     await screen.findByText('Close attempt #19 queued.')
@@ -41,7 +45,9 @@ describe('position protection status and retry', () => {
 
   it('does not expose retry while a close attempt is live', () => {
     render(<PerpsPositionProtection id={7n} status={3} linkedOrderId={11n} onRefresh={vi.fn()} />)
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText('Close queued')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(screen.queryByRole('button', { name: 'Retry protection close' })).toBeNull()
     expect(screen.getByText(/market close is queued/)).toBeVisible()
   })
 
@@ -49,11 +55,12 @@ describe('position protection status and retry', () => {
     mocks.account.chainId = 1
     const refresh = vi.fn().mockResolvedValue(undefined)
     const { rerender } = render(<PerpsPositionProtection id={7n} status={8} linkedOrderId={11n} onRefresh={refresh} />)
-    expect(screen.getByRole('button')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Details & retry' }))
+    expect(screen.getByRole('button', { name: 'Retry protection close' })).toBeDisabled()
     mocks.account.chainId = 421614
     mocks.simulate.mockRejectedValueOnce(new Error('Protection is no longer latched'))
     rerender(<PerpsPositionProtection id={7n} status={8} linkedOrderId={11n} onRefresh={refresh} />)
-    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry protection close' }))
     await screen.findByRole('alert')
     expect(mocks.write).not.toHaveBeenCalled()
     await waitFor(() => expect(refresh).toHaveBeenCalled())
@@ -62,7 +69,8 @@ describe('position protection status and retry', () => {
   it('blocks an incompatible deployment before requesting a signature', async () => {
     mocks.verify.mockRejectedValueOnce(new Error('V3 schema required'))
     render(<PerpsPositionProtection id={7n} status={8} linkedOrderId={11n} onRefresh={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(screen.getByRole('button', { name: 'Details & retry' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry protection close' }))
     await screen.findByText('V3 schema required')
     expect(mocks.simulate).not.toHaveBeenCalled()
     expect(mocks.write).not.toHaveBeenCalled()

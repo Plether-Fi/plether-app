@@ -1,7 +1,36 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 import { PerpsPositionProtectionPanel } from '../components/PerpsPositionProtection'
+import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { POSITION_PROTECTION_STATUS } from '../contracts/perpsProtection'
+import { PerpsIdentityContext, type PerpsIdentityContextValue } from '../perps-aa'
+import type { PerpsPosition } from '../hooks'
+
+const protectedPosition: PerpsPosition = {
+  exists: true, side: 0, direction: 'long', size: 2_000n * 10n ** 18n,
+  entryPrice: 98_300_000n, marginUsdc: 400_000_000n,
+  unrealizedPnlUsdc: 48_250_000n, maintenanceMarginUsdc: 20_000_000n,
+  liquidatable: false, estimatedNotionalUsdc: 1_999_920_000n,
+  entryNotionalUsdc: 2_000_000_000n, dxyExposureUsdc: 2_069_380_000n,
+  displayDxyPrice: 101_700_000n, liquidationPrice: 110_000_000n,
+  pendingCarryUsdc: 1_250_000n,
+}
+
+const storyIdentity: PerpsIdentityContextValue = {
+  status: 'ready',
+  ownerAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+  accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+  chainId: 421614,
+  isAaManifestConfigured: false,
+  sponsorshipEnabled: false,
+  manifest: null,
+  identity: null,
+  proposedIdentity: null,
+  changedIdentityFields: [],
+  error: null,
+  confirmIdentityAfterContinuityCheck: () => false,
+  reloadIdentity: () => undefined,
+}
 
 const meta = {
   title: 'Perps/Position Protection',
@@ -10,9 +39,13 @@ const meta = {
   parameters: { layout: 'fullscreen' },
   decorators: [
     (Story) => (
-      <div className="min-h-screen bg-app-bg p-4 text-text-primary md:p-8">
-        <div className="mx-auto max-w-5xl"><Story /></div>
-      </div>
+      <PerpsIdentityContext.Provider value={storyIdentity}>
+        <div className="min-h-screen bg-app-bg p-4 text-text-primary md:p-8">
+          <div className="mx-auto max-w-5xl">
+            <PerpsAccountPanel isConnected position={protectedPosition} positionProtection={<Story />} />
+          </div>
+        </div>
+      </PerpsIdentityContext.Provider>
     ),
   ],
   args: {

@@ -1,4 +1,4 @@
-import { positionProtectionMessage } from '../contracts/perpsProtection'
+import { POSITION_PROTECTION_STATUS, positionProtectionMessage } from '../contracts/perpsProtection'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
@@ -2842,6 +2842,10 @@ export function PerpsTradeTicket({
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
     if (activePositionProtectionId > 0n) {
+      if (activePositionProtectionStatus === POSITION_PROTECTION_STATUS.Triggered
+        || activePositionProtectionStatus === POSITION_PROTECTION_STATUS.Latched) {
+        return 'SL/TP protection is closing this position. See Position for status and retry options.'
+      }
       return positionProtectionMessage(activePositionProtectionId, activePositionProtectionStatus)
     }
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'

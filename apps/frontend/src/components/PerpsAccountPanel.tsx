@@ -60,6 +60,7 @@ interface TradeRow {
 }
 
 interface PerpsAccountPanelProps {
+  positionProtection?: ReactNode
   initialTab?: PerpsAccountTab
   initialPositionMarginModalOpen?: boolean
   position?: PerpsPosition
@@ -368,6 +369,7 @@ function TxLink({ hash }: { hash?: string }) {
 }
 
 function PositionView({
+  positionProtection,
   position,
   equityUsdc,
   freeBuyingPowerUsdc,
@@ -377,6 +379,7 @@ function PositionView({
   onAccountRefresh,
   onClosePosition,
 }: {
+  positionProtection?: ReactNode
   position?: PerpsPosition
   equityUsdc?: bigint
   freeBuyingPowerUsdc?: bigint
@@ -527,6 +530,7 @@ function PositionView({
           ) : null}
         </div>
       </div>
+      {positionProtection}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric
@@ -952,6 +956,7 @@ function TraderClaimCard({
 }
 
 function AccountTabContent({
+  positionProtection,
   activeTab,
   position,
   equityUsdc,
@@ -1052,6 +1057,7 @@ function AccountTabContent({
           onAccountRefresh={onAccountRefresh}
         />
         <PositionView
+          positionProtection={positionProtection}
           position={position ?? (isConnected === undefined ? mockPosition : undefined)}
           equityUsdc={equityUsdc}
           freeBuyingPowerUsdc={freeBuyingPowerUsdc}
