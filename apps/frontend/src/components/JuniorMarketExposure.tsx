@@ -62,7 +62,12 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
           </div>
           <div className="mt-5 flex items-end justify-between gap-3 border-t border-brand-border/30 pt-4">
             <span className="text-sm text-content-secondary">Open exposure / pool capital</span>
-            <span className="text-2xl font-semibold tabular-nums text-content-primary">{currentPricing ? multiple(exposure.grossExposureMultiple) : '—'}</span>
+            <div className="text-right">
+              <span className="text-2xl font-semibold tabular-nums text-content-primary">{multiple(exposure.grossExposureMultiple)}</span>
+              {!currentPricing && exposure.grossExposureMultiple !== undefined && (
+                <p className="mt-1 text-xs text-content-secondary">At last market price</p>
+              )}
+            </div>
           </div>
         </div>
 
