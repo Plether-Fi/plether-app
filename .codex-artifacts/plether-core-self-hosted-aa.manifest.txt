@@ -1,0 +1,31 @@
+Plether Core self-hosted AA patch manifest
+Generated: 2026-09-02
+
+Target repository: Plether-Fi/plether-core
+Base: origin/master bc8f6290c540665e4ff61328ea83a4c3d421a8d4
+Patch: plether-core-self-hosted-aa.patch
+SHA-256: d1c6941c03f37cc9a93b35b95dc73a876ee87dab624524ed9c4d6336022f2955
+Size: 236390 bytes, 6326 lines
+Diff: 32 files, 6009 insertions, 11 deletions
+
+Contents:
+- 7 files under packages/perps-aa (contract, deploy script, Foundry config, unit and fork tests, README, security model)
+- 19 files under packages/perps-aa-client (client source, tests, package metadata, README)
+- deployments/arbitrum-sepolia-perps-aa.template.json
+- CI, Makefile, root README, remapping, and package-boundary integration
+
+Verification:
+- git apply --check on a clean local clone at the exact base: PASS
+- git diff --check after applying in that clone: PASS
+- forge test --offline --root packages/perps-aa: 29 passed, 0 failed, 1 opt-in fork test skipped
+- Arbitrum Sepolia opt-in EntryPoint handleOps fork test: 1 passed, 0 failed (no broadcast)
+- forge build --sizes --root packages/perps-aa: PASS; paymaster runtime 7441 bytes
+- npm test --prefix packages/perps-aa-client: 22 passed, 0 failed
+- npm run typecheck/build --prefix packages/perps-aa-client: PASS
+- no-broadcast forge script against Arbitrum Sepolia chain 421614: PASS; deployed paused in simulation
+
+Reviewed Sepolia runtime hashes:
+- EntryPoint: 0xe3f30f78ae55058acdefea00952c8e44f2263215cf720fe1b27b6f148add0278
+- SimpleAccount factory: 0xa2e635152a61e180383c7afc045620b7461ef6f43ba27d592262513106b991b7
+- SimpleAccount implementation: 0x689a90eff03926a12aedad2fc6d4fdbcbdd9ffac86e7d0d70ce6355961305c74
+- SimpleAccount proxy: 0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9

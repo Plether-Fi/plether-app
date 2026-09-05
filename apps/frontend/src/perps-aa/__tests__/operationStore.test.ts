@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex } from 'viem'
+import {
+  concatHex,
+  numberToHex,
+  type Address,
+  type Hex,
+} from 'viem'
 import {
   cancelSponsoredOperationRequest,
   canForceUnlockLegacySponsoredOperation,
   createSponsoredOperationSignal,
   forceUnlockLegacySponsoredOperation,
+  hasDurableSponsoredOperationSubmission,
   LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
   mergeSponsoredOperationState,
   migrateSponsoredOperationState,
@@ -23,9 +29,38 @@ import {
   SponsoredOperationLockedError,
   useSponsoredOperationStore,
 } from '../operationStore'
+import { createSponsorshipAuthority } from '../paymasterValidity'
+import type { ManagedUserOperation } from '../runtimeContext'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
+const PLETHER_PAYMASTER =
+  '0x1234567890123456789012345678901234567890' as Address
+
+function signedPletherOperation(validUntil = 1_000n): ManagedUserOperation {
+  return {
+    sender: ACCOUNT,
+    nonce: 7n,
+    callData: '0x1234',
+    callGasLimit: 1n,
+    verificationGasLimit: 2n,
+    preVerificationGas: 3n,
+    maxFeePerGas: 4n,
+    maxPriorityFeePerGas: 5n,
+    paymaster: PLETHER_PAYMASTER,
+    paymasterData: concatHex([
+      numberToHex(validUntil, { size: 6 }),
+      numberToHex(0n, { size: 6 }),
+      numberToHex(1_000_000n, { size: 16 }),
+      `0x${'22'.repeat(32)}`,
+      `0x${'33'.repeat(32)}`,
+      `0x${'44'.repeat(65)}`,
+    ]),
+    paymasterVerificationGasLimit: 100_000n,
+    paymasterPostOpGasLimit: 0n,
+    signature: '0xdeadbeef',
+  }
+}
 
 function begin(id: string) {
   useSponsoredOperationStore.getState().beginOperation({
@@ -1275,6 +1310,84 @@ describe('sponsored operation store', () => {
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
       [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
     })
+  })
+
+  it('journals and monotonically merges the v2 sponsorship authority', () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const sponsorshipAuthority = createSponsorshipAuthority({
+      paymasterAddress: PLETHER_PAYMASTER,
+      validUntil: 1_000n,
+    })
+    begin('operation-1')
+
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash,
+      {
+        signedUserOperation: signedPletherOperation(),
+        sponsorshipAuthority,
+      }
+    )).toBe(true)
+    expect(JSON.parse(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    )!)).toMatchObject({
+      version: 1,
+      operation: { sponsorshipAuthority },
+    })
+
+    const currentState = useSponsoredOperationStore.getState()
+    const currentOperation = currentState.operations[0]!
+    globalThis.localStorage.clear()
+    const merged = mergeSponsoredOperationState({
+      operations: [{
+        ...currentOperation,
+        sponsorshipAuthority: undefined,
+        updatedAt: currentOperation.updatedAt + 1,
+      }],
+      activeLanes: {},
+    }, currentState)
+
+    expect(merged.operations[0]?.sponsorshipAuthority)
+      .toEqual(sponsorshipAuthority)
+  })
+
+  it('fails the pre-send barrier when journal authority is tampered', () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const operationId = 'operation-1'
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}${operationId}`
+    begin(operationId)
+    createSponsoredOperationSignal(operationId)
+
+    try {
+      expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+        operationId,
+        userOperationHash,
+        {
+          signedUserOperation: signedPletherOperation(),
+          sponsorshipAuthority: createSponsorshipAuthority({
+            paymasterAddress: PLETHER_PAYMASTER,
+            validUntil: 1_000n,
+          }),
+        }
+      )).toBe(true)
+      const journal = JSON.parse(
+        globalThis.localStorage.getItem(journalKey)!
+      ) as {
+        operation: {
+          sponsorshipAuthority: { validUntil: string }
+        }
+      }
+      journal.operation.sponsorshipAuthority.validUntil = '999'
+      globalThis.localStorage.setItem(journalKey, JSON.stringify(journal))
+
+      expect(hasDurableSponsoredOperationSubmission(
+        operationId,
+        userOperationHash
+      )).toBe(false)
+    } finally {
+      releaseSponsoredOperationSignal(operationId)
+    }
   })
 
   it('merges peer storage without erasing a newer persisted submission hash', () => {

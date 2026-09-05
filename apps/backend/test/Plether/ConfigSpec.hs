@@ -6,6 +6,7 @@ import Plether.Config
   ( Config (..)
   , FaucetGuardConfig (..)
   , LpSettlementMode (..)
+  , NativeAaSafetyInput (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , parseLpSettlementLimits
@@ -15,20 +16,25 @@ import Plether.Config
   , parsePerpsCandleWriteMode
   , perpsCandleRollupReadEnabled
   , loadConfig
+  , normalizeExternalSecurityRpcUrl
   , resolveLpSettlementMode
-  , validateLpSettlementChainId
-  , validateLpSettlementPrivateKeyConfig
+  , validAaDeploymentAddresses
+  , validAaOriginSecret
+  , validateFaucetGuardConfig
   , validateInsightsCompetitionActivation
   , validateKeeperPollSeconds
-  , validateFaucetGuardConfig
+  , validateLpSettlementChainId
+  , validateLpSettlementPrivateKeyConfig
+  , validateNativeAaPresence
+  , validateNativeAaSafety
   , validatePerpsCandleModeCombination
   )
-import Plether.Keeper (lpSettlementRequiredBalance)
 import Plether.Insights.Competition
   ( crSlug
   , july2026CompetitionSlug
   , september2026CompetitionSlug
   )
+import Plether.Keeper (lpSettlementRequiredBalance)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 
@@ -407,10 +413,160 @@ spec = do
         `shouldSatisfy` isLeft
       validateFaucetGuardConfig Nothing (Just faucetToken) "201" "200"
         `shouldSatisfy` isLeft
-  where
-    faucetToken = "0123456789abcdef0123456789abcdef"
-    isLeft (Left _) = True
-    isLeft (Right _) = False
+
+  describe "native AA configuration safety" $ do
+    it "accepts only generated-looking 64-character lowercase hex origin tokens" $ do
+      validAaOriginSecret validOriginToken `shouldBe` True
+      validAaOriginSecret (T.toUpper validOriginToken) `shouldBe` False
+      validAaOriginSecret (T.take 63 validOriginToken) `shouldBe` False
+      validAaOriginSecret (validOriginToken <> "0") `shouldBe` False
+
+    it "rejects known origin-token placeholders" $ do
+      mapM_ (\candidate -> validAaOriginSecret candidate `shouldBe` False)
+        [ T.replicate 64 "0"
+        , T.replicate 64 "f"
+        , T.concat $ replicate 4 "0123456789abcdef"
+        , T.concat $ replicate 8 "deadbeef"
+        ]
+
+    it "rejects an invalid origin token even when both AA providers are disabled" $ do
+      validateNativeAaPresence False False False (Just $ replicate 64 '0') (replicate 8 Nothing)
+        `shouldSatisfy` isLeft
+      validateNativeAaPresence False False False (Just "short") (replicate 8 Nothing)
+        `shouldSatisfy` isLeft
+      validateNativeAaPresence False False False (Just $ T.unpack validOriginToken) (replicate 8 Nothing)
+        `shouldBe` Right False
+
+    it "distinguishes an absent native configuration from any partial configuration" $ do
+      let completeNativeFields = replicate 8 $ Just "configured"
+      validateNativeAaPresence False False False Nothing (replicate 8 Nothing)
+        `shouldBe` Right False
+      validateNativeAaPresence False False False (Just $ T.unpack validOriginToken) (replicate 8 Nothing)
+        `shouldBe` Right False
+      validateNativeAaPresence False False False Nothing completeNativeFields
+        `shouldSatisfy` isLeft
+      mapM_
+        (\missingIndex ->
+          validateNativeAaPresence
+            False
+            False
+            False
+            (Just $ T.unpack validOriginToken)
+            ( take missingIndex completeNativeFields
+                <> [Nothing]
+                <> drop (missingIndex + 1) completeNativeFields
+            )
+            `shouldSatisfy` isLeft
+        )
+        [0 .. 7]
+      validateNativeAaPresence True True False (Just $ T.unpack validOriginToken) (replicate 8 Nothing)
+        `shouldSatisfy` isLeft
+      validateNativeAaPresence False True False (Just $ T.unpack validOriginToken) (replicate 8 Nothing)
+        `shouldSatisfy` isLeft
+      validateNativeAaPresence False False False (Just $ T.unpack validOriginToken) completeNativeFields
+        `shouldBe` Right True
+
+    it "rejects the global rollout flag unconditionally and requires a canary when enabled" $ do
+      validateNativeAaPresence False False True Nothing (replicate 8 Nothing)
+        `shouldBe` Left globalRolloutUnsupported
+      validateNativeAaSafety
+        (validNativeSafety {nasiGlobalRolloutEnabled = True})
+        `shouldBe` Left globalRolloutUnsupported
+      validateNativeAaSafety
+        (validNativeSafety {nasiCanaryOwners = []})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety validNativeSafety `shouldBe` Right ()
+
+    it "caps paymaster authorization validity at 570 seconds" $ do
+      validateNativeAaSafety
+        (validNativeSafety {nasiValiditySeconds = 570})
+        `shouldBe` Right ()
+      validateNativeAaSafety
+        (validNativeSafety {nasiValiditySeconds = 571})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiValiditySeconds = 0})
+        `shouldSatisfy` isLeft
+
+    it "pins the reviewed policy and account runtime and rejects a zero paymaster runtime hash" $ do
+      validateNativeAaSafety validNativeSafety `shouldBe` Right ()
+      validateNativeAaSafety
+        (validNativeSafety {nasiPolicyId = "0x" <> T.replicate 64 "1"})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiAccountCodeHash = "0x" <> T.replicate 64 "2"})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiPaymasterCodeHash = "0x" <> T.replicate 64 "0"})
+        `shouldSatisfy` isLeft
+
+    it "requires per-operation cost to fit both account and client caps before the global cap" $ do
+      validateNativeAaSafety
+        (validNativeSafety {nasiMaxCostWei = 21})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiClientOutstandingWei = 9})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiAccountOutstandingWei = 101})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiClientOutstandingWei = 101})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety validNativeSafety `shouldBe` Right ()
+
+    it "orders account-hourly, global-hourly, and global-daily spend budgets" $ do
+      validateNativeAaSafety
+        (validNativeSafety {nasiAccountHourlyWei = 201})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        (validNativeSafety {nasiGlobalDailyWei = 199})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety validNativeSafety `shouldBe` Right ()
+
+    it "requires submission whenever sponsorship is enabled" $ do
+      validateNativeAaSafety
+        (validNativeSafety {nasiSubmissionEnabled = False})
+        `shouldSatisfy` isLeft
+      validateNativeAaSafety
+        ( validNativeSafety
+            { nasiSponsorshipEnabled = False
+            , nasiSubmissionEnabled = False
+            , nasiCanaryOwners = []
+            }
+        )
+        `shouldBe` Right ()
+
+    it "pins native action targets to the reviewed Arbitrum Sepolia deployment" $ do
+      validAaDeploymentAddresses
+        "0xabee441b564dc084857468fa244aee0a444b07df"
+        "0x2b9790ad11ce5fb1b91ac3415b08cd1ec7d0ce0b"
+        "0x2cedc3f0059f0e9c1099be96974f459e58c428d6"
+        "0x91c85540a1f64c9aec2c801fcc927f037d619f17"
+        `shouldBe` True
+      validAaDeploymentAddresses
+        "0x1111111111111111111111111111111111111111"
+        "0x2b9790ad11ce5fb1b91ac3415b08cd1ec7d0ce0b"
+        "0x2cedc3f0059f0e9c1099be96974f459e58c428d6"
+        "0x91c85540a1f64c9aec2c801fcc927f037d619f17"
+        `shouldBe` False
+
+    it "normalizes only HTTPS/default-443 external security RPC endpoints" $ do
+      normalizeExternalSecurityRpcUrl "https://RPC.Example.com/tenant"
+        `shouldBe` Just "https://rpc.example.com/tenant"
+      normalizeExternalSecurityRpcUrl "https://rpc.example.com:443/"
+        `shouldBe` Just "https://rpc.example.com"
+      normalizeExternalSecurityRpcUrl "http://rpc.example.com" `shouldBe` Nothing
+      normalizeExternalSecurityRpcUrl "https://user@rpc.example.com" `shouldBe` Nothing
+      normalizeExternalSecurityRpcUrl "https://rpc.example.com:8443" `shouldBe` Nothing
+      normalizeExternalSecurityRpcUrl "https://rpc.example.com/?token=x" `shouldBe` Nothing
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft (Right _) = False
+
+faucetToken :: String
+faucetToken = "0123456789abcdef0123456789abcdef"
 
 withEnvironmentVariables :: [(String, Maybe String)] -> IO a -> IO a
 withEnvironmentVariables [] action = action
@@ -428,3 +584,31 @@ withEnvironmentVariables ((name, configuredValue) : rest) action =
       case value of
         Just configured -> setEnv name configured
         Nothing -> unsetEnv name
+
+validOriginToken :: T.Text
+validOriginToken = T.replicate 63 "a" <> "b"
+
+globalRolloutUnsupported :: String
+globalRolloutUnsupported =
+  "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
+
+validNativeSafety :: NativeAaSafetyInput
+validNativeSafety =
+  NativeAaSafetyInput
+    { nasiOriginToken = validOriginToken
+    , nasiSponsorshipEnabled = True
+    , nasiSubmissionEnabled = True
+    , nasiGlobalRolloutEnabled = False
+    , nasiCanaryOwners = ["0x1111111111111111111111111111111111111111"]
+    , nasiValiditySeconds = 570
+    , nasiPaymasterCodeHash = "0x" <> T.replicate 64 "3"
+    , nasiPolicyId = "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3"
+    , nasiAccountCodeHash = "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9"
+    , nasiMaxCostWei = 10
+    , nasiAccountOutstandingWei = 20
+    , nasiClientOutstandingWei = 20
+    , nasiGlobalOutstandingWei = 100
+    , nasiAccountHourlyWei = 30
+    , nasiGlobalHourlyWei = 200
+    , nasiGlobalDailyWei = 250
+    }

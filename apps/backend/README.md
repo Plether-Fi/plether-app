@@ -617,6 +617,38 @@ database:
 cabal run plether-provider-preflight
 ```
 
+### Native self-hosted account abstraction
+
+The native Alto + Plether-paymaster path is disabled by default and is
+currently valid only for the reviewed Arbitrum Sepolia (`421614`) canary. It
+becomes configured only when all of `AA_ALTO_RPC_URL`,
+`AA_RECONCILER_SECONDARY_RPC_URL`, `AA_PAYMASTER_ADDRESS`,
+`AA_PAYMASTER_CODE_HASH`, `AA_PAYMASTER_POLICY_ID`,
+`AA_PAYMASTER_SIGNER_ADDRESS`, `AA_PAYMASTER_KMS_KEY_ID`, and
+`AA_PAYMASTER_ACCOUNT_CODE_HASH` are non-empty alongside a valid
+`AA_PROXY_ORIGIN_TOKEN` and `DATABASE_URL`. Partial configuration fails
+startup. The two external security RPCs must be distinct normalized HTTPS/443
+origins and operationally independent.
+
+`AA_NATIVE_SPONSORSHIP_ENABLED` and `AA_NATIVE_SUBMISSION_ENABLED` default to
+`false`; sponsorship cannot be enabled without submission. An enabled canary
+also requires `AA_NATIVE_CANARY_OWNERS`. The current release always rejects
+`AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true`. Liability, spend, validity, paymaster
+gas, and final-request rate limits use the `AA_PAYMASTER_*` variables listed in
+`.env.example`; do not relax them independently of the contract profile and
+rollout review.
+
+The separate `plether-aa-reconciler` additionally requires
+`AA_RECONCILER_START_BLOCK`, `AA_RECONCILER_START_BLOCK_HASH`,
+`AA_RECONCILER_POLL_SECONDS`, `AA_RECONCILER_BATCH_BLOCKS`,
+`AA_RECONCILER_FAILURE_PAUSE_SECONDS`,
+`AA_RECONCILER_MAX_SAFE_LAG_SECONDS`, and
+`AA_PAYMASTER_MIN_DEPOSIT_WEI`. The start block and hash are deployment
+evidence, not example values. Production configuration is owned by Terraform;
+follow [the self-hosted AA rollout runbook](../../docs/runbooks/self-hosted-aa-rollout.md)
+for the ordered dark deployment, KMS attestation, reconciliation, and canary
+gates.
+
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set
 `enable_pyth_api_key = true` and provide the sensitive `pyth_api_key`. Apply
@@ -664,6 +696,7 @@ the backend alert is a receipt-based secondary signal.
 |----------|-------------|
 | `GET /api/aa/status` | Public bounded-V2 release fingerprint, startup binding verification state, and sponsorship kill-switch state |
 | `POST /api/aa/pimlico` | Authenticated, fail-closed Pimlico JSON-RPC proxy for the approved Arbitrum Sepolia SimpleAccount and Plether action surface |
+| `POST /api/aa/rpc` | Authenticated native JSON-RPC gateway for the private Alto bundler and Plether verifying paymaster; disabled until the reviewed Sepolia canary is configured |
 
 ### Protocol
 

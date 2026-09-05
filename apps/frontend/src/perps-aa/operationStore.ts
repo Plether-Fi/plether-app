@@ -18,6 +18,7 @@ import {
   persistManagedUserOperation,
   type PersistedManagedUserOperationV1,
 } from './persistedUserOperation'
+import type { PersistedSponsorshipAuthorityV1 } from './paymasterValidity'
 import {
   acquireSponsoredOperationBrowserLane,
   type ReleaseSponsoredOperationBrowserLock,
@@ -54,6 +55,10 @@ export interface SponsoredOperation {
   userOperationHash?: Hex
   signedUserOperation?: PersistedManagedUserOperationV1
   submissionMetadataVersion?: 1
+  /**
+   * Immutable native-paymaster identity and deadline bound to the signed hash.
+   */
+  sponsorshipAuthority?: PersistedSponsorshipAuthorityV1
   hashRecordedAt?: number
   automaticRecoveryStartedAt?: number
   lastAutomaticRecoveryAttemptAt?: number
@@ -140,6 +145,7 @@ interface SponsoredOperationState {
     hash: Hex,
     metadata?: {
       signedUserOperation: ManagedUserOperation
+      sponsorshipAuthority?: PersistedSponsorshipAuthorityV1
     }
   ) => boolean
   recordObservedInclusion: (
@@ -402,6 +408,7 @@ export function canCancelSponsoredOperationLocally(
   return operationAbortControllers.has(operation.id) &&
     operation.userOperationHash === undefined &&
     ![
+      'journaling',
       'submitting',
       'confirming',
       'confirmed',
@@ -637,6 +644,7 @@ function mergeOperationRecord(
   current: SponsoredOperation,
   persisted: SponsoredOperation
 ): SponsoredOperation {
+  assertCompatibleSponsorshipAuthorities(current, persisted)
   const preferLiveCurrent =
     operationAbortControllers.has(current.id) &&
     !isSponsoredOperationTerminal(current.status)
@@ -693,6 +701,8 @@ function mergeOperationRecord(
     submissionMetadataVersion:
       preferred.submissionMetadataVersion ??
       other.submissionMetadataVersion,
+    sponsorshipAuthority:
+      preferred.sponsorshipAuthority ?? other.sponsorshipAuthority,
     hashRecordedAt: preferred.hashRecordedAt ?? other.hashRecordedAt,
     automaticRecoveryStartedAt:
       preferred.automaticRecoveryStartedAt === undefined
@@ -1379,6 +1389,22 @@ function assertCompatibleOperationHashes(
   }
 }
 
+function assertCompatibleSponsorshipAuthorities(
+  left: SponsoredOperation,
+  right: SponsoredOperation
+): void {
+  if (
+    left.sponsorshipAuthority !== undefined &&
+    right.sponsorshipAuthority !== undefined &&
+    JSON.stringify(left.sponsorshipAuthority) !==
+      JSON.stringify(right.sponsorshipAuthority)
+  ) {
+    throw new Error(
+      'Conflicting sponsorship authorities share one operation ID'
+    )
+  }
+}
+
 function assertUniqueUserOperationHashes(
   operations: SponsoredOperation[]
 ): void {
@@ -1950,7 +1976,9 @@ function hasDurableOperationJournal(
         operation.submissionMetadataVersion !== 1 ||
         operation.signedUserOperation === undefined ||
         JSON.stringify(journalOperation.signedUserOperation) !==
-          JSON.stringify(operation.signedUserOperation)
+          JSON.stringify(operation.signedUserOperation) ||
+        JSON.stringify(journalOperation.sponsorshipAuthority) !==
+          JSON.stringify(operation.sponsorshipAuthority)
       )
     ) ||
     laneHead?.chainId !== operation.chainId ||
@@ -2357,6 +2385,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                   sponsorshipAccepted:
                     operation.sponsorshipAccepted ||
                     status === 'awaiting-signature' ||
+                    status === 'journaling' ||
                     status === 'submitting' ||
                     status === 'confirming' ||
                     status === 'confirmed',
@@ -2406,6 +2435,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           const signedUserOperation = metadata
             ? persistManagedUserOperation(metadata.signedUserOperation)
             : undefined
+          const sponsorshipAuthority = metadata?.sponsorshipAuthority
           const pendingOperation: SponsoredOperation = {
             ...currentOperation,
             // Publish the first recoverable submission identity before the
@@ -2418,6 +2448,9 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
               ? {
                   signedUserOperation,
                   submissionMetadataVersion: 1 as const,
+                  ...(sponsorshipAuthority
+                    ? { sponsorshipAuthority }
+                    : {}),
                 }
               : {}),
             hashRecordedAt: now,
@@ -2456,6 +2489,9 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                       ? {
                           signedUserOperation,
                           submissionMetadataVersion: 1 as const,
+                          ...(sponsorshipAuthority
+                            ? { sponsorshipAuthority }
+                            : {}),
                         }
                       : {}),
                     hashRecordedAt: now,
@@ -2719,7 +2755,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             )
 
             // The append-only tombstone readback is the release barrier. The
-            // inclusion evidence was already persisted above; old v1 tabs may
+            // inclusion evidence was already persisted above; older tabs may
             // overwrite its mutable journal but cannot erase this record.
             const releaseTombstone =
               readExactSponsoredOperationLaneRelease({

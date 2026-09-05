@@ -18,6 +18,11 @@ library
     import:           warnings
     exposed-modules:
         Plether.AA.Pimlico
+        Plether.AA.ClientKey
+        Plether.AA.Gateway
+        Plether.AA.Kms
+        Plether.AA.Paymaster
+        Plether.AA.Reconciler
         Plether.Api
         Plether.Cache
         Plether.Config
@@ -64,6 +69,7 @@ library
         Plether.Database
         Plether.Database.VaultPerformance
         Plether.Database.VaultActivity
+        Plether.Database.AaSponsorship
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
@@ -169,6 +175,37 @@ executable plether-api
     default-extensions:
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable plether-aa-reconciler
+    import:           warnings
+    main-is:          AaReconciler.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        TypeApplications
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable plether-aa-admin
+    import:           warnings
+    main-is:          AaAdmin.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        bytestring >= 0.11,
+        text >= 2.0,
+        http-client >= 0.7,
+        http-client-tls >= 0.3
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        TypeApplications
+    ghc-options: -threaded -rtsopts
 
 executable plether-basket-worker
     import:           warnings
@@ -297,11 +334,15 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.PaymasterSpec
+        Plether.AA.KmsSpec
+        Plether.AA.ReconcilerSpec
         Plether.CacheSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
+        Plether.Ethereum.ClientSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
         Plether.Ethereum.Contracts.SettlementMonitorSpec
@@ -334,6 +375,7 @@ test-suite plether-api-test
         Plether.Perps.ReleaseSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.VaultPerformanceSpec
+        Plether.Database.AaSponsorshipSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
         Plether.Insights.Registration.ConfigSpec

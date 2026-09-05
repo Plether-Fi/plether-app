@@ -9,6 +9,9 @@ describe('sponsoredOperationStatusLabel', () => {
     expect(sponsoredOperationStatusLabel('requesting-sponsorship')).toBe(
       'Preparing sponsored transaction'
     )
+    expect(sponsoredOperationStatusLabel('journaling')).toBe(
+      'Saving recovery record'
+    )
   })
 
   it('does not label a reverted receipt as confirmed', () => {

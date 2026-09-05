@@ -7,6 +7,8 @@ module Plether.Ethereum.Transaction
   , applyBpsBuffer
   , sameNonceReplacementFees
   , normalizePrivateKey
+  , ethereumAddressFromPublicKey
+  , recoverSignerAddress
   ) where
 
 import Control.Exception (bracket)
@@ -78,6 +80,63 @@ deriveAddress privateKeyText = do
                in "0x" <> TE.decodeUtf8 (B16.encode $ BS.drop (BS.length digest - 20) digest)
           )
           pubResult
+
+ethereumAddressFromPublicKey :: ByteString -> Either Text Text
+ethereumAddressFromPublicKey publicKey
+  | BS.length publicKey /= 65 || BS.head publicKey /= 0x04 =
+      Left "secp256k1 public key must use the 65-byte uncompressed encoding"
+  | otherwise =
+      let digest = keccak256 $ BS.drop 1 publicKey
+       in Right $
+            "0x" <> TE.decodeUtf8 (B16.encode $ BS.drop (BS.length digest - 20) digest)
+
+-- | Recover the Ethereum signer for a compact ECDSA signature. KMS returns
+-- DER signatures without a recovery id, so the caller tries both Ethereum
+-- parity values and compares them with the startup-attested public key.
+recoverSignerAddress :: ByteString -> ByteString -> Int -> IO (Either Text Text)
+recoverSignerAddress digest compactSignature recoveryId
+  | BS.length digest /= 32 = pure $ Left "ECDSA recovery digest must be 32 bytes"
+  | BS.length compactSignature /= 64 = pure $ Left "ECDSA compact signature must be 64 bytes"
+  | recoveryId < 0 || recoveryId > 3 = pure $ Left "ECDSA recovery id must be between 0 and 3"
+  | otherwise =
+      withSecpContext $ \ctx ->
+        allocaBytes 65 $ \recoverablePtr ->
+          BS.useAsCString compactSignature $ \compactPtr -> do
+            parsed <-
+              c_secp256k1_ecdsa_recoverable_signature_parse_compact
+                ctx
+                recoverablePtr
+                (castPtr compactPtr)
+                (fromIntegral recoveryId)
+            if not (isSuccess parsed)
+              then pure $ Left "Could not parse compact ECDSA signature"
+              else
+                allocaBytes 64 $ \publicKeyPtr ->
+                  BS.useAsCString digest $ \digestPtr -> do
+                    recovered <-
+                      c_secp256k1_ecdsa_recover
+                        ctx
+                        publicKeyPtr
+                        recoverablePtr
+                        (castPtr digestPtr)
+                    if not (isSuccess recovered)
+                      then pure $ Left "Could not recover ECDSA public key"
+                      else
+                        alloca $ \lengthPtr ->
+                          allocaBytes 65 $ \serializedPtr -> do
+                            poke lengthPtr 65
+                            serialized <-
+                              c_secp256k1_ec_pubkey_serialize
+                                ctx
+                                (castPtr serializedPtr)
+                                lengthPtr
+                                publicKeyPtr
+                                secp256k1EcUncompressed
+                            if not (isSuccess serialized)
+                              then pure $ Left "Could not serialize recovered public key"
+                              else do
+                                publicKey <- BS.packCStringLen (serializedPtr, 65)
+                                pure $ ethereumAddressFromPublicKey publicKey
 
 signTransaction :: Text -> Tx1559 -> IO (Either Text SignedTransaction)
 signTransaction privateKeyText tx = do
@@ -298,4 +357,20 @@ foreign import ccall safe "secp256k1_recovery.h secp256k1_ecdsa_recoverable_sign
     Ptr Word8 ->
     Ptr CInt ->
     Ptr SecpRecoverableSig ->
+    IO CInt
+
+foreign import ccall safe "secp256k1_recovery.h secp256k1_ecdsa_recoverable_signature_parse_compact"
+  c_secp256k1_ecdsa_recoverable_signature_parse_compact ::
+    Ptr SecpCtx ->
+    Ptr SecpRecoverableSig ->
+    Ptr Word8 ->
+    CInt ->
+    IO CInt
+
+foreign import ccall safe "secp256k1_recovery.h secp256k1_ecdsa_recover"
+  c_secp256k1_ecdsa_recover ::
+    Ptr SecpCtx ->
+    Ptr SecpPubKey ->
+    Ptr SecpRecoverableSig ->
+    Ptr Word8 ->
     IO CInt

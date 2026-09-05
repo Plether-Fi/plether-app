@@ -1,7 +1,16 @@
 import { concatHex, numberToHex, type Address, type Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import type { SponsoredOperation } from '../operationStore'
-import { PIMLICO_SINGLETON_PAYMASTER_V8 } from '../paymasterValidity'
+import {
+  createSponsorshipAuthority,
+  PLETHER_PAYMASTER_POLICY_ID,
+  PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
+  PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
+  PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
+  PIMLICO_SINGLETON_PAYMASTER_V8,
+  pletherSponsorshipValidUntil,
+  type PersistedSponsorshipAuthorityV1,
+} from '../paymasterValidity'
 import { persistManagedUserOperation } from '../persistedUserOperation'
 import {
   resolveProtocolOperation,
@@ -18,6 +27,10 @@ const ENTRY_POINT = '0x3333333333333333333333333333333333333333' as Address
 const HASH = `0x${'44'.repeat(32)}` as Hex
 const OTHER_HASH = `0x${'55'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'66'.repeat(32)}` as Hex
+const PLETHER_PAYMASTER_A =
+  '0x1234567890123456789012345678901234567890' as Address
+const PLETHER_PAYMASTER_B =
+  '0x9876543210987654321098765432109876543210' as Address
 
 function paymasterData(validUntil: bigint): Hex {
   return concatHex([
@@ -25,6 +38,17 @@ function paymasterData(validUntil: bigint): Hex {
     numberToHex(validUntil, { size: 6 }),
     numberToHex(0n, { size: 6 }),
     `0x${'11'.repeat(65)}`,
+  ])
+}
+
+function pletherPaymasterData(validUntil: bigint): Hex {
+  return concatHex([
+    numberToHex(validUntil, { size: 6 }),
+    numberToHex(validUntil - 300n, { size: 6 }),
+    numberToHex(1_000_000n, { size: 16 }),
+    PLETHER_PAYMASTER_POLICY_ID,
+    PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
+    `0x${'44'.repeat(65)}`,
   ])
 }
 
@@ -49,8 +73,24 @@ function signedOperation(input: {
   }
 }
 
+function pletherSignedOperation(input: {
+  paymaster?: Address
+  nonce?: bigint
+  validUntil?: bigint
+} = {}): ManagedUserOperation {
+  return {
+    ...signedOperation({ nonce: input.nonce }),
+    paymaster: input.paymaster ?? PLETHER_PAYMASTER_A,
+    paymasterData: pletherPaymasterData(input.validUntil ?? 1_000n),
+    paymasterVerificationGasLimit:
+      PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
+    paymasterPostOpGasLimit: PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
+  }
+}
+
 function operation(
-  signedUserOperation = signedOperation()
+  signedUserOperation = signedOperation(),
+  sponsorshipAuthority?: PersistedSponsorshipAuthorityV1
 ): SponsoredOperation {
   return {
     id: 'operation-1',
@@ -66,6 +106,7 @@ function operation(
     userOperationHash: HASH,
     signedUserOperation: persistManagedUserOperation(signedUserOperation),
     submissionMetadataVersion: 1,
+    ...(sponsorshipAuthority ? { sponsorshipAuthority } : {}),
     retryCount: 0,
     createdAt: 1,
     updatedAt: 1,
@@ -135,6 +176,107 @@ describe('resolveProtocolOperation', () => {
       runtime: managedRuntime,
       userOperationHash: HASH,
     })).resolves.toEqual({ status: 'expired' })
+  })
+
+  it(
+    'recovers a native-paymaster journal after rollback to a runtime without native sponsorship decoding',
+    async () => {
+      const signedUserOperation = pletherSignedOperation()
+      const managedRuntime = runtime(notLocatedSnapshot({
+        accountNonce: 7n,
+        blockTimestamp: 1_001n,
+      }))
+
+      await expect(resolveProtocolOperation({
+        operation: operation(
+          signedUserOperation,
+          createSponsorshipAuthority({
+            paymasterAddress: PLETHER_PAYMASTER_A,
+            validUntil: 1_000n,
+          })
+        ),
+        runtime: managedRuntime,
+        userOperationHash: HASH,
+      })).resolves.toEqual({ status: 'expired' })
+    }
+  )
+
+  it('uses the journal authority after a paymaster rotation', async () => {
+    const signedUserOperation = pletherSignedOperation({
+      paymaster: PLETHER_PAYMASTER_A,
+    })
+    const managedRuntime = runtime(notLocatedSnapshot({
+      accountNonce: 7n,
+      blockTimestamp: 1_001n,
+    }))
+    managedRuntime.sponsorshipValidUntil = vi.fn((candidate) =>
+      pletherSponsorshipValidUntil(PLETHER_PAYMASTER_B, candidate)
+    )
+
+    await expect(resolveProtocolOperation({
+      operation: operation(
+        signedUserOperation,
+        createSponsorshipAuthority({
+          paymasterAddress: PLETHER_PAYMASTER_A,
+          validUntil: 1_000n,
+        })
+      ),
+      runtime: managedRuntime,
+      userOperationHash: HASH,
+    })).resolves.toEqual({ status: 'expired' })
+    expect(managedRuntime.sponsorshipValidUntil).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      name: 'changed deadline',
+      authority: {
+        version: 1,
+        paymasterAddress: PLETHER_PAYMASTER_A,
+        validUntil: '999',
+      },
+    },
+    {
+      name: 'changed paymaster',
+      authority: {
+        version: 1,
+        paymasterAddress: PLETHER_PAYMASTER_B,
+        validUntil: '1000',
+      },
+    },
+    {
+      name: 'non-canonical deadline',
+      authority: {
+        version: 1,
+        paymasterAddress: PLETHER_PAYMASTER_A,
+        validUntil: '01000',
+      },
+    },
+    {
+      name: 'unknown authority version',
+      authority: {
+        version: 2,
+        paymasterAddress: PLETHER_PAYMASTER_A,
+        validUntil: '1000',
+      },
+    },
+  ])('fails closed for tampered native sponsorship authority: $name', async ({
+    authority,
+  }) => {
+    const managedRuntime = runtime(notLocatedSnapshot({
+      accountNonce: 7n,
+      blockTimestamp: 1_001n,
+    }))
+    const persistedOperation = {
+      ...operation(pletherSignedOperation()),
+      sponsorshipAuthority: authority,
+    } as SponsoredOperation
+
+    await expect(resolveProtocolOperation({
+      operation: persistedOperation,
+      runtime: managedRuntime,
+      userOperationHash: HASH,
+    })).resolves.toBeUndefined()
   })
 
   it('keeps the exact deadline and future sponsorship fail-closed', async () => {

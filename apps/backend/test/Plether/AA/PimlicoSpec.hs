@@ -449,6 +449,7 @@ testConfig =
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Just testAaConfig
     , cfgFaucetGuardConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

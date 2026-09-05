@@ -10,7 +10,10 @@ The connected MetaMask, Rabby, Trust Wallet, or other EOA remains the owner and 
 2. Resolve its deterministic smart-account address through your chosen account implementation.
 3. Build a `PerpsActionPlan` with the exported action builders.
 4. Pass adapters for the account, sponsor service, and bundler to `sendSponsoredAction`.
-5. Render `onStatus` values as one transaction flow: preparing, confirm in wallet, submitting, confirmed.
+5. Supply the exact manifest-derived `paymasterProfile` (including chain, EntryPoint, gas limits, and validity ceiling)
+   and a `journalSignedUserOperation` callback that durably
+   stores the signed operation and returns its locally computed EntryPoint v0.8 hash.
+6. Render `onStatus` values as one transaction flow: preparing, confirm in wallet, journaling, submitting, confirmed.
 
 The orchestrator enforces the v0.8 signing order:
 
@@ -19,7 +22,8 @@ The orchestrator enforces the v0.8 signing order:
 3. Apply the gas estimate.
 4. Request and apply final `pm_getPaymasterData`.
 5. Ask the owner wallet to sign the final UserOperation.
-6. Submit it to the bundler.
+6. Persist the exact signed operation and locally computed hash.
+7. Submit it to the bundler and reject a returned hash that differs from the journaled hash.
 
 Never replace paymaster data after the owner signs; that changes the EntryPoint UserOperation hash and invalidates the signature.
 The adapter may retain a dummy account signature in its internal operation for bundler estimation, but both ERC-7677
@@ -42,11 +46,21 @@ accountCodeHash(32) | signature(65)
 payloads must have the same fixed length so estimation runs the same validation
 path. `accountCodeHash` binds the sponsorship to the validated smart-account
 runtime, including an EIP-7702 delegation target or immutable account runtime.
-The backend must reject mutable proxy accounts: the proxy runtime code hash does
-not bind the implementation and is therefore insufficient authorization.
+For the initial Arbitrum Sepolia rollout, `accountCodeHash` is the pinned SimpleAccount proxy runtime hash.
+`validatePletherPaymasterEnvelope` checks the manifest-pinned paymaster, policy, code hash, gas limits, and ten-minute
+validity ceiling. For this explicit Arbitrum Sepolia-only UUPS exception, the paymaster binds the proxy runtime hash
+and the pinned factory/implementation addresses and runtime hashes. The API must separately recheck the proxy's
+ERC-1967 implementation slot, zero beacon slot, and factory-derived identity before stub issuance, final signing, and
+submission. An owner can still upgrade after signing and submit elsewhere; that residual risk is accepted on Sepolia
+only with short validity, low on-chain and database caps, and a small deposit. Mainnet requires an immutable or
+irreversibly upgrade-locked account implementation and a separate security review.
 The initial stub must supply both paymaster gas limits. A standards-compatible
 final response may return only `paymaster` and `paymasterData`; the orchestrator
 reuses the stub limits and rejects a final response that changes paymaster address.
+
+`hashPletherSponsorship` and `getPletherSponsorshipTypedData` implement the contract's exact EIP-712 domain and
+message. The package test pins the shared Solidity/TypeScript digest
+`0xd92042495de3ae32c76391a73aeb6bfaf515af2dd3da45c9a8921b5310cde1ea`.
 
 ## First USDC deposit
 

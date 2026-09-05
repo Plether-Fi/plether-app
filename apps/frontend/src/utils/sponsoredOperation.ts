@@ -28,6 +28,8 @@ export function sponsoredOperationStatusLabel(
       return 'Preparing sponsored transaction'
     case 'awaiting-signature':
       return 'Confirm in wallet'
+    case 'journaling':
+      return 'Saving recovery record'
     case 'submitting':
       return 'Submitting'
     case 'confirming':

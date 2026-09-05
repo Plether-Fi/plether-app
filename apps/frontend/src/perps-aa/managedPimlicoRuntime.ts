@@ -20,21 +20,30 @@ import {
   type WalletClient,
 } from 'viem'
 import {
+  createBundlerClient,
+  createPaymasterClient,
   getUserOperationHash,
+  type PaymasterActions,
   type UserOperationReceipt,
 } from 'viem/account-abstraction'
 import { arbitrumSepolia } from 'viem/chains'
-import type { PerpsAaDeploymentManifest } from './manifest'
+import {
+  bundlerRpcUrlForManifest,
+  isPerpsAaManifestV2 as isNativePaymasterManifest,
+  paymasterRpcUrlForManifest,
+  type PerpsAaDeploymentManifest,
+} from './manifest'
+import { knownSponsorshipValidUntil } from './paymasterValidity'
 import type {
   ManagedUserOperation,
   PerpsAaSmartAccountRuntime,
-  PimlicoUserOperationStatus,
-  PimlicoUserOperationStatusResult,
+  BundlerUserOperationStatus,
+  BundlerUserOperationStatusResult,
   SponsoredOperationRecoverySnapshot,
 } from './runtimeContext'
 import { UserOperationReceiptNotSafeError } from './runtimeContext'
 
-const PIMLICO_STATUSES = new Set<PimlicoUserOperationStatus>([
+const BUNDLER_STATUSES = new Set<BundlerUserOperationStatus>([
   'not_found',
   'not_submitted',
   'submitted',
@@ -51,16 +60,16 @@ const ENTRY_POINT_NONCE_ABI = parseAbi([
 const USER_OPERATION_EVENT = parseAbiItem(
   'event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)'
 )
-interface CreateManagedPimlicoRuntimeInput {
+interface CreateManagedAaRuntimeInput {
   manifest: PerpsAaDeploymentManifest
   ownerAddress: Address
   walletClient: WalletClient
   publicClient: PublicClient
 }
 
-function parseStatus(value: unknown): PimlicoUserOperationStatusResult {
+function parseStatus(value: unknown): BundlerUserOperationStatusResult {
   if (!value || typeof value !== 'object') {
-    throw new Error('Pimlico returned an invalid UserOperation status')
+    throw new Error('The bundler returned an invalid UserOperation status')
   }
   const result = value as {
     status?: unknown
@@ -68,9 +77,9 @@ function parseStatus(value: unknown): PimlicoUserOperationStatusResult {
   }
   if (
     typeof result.status !== 'string' ||
-    !PIMLICO_STATUSES.has(result.status as PimlicoUserOperationStatus)
+    !BUNDLER_STATUSES.has(result.status as BundlerUserOperationStatus)
   ) {
-    throw new Error('Pimlico returned an unknown UserOperation status')
+    throw new Error('The bundler returned an unknown UserOperation status')
   }
   if (
     result.transactionHash !== null &&
@@ -80,11 +89,97 @@ function parseStatus(value: unknown): PimlicoUserOperationStatusResult {
       size(result.transactionHash) !== 32
     )
   ) {
-    throw new Error('Pimlico returned an invalid transaction hash')
+    throw new Error('The bundler returned an invalid transaction hash')
   }
   return {
-    status: result.status as PimlicoUserOperationStatus,
+    status: result.status as BundlerUserOperationStatus,
     transactionHash: result.transactionHash,
+  }
+}
+
+function rpcQuantity(value: unknown, field: string): bigint {
+  if (typeof value === 'bigint' && value >= 0n && value <= maxUint256) {
+    return value
+  }
+  if (
+    typeof value === 'string' &&
+    /^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(value)
+  ) {
+    const parsed = hexToBigInt(value as Hex)
+    if (parsed <= maxUint256) return parsed
+  }
+  throw new Error(`The bundler returned an invalid ${field}`)
+}
+
+function parseFastUserOperationGasPrice(value: unknown): {
+  maxFeePerGas: bigint
+  maxPriorityFeePerGas: bigint
+} {
+  const result = value && typeof value === 'object'
+    ? value as { fast?: unknown }
+    : undefined
+  const fast = result?.fast && typeof result.fast === 'object'
+    ? result.fast as {
+        maxFeePerGas?: unknown
+        maxPriorityFeePerGas?: unknown
+      }
+    : undefined
+  return {
+    maxFeePerGas: rpcQuantity(
+      fast?.maxFeePerGas,
+      'fast maxFeePerGas'
+    ),
+    maxPriorityFeePerGas: rpcQuantity(
+      fast?.maxPriorityFeePerGas,
+      'fast maxPriorityFeePerGas'
+    ),
+  }
+}
+
+function requestAltoExtension(
+  client: unknown,
+  method: 'pimlico_getUserOperationGasPrice' | 'pimlico_getUserOperationStatus',
+  params: readonly unknown[]
+): Promise<unknown> {
+  return (client as {
+    request(request: {
+      method: string
+      params: readonly unknown[]
+    }): Promise<unknown>
+  }).request({ method, params })
+}
+
+function stripPaymasterRequestCredentials<T>(parameters: T): T {
+  const unsigned = {
+    ...(parameters as Record<string, unknown>),
+  }
+  // viem prepares an account stub signature before calling its paymaster
+  // hooks. Plether's ERC-7677 endpoint must never receive that owner-backed
+  // credential or the stub paymaster payload it is about to replace.
+  delete unsigned.signature
+  delete unsigned.paymaster
+  delete unsigned.paymasterData
+  return unsigned as T
+}
+
+export function createUnsignedPaymasterActions(
+  paymasterClient: {
+    getPaymasterStubData: PaymasterActions['getPaymasterStubData']
+    getPaymasterData: PaymasterActions['getPaymasterData']
+  }
+): {
+  getPaymasterStubData: PaymasterActions['getPaymasterStubData']
+  getPaymasterData: PaymasterActions['getPaymasterData']
+} {
+  return {
+    getPaymasterStubData: (parameters) =>
+      paymasterClient.getPaymasterStubData(
+        stripPaymasterRequestCredentials(parameters)
+      ),
+    getPaymasterData: (parameters) =>
+      paymasterClient.getPaymasterData(
+        stripPaymasterRequestCredentials(parameters)
+      ),
   }
 }
 
@@ -100,7 +195,7 @@ function assertReceipt(
     !isAddressEqual(receipt.entryPoint, expectedEntryPoint)
   ) {
     throw new Error(
-      'Alchemy returned a receipt for a different Trading Account operation'
+      'The bundler returned a receipt for a different Trading Account operation'
     )
   }
 }
@@ -108,8 +203,8 @@ function assertReceipt(
 function normalizeReceiptNonce(
   receipt: UserOperationReceipt<'0.8'>
 ): UserOperationReceipt<'0.8'> {
-  // Pimlico's JSON-RPC response currently leaves `nonce` as a quantity string
-  // at runtime even though permissionless/viem declares it as bigint.
+  // Some bundler JSON-RPC responses leave `nonce` as a quantity string at
+  // runtime even though permissionless/viem declares it as bigint.
   const nonce: unknown = receipt.nonce
   if (
     typeof nonce === 'bigint' &&
@@ -124,14 +219,14 @@ function normalizeReceiptNonce(
   ) {
     const normalizedNonce = hexToBigInt(nonce as Hex)
     if (normalizedNonce > maxUint256) {
-      throw new Error('Pimlico returned an invalid UserOperation receipt nonce')
+      throw new Error('The bundler returned an invalid UserOperation receipt nonce')
     }
     return {
       ...receipt,
       nonce: normalizedNonce,
     }
   }
-  throw new Error('Pimlico returned an invalid UserOperation receipt nonce')
+  throw new Error('The bundler returned an invalid UserOperation receipt nonce')
 }
 
 async function assertCanonicalSafeReceipt(input: {
@@ -159,7 +254,9 @@ async function assertCanonicalSafeReceipt(input: {
       input.receipt.receipt.transactionHash.toLowerCase() ||
     canonicalTransactionReceipt.status !== input.receipt.receipt.status
   ) {
-    throw new Error('Alchemy returned a noncanonical UserOperation transaction receipt')
+    throw new Error(
+      'The bundler returned a noncanonical UserOperation transaction receipt'
+    )
   }
 
   const events = await input.publicClient.getLogs({
@@ -191,7 +288,7 @@ async function assertCanonicalSafeReceipt(input: {
     event.args.success !== input.receipt.success
   ) {
     throw new Error(
-      'The canonical UserOperation event does not match Alchemy’s receipt'
+      'The canonical UserOperation event does not match the bundler receipt'
     )
   }
   if (input.receipt.receipt.blockNumber > safeBlockNumber) {
@@ -205,16 +302,16 @@ function isReceiptNotFoundError(error: unknown): boolean {
   return name === 'UserOperationReceiptNotFoundError'
 }
 
-export async function createManagedPimlicoRuntime({
+export async function createManagedAaRuntime({
   manifest,
   ownerAddress,
   walletClient,
   publicClient,
-}: CreateManagedPimlicoRuntimeInput): Promise<PerpsAaSmartAccountRuntime> {
+}: CreateManagedAaRuntimeInput): Promise<PerpsAaSmartAccountRuntime> {
   if (
     manifest.chainId !== arbitrumSepolia.id
   ) {
-    throw new Error('The manifest does not describe the supported Pimlico account stack')
+    throw new Error('The manifest does not describe the supported account stack')
   }
   if (
     publicClient.chain?.id !== manifest.chainId ||
@@ -242,26 +339,112 @@ export async function createManagedPimlicoRuntime({
     index: accountIndex,
     nonceKey: 0n,
   })
-  const pimlicoClient = createPimlicoClient({
-    chain: arbitrumSepolia,
-    entryPoint: {
-      address: manifest.entryPoint,
-      version: manifest.entryPointVersion,
-    },
-    transport: http(manifest.pimlicoRpcUrl),
-  })
-  const smartAccountClient = createSmartAccountClient({
-    account: smartAccount,
-    chain: arbitrumSepolia,
-    client: publicClient,
-    bundlerTransport: http(manifest.pimlicoRpcUrl),
-    paymaster: pimlicoClient,
-    paymasterContext: {},
-    userOperation: {
-      estimateFeesPerGas: async () =>
-        (await pimlicoClient.getUserOperationGasPrice()).fast,
-    },
-  })
+  const bundlerRpcUrl = bundlerRpcUrlForManifest(manifest)
+  const paymasterRpcUrl = paymasterRpcUrlForManifest(manifest)
+  let prepareUserOperation:
+    PerpsAaSmartAccountRuntime['smartAccount']['prepareUserOperation']
+  let sendUserOperation:
+    PerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
+  let getUserOperationStatus:
+    PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationStatus']
+  let getUserOperationReceipt:
+    PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationReceipt']
+
+  if (isNativePaymasterManifest(manifest)) {
+    const paymasterClient = createPaymasterClient({
+      transport: http(paymasterRpcUrl),
+    })
+    const unsignedPaymasterClient = createUnsignedPaymasterActions(
+      paymasterClient
+    )
+    // This client deliberately has no account. Sending a fully signed
+    // operation therefore forwards the exact journalled payload instead of
+    // preparing, re-sponsoring, or re-signing it a second time.
+    const bundlerClient = createBundlerClient({
+      chain: arbitrumSepolia,
+      transport: http(bundlerRpcUrl),
+    })
+    const smartAccountClient = createSmartAccountClient({
+      account: smartAccount,
+      chain: arbitrumSepolia,
+      client: publicClient,
+      bundlerTransport: http(bundlerRpcUrl),
+      paymaster: unsignedPaymasterClient,
+      paymasterContext: {},
+      userOperation: {
+        estimateFeesPerGas: async () => parseFastUserOperationGasPrice(
+          await requestAltoExtension(
+            bundlerClient,
+            'pimlico_getUserOperationGasPrice',
+            []
+          )
+        ),
+      },
+    })
+    prepareUserOperation = async ({ calls }) =>
+      await smartAccountClient.prepareUserOperation({
+        account: smartAccount,
+        calls: calls.map((call) => ({
+          to: call.to,
+          value: call.value,
+          data: call.data,
+        })),
+      }) as ManagedUserOperation
+    sendUserOperation = (operation) =>
+      bundlerClient.sendUserOperation({
+        ...operation,
+        entryPointAddress: manifest.entryPoint,
+      })
+    getUserOperationStatus = async (userOperationHash) =>
+      parseStatus(await requestAltoExtension(
+        bundlerClient,
+        'pimlico_getUserOperationStatus',
+        [userOperationHash]
+      ))
+    getUserOperationReceipt = (userOperationHash) =>
+      bundlerClient.getUserOperationReceipt({ hash: userOperationHash })
+  } else {
+    const pimlicoClient = createPimlicoClient({
+      chain: arbitrumSepolia,
+      entryPoint: {
+        address: manifest.entryPoint,
+        version: manifest.entryPointVersion,
+      },
+      transport: http(bundlerRpcUrl),
+    })
+    const smartAccountClient = createSmartAccountClient({
+      account: smartAccount,
+      chain: arbitrumSepolia,
+      client: publicClient,
+      bundlerTransport: http(bundlerRpcUrl),
+      paymaster: pimlicoClient,
+      paymasterContext: {},
+      userOperation: {
+        estimateFeesPerGas: async () =>
+          (await pimlicoClient.getUserOperationGasPrice()).fast,
+      },
+    })
+    prepareUserOperation = async ({ calls }) =>
+      await smartAccountClient.prepareUserOperation({
+        account: smartAccount,
+        calls: calls.map((call) => ({
+          to: call.to,
+          value: call.value,
+          data: call.data,
+        })),
+      }) as ManagedUserOperation
+    sendUserOperation = (operation) =>
+      pimlicoClient.sendUserOperation({
+        ...operation,
+        entryPointAddress: manifest.entryPoint,
+      })
+    getUserOperationStatus = async (userOperationHash) =>
+      parseStatus(await pimlicoClient.getUserOperationStatus({
+        hash: userOperationHash,
+      }))
+    getUserOperationReceipt = (userOperationHash) =>
+      pimlicoClient.getUserOperationReceipt({ hash: userOperationHash })
+  }
   const accountAddress = getAddress(smartAccount.address)
 
   return {
@@ -271,6 +454,13 @@ export async function createManagedPimlicoRuntime({
     accountVersion: manifest.smartAccountVersion,
     accountIndex: manifest.smartAccountIndex,
     manifestVersion: manifest.version,
+    sponsorshipValidUntil: (operation) =>
+      knownSponsorshipValidUntil(
+        operation,
+        isNativePaymasterManifest(manifest)
+          ? manifest.paymasterAddress
+          : undefined
+      ),
     verifyObservedInclusion: async (inclusion) => {
       try {
         const block = await publicClient.getBlock({
@@ -295,7 +485,7 @@ export async function createManagedPimlicoRuntime({
           args: [accountAddress, nonceKey],
           blockNumber: block.number,
         }),
-        pimlicoClient.getUserOperationReceipt({ hash: userOperationHash })
+        getUserOperationReceipt(userOperationHash)
           .then((receipt: UserOperationReceipt<'0.8'> | null) => receipt === null
             ? { kind: 'not-located' as const }
             : { kind: 'located' as const, receipt })
@@ -350,16 +540,8 @@ export async function createManagedPimlicoRuntime({
       accountAddress,
       entryPoint: getAddress(manifest.entryPoint),
 
-      prepareUserOperation: async ({ calls }) => {
-        const operation = await smartAccountClient.prepareUserOperation({
-          account: smartAccount,
-          calls: calls.map((call) => ({
-            to: call.to,
-            value: call.value,
-            data: call.data,
-          })),
-        })
-        return operation as ManagedUserOperation
+      prepareUserOperation: async ({ calls, action }) => {
+        return prepareUserOperation({ calls, action })
       },
 
       signUserOperation: async (operation) => ({
@@ -378,24 +560,13 @@ export async function createManagedPimlicoRuntime({
           userOperation: operation,
         }),
 
-      sendUserOperation: (operation) =>
-        pimlicoClient.sendUserOperation({
-          ...operation,
-          entryPointAddress: manifest.entryPoint,
-        }),
+      sendUserOperation,
 
-      getUserOperationStatus: async (userOperationHash) =>
-        parseStatus(
-          await pimlicoClient.getUserOperationStatus({
-            hash: userOperationHash,
-          })
-        ),
+      getUserOperationStatus,
 
       getUserOperationReceipt: async (userOperationHash) => {
         const receipt = normalizeReceiptNonce(
-          await pimlicoClient.getUserOperationReceipt({
-            hash: userOperationHash,
-          })
+          await getUserOperationReceipt(userOperationHash)
         )
         assertReceipt(
           receipt,
@@ -415,3 +586,6 @@ export async function createManagedPimlicoRuntime({
     },
   }
 }
+
+/** @deprecated Use createManagedAaRuntime for Pimlico/native provider support. */
+export const createManagedPimlicoRuntime = createManagedAaRuntime

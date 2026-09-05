@@ -280,9 +280,23 @@ variable "pimlico_sponsorship_policy_id" {
 }
 
 variable "aa_proxy_origin_token" {
-  type      = string
-  default   = ""
-  sensitive = true
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Shared Worker-to-API origin credential and pseudonymous AA HMAC key. When an AA gateway is configured, set this to the exact lowercase 64-hex-character output of a cryptographically secure 32-byte generator."
+
+  validation {
+    condition = var.aa_proxy_origin_token == "" || (
+      can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
+      && !contains([
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      ], var.aa_proxy_origin_token)
+    )
+    error_message = "aa_proxy_origin_token must be empty or a generated 64-character lowercase hexadecimal value that is not a known placeholder."
+  }
 }
 
 variable "provision_insights_registration" {
@@ -533,6 +547,427 @@ variable "aa_max_request_bytes" {
 variable "aa_sponsored_gas_alert_wei_per_hour" {
   type    = string
   default = "0"
+}
+
+variable "provision_self_hosted_aa" {
+  type        = bool
+  default     = false
+  description = "Provision the dormant Sepolia-only Alto, native verifying-paymaster signer, and reconciler resources. API wiring is activated separately."
+}
+
+variable "configure_native_aa_backend" {
+  type        = bool
+  default     = false
+  description = "Inject the complete native-AA recovery/submission configuration into the API. Keep false during Alto and paymaster bootstrap."
+}
+
+variable "enable_native_aa_sponsorship" {
+  type        = bool
+  default     = false
+  description = "Enable native Plether paymaster issuance. Keep false until Alto, the paymaster contract, KMS signer address, and durable database state are verified."
+}
+
+variable "enable_native_aa_submission" {
+  type        = bool
+  default     = false
+  description = "Allow already-signed native UserOperations to reach Alto after explicit activation. Keep true during an issuance pause so signed operations can drain."
+}
+
+variable "aa_native_canary_owners" {
+  type        = string
+  default     = ""
+  description = "Optional comma-separated smart-account owner allowlist for native-AA canary rollout. It must be nonempty whenever issuance is enabled; the reviewed Sepolia profile blocks global rollout."
+
+  validation {
+    condition = var.aa_native_canary_owners == "" || (
+      can(regex("^0x[0-9A-Fa-f]{40}(,0x[0-9A-Fa-f]{40})*$", var.aa_native_canary_owners))
+      && alltrue([
+        for owner in split(",", var.aa_native_canary_owners) :
+        lower(owner) != "0x0000000000000000000000000000000000000000"
+      ])
+    )
+    error_message = "aa_native_canary_owners must be empty or an exact, whitespace-free comma-separated list of nonzero 20-byte addresses."
+  }
+}
+
+variable "aa_native_global_rollout_enabled" {
+  type        = bool
+  default     = false
+  description = "Future backend capability for global native AA. The reviewed Sepolia Terraform guard currently requires this to remain false and requires explicit canary owners for issuance."
+}
+
+variable "alto_desired_count" {
+  type        = number
+  default     = 0
+  description = "Desired count for the single-active Alto service. Only 0 (bootstrap/paused) or 1 is permitted."
+
+  validation {
+    condition     = floor(var.alto_desired_count) == var.alto_desired_count && contains([0, 1], var.alto_desired_count)
+    error_message = "alto_desired_count must be either 0 or 1."
+  }
+}
+
+variable "alto_upstream_image" {
+  type        = string
+  default     = "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+  description = "Bootstrap Alto image. It is deliberately locked to the reviewed v1.2.7 linux/arm64 digest; deploy-alto.yml mirrors and deploys the same image from immutable ECR."
+
+  validation {
+    condition     = var.alto_upstream_image == "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+    error_message = "alto_upstream_image must remain pinned to the reviewed Alto v1.2.7 linux/arm64 digest; update the Terraform guard and deploy workflow together after qualification."
+  }
+}
+
+variable "alto_rpc_url_ssm_parameter_name" {
+  type        = string
+  default     = "/plether/sepolia/alto-rpc-url"
+  description = "Existing SecureString containing Alto's dedicated, write-capable HTTPS Arbitrum Sepolia RPC URL on port 443. v1.2.7 uses this URL for simulation deployment and utility-wallet refills even when a separate send-transaction URL is configured. Terraform references the parameter without reading its value into state."
+
+  validation {
+    condition = (
+      var.alto_rpc_url_ssm_parameter_name == trimspace(var.alto_rpc_url_ssm_parameter_name)
+      &&
+      can(regex("^/[A-Za-z0-9_./-]+$", trimspace(var.alto_rpc_url_ssm_parameter_name)))
+      && !strcontains(trimspace(var.alto_rpc_url_ssm_parameter_name), "//")
+    )
+    error_message = "alto_rpc_url_ssm_parameter_name must be an absolute SSM parameter name without whitespace, wildcards, or empty path segments."
+  }
+}
+
+variable "alto_send_transaction_rpc_url_ssm_parameter_name" {
+  type        = string
+  default     = ""
+  description = "Optional existing SecureString containing Alto's dedicated HTTPS bundle-submission RPC URL on port 443. Empty uses alto_rpc_url; setting it does not remove the write-capability requirement from alto_rpc_url."
+
+  validation {
+    condition = trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name) == "" || (
+      var.alto_send_transaction_rpc_url_ssm_parameter_name == trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name)
+      &&
+      can(regex("^/[A-Za-z0-9_./-]+$", trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name)))
+      && !strcontains(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "//")
+    )
+    error_message = "alto_send_transaction_rpc_url_ssm_parameter_name must be empty or an absolute SSM parameter name without whitespace, wildcards, or empty path segments."
+  }
+}
+
+variable "alto_executor_private_keys_ssm_parameter_name" {
+  type        = string
+  default     = "/plether/sepolia/alto-executor-private-keys"
+  description = "Existing SecureString containing exactly four comma-separated, dedicated Alto executor private keys."
+
+  validation {
+    condition = (
+      var.alto_executor_private_keys_ssm_parameter_name == trimspace(var.alto_executor_private_keys_ssm_parameter_name)
+      &&
+      can(regex("^/[A-Za-z0-9_./-]+$", trimspace(var.alto_executor_private_keys_ssm_parameter_name)))
+      && !strcontains(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "//")
+    )
+    error_message = "alto_executor_private_keys_ssm_parameter_name must be an absolute SSM parameter name without whitespace, wildcards, or empty path segments."
+  }
+}
+
+variable "alto_utility_private_key_ssm_parameter_name" {
+  type        = string
+  default     = "/plether/sepolia/alto-utility-private-key"
+  description = "Existing SecureString containing Alto's dedicated executor-refill utility private key."
+
+  validation {
+    condition = (
+      var.alto_utility_private_key_ssm_parameter_name == trimspace(var.alto_utility_private_key_ssm_parameter_name)
+      &&
+      can(regex("^/[A-Za-z0-9_./-]+$", trimspace(var.alto_utility_private_key_ssm_parameter_name)))
+      && !strcontains(trimspace(var.alto_utility_private_key_ssm_parameter_name), "//")
+    )
+    error_message = "alto_utility_private_key_ssm_parameter_name must be an absolute SSM parameter name without whitespace, wildcards, or empty path segments."
+  }
+}
+
+variable "alto_secrets_kms_key_arn" {
+  type        = string
+  default     = ""
+  description = "Optional customer-managed KMS key ARN encrypting the external Alto SecureStrings. Leave empty when they use the AWS-managed SSM key."
+
+  validation {
+    condition = trimspace(var.alto_secrets_kms_key_arn) == "" || can(regex(
+      "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$",
+      trimspace(var.alto_secrets_kms_key_arn)
+    ))
+    error_message = "alto_secrets_kms_key_arn must be empty or a KMS key ARN."
+  }
+}
+
+variable "alto_entrypoint_address" {
+  type        = string
+  default     = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
+  description = "ERC-4337 EntryPoint v0.8 used by the Sepolia AA stack."
+}
+
+variable "alto_entrypoint_simulation_contract_v8" {
+  type        = string
+  default     = ""
+  description = "Pinned Alto EntryPoint v0.8 simulation contract deployed during the one-time bootstrap. Required before Alto is scaled above zero."
+}
+
+variable "alto_pimlico_simulation_contract" {
+  type        = string
+  default     = ""
+  description = "Pinned Alto PimlicoSimulations contract deployed during the one-time bootstrap. Required before Alto is scaled above zero."
+}
+
+variable "alto_min_executor_balance_wei" {
+  type        = string
+  default     = "5000000000000000"
+  description = "Executor refill floor in wei. Re-size from measured all-in Arbitrum bundle cost before enabling the service."
+}
+
+variable "alto_max_gas_per_user_operation" {
+  type        = string
+  default     = "5000000"
+  description = "Maximum gas admitted by Alto for one UserOperation."
+}
+
+variable "alto_max_gas_per_bundle" {
+  type        = string
+  default     = "20000000"
+  description = "Maximum gas admitted by Alto for one bundle."
+}
+
+variable "alto_container_cpu" {
+  type        = number
+  default     = 1024
+  description = "CPU units reserved for the Alto Fargate task."
+}
+
+variable "alto_container_memory" {
+  type        = number
+  default     = 2048
+  description = "Memory in MiB reserved for the Alto Fargate task, including its FireLens sidecar."
+}
+
+variable "aa_reconciler_desired_count" {
+  type        = number
+  default     = 0
+  description = "Desired count for the single-active native-AA reconciler. Only 0 (bootstrap/paused) or 1 is permitted."
+
+  validation {
+    condition     = floor(var.aa_reconciler_desired_count) == var.aa_reconciler_desired_count && contains([0, 1], var.aa_reconciler_desired_count)
+    error_message = "aa_reconciler_desired_count must be either 0 or 1."
+  }
+}
+
+variable "aa_reconciler_start_block" {
+  type        = string
+  default     = ""
+  description = "Arbitrum Sepolia block that deployed the Plether paymaster. Required before the reconciler is scaled above zero."
+}
+
+variable "aa_reconciler_start_block_hash" {
+  type        = string
+  default     = ""
+  description = "Canonical Arbitrum Sepolia hash of aa_reconciler_start_block. Required before the reconciler is scaled above zero."
+
+  validation {
+    condition = (
+      var.aa_reconciler_start_block_hash == ""
+      || (
+        var.aa_reconciler_start_block_hash == trimspace(var.aa_reconciler_start_block_hash)
+        && can(regex("^0x[0-9a-f]{64}$", var.aa_reconciler_start_block_hash))
+        && var.aa_reconciler_start_block_hash != "0x0000000000000000000000000000000000000000000000000000000000000000"
+      )
+    )
+    error_message = "aa_reconciler_start_block_hash must be empty or a canonical lowercase nonzero 32-byte hash."
+  }
+}
+
+variable "aa_reconciler_poll_seconds" {
+  type        = string
+  default     = "5"
+  description = "Delay between native-AA reconciler scans."
+}
+
+variable "aa_reconciler_batch_blocks" {
+  type        = string
+  default     = "1000"
+  description = "Maximum EntryPoint log block range processed per native-AA reconciliation batch."
+}
+
+variable "aa_reconciler_max_safe_lag_seconds" {
+  type        = string
+  default     = "600"
+  description = "Maximum age of the independently agreed safe-chain head before the reconciler fails closed and pauses native issuance."
+
+  validation {
+    condition = try(
+      can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
+      && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
+      && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 3600,
+      false
+    )
+    error_message = "aa_reconciler_max_safe_lag_seconds must be a canonical decimal integer from 60 through 3600."
+  }
+}
+
+variable "aa_reconciler_secondary_rpc_url_ssm_parameter_name" {
+  type        = string
+  default     = "/plether/sepolia/aa-reconciler-secondary-rpc-url"
+  description = "Existing SecureString containing the reconciler's independent secondary Arbitrum Sepolia HTTPS RPC URL. Terraform references its exact ARN without reading the value into state."
+
+  validation {
+    condition = (
+      var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name)
+      && can(regex("^/[A-Za-z0-9_./-]+$", trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name)))
+      && !strcontains(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "//")
+    )
+    error_message = "aa_reconciler_secondary_rpc_url_ssm_parameter_name must be an absolute SSM parameter name without whitespace, wildcards, or empty path segments."
+  }
+}
+
+variable "aa_reconciler_secondary_rpc_url_kms_key_arn" {
+  type        = string
+  default     = ""
+  description = "Optional exact customer-managed KMS key ARN encrypting the external reconciler secondary-RPC SecureString. Leave empty only when the parameter uses the AWS-managed alias/aws/ssm key."
+
+  validation {
+    condition = (
+      var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
+      || (
+        var.aa_reconciler_secondary_rpc_url_kms_key_arn == trimspace(var.aa_reconciler_secondary_rpc_url_kms_key_arn)
+        && can(regex(
+          "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$",
+          var.aa_reconciler_secondary_rpc_url_kms_key_arn
+        ))
+      )
+    )
+    error_message = "aa_reconciler_secondary_rpc_url_kms_key_arn must be empty or an exact customer-managed KMS key ARN without surrounding whitespace."
+  }
+}
+
+variable "aa_paymaster_min_deposit_wei" {
+  type        = string
+  default     = "150000000000000000"
+  description = "Minimum EntryPoint deposit required by the AA reconciler before native sponsorship issuance remains unpaused. The default covers the global outstanding-liability cap plus a 0.05 ETH operating buffer."
+}
+
+variable "aa_reconciler_container_cpu" {
+  type        = number
+  default     = 256
+  description = "CPU units reserved for the native-AA reconciler Fargate task."
+}
+
+variable "aa_reconciler_container_memory" {
+  type        = number
+  default     = 512
+  description = "Memory in MiB reserved for the native-AA reconciler Fargate task, including its FireLens sidecar."
+}
+
+variable "aa_paymaster_address" {
+  type        = string
+  default     = ""
+  description = "Deployed Plether verifying-paymaster address. Required when native sponsorship is enabled."
+}
+
+variable "aa_paymaster_policy_id" {
+  type        = string
+  default     = "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3"
+  description = "Reviewed bytes32 policy identifier included in every native sponsorship authorization. The rollout guard pins this value."
+}
+
+variable "aa_paymaster_signer_address" {
+  type        = string
+  default     = ""
+  description = "Ethereum address derived from the Terraform-managed secp256k1 KMS public key. Required when native sponsorship is enabled."
+}
+
+variable "aa_paymaster_account_code_hash" {
+  type        = string
+  default     = "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9"
+  description = "Reviewed permissionless.js SimpleAccount proxy runtime-code hash accepted by the native sponsorship policy. The rollout guard pins this value."
+}
+
+variable "aa_paymaster_code_hash" {
+  type        = string
+  default     = ""
+  description = "Deployment-specific runtime-code hash of the reviewed verifying paymaster. Required before native AA backend configuration is enabled."
+
+  validation {
+    condition = (
+      var.aa_paymaster_code_hash == ""
+      || (
+        var.aa_paymaster_code_hash == trimspace(var.aa_paymaster_code_hash)
+        && can(regex("^0x[0-9a-f]{64}$", var.aa_paymaster_code_hash))
+        && var.aa_paymaster_code_hash != "0x0000000000000000000000000000000000000000000000000000000000000000"
+      )
+    )
+    error_message = "aa_paymaster_code_hash must be empty or a canonical lowercase nonzero 32-byte runtime hash."
+  }
+}
+
+variable "aa_paymaster_validity_seconds" {
+  type        = string
+  default     = "300"
+  description = "Requested paymaster-signature lifetime. Must be at most 570 seconds because the backend backdates validAfter by 30 seconds within the paymaster's 600-second onchain window."
+
+  validation {
+    condition = try(
+      can(regex("^[1-9][0-9]*$", var.aa_paymaster_validity_seconds))
+      && tonumber(var.aa_paymaster_validity_seconds) >= 1
+      && tonumber(var.aa_paymaster_validity_seconds) <= 570,
+      false
+    )
+    error_message = "aa_paymaster_validity_seconds must be a canonical decimal integer from 1 through 570."
+  }
+}
+
+variable "aa_paymaster_verification_gas_limit" {
+  type    = string
+  default = "100000"
+}
+
+variable "aa_paymaster_post_op_gas_limit" {
+  type    = string
+  default = "0"
+}
+
+variable "aa_paymaster_max_cost_wei" {
+  type    = string
+  default = "10000000000000000"
+}
+
+variable "aa_paymaster_account_outstanding_wei" {
+  type    = string
+  default = "20000000000000000"
+}
+
+variable "aa_paymaster_client_outstanding_wei" {
+  type        = string
+  default     = "20000000000000000"
+  description = "Maximum total outstanding native sponsorship liability for one pseudonymous client key."
+}
+
+variable "aa_paymaster_global_outstanding_wei" {
+  type    = string
+  default = "100000000000000000"
+}
+
+variable "aa_paymaster_account_hourly_wei" {
+  type    = string
+  default = "30000000000000000"
+}
+
+variable "aa_paymaster_global_hourly_wei" {
+  type    = string
+  default = "100000000000000000"
+}
+
+variable "aa_paymaster_global_daily_wei" {
+  type    = string
+  default = "250000000000000000"
+}
+
+variable "aa_paymaster_final_rate_limit_per_minute" {
+  type        = string
+  default     = "6"
+  description = "Durable per-client rate limit for final paymaster-data issuance, evaluated before reservation and KMS signing."
 }
 
 variable "alb_certificate_arn" {

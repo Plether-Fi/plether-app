@@ -1184,6 +1184,7 @@ rollupConfig =
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

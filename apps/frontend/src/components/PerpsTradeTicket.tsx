@@ -1981,23 +1981,27 @@ export function PerpsTradeTicket({
     [normalizedAccountAddress, sponsoredOperations]
   )
   const commitPendingTitle =
-    commitExecutionStatus === 'submitting'
-      ? 'Submitting sponsored transaction'
-      : commitExecutionStatus === 'confirming'
-        ? 'Waiting for on-chain confirmation'
-        : commitExecutionStatus === 'confirmed'
-          ? 'Transaction confirmed'
-          : 'Waiting for wallet confirmation'
+    commitExecutionStatus === 'journaling'
+      ? 'Saving signed transaction'
+      : commitExecutionStatus === 'submitting'
+        ? 'Submitting sponsored transaction'
+        : commitExecutionStatus === 'confirming'
+          ? 'Waiting for on-chain confirmation'
+          : commitExecutionStatus === 'confirmed'
+            ? 'Transaction confirmed'
+            : 'Waiting for wallet confirmation'
   const commitPendingDescription =
-    commitExecutionStatus === 'submitting'
-      ? 'Your wallet approved the sponsored UserOperation. Plether is submitting it to the network.'
-      : commitExecutionStatus === 'confirming'
-        ? 'Your wallet approved the sponsored UserOperation and it was submitted. Plether is waiting for on-chain confirmation.'
-        : commitExecutionStatus === 'confirmed'
-          ? 'The sponsored UserOperation is confirmed on-chain. Plether is loading the committed order.'
-          : isSponsoredAccountConfigured
-            ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
-            : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
+    commitExecutionStatus === 'journaling'
+      ? 'Your wallet approved the sponsored UserOperation. Plether is saving its recovery record before submission.'
+      : commitExecutionStatus === 'submitting'
+        ? 'Your wallet approved the sponsored UserOperation. Plether is submitting it to the network.'
+        : commitExecutionStatus === 'confirming'
+          ? 'Your wallet approved the sponsored UserOperation and it was submitted. Plether is waiting for on-chain confirmation.'
+          : commitExecutionStatus === 'confirmed'
+            ? 'The sponsored UserOperation is confirmed on-chain. Plether is loading the committed order.'
+            : isSponsoredAccountConfigured
+              ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
+              : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
 
   useEffect(() => {
     onAccountRefreshRef.current = onAccountRefresh

@@ -1,4 +1,5 @@
 name: Deploy Backend
+run-name: Backend / ${{ inputs.environment }} / scope=${{ inputs.deployment_scope }} / bootstrap=${{ inputs.bootstrap }} / ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -32,10 +33,129 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  BACKEND_ADMIN_ENVIRONMENT: backend-admin-sepolia
   TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
+  sepolia_environment_preflight:
+    name: Require pre-provisioned protected Sepolia backend environment
+    if: ${{ inputs.environment == 'sepolia' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+
+    steps:
+      - name: Verify protected environment and master-only policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::Sepolia backend deployments must be dispatched from master."
+            exit 1
+          fi
+
+          environment_file="$RUNNER_TEMP/backend-admin-environment.json"
+          branch_policy_file="$RUNNER_TEMP/backend-admin-branch-policies.json"
+          if ! gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT" \
+              > "$environment_file"; then
+            echo "::error title=Backend environment unavailable::Provision and protect $BACKEND_ADMIN_ENVIRONMENT before dispatching a Sepolia backend deployment."
+            exit 1
+          fi
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+
+          if ! jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+              '.name == $name
+               and .can_admins_bypass == false
+               and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+               and .deployment_branch_policy.custom_branch_policies == true' \
+              "$environment_file" >/dev/null \
+              || ! jq --exit-status \
+                '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+                "$branch_policy_file" >/dev/null; then
+            echo "::error title=Unsafe backend environment::$BACKEND_ADMIN_ENVIRONMENT must disable administrator bypass, require an independent reviewer, and allow exactly the master branch."
+            exit 1
+          fi
+
+  sepolia_environment_gate:
+    name: Approve protected Sepolia backend mutation
+    needs: sepolia_environment_preflight
+    if: ${{ always() && inputs.environment == 'sepolia' && needs.sepolia_environment_preflight.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: backend-admin-sepolia
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+    outputs:
+      expected_aws_account_id: ${{ steps.account_boundary.outputs.expected_aws_account_id }}
+
+    steps:
+      - name: Revalidate protected environment after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          environment_file="$RUNNER_TEMP/backend-admin-environment-recheck.json"
+          branch_policy_file="$RUNNER_TEMP/backend-admin-branch-policies-recheck.json"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT" \
+            > "$environment_file"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$BACKEND_ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+          jq --exit-status --arg name "$BACKEND_ADMIN_ENVIRONMENT" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
+          [ "$GITHUB_REF" = "refs/heads/master" ]
+
+      - name: Load protected Sepolia AWS account boundary
+        id: account_boundary
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.EXPECTED_AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
+            echo "::error title=Missing AWS account boundary::Set EXPECTED_AWS_ACCOUNT_ID to the exact 12-digit deployment account in the protected backend-admin-sepolia environment."
+            exit 1
+          fi
+          echo "expected_aws_account_id=$EXPECTED_AWS_ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+
   pyth-config-preflight:
+    needs:
+      - sepolia_environment_preflight
+      - sepolia_environment_gate
+    if: >-
+      ${{ always() &&
+          (inputs.environment != 'sepolia' ||
+           (needs.sepolia_environment_preflight.result == 'success' &&
+            needs.sepolia_environment_gate.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:
@@ -50,6 +170,286 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: plether-${{ github.run_id }}
+
+      - name: Verify Sepolia AWS account boundary
+        if: inputs.environment == 'sepolia'
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+        run: |
+          set -euo pipefail
+
+          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            exit 1
+          fi
+
+      - name: Validate reconciler secondary RPC encryption boundary
+        if: inputs.environment == 'sepolia' && inputs.bootstrap != true
+        env:
+          AWS_MAX_ATTEMPTS: '3'
+          AWS_PAGER: ''
+          AWS_RETRY_MODE: standard
+        run: |
+          set -euo pipefail
+          umask 077
+
+          identity_file="$RUNNER_TEMP/reconciler-rpc-identity.json"
+          aws sts get-caller-identity --output json --no-cli-pager > "$identity_file"
+          account_id=$(jq -er '.Account | select(test("^[0-9]{12}$"))' "$identity_file")
+          identity_arn=$(jq -er '.Arn' "$identity_file")
+          partition=$(cut -d: -f1-2 <<< "$identity_arn")
+          if [[ ! "$partition" =~ ^arn:(aws|aws-us-gov|aws-cn)$ ]]; then
+            echo "::error title=Unsupported AWS partition::Could not derive a recognized partition from the caller identity."
+            exit 1
+          fi
+
+          parameter_refs=()
+          execution_roles=()
+          api_uses_secondary_rpc=false
+          reconciler_exists=false
+
+          inspect_consumer() {
+            local family=$1
+            local container=$2
+            local requires_secret=$3
+            local definition_file="$RUNNER_TEMP/reconciler-rpc-${container}.json"
+            local error_file="$RUNNER_TEMP/reconciler-rpc-${container}.error"
+
+            if ! aws ecs describe-task-definition \
+                --task-definition "$family" \
+                --query taskDefinition \
+                --output json \
+                --no-cli-pager > "$definition_file" 2> "$error_file"; then
+              if grep -Fq 'Unable to describe task definition' "$error_file"; then
+                return 0
+              fi
+              sed 's/^/AWS ECS error: /' "$error_file" >&2
+              return 1
+            fi
+
+            if ! jq --exit-status --arg family "$family" --arg container "$container" \
+                '.family == $family
+                 and .status == "ACTIVE"
+                 and ([.containerDefinitions[] | select(.name == $container)] | length) == 1
+                 and (.executionRoleArn | type == "string" and length > 0)' \
+                "$definition_file" >/dev/null; then
+              echo "::error title=Secondary RPC consumer drift::${family}/${container} is not an exact ACTIVE task-definition consumer."
+              return 1
+            fi
+
+            if [ "$container" = "plether-aa-reconciler" ]; then
+              reconciler_exists=true
+            fi
+            local secret_count
+            secret_count=$(jq --arg container "$container" \
+              '[.containerDefinitions[]
+                | select(.name == $container)
+                | (.secrets // [])[]
+                | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")] | length' \
+              "$definition_file")
+            if [ "$requires_secret" = true ] && [ "$secret_count" -ne 1 ]; then
+              echo "::error title=Secondary RPC secret missing::${family}/${container} must contain exactly one AA_RECONCILER_SECONDARY_RPC_URL reference."
+              return 1
+            fi
+            if [ "$secret_count" -eq 0 ]; then
+              return 0
+            fi
+            if [ "$secret_count" -ne 1 ]; then
+              echo "::error title=Secondary RPC secret ambiguous::${family}/${container} contains duplicate AA_RECONCILER_SECONDARY_RPC_URL references."
+              return 1
+            fi
+
+            if [ "$container" = "plether-api" ]; then
+              api_uses_secondary_rpc=true
+            fi
+            parameter_refs+=("$(jq -er --arg container "$container" \
+              '.containerDefinitions[]
+               | select(.name == $container)
+               | .secrets[]
+               | select(.name == "AA_RECONCILER_SECONDARY_RPC_URL")
+               | .valueFrom' "$definition_file")")
+            execution_roles+=("$(jq -er '.executionRoleArn' "$definition_file")")
+          }
+
+          inspect_consumer plether-sepolia plether-api false
+          inspect_consumer plether-sepolia-aa-reconciler plether-aa-reconciler true
+
+          if [ "$api_uses_secondary_rpc" = true ] && [ "$reconciler_exists" != true ]; then
+            echo "::error title=Incomplete native AA topology::The API consumes the secondary RPC but the reconciler task definition is missing."
+            exit 1
+          fi
+          if [ "${#parameter_refs[@]}" -eq 0 ]; then
+            echo "No deployed Sepolia API/reconciler task currently consumes the external secondary RPC; skipping its metadata gate."
+            exit 0
+          fi
+
+          mapfile -t unique_refs < <(printf '%s\n' "${parameter_refs[@]}" | sort -u)
+          if [ "${#unique_refs[@]}" -ne 1 ]; then
+            echo "::error title=Secondary RPC reference mismatch::Every deployed consumer must use the same exact external SSM parameter ARN."
+            exit 1
+          fi
+          parameter_ref=${unique_refs[0]}
+          parameter_prefix="$partition:ssm:$AWS_REGION:$account_id:parameter"
+          if [[ "$parameter_ref" != "$parameter_prefix/plether/sepolia/"* ]]; then
+            echo "::error title=Unsafe secondary RPC reference::The external parameter must be an exact same-account, same-region ARN under /plether/sepolia/."
+            exit 1
+          fi
+          parameter_name=${parameter_ref#"$parameter_prefix"}
+          if [[ ! "$parameter_name" =~ ^/plether/sepolia/[A-Za-z0-9_./-]+$ ]] \
+              || [[ "$parameter_name" == *//* ]]; then
+            echo "::error title=Unsafe secondary RPC name::The external parameter name contains unsupported characters or an empty path segment."
+            exit 1
+          fi
+
+          parameter_file="$RUNNER_TEMP/reconciler-rpc-parameter.json"
+          aws ssm describe-parameters \
+            --parameter-filters "Key=Name,Option=Equals,Values=$parameter_name" \
+            --output json \
+            --no-cli-pager > "$parameter_file"
+          if ! jq --exit-status --arg name "$parameter_name" \
+              '(.Parameters | length) == 1
+               and .Parameters[0].Name == $name
+               and .Parameters[0].Type == "SecureString"
+               and (.Parameters[0].KeyId | type == "string" and length > 0)' \
+              "$parameter_file" >/dev/null; then
+            echo "::error title=Unsafe secondary RPC parameter::The exact external SSM parameter must exist once as a SecureString with explicit key metadata."
+            exit 1
+          fi
+
+          parameter_key_id=$(jq -er '.Parameters[0].KeyId' "$parameter_file")
+          key_file="$RUNNER_TEMP/reconciler-rpc-kms-key.json"
+          managed_key_file="$RUNNER_TEMP/reconciler-rpc-managed-kms-key.json"
+          aws kms describe-key \
+            --key-id "$parameter_key_id" \
+            --output json \
+            --no-cli-pager > "$key_file"
+          aws kms describe-key \
+            --key-id alias/aws/ssm \
+            --output json \
+            --no-cli-pager > "$managed_key_file"
+          if ! jq --exit-status \
+              '.KeyMetadata.Enabled == true
+               and .KeyMetadata.KeyState == "Enabled"
+               and .KeyMetadata.KeyUsage == "ENCRYPT_DECRYPT"
+               and .KeyMetadata.CustomerMasterKeySpec == "SYMMETRIC_DEFAULT"' \
+              "$key_file" >/dev/null; then
+            echo "::error title=Unsafe secondary RPC key::The parameter KMS key must be an enabled symmetric encryption key."
+            exit 1
+          fi
+          key_arn=$(jq -er '.KeyMetadata.Arn' "$key_file")
+          managed_key_arn=$(jq -er '.KeyMetadata.Arn' "$managed_key_file")
+          if [ "$key_arn" = "$managed_key_arn" ]; then
+            key_mode=aws-managed
+            if ! jq --exit-status '.KeyMetadata.KeyManager == "AWS"' "$key_file" >/dev/null; then
+              echo "::error title=Unsafe secondary RPC key::alias/aws/ssm did not resolve to an AWS-managed key."
+              exit 1
+            fi
+          else
+            key_mode=customer-managed
+            if ! jq --exit-status '.KeyMetadata.KeyManager == "CUSTOMER"' "$key_file" >/dev/null; then
+              echo "::error title=Unsafe secondary RPC key::A non-default parameter key must be customer-managed."
+              exit 1
+            fi
+            if [[ "$key_arn" != "$partition:kms:$AWS_REGION:$account_id:key/"* ]]; then
+              echo "::error title=Unsafe secondary RPC key::The customer-managed key must belong to the exact deployment account and region."
+              exit 1
+            fi
+          fi
+
+          mapfile -t unique_roles < <(printf '%s\n' "${execution_roles[@]}" | sort -u)
+          for role_arn in "${unique_roles[@]}"; do
+            role_name=${role_arn##*/}
+            case "$role_name" in
+              plether-sepolia-api-execution|plether-sepolia-aa-reconciler-execution) ;;
+              *)
+                echo "::error title=Unsafe secondary RPC role::A deployed consumer uses an unexpected ECS execution role."
+                exit 1
+                ;;
+            esac
+            if [ "$role_arn" != "$partition:iam::$account_id:role/$role_name" ]; then
+              echo "::error title=Unsafe secondary RPC role::The execution role must belong to the exact deployment account and partition."
+              exit 1
+            fi
+
+            policies_file="$RUNNER_TEMP/reconciler-rpc-${role_name}-policies.json"
+            aws iam list-role-policies \
+              --role-name "$role_name" \
+              --output json \
+              --no-cli-pager > "$policies_file"
+
+            secret_policy_file="$RUNNER_TEMP/reconciler-rpc-${role_name}-secret-policy.json"
+            aws iam get-role-policy \
+              --role-name "$role_name" \
+              --policy-name exact-ssm-secret-access \
+              --output json \
+              --no-cli-pager > "$secret_policy_file"
+            if ! jq --exit-status \
+                --arg parameter "$parameter_ref" \
+                --arg parameter_prefix "$parameter_prefix/" \
+                '
+                def array: if type == "array" then . else [.] end;
+                .PolicyDocument.Version == "2012-10-17"
+                and (.PolicyDocument.Statement | length) == 1
+                and .PolicyDocument.Statement[0].Effect == "Allow"
+                and (.PolicyDocument.Statement[0].Action | array | sort)
+                    == (["ssm:GetParameter", "ssm:GetParameters"] | sort)
+                and ((.PolicyDocument.Statement[0].Resource | array | index($parameter)) != null)
+                and all((.PolicyDocument.Statement[0].Resource | array)[];
+                        startswith($parameter_prefix)
+                        and (test("[?*]") | not))
+                and (.PolicyDocument.Statement[0] | has("Condition") | not)
+                ' "$secret_policy_file" >/dev/null; then
+              echo "::error title=Unsafe secondary RPC secret policy::Every consumer execution role must read the exact parameter through a wildcard-free same-account SSM policy."
+              exit 1
+            fi
+
+            if [ "$key_mode" = aws-managed ]; then
+              if ! jq --exit-status \
+                  '.PolicyNames == ["exact-ssm-secret-access"]' \
+                  "$policies_file" >/dev/null; then
+                echo "::error title=Unexpected secondary RPC decrypt policy::AWS-managed alias/aws/ssm requires no execution-role KMS grant."
+                exit 1
+              fi
+              continue
+            fi
+
+            if ! jq --exit-status \
+                '(.PolicyNames | sort) == (["aa-reconciler-secondary-rpc-kms-decrypt", "exact-ssm-secret-access"] | sort)' \
+                "$policies_file" >/dev/null; then
+              echo "::error title=Missing exact secondary RPC decrypt policy::A customer-managed parameter key requires only the reviewed exact execution-role grant."
+              exit 1
+            fi
+            decrypt_policy_file="$RUNNER_TEMP/reconciler-rpc-${role_name}-decrypt-policy.json"
+            aws iam get-role-policy \
+              --role-name "$role_name" \
+              --policy-name aa-reconciler-secondary-rpc-kms-decrypt \
+              --output json \
+              --no-cli-pager > "$decrypt_policy_file"
+            if ! jq --exit-status \
+                --arg key "$key_arn" \
+                --arg parameter "$parameter_ref" \
+                --arg via "ssm.$AWS_REGION.amazonaws.com" \
+                '.PolicyDocument.Version == "2012-10-17"
+                 and (.PolicyDocument.Statement | length) == 1
+                 and .PolicyDocument.Statement[0] == {
+                   "Sid":"DecryptExactReconcilerSecondaryRpcParameter",
+                   "Effect":"Allow",
+                   "Action":["kms:Decrypt"],
+                   "Resource":$key,
+                   "Condition":{"StringEquals":{
+                     "kms:ViaService":$via,
+                     "kms:EncryptionContext:PARAMETER_ARN":$parameter
+                   }}
+                 }' "$decrypt_policy_file" >/dev/null; then
+              echo "::error title=Unsafe secondary RPC decrypt policy::The execution role KMS grant must bind the exact key, SSM service, and parameter encryption context."
+              exit 1
+            fi
+          done
+
+          echo "The secondary RPC SecureString and ${key_mode} KMS boundary match every deployed API/reconciler consumer."
 
       - name: Validate deployed Pyth configuration
         env:
@@ -354,6 +754,14 @@ jobs:
           fi
 
   lp-settlement-config-preflight:
+    needs:
+      - sepolia_environment_preflight
+      - sepolia_environment_gate
+    if: >-
+      ${{ always() &&
+          (inputs.environment != 'sepolia' ||
+           (needs.sepolia_environment_preflight.result == 'success' &&
+            needs.sepolia_environment_gate.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:
@@ -368,6 +776,21 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: plether-${{ github.run_id }}
+
+      - name: Verify Sepolia AWS account boundary
+        if: inputs.environment == 'sepolia'
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+        run: |
+          set -euo pipefail
+
+          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            exit 1
+          fi
 
       - name: Validate deployed LP settlement topology
         env:
@@ -579,7 +1002,18 @@ jobs:
           echo "LP settlement ECS configuration is valid in ${detected_mode} mode for ${TARGET_ENV}"
 
   build:
-    needs: [pyth-config-preflight, lp-settlement-config-preflight]
+    needs:
+      - sepolia_environment_preflight
+      - sepolia_environment_gate
+      - pyth-config-preflight
+      - lp-settlement-config-preflight
+    if: >-
+      ${{ always() &&
+          needs['pyth-config-preflight'].result == 'success' &&
+          needs['lp-settlement-config-preflight'].result == 'success' &&
+          (inputs.environment != 'sepolia' ||
+           (needs.sepolia_environment_preflight.result == 'success' &&
+            needs.sepolia_environment_gate.result == 'success')) }}
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -589,7 +1023,7 @@ jobs:
       log_router_image: ${{ steps.images.outputs.log_router_image }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -599,12 +1033,27 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: plether-${{ github.run_id }}
 
+      - name: Verify Sepolia AWS account boundary
+        if: inputs.environment == 'sepolia'
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
+        run: |
+          set -euo pipefail
+
+          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            exit 1
+          fi
+
       - name: Login to ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Resolve backend image tags
         id: images
@@ -626,7 +1075,7 @@ jobs:
           echo "log_router_image_latest=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
 
       - name: Build and push application image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: apps/backend/Dockerfile
@@ -639,7 +1088,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=plether-backend-linux-arm64,ignore-error=true
 
       - name: Build and push log router image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: apps/backend/otel-log-router/Dockerfile
@@ -652,8 +1101,17 @@ jobs:
           cache-to: type=gha,mode=max,scope=plether-otel-log-router-linux-arm64,ignore-error=true
 
   deploy:
-    needs: build
-    if: ${{ inputs.bootstrap != true }}
+    needs:
+      - sepolia_environment_preflight
+      - sepolia_environment_gate
+      - build
+    if: >-
+      ${{ always() &&
+          inputs.bootstrap != true &&
+          needs.build.result == 'success' &&
+          (inputs.environment != 'sepolia' ||
+           (needs.sepolia_environment_preflight.result == 'success' &&
+            needs.sepolia_environment_gate.result == 'success')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -662,7 +1120,7 @@ jobs:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]')) }}
+        include: ${{ fromJson((inputs.deployment_scope == 'api') && format('[{{"environment":"{0}","task_suffix":"","service_name":"plether-api","container_name":"plether-api"}}]', inputs.environment) || ((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-aa-reconciler","service_name":"plether-aa-reconciler","container_name":"plether-aa-reconciler"}]')) }}
 
     steps:
       - name: Configure AWS credentials
@@ -673,16 +1131,220 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: plether-${{ github.run_id }}
 
-      - name: Get current task definition
-        id: task-definition-status
+      - name: Verify Sepolia AWS account boundary
+        if: inputs.environment == 'sepolia'
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ needs.sepolia_environment_gate.outputs.expected_aws_account_id }}
         run: |
-          if aws ecs describe-task-definition \
-              --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
-              --query taskDefinition > task-def.json; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
+          set -euo pipefail
+
+          actual_account_id=$(aws sts get-caller-identity --query Account --output text --no-cli-pager)
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$actual_account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong Sepolia AWS target::The configured credentials and region do not match the protected Sepolia deployment boundary."
+            exit 1
+          fi
+
+      - name: Get current task definition and service
+        id: task-definition-status
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
+          ECS_SERVICE: ${{ matrix.service_name }}
+          TASK_FAMILY: plether-${{ matrix.environment }}${{ matrix.task_suffix }}
+          TASK_SUFFIX: ${{ matrix.task_suffix }}
+        run: |
+          set -euo pipefail
+
+          task_definition_error="$RUNNER_TEMP/task-definition-${ECS_SERVICE}.error"
+          if ! aws ecs describe-task-definition \
+              --task-definition "$TASK_FAMILY" \
+              --query taskDefinition \
+              --output json \
+              --no-cli-pager \
+              > task-def.json 2> "$task_definition_error"; then
+            if ! grep -Fq 'Unable to describe task definition' "$task_definition_error"; then
+              sed 's/^/AWS ECS task-definition error: /' "$task_definition_error" >&2
+              exit 1
+            fi
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
+            echo "::warning::Skipping ${ECS_SERVICE} until Terraform creates its task definition and service"
+            exit 0
+          fi
+
+          service_file="$RUNNER_TEMP/service-${ECS_SERVICE}.json"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --output json \
+            --no-cli-pager > "$service_file"
+
+          if jq -e \
+              --arg service "$ECS_SERVICE" \
+              '.failures == []
+               and (.services | length) == 1
+               and .services[0].serviceName == $service
+               and .services[0].status == "ACTIVE"' \
+              "$service_file" >/dev/null; then
+            if [ "$TASK_SUFFIX" = "-aa-reconciler" ] && ! jq -e \
+                '.services[0]
+                 | .launchType == "FARGATE"
+                   and .platformVersion == "1.4.0"
+                   and (.desiredCount == 0 or .desiredCount == 1)
+                   and .runningCount == .desiredCount
+                   and .pendingCount == 0
+                   and .deploymentConfiguration.minimumHealthyPercent == 0
+                   and .deploymentConfiguration.maximumPercent == 100
+                   and .deploymentConfiguration.deploymentCircuitBreaker.enable == true
+                   and .deploymentConfiguration.deploymentCircuitBreaker.rollback == true
+                   and (.networkConfiguration.awsvpcConfiguration.subnets | type == "array" and length > 0)
+                   and (.networkConfiguration.awsvpcConfiguration.securityGroups | type == "array" and length > 0)
+                   and .networkConfiguration.awsvpcConfiguration.assignPublicIp == "ENABLED"
+                   and ([.deployments[] | select(.status == "PRIMARY")] | length) == 1
+                   and ([.deployments[] | select(.status != "PRIMARY")] | length) == 0' \
+                "$service_file" >/dev/null; then
+              echo "::error title=AA reconciler deployment preflight failed::The reconciler must be a stable single-active Fargate service on its reviewed public-IP awsvpc network, with circuit-breaker rollback and stop-before-start deployment (0/100)."
+              exit 1
+            fi
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "desired_count=$(jq -r '.services[0].desiredCount' "$service_file")" >> "$GITHUB_OUTPUT"
+          elif jq -e \
+              '(.services | length) == 0
+               and (.failures | length) == 1
+               and .failures[0].reason == "MISSING"' \
+              "$service_file" >/dev/null; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping ${ECS_SERVICE} until Terraform creates its task definition and service"
+          else
+            echo "::error title=ECS deployment preflight failed::${ECS_SERVICE} did not resolve to exactly one ACTIVE ECS service."
+            jq '{services: [.services[]? | {serviceName, status}], failures}' "$service_file" >&2
+            exit 1
+          fi
+
+      - name: Validate AA reconciler task topology
+        if: matrix.task_suffix == '-aa-reconciler' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          RECONCILER_DESIRED_COUNT: ${{ steps.task-definition-status.outputs.desired_count }}
+          RECONCILER_CONTAINER: ${{ matrix.container_name }}
+          TASK_FAMILY: plether-${{ matrix.environment }}${{ matrix.task_suffix }}
+        run: |
+          set -euo pipefail
+
+          if ! jq -e \
+              --arg family "$TASK_FAMILY" \
+              --arg reconciler "$RECONCILER_CONTAINER" \
+              --arg desired_count "$RECONCILER_DESIRED_COUNT" \
+              '
+              def container($name): [.containerDefinitions[] | select(.name == $name)];
+              def envmap($container):
+                ($container.environment // [])
+                | map({key: .name, value: .value})
+                | from_entries;
+              def canonical_positive_decimal:
+                type == "string" and test("^[1-9][0-9]*$");
+              def canonical_nonzero_hash:
+                type == "string"
+                and test("^0x[0-9a-f]{64}$")
+                and . != "0x0000000000000000000000000000000000000000000000000000000000000000";
+              def canonical_nonzero_address:
+                type == "string"
+                and test("^0x[0-9A-Fa-f]{40}$")
+                and ascii_downcase != "0x0000000000000000000000000000000000000000";
+              .family == $family
+              and .status == "ACTIVE"
+              and .networkMode == "awsvpc"
+              and (.requiresCompatibilities | index("FARGATE") != null)
+              and .runtimePlatform.cpuArchitecture == "ARM64"
+              and .runtimePlatform.operatingSystemFamily == "LINUX"
+              and (.executionRoleArn | endswith(":role/plether-sepolia-aa-reconciler-execution"))
+              and (.taskRoleArn | endswith(":role/plether-sepolia-aa-reconciler-task"))
+              and (.containerDefinitions | length) == 3
+              and (container($reconciler) | length) == 1
+              and (container("aa-reconciler-tmp-init") | length) == 1
+              and (container("otel-log-router") | length) == 1
+              and ((.volumes // []) | map(.name)) == ["aa-reconciler-tmp"]
+              and (
+                (container($reconciler)[0]) as $main
+                | (container("aa-reconciler-tmp-init")[0]) as $tmp
+                | (container("otel-log-router")[0]) as $router
+                | $main.essential == true
+                  and $main.readonlyRootFilesystem == true
+                  and $main.user == "65534:65534"
+                  and $main.command == ["/usr/local/bin/plether-aa-reconciler"]
+                  and $main.linuxParameters.initProcessEnabled == true
+                  and (($main.linuxParameters.capabilities.drop // []) == ["ALL"])
+                  and (($main.portMappings // []) | length) == 0
+                  and (($main.mountPoints // []) == [{"sourceVolume":"aa-reconciler-tmp","containerPath":"/tmp","readOnly":false}])
+                  and (($main.dependsOn // []) | sort_by([.containerName, .condition]))
+                      == ([
+                            {"containerName":"aa-reconciler-tmp-init","condition":"SUCCESS"},
+                            {"containerName":"otel-log-router","condition":"START"}
+                          ] | sort_by([.containerName, .condition]))
+                  and (($main.secrets // []) | map(.name) | sort)
+                      == (["AA_RECONCILER_SECONDARY_RPC_URL", "DATABASE_URL", "PERPS_RPC_URL"] | sort)
+                  and all(($main.secrets // [])[]; ((.valueFrom // "") | length) > 0)
+                  and (($main.environment // []) | map(.name) | sort)
+                      == ([
+                            "AA_PAYMASTER_ADDRESS",
+                            "AA_PAYMASTER_CODE_HASH",
+                            "AA_PAYMASTER_MIN_DEPOSIT_WEI",
+                            "AA_RECONCILER_BATCH_BLOCKS",
+                            "AA_RECONCILER_MAX_SAFE_LAG_SECONDS",
+                            "AA_RECONCILER_POLL_SECONDS",
+                            "AA_RECONCILER_START_BLOCK",
+                            "AA_RECONCILER_START_BLOCK_HASH",
+                            "HOME",
+                            "PERPS_CHAIN_ID",
+                            "TMPDIR"
+                          ] | sort)
+                  and (
+                    envmap($main) as $environment
+                    | $environment.HOME == "/tmp"
+                      and $environment.TMPDIR == "/tmp"
+                      and $environment.PERPS_CHAIN_ID == "421614"
+                      and (
+                        if $desired_count == "1" then
+                          ($environment.AA_PAYMASTER_ADDRESS | canonical_nonzero_address)
+                          and ($environment.AA_PAYMASTER_CODE_HASH | canonical_nonzero_hash)
+                          and ($environment.AA_RECONCILER_START_BLOCK | canonical_positive_decimal)
+                          and ($environment.AA_RECONCILER_START_BLOCK_HASH | canonical_nonzero_hash)
+                        elif $desired_count == "0" then
+                          (([
+                              $environment.AA_PAYMASTER_ADDRESS,
+                              $environment.AA_PAYMASTER_CODE_HASH,
+                              $environment.AA_RECONCILER_START_BLOCK,
+                              $environment.AA_RECONCILER_START_BLOCK_HASH
+                            ] | all(. == ""))
+                           or
+                           (($environment.AA_PAYMASTER_ADDRESS | canonical_nonzero_address)
+                            and ($environment.AA_PAYMASTER_CODE_HASH | canonical_nonzero_hash)
+                            and ($environment.AA_RECONCILER_START_BLOCK | canonical_positive_decimal)
+                            and ($environment.AA_RECONCILER_START_BLOCK_HASH | canonical_nonzero_hash)))
+                        else false
+                        end
+                      )
+                      and ($environment.AA_RECONCILER_POLL_SECONDS | canonical_positive_decimal and (tonumber <= 60))
+                      and ($environment.AA_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= 10000))
+                      and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 3600))
+                      and ($environment.AA_PAYMASTER_MIN_DEPOSIT_WEI | canonical_positive_decimal)
+                  )
+                  and $tmp.essential == false
+                  and $tmp.readonlyRootFilesystem == true
+                  and $tmp.user == "0:0"
+                  and $tmp.entryPoint == ["/bin/sh", "-c"]
+                  and $tmp.command == ["chmod 1777 /tmp"]
+                  and $tmp.linuxParameters.initProcessEnabled == true
+                  and (($tmp.linuxParameters.capabilities.drop // []) == ["ALL"])
+                  and (($tmp.mountPoints // []) == [{"sourceVolume":"aa-reconciler-tmp","containerPath":"/tmp","readOnly":false}])
+                  and (($tmp.secrets // []) | length) == 0
+                  and (($tmp.environment // []) | length) == 0
+                  and $tmp.image == $main.image
+                  and $router.essential == true
+                  and $router.firelensConfiguration.type == "fluentbit"
+              )' \
+              task-def.json >/dev/null; then
+            echo "::error title=AA reconciler task-definition preflight failed::Apply the reviewed Sepolia reconciler Terraform topology before deploying its image. A stopped bootstrap definition may leave all four paymaster deployment-anchor values empty; a running definition, or a configured stopped definition, must provide the complete canonical anchor."
+            exit 1
           fi
 
       - name: Validate Sepolia faucet guard configuration
@@ -880,7 +1542,9 @@ jobs:
         if: steps.task-definition-status.outputs.exists == 'true'
         env:
           APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
+          RECONCILER_CONTAINER: ${{ matrix.container_name }}
           SERVICE_VERSION: ${{ github.sha }}
+          TASK_SUFFIX: ${{ matrix.task_suffix }}
         run: |
           jq \
             --arg applicationImage "$APPLICATION_IMAGE" \
@@ -902,10 +1566,21 @@ jobs:
             ' task-def.json > task-def.updated.json
           mv task-def.updated.json task-def.json
 
+          if [ "$TASK_SUFFIX" = "-aa-reconciler" ] && ! jq -e \
+              --arg application_image "$APPLICATION_IMAGE" \
+              --arg reconciler "$RECONCILER_CONTAINER" \
+              '[.containerDefinitions[]
+                | select(.name == $reconciler or .name == "aa-reconciler-tmp-init")
+                | select(.image == $application_image)] | length == 2' \
+              task-def.json >/dev/null; then
+            echo "::error title=AA reconciler image rendering failed::Both the reconciler and its scratch-volume init container must use the newly built application image."
+            exit 1
+          fi
+
       - name: Update log router image
         if: steps.task-definition-status.outputs.exists == 'true'
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        uses: aws-actions/amazon-ecs-render-task-definition@138c24f321fdbdf7edee4a685519d253cae2cdea # v1
         with:
           task-definition: task-def.json
           container-name: otel-log-router
@@ -937,7 +1612,7 @@ jobs:
 
       - name: Deploy to ECS
         if: steps.task-definition-status.outputs.exists == 'true'
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@c465972ecbd160473f22e683363b422a5412a3de # v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ matrix.service_name }}

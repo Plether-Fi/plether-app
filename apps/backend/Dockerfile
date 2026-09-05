@@ -29,8 +29,10 @@ COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY config/perps/arbitrum-sepolia-v2.json config/perps/arbitrum-sepolia-v2.json
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
+RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
+    cp "$(cabal list-bin plether-aa-reconciler)" /build/plether-aa-reconciler-bin && \
+    cp "$(cabal list-bin plether-aa-admin)" /build/plether-aa-admin-bin && \
     cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
     cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin && \
     cp "$(cabal list-bin plether-liquidation-worker)" /build/plether-liquidation-worker-bin && \
@@ -54,6 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
+COPY --from=builder /build/plether-aa-reconciler-bin /usr/local/bin/plether-aa-reconciler
+COPY --from=builder /build/plether-aa-admin-bin /usr/local/bin/plether-aa-admin
 COPY --from=builder /build/plether-basket-worker-bin /usr/local/bin/plether-basket-worker
 COPY --from=builder /build/plether-keeper-bin /usr/local/bin/plether-keeper
 COPY --from=builder /build/plether-liquidation-worker-bin /usr/local/bin/plether-liquidation-worker

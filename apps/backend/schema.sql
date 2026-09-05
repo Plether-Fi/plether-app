@@ -2582,3 +2582,287 @@ CREATE INDEX IF NOT EXISTS idx_vault_request_events_controller
     ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id DESC);
 CREATE INDEX IF NOT EXISTS idx_vault_request_events_owner
     ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, owner_address, request_id DESC);
+
+-- BEGIN NATIVE AA SPONSORSHIP
+CREATE TABLE IF NOT EXISTS aa_sponsorship_authorizations (
+    request_key VARCHAR(66) NOT NULL,
+    digest VARCHAR(66) PRIMARY KEY,
+    expected_user_operation_hash VARCHAR(66) UNIQUE,
+    user_operation_hash VARCHAR(66) UNIQUE,
+    sender VARCHAR(42) NOT NULL,
+    owner VARCHAR(42) NOT NULL,
+    nonce NUMERIC(78,0) NOT NULL,
+    valid_after BIGINT NOT NULL,
+    valid_until BIGINT NOT NULL,
+    max_cost_wei NUMERIC(78,0) NOT NULL,
+    client_key VARCHAR(66) NOT NULL,
+    operation JSONB NOT NULL,
+    signature VARCHAR(132),
+    state VARCHAR(16) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    signed_at TIMESTAMPTZ,
+    submitted_at TIMESTAMPTZ,
+    settled_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (request_key ~ '^0x[0-9a-f]{64}$'),
+    CHECK (digest ~ '^0x[0-9a-f]{64}$'),
+    CHECK (expected_user_operation_hash IS NULL OR expected_user_operation_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (user_operation_hash IS NULL OR user_operation_hash = expected_user_operation_hash),
+    CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+    CHECK (owner ~ '^0x[0-9a-f]{40}$'),
+    CHECK (nonce >= 0 AND max_cost_wei > 0),
+    CHECK (valid_after >= 0 AND valid_until > valid_after),
+    CHECK (signature IS NULL OR signature ~ '^0x[0-9a-f]{130}$'),
+    CHECK (state IN ('reserved','signed','submitted','settled','expired','cancelled')),
+    CHECK ((state = 'reserved' AND signature IS NULL) OR state <> 'reserved')
+);
+
+-- Upgrade the pre-native development shape before creating the active-only
+-- idempotency key.  Keep this sequence aligned with
+-- Plether.Database.AaSponsorship.ensureAaSponsorshipSchema.
+ALTER TABLE aa_sponsorship_authorizations
+    ADD COLUMN IF NOT EXISTS request_key VARCHAR(66);
+UPDATE aa_sponsorship_authorizations
+   SET request_key = digest
+ WHERE request_key IS NULL;
+ALTER TABLE aa_sponsorship_authorizations
+    ALTER COLUMN request_key SET NOT NULL,
+    ALTER COLUMN expected_user_operation_hash DROP NOT NULL;
+ALTER TABLE aa_sponsorship_authorizations
+    DROP CONSTRAINT IF EXISTS aa_sponsorship_authorizations_request_key_key;
+DROP INDEX IF EXISTS idx_aa_sponsorship_request_key;
+
+CREATE INDEX IF NOT EXISTS idx_aa_sponsorship_sender_state
+    ON aa_sponsorship_authorizations(sender, state);
+CREATE INDEX IF NOT EXISTS idx_aa_sponsorship_client_state
+    ON aa_sponsorship_authorizations(client_key, state);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aa_sponsorship_active_request_key
+    ON aa_sponsorship_authorizations(request_key)
+    WHERE state IN ('reserved', 'signed', 'submitted');
+CREATE INDEX IF NOT EXISTS idx_aa_sponsorship_submitted
+    ON aa_sponsorship_authorizations(state, submitted_at);
+
+CREATE TABLE IF NOT EXISTS aa_sponsorship_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    digest VARCHAR(66) NOT NULL REFERENCES aa_sponsorship_authorizations(digest),
+    entry_type VARCHAR(16) NOT NULL,
+    amount_wei NUMERIC(78,0) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (digest, entry_type),
+    CHECK (entry_type IN ('reserve','release','actual_charge')),
+    CHECK (amount_wei >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS aa_user_operation_events (
+    user_operation_hash VARCHAR(66) PRIMARY KEY,
+    digest VARCHAR(66) NOT NULL REFERENCES aa_sponsorship_authorizations(digest),
+    transaction_hash VARCHAR(66) NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    success BOOLEAN NOT NULL,
+    actual_gas_cost_wei NUMERIC(78,0) NOT NULL,
+    event_json JSONB NOT NULL,
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finalized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (actual_gas_cost_wei >= 0),
+    CHECK (block_number >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_aa_user_operation_events_finalized_at
+    ON aa_user_operation_events(finalized_at);
+CREATE INDEX IF NOT EXISTS idx_aa_user_operation_events_digest
+    ON aa_user_operation_events(digest);
+
+CREATE TABLE IF NOT EXISTS aa_reconciler_cursor (
+    chain_id BIGINT NOT NULL,
+    paymaster VARCHAR(42) NOT NULL,
+    safe_block BIGINT NOT NULL,
+    safe_block_hash VARCHAR(66) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, paymaster),
+    CHECK (safe_block >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS aa_reconciler_health (
+    chain_id BIGINT NOT NULL,
+    paymaster VARCHAR(42) NOT NULL,
+    safe_block BIGINT NOT NULL,
+    safe_block_hash VARCHAR(66) NOT NULL,
+    last_success_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, paymaster),
+    CHECK (safe_block >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS aa_recovery_operations (
+    user_operation_hash VARCHAR(66) PRIMARY KEY,
+    client_key VARCHAR(66) NOT NULL,
+    provider VARCHAR(16) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    CHECK (provider IN ('pimlico','alto'))
+);
+CREATE INDEX IF NOT EXISTS idx_aa_recovery_expiry
+    ON aa_recovery_operations(expires_at);
+
+CREATE TABLE IF NOT EXISTS aa_rate_windows (
+    scope VARCHAR(24) NOT NULL,
+    client_key VARCHAR(66) NOT NULL,
+    account_key VARCHAR(66) NOT NULL,
+    window_start TIMESTAMPTZ NOT NULL,
+    request_count INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (scope, client_key, account_key, window_start),
+    CHECK (client_key ~ '^0x[0-9a-f]{64}$'),
+    CHECK (account_key ~ '^0x[0-9a-f]{64}$'),
+    CHECK (request_count > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_aa_rate_window_expiry
+    ON aa_rate_windows(window_start);
+
+CREATE TABLE IF NOT EXISTS aa_sponsorship_control (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    issuance_paused BOOLEAN NOT NULL DEFAULT TRUE,
+    paused_reason TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (issuance_paused OR paused_reason IS NULL),
+    CONSTRAINT aa_sponsorship_control_reason_consistent CHECK (
+        (issuance_paused AND paused_reason IS NOT NULL AND length(btrim(paused_reason)) BETWEEN 1 AND 512)
+        OR (NOT issuance_paused AND paused_reason IS NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS aa_sponsorship_control_events (
+    id BIGSERIAL PRIMARY KEY,
+    action VARCHAR(16) NOT NULL,
+    reason TEXT NOT NULL,
+    operator_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (action IN ('pause', 'resume')),
+    CHECK (length(reason) BETWEEN 1 AND 512),
+    CHECK (operator_note IS NULL OR length(operator_note) BETWEEN 1 AND 512)
+);
+
+-- Named, validated composite constraints are used by runtime startup
+-- fingerprinting.  They also harden a same-named table created by the older
+-- development schema, whose anonymous checks cannot be safely identified.
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_sponsorship_authorizations'::regclass AND conname = 'aa_authorization_invariants_ck') THEN
+        ALTER TABLE aa_sponsorship_authorizations ADD CONSTRAINT aa_authorization_invariants_ck CHECK (
+            request_key ~ '^0x[0-9a-f]{64}$' AND digest ~ '^0x[0-9a-f]{64}$'
+            AND (expected_user_operation_hash IS NULL OR expected_user_operation_hash ~ '^0x[0-9a-f]{64}$')
+            AND (user_operation_hash IS NULL OR user_operation_hash = expected_user_operation_hash)
+            AND sender ~ '^0x[0-9a-f]{40}$' AND owner ~ '^0x[0-9a-f]{40}$'
+            AND nonce >= 0 AND max_cost_wei > 0 AND valid_after >= 0 AND valid_until > valid_after
+            AND (signature IS NULL OR signature ~ '^0x[0-9a-f]{130}$')
+            AND state IN ('reserved','signed','submitted','settled','expired','cancelled')
+            AND ((state = 'reserved' AND signature IS NULL) OR state <> 'reserved'));
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_sponsorship_ledger'::regclass AND conname = 'aa_ledger_invariants_ck') THEN
+        ALTER TABLE aa_sponsorship_ledger ADD CONSTRAINT aa_ledger_invariants_ck CHECK (
+            entry_type IN ('reserve','release','actual_charge') AND amount_wei >= 0);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_user_operation_events'::regclass AND conname = 'aa_event_invariants_ck') THEN
+        ALTER TABLE aa_user_operation_events ADD CONSTRAINT aa_event_invariants_ck CHECK (
+            actual_gas_cost_wei >= 0 AND block_number >= 0);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_reconciler_cursor'::regclass AND conname = 'aa_cursor_invariants_ck') THEN
+        ALTER TABLE aa_reconciler_cursor ADD CONSTRAINT aa_cursor_invariants_ck CHECK (safe_block >= 0);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_reconciler_health'::regclass AND conname = 'aa_health_invariants_ck') THEN
+        ALTER TABLE aa_reconciler_health ADD CONSTRAINT aa_health_invariants_ck CHECK (safe_block >= 0);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_recovery_operations'::regclass AND conname = 'aa_recovery_invariants_ck') THEN
+        ALTER TABLE aa_recovery_operations ADD CONSTRAINT aa_recovery_invariants_ck CHECK (
+            provider IN ('pimlico','alto') AND expires_at > created_at);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_rate_windows'::regclass AND conname = 'aa_rate_invariants_ck') THEN
+        ALTER TABLE aa_rate_windows ADD CONSTRAINT aa_rate_invariants_ck CHECK (
+            client_key ~ '^0x[0-9a-f]{64}$' AND account_key ~ '^0x[0-9a-f]{64}$' AND request_count > 0);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_sponsorship_control'::regclass AND conname = 'aa_control_singleton_ck') THEN
+        ALTER TABLE aa_sponsorship_control ADD CONSTRAINT aa_control_singleton_ck CHECK (singleton);
+    END IF;
+END
+$aa_schema$;
+
+DO $aa_schema$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'aa_sponsorship_control_events'::regclass AND conname = 'aa_control_event_invariants_ck') THEN
+        ALTER TABLE aa_sponsorship_control_events ADD CONSTRAINT aa_control_event_invariants_ck CHECK (
+            action IN ('pause','resume') AND length(reason) BETWEEN 1 AND 512
+            AND (operator_note IS NULL OR length(operator_note) BETWEEN 1 AND 512));
+    END IF;
+END
+$aa_schema$;
+
+ALTER TABLE aa_sponsorship_control
+    ALTER COLUMN issuance_paused SET DEFAULT TRUE;
+
+WITH repaired AS (
+    UPDATE aa_sponsorship_control
+       SET issuance_paused = TRUE,
+           paused_reason = 'uninitialized or control row recreated',
+           updated_at = clock_timestamp()
+     WHERE singleton = TRUE
+       AND issuance_paused
+       AND (paused_reason IS NULL OR length(btrim(paused_reason)) = 0)
+    RETURNING singleton
+)
+INSERT INTO aa_sponsorship_control_events (action, reason, operator_note)
+SELECT 'pause', 'uninitialized or control row recreated',
+       'automatic repair of an invalid paused control row'
+FROM repaired;
+
+ALTER TABLE aa_sponsorship_control
+    DROP CONSTRAINT IF EXISTS aa_sponsorship_control_reason_consistent,
+    ADD CONSTRAINT aa_sponsorship_control_reason_consistent CHECK (
+        (issuance_paused AND paused_reason IS NOT NULL AND length(btrim(paused_reason)) BETWEEN 1 AND 512)
+        OR (NOT issuance_paused AND paused_reason IS NULL)
+    );
+
+WITH inserted AS (
+    INSERT INTO aa_sponsorship_control (singleton, issuance_paused, paused_reason)
+    VALUES (TRUE, TRUE, 'uninitialized or control row recreated')
+    ON CONFLICT DO NOTHING
+    RETURNING singleton
+)
+INSERT INTO aa_sponsorship_control_events (action, reason, operator_note)
+SELECT 'pause', 'uninitialized or control row recreated',
+       'automatic fail-closed control row bootstrap'
+FROM inserted;
+-- END NATIVE AA SPONSORSHIP

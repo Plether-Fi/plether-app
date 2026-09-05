@@ -33,6 +33,7 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
+import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc)
 import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
@@ -165,8 +166,8 @@ instance FromJSON TestnetFaucetRequest where
         acceptsAsync = confirmationMode == Just (Aeson.String "async")
     pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
   middleware $ corsMiddleware cfg
 
   case mPool of
@@ -247,7 +248,10 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
               Nothing -> handleError $ E.invalidAddress "address is required"
 
   post "/api/aa/pimlico" $
-    handlePimlicoProxy pimlicoProxyState cfg perpsClient manager
+    handlePimlicoProxy pimlicoProxyState cfg perpsClient manager mPool
+
+  post "/api/aa/rpc" $
+    handleNativeAaRpc nativeGatewayState cfg mPool perpsClient manager
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool

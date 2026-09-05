@@ -3,6 +3,8 @@ module Plether.Config
   , AaConfig (..)
   , FaucetGuardConfig (..)
   , LpSettlementMode (..)
+  , NativeAaConfig (..)
+  , NativeAaSafetyInput (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , Addresses (..)
@@ -28,6 +30,11 @@ module Plether.Config
   , validatePerpsCandleModeCombination
   , validateInsightsCompetitionActivation
   , validateFaucetGuardConfig
+  , validateNativeAaPresence
+  , validateNativeAaSafety
+  , validAaOriginSecret
+  , validAaDeploymentAddresses
+  , normalizeExternalSecurityRpcUrl
   ) where
 
 import qualified Plether.Perps.Manifest as Manifest
@@ -36,6 +43,7 @@ import Data.Char (isHexDigit)
 import Data.List (intercalate, nub, sortBy)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Ord (Down (..), comparing)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -105,6 +113,7 @@ data Config = Config
   , cfgRegistrationConfig :: Maybe RegistrationConfig
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetGuardConfig :: Maybe FaucetGuardConfig
+  , cfgNativeAaConfig :: Maybe NativeAaConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
@@ -234,6 +243,89 @@ instance Show FaucetGuardConfig where
       <> show (fgcClientRequestsPerHour cfg)
       <> ", fgcGlobalRequestsPerHour = "
       <> show (fgcGlobalRequestsPerHour cfg)
+      <> "}"
+
+-- | Configuration for the self-hosted ERC-4337 bundler and Plether
+-- verifying-paymaster policy service.  This deliberately remains separate
+-- from 'AaConfig' so the legacy Pimlico recovery route can be kept online
+-- during a native sponsorship rollout without coupling either provider's
+-- availability or credentials to the other.
+data NativeAaConfig = NativeAaConfig
+  { naaProxyOriginToken :: Text
+  , naaAltoRpcUrl :: Text
+  , naaSecurityRpcUrl :: Text
+  , naaPaymasterAddress :: Text
+  , naaPaymasterCodeHash :: Text
+  , naaPolicyId :: Text
+  , naaSignerAddress :: Text
+  , naaKmsKeyId :: Text
+  , naaAccountCodeHash :: Text
+  , naaSponsorshipEnabled :: Bool
+  , naaSubmissionEnabled :: Bool
+  , naaIpRateLimitPerMinute :: Int
+  , naaFinalRateLimitPerMinute :: Int
+  , naaAccountRateLimitPerMinute :: Int
+  , naaMaxRequestBytes :: Int
+  , naaValiditySeconds :: Integer
+  , naaVerificationGasLimit :: Integer
+  , naaPostOpGasLimit :: Integer
+  , naaMaxCostWei :: Integer
+  , naaAccountOutstandingWei :: Integer
+  , naaClientOutstandingWei :: Integer
+  , naaGlobalOutstandingWei :: Integer
+  , naaAccountHourlyWei :: Integer
+  , naaGlobalHourlyWei :: Integer
+  , naaGlobalDailyWei :: Integer
+  , naaCanaryOwners :: [Text]
+  , naaGlobalRolloutEnabled :: Bool
+  }
+
+-- | Security-sensitive values whose relationships must be validated as one
+-- unit before native sponsorship can be enabled.  Keeping this validator pure
+-- makes the environment loader and its regression tests share the exact same
+-- fail-closed boundary.
+data NativeAaSafetyInput = NativeAaSafetyInput
+  { nasiOriginToken :: Text
+  , nasiSponsorshipEnabled :: Bool
+  , nasiSubmissionEnabled :: Bool
+  , nasiGlobalRolloutEnabled :: Bool
+  , nasiCanaryOwners :: [Text]
+  , nasiValiditySeconds :: Integer
+  , nasiPaymasterCodeHash :: Text
+  , nasiPolicyId :: Text
+  , nasiAccountCodeHash :: Text
+  , nasiMaxCostWei :: Integer
+  , nasiAccountOutstandingWei :: Integer
+  , nasiClientOutstandingWei :: Integer
+  , nasiGlobalOutstandingWei :: Integer
+  , nasiAccountHourlyWei :: Integer
+  , nasiGlobalHourlyWei :: Integer
+  , nasiGlobalDailyWei :: Integer
+  }
+
+instance Show NativeAaConfig where
+  show cfg =
+    "NativeAaConfig {naaProxyOriginToken = <redacted>, naaAltoRpcUrl = "
+      <> show (naaAltoRpcUrl cfg)
+      <> ", naaSecurityRpcUrl = <redacted>"
+      <> ", naaPaymasterAddress = "
+      <> show (naaPaymasterAddress cfg)
+      <> ", naaPaymasterCodeHash = "
+      <> show (naaPaymasterCodeHash cfg)
+      <> ", naaPolicyId = "
+      <> show (naaPolicyId cfg)
+      <> ", naaSignerAddress = "
+      <> show (naaSignerAddress cfg)
+      <> ", naaKmsKeyId = <redacted>, naaAccountCodeHash = "
+      <> show (naaAccountCodeHash cfg)
+      <> ", naaSponsorshipEnabled = "
+      <> show (naaSponsorshipEnabled cfg)
+      <> ", naaSubmissionEnabled = "
+      <> show (naaSubmissionEnabled cfg)
+      <> ", naaCanaryOwners = "
+      <> show (naaCanaryOwners cfg)
+      <> ", naaGlobalRolloutEnabled = "
+      <> show (naaGlobalRolloutEnabled cfg)
       <> "}"
 
 data Addresses = Addresses
@@ -557,6 +649,29 @@ loadConfig = do
       aaAccountRateLimitStr <- fromMaybe "30" <$> lookupEnv "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE"
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
       aaSponsoredGasAlertWeiStr <- fromMaybe "0" <$> lookupEnv "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR"
+      nativeAaEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SPONSORSHIP_ENABLED"
+      nativeAaSubmissionEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SUBMISSION_ENABLED"
+      nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
+      mAltoRpcUrl <- firstEnv ["AA_ALTO_RPC_URL"]
+      mNativeSecurityRpcUrl <- firstEnv ["AA_RECONCILER_SECONDARY_RPC_URL"]
+      mPaymasterAddress <- firstEnv ["AA_PAYMASTER_ADDRESS"]
+      mPaymasterCodeHash <- firstEnv ["AA_PAYMASTER_CODE_HASH"]
+      mNativePolicyId <- firstEnv ["AA_PAYMASTER_POLICY_ID"]
+      mPaymasterSignerAddress <- firstEnv ["AA_PAYMASTER_SIGNER_ADDRESS"]
+      mPaymasterKmsKeyId <- firstEnv ["AA_PAYMASTER_KMS_KEY_ID"]
+      mPaymasterAccountCodeHash <- firstEnv ["AA_PAYMASTER_ACCOUNT_CODE_HASH"]
+      paymasterValiditySecondsStr <- fromMaybe "300" <$> lookupEnv "AA_PAYMASTER_VALIDITY_SECONDS"
+      paymasterVerificationGasLimitStr <- fromMaybe "100000" <$> lookupEnv "AA_PAYMASTER_VERIFICATION_GAS_LIMIT"
+      paymasterPostOpGasLimitStr <- fromMaybe "0" <$> lookupEnv "AA_PAYMASTER_POST_OP_GAS_LIMIT"
+      paymasterMaxCostWeiStr <- fromMaybe "10000000000000000" <$> lookupEnv "AA_PAYMASTER_MAX_COST_WEI"
+      paymasterAccountOutstandingWeiStr <- fromMaybe "20000000000000000" <$> lookupEnv "AA_PAYMASTER_ACCOUNT_OUTSTANDING_WEI"
+      paymasterClientOutstandingWeiStr <- fromMaybe "20000000000000000" <$> lookupEnv "AA_PAYMASTER_CLIENT_OUTSTANDING_WEI"
+      paymasterGlobalOutstandingWeiStr <- fromMaybe "100000000000000000" <$> lookupEnv "AA_PAYMASTER_GLOBAL_OUTSTANDING_WEI"
+      paymasterAccountHourlyWeiStr <- fromMaybe "30000000000000000" <$> lookupEnv "AA_PAYMASTER_ACCOUNT_HOURLY_WEI"
+      paymasterGlobalHourlyWeiStr <- fromMaybe "100000000000000000" <$> lookupEnv "AA_PAYMASTER_GLOBAL_HOURLY_WEI"
+      paymasterGlobalDailyWeiStr <- fromMaybe "250000000000000000" <$> lookupEnv "AA_PAYMASTER_GLOBAL_DAILY_WEI"
+      nativeCanaryOwnersStr <- fromMaybe "" <$> lookupEnv "AA_NATIVE_CANARY_OWNERS"
+      nativeGlobalRolloutEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED"
       mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mFaucetProxyOriginToken <- lookupEnv "FAUCET_PROXY_ORIGIN_TOKEN"
       faucetClientRequestsPerHourStr <- fromMaybe "20" <$> lookupEnv "FAUCET_CLIENT_REQUESTS_PER_HOUR"
@@ -635,8 +750,10 @@ loadConfig = do
               (Nothing, _, _, _) ->
                 Left
                   "AA_SPONSORSHIP_ENABLED must be one of true, false, 1, 0, yes, no, on, or off"
-              (Just _, Nothing, Nothing, Nothing) -> Right Nothing
+              (Just _, _, Nothing, Nothing) -> Right Nothing
               (Just aaSponsorshipEnabled, Just originToken, Just apiKey, Just policyId)
+                | not (validAaOriginSecret $ T.pack originToken) ->
+                    Left "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
                 | not $
                     validAaDeploymentAddresses
                       perpsUsdc
@@ -684,6 +801,162 @@ loadConfig = do
               mFaucetProxyOriginToken
               faucetClientRequestsPerHourStr
               faucetGlobalRequestsPerHourStr
+
+          nativeAaConfig = do
+            enabled <-
+              maybe
+                (Left "AA_NATIVE_SPONSORSHIP_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict nativeAaEnabledStr)
+            submissionEnabled <-
+              maybe
+                (Left "AA_NATIVE_SUBMISSION_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict nativeAaSubmissionEnabledStr)
+            globalRolloutEnabled <-
+              maybe
+                (Left "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict nativeGlobalRolloutEnabledStr)
+            let nativeSpecific =
+                  [ mAltoRpcUrl
+                  , mNativeSecurityRpcUrl
+                  , mPaymasterAddress
+                  , mPaymasterCodeHash
+                  , mNativePolicyId
+                  , mPaymasterSignerAddress
+                  , mPaymasterKmsKeyId
+                  , mPaymasterAccountCodeHash
+                  ]
+            nativeConfigured <-
+              validateNativeAaPresence
+                enabled
+                submissionEnabled
+                globalRolloutEnabled
+                mAaProxyOriginToken
+                nativeSpecific
+            if not nativeConfigured
+              then Right Nothing
+              else case (mAaProxyOriginToken, nativeSpecific) of
+                ( Just originToken
+                  , [ Just altoRpcUrl
+                  , Just securityRpcUrl
+                  , Just paymasterAddress
+                  , Just paymasterCodeHash
+                  , Just policyId
+                  , Just signerAddress
+                  , Just kmsKeyId
+                  , Just accountCodeHash
+                  ]) -> do
+                    validitySeconds <- parseDecimalBetween "AA_PAYMASTER_VALIDITY_SECONDS" 1 570 paymasterValiditySecondsStr
+                    finalRateLimit <- parseDecimalBetween "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE" 1 60 nativeAaFinalRateLimitStr
+                    verificationGasLimit <- parseDecimalBetween "AA_PAYMASTER_VERIFICATION_GAS_LIMIT" 1 (2 ^ (128 :: Integer) - 1) paymasterVerificationGasLimitStr
+                    postOpGasLimit <- parseDecimalBetween "AA_PAYMASTER_POST_OP_GAS_LIMIT" 0 (2 ^ (128 :: Integer) - 1) paymasterPostOpGasLimitStr
+                    maxCostWei <- parsePositiveDecimal "AA_PAYMASTER_MAX_COST_WEI" paymasterMaxCostWeiStr
+                    accountOutstandingWei <- parsePositiveDecimal "AA_PAYMASTER_ACCOUNT_OUTSTANDING_WEI" paymasterAccountOutstandingWeiStr
+                    clientOutstandingWei <- parsePositiveDecimal "AA_PAYMASTER_CLIENT_OUTSTANDING_WEI" paymasterClientOutstandingWeiStr
+                    globalOutstandingWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_OUTSTANDING_WEI" paymasterGlobalOutstandingWeiStr
+                    accountHourlyWei <- parsePositiveDecimal "AA_PAYMASTER_ACCOUNT_HOURLY_WEI" paymasterAccountHourlyWeiStr
+                    globalHourlyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_HOURLY_WEI" paymasterGlobalHourlyWeiStr
+                    globalDailyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_DAILY_WEI" paymasterGlobalDailyWeiStr
+                    canaryOwners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" nativeCanaryOwnersStr
+                    unlessEither
+                      (perpsChainId == 421614)
+                      "Native AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                    unlessEither
+                      ( validAaDeploymentAddresses
+                          perpsUsdc
+                          perpsOrderRouter
+                          perpsCfdEngine
+                          perpsMarginClearinghouse
+                      )
+                      "Native AA sponsorship requires the reviewed Arbitrum Sepolia PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
+                    unlessEither
+                      (isJust mDatabaseUrl)
+                      "DATABASE_URL is required whenever native AA is configured"
+                    validateNativeAaSafety
+                      NativeAaSafetyInput
+                        { nasiOriginToken = T.pack originToken
+                        , nasiSponsorshipEnabled = enabled
+                        , nasiSubmissionEnabled = submissionEnabled
+                        , nasiGlobalRolloutEnabled = globalRolloutEnabled
+                        , nasiCanaryOwners = canaryOwners
+                        , nasiValiditySeconds = validitySeconds
+                        , nasiPaymasterCodeHash = T.pack paymasterCodeHash
+                        , nasiPolicyId = T.pack policyId
+                        , nasiAccountCodeHash = T.pack accountCodeHash
+                        , nasiMaxCostWei = maxCostWei
+                        , nasiAccountOutstandingWei = accountOutstandingWei
+                        , nasiClientOutstandingWei = clientOutstandingWei
+                        , nasiGlobalOutstandingWei = globalOutstandingWei
+                        , nasiAccountHourlyWei = accountHourlyWei
+                        , nasiGlobalHourlyWei = globalHourlyWei
+                        , nasiGlobalDailyWei = globalDailyWei
+                        }
+                    unlessEither
+                      (postOpGasLimit == 0)
+                      "AA_PAYMASTER_POST_OP_GAS_LIMIT must be zero for the reviewed paymaster"
+                    unlessEither
+                      (validInternalRpcUrl $ T.pack altoRpcUrl)
+                      "AA_ALTO_RPC_URL must be an http(s) URL without credentials or query parameters"
+                    primarySecurityRpc <-
+                      maybe
+                        (Left "PERPS_RPC_URL must be a normalized HTTPS/default-443 URL without credentials, query, fragment, or whitespace when native AA is configured")
+                        Right
+                        (normalizeExternalSecurityRpcUrl $ T.pack perpsRpcUrl)
+                    secondarySecurityRpc <-
+                      maybe
+                        (Left "AA_RECONCILER_SECONDARY_RPC_URL must be a normalized HTTPS/default-443 URL without credentials, query, fragment, or whitespace")
+                        Right
+                        (normalizeExternalSecurityRpcUrl $ T.pack securityRpcUrl)
+                    unlessEither
+                      (secondarySecurityRpc /= primarySecurityRpc)
+                      "AA_RECONCILER_SECONDARY_RPC_URL must be independent from PERPS_RPC_URL"
+                    unlessEither
+                      (validNonzeroAddress $ T.pack paymasterAddress)
+                      "AA_PAYMASTER_ADDRESS must be a nonzero 20-byte address"
+                    unlessEither
+                      (validNonzeroAddress $ T.pack signerAddress)
+                      "AA_PAYMASTER_SIGNER_ADDRESS must be a nonzero 20-byte address"
+                    unlessEither
+                      (not $ T.null $ T.strip $ T.pack kmsKeyId)
+                      "AA_PAYMASTER_KMS_KEY_ID must not be blank"
+                    Right $
+                      Just $
+                        NativeAaConfig
+                          { naaProxyOriginToken = T.pack originToken
+                          , naaAltoRpcUrl = T.strip $ T.pack altoRpcUrl
+                          , naaSecurityRpcUrl = secondarySecurityRpc
+                          , naaPaymasterAddress = T.toLower $ T.strip $ T.pack paymasterAddress
+                          , naaPaymasterCodeHash = T.toLower $ T.strip $ T.pack paymasterCodeHash
+                          , naaPolicyId = T.toLower $ T.strip $ T.pack policyId
+                          , naaSignerAddress = T.toLower $ T.strip $ T.pack signerAddress
+                          , naaKmsKeyId = T.strip $ T.pack kmsKeyId
+                          , naaAccountCodeHash = T.toLower $ T.strip $ T.pack accountCodeHash
+                          , naaSponsorshipEnabled = enabled
+                          , naaSubmissionEnabled = submissionEnabled
+                          , naaIpRateLimitPerMinute = max 1 aaIpRateLimit
+                          , naaFinalRateLimitPerMinute = fromInteger finalRateLimit
+                          , naaAccountRateLimitPerMinute = max 1 aaAccountRateLimit
+                          , naaMaxRequestBytes = max 1024 aaMaxRequestBytes
+                          , naaValiditySeconds = validitySeconds
+                          , naaVerificationGasLimit = verificationGasLimit
+                          , naaPostOpGasLimit = postOpGasLimit
+                          , naaMaxCostWei = maxCostWei
+                          , naaAccountOutstandingWei = accountOutstandingWei
+                          , naaClientOutstandingWei = clientOutstandingWei
+                          , naaGlobalOutstandingWei = globalOutstandingWei
+                          , naaAccountHourlyWei = accountHourlyWei
+                          , naaGlobalHourlyWei = globalHourlyWei
+                          , naaGlobalDailyWei = globalDailyWei
+                          , naaCanaryOwners = canaryOwners
+                          , naaGlobalRolloutEnabled = globalRolloutEnabled
+                          }
+                _ ->
+                  Left
+                    "Native AA configuration is partial; set AA_PROXY_ORIGIN_TOKEN, AA_ALTO_RPC_URL, AA_RECONCILER_SECONDARY_RPC_URL, \
+                    \AA_PAYMASTER_ADDRESS, AA_PAYMASTER_CODE_HASH, AA_PAYMASTER_POLICY_ID, AA_PAYMASTER_SIGNER_ADDRESS, \
+                    \AA_PAYMASTER_KMS_KEY_ID, and AA_PAYMASTER_ACCOUNT_CODE_HASH"
 
           candleConfig = do
             writeMode <- parsePerpsCandleWriteMode candleWriteModeStr
@@ -873,6 +1146,7 @@ loadConfig = do
       case
           ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
           , aaConfig
+          , nativeAaConfig
           , candleConfig
           , vaultHistoryConfig
           , lpSettlementConfig
@@ -881,16 +1155,18 @@ loadConfig = do
           , faucetGuardConfig
           )
         of
-        (Left err, _, _, _, _, _, _, _) -> pure $ Left err
-        (_, Left err, _, _, _, _, _, _) -> pure $ Left err
-        (_, _, Left err, _, _, _, _, _) -> pure $ Left err
-        (_, _, _, Left err, _, _, _, _) -> pure $ Left err
-        (_, _, _, _, Left err, _, _, _) -> pure $ Left err
-        (_, _, _, _, _, Left err, _, _) -> pure $ Left err
-        (_, _, _, _, _, _, Left err, _) -> pure $ Left err
-        (_, _, _, _, _, _, _, Left err) -> pure $ Left err
+        (Left err, _, _, _, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _, _, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, _, _, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, _, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
+          , Right resolvedNativeAaConfig
           , Right
               ( candleWriteMode
                 , candleReadMode
@@ -981,6 +1257,7 @@ loadConfig = do
                 , cfgRegistrationConfig = resolvedRegistrationConfig
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetGuardConfig = resolvedFaucetGuardConfig
+                , cfgNativeAaConfig = resolvedNativeAaConfig
                 , cfgFaucetPrivateKey = nonBlankText mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = keeperPollSeconds
@@ -1086,6 +1363,218 @@ validateLpSettlementChainId mode rawChainId
           Left
             "LP_SETTLEMENT_MODE observe and execute are supported only on \
             \PERPS_CHAIN_ID=421614"
+
+parsePositiveDecimal :: String -> String -> Either String Integer
+parsePositiveDecimal name = parseDecimalBetween name 1 (2 ^ (128 :: Integer) - 1)
+
+parseDecimalBetween :: String -> Integer -> Integer -> String -> Either String Integer
+parseDecimalBetween name minimum maximum raw =
+  let normalized = T.unpack $ T.strip $ T.pack raw
+   in case readMaybe normalized of
+        Just value
+          | show value == normalized
+          , value >= minimum
+          , value <= maximum -> Right value
+        _ ->
+          Left $
+            name
+              <> " must be a canonical decimal integer between "
+              <> show minimum
+              <> " and "
+              <> show maximum
+
+unlessEither :: Bool -> String -> Either String ()
+unlessEither condition message =
+  if condition then Right () else Left message
+
+validFixedHexBytes :: Int -> Text -> Bool
+validFixedHexBytes bytes raw =
+  let value = T.toLower $ T.strip raw
+      body = T.drop 2 value
+   in T.isPrefixOf "0x" value
+        && T.length body == bytes * 2
+        && T.all isHexCharacter body
+
+validNonzeroAddress :: Text -> Bool
+validNonzeroAddress raw =
+  validFixedHexBytes 20 raw
+    && T.toLower (T.strip raw) /= "0x0000000000000000000000000000000000000000"
+
+validInternalRpcUrl :: Text -> Bool
+validInternalRpcUrl raw =
+  let value = raw
+      authority
+        | "http://" `T.isPrefixOf` value = T.takeWhile (/= '/') $ T.drop 7 value
+        | "https://" `T.isPrefixOf` value = T.takeWhile (/= '/') $ T.drop 8 value
+        | otherwise = ""
+      validAuthorityChar char =
+        isHexCharacter char
+          || (char >= 'g' && char <= 'z')
+          || (char >= 'G' && char <= 'Z')
+          || char `elem` (".-:[]" :: String)
+   in raw == T.strip raw
+        && not (T.any (`elem` [' ', '\t', '\r', '\n', '\0']) value)
+        && not (T.null authority)
+        && T.length authority <= 255
+        && T.all validAuthorityChar authority
+        && T.head authority /= '.'
+        && T.last authority /= '.'
+        && not ("@" `T.isInfixOf` value)
+        && not ("?" `T.isInfixOf` value)
+        && not ("#" `T.isInfixOf` value)
+
+-- | Canonicalize the two security-critical external providers.  Requiring the
+-- default HTTPS port removes spelling aliases that could accidentally defeat
+-- the distinct-provider guard. DNS/provider independence remains an explicit
+-- rollout attestation because it cannot be proven from a URL alone.
+normalizeExternalSecurityRpcUrl :: Text -> Maybe Text
+normalizeExternalSecurityRpcUrl raw = do
+  let prefix = "https://"
+      value = raw
+  if raw /= T.strip raw || not (prefix `T.isPrefixOf` value)
+    then Nothing
+    else do
+      let remainder = T.drop (T.length prefix) value
+          (authority, path) = T.breakOn "/" remainder
+          host = fromMaybe authority $ T.stripSuffix ":443" authority
+          normalizedPath
+            | T.null path || path == "/" = ""
+            | otherwise = T.dropWhileEnd (== '/') path
+          validHostChar char =
+            (char >= 'a' && char <= 'z')
+              || (char >= 'A' && char <= 'Z')
+              || (char >= '0' && char <= '9')
+              || char `elem` (".-" :: String)
+      if T.null host
+          || T.length host > 253
+          || T.head host == '.'
+          || T.last host == '.'
+          || T.any (not . validHostChar) host
+          || "@" `T.isInfixOf` value
+          || "?" `T.isInfixOf` value
+          || "#" `T.isInfixOf` value
+          || T.any (`elem` [' ', '\t', '\r', '\n', '\0']) value
+          || (":" `T.isInfixOf` authority && not (":443" `T.isSuffixOf` authority))
+        then Nothing
+        else Just $ prefix <> T.toLower host <> normalizedPath
+
+reviewedNativePolicyId :: Text
+reviewedNativePolicyId =
+  "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3"
+
+reviewedNativeAccountCodeHash :: Text
+reviewedNativeAccountCodeHash =
+  "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9"
+
+zeroNativeHash :: Text
+zeroNativeHash = "0x" <> T.replicate 64 "0"
+
+-- | Resolve whether the native configuration is absent or complete.  The
+-- global rollout switch is intentionally unavailable until a separate release
+-- explicitly enables it, so setting it is always an error (even when the rest
+-- of the native configuration is absent).
+validateNativeAaPresence
+  :: Bool
+  -> Bool
+  -> Bool
+  -> Maybe String
+  -> [Maybe String]
+  -> Either String Bool
+validateNativeAaPresence enabled submissionEnabled globalRolloutEnabled originToken nativeSpecific
+  | globalRolloutEnabled =
+      Left
+        "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
+  | maybe False (not . validAaOriginSecret . T.pack) originToken =
+      Left "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
+  | all (== Nothing) nativeSpecific
+      && not enabled
+      && not submissionEnabled =
+      Right False
+  | isJust originToken && all isJust nativeSpecific = Right True
+  | otherwise =
+      Left
+        "Native AA configuration is partial; set AA_PROXY_ORIGIN_TOKEN, AA_ALTO_RPC_URL, AA_RECONCILER_SECONDARY_RPC_URL, \
+        \AA_PAYMASTER_ADDRESS, AA_PAYMASTER_CODE_HASH, AA_PAYMASTER_POLICY_ID, AA_PAYMASTER_SIGNER_ADDRESS, \
+        \AA_PAYMASTER_KMS_KEY_ID, and AA_PAYMASTER_ACCOUNT_CODE_HASH"
+
+-- | Validate the security relationships between individually parsed native AA
+-- settings.  Callers must run this before constructing 'NativeAaConfig'.
+validateNativeAaSafety :: NativeAaSafetyInput -> Either String ()
+validateNativeAaSafety NativeAaSafetyInput{..} = do
+  unlessEither
+    (validAaOriginSecret nasiOriginToken)
+    "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
+  unlessEither
+    (not nasiGlobalRolloutEnabled)
+    "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
+  unlessEither
+    (not nasiSponsorshipEnabled || nasiSubmissionEnabled)
+    "AA_NATIVE_SPONSORSHIP_ENABLED=true requires AA_NATIVE_SUBMISSION_ENABLED=true"
+  unlessEither
+    (not nasiSponsorshipEnabled || not (null nasiCanaryOwners))
+    "Native sponsorship requires at least one AA_NATIVE_CANARY_OWNERS entry"
+  unlessEither
+    (nasiValiditySeconds >= 1 && nasiValiditySeconds <= 570)
+    "AA_PAYMASTER_VALIDITY_SECONDS must be between 1 and 570"
+  unlessEither
+    ( validFixedHexBytes 32 nasiPaymasterCodeHash
+        && T.toLower (T.strip nasiPaymasterCodeHash) /= zeroNativeHash
+    )
+    "AA_PAYMASTER_CODE_HASH must be a nonzero 32-byte runtime hash"
+  unlessEither
+    (T.toLower (T.strip nasiPolicyId) == reviewedNativePolicyId)
+    "AA_PAYMASTER_POLICY_ID does not match the reviewed Plether paymaster policy"
+  unlessEither
+    (T.toLower (T.strip nasiAccountCodeHash) == reviewedNativeAccountCodeHash)
+    "AA_PAYMASTER_ACCOUNT_CODE_HASH does not match the reviewed SimpleAccount proxy runtime"
+  unlessEither
+    ( nasiMaxCostWei <= nasiAccountOutstandingWei
+        && nasiMaxCostWei <= nasiClientOutstandingWei
+        && nasiAccountOutstandingWei <= nasiGlobalOutstandingWei
+        && nasiClientOutstandingWei <= nasiGlobalOutstandingWei
+    )
+    "AA paymaster outstanding budgets must satisfy per-operation <= account/client <= global"
+  unlessEither
+    (nasiAccountHourlyWei <= nasiGlobalHourlyWei && nasiGlobalHourlyWei <= nasiGlobalDailyWei)
+    "AA paymaster spend budgets must satisfy account-hourly <= global-hourly <= global-daily"
+
+validAaOriginSecret :: Text -> Bool
+validAaOriginSecret raw =
+  T.length raw == 64
+    && raw == T.strip raw
+    && T.all (\char -> (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) raw
+    && raw `notElem` knownAaOriginPlaceholders
+
+knownAaOriginPlaceholders :: [Text]
+knownAaOriginPlaceholders =
+  [ T.replicate 64 "0"
+  , T.replicate 64 "f"
+  , T.concat $ replicate 4 "0123456789abcdef"
+  , T.concat $ replicate 8 "deadbeef"
+  ]
+
+isHexCharacter :: Char -> Bool
+isHexCharacter char =
+  (char >= '0' && char <= '9')
+    || (char >= 'a' && char <= 'f')
+    || (char >= 'A' && char <= 'F')
+
+parseCanonicalAddressList :: String -> String -> Either String [Text]
+parseCanonicalAddressList name raw = do
+  let tokens =
+        filter (not . T.null) $
+          concatMap T.words $
+            T.splitOn "," $
+              T.strip $
+                T.pack raw
+      normalized = map T.toLower tokens
+  unlessEither
+    (all validNonzeroAddress normalized)
+    (name <> " may contain only nonzero 20-byte addresses separated by spaces or commas")
+  unlessEither
+    (Set.size (Set.fromList normalized) == length normalized)
+    (name <> " must not contain duplicate addresses")
+  Right normalized
 
 parsePerpsCandleWriteMode :: String -> Either String PerpsCandleWriteMode
 parsePerpsCandleWriteMode raw =

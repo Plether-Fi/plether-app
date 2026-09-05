@@ -20,11 +20,19 @@ import {
 } from './PerpsIdentityProvider'
 import { resolvePerpsAaManifestUrl } from './manifestUrl'
 import {
+  bundlerRpcUrlForManifest,
+  isPerpsAaManifestV2 as isNativePaymasterManifest,
+  paymasterRpcUrlForManifest,
+} from './manifest'
+import {
   PerpsAaRuntimeProvider,
 } from './runtime'
 import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
 
-const SponsoredOperationRecovery = lazy(() => import('./SponsoredOperationRecovery').then((module) => ({ default: module.SponsoredOperationRecovery })))
+const SponsoredOperationRecovery = lazy(async () => {
+  const module = await import('./SponsoredOperationRecovery')
+  return { default: module.SponsoredOperationRecovery }
+})
 
 function configuredManifestUrl(): string | null {
   const value: unknown = import.meta.env.VITE_PERPS_AA_MANIFEST_URL
@@ -83,18 +91,25 @@ export function PerpsAaProvider({
         manifest.smartAccountFactory.toLowerCase(),
         manifest.smartAccountVersion,
         manifest.smartAccountIndex,
-        manifest.pimlicoRpcUrl,
+        bundlerRpcUrlForManifest(manifest),
+        paymasterRpcUrlForManifest(manifest),
+        isNativePaymasterManifest(manifest)
+          ? manifest.paymasterAddress.toLowerCase()
+          : 'pimlico-singleton-v8',
+        isNativePaymasterManifest(manifest)
+          ? manifest.paymasterVersion
+          : 'pimlico-rpc-shape',
       ].join(':')
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
-        const promise = import('./managedPimlicoRuntime').then(({ createManagedPimlicoRuntime }) => (
-          createManagedPimlicoRuntime({
+        const promise = import('./managedPimlicoRuntime').then(
+          ({ createManagedAaRuntime }) => createManagedAaRuntime({
             manifest,
             ownerAddress,
             walletClient,
             publicClient,
           })
-        ))
+        )
         cacheEntry = {
           key,
           promise,

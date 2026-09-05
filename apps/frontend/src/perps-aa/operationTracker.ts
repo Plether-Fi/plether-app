@@ -19,6 +19,7 @@ import {
   type SponsoredOperationInclusionObservation,
   useSponsoredOperationStore,
 } from './operationStore'
+import type { PersistedSponsorshipAuthorityV1 } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 
@@ -52,6 +53,7 @@ export interface SponsoredOperationTracker {
     hash: Hex,
     metadata: {
       signedUserOperation: ManagedUserOperation
+      sponsorshipAuthority?: PersistedSponsorshipAuthorityV1
     }
   ) => boolean
   onObservedInclusion: (

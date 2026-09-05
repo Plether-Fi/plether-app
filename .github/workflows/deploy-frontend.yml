@@ -27,9 +27,9 @@ jobs:
       deployments: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 25.2.1
           cache: npm
@@ -56,7 +56,7 @@ jobs:
 
       - name: Checkout TradingView Advanced Charts
         if: env.TARGET_ENV == 'sepolia'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: tradingview/charting_library
           # TradingView Advanced Charts v32.0.0. Pin executable third-party code by commit.
@@ -122,22 +122,87 @@ jobs:
       - name: Validate testnet AA manifest
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
-        env:
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
           test -s dist/perps-aa-manifest.json
           jq -e '
+            def common_keys:
+              ["version", "chainId", "entryPoint", "entryPointVersion",
+               "smartAccountMode", "smartAccountVersion", "smartAccountIndex",
+               "smartAccountFactory", "usdc", "usdcSupportsEip3009",
+               "usdcEip712Name", "usdcEip712Version", "marginClearinghouse",
+               "cfdEngine", "orderRouter", "orderLifecycleBook",
+               "policyEvaluator", "userOperationExplorerUrlTemplate",
+               "transactionExplorerUrlTemplate", "testnetFaucet",
+               "sponsorshipEnabled"];
+            def exact_keys($expected): (keys | sort) == ($expected | sort);
+            def nonzero_address:
+              type == "string" and
+              test("^0x[0-9A-Fa-f]{40}$") and
+              ascii_downcase != "0x0000000000000000000000000000000000000000";
+            def common_profile:
+              .chainId == 421614 and
+              (.entryPoint | ascii_downcase) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" and
+              .entryPointVersion == "0.8" and
+              .smartAccountMode == "simple" and
+              .smartAccountVersion == "permissionless-simple-v0.8" and
+              .smartAccountIndex == "0" and
+              (.smartAccountFactory | ascii_downcase) == "0x13e9ed32155810fdbd067d4522c492d6f68e5944" and
+              .orderRouter == "0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B" and
+              .orderLifecycleBook == "0xca57215a3859462eb380ea40969762Ac89D99522" and
+              .policyEvaluator == "0x611b34a98261D60f0aE8584F4Dd1fF09CF663466" and
+              .sponsorshipEnabled == true;
+            def pimlico_transport:
+              exact_keys(common_keys + ["pimlicoRpcUrl"]) and
+              .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
+              ((has("bundlerRpcUrl") or has("paymasterRpcUrl") or
+                has("paymasterAddress") or has("paymasterVersion")) | not);
+            def native_transport:
+              exact_keys(common_keys + ["bundlerRpcUrl", "paymasterRpcUrl",
+                                        "paymasterAddress", "paymasterVersion"]) and
+              .bundlerRpcUrl == "/api/perps/v1/aa/rpc" and
+              .paymasterRpcUrl == "/api/perps/v1/aa/rpc" and
+              (.paymasterAddress | nonzero_address) and
+              .paymasterVersion == "plether-verifying-v1" and
+              (has("pimlicoRpcUrl") | not);
+            common_profile and
             .version == "perps-aa-arbitrum-sepolia-20260905-v2" and
-            .chainId == 421614 and
-            .entryPointVersion == "0.8" and
-            .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
-            .orderRouter == "0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B" and
-            .orderLifecycleBook == "0xca57215a3859462eb380ea40969762Ac89D99522" and
-            .policyEvaluator == "0x611b34a98261D60f0aE8584F4Dd1fF09CF663466" and
-            .sponsorshipEnabled == true
+            (pimlico_transport or native_transport)
           ' dist/perps-aa-manifest.json >/dev/null
 
-          test -n "$SEPOLIA_BACKEND_URL"
+      - name: Validate testnet backend origin
+        id: backend-origin
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          set -euo pipefail
+
+          backend_origin=${SEPOLIA_BACKEND_URL%/}
+          if [ "$SEPOLIA_BACKEND_URL" != "$backend_origin" ] && \
+             [ "$SEPOLIA_BACKEND_URL" != "$backend_origin/" ]; then
+            echo "::error title=Invalid Sepolia backend URL::SEPOLIA_BACKEND_URL may contain only one optional trailing slash."
+            exit 1
+          fi
+          if ! BACKEND_ORIGIN="$backend_origin" node -e '
+            const value = process.env.BACKEND_ORIGIN;
+            const url = new URL(value);
+            if (url.protocol !== "https:" || url.username || url.password ||
+                url.pathname !== "/" || url.search || url.hash ||
+                url.origin !== value) process.exit(1);
+          '; then
+            echo "::error title=Invalid Sepolia backend URL::SEPOLIA_BACKEND_URL must be an HTTPS origin without credentials, path, query, or fragment."
+            exit 1
+          fi
+          echo "origin=$backend_origin" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployed testnet AA bindings
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
+        run: |
+          set -euo pipefail
+
           curl --fail --silent --show-error \
             "$SEPOLIA_BACKEND_URL/api/aa/status" > aa-status.json
           jq --exit-status \
@@ -165,7 +230,7 @@ jobs:
         working-directory: apps/frontend
         env:
           CANDLE_API_ENABLED: ${{ vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false' }}
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
         run: |
           set -euo pipefail
           case "${CANDLE_API_ENABLED,,}" in
@@ -176,7 +241,6 @@ jobs:
               ;;
           esac
 
-          test -n "$SEPOLIA_BACKEND_URL"
           node scripts/validate-candle-volume-coverage.mjs \
             --backend-url "$SEPOLIA_BACKEND_URL" \
             --manifest dist/perps-aa-manifest.json
@@ -185,7 +249,7 @@ jobs:
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
-          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
         run: |
           test -n "$SEPOLIA_BACKEND_URL"
           cat > wrangler.toml <<EOF
@@ -200,7 +264,7 @@ jobs:
 
       - name: Ensure testnet Pages project
         if: env.TARGET_ENV == 'sepolia'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         continue-on-error: true
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -215,8 +279,95 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
+          SEPOLIA_BACKEND_URL: ${{ steps.backend-origin.outputs.origin }}
         run: |
-          test -n "$AA_PROXY_ORIGIN_TOKEN"
+          set -euo pipefail
+          umask 077
+
+          if [[ ! "$AA_PROXY_ORIGIN_TOKEN" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Invalid AA origin credential::AA_PROXY_ORIGIN_TOKEN must be exactly 64 lowercase hexadecimal characters."
+            exit 1
+          fi
+          case "$AA_PROXY_ORIGIN_TOKEN" in
+            0000000000000000000000000000000000000000000000000000000000000000|\
+            ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff|\
+            0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef|\
+            deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef)
+              echo "::error title=Placeholder AA origin credential::Generate a unique cryptographically random credential before deployment."
+              exit 1
+              ;;
+          esac
+          echo "::add-mask::$AA_PROXY_ORIGIN_TOKEN"
+
+          backend_origin=$SEPOLIA_BACKEND_URL
+
+          health_body="$RUNNER_TEMP/frontend-aa-origin-health.json"
+          health_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$health_body" \
+            --write-out '%{http_code}' \
+            "$backend_origin/api/health")
+          if [ "$health_status" != "200" ] || \
+             ! jq --exit-status '.status == "ok"' "$health_body" >/dev/null; then
+            echo "::error title=Sepolia backend not ready::The intended API origin did not pass its exact health check."
+            exit 1
+          fi
+
+          if jq --exit-status 'has("bundlerRpcUrl")' dist/perps-aa-manifest.json >/dev/null; then
+            aa_path=/api/aa/rpc
+          else
+            aa_path=/api/aa/pimlico
+          fi
+          unauthenticated_body="$RUNNER_TEMP/frontend-aa-origin-unauthenticated.json"
+          authenticated_body="$RUNNER_TEMP/frontend-aa-origin-authenticated.json"
+          unauthenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$unauthenticated_body" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 192.0.2.10' \
+            --data-binary '{' \
+            "$backend_origin$aa_path")
+          if [ "$unauthenticated_status" != "403" ] || \
+             ! jq --exit-status \
+               '.error.data.reason == "PROXY_AUTH_FAILED" and .error.data.retryable == false' \
+               "$unauthenticated_body" >/dev/null; then
+            echo "::error title=AA origin boundary unavailable::The intended API did not reject the credential-free control request."
+            exit 1
+          fi
+
+          authenticated_status=$(curl \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$authenticated_body" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --header 'CF-Connecting-IP: 192.0.2.10' \
+            --header "X-Plether-AA-Proxy-Token: $AA_PROXY_ORIGIN_TOKEN" \
+            --data-binary '{' \
+            "$backend_origin$aa_path")
+          if [ "$authenticated_status" != "400" ] || \
+             ! jq --exit-status \
+               '.error.data.reason == "INVALID_REQUEST" and .error.data.retryable == false' \
+               "$authenticated_body" >/dev/null; then
+            echo "::error title=AA origin credential mismatch::The intended API did not accept this exact credential before request validation."
+            exit 1
+          fi
+
           printf '%s\n' "$AA_PROXY_ORIGIN_TOKEN" |
             npx --yes wrangler@4.103.0 pages secret put AA_PROXY_ORIGIN_TOKEN \
               --project-name=plether-testnet
@@ -235,7 +386,7 @@ jobs:
               --project-name=plether-testnet
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

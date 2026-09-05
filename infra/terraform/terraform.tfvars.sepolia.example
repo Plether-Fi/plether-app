@@ -24,7 +24,8 @@ provision_aa_proxy             = true
 enable_aa_sponsorship          = false # Enable only after the bounded-V2 backend passes its readiness probe.
 pimlico_api_key                = "pim_YOUR_PIMLICO_API_KEY"
 pimlico_sponsorship_policy_id = "sp_YOUR_POLICY_ID"
-aa_proxy_origin_token          = "GENERATE_A_LONG_RANDOM_SHARED_SECRET"
+# Intentionally invalid: replace with the exact output of `openssl rand -hex 32`.
+aa_proxy_origin_token          = "INVALID_REPLACE_WITH_OPENSSL_RAND_HEX_32"
 provision_insights_registration = true
 # Keep false until the September competition slug is activated and the
 # identical origin token is configured as the
@@ -69,6 +70,53 @@ operations_alarm_sns_topic_arn = ""
 aa_ip_rate_limit_per_minute    = "120"
 aa_account_rate_limit_per_minute = "30"
 aa_sponsored_gas_alert_wei_per_hour = "10000000000000000"
+
+# Self-hosted AA is bootstrapped dark. First create the external SecureStrings,
+# then provision with both desired counts at zero and run deploy-alto.yml to
+# mirror the pinned image. Populate the reviewed contract values before scaling.
+provision_self_hosted_aa                    = false
+configure_native_aa_backend                = false
+enable_native_aa_sponsorship               = false
+enable_native_aa_submission                = false
+aa_native_canary_owners                    = ""
+aa_native_global_rollout_enabled            = false
+alto_desired_count                         = 0
+aa_reconciler_desired_count                = 0
+alto_upstream_image                        = "ghcr.io/pimlicolabs/alto:v1.2.7@sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+alto_rpc_url_ssm_parameter_name             = "/plether/sepolia/alto-rpc-url"
+alto_send_transaction_rpc_url_ssm_parameter_name = ""
+alto_executor_private_keys_ssm_parameter_name = "/plether/sepolia/alto-executor-private-keys"
+alto_utility_private_key_ssm_parameter_name = "/plether/sepolia/alto-utility-private-key"
+alto_secrets_kms_key_arn                    = ""
+alto_entrypoint_simulation_contract_v8      = ""
+alto_pimlico_simulation_contract            = ""
+alto_min_executor_balance_wei               = "5000000000000000"
+alto_max_gas_per_user_operation             = "5000000"
+alto_max_gas_per_bundle                     = "20000000"
+aa_paymaster_address                        = ""
+aa_paymaster_policy_id                      = "0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3"
+aa_paymaster_signer_address                 = ""
+aa_paymaster_account_code_hash              = "0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9"
+aa_paymaster_code_hash                      = ""
+aa_paymaster_validity_seconds               = "300"
+aa_paymaster_verification_gas_limit         = "100000"
+aa_paymaster_post_op_gas_limit              = "0"
+aa_paymaster_max_cost_wei                   = "10000000000000000"
+aa_paymaster_account_outstanding_wei        = "20000000000000000"
+aa_paymaster_client_outstanding_wei         = "20000000000000000"
+aa_paymaster_global_outstanding_wei         = "100000000000000000"
+aa_paymaster_account_hourly_wei             = "30000000000000000"
+aa_paymaster_global_hourly_wei              = "100000000000000000"
+aa_paymaster_global_daily_wei               = "250000000000000000"
+aa_paymaster_final_rate_limit_per_minute    = "6"
+aa_reconciler_start_block                   = ""
+aa_reconciler_start_block_hash              = ""
+aa_reconciler_poll_seconds                  = "5"
+aa_reconciler_batch_blocks                  = "1000"
+aa_reconciler_max_safe_lag_seconds          = "600"
+aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/aa-reconciler-secondary-rpc-url"
+aa_reconciler_secondary_rpc_url_kms_key_arn = ""
+aa_paymaster_min_deposit_wei                = "150000000000000000"
 pyth_hermes_url                 = "https://pyth.dourolabs.app/hermes"
 pyth_history_url                = "https://pyth.dourolabs.app/v1"
 pyth_api_key_ssm_parameter_name = "/plether/sepolia/pyth-api-key"

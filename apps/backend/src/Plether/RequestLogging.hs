@@ -216,6 +216,7 @@ knownNormalizedRoutes =
   , ["api", "testnet", "faucet"]
   , ["api", "aa", "status"]
   , ["api", "aa", "pimlico"]
+  , ["api", "aa", "rpc"]
   , ["api", "protocol", "status"]
   , ["api", "protocol", "config"]
   , ["api", "user", ":address", "dashboard"]

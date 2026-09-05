@@ -75,16 +75,31 @@ will derive different addresses.
 
 Local and hosted testnet deployments use the bundled
 `/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
-override that path. Its `pimlicoRpcUrl` is a same-origin
-`/api/perps/v1/aa/...` path. The backend proxy owns the Pimlico API key,
-injects the approved sponsorship policy, validates Plether call targets, and
-relays only the required bundler/paymaster/status methods.
+override that path. The manifest suffix identifies a deployment generation,
+not the AA provider. The current bundled manifest is
+`perps-aa-arbitrum-sepolia-20260830-v2` and deliberately uses Pimlico through
+the exact same-origin `pimlicoRpcUrl` field.
+
+Transport is selected only after exact-key validation. A v1 suffix accepts
+only the Pimlico field set. A v2 suffix accepts either that same exclusive
+Pimlico field set or the native field set: exact same-origin `bundlerRpcUrl`
+and `paymasterRpcUrl` values plus `paymasterAddress` and
+`paymasterVersion`, with no `pimlicoRpcUrl`. Partial and hybrid shapes are
+rejected; the `-v2` suffix alone never selects the native provider. For the
+native shape, the frontend also validates every sponsorship envelope against
+the reviewed policy ID, SimpleAccount proxy runtime hash, 100,000/0 paymaster
+gas limits, and 600-second maximum validity window pinned in the client. The
+backend validates Plether call targets and relays only the required bundler,
+paymaster, and diagnostic-status methods.
 
 Configure `AA_PROXY_ORIGIN_TOKEN` as a Cloudflare Pages secret and require its
-`X-Plether-AA-Proxy-Token` value on the backend `/api/aa/pimlico` route. This
-keeps direct callers from spoofing the client IP used for rate limits. The
-testnet deploy workflow provisions the Pages value from the GitHub Actions
-secret with the same name; the backend must receive the matching secret.
+`X-Plether-AA-Proxy-Token` value on the legacy `/api/aa/pimlico` and native
+`/api/aa/rpc` backend routes. This keeps direct callers from spoofing the
+client IP used for rate limits. The testnet deploy workflow provisions the
+Pages value from the GitHub Actions secret with the same name; the backend
+must receive the matching secret. Generate it with `openssl rand -hex 32`;
+both sides require exactly 64 lowercase hexadecimal characters and reject
+known placeholder values.
 
 Configure a separate `FAUCET_PROXY_ORIGIN_TOKEN` Pages secret for the exact
 `/api/perps/v1/testnet/faucet` route. The Worker removes any caller-supplied
@@ -95,10 +110,11 @@ Never reuse the AA token for the faucet.
 Before `eth_sendUserOperation`, the frontend atomically persists the locally
 computed hash with the signed UserOperation preimage. Recovery parses that
 preimage, recomputes and matches the exact hash, and derives the nonce and
-nonzero pinned-Pimlico `validUntil` from it. Pimlico statuses are diagnostic
-only after an exact receipt miss. A receipt becomes terminal evidence only
+nonzero deadline from an exact trusted legacy or Plether paymaster envelope.
+Bundler statuses are diagnostic only after an exact receipt miss. A receipt
+becomes terminal evidence only
 after its transaction and EntryPoint event are verified against the canonical
-RPC at or below the safe head. Pimlico outages remain inconclusive but do not
+RPC at or below the safe head. Bundler outages remain inconclusive but do not
 prevent independent safe-chain nonce and expiry recovery.
 
 The trade ticket may progress earlier from an exact canonical-latest receipt
