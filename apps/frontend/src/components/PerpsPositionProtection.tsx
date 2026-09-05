@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
-import { POSITION_PROTECTION_STATUS, positionProtectionMessage } from '../contracts/perpsProtection'
+import { POSITION_PROTECTION_STATUS, POSITION_PROTECTION_STATUS_LABELS, positionProtectionMessage } from '../contracts/perpsProtection'
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { verifyProtectionRetryBindings } from '../contracts/verifyPerpsV2Bindings'
 
@@ -88,10 +88,7 @@ export function PerpsPositionProtectionPanel({
   const detailsId = useId()
   if (id === 0n) return null
   const latched = status === POSITION_PROTECTION_STATUS.Latched
-  const statusLabel = latched ? 'Waiting to retry'
-    : status === POSITION_PROTECTION_STATUS.Triggered ? 'Close queued'
-    : status === POSITION_PROTECTION_STATUS.PendingOpen ? 'Pending open'
-    : status === POSITION_PROTECTION_STATUS.Armed ? 'Active' : 'Resolving'
+  const statusLabel = POSITION_PROTECTION_STATUS_LABELS[status] ?? 'Unknown'
   return (
     <section aria-label="Position protection" className="mb-4 border-b border-brand-border/20 pb-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">

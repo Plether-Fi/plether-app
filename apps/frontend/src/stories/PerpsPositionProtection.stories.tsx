@@ -38,11 +38,25 @@ const meta = {
   tags: ['autodocs'],
   parameters: { layout: 'fullscreen' },
   decorators: [
-    (Story) => (
+    (Story, context) => (
       <PerpsIdentityContext.Provider value={storyIdentity}>
         <div className="min-h-screen bg-app-bg p-4 text-text-primary md:p-8">
           <div className="mx-auto max-w-5xl">
-            <PerpsAccountPanel isConnected position={protectedPosition} positionProtection={<Story />} />
+            {context.args.status === POSITION_PROTECTION_STATUS.PendingOpen ? (
+              <div className="border border-brand-border/20 bg-app-bg p-4">
+                <p className="mb-4 text-xs uppercase text-content-secondary">SL/TP attached to pending opening order</p>
+                <Story />
+              </div>
+            ) : [POSITION_PROTECTION_STATUS.Executed, POSITION_PROTECTION_STATUS.Failed,
+              POSITION_PROTECTION_STATUS.Cancelled, POSITION_PROTECTION_STATUS.Liquidated,
+            ].some((status) => status === context.args.status) ? (
+              <div className="border border-brand-border/20 bg-app-bg p-4">
+                <p className="mb-4 text-xs uppercase text-content-secondary">Completed protection record</p>
+                <Story />
+              </div>
+            ) : (
+              <PerpsAccountPanel isConnected position={protectedPosition} positionProtection={<Story />} />
+            )}
           </div>
         </div>
       </PerpsIdentityContext.Provider>
@@ -67,6 +81,22 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+export const None: Story = {
+  name: 'None · No attached protection',
+  args: { id: 0n, status: POSITION_PROTECTION_STATUS.None, linkedOrderId: 0n },
+}
+
+export const PendingOpen: Story = {
+  name: 'Pending Open · Waiting for position',
+  args: { status: POSITION_PROTECTION_STATUS.PendingOpen, linkedOrderId: 0n },
+  parameters: { docs: { description: { story: 'Preview of the pending attachment before a position exists. The live Current Position card only shows protection once the position exists.' } } },
+}
+
+export const Armed: Story = {
+  name: 'Armed · Watching SL/TP levels',
+  args: { status: POSITION_PROTECTION_STATUS.Armed, linkedOrderId: 0n },
+}
+
 export const Latched: Story = {
   name: 'Latched · Waiting for retry',
   render: function InteractiveRetry(args) {
@@ -86,6 +116,34 @@ export const Latched: Story = {
 export const Triggered: Story = {
   name: 'Triggered · Close queued',
   args: { status: POSITION_PROTECTION_STATUS.Triggered, linkedOrderId: 19n },
+}
+
+const completedRecordParameters = {
+  docs: { description: { story: 'Preview of a terminal protection record. Terminal records are not retained in the live active-protection row; this story demonstrates their labels and details without presenting an active position.' } },
+}
+
+export const Executed: Story = {
+  name: 'Executed · Close completed',
+  args: { status: POSITION_PROTECTION_STATUS.Executed, linkedOrderId: 19n },
+  parameters: completedRecordParameters,
+}
+
+export const Failed: Story = {
+  name: 'Failed · Protection ended',
+  args: { status: POSITION_PROTECTION_STATUS.Failed, linkedOrderId: 0n },
+  parameters: completedRecordParameters,
+}
+
+export const Cancelled: Story = {
+  name: 'Cancelled · Protection removed',
+  args: { status: POSITION_PROTECTION_STATUS.Cancelled, linkedOrderId: 0n },
+  parameters: completedRecordParameters,
+}
+
+export const Liquidated: Story = {
+  name: 'Liquidated · Position liquidated',
+  args: { status: POSITION_PROTECTION_STATUS.Liquidated, linkedOrderId: 0n },
+  parameters: completedRecordParameters,
 }
 
 export const WalletDisconnected: Story = {

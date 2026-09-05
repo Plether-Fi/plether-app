@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { PerpsPositionProtection } from '../PerpsPositionProtection'
+import { PerpsPositionProtection, PerpsPositionProtectionPanel } from '../PerpsPositionProtection'
 
 const mocks = vi.hoisted(() => ({
   simulate: vi.fn(), write: vi.fn(), receipt: vi.fn(), read: vi.fn(), verify: vi.fn(),
@@ -15,6 +15,27 @@ vi.mock('wagmi', () => ({
 vi.mock('../../contracts/verifyPerpsV2Bindings', () => ({ verifyProtectionRetryBindings: mocks.verify }))
 
 describe('position protection status and retry', () => {
+  it.each([
+    [1, 'Pending open', 'not yet armed'],
+    [2, 'Armed', 'Cancel it'],
+    [4, 'Executed', 'completed its close execution'],
+    [5, 'Failed', 'ended in failure'],
+    [6, 'Cancelled', 'was cancelled'],
+    [7, 'Liquidated', 'was liquidated'],
+  ] as const)('shows lifecycle status %s without offering a retry', (status, label, message) => {
+    render(<PerpsPositionProtectionPanel id={7n} status={status} linkedOrderId={0n} canRetry walletOnNetwork onRetry={vi.fn()} />)
+    expect(screen.getByText(label)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(screen.getByText(new RegExp(message))).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry protection close' })).toBeNull()
+    if (status >= 4) expect(screen.queryByText(/remain locked|is active/)).toBeNull()
+  })
+
+  it('keeps the position uncluttered when no protection is attached', () => {
+    const { container } = render(<PerpsPositionProtectionPanel id={0n} status={0} linkedOrderId={0n} onRetry={vi.fn()} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.account.chainId = 421614
