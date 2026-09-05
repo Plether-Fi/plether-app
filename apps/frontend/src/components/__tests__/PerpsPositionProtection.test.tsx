@@ -24,15 +24,23 @@ describe('position protection status and retry', () => {
     expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('distinguishes an unset trigger from an unavailable price', () => {
+  it('shows only the configured leg for one-sided protection', () => {
     const { rerender } = render(<PerpsPositionProtectionPanel id={7n} status={2} linkedOrderId={0n}
-      stopLossTriggerPrice={0n} onRetry={vi.fn()} />)
-    expect(screen.getByLabelText('Stop-loss trigger price')).toHaveTextContent('Not set')
-    expect(screen.getByLabelText('Take-profit trigger price')).toHaveTextContent('--')
+      stopLossTriggerPrice={100_000_000n} takeProfitTriggerPrice={0n} onRetry={vi.fn()} />)
+    expect(screen.getByLabelText('Stop-loss trigger price')).toHaveTextContent('1.0000')
+    expect(screen.queryByLabelText('Take-profit trigger price')).toBeNull()
+    expect(screen.queryByText('TP')).toBeNull()
     rerender(<PerpsPositionProtectionPanel id={7n} status={2} linkedOrderId={0n}
-      takeProfitTriggerPrice={0n} onRetry={vi.fn()} />)
+      stopLossTriggerPrice={0n} takeProfitTriggerPrice={95_000_000n} onRetry={vi.fn()} />)
+    expect(screen.queryByLabelText('Stop-loss trigger price')).toBeNull()
+    expect(screen.queryByText('SL')).toBeNull()
+    expect(screen.getByLabelText('Take-profit trigger price')).toHaveTextContent('1.0500')
+  })
+
+  it('keeps unavailable trigger prices distinct from unset legs', () => {
+    render(<PerpsPositionProtectionPanel id={7n} status={2} linkedOrderId={0n} onRetry={vi.fn()} />)
     expect(screen.getByLabelText('Stop-loss trigger price')).toHaveTextContent('--')
-    expect(screen.getByLabelText('Take-profit trigger price')).toHaveTextContent('Not set')
+    expect(screen.getByLabelText('Take-profit trigger price')).toHaveTextContent('--')
   })
 
   it.each([

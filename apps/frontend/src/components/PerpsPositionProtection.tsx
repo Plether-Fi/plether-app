@@ -12,10 +12,6 @@ interface ProtectionTriggerPrices {
   stopLossTriggerPrice?: bigint
 }
 
-function formatTriggerPrice(price: bigint | undefined): string {
-  return price === 0n ? 'Not set' : formatDisplayDxyPrice(price)
-}
-
 export function PerpsPositionProtection({ id, status, linkedOrderId, takeProfitTriggerPrice, stopLossTriggerPrice, onRefresh }: ProtectionTriggerPrices & {
   id: bigint
   status: number
@@ -106,16 +102,16 @@ export function PerpsPositionProtectionPanel({
     <section aria-label="Position protection" className="mb-4 border-b border-brand-border/20 pb-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <p className="text-content-secondary">SL/TP <span className={latched ? 'ml-2 text-[#FFAB96]' : 'ml-2 text-content-primary'}>{statusLabel}</span></p>
+          <p className={latched ? 'text-[#FFAB96]' : 'text-content-primary'}>{statusLabel}</p>
           <dl className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-            <div className="flex gap-1.5" title="Stop-loss trigger price">
+            {stopLossTriggerPrice !== 0n && <div className="flex gap-1.5" title="Stop-loss trigger price">
               <dt className="text-content-secondary">SL</dt>
-              <dd aria-label="Stop-loss trigger price" className="text-content-primary">{formatTriggerPrice(stopLossTriggerPrice)}</dd>
-            </div>
-            <div className="flex gap-1.5" title="Take-profit trigger price">
+              <dd aria-label="Stop-loss trigger price" className="text-content-primary">{formatDisplayDxyPrice(stopLossTriggerPrice)}</dd>
+            </div>}
+            {takeProfitTriggerPrice !== 0n && <div className="flex gap-1.5" title="Take-profit trigger price">
               <dt className="text-content-secondary">TP</dt>
-              <dd aria-label="Take-profit trigger price" className="text-content-primary">{formatTriggerPrice(takeProfitTriggerPrice)}</dd>
-            </div>
+              <dd aria-label="Take-profit trigger price" className="text-content-primary">{formatDisplayDxyPrice(takeProfitTriggerPrice)}</dd>
+            </div>}
           </dl>
         </div>
         <button type="button" aria-expanded={expanded} aria-controls={detailsId}
