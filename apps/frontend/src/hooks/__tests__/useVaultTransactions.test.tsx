@@ -119,6 +119,7 @@ describe('useVaultTransactions', () => {
     act(() => {
       result.current.requestDeposit(2_000_000n)
       result.current.requestRedeem(1_000_000n)
+      result.current.requestRedeemFromClaimableDeposit(500_000n, 1_000_000n)
       result.current.cancelPendingDeposit(500_001n)
       result.current.cancelRedeemRequest(500_002n)
       result.current.claimDepositShares(500_003n)
@@ -126,7 +127,7 @@ describe('useVaultTransactions', () => {
       result.current.claimRedeemRefund(500_005n)
     })
 
-    expect(mocks.execute).toHaveBeenCalledTimes(7)
+    expect(mocks.execute).toHaveBeenCalledTimes(8)
     for (const [config] of mocks.execute.mock.calls) {
       expect((config as SequenceConfig).showModal).toBe(false)
     }
@@ -186,6 +187,34 @@ describe('useVaultTransactions', () => {
       account: mocks.address,
       chainId: 421614,
       functionName: 'requestRedeem',
+    }))
+  })
+
+  it('routes claimable deposit shares directly into the withdrawal queue', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestRedeemFromClaimableDeposit(500_001n, 3_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe('withdraw')
+    const [requestStep] = config.buildSteps()
+    expect(requestStep.label).toBe('Queue withdrawal')
+    await requestStep.action()
+
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      functionName: 'requestRedeemFromClaimableDeposit',
+      args: [500_001n, 3_000_000n, mocks.address],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      account: mocks.address,
+      chainId: 421614,
+      functionName: 'requestRedeemFromClaimableDeposit',
     }))
   })
 

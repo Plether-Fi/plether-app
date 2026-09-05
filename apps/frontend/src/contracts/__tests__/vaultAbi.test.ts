@@ -35,6 +35,9 @@ describe('tranche vault ABI', () => {
       'estimateRedeemAssets',
       'requestDeposit',
       'requestRedeem',
+      'requestRedeemFromClaimableDeposit',
+      'maxRequestRedeemFromClaimableDeposit',
+      'depositEpochActivationTime',
       'cancelPendingDeposit',
       'cancelRedeemRequest',
       'claimDepositShares',
@@ -64,6 +67,7 @@ describe('tranche vault ABI', () => {
       'getJuniorTranche',
       'getTrancheQueues',
       'getLpRequestState',
+      'getLpDepositCooldownState',
     ]))
     expect(poolNames).toEqual(expect.arrayContaining([
       'getPendingTrancheState',

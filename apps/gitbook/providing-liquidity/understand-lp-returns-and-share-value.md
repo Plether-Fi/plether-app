@@ -32,7 +32,7 @@ LP-owned revenue and losses normally change tranche principal without changing t
 
 The exact conversion follows ERC-4626 rounding, Plether's virtual-share protections and, for Junior, accrued maintenance-fee shares in effective supply. A share is an accounting claim on its tranche—not an unconditional claim on the same fraction of the liquidity pool's raw wallet balance.
 
-All deposits enter the hourly queue. The deposit request escrows USDC first; the final number of shares is fixed when eligible hourly settlement processes the batch. Processed shares already participate in vault performance while they are held as a claim in vault escrow. The holder then uses **Move shares to wallet** as a separate transaction.
+All deposits enter the hourly queue. The deposit request escrows USDC first; the final number of shares is fixed when eligible hourly settlement processes the batch. Processed shares already participate in vault performance while they are held as a claim in vault escrow. The holder can then use **Move shares to wallet**, or after the source cooldown use **Queue direct withdrawal** when shown, as a separate transaction.
 
 ### What can increase LP value
 
@@ -176,7 +176,7 @@ The deposit preview estimates how many shares an amount of USDC may buy. It does
 
 The contract assigns requests by their transaction's block-inclusion timestamp. Inclusion strictly before the five-minute cutoff targets the next hourly processing time; inclusion at or after it targets the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so the confirmed request record is authoritative. Until eligible settlement processes the request, the depositor has funded the queue but does not hold active tranche shares or earn the Senior targeted return or Junior residual return. The settlement path is permissionless, but the current interface exposes no user finalization action; when the automated LP worker is enabled, a healthy keeper submits the normal processing transaction.
 
-After processing, the shares are active and **Shares ready** appears under **Your position**. The depositor must separately select **Move shares to wallet**. Receiving those shares starts or restarts the one-hour withdrawal cooldown for every share in that wallet's position in the selected vault. Learn the complete lifecycle in [**Manage a pending deposit**](manage-a-pending-deposit.md).
+After processing, the shares are active, their one-hour cooldown begins and **Shares ready** appears under **Your position**. The depositor can select **Move shares to wallet**, which preserves the activation timestamp and cannot weaken a newer wallet cooldown. After the source cooldown elapses, **Queue direct withdrawal** can instead move shares from that claimable deposit into the current withdrawal queue without a wallet transfer or token approval. Learn the complete lifecycle in [**Manage a pending deposit**](manage-a-pending-deposit.md).
 
 Withdrawals use the same hourly cadence. A request escrows the selected shares, and those shares continue to gain or lose value until the withdrawal is funded. Matured Senior withdrawals receive funding priority. After eligible processing allocates USDC, **USDC ready** appears and the holder separately selects **Move USDC to wallet**. Only when the full remaining-share amount quotes to zero assets and enters terminal refund state can **Return shares to wallet** also become available; ordinary insufficient-liquidity remainders remain queued. Returning shares restarts the one-hour cooldown.
 

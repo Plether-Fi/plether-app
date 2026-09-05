@@ -89,12 +89,12 @@ Submitting a deposit moves USDC out of the owner wallet and into vault custody. 
 | --- | --- |
 | **Pending** | The USDC is held for hourly processing. The share amount is still an estimate. **Cancel deposit** is available before the processing boundary. |
 | **Waiting for processing** | The expected time passed without processing. The request is not a wallet-held share position, and cancellation is no longer offered. |
-| **Shares ready** | The processed shares already participate in vault performance but remain in vault custody until **Move shares to wallet** confirms. |
+| **Shares ready** | The processed shares already participate in vault performance, their cooldown began at activation, and they remain in vault custody until **Move shares to wallet** or an available **Queue direct withdrawal** confirms. |
 | **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected. The user must select **Return USDC to wallet** to recover the refundable assets. |
 
 The final shares can differ from **Estimated shares** because the share price and applicable pricing conditions can change before processing. Approval confirmation alone is not a deposit request; **Queue deposit** must also confirm.
 
-Moving ready shares into the wallet starts or restarts a one-hour withdrawal cooldown for the wallet's entire position in that tranche.
+Moving ready shares into the wallet preserves their activation timestamp and applies the later of it and the wallet's existing timestamp. It does not start a fresh cooldown or weaken a newer wallet cooldown.
 
 ### Withdrawal-request risks
 
@@ -115,13 +115,15 @@ There is no guaranteed date on which a waiting withdrawal, including a Junior re
 
 ### Cooldown and transfer risk
 
-The vault's share-delivery, withdrawal-cancellation and zero-value-remainder return actions start or restart a one-hour cooldown for that wallet's entire position in the same tranche. An ordinary wallet-to-wallet transfer can occur only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the live **Available in** countdown ends, those shares cannot be transferred or used for another withdrawal request.
+Successful deposit activation starts a one-hour cooldown for that source deposit. Share delivery preserves the activation timestamp; withdrawal cancellation and zero-value-remainder returns restart the cooldown for the wallet's entire position in the same tranche. An ordinary wallet-to-wallet transfer can occur only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the live **Available in** countdown ends, wallet-held shares cannot be transferred or used for another withdrawal request.
 
-The current flow explicitly warns about the cooldown when the user:
+The current flow explains the applicable timestamp when the user:
 
 * selects **Move shares to wallet** after a deposit;
 * selects **Cancel withdrawal**; or
 * selects **Return shares to wallet** for a zero-value withdrawal remainder.
+
+After a claimable deposit's source cooldown elapses, **Queue direct withdrawal** can place shares from that single deposit into the current withdrawal queue without a wallet transfer or token approval. This does not bypass the cooldown; the action is unavailable before expiry.
 
 The cooldown is a holder-level restriction, not an accounting loss. **Current value** can continue moving while **Shares available to withdraw** is zero.
 
@@ -240,7 +242,7 @@ At minimum, check:
 * **New deposits paused**, **Safety restrictions**, **Hourly processing paused** and **New withdrawal funding**.
 * Deposit and withdrawal backlog indicators.
 * The five-minute **Submission deadline** and **Next processing time**.
-* The cancellation boundary and the separate **Move shares to wallet**, **Move USDC to wallet**, **Return USDC to wallet** and **Return shares to wallet** actions.
+* The cancellation boundary and the separate **Move shares to wallet**, **Queue direct withdrawal**, **Move USDC to wallet**, **Return USDC to wallet** and **Return shares to wallet** actions.
 * The one-hour cooldown and its live countdown.
 * The exact owner-wallet transactions and native gas required to manage and eventually exit the position.
 

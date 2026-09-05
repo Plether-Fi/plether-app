@@ -36,12 +36,12 @@ An LP deposit does not create Margin Account collateral. A Margin Account deposi
 | Symptom | Check first | Safe next action |
 | --- | --- | --- |
 | `Vaults` is missing | Application hostname, cached build and route | Open the official Arbitrum Sepolia application, reload, and do not substitute the Perps-page Margin Account controls |
-| USDC moved but no shares appeared | **Pending deposits** and transaction target | Confirm that **Queue deposit** succeeded; wait for processing, then use **Move shares to wallet** |
+| USDC moved but no shares appeared | **Pending deposits** and transaction target | Confirm that **Queue deposit** succeeded; wait for processing, then move the shares or use the direct-withdrawal action after cooldown when shown |
 | Approval confirmed but no deposit exists | Whether the second wallet step confirmed | Return to the deposit preview and queue once; approval changes allowance only |
 | **Review deposit** is disabled | Wallet balance, minimum, capacity and displayed deposit-closure reason | Correct the displayed issue or wait for the stated reopening condition |
 | Deposit is past **Expected processing** | **Hourly processing paused**, pricing and safety state | Leave it queued; the holder does not submit a processing transaction |
 | **Cancel deposit** is missing | Whether the request has reached its processing epoch | Wait for **Shares ready** or **Refund available** |
-| **Shares ready** but wallet balance did not increase | The separate share claim | Select **Move shares to wallet** and confirm the transaction |
+| **Shares ready** but wallet balance did not increase | The shares remain claimable in vault custody | Select **Move shares to wallet** if wallet delivery is intended, or use **Queue direct withdrawal** after cooldown when shown |
 | **Shares available to withdraw** is zero | Wallet share balance and cooldown countdown | Wait for **Available in** to reach zero or return/move the required shares first |
 | **Review withdrawal** is disabled | Share estimate, request limit and live data | Correct the displayed issue; separately remember that a sub-minimum partial request can pass review but still revert onchain |
 | Withdrawal is past **Expected processing** | **New withdrawal funding**, Senior priority and processing status | Leave it queued; **Waiting for USDC** can persist beyond the displayed time |
@@ -59,7 +59,7 @@ First identify which `Deposit` action you used. The Perps-page action funds the 
 
 Every vault deposit is queued:
 
-`Approve USDC when needed → Queue deposit → Pending → eligible processing → Shares ready → Move shares to wallet`
+`Approve USDC when needed → Queue deposit → Pending → eligible processing and cooldown start → Shares ready → Move shares to wallet or Queue direct withdrawal after cooldown`
 
 Check:
 
@@ -68,7 +68,7 @@ Check:
 3. **Pending deposits** shows the deposit reference and expected processing time.
 4. Whether the request transaction was included onchain strictly before the five-minute cutoff or at/after it. Inclusion at or after the cutoff targets the following hour, even if the transaction was signed or sent earlier; use the confirmed request record.
 5. **Hourly processing paused**, price freshness or a safety gate is not delaying processing.
-6. **Shares ready** is followed by a successful **Move shares to wallet** transaction.
+6. **Shares ready** is followed by either a successful **Move shares to wallet** transaction or, after cooldown, a successful **Queue direct withdrawal** transaction when that action is shown.
 
 Do not queue another deposit until you know which transition the first transaction reached. See [**Deposit liquidity**](deposit-liquidity.md) and [**Manage a pending deposit**](manage-a-pending-deposit.md).
 
@@ -118,7 +118,7 @@ The expected time is not a completion guarantee. Check:
 * safety restrictions, an unresolved pool shortfall or Senior impairment; and
 * keeper and network availability.
 
-There is no user processing button. Monitor the request and its eligibility gates. When the automated LP worker is enabled and healthy, it submits eligible processing; otherwise progress requires another permissionless caller. Once processing succeeds, **Shares ready** appears. Those shares already participate in vault performance while held by the vault, but they are not wallet-held until **Move shares to wallet** confirms.
+There is no user processing button. Monitor the request and its eligibility gates. When the automated LP worker is enabled and healthy, it submits eligible processing; otherwise progress requires another permissionless caller. Once processing succeeds, **Shares ready** appears and the source cooldown begins. Those shares already participate in vault performance while held by the vault. They are not wallet-held until **Move shares to wallet** confirms, but after cooldown they can enter a withdrawal request directly when **Queue direct withdrawal** is shown.
 
 ### The share amount differs from the request estimate
 
@@ -135,7 +135,7 @@ Compare the processed request and final share amount. Do not treat the preview o
 5. Refresh the application.
 6. Confirm that the pending deposit cleared.
 
-Moving shares to the wallet starts or restarts the one-hour withdrawal cooldown for the wallet's complete position in that vault. A zero **Shares available to withdraw** value immediately afterward is expected; use the displayed **Available in** countdown.
+The deposit's one-hour withdrawal cooldown started when processing activated it. Moving shares to the wallet preserves that timestamp and cannot weaken a newer wallet cooldown. If **Shares available to withdraw** is zero, use the displayed **Available in** countdown; if an aged claimable deposit shows **Queue direct withdrawal**, it can enter the current withdrawal queue without first moving through the wallet.
 
 ### My withdrawal request is pending
 
@@ -158,7 +158,7 @@ Do not submit a duplicate request for shares already locked in the vault.
 Check these independent conditions:
 
 * **Wallet share state:** queued or returnable shares are not wallet-held shares.
-* **Cooldown:** receiving deposit shares, cancelled-withdrawal shares or a returned zero-value remainder starts or restarts the one-hour countdown for the complete tranche position.
+* **Cooldown:** deposit activation starts the source-lot countdown and claiming preserves it; cancelled-withdrawal shares or a returned zero-value remainder restart the wallet countdown for the complete tranche position.
 * **Vault request limit:** current vault rules may make fewer shares eligible than the wallet balance.
 * **Live data:** unavailable wallet or vault reads disable the preview.
 

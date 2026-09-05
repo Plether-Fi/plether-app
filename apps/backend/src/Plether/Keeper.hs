@@ -34,7 +34,6 @@ import Control.Concurrent.Async (concurrently_)
 import Control.Exception
   ( SomeAsyncException
   , SomeException
-  , bracket
   , displayException
   , fromException
   , throwIO
@@ -288,11 +287,7 @@ runOrderKeeper cfg pool client KeeperLoop dryRun = supervise
 
 runOrderKeeperSession :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
 runOrderKeeperSession cfg pool client mode dryRun =
-  withDb pool $ \conn ->
-    bracket
-      (tryPerpsKeeperLock conn)
-      (\acquired -> when acquired $ unlockPerpsKeeperLock conn)
-      $ \acquired ->
+  withKeeperSessionLock pool tryPerpsKeeperLock unlockPerpsKeeperLock $ \conn acquired ->
         if not acquired
           then case mode of
             KeeperOnce ->
@@ -360,11 +355,7 @@ runLpSettlementWorkerSession
   -> KeeperMode
   -> IO ()
 runLpSettlementWorkerSession codeHashes cfg pool client mode =
-  withDb pool $ \conn ->
-    bracket
-      (tryLpSettlementKeeperLock conn)
-      (\acquired -> when acquired $ unlockLpSettlementKeeperLock conn)
-      $ \acquired ->
+  withKeeperSessionLock pool tryLpSettlementKeeperLock unlockLpSettlementKeeperLock $ \conn acquired ->
         if not acquired
           then
             fail "Another LP settlement worker already holds the advisory lock"
@@ -393,6 +384,23 @@ runLpSettlementIteration codeHashes cfg conn client = do
   processLpSettlementCycleWithCodeHashes codeHashes cfg conn client
   emitLpSettlementHeartbeat cfg conn client
   pure True
+
+-- On failure (including cancellation), withDb destroys the connection, which
+-- releases its session locks. Do not issue an unlock query on that path: an
+-- interrupted libpq query can leave the connection busy, and an unlock error
+-- would replace the cancellation and cause the supervisor to restart.
+withKeeperSessionLock
+  :: DbPool
+  -> (Connection -> IO Bool)
+  -> (Connection -> IO ())
+  -> (Connection -> Bool -> IO a)
+  -> IO a
+withKeeperSessionLock pool acquire release action =
+  withDb pool $ \conn -> do
+    acquired <- acquire conn
+    result <- action conn acquired
+    when acquired $ release conn
+    pure result
 
 trySynchronous :: IO a -> IO (Either SomeException a)
 trySynchronous action = do

@@ -2498,11 +2498,16 @@ CREATE TABLE IF NOT EXISTS vault_canonical_logs (
     log_index NUMERIC(78,0) NOT NULL,
     block_timestamp BIGINT NOT NULL,
     PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),
-    CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'DepositRequested')),
+    CONSTRAINT vault_canonical_logs_event_name_check CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested')),
     CHECK (chain_id > 0 AND deployment_block >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
     CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
 );
+ALTER TABLE vault_canonical_logs
+    DROP CONSTRAINT IF EXISTS vault_canonical_logs_event_name_check;
+ALTER TABLE vault_canonical_logs
+    ADD CONSTRAINT vault_canonical_logs_event_name_check
+    CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested'));
 
 CREATE TABLE IF NOT EXISTS vault_share_transfers (
     chain_id NUMERIC(78,0) NOT NULL,
@@ -2560,12 +2565,17 @@ CREATE TABLE IF NOT EXISTS vault_request_events (
     log_index NUMERIC(78,0) NOT NULL,
     block_timestamp BIGINT NOT NULL,
     PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),
-    CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'DepositRequested')),
+    CONSTRAINT vault_request_events_event_name_check CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested')),
     CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND raw_amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
     CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (controller_address ~ '^0x[0-9a-f]{40}$' AND owner_address ~ '^0x[0-9a-f]{40}$'),
     CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
 );
+ALTER TABLE vault_request_events
+    DROP CONSTRAINT IF EXISTS vault_request_events_event_name_check;
+ALTER TABLE vault_request_events
+    ADD CONSTRAINT vault_request_events_event_name_check
+    CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested'));
 CREATE INDEX IF NOT EXISTS idx_vault_request_events_recent
     ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, block_number DESC, tx_index DESC, log_index DESC);
 CREATE INDEX IF NOT EXISTS idx_vault_request_events_controller

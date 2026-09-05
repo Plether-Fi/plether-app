@@ -65,6 +65,7 @@ type VaultRequestAction =
   | { kind: 'cancel-deposit'; requestId: bigint; assets: bigint }
   | { kind: 'recover-deposit'; requestId: bigint; assets: bigint }
   | { kind: 'claim-deposit'; requestId: bigint; shares: bigint }
+  | { kind: 'redeem-claimable-deposit'; requestId: bigint; shares: bigint }
   | { kind: 'cancel-withdrawal'; requestId: bigint; shares: bigint }
   | { kind: 'claim-withdrawal'; requestId: bigint; shares: bigint; assets: bigint }
   | { kind: 'reclaim-withdrawal'; requestId: bigint; shares: bigint }
@@ -3432,6 +3433,12 @@ export function ActivityTab({
       case 'claim-deposit':
         vaultTransactions.claimDepositShares(requestAction.requestId)
         break
+      case 'redeem-claimable-deposit':
+        vaultTransactions.requestRedeemFromClaimableDeposit(
+          requestAction.requestId,
+          requestAction.shares,
+        )
+        break
       case 'cancel-withdrawal':
         vaultTransactions.cancelRedeemRequest(requestAction.requestId)
         break
@@ -3516,6 +3523,7 @@ export function ActivityTab({
         {depositRequests.length > 0 ? (
           <div className="divide-y divide-brand-border/25">
             {depositRequests.map((request) => {
+              const directRedeemableShares = request.directRedeemableShares
               const statusLabel = request.refundableAssets > 0n
                 ? 'Refund available'
                 : request.claimableShares > 0n
@@ -3553,8 +3561,12 @@ export function ActivityTab({
 
                   <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
                     <RequestMetric
-                      label={hasProcessedDeposit ? 'Eligible since' : 'Expected processing'}
-                      value={settlementLabel(request.targetTimestamp)}
+                      label={request.activationTimestamp !== undefined
+                        ? 'Activated'
+                        : hasProcessedDeposit
+                          ? 'Eligible since'
+                          : 'Expected processing'}
+                      value={settlementLabel(request.activationTimestamp ?? request.targetTimestamp)}
                     />
                     {!hasProcessedDeposit ? (
                       <RequestMetric
@@ -3567,6 +3579,17 @@ export function ActivityTab({
                         label="Shares ready for wallet"
                         value={formatPositionShares(request.claimableShares, tranche.token)}
                         tone="positive"
+                      />
+                    ) : null}
+                    {request.claimableShares > 0n ? (
+                      <RequestMetric
+                        label="Direct withdrawal"
+                        value={directRedeemableShares > 0n
+                          ? 'Available now'
+                          : request.cooldownEndsAt !== undefined
+                            ? `Available after ${settlementLabel(Number(request.cooldownEndsAt))}`
+                            : 'Waiting for activation'}
+                        tone={directRedeemableShares > 0n ? 'positive' : 'default'}
                       />
                     ) : null}
                     {request.refundableAssets > 0n ? (
@@ -3583,7 +3606,9 @@ export function ActivityTab({
                       {request.refundableAssets > 0n
                         ? 'This deposit could not be completed. Return the held USDC to your wallet.'
                         : request.claimableShares > 0n
-                          ? `Your deposit is active and already participates in vault performance. Moving the shares to your wallet starts or restarts a one-hour withdrawal cooldown for your entire ${tranche.name} position.`
+                          ? directRedeemableShares > 0n
+                            ? 'This deposit is active and its settlement-aged cooldown has elapsed. Queue the shares directly for withdrawal, or move them to your wallet without restarting that elapsed cooldown.'
+                            : 'This deposit is active and already participates in vault performance. Its one-hour withdrawal cooldown began when processing activated it; moving the shares to your wallet preserves that timestamp.'
                           : request.matured
                             ? 'The expected time has passed, but this deposit has not been processed yet.'
                             : 'You can cancel before processing. The final number of shares is set when the deposit is processed.'}
@@ -3598,6 +3623,7 @@ export function ActivityTab({
                       {request.claimableShares > 0n ? (
                         <Button
                           type="button"
+                          variant={directRedeemableShares > 0n ? 'secondary' : 'primary'}
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
                             openRequestAction({
@@ -3608,6 +3634,21 @@ export function ActivityTab({
                           }}
                         >
                           Move shares to wallet
+                        </Button>
+                      ) : null}
+                      {directRedeemableShares > 0n ? (
+                        <Button
+                          type="button"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            openRequestAction({
+                              kind: 'redeem-claimable-deposit',
+                              requestId: request.requestId,
+                              shares: directRedeemableShares,
+                            })
+                          }}
+                        >
+                          Queue direct withdrawal
                         </Button>
                       ) : null}
                       {request.refundableAssets > 0n ? (
@@ -4102,13 +4143,24 @@ function VaultRequestActionModal({
       case 'claim-deposit':
         return {
           title: 'Move your vault shares to your wallet?',
-          description: `These shares already participate in vault performance. Moving them to your wallet starts or restarts a one-hour cooldown for every ${tranche.token} share in your wallet. Until it ends, those shares cannot be transferred or used for a withdrawal request.`,
+          description: `These shares already participate in vault performance. Their one-hour cooldown began when the deposit became active. Moving them to your wallet preserves that activation timestamp and cannot weaken a newer cooldown on your ${tranche.token} balance.`,
           amountLabel: 'Shares moved',
           amount: shareAmount(action.shares),
           confirmLabel: 'Move shares',
           confirmVariant: 'primary' as const,
           successTitle: 'Vault shares moved',
-          successDescription: <>{shareAmount(action.shares)} is now in your wallet. Your one-hour withdrawal cooldown has started.</>,
+          successDescription: <>{shareAmount(action.shares)} is now in your wallet with its settlement-aged withdrawal timestamp.</>,
+        }
+      case 'redeem-claimable-deposit':
+        return {
+          title: 'Queue these shares for withdrawal?',
+          description: 'The deposit cooldown has elapsed. These shares will move directly from deposit-claim escrow into the current withdrawal queue without entering your wallet or requiring a token approval.',
+          amountLabel: 'Shares queued',
+          amount: shareAmount(action.shares),
+          confirmLabel: 'Queue withdrawal',
+          confirmVariant: 'primary' as const,
+          successTitle: 'Withdrawal submitted',
+          successDescription: <>{shareAmount(action.shares)} has been added to the withdrawal queue.</>,
         }
       case 'cancel-withdrawal':
         return {
@@ -4902,8 +4954,8 @@ function VaultActionPanel({
                 <>
                   You can request a withdrawal in{' '}
                   <WithdrawalCooldownCountdown remainingSeconds={withdrawalCooldownRemaining} />.{' '}
-                  Receiving more {tranche.token} shares in your wallet restarts this one-hour cooldown
-                  for your entire {tranche.name} position.
+                  Claimed deposit shares preserve the timestamp from activation. Shares returned by a
+                  cancelled or refunded withdrawal restart the cooldown for your entire {tranche.name} position.
                 </>
               ) : (
                 'None of your shares are currently available to withdraw.'

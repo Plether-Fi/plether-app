@@ -314,8 +314,8 @@ The lifecycle is:
 3. `requestDeposit` moves the USDC into tranche-vault escrow and assigns a request reference and expected processing time.
 4. Before processing, the owner may use **Cancel deposit** while the interface offers it.
 5. When LP settlement is enabled, a healthy keeper can process an eligible hourly batch after the protocol's safety checks pass. The processing path is permissionless, but the current interface does not expose a user **Finalize** action.
-6. Processing fixes the batch share conversion, moves the deposit into active accounting and makes the depositor's shares claimable in vault escrow.
-7. The depositor uses **Move shares to wallet**. Those shares already participate in vault performance before this transfer, but moving them starts or restarts the wallet's one-hour withdrawal cooldown for the whole tranche position.
+6. Processing fixes the batch share conversion, moves the deposit into active accounting, records its activation time, starts its one-hour withdrawal cooldown and makes the depositor's shares claimable in vault escrow.
+7. The depositor uses **Move shares to wallet**, which preserves that activation timestamp and cannot weaken a newer wallet cooldown. After the source cooldown elapses, the depositor can instead use **Queue direct withdrawal** when shown to route shares from that claimable deposit into the current withdrawal queue without a wallet transfer or token approval.
 
 Before processing:
 
@@ -347,7 +347,7 @@ For a queued withdrawal, the frozen-oracle surcharge is determined when funding 
 
 ### Withdrawal cooldown
 
-Wallet-held tranche shares are subject to a fixed one-hour cooldown after shares are moved or returned to that wallet.
+Each successfully activated deposit receives a fixed one-hour cooldown timestamp at processing. Claiming those shares to a wallet preserves the source timestamp and applies the later of it and the wallet's existing timestamp.
 
 During the cooldown:
 
@@ -357,7 +357,7 @@ During the cooldown:
 
 A share transfer propagates the relevant cooldown timestamp to the receiver.
 
-Moving processed deposit shares to the wallet, cancelling a queued withdrawal or returning a zero-value withdrawal remainder starts or restarts the cooldown for the wallet's entire position in that tranche.
+Cancelling a queued withdrawal or returning a zero-value withdrawal remainder restarts the cooldown for the wallet's entire position in that tranche. Claiming processed deposit shares does not restart it. Once a claimable source deposit's cooldown has elapsed, its shares can be queued directly for withdrawal, one source request per transaction, without an ERC-20 transfer or approval and without changing controller.
 
 Deposits must meet the live minimum shown by the vault. A partial withdrawal request must also estimate to at least that live minimum, currently `1 USDC`; a complete exit of all remaining requestable shares may use the contract's smaller dust exception.
 

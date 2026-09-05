@@ -154,12 +154,12 @@ The deposit record can move through these states:
 | --- | --- | --- |
 | **Pending** | USDC is queued before its expected processing time | Wait or **Cancel deposit** |
 | **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet | Wait and check processing or protocol status |
-| **Shares ready** | Processing created your vault-share allocation | **Move shares to wallet** |
+| **Shares ready** | Processing created your vault-share allocation and started its withdrawal cooldown | **Move shares to wallet**, or **Queue direct withdrawal** after the cooldown when shown |
 | **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and its USDC is recoverable | **Return USDC to wallet** |
 
-When **Shares ready** appears, the shares already participate in vault performance while held by the vault. Select **Move shares to wallet** to complete delivery.
+When **Shares ready** appears, the shares already participate in vault performance while held by the vault. Select **Move shares to wallet** to complete delivery, or use **Queue direct withdrawal** after the displayed source-deposit cooldown when that action is available.
 
-Moving shares into the owner wallet starts or restarts the one-hour withdrawal cooldown for the owner's entire position in that vault. During the cooldown, those wallet-held shares cannot be transferred or used for a withdrawal request.
+The one-hour cooldown starts when processing activates the deposit, not when the owner later claims it. Moving shares into the owner wallet preserves the source activation timestamp and uses the later of that timestamp and any existing wallet timestamp, so claiming cannot shorten a newer wallet cooldown. During an active wallet cooldown, wallet-held shares cannot be transferred or used for a withdrawal request.
 
 When **Refund available** appears, select **Return USDC to wallet** and verify that the correct amount returns before attempting another deposit.
 
@@ -173,7 +173,7 @@ When **Refund available** appears, select **Return USDC to wallet** and verify t
 | **Waiting for processing** persists | Hourly settlement is paused, delayed or blocked by the keeper path or a live safety gate | Check hourly-processing, backlog, market-price and safety status; do not look for a user finalization action |
 | Final shares differ from the preview | The preview was an estimate and processing used the then-current batch accounting and share price | Review the processed allocation rather than the request-time estimate |
 | **Refund available** appears | The processed batch's aggregate deposit quote rounded to zero shares and its epoch was rejected | Use **Return USDC to wallet** and verify the recovery transaction |
-| Shares are ready but absent from the wallet | The allocation still needs its delivery transaction | Select **Move shares to wallet** and verify the cooldown start |
+| Shares are ready but absent from the wallet | The allocation remains claimable in vault custody | Select **Move shares to wallet**, or use **Queue direct withdrawal** after its cooldown when shown; verify the activation time |
 
 See [Manage a pending deposit](manage-a-pending-deposit.md) for the complete monitoring lifecycle and [LP troubleshooting](lp-troubleshooting.md) for broader recovery guidance.
 

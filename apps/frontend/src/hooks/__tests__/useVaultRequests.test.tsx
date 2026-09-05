@@ -25,37 +25,70 @@ const mocks = vi.hoisted(() => ({
     0n,
     false,
   ] as readonly unknown[],
+  cooldownState: [
+    '0x0000000000000000000000000000000000000000',
+    0n,
+    '0x0000000000000000000000000000000000000000',
+    0n,
+    0n,
+    0n,
+    0n,
+  ] as readonly unknown[],
 }))
 
 vi.mock('wagmi', () => ({
   useReadContracts: (args: unknown) => {
+    expect(args).toMatchObject({ allowFailure: false })
     const contracts = (args as {
-      contracts: readonly { args: readonly [boolean, bigint, `0x${string}`] }[]
+      contracts: readonly {
+        functionName: 'getLpDepositCooldownState' | 'getLpRequestState'
+        args: readonly [boolean, bigint, `0x${string}`]
+      }[]
     }).contracts
     return {
-      data: contracts.map((contract) => ({
-        status: 'success' as const,
-        result: contract.args[1] === mocks.requestId
-          ? mocks.requestState
-          : [
-              contract.args[0]
-                ? '0x0000000000000000000000000000000000000001'
-                : '0x0000000000000000000000000000000000000002',
-              contract.args[1],
-              contract.args[2],
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              0n,
-              false,
-            ],
-      })),
+      data: contracts.map((contract) => {
+        if (contract.functionName === 'getLpDepositCooldownState') {
+          return {
+            status: 'success' as const,
+            result: contract.args[1] === mocks.requestId
+              ? mocks.cooldownState
+              : [
+                  contract.args[0]
+                    ? '0x0000000000000000000000000000000000000001'
+                    : '0x0000000000000000000000000000000000000002',
+                  contract.args[1],
+                  contract.args[2],
+                  0n,
+                  0n,
+                  0n,
+                  0n,
+                ],
+          }
+        }
+        return {
+          status: 'success' as const,
+          result: contract.args[1] === mocks.requestId
+            ? mocks.requestState
+            : [
+                contract.args[0]
+                  ? '0x0000000000000000000000000000000000000001'
+                  : '0x0000000000000000000000000000000000000002',
+                contract.args[1],
+                contract.args[2],
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                0n,
+                false,
+              ],
+        }
+      }).map(({ result }) => result),
       isLoading: false,
       refetch: mocks.refetch,
     }
@@ -107,6 +140,15 @@ describe('useVaultRequests', () => {
       0n,
       0n,
       false,
+    ]
+    mocks.cooldownState = [
+      '0x0000000000000000000000000000000000000000',
+      0n,
+      CONTROLLER,
+      0n,
+      0n,
+      0n,
+      0n,
     ]
   })
 
@@ -198,6 +240,52 @@ describe('useVaultRequests', () => {
       250,
       expect.any(AbortSignal),
     )
+  })
+
+  it('exposes settlement-aged cooldown state for direct redemption', async () => {
+    mocks.requestId = 400n
+    mocks.requestState = [
+      '0x0000000000000000000000000000000000000002',
+      400n,
+      CONTROLLER,
+      0n,
+      0n,
+      12_000_000n,
+      6_000_000_000n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      false,
+    ]
+    mocks.cooldownState = [
+      '0x0000000000000000000000000000000000000002',
+      400n,
+      CONTROLLER,
+      1_800_000_000n,
+      1_800_003_600n,
+      6_000_000_000n,
+      6_000_000_000n,
+    ]
+    vi.mocked(perpsApi.getPerpsVaultRequestIds)
+      .mockResolvedValue(requestIdResponse(['400']))
+
+    const { result } = renderHook(() => useVaultRequests({
+      controller: CONTROLLER,
+      isSenior: false,
+      currentEpoch: 500n,
+    }))
+
+    await waitFor(() => {
+      expect(result.current.depositRequests[0]?.requestId).toBe(400n)
+    })
+    expect(result.current.depositRequests[0]).toMatchObject({
+      activationTimestamp: 1_800_000_000,
+      cooldownEndsAt: 1_800_003_600n,
+      directRedeemableShares: 6_000_000_000n,
+    })
   })
 
   it('paginates strictly and exposes stale confirmed discovery data', async () => {

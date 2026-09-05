@@ -19,6 +19,7 @@ import Plether.Ethereum.Client (RpcError (..))
 import Plether.Vaults.ActivityIndexer
   ( ParsedVaultEvent (..)
   , VaultTransfer (..)
+  , claimableDepositRedeemRequestTopic
   , depositRequestTopic
   , legacyDepositRequestedTopic
   , isProviderLogRangeLimit
@@ -61,6 +62,16 @@ spec = describe "vault activity ABI decoding" $ do
       `shouldSatisfy` isRequest "DepositRequest" ownerAddress secondAddress 77 456
     parseVaultLog deployment 1_800_000_000 redeem
       `shouldSatisfy` isRequest "RedeemRequest" ownerAddress secondAddress 77 789
+
+  it "decodes a direct claimable-deposit withdrawal as its destination redeem request" $ do
+    let entry =
+          baseLog
+            claimableDepositRedeemRequestTopic
+            [addressTopic ownerAddress, word 70, word 77]
+            [addressWord unknownAddress, word 456, word 789]
+    parseVaultLog deployment 1_800_000_000 entry
+      `shouldSatisfy`
+        isRequest "ClaimableDepositRedeemRequest" ownerAddress ownerAddress 77 789
 
   it "retains legacy DepositRequested for wallet request discovery" $ do
     let entry =
@@ -195,6 +206,12 @@ spec = describe "vault activity ABI decoding" $ do
       ]
     runtime `shouldContain` "PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index)"
     static `shouldContain` "PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index)"
+    runtime `shouldContain` "ClaimableDepositRedeemRequest"
+    static `shouldContain` "ClaimableDepositRedeemRequest"
+    runtime `shouldContain` "DROP CONSTRAINT IF EXISTS vault_canonical_logs_event_name_check"
+    runtime `shouldContain` "DROP CONSTRAINT IF EXISTS vault_request_events_event_name_check"
+    static `shouldContain` "DROP CONSTRAINT IF EXISTS vault_canonical_logs_event_name_check"
+    static `shouldContain` "DROP CONSTRAINT IF EXISTS vault_request_events_event_name_check"
 
 isRequest :: Text -> Text -> Text -> Integer -> Integer -> Either a ParsedVaultEvent -> Bool
 isRequest eventName controller owner requestId amount = \case

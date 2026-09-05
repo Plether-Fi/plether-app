@@ -334,11 +334,16 @@ ensureVaultActivitySchema conn = do
     \log_index NUMERIC(78,0) NOT NULL,\
     \block_timestamp BIGINT NOT NULL,\
     \PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),\
-    \CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'DepositRequested')),\
+    \CONSTRAINT vault_canonical_logs_event_name_check CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested')),\
     \CHECK (chain_id > 0 AND deployment_block >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),\
     \CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')\
     \)"
+  _ <- execute_ conn
+    "ALTER TABLE vault_canonical_logs DROP CONSTRAINT IF EXISTS vault_canonical_logs_event_name_check"
+  _ <- execute_ conn
+    "ALTER TABLE vault_canonical_logs ADD CONSTRAINT vault_canonical_logs_event_name_check \
+    \CHECK (event_name IN ('Transfer', 'DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested'))"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS vault_share_transfers (\
     \chain_id NUMERIC(78,0) NOT NULL,\
@@ -398,12 +403,17 @@ ensureVaultActivitySchema conn = do
     \log_index NUMERIC(78,0) NOT NULL,\
     \block_timestamp BIGINT NOT NULL,\
     \PRIMARY KEY (chain_id, house_pool_address, deployment_block, vault_address, tx_hash, log_index),\
-    \CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'DepositRequested')),\
+    \CONSTRAINT vault_request_events_event_name_check CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested')),\
     \CHECK (chain_id > 0 AND deployment_block >= 0 AND request_id >= 0 AND raw_amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0),\
     \CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$' AND vault_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (controller_address ~ '^0x[0-9a-f]{40}$' AND owner_address ~ '^0x[0-9a-f]{40}$'),\
     \CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')\
     \)"
+  _ <- execute_ conn
+    "ALTER TABLE vault_request_events DROP CONSTRAINT IF EXISTS vault_request_events_event_name_check"
+  _ <- execute_ conn
+    "ALTER TABLE vault_request_events ADD CONSTRAINT vault_request_events_event_name_check \
+    \CHECK (event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest', 'DepositRequested'))"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_vault_request_events_recent \
     \ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, block_number DESC, tx_index DESC, log_index DESC)"
@@ -698,7 +708,7 @@ getVaultDepositRequestKeys conn deployment afterBlock throughBlock =
     Nothing -> query conn
       "SELECT DISTINCT vault_address, controller_address, request_id::TEXT \
       \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
-      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest') \
+      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest', 'ClaimableDepositRedeemRequest') \
       \AND block_number <= ? ORDER BY vault_address, controller_address, request_id"
       ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
       , address $ vadSeniorVault deployment, address $ vadJuniorVault deployment, throughBlock
@@ -706,7 +716,7 @@ getVaultDepositRequestKeys conn deployment afterBlock throughBlock =
     Just lowerBound -> query conn
       "SELECT DISTINCT vault_address, controller_address, request_id::TEXT \
       \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? \
-      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest') \
+      \AND vault_address IN (?, ?) AND event_name IN ('DepositRequest', 'DepositRequested', 'RedeemRequest', 'ClaimableDepositRedeemRequest') \
       \AND block_number > ? AND block_number <= ? ORDER BY vault_address, controller_address, request_id"
       ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
       , address $ vadSeniorVault deployment, address $ vadJuniorVault deployment, lowerBound, throughBlock
@@ -912,7 +922,7 @@ getVaultRequests conn deployment vault limit =
     "SELECT event_name, vault_address, controller_address, owner_address, request_id::TEXT, raw_amount::TEXT, \
     \tx_hash, block_number::TEXT, block_hash, tx_index::TEXT, log_index::TEXT, block_timestamp \
     \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? \
-    \AND event_name IN ('DepositRequest', 'RedeemRequest') \
+    \AND event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest') \
     \ORDER BY block_number DESC, tx_index DESC, log_index DESC LIMIT ?"
     (vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault, max 0 limit)
 
@@ -922,7 +932,7 @@ getVaultRequestsThrough conn deployment vault throughBlock limit =
     "SELECT event_name, vault_address, controller_address, owner_address, request_id::TEXT, raw_amount::TEXT, \
     \tx_hash, block_number::TEXT, block_hash, tx_index::TEXT, log_index::TEXT, block_timestamp \
     \FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? \
-    \AND event_name IN ('DepositRequest', 'RedeemRequest') AND block_number <= ? \
+    \AND event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest') AND block_number <= ? \
     \ORDER BY block_number DESC, tx_index DESC, log_index DESC LIMIT ?"
     ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment
     , address vault, throughBlock, max 0 limit
@@ -932,7 +942,7 @@ countVaultRequests :: Connection -> VaultActivityDeployment -> Text -> IO Int64
 countVaultRequests conn deployment vault = do
   rows <- query conn
     "SELECT COUNT(*) FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? \
-    \AND event_name IN ('DepositRequest', 'RedeemRequest')"
+    \AND event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest')"
     (vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault) :: IO [Only Int64]
   pure $ case rows of
     [Only count] -> count
@@ -942,7 +952,7 @@ countVaultRequestsThrough :: Connection -> VaultActivityDeployment -> Text -> In
 countVaultRequestsThrough conn deployment vault throughBlock = do
   rows <- query conn
     "SELECT COUNT(*) FROM vault_request_events WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? AND vault_address = ? \
-    \AND event_name IN ('DepositRequest', 'RedeemRequest') AND block_number <= ?"
+    \AND event_name IN ('DepositRequest', 'RedeemRequest', 'ClaimableDepositRedeemRequest') AND block_number <= ?"
     ( vadChainId deployment, address $ vadHousePool deployment, vadDeploymentBlock deployment, address vault, throughBlock
     ) :: IO [Only Int64]
   pure $ case rows of

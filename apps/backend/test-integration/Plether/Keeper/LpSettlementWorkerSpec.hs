@@ -12,7 +12,7 @@ import Control.Concurrent
   , threadDelay
   , tryPutMVar
   )
-import Control.Exception (bracket, finally)
+import Control.Exception (AsyncException (ThreadKilled), bracket, finally, fromException)
 import Control.Monad (foldM, unless, void, when)
 import Data.Aeson (Value (..), decode, encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key as Key
@@ -72,6 +72,8 @@ import Plether.Database.Schema
   , recordLpSettlementObservationV2
   , setPerpsKeeperLastIndexedBlock
   , tryPerpsKeeperLock
+  , tryLpSettlementKeeperLock
+  , unlockLpSettlementKeeperLock
   , unlockPerpsKeeperLock
   , verifyLpSettlementSchema
   )
@@ -435,7 +437,12 @@ lpSettlementWorkerSpec databaseUrl =
 
                 progressed `shouldBe` Just ()
                 confirmed `shouldBe` Just ()
-                terminated `shouldSatisfy` maybe False (const True)
+                fmap (either fromException (const Nothing)) terminated `shouldBe` Just (Just ThreadKilled)
+                withDb pool $ \conn ->
+                  bracket
+                    (tryLpSettlementKeeperLock conn)
+                    (\locked -> when locked $ unlockLpSettlementKeeperLock conn)
+                    (`shouldBe` True)
                 sends <- readIORef $ rfSentRawTransactions fixture
                 length sends `shouldBe` 4
                 assertNoUnexpectedRequests fixture
@@ -464,7 +471,7 @@ lpSettlementWorkerSpec databaseUrl =
             orderBlocked `shouldBe` Just ()
             progressed `shouldBe` Just ()
             orderResumed `shouldBe` Just ()
-            terminated `shouldSatisfy` maybe False (const True)
+            fmap (either fromException (const Nothing)) terminated `shouldBe` Just (Just ThreadKilled)
             sends <- readIORef $ rfSentRawTransactions fixture
             length sends `shouldBe` 4
             assertNoUnexpectedRequests fixture

@@ -281,6 +281,7 @@ const pendingRequests = {
       requestId: 500_001n,
       targetTimestamp: 1_800_003_600,
       pendingAssets: usdc(10_000),
+      directRedeemableShares: 0n,
       pendingSharesEstimate: shares(5_000),
       claimableAssets: 0n,
       claimableShares: 0n,
@@ -290,6 +291,9 @@ const pendingRequests = {
     {
       requestId: 499_998n,
       targetTimestamp: 1_799_992_800,
+      activationTimestamp: 1_799_992_920,
+      cooldownEndsAt: 1_799_996_520n,
+      directRedeemableShares: shares(1_250),
       pendingAssets: 0n,
       pendingSharesEstimate: 0n,
       claimableAssets: usdc(2_500),

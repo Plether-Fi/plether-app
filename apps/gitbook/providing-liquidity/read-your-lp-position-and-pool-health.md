@@ -185,10 +185,9 @@ Every deposit and withdrawal is a queued request:
 ```text
 Owner-wallet USDC
 → queued deposit
-→ hourly processing
+→ hourly processing and source-deposit cooldown start
 → shares ready
-→ move shares to wallet
-→ one-hour cooldown
+→ move shares to wallet, or queue a direct withdrawal after cooldown
 → queued withdrawal
 → hourly funding
 → move USDC to wallet
@@ -208,7 +207,7 @@ Pending deposit USDC is separate from wallet-held shares. The final share amount
 | --- | --- | --- |
 | **Pending** | The vault holds the submitted USDC for a future hourly processing time. | **Cancel deposit** is available before the processing boundary. |
 | **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet. | Wait; do not submit a duplicate. |
-| **Shares ready** | The processed shares already participate in vault performance but remain in vault custody. | **Move shares to wallet**. |
+| **Shares ready** | The processed shares already participate in vault performance, remain in vault custody and age from their activation time. | **Move shares to wallet**, or **Queue direct withdrawal** after cooldown when shown. |
 | **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and USDC is available to recover. | **Return USDC to wallet**. |
 
 Each item includes a deposit reference, **Expected processing**, **Estimated shares**, and—when applicable—**Shares ready for wallet** or **USDC ready to return**.
@@ -230,15 +229,14 @@ If older request discovery fails, the app warns **Older activity is unavailable*
 
 ### Check the one-hour cooldown
 
-The cooldown applies to the connected wallet's entire position in the selected tranche, not only to a single batch of shares.
+Successful processing starts a one-hour cooldown for that source deposit. Claiming its shares preserves the activation timestamp and applies the later of it and the wallet's current timestamp, so it cannot weaken a newer wallet cooldown.
 
-The current vault claim and recovery actions start or restart the one-hour cooldown. They include:
+The following recovery actions restart the cooldown for the connected wallet's entire position in the selected tranche:
 
-* selecting **Move shares to wallet** after a deposit is processed;
 * selecting **Cancel withdrawal**, which returns queued shares; and
 * selecting **Return shares to wallet** for a zero-value withdrawal remainder.
 
-An ordinary wallet-to-wallet transfer is possible only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the countdown ends, wallet-held shares cannot be transferred or used for a new withdrawal request. **Shares available to withdraw** shows a live **Available in** countdown. The action panel says **Withdrawal cooldown active** and **You can request a withdrawal in**. Waiting shares can still gain or lose value during the cooldown.
+An ordinary wallet-to-wallet transfer is possible only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the countdown ends, wallet-held shares cannot be transferred or used for a new withdrawal request. **Shares available to withdraw** shows a live **Available in** countdown. A claimable deposit with an elapsed source cooldown can instead show **Queue direct withdrawal**, which moves shares from that single deposit into the current withdrawal queue without a wallet transfer or approval. Waiting shares can still gain or lose value during the cooldown.
 
 Moving already allocated USDC to the wallet does not return shares and is not described as a cooldown-triggering action.
 
