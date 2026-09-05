@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
+import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
 import { Alert, Badge, Button, DocsLink, InfoTooltip, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 import { openAppKit } from '../config/wagmi'
@@ -55,7 +56,7 @@ import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 type TrancheId = 'senior' | 'junior'
-type DetailSectionId = 'overview' | 'performance' | 'position' | 'activity'
+type DetailSectionId = 'overview' | 'market-exposure' | 'performance' | 'position' | 'activity'
 type ActionMode = 'deposit' | 'withdraw'
 type DataStatus = 'live' | 'partial' | 'syncing' | 'unavailable'
 
@@ -270,6 +271,8 @@ const VAULT_GOVERNANCE_TIMELOCKS = [
 ] as const
 
 interface PoolSnapshot {
+  longOpenInterest?: bigint
+  shortOpenInterest?: bigint
   totalAssetsUsdc?: bigint
   freeUsdc?: bigint
   withdrawalReservedUsdc?: bigint
@@ -925,6 +928,8 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
             ? 'partial'
             : 'unavailable',
       pool: {
+        longOpenInterest: bullOpenInterest,
+        shortOpenInterest: bearOpenInterest,
         totalAssetsUsdc,
         freeUsdc,
         withdrawalReservedUsdc,
@@ -5142,12 +5147,15 @@ export function VaultDetailView({
     : snapshot.pool.juniorPoolWithdrawCapUsdc
   const sections = useMemo<{ id: DetailSectionId; anchor: string; label: string }[]>(() => [
     { id: 'overview', anchor: 'overview', label: 'Overview' },
+    ...(tranche.id === 'junior'
+      ? [{ id: 'market-exposure' as const, anchor: 'market-exposure', label: 'Market exposure' }]
+      : []),
     ...(hasPerformance
       ? [{ id: 'performance' as const, anchor: 'performance', label: 'Performance' }]
       : []),
     { id: 'position', anchor: 'your-position', label: 'Your position' },
     { id: 'activity', anchor: 'activity', label: 'Activity' },
-  ], [hasPerformance])
+  ], [hasPerformance, tranche.id])
 
   function scrollToSection(sectionId: DetailSectionId) {
     const section = sections.find((candidate) => candidate.id === sectionId)
@@ -5317,7 +5325,7 @@ export function VaultDetailView({
             className="relative sticky z-10 border border-brand-border/30 bg-app-bg px-4 before:pointer-events-none before:absolute before:-left-px before:-right-px before:bottom-[calc(100%+1px)] before:h-4 before:bg-app-bg before:content-['']"
             style={{ top: stickyElementTop }}
           >
-            <div className="flex items-stretch gap-6 overflow-x-auto">
+            <div className="vault-section-nav flex items-stretch gap-6 overflow-x-auto">
               <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
                 On this page
               </span>
@@ -5374,6 +5382,10 @@ export function VaultDetailView({
               epochCountdownSeconds={epochCountdownSeconds}
             />
           </section>
+
+          {tranche.id === 'junior' && (
+            <JuniorMarketExposure pool={snapshot.pool} scrollMarginTop={sectionScrollOffset} />
+          )}
 
           {performance ? (
             <section

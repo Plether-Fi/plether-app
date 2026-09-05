@@ -982,6 +982,32 @@ describe('Vaults page', () => {
 
     expect(screen.getByText('Target nominal APR')).toBeInTheDocument()
     expect(screen.getByText('8.25%')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'The market exposure' })).not.toBeInTheDocument()
+  })
+
+  it('shows Junior market exposure between Overview and Performance', () => {
+    mocks.vaultHistory = completeHistoryFixture()
+    mocks.readContractsData = liveReadFixture()
+    renderVaults('/vaults/junior')
+
+    const section = screen.getByRole('region', { name: 'The market exposure' })
+    expect(section.previousElementSibling).toHaveAttribute('id', 'overview')
+    expect(section.nextElementSibling).toHaveAttribute('id', 'performance')
+    expect(screen.getByRole('button', { name: 'Market exposure' })).toBeInTheDocument()
+    expect(within(section).getByText('41.67%')).toBeInTheDocument()
+    expect(within(section).getByText('11.20%')).toBeInTheDocument()
+    expect(within(section).getByText('2.40%')).toBeInTheDocument()
+    expect(within(section).getByRole('img', { name: 'Cash unavailable for LP withdrawals: 25.00%' })).toBeInTheDocument()
+  })
+
+  it('withholds market sensitivity when the pool mark is stale', () => {
+    mocks.readContractsData = liveReadFixture({ markFresh: false })
+    renderVaults('/vaults/junior')
+
+    const section = screen.getByRole('region', { name: 'The market exposure' })
+    expect(within(section).getByText(/Market sensitivity is unavailable/)).toBeInTheDocument()
+    expect(within(section).getByText(/live pricing is unavailable/)).toBeInTheDocument()
+    expect(within(section).getByText('11.20%')).toBeInTheDocument()
   })
 
   it('surfaces a settlement hold without disabling new requests or existing request actions', () => {

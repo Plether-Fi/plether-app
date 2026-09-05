@@ -57,6 +57,9 @@ const snapshot = {
     reservedSeniorDepositAssetsUsdc: usdc(5_000_000),
     seniorReservationsWithinLimits: true,
     minTrancheDepositUsdc: usdc(1),
+    markPrice: 100_000_000n,
+    longOpenInterest: 40_000_000n * 10n ** 18n,
+    shortOpenInterest: 30_000_000n * 10n ** 18n,
     longOpenCapacityUsdc: usdc(38_400_000),
     shortOpenCapacityUsdc: usdc(31_200_000),
   },
@@ -365,6 +368,26 @@ export const SeniorVaultDetail: Story = {
     <PageFrame>
       <VaultDetailView
         tranche={VAULT_TRANCHES.senior}
+        snapshot={snapshot}
+        history={history}
+        isConnected
+        isWrongNetwork={false}
+        onConnect={noop}
+        onSwitchNetwork={noop}
+        isSwitchingNetwork={false}
+        vaultActivity={activity}
+        vaultRequests={emptyRequests}
+        epochCountdownSeconds={FIXED_EPOCH_COUNTDOWN_SECONDS}
+      />
+    </PageFrame>
+  ),
+}
+
+export const JuniorVaultDetail: Story = {
+  render: () => (
+    <PageFrame>
+      <VaultDetailView
+        tranche={VAULT_TRANCHES.junior}
         snapshot={snapshot}
         history={history}
         isConnected
