@@ -96,7 +96,7 @@ import Plether.Perps.HistoryIndexer
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (PerpsIndexerOnce)
   , perpsEventTopics
-  , perpsIndexerName
+  , perpsV2IndexerName
   , transferTopic
   )
 
@@ -215,7 +215,7 @@ testIndexerConfig chain =
     , picConfirmations = 0
     , picBatchSize = 10
     , picPollIntervalMicros = 1_000_000
-    , picIndexerName = perpsIndexerName
+    , picIndexerName = perpsV2IndexerName
     , picMode = PerpsIndexerOnce
     , picCandleWriteMode = PerpsCandleWritesOff
     , picCandleLatenessSeconds = 120

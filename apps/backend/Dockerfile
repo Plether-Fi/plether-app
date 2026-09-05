@@ -27,6 +27,7 @@ RUN cabal update && cabal build --only-dependencies
 
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
+COPY config/perps/arbitrum-sepolia-v2.json config/perps/arbitrum-sepolia-v2.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \

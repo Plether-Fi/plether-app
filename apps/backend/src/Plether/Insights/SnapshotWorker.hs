@@ -86,6 +86,7 @@ runInsightsSnapshotCycle client pool cfg multicallSize = do
         withDb pool $ \conn ->
           getLatestIndexedSafeBlock
             conn
+            (icrSlug competition)
             (icrChainId competition)
             (icrReleaseRouter competition)
       case mSafe of

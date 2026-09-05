@@ -186,9 +186,9 @@ const history = {
   intervalSeconds: 3600,
   deployment: {
     chainId: 421614,
-    housePool: '0x86939a377A78EDe8EEe5445765ac77c9016E35E2',
-    seniorVault: '0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710',
-    juniorVault: '0xdf306B52eaC722D5994E2cc93D2818F391d68Adb',
+    housePool: '0x7b8b851cb3783611bcDA4CF2F7D5A2F8C6106F98',
+    seniorVault: '0xF98e69d808F8c22fCE4210516E2F0B2dAa4CC0B2',
+    juniorVault: '0xd6B662D75B102eA360C1B083E1f332e6c1634832',
   },
   coverage: { start: historyStart, end: historyEnd, complete: true },
   senior: {

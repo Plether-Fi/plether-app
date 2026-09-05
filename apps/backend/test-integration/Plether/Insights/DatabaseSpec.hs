@@ -42,6 +42,7 @@ import Plether.Database.Schema
   , insertPerpsUsdcTransfer
   , setPerpsIndexerState
   )
+import Plether.Perps.IndexerFormat (PerpsIndexerFormat (..), indexerName)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , CompetitionRules (..)
@@ -328,7 +329,9 @@ prepareDatabase pool = withDb pool $ \conn -> do
   ensureInsightsSchema
     conn testSeptemberRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
   setPerpsIndexerState
-    conn fixtureChain "perps-history-costs-v1" fixtureRouter 1 cursorBlock (Just cursorHash)
+    conn fixtureChain (indexerName LegacyV1) fixtureRouter 1 cursorBlock (Just cursorHash)
+  setPerpsIndexerState
+    conn fixtureChain (indexerName BoundedV2) fixtureRouter 1 cursorBlock (Just cursorHash)
 
 cleanupDatabase :: DbPool -> IO ()
 cleanupDatabase pool = withDb pool cleanupRows

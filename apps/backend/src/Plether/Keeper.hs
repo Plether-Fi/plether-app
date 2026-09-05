@@ -237,7 +237,7 @@ data LpReconcileOutcome
   deriving stock (Eq, Show)
 
 runKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
-runKeeper = runKeeperWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+runKeeper = runKeeperWithCodeHashes SettlementMonitor.reviewedSettlementCodeHashes
 
 runKeeperWithCodeHashes
   :: SettlementMonitor.SettlementCodeHashes
@@ -501,7 +501,7 @@ verifyLpSettlementStartup
   -> EthClient
   -> IO (Either Text Text)
 verifyLpSettlementStartup =
-  verifyLpSettlementStartupWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+  verifyLpSettlementStartupWithCodeHashes SettlementMonitor.reviewedSettlementCodeHashes
 
 verifyLpSettlementStartupWithCodeHashes
   :: SettlementMonitor.SettlementCodeHashes
@@ -769,7 +769,7 @@ transactionMaximumCost tx = txValue tx + txGasLimit tx * txMaxFeePerGas tx
 
 processLpSettlementCycle :: Config -> Connection -> EthClient -> IO ()
 processLpSettlementCycle =
-  processLpSettlementCycleWithCodeHashes SettlementMonitor.reviewedV120SettlementCodeHashes
+  processLpSettlementCycleWithCodeHashes SettlementMonitor.reviewedSettlementCodeHashes
 
 processLpSettlementCycleWithCodeHashes
   :: SettlementMonitor.SettlementCodeHashes

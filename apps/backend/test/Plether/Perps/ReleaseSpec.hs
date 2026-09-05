@@ -13,16 +13,16 @@ import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , defaultPerpsAddresses
   , perpsIndexerName
-  , perpsIndexerNameForRelease
+  , perpsIndexerNameForLifecycleBook
   , perpsV2IndexerName
   , validatePerpsIndexerReleaseConfig
   )
 import Test.Hspec
 
 engine, clearinghouse, housePool :: Text
-engine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
-clearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
-housePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+engine = "0x2CEDc3f0059f0E9C1099bE96974f459E58c428d6"
+clearinghouse = "0x91c85540A1f64C9AEC2C801fcc927F037d619f17"
+housePool = "0x7b8b851cb3783611bcDA4CF2F7D5A2F8C6106F98"
 
 validReleaseConfig :: Either Text ()
 validReleaseConfig =
@@ -42,7 +42,7 @@ spec =
       validReleaseConfig `shouldSatisfy` isRight
 
     it "pins the first whole minute after the deployment block for volume history" $
-      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1787759880
+      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1788596760
 
     it "rejects a missing LifecycleBook" $
       validatePerpsV2ReleaseConfig
@@ -95,15 +95,10 @@ spec =
       validatePerpsIndexerReleaseConfig 421614 wrongLifecycle housePool perpsV2DeploymentBlock
         `shouldSatisfy` isLeft
 
-    it "isolates only the pinned Sepolia release in the V2 cursor namespace" $ do
+    it "selects the indexer format independently of deployment addresses" $ do
       perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi3"
-      perpsIndexerNameForRelease
-        421614
-        perpsV2OrderRouter
-        (Just perpsV2OrderLifecycleBook)
+      perpsIndexerNameForLifecycleBook (Just perpsV2OrderLifecycleBook)
         `shouldBe` perpsV2IndexerName
-      perpsIndexerNameForRelease
-        1
-        perpsV2OrderRouter
-        (Just perpsV2OrderLifecycleBook)
-        `shouldBe` perpsIndexerName
+      perpsIndexerNameForLifecycleBook (Just "0x1111111111111111111111111111111111111111")
+        `shouldBe` perpsV2IndexerName
+      perpsIndexerNameForLifecycleBook Nothing `shouldBe` perpsIndexerName

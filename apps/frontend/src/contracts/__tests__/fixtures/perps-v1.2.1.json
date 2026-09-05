@@ -1,0 +1,408 @@
+{
+  "riskParams": {
+    "type": "function",
+    "name": "riskParams",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "vpiFactor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxSkewRatio",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maintMarginBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initMarginBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fadMarginBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "baseCarryBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minBountyUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bountyBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeperShareBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "protocolShareBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  "previewLiquidation": {
+    "type": "function",
+    "name": "previewLiquidation",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "oraclePrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "preview",
+        "type": "tuple",
+        "internalType": "struct ICfdEngineTypes.LiquidationPreview",
+        "components": [
+          {
+            "name": "liquidatable",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "oraclePrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "equityUsdc",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "pnlUsdc",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "reachableCollateralUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "liquidationChargeUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keeperBountyUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "protocolLiquidationFeeUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lpLiquidationFeeUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "seizedCollateralUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "settlementRetainedUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshTraderPayoutUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "existingTraderClaimConsumedUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "existingTraderClaimRemainingUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "immediatePayoutUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "traderClaimBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "badDebtUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "triggersDegradedMode",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "postOpDegradedMode",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "effectiveAssetsAfterUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxLiabilityAfterUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  "getAccountLedgerSnapshot": {
+    "type": "function",
+    "name": "getAccountLedgerSnapshot",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "snapshot",
+        "type": "tuple",
+        "internalType": "struct AccountLensViewTypes.AccountLedgerSnapshot",
+        "components": [
+          {
+            "name": "settlementBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freeSettlementUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "activePositionMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "otherLockedMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "positionMarginBucketUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "committedOrderMarginBucketUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedSettlementBucketUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "executionBountyReserveUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "committedMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "traderClaimBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "pendingOrderCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "closeReachableUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "liquidationReachableSettlementUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terminalPriceCollectibleCapUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "accountEquityUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freeBuyingPowerUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "hasPosition",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "enum CfdTypes.Side"
+          },
+          {
+            "name": "size",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "margin",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "unrealizedPnlUsdc",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "netEquityUsdc",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "liquidatable",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  "getAccountCollateralView": {
+    "type": "function",
+    "name": "getAccountCollateralView",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "viewData",
+        "type": "tuple",
+        "internalType": "struct ICfdEngineTypes.AccountCollateralView",
+        "components": [
+          {
+            "name": "settlementBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lockedMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "activePositionMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "otherLockedMarginUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freeSettlementUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "closeReachableUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "liquidationReachableSettlementUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terminalPriceCollectibleCapUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "accountEquityUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freeBuyingPowerUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "traderClaimBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  }
+}
