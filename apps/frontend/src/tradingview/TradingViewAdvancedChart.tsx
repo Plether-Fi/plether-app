@@ -42,6 +42,10 @@ const BRAND_PEACH = '#FFAB96'
 const BRAND_ORANGE = '#FF572D'
 const POSITIVE_COLOR = '#00FF99'
 const LIQUIDATION_COLOR = '#F7D977'
+// TradingView's `small` pane uses a 0.3:1 volume-to-price stretch ratio, making
+// its original share 3/13 of the plot area. Half that absolute height is 3/26.
+// Basing this on the total height keeps remounts from repeatedly shrinking it.
+const DIRECTIONAL_VOLUME_PANE_HEIGHT_SHARE = 3 / 26
 const MARKET_STATUS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="5" /></svg>'
 const CHART_STYLE_OVERRIDES = {
   volumePaneSize: 'small',
@@ -418,7 +422,16 @@ export function TradingViewAdvancedChart({
                 PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
                 false,
                 true
-              ).catch(() => {
+              ).then((studyId) => {
+                if (cancelled || studyId === null) return
+                const panes = chart.getPanes()
+                const volumePane = panes.find((pane) => !pane.hasMainSeries())
+                if (!volumePane) return
+                const totalPaneHeight = panes.reduce((height, pane) => height + pane.getHeight(), 0)
+                volumePane.setHeight(
+                  Math.round(totalPaneHeight * DIRECTIONAL_VOLUME_PANE_HEIGHT_SHARE)
+                )
+              }).catch(() => {
                 // Price remains useful if the optional direction pane cannot initialize.
               })
             }

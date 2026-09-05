@@ -813,6 +813,95 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
+  it('shares a concurrent fixed-page probe between price and directional volume only', async () => {
+    const cursor = 90_000
+    const page = candlePage(cursor, [rawCandle(64_920)], {
+      hasEarlier: false,
+      previousCursor: null,
+    })
+    const apiResponse = {
+      data: page,
+      meta: { blockNumber: 1, cached: false, chainId: 421_614 },
+    }
+    const pendingResponse = deferredValue<Response>()
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(() => pendingResponse.promise)
+      .mockImplementation(async () => new Response(JSON.stringify(apiResponse), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    const feed = new PletherDxyDatafeed({ useCandleApi: true })
+    const requestBars = (symbolInfo: TradingViewSymbolInfo) => new Promise<TradingViewBar[]>(
+      (resolve, reject) => {
+        feed.getBars(
+          symbolInfo,
+          '1',
+          { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+          resolve,
+          reject
+        )
+      }
+    )
+
+    try {
+      const priceBars = requestBars({} as TradingViewSymbolInfo)
+      const directionalBars = requestBars({
+        ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
+        name: 'plDXY.DirectionalVolume',
+      } as TradingViewSymbolInfo)
+
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce())
+      pendingResponse.resolve(new Response(JSON.stringify(apiResponse), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+      await expect(priceBars).resolves.toHaveLength(1)
+      await expect(directionalBars).resolves.toHaveLength(1)
+      expect(fetchSpy).toHaveBeenCalledOnce()
+
+      await expect(requestBars({} as TradingViewSymbolInfo)).resolves.toHaveLength(1)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      pendingResponse.resolve(new Response(JSON.stringify(apiResponse), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      feed.destroy()
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('removes a failed fixed-page probe before the next request', async () => {
+    const cursor = 90_000
+    const page = candlePage(cursor, [rawCandle(64_920)], {
+      hasEarlier: false,
+      previousCursor: null,
+    })
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('temporary network failure'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: page,
+        meta: { blockNumber: 1, cached: false, chainId: 421_614 },
+      }), { headers: { 'Content-Type': 'application/json' } }))
+    const feed = new PletherDxyDatafeed({ useCandleApi: true })
+    const requestBars = () => new Promise<TradingViewBar[]>((resolve, reject) => {
+      feed.getBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
+        resolve,
+        reject
+      )
+    })
+
+    try {
+      await expect(requestBars()).rejects.toBeDefined()
+      await expect(requestBars()).resolves.toHaveLength(1)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      feed.destroy()
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('clamps a future TradingView range to the local current fixed page', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(65_000_000)
     const getCandlePage = vi.fn(async (_interval: number, cursor: number) => candlePage(
@@ -1702,6 +1791,65 @@ describe('Plether TradingView datafeed', () => {
       }))
       feed.destroy()
       queryClient.clear()
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('shares a current-candle transport while keeping listener cancellation isolated', async () => {
+    const pendingResponse = deferredValue<Response>()
+    let transportSignal: AbortSignal | undefined
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      transportSignal = init?.signal as AbortSignal | undefined
+      return pendingResponse.promise
+    })
+    const response = {
+      data: currentCandle(60, { candle: rawCandle(64_800) }),
+      meta: { blockNumber: 1, cached: false, chainId: 421_614 },
+    }
+    const directionalBar = deferredValue<TradingViewBar>()
+    const priceTick = vi.fn()
+    const feed = new PletherDxyDatafeed({
+      useCandleApi: true,
+      pollIntervalMs: 60_000,
+    })
+
+    try {
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        priceTick,
+        'shared-current-price',
+        () => undefined
+      )
+      feed.subscribeBars(
+        {
+          ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL,
+          name: 'plDXY.DirectionalVolume',
+        } as TradingViewSymbolInfo,
+        '1',
+        directionalBar.resolve,
+        'shared-current-directional-volume',
+        () => undefined
+      )
+
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce())
+      feed.unsubscribeBars('shared-current-price')
+      expect(transportSignal?.aborted).toBe(false)
+
+      pendingResponse.resolve(new Response(JSON.stringify(response), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      await expect(directionalBar.promise).resolves.toMatchObject({
+        close: 0.75,
+        volume: 0.25,
+      })
+      expect(priceTick).not.toHaveBeenCalled()
+      expect(fetchSpy).toHaveBeenCalledOnce()
+    } finally {
+      pendingResponse.resolve(new Response(JSON.stringify(response), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      feed.destroy()
       fetchSpy.mockRestore()
     }
   })

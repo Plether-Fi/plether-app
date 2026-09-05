@@ -95,6 +95,7 @@ import Plether.Insights.Competition
   , september2026CompetitionSlug
   )
 import qualified Plether.Database.Insights.Registration as RegistrationDb
+import Plether.Perps.IndexerFormat (competitionIndexerNamespace, competitionIndexerNamespaceSql)
 import Plether.Utils.Address (isValidAddress)
 
 -- Immutable values used only to migrate the already-published July row. A
@@ -902,10 +903,9 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
   forM_ finalizedWithoutMaterialization $ \(Only finalizedSlug) -> do
     result <- withTransaction conn $ do
       advisoryRows <- query conn
-        "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
-        \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-        \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
-        \ FROM insights_competitions c WHERE c.slug = ?) locked"
+        ("SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
+        \ 'perps-indexer:' || " <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router, c.chain_id))\
+        \ FROM insights_competitions c WHERE c.slug = ?) locked")
         (Only finalizedSlug) :: IO [Only Integer]
       unless (length advisoryRows == 1) $
         fail "Could not acquire the release history lock for finalized standings migration"
@@ -1713,10 +1713,9 @@ finalizeCompetition _ _ finalizedBy _verifyCanonicality
 finalizeCompetition conn slug finalizedBy verifyCanonicality =
   withTransaction conn $ do
     advisoryRows <- query conn
-      "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
-      \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
-      \ FROM insights_competitions c WHERE c.slug = ?) locked"
+      ("SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
+      \ 'perps-indexer:' || " <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router, c.chain_id))\
+      \ FROM insights_competitions c WHERE c.slug = ?) locked")
       (Only slug) :: IO [Only Integer]
     unless (length advisoryRows == 1) $
       fail "Could not acquire the release history lock for competition finalization"
@@ -1752,15 +1751,14 @@ finalizeCompetition conn slug finalizedBy verifyCanonicality =
               [] -> case (fdrStartBlockHash, fdrScoreCutoffBlock, fdrFinalSnapshotHash) of
                 (Just _, Just finalBlock, Just finalHash) -> do
                   canonicalTargets <- query conn
-                    "SELECT c.start_block, c.start_block_hash, c.start_block - 1, c.start_snapshot_block_hash,\
+                    ("SELECT c.start_block, c.start_block_hash, c.start_block - 1, c.start_snapshot_block_hash,\
                     \ c.score_cutoff_block, c.score_cutoff_block_hash, i.last_indexed_block, i.last_indexed_block_hash\
                     \ FROM insights_competitions c JOIN perps_indexer_state i\
                     \ ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
-                    \ AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-                    \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+                    \ AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
                     \ WHERE c.slug = ? AND c.start_block IS NOT NULL AND c.start_block_hash IS NOT NULL\
                     \ AND c.start_snapshot_block_hash IS NOT NULL AND c.score_cutoff_block IS NOT NULL\
-                    \ AND c.score_cutoff_block_hash IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL"
+                    \ AND c.score_cutoff_block_hash IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL")
                     (Only slug)
                   case canonicalTargets of
                     [target] -> verifyCanonicality target >>= \case
@@ -1902,10 +1900,9 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
     cursorReady <- query conn
       "SELECT EXISTS (SELECT 1 FROM perps_indexer_state i\
       \ WHERE i.chain_id = ? AND i.release_router = ?\
-      \ AND i.indexer_name = ((CASE WHEN ? = 421614 AND ? = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || ?)\
+      \ AND i.indexer_name = (? || ?)\
       \ AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= ?)"
-      (chainId, releaseRouter, chainId, releaseRouter, releaseRouter, blockNumber)
+      (chainId, releaseRouter, competitionIndexerNamespace slug, releaseRouter, blockNumber)
     unless (cursorReady == [Only True]) $
       fail "Cannot publish an Insights snapshot ahead of a canonical perps-history cursor"
     configuredLens <- query conn
@@ -2229,7 +2226,7 @@ getInsightsDataStatus conn slug = do
 -- table as the durable completeness summary instead of rescanning history.
 insightsDataStatusQuerySql :: Query
 insightsDataStatusQuerySql =
-  "WITH target AS (SELECT * FROM insights_competitions WHERE slug = ?),\
+  ("WITH target AS (SELECT * FROM insights_competitions WHERE slug = ?),\
   \ participant_stats AS (\
   \ SELECT COUNT(*) AS participant_count FROM insights_competition_participants p\
   \ JOIN target t ON t.slug = p.competition_slug\
@@ -2250,38 +2247,30 @@ insightsDataStatusQuerySql =
   \   EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
   \ FROM perps_indexer_state i\
   \ JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
-  \ WHERE i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router) LIMIT 1\
+  \ WHERE i.indexer_name = (" <> competitionIndexerNamespaceSql "t.slug" <> " || t.release_router) LIMIT 1\
   \ )\
   \ SELECT COALESCE(p.participant_count, 0), s.wallet_count, s.start_count, s.final_count,\
   \ s.latest_block, s.latest_timestamp, i.last_indexed_block, i.last_indexed_block_hash,\
   \ i.updated_timestamp, s.updated_timestamp\
-  \ FROM participant_stats p CROSS JOIN snapshot_stats s LEFT JOIN indexer i ON TRUE"
+  \ FROM participant_stats p CROSS JOIN snapshot_stats s LEFT JOIN indexer i ON TRUE")
 
 getLatestIndexedSafeBlock
   :: Connection
+  -> Text
   -> Integer
   -> Text
   -> IO (Maybe (Integer, Maybe Text))
-getLatestIndexedSafeBlock conn chainId releaseRouter = do
+getLatestIndexedSafeBlock conn slug chainId releaseRouter = do
   rows <- query conn
     "SELECT last_indexed_block, last_indexed_block_hash FROM perps_indexer_state\
     \ WHERE chain_id = ? AND release_router = ?\
     \ AND indexer_name = (? || ?) LIMIT 1"
     ( chainId
     , normalizeAddress releaseRouter
-    , perpsCursorNamespace chainId releaseRouter
+    , competitionIndexerNamespace slug
     , normalizeAddress releaseRouter
     )
   pure $ firstRow rows
-
-perpsCursorNamespace :: Integer -> Text -> Text
-perpsCursorNamespace chainId releaseRouter
-  | chainId == 421614
-      && normalizeAddress releaseRouter ==
-        "0x97a901de2b267c307e264fd5f71403f8072f73e7" =
-      "perps-history-costs-v2:finalized-abi3:"
-  | otherwise = "perps-history-costs-v1:"
 
 participantSelect :: Query
 participantSelect =
@@ -2294,11 +2283,10 @@ participantSelect =
 -- capacity and therefore blocks an eligible review state.
 fundingIntegrityRefreshSql :: Query
 fundingIntegrityRefreshSql =
-  "WITH target AS (\
+  ("WITH target AS (\
   \ SELECT c.*, i.configured_start_block FROM insights_competitions c\
   \ JOIN perps_indexer_state i ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
-  \  AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \  THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \  AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
   \  AND i.configured_start_block IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL\
   \  AND split_part(c.release_manifest, '|', 12) ~ '^[1-9][0-9]*$'\
   \  AND i.configured_start_block = split_part(c.release_manifest, '|', 12)::bigint\
@@ -2480,16 +2468,15 @@ fundingIntegrityRefreshSql =
   \ CASE WHEN max_net_amount > starting_balance_usdc THEN 'funding_capacity_exceeded' END\
   \ ]::TEXT[], NULL)) AS flags FROM facts)\
   \ UPDATE insights_competition_participants p SET integrity_flags = c.flags, updated_at = NOW()\
-  \ FROM computed c, target t WHERE p.competition_slug = t.slug AND p.wallet = c.wallet"
+  \ FROM computed c, target t WHERE p.competition_slug = t.slug AND p.wallet = c.wallet")
 
 fundingIntegrityRefreshSqlLegacy :: Query
 fundingIntegrityRefreshSqlLegacy =
-  "WITH target AS (SELECT * FROM insights_competitions WHERE slug = ? AND finalized = FALSE),\
+  ("WITH target AS (SELECT * FROM insights_competitions WHERE slug = ? AND finalized = FALSE),\
   \ start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   AND i.indexer_name = (" <> competitionIndexerNamespaceSql "t.slug" <> " || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND t.start_snapshot_block_hash IS NOT NULL\
@@ -2632,7 +2619,7 @@ fundingIntegrityRefreshSqlLegacy =
   \   CASE WHEN max_net_amount > starting_balance_usdc THEN 'funding_capacity_exceeded' END\
   \ ]::TEXT[], NULL)) AS flags FROM facts\
   \ ) UPDATE insights_competition_participants p SET integrity_flags = c.flags, updated_at = NOW()\
-  \ FROM computed c, target t WHERE p.competition_slug = t.slug AND p.wallet = c.wallet"
+  \ FROM computed c, target t WHERE p.competition_slug = t.slug AND p.wallet = c.wallet")
 
 competitionSeedMetadataSelect :: Query
 competitionSeedMetadataSelect =
@@ -2660,13 +2647,12 @@ competitionSelect =
 -- selection is pinned to the configured cutoff block/timestamp.
 leaderboardQuery :: Query
 leaderboardQuery =
-  "WITH target AS (\
+  ("WITH target AS (\
   \ SELECT c.*, ?::NUMERIC AS code_minimum_profit_usdc FROM insights_competitions c WHERE slug = ?\
   \ ), start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   AND i.indexer_name = (" <> competitionIndexerNamespaceSql "t.slug" <> " || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND (LOWER(b.block_hash) = LOWER(t.start_snapshot_block_hash)\
@@ -2677,8 +2663,7 @@ leaderboardQuery =
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   AND i.indexer_name = (" <> competitionIndexerNamespaceSql "t.slug" <> " || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2794,7 +2779,7 @@ leaderboardQuery =
   \ active_days, volume_usdc, executed_trades, liquidations, realized_pnl_usdc, block_number, timestamp, has_open_position, snapshot_kind,\
   \ position_side, position_size_delta, position_margin_usdc, position_entry_price,\
   \ position_unrealized_pnl_usdc, position_liquidatable\
-  \ FROM with_prizes"
+  \ FROM with_prizes")
 
 leaderboardQuerySql :: Query
 leaderboardQuerySql = leaderboardQuery
@@ -2867,13 +2852,12 @@ leaderboardOrderBySql = leaderboardOrderBy
 
 walletActivityQuery :: Query
 walletActivityQuery =
-  "WITH target AS (\
+  ("WITH target AS (\
   \ SELECT * FROM insights_competitions WHERE slug = ?\
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
-  \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   AND i.indexer_name = (" <> competitionIndexerNamespaceSql "t.slug" <> " || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2894,14 +2878,14 @@ walletActivityQuery =
   \ CROSS JOIN current_batch b\
   \ WHERE a.account = ? AND a.timestamp >= c.start_timestamp AND a.timestamp < c.score_cutoff_timestamp\
   \ AND (c.start_block IS NULL OR a.block_number >= c.start_block) AND a.block_number <= b.block_number\
-  \ ORDER BY a.block_number DESC, a.log_index DESC LIMIT ?"
+  \ ORDER BY a.block_number DESC, a.log_index DESC LIMIT ?")
 
 walletActivityQuerySql :: Query
 walletActivityQuerySql = walletActivityQuery
 
 finalizationReadinessQuery :: Query
 finalizationReadinessQuery =
-  "SELECT c.finalized, c.score_cutoff_timestamp, c.results_timestamp, c.start_block, c.start_block_hash, c.score_cutoff_block,\
+  ("SELECT c.finalized, c.score_cutoff_timestamp, c.results_timestamp, c.start_block, c.start_block_hash, c.score_cutoff_block,\
   \ (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = c.slug),\
   \ (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = c.slug\
   \   AND NULLIF(BTRIM(p.trader_reference), '') IS NULL),\
@@ -2919,8 +2903,7 @@ finalizationReadinessQuery =
   \     AND LOWER(b.block_hash) = LOWER(c.start_snapshot_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2935,8 +2918,7 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2947,8 +2929,7 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)),\
   \ (SELECT MIN(b.block_hash) FROM insights_snapshot_batches b\
@@ -2956,11 +2937,10 @@ finalizationReadinessQuery =
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
-  \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       AND i.indexer_name = (" <> competitionIndexerNamespaceSql "c.slug" <> " || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address))\
-  \ FROM insights_competitions c WHERE c.slug = ? FOR UPDATE OF c"
+  \ FROM insights_competitions c WHERE c.slug = ? FOR UPDATE OF c")
 
 normalizeLeaderboardSearch :: Maybe Text -> Maybe Text
 normalizeLeaderboardSearch requestedSearch = do

@@ -541,10 +541,10 @@ export function usePerpsAccount(markPrice?: bigint) {
     const capPrice = readResult(immutableContractData, 0) as bigint | undefined
     const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
-    const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'terminalReachableUsdc')
+    const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'liquidationReachableSettlementUsdc')
     const traderClaimBalanceUsdc = readBigInt(accountLedgerSnapshot, 9, 'traderClaimBalanceUsdc')
-    const snapshotUnrealizedPnlUsdc = readBigInt(accountLedgerSnapshot, 20, 'unrealizedPnlUsdc')
-    const netEquityUsdc = readBigInt(accountLedgerSnapshot, 21, 'netEquityUsdc')
+    const snapshotUnrealizedPnlUsdc = readBigInt(accountLedgerSnapshot, 21, 'unrealizedPnlUsdc')
+    const netEquityUsdc = readBigInt(accountLedgerSnapshot, 22, 'netEquityUsdc')
     const maintenanceMarginBps = isFadWindow
       ? readBigInt(riskParams, 4, 'fadMarginBps')
       : readBigInt(riskParams, 2, 'maintMarginBps')

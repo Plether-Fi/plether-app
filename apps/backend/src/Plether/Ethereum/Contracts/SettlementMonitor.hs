@@ -4,7 +4,7 @@ module Plether.Ethereum.Contracts.SettlementMonitor
   , SettlementObservation (..)
   , SettlementDeployment (..)
   , SettlementCodeHashes (..)
-  , reviewedV120SettlementCodeHashes
+  , reviewedSettlementCodeHashes
   , supportedConfigSchemaVersion
   , supportedObservationSchemaVersion
   , verifyBindings
@@ -19,6 +19,7 @@ module Plether.Ethereum.Contracts.SettlementMonitor
   , decodeSettlementObservation
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Monad (forM_)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import Data.ByteString (ByteString)
@@ -104,24 +105,24 @@ data SettlementCodeHashes = SettlementCodeHashes
   deriving stock (Show, Eq)
 
 -- Keccak-256 hashes of the runtime bytecode at the reviewed Arbitrum Sepolia
--- v1.2.0 release addresses. These are deliberately compiled into the keeper:
+-- pinned release addresses. These are deliberately compiled into the keeper:
 -- changing any execution-critical implementation requires a reviewed release.
-reviewedV120SettlementCodeHashes :: SettlementCodeHashes
-reviewedV120SettlementCodeHashes =
+reviewedSettlementCodeHashes :: SettlementCodeHashes
+reviewedSettlementCodeHashes =
   SettlementCodeHashes
-    { schMonitor = "0x625558c5479800ddf19d07fd537c53659f4f731d6327fd6dd10ca8cee4759c0c"
-    , schRouter = "0x74f3676e93f5175dddec2298ad0fdc67bdc7436c8ecabc59ed980f8ee8a7881a"
-    , schEngine = "0xf61a42cb75e6b83ccbbb1c7046f41d75c9d793de4105a6fe259eb8174c9b8b42"
-    , schHousePool = "0x730fe4c35663b034934191001a219c487b53cad00a5ad706b9767103a61f18c1"
-    , schSeniorVault = "0xe370e3cb4330e38ee9836598bba279cde16d51a5c68375c2bc6afe18a5ba4cea"
-    , schJuniorVault = "0x36a4714a180c98221b06f0cb6edf85a525fb36cfa3d511183507140e341920ba"
-    , schPletherOracle = "0xe25325224a61a901d6bb7d9f0000c054252d350fdb3ca103a6e3b60c59b64850"
+    { schMonitor = Manifest.settlementMonitorLensCodeHash
+    , schRouter = Manifest.orderRouterCodeHash
+    , schEngine = Manifest.cfdEngineCodeHash
+    , schHousePool = Manifest.housePoolCodeHash
+    , schSeniorVault = Manifest.seniorVaultCodeHash
+    , schJuniorVault = Manifest.juniorVaultCodeHash
+    , schPletherOracle = Manifest.pletherOracleCodeHash
     }
 
 supportedConfigSchemaVersion :: Integer
 supportedConfigSchemaVersion = 4
 
--- The deployed v1.2.0 facade writes CONFIG_SCHEMA_VERSION into observation
+-- The deployed v1.2.1 facade writes CONFIG_SCHEMA_VERSION into observation
 -- word zero. Keep the observation gate named separately so a future facade
 -- can version the two surfaces independently without weakening validation.
 supportedObservationSchemaVersion :: Integer

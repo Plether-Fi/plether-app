@@ -30,6 +30,7 @@ module Plether.Config
   , validateFaucetGuardConfig
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
 import Data.Char (isHexDigit)
 import Data.List (intercalate, nub, sortBy)
@@ -539,12 +540,12 @@ loadConfig = do
       mPerpsMarginClearinghouse <- lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       mPerpsPletherOracle <- lookupEnv "PERPS_PLETHER_ORACLE"
       mPerpsIndexerStartBlockStr <- lookupEnv "PERPS_INDEXER_START_BLOCK"
-      perpsHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "PERPS_HOUSE_POOL"
-      perpsSettlementMonitorLens <- fromMaybe "0xd251AC0BD90780c48F31F575152808315200664E" <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
-      vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
-      vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
-      vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
-      vaultHistoryDeploymentBlockStr <- fromMaybe "302257125" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+      perpsHousePool <- fromMaybe (T.unpack Manifest.housePoolAddress) <$> lookupEnv "PERPS_HOUSE_POOL"
+      perpsSettlementMonitorLens <- fromMaybe (T.unpack Manifest.settlementMonitorLensAddress) <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
+      vaultHistoryHousePool <- fromMaybe (T.unpack Manifest.housePoolAddress) <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
+      vaultHistorySeniorVault <- fromMaybe (T.unpack Manifest.seniorVaultAddress) <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
+      vaultHistoryJuniorVault <- fromMaybe (T.unpack Manifest.juniorVaultAddress) <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
+      vaultHistoryDeploymentBlockStr <- fromMaybe (show Manifest.releaseDeploymentBlock) <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
       vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
       mInsightsCompetitionSlug <- lookupEnv "INSIGHTS_ACTIVE_COMPETITION_SLUG"
       mInsightsCompetitionReleaseId <- lookupEnv "INSIGHTS_COMPETITION_RELEASE_ID"
@@ -571,10 +572,10 @@ loadConfig = do
       mLpSettlementEnabled <- lookupEnv "LP_SETTLEMENT_ENABLED"
       mLpSettlementPrivateKey <- lookupEnv "LP_SETTLEMENT_PRIVATE_KEY"
       lpSettlementSeniorVault <-
-        fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+        fromMaybe (T.unpack Manifest.seniorVaultAddress)
           <$> lookupEnv "PERPS_SENIOR_VAULT"
       lpSettlementJuniorVault <-
-        fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+        fromMaybe (T.unpack Manifest.juniorVaultAddress)
           <$> lookupEnv "PERPS_JUNIOR_VAULT"
       lpSettlementPollSecondsStr <- fromMaybe "15" <$> lookupEnv "LP_SETTLEMENT_POLL_SECONDS"
       lpSettlementMaxDrainTransactionsStr <-
@@ -804,8 +805,8 @@ loadConfig = do
               invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
               []
                 | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
-                    == "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151" ->
-                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.0 monitor sidecar"
+                    == (T.toLower Manifest.settlementMonitorLensSidecarAddress) ->
+                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.1 monitor sidecar"
                 | active
                 , invalid : _ <-
                     [ name
@@ -1264,10 +1265,10 @@ isValidPrivateKeyShape value =
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc "0x1647e41f49ed6d688936092b5a291c4b28106343"
-    , reviewed router "0x97a901de2b267c307e264fd5f71403f8072f73e7"
-    , reviewed engine "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
-    , reviewed clearinghouse "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
+    [ reviewed usdc (T.toLower Manifest.mockUsdcAddress)
+    , reviewed router (T.toLower Manifest.orderRouterAddress)
+    , reviewed engine (T.toLower Manifest.cfdEngineAddress)
+    , reviewed clearinghouse (T.toLower Manifest.marginClearinghouseAddress)
     ]
   where
     reviewed raw expected =

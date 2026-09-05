@@ -161,6 +161,13 @@ interface PrimedCurrentCandle {
   primedAt: number
 }
 
+interface SharedRequest<T> {
+  controller: AbortController
+  promise: Promise<T>
+  consumerCount: number
+  settled: boolean
+}
+
 export interface PletherDxyDatafeedOptions {
   dataSource?: PletherChartDataSource
   queryClient?: QueryClient
@@ -230,6 +237,9 @@ async function fetchBasketCurrentCandle(
 }
 
 function createApiDataSource(queryClient: QueryClient | undefined): PletherChartDataSource {
+  const candlePageRequests = new Map<string, SharedRequest<PerpsBasketCandlePage>>()
+  const currentCandleRequests = new Map<string, SharedRequest<PerpsBasketCurrentCandle>>()
+
   return {
     async getHistory(range, intervalSeconds, signal) {
       if (!queryClient) return (await fetchBasketHistory(range, intervalSeconds, signal)).data
@@ -267,34 +277,52 @@ function createApiDataSource(queryClient: QueryClient | undefined): PletherChart
       // The Worker already caches fixed pages against an authoritative origin
       // identity and generation. Reusing a page locally under only
       // (interval,cursor) could bypass that probe after a correction, reorg, or
-      // chart remount, so every chart history read must reach the Worker.
-      return (
-        await fetchBasketCandlePage(intervalSeconds, cursor, signal, revalidate)
-      ).data
+      // chart remount, so settled responses are never cached here. Price and
+      // directional-volume reads can still share the exact same active probe.
+      return await consumeSharedRequest(
+        candlePageRequests,
+        `${String(intervalSeconds)}:${String(cursor)}:${revalidate ? 'revalidate' : 'default'}`,
+        signal,
+        async (sharedSignal) => (
+          await fetchBasketCandlePage(
+            intervalSeconds,
+            cursor,
+            sharedSignal,
+            revalidate
+          )
+        ).data
+      )
     },
     async getCurrentCandle(intervalSeconds, signal, revalidate = false) {
-      if (!queryClient || revalidate) {
-        return (
-          await fetchBasketCurrentCandle(intervalSeconds, signal, revalidate)
-        ).data
-      }
+      return await consumeSharedRequest(
+        currentCandleRequests,
+        `${String(intervalSeconds)}:${revalidate ? 'revalidate' : 'default'}`,
+        signal,
+        async (sharedSignal) => {
+          if (!queryClient || revalidate) {
+            return (
+              await fetchBasketCurrentCandle(intervalSeconds, sharedSignal, revalidate)
+            ).data
+          }
 
-      const response = await awaitWithAbort(
-        queryClient.fetchQuery({
-          queryKey: apiQueryKeys.perps.basketCurrentCandle(intervalSeconds),
-          queryFn: ({ signal: querySignal }) => fetchBasketCurrentCandle(
-            intervalSeconds,
-            querySignal
-          ),
-          // The edge cache supplies the bounded reuse window. Keeping this
-          // query immediately stale ensures every visible polling tick reaches
-          // that boundary instead of skipping alternate ticks locally.
-          staleTime: 0,
-          retry: retryTransientFailureOnce,
-        }),
-        signal
+          const response = await awaitWithAbort(
+            queryClient.fetchQuery({
+              queryKey: apiQueryKeys.perps.basketCurrentCandle(intervalSeconds),
+              queryFn: ({ signal: querySignal }) => fetchBasketCurrentCandle(
+                intervalSeconds,
+                querySignal
+              ),
+              // The edge cache supplies the bounded reuse window. Keeping this
+              // query immediately stale ensures every visible polling tick reaches
+              // that boundary instead of skipping alternate ticks locally.
+              staleTime: 0,
+              retry: retryTransientFailureOnce,
+            }),
+            sharedSignal
+          )
+          return response.data
+        }
       )
-      return response.data
     },
     clearCandlePageCache(intervalSeconds) {
       const candleKey = apiQueryKeys.perps.basketCandlesAll()
@@ -311,6 +339,70 @@ function createApiDataSource(queryClient: QueryClient | undefined): PletherChart
       })
     },
   }
+}
+
+function consumeSharedRequest<T>(
+  requests: Map<string, SharedRequest<T>>,
+  key: string,
+  signal: AbortSignal | undefined,
+  load: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal))
+
+  let request = requests.get(key)
+  if (!request) {
+    const controller = new AbortController()
+    const sharedRequest: SharedRequest<T> = {
+      controller,
+      promise: Promise.resolve().then(() => load(controller.signal)),
+      consumerCount: 0,
+      settled: false,
+    }
+    request = sharedRequest
+    requests.set(key, sharedRequest)
+    void sharedRequest.promise.then(
+      () => {
+        sharedRequest.settled = true
+        if (requests.get(key) === sharedRequest) requests.delete(key)
+      },
+      () => {
+        sharedRequest.settled = true
+        if (requests.get(key) === sharedRequest) requests.delete(key)
+      }
+    )
+  }
+
+  request.consumerCount += 1
+  const activeRequest = request
+  return new Promise<T>((resolve, reject) => {
+    let released = false
+    const release = (): boolean => {
+      if (released) return false
+      released = true
+      signal?.removeEventListener('abort', onAbort)
+      activeRequest.consumerCount -= 1
+      if (activeRequest.consumerCount === 0 && !activeRequest.settled) {
+        if (requests.get(key) === activeRequest) requests.delete(key)
+        activeRequest.controller.abort()
+      }
+      return true
+    }
+    const onAbort = () => {
+      if (!release()) return
+      reject(signal ? abortReason(signal) : new DOMException('The operation was aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    void activeRequest.promise.then(
+      (value) => {
+        if (release()) resolve(value)
+      },
+      (error: unknown) => {
+        if (release()) {
+          reject(error instanceof Error ? error : new Error('Chart data request failed'))
+        }
+      }
+    )
+  })
 }
 
 function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {

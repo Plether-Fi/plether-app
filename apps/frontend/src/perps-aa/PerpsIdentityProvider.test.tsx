@@ -181,7 +181,7 @@ describe('PerpsIdentityProvider', () => {
     ).toBe(true)
 
     const nextManifest = validManifest()
-    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260830-v2'
+    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260905-v2'
     const fetchManifest = vi.fn(async () => new Response(
       JSON.stringify(nextManifest),
       {
@@ -220,7 +220,7 @@ describe('PerpsIdentityProvider', () => {
       expect(result.current.status).toBe('ready')
     })
     expect(result.current.identity?.manifestVersion).toBe(
-      'perps-aa-arbitrum-sepolia-20260830-v2'
+      'perps-aa-arbitrum-sepolia-20260905-v2'
     )
   })
 

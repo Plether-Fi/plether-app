@@ -28,7 +28,7 @@ import Plether.Perps.HistoryIndexer
   , PerpsIndexerMode (..)
   , applyPerpsAddressEnvironment
   , defaultPerpsAddresses
-  , perpsIndexerNameForRelease
+  , perpsIndexerNameForLifecycleBook
   , runPerpsIndexer
   , validatePerpsIndexerReleaseConfig
   )
@@ -140,9 +140,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
           , crmIndexerStartBlock = startBlock
           }
       indexerName =
-        perpsIndexerNameForRelease
-          (cfgPerpsChainId cfg)
-          (paOrderRouter addresses)
+        perpsIndexerNameForLifecycleBook
           (paOrderLifecycleBook addresses)
       indexerCfg =
         PerpsIndexerConfig

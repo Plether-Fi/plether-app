@@ -1,6 +1,6 @@
 # LP Epoch Settlement Keeper (Arbitrum Sepolia)
 
-This runbook activates the v1.2.0 vault epoch-settlement worker embedded in
+This runbook activates the v1.2.1 vault epoch-settlement worker embedded in
 `plether-keeper`. It is Sepolia-only. Mainnet must remain in `off` mode.
 
 The worker settles contract queues; it does not enumerate depositors or
@@ -27,7 +27,7 @@ confirmation-pinned Settlement Monitor observation and fails closed unless its
 schema, epoch, block, health, dependency, fault, blocker, maturity, and route
 invariants all hold.
 
-The reviewed v1.2.0 facade reports onchain configuration and observation
+The reviewed v1.2.1 facade reports onchain configuration and observation
 schema version `4`; that deployed value is compiled into the keeper's decoder.
 
 ## Initial off deployment
