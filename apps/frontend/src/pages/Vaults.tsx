@@ -19,6 +19,7 @@ import {
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
+import { TrancheMark } from '../components/TrancheMark'
 import { Alert, Badge, Button, DocsLink, InfoTooltip, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 import { openAppKit } from '../config/wagmi'
@@ -120,7 +121,6 @@ interface TrancheDefinition {
   riskLabel: string
   riskVariant: 'info' | 'warning'
   targetReturn: string
-  markClassName: string
   valueClassName: string
   barClassName: string
   featureItems: {
@@ -386,7 +386,6 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     riskLabel: 'Lower relative risk',
     riskVariant: 'info',
     targetReturn: 'Target return',
-    markClassName: 'border-brand-peach/60 bg-brand-peach/10 text-brand-peach',
     valueClassName: 'text-brand-peach',
     barClassName: 'bg-brand-peach',
     featureItems: [
@@ -427,7 +426,6 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     riskLabel: 'Higher relative risk',
     riskVariant: 'warning',
     targetReturn: 'Variable return',
-    markClassName: 'border-brand-orange/60 bg-brand-orange/10 text-brand-orange',
     valueClassName: 'text-brand-orange',
     barClassName: 'bg-brand-orange',
     featureItems: [
@@ -1518,46 +1516,6 @@ function VaultEpochCountdown({
   )
 }
 
-function TrancheMark({ tranche, size = 'lg' }: { tranche: TrancheDefinition; size?: 'md' | 'lg' }) {
-  const senior = tranche.id === 'senior'
-
-  return (
-    <div
-      className={`flex shrink-0 items-center justify-center border ${tranche.markClassName} ${
-        size === 'lg' ? 'h-14 w-14' : 'h-11 w-11'
-      }`}
-      aria-hidden="true"
-    >
-      <svg
-        viewBox="0 0 28 28"
-        className={size === 'lg' ? 'h-8 w-8' : 'h-7 w-7'}
-        fill="none"
-        role="presentation"
-      >
-        <rect
-          x="6"
-          y="4.5"
-          width="16"
-          height="7"
-          fill={senior ? 'currentColor' : 'none'}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          opacity={senior ? 1 : 0.45}
-        />
-        <rect
-          x="3"
-          y="16.5"
-          width="22"
-          height="7"
-          fill={senior ? 'none' : 'currentColor'}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          opacity={senior ? 0.45 : 1}
-        />
-      </svg>
-    </div>
-  )
-}
 
 function chartYDomain(points: VaultChartPoint[]): { min: number; max: number } {
   const prices = points.map((point) => point.sharePrice)
@@ -3135,7 +3093,7 @@ function PerformanceChart({
           </p>
         </div>
         <span className="self-start border border-brand-border/30 bg-app-bg px-3 py-1.5 text-xs font-semibold uppercase text-content-secondary">
-          7 days
+          {tranche.id === 'junior' ? 'Junior' : 'Senior'}
         </span>
       </div>
 

@@ -1,3 +1,4 @@
+import { TrancheMark } from './TrancheMark'
 import { calculateJuniorExposure, type JuniorExposureInputs } from '../utils/juniorExposure'
 
 const percent = (value: number | undefined) => value === undefined ? 'Unavailable' : `${value.toFixed(2)}%`
@@ -53,11 +54,11 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
           <h3 className="text-xs uppercase tracking-wider text-content-secondary">Trader positioning</h3>
           <p className="mt-2 text-base font-semibold text-content-primary">{direction}</p>
           <div className="mt-5 flex flex-wrap justify-between gap-3 text-sm">
-            <span className="text-brand-peach">LONG USD <strong className="text-content-primary">{percent(longShare === undefined ? undefined : longShare * 100)}</strong></span>
-            <span className="text-content-primary">SHORT USD <strong>{percent(longShare === undefined ? undefined : (1 - longShare) * 100)}</strong></span>
+            <span className="text-positive">LONG USD <strong>{percent(longShare === undefined ? undefined : longShare * 100)}</strong></span>
+            <span className="text-brand-orange">SHORT USD <strong>{percent(longShare === undefined ? undefined : (1 - longShare) * 100)}</strong></span>
           </div>
           <div className="mt-2">
-            <SplitBar share={longShare} label={longShare === undefined ? 'Trader position split unavailable or empty' : `Trader position split: ${percent(longShare * 100)} LONG USD, ${percent((1 - longShare) * 100)} SHORT USD`} />
+            <SplitBar share={longShare} firstClass="bg-positive" secondClass="bg-brand-orange" label={longShare === undefined ? 'Trader position split unavailable or empty' : `Trader position split: ${percent(longShare * 100)} LONG USD, ${percent((1 - longShare) * 100)} SHORT USD`} />
           </div>
           <div className="mt-5 flex items-end justify-between gap-3 border-t border-brand-border/30 pt-4">
             <span className="text-sm text-content-secondary">Open exposure / pool capital</span>
@@ -97,7 +98,7 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
         <div className={cardClass}>
           <h3 className="text-xs uppercase tracking-wider text-content-secondary">Pool cash usage</h3>
           <div className="mt-4 flex items-baseline gap-2"><span className="text-3xl font-semibold tabular-nums text-content-primary">{percent(reservedPercent)}</span><span className="text-sm text-content-secondary">reserved</span></div>
-          <div className="mt-4"><SplitBar share={exposure.unavailableCashShare} firstClass="bg-brand-orange" secondClass="bg-positive/60" label={`Cash unavailable for LP withdrawals: ${percent(reservedPercent)}`} /></div>
+          <div className="mt-4"><SplitBar share={exposure.unavailableCashShare} firstClass="bg-brand-orange" secondClass="bg-positive" label={`Cash unavailable for LP withdrawals: ${percent(reservedPercent)}`} /></div>
           <div className="mt-2 flex justify-between text-xs text-content-secondary"><span>Unavailable to LPs</span><span>Free {percent(reservedPercent === undefined ? undefined : 100 - reservedPercent)}</span></div>
           <p className="mt-5 border-t border-brand-border/30 pt-4 text-xs leading-5 text-content-secondary">Trader backing + other reserves. More reserved cash leaves less room for withdrawals.</p>
         </div>
@@ -105,18 +106,17 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
         <div className={cardClass}>
           <h3 className="text-xs uppercase tracking-wider text-content-secondary">Senior coupon cost</h3>
           <div className="mt-4 text-3xl font-semibold tabular-nums text-content-primary">{percent(exposure.couponDragPercent)}</div>
-          <p className="mt-1 text-xs text-content-secondary">Annualized, relative to Junior capital</p>
-          <div className="mt-4 flex items-center gap-2 text-sm text-content-primary">
-            <span className="border border-brand-border/30 px-2 py-1 text-brand-peach">Junior</span>
+          <p className="mt-1 text-xs text-content-secondary">Annualized, relative to Junior capital; A larger Senior / Junior ratio increases this cost.</p>
+          <div className="mt-4 grid grid-cols-[auto_minmax(1rem,1fr)_auto] items-center gap-3 text-sm text-content-primary">
+            <div className="justify-self-center"><TrancheMark tranche={{ id: 'junior' }} size="md" showLabel /></div>
             <span aria-hidden="true" className="flex min-w-4 flex-1 items-center text-content-secondary">
               <span className="h-px flex-1 bg-current" />
               <svg className="-ml-2 h-4 w-4 shrink-0" viewBox="0 0 16 16" fill="none" focusable="false">
                 <path d="M3 8h10m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="border border-brand-border/30 px-2 py-1">Senior</span>
+            <div className="justify-self-center"><TrancheMark tranche={{ id: 'senior' }} size="md" showLabel /></div>
           </div>
-          <p className="mt-5 border-t border-brand-border/30 pt-4 text-xs leading-5 text-content-secondary">A larger Senior / Junior ratio increases this cost. Pool earnings can offset it.</p>
         </div>
       </div>
 
