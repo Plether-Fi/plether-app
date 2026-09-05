@@ -91,6 +91,9 @@ library
         Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
         Plether.Perps.Release
+        Plether.Perps.Manifest
+        Plether.Perps.IndexerFormat
+        Plether.Perps.Manifest.Embed
         Plether.Perps.IndexerOptions
         Plether.Types.History
         Plether.Indexer
@@ -131,7 +134,9 @@ library
         http-types >= 0.12,
         vector >= 0.13,
         postgresql-simple >= 0.7,
-        resource-pool >= 0.4
+        resource-pool >= 0.4,
+        template-haskell,
+        directory
     pkgconfig-depends:
         libsecp256k1
     hs-source-dirs:   src

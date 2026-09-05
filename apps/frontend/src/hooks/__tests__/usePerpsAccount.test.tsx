@@ -233,6 +233,21 @@ describe('usePerpsAccount', () => {
     expect(mocks.refetchImmutable).not.toHaveBeenCalled()
   })
 
+  it('reads P&L from the v1.2.1 ledger snapshot offsets', () => {
+    const snapshot = Array<bigint | boolean>(24).fill(0n)
+    snapshot[12] = 400_000_000n // liquidation-reachable settlement
+    snapshot[13] = 900_000_000n // separate terminal-price cap
+    snapshot[20] = 97_500_000n // entry price, not unrealized P&L
+    snapshot[21] = 25_000_000n
+    snapshot[22] = 415_000_000n
+    snapshot[23] = false
+    mocks.primaryData[7] = success(snapshot)
+
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+
+    expect(result.current.position?.pendingCarryUsdc).toBe(10_000_000n)
+  })
+
   it('keeps position data visible while pending-order details load', () => {
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
 

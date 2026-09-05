@@ -402,12 +402,12 @@ resource "aws_ecs_task_definition" "api" {
 
     precondition {
       condition = var.environment != "sepolia" || !var.provision_aa_proxy || (
-        lower(var.perps_order_router) == "0x97a901de2b267c307e264fd5f71403f8072f73e7"
-        && lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
-        && lower(var.perps_cfd_engine) == "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
-        && lower(var.perps_margin_clearinghouse) == "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
-        && lower(var.perps_house_pool) == "0x86939a377a78ede8eee5445765ac77c9016e35e2"
-        && var.perps_indexer_start_block == "302257125"
+        lower(var.perps_order_router) == "0x2b9790ad11ce5fb1b91ac3415b08cd1ec7d0ce0b"
+        && lower(var.perps_order_lifecycle_book) == "0xca57215a3859462eb380ea40969762ac89d99522"
+        && lower(var.perps_cfd_engine) == "0x2cedc3f0059f0e9c1099be96974f459e58c428d6"
+        && lower(var.perps_margin_clearinghouse) == "0x91c85540a1f64c9aec2c801fcc927f037d619f17"
+        && lower(var.perps_house_pool) == "0x7b8b851cb3783611bcda4cf2f7d5a2f8c6106f98"
+        && var.perps_indexer_start_block == "305627052"
       )
       error_message = "The Sepolia AA proxy must use the pinned bounded-V2 release and deployment block."
     }

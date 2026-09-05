@@ -36,11 +36,11 @@ describe('pinned bounded-V2 Sepolia release', () => {
       network: { chainId: 421614 },
       release: {
         sourceRepository: 'Plether-Fi/plether-core',
-        sourceArtifact: 'deployments/arbitrum-sepolia-perps.json',
-        artifactCommit: 'bc8f6290c540665e4ff61328ea83a4c3d421a8d4',
-        artifactBlobSha: 'c2e369be6acbde0b54b614f81829810dd22794c7',
-        sourceCommit: '69fa3e2bc2d2c9d32a5808e26e62b59c11119fb9',
-        deploymentBlock: 302257125,
+        sourceArtifact: 'deployments/releases/2026-09-05-perps-arbitrum-sepolia/manifest.json',
+        artifactCommit: '999691615ec2fb7443c1920547e148633ec9aca2',
+        artifactBlobSha: '9127fb9a6b3d7bcf9875379a2a37e2ff28598c26',
+        sourceCommit: 'c3f60f58bcd5dc1b85a28739a5de7ec4a2ee114c',
+        deploymentBlock: 305627052,
       },
     })
     for (const contract of Object.values(pinnedRelease.contracts)) {
@@ -50,7 +50,7 @@ describe('pinned bounded-V2 Sepolia release', () => {
 
   it('keeps the frontend registry and public manifest on the same release', () => {
     expect(publicManifest).toMatchObject({
-      version: 'perps-aa-arbitrum-sepolia-20260830-v2',
+      version: 'perps-aa-arbitrum-sepolia-20260905-v2',
       chainId: pinnedRelease.network.chainId,
       orderRouter: pinnedRelease.contracts.orderRouter.address,
       orderLifecycleBook: pinnedRelease.contracts.orderLifecycleBook.address,
@@ -149,13 +149,19 @@ describe('pinned bounded-V2 Sepolia release', () => {
       )
     }
     expect(backendWorkflow).toContain('"PERPS_HOUSE_POOL",')
-    expect(backendRelease).toContain(publicManifest.version)
-    expect(backendRelease).toContain(
-      pinnedRelease.contracts.orderLifecycleBook.address
+    expect(backendRelease).toContain('Manifest.releaseAaManifestVersion')
+    expect(backendRelease).toContain('Manifest.orderLifecycleBookAddress')
+    expect(backendRelease).toContain('Manifest.cfdOrderPolicyEvaluatorCodeHash')
+    expect(backendRelease).not.toMatch(/0x[0-9a-fA-F]{40,64}/)
+    const backendManifest = readFileSync(
+      path.join(repositoryRoot, 'apps/backend/src/Plether/Perps/Manifest.hs'),
+      'utf8'
     )
-    expect(backendRelease).toContain(
-      pinnedRelease.contracts.cfdOrderPolicyEvaluator.runtimeCodeHash
-    )
+    expect(backendManifest).toContain('manifestText ["contracts", "orderLifecycleBook", "address"]')
+    expect(backendManifest).toContain('manifestText ["contracts", "cfdOrderPolicyEvaluator", "runtimeCodeHash"]')
+    expect(pinnedRelease).toMatchObject({
+      integration: { aaManifestVersion: publicManifest.version },
+    })
     expect(frontendWorkflow).toContain('/api/aa/status')
     expect(frontendWorkflow).toContain('calldataPolicy == "bounded-v2"')
   })

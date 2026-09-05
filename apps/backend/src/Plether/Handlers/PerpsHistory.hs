@@ -30,7 +30,7 @@ import Plether.Database.Schema
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
-import Plether.Perps.HistoryIndexer (perpsIndexerNameForRelease)
+import Plether.Perps.HistoryIndexer (perpsIndexerNameForLifecycleBook)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 
@@ -51,7 +51,7 @@ getPerpsAccountOrders pool cfg mRouter account limit cursor = do
       getPerpsIndexerStatus
         conn
         chainId
-        (perpsIndexerNameForRelease chainId orderRouter $ cfgPerpsOrderLifecycleBook cfg)
+        (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
         orderRouter
     orderRows <- getPerpsOrdersByAccount conn chainId orderRouter account pageLimit cursor
     pure (indexerStatus, orderRows)
@@ -130,7 +130,7 @@ getPerpsIndexerStatusResponse pool cfg = do
     getPerpsIndexerStatus
       conn
       chainId
-      (perpsIndexerNameForRelease chainId (cfgPerpsOrderRouter cfg) $ cfgPerpsOrderLifecycleBook cfg)
+      (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
       (cfgPerpsOrderRouter cfg)
   pure $ case mStatus of
     Nothing ->

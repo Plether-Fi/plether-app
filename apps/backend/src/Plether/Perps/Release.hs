@@ -12,6 +12,7 @@ module Plether.Perps.Release
   , verifyPerpsV2ReleaseBindings
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Monad (foldM, unless)
 import Data.Aeson (Value (..), toJSON)
 import qualified Data.ByteString as BS
@@ -30,44 +31,44 @@ import Plether.Ethereum.Client
 import Plether.Utils.Hex (intToHex)
 
 perpsV2ManifestVersion :: Text
-perpsV2ManifestVersion = "perps-aa-arbitrum-sepolia-20260830-v2"
+perpsV2ManifestVersion = Manifest.releaseAaManifestVersion
 
 perpsV2CalldataPolicy :: Text
 perpsV2CalldataPolicy = "bounded-v2"
 
 perpsV2DeploymentBlock :: Integer
-perpsV2DeploymentBlock = 302257125
+perpsV2DeploymentBlock = Manifest.releaseDeploymentBlock
 
 -- | First whole minute after the pinned V2 deployment block. The history
 -- indexer starts at the deployment block, so a certified cursor proves the
 -- intervening zero-volume minutes even when the release activation record was
 -- written later.
 perpsV2VolumeHistoryStartTimestamp :: Integer
-perpsV2VolumeHistoryStartTimestamp = 1787759880
+perpsV2VolumeHistoryStartTimestamp = Manifest.releaseVolumeHistoryStartTimestamp
 
 perpsV2OrderRouter :: Text
-perpsV2OrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+perpsV2OrderRouter = Manifest.orderRouterAddress
 
 perpsV2OrderLifecycleBook :: Text
-perpsV2OrderLifecycleBook = "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
+perpsV2OrderLifecycleBook = Manifest.orderLifecycleBookAddress
 
 perpsV2PolicyEvaluator :: Text
-perpsV2PolicyEvaluator = "0xaa4703B190684b5A57b8a9aA432fA043B169D171"
+perpsV2PolicyEvaluator = Manifest.cfdOrderPolicyEvaluatorAddress
 
 perpsV2PositionProtectionBook :: Text
-perpsV2PositionProtectionBook = "0xC009E2159146188b272420cF273B0fc12e5Fdfc8"
+perpsV2PositionProtectionBook = Manifest.positionProtectionBookAddress
 
 perpsV2PublicLens :: Text
-perpsV2PublicLens = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+perpsV2PublicLens = Manifest.perpsPublicLensAddress
 
 perpsV2Engine :: Text
-perpsV2Engine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+perpsV2Engine = Manifest.cfdEngineAddress
 
 perpsV2Clearinghouse :: Text
-perpsV2Clearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+perpsV2Clearinghouse = Manifest.marginClearinghouseAddress
 
 perpsV2HousePool :: Text
-perpsV2HousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+perpsV2HousePool = Manifest.housePoolAddress
 
 validatePerpsV2ReleaseConfig
   :: Integer
@@ -79,7 +80,7 @@ validatePerpsV2ReleaseConfig
   -> Integer
   -> Either Text ()
 validatePerpsV2ReleaseConfig chainId router lifecycleBook engine clearinghouse housePool startBlock = do
-  expectNumber "PERPS_CHAIN_ID" chainId 421614
+  expectNumber "PERPS_CHAIN_ID" chainId Manifest.releaseChainId
   expectAddress "PERPS_ORDER_ROUTER" router perpsV2OrderRouter
   case lifecycleBook of
     Nothing -> Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V2 sponsorship"
@@ -156,14 +157,14 @@ verifyAddressAt client blockNumber (Right ()) (label, target, signature, expecte
 
 runtimeHashes :: [(Text, Text, Text)]
 runtimeHashes =
-  [ ("OrderRouter", perpsV2OrderRouter, "0x74f3676e93f5175dddec2298ad0fdc67bdc7436c8ecabc59ed980f8ee8a7881a")
-  , ("OrderLifecycleBook", perpsV2OrderLifecycleBook, "0xaf0f48b06282386e245935921b72f8f4a2fe8e43afb89bb1a7d3eba3962e9517")
-  , ("PolicyEvaluator", perpsV2PolicyEvaluator, "0xbf5d49312d5ca849e2719bef0dda2a45c552fb9b5af3e626537ff72adaa85882")
-  , ("PositionProtectionBook", perpsV2PositionProtectionBook, "0xb24932b1130c74c32279aef54032368fdf61a16ff4fedbc8c0e3d6e6430fc42c")
-  , ("CfdEngine", perpsV2Engine, "0xf61a42cb75e6b83ccbbb1c7046f41d75c9d793de4105a6fe259eb8174c9b8b42")
-  , ("MarginClearinghouse", perpsV2Clearinghouse, "0xe761ef9f2249d04f20264dfb1f04895f2864aeaa407782e74d7b555f8a39f7e9")
-  , ("HousePool", perpsV2HousePool, "0x730fe4c35663b034934191001a219c487b53cad00a5ad706b9767103a61f18c1")
-  , ("PerpsPublicLens", perpsV2PublicLens, "0x8503b7db5845a8aff3dc7cb82c9418351136b1e7aa10ecbb374ea5df78c014b3")
+  [ ("OrderRouter", perpsV2OrderRouter, Manifest.orderRouterCodeHash)
+  , ("OrderLifecycleBook", perpsV2OrderLifecycleBook, Manifest.orderLifecycleBookCodeHash)
+  , ("PolicyEvaluator", perpsV2PolicyEvaluator, Manifest.cfdOrderPolicyEvaluatorCodeHash)
+  , ("PositionProtectionBook", perpsV2PositionProtectionBook, Manifest.positionProtectionBookCodeHash)
+  , ("CfdEngine", perpsV2Engine, Manifest.cfdEngineCodeHash)
+  , ("MarginClearinghouse", perpsV2Clearinghouse, Manifest.marginClearinghouseCodeHash)
+  , ("HousePool", perpsV2HousePool, Manifest.housePoolCodeHash)
+  , ("PerpsPublicLens", perpsV2PublicLens, Manifest.perpsPublicLensCodeHash)
   ]
 
 verifyRuntimeHashAt
