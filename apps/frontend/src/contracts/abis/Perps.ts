@@ -780,6 +780,25 @@ export const PERPS_ORDER_ROUTER_ABI = [
 ] as const
 
 export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
+  ...(['OrderLifecycleBook__InvalidProtectionAttempt', 'OrderLifecycleBook__ProtectionAttemptAlreadyRegistered'] as const).map((name) => ({
+    type: 'error' as const, name, inputs: [{ name: 'orderId', type: 'uint64' as const }],
+  })),
+  ...(['CONFIG_SCHEMA_HASH', 'RECEIPT_TYPEHASH'] as const).map((name) => ({
+    type: 'function' as const, name, stateMutability: 'view' as const,
+    inputs: [], outputs: [{ type: 'bytes32' as const }],
+  })),
+  {
+    type: 'function', name: 'isProtectionAttempt', stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }], outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function', name: 'registerProtectionAttempt', stateMutability: 'nonpayable',
+    inputs: [{ name: 'orderId', type: 'uint64' }], outputs: [],
+  },
+  {
+    type: 'event', name: 'ProtectionAttemptRegistered',
+    inputs: [{ name: 'orderId', type: 'uint64', indexed: true }],
+  },
   ...(['ROUTER', 'ENGINE', 'CLEARINGHOUSE', 'HOUSE_POOL'] as const).map(
     (name) => ({
       type: 'function' as const,
@@ -1005,6 +1024,43 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
 ] as const
 
 export const PERPS_POSITION_PROTECTION_BOOK_ABI = [
+  {
+    type: 'function', name: 'ENGINE', stateMutability: 'view',
+    inputs: [], outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function', name: 'getPositionProtection', stateMutability: 'view',
+    inputs: [{ name: 'protectionId', type: 'uint64' }],
+    outputs: [{ name: 'protection', type: 'tuple', components: POSITION_PROTECTION_VIEW_COMPONENTS }],
+  },
+  {
+    type: 'function', name: 'retryPositionProtectionClose', stateMutability: 'nonpayable',
+    inputs: [{ name: 'protectionId', type: 'uint64' }],
+    outputs: [{ name: 'linkedOrderId', type: 'uint64' }],
+  },
+  { type: 'error', name: 'OrderRouter__ProtectionNotLatched', inputs: [] },
+  { type: 'error', name: 'PositionProtectionBook__InvalidTerminalReason', inputs: [] },
+  { type: 'error', name: 'PositionProtectionBook__BountyMismatch', inputs: [] },
+  { type: 'error', name: 'OrderRouter__PendingOrdersExist', inputs: [] },
+  {
+    type: 'event', name: 'PositionProtectionCloseAttemptQueued',
+    inputs: [
+      { name: 'protectionId', type: 'uint64', indexed: true },
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'linkedOrderId', type: 'uint64', indexed: true },
+      { name: 'previousLinkedOrderId', type: 'uint64', indexed: false },
+    ],
+  },
+  {
+    type: 'event', name: 'PositionProtectionCloseAttemptFailed',
+    inputs: [
+      { name: 'protectionId', type: 'uint64', indexed: true },
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'linkedOrderId', type: 'uint64', indexed: true },
+      { name: 'reason', type: 'uint8', indexed: false },
+      { name: 'relatched', type: 'bool', indexed: false },
+    ],
+  },
   {
     type: 'function',
     name: 'ROUTER',

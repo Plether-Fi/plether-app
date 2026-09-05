@@ -333,8 +333,28 @@ spec = do
             , otoTerminalBlock = 303858802
             , otoExecutionPrice = 101250000
             , otoFailedConstraint = 4
+            , otoBountyDisposition = 0
+            , otoBountyUsdc = 0
+            , otoBountyRecipient = "0x0000000000000000000000000000000000000000"
             , otoReceiptHash = receiptHash
             }
+
+    it "decodes retained bounty without claiming a keeper payout" $ do
+      let outcome disposition recipient = mconcat
+            [ encodeUint256 $ case index of
+                5 -> 3
+                6 -> 2
+                9 -> disposition
+                10 -> 100
+                14 -> recipient
+                16 -> 200000
+                _ -> 0
+            | index <- [0 .. 22 :: Int]
+            ]
+      fmap otoBountyDisposition (decodeOrderTerminalOutcome $ outcome 4 0) `shouldBe` Right 4
+      fmap otoBountyUsdc (decodeOrderTerminalOutcome $ outcome 4 0) `shouldBe` Right 200000
+      decodeOrderTerminalOutcome (outcome 4 1) `shouldSatisfy` isDecodeError
+      decodeOrderTerminalOutcome (outcome 5 0) `shouldSatisfy` isDecodeError
 
     it "rejects a non-terminal outcome" $ do
       decodeOrderTerminalOutcome (BS.replicate (23 * 32) 0)

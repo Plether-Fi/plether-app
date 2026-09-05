@@ -8,6 +8,32 @@ import {
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
+import { PERPS_CONFIG_SCHEMA_HASH, PERPS_RECEIPT_TYPEHASH } from './perpsProtection'
+
+export async function verifyPerpsReceiptSchema(client: PublicClient, book: Address, blockNumber: bigint): Promise<void> {
+  const [configSchema, receiptType] = await Promise.all([
+    client.readContract({ address: book, abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI, functionName: 'CONFIG_SCHEMA_HASH', blockNumber }),
+    client.readContract({ address: book, abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI, functionName: 'RECEIPT_TYPEHASH', blockNumber }),
+  ])
+  if (configSchema !== PERPS_CONFIG_SCHEMA_HASH || receiptType !== PERPS_RECEIPT_TYPEHASH) {
+    throw new Error('This deployment does not support V3 protection receipts. A complete perps stack deployment is required.')
+  }
+}
+
+export async function verifyProtectionRetryBindings(client: PublicClient, blockNumber: bigint): Promise<void> {
+  const addresses = PERPS_ARBITRUM_SEPOLIA
+  const [book, lifecycle, router, engine] = await Promise.all([
+    client.readContract({ address: addresses.orderRouter, abi: PERPS_ORDER_ROUTER_ABI, functionName: 'positionProtectionBook', blockNumber }),
+    client.readContract({ address: addresses.orderRouter, abi: PERPS_ORDER_ROUTER_ABI, functionName: 'lifecycleBook', blockNumber }),
+    client.readContract({ address: addresses.positionProtectionBook, abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName: 'ROUTER', blockNumber }),
+    client.readContract({ address: addresses.positionProtectionBook, abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName: 'ENGINE', blockNumber }),
+  ])
+  requireSameAddress('Router protection Book', book, addresses.positionProtectionBook)
+  requireSameAddress('Router lifecycle Book', lifecycle, addresses.orderLifecycleBook)
+  requireSameAddress('Protection Router', router, addresses.orderRouter)
+  requireSameAddress('Protection Engine', engine, addresses.cfdEngine)
+  await verifyPerpsReceiptSchema(client, lifecycle, blockNumber)
+}
 
 function requireSameAddress(
   label: string,
@@ -31,6 +57,7 @@ export async function verifyPerpsV2DeploymentBindings(
 ): Promise<{ positionProtectionBook: Address; blockNumber: bigint }> {
   const block = await client.getBlock({ blockTag: 'latest' })
   const blockNumber = block.number
+  await verifyPerpsReceiptSchema(client, manifest.orderLifecycleBook, blockNumber)
   const [
     routerEngine,
     routerLifecycleBook,

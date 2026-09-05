@@ -168,6 +168,9 @@ data OrderTerminalOutcome = OrderTerminalOutcome
   , otoTerminalBlock :: Integer
   , otoExecutionPrice :: Integer
   , otoFailedConstraint :: Integer
+  , otoBountyDisposition :: Integer
+  , otoBountyUsdc :: Integer
+  , otoBountyRecipient :: Text
   , otoReceiptHash :: ByteString
   }
   deriving stock (Show, Eq)
@@ -1003,6 +1006,10 @@ decodeOrderTerminalOutcome bytes
       Left $ RpcJsonError "outcome(uint64) returned an invalid terminal reason"
   | executionMode > 3 =
       Left $ RpcJsonError "outcome(uint64) returned an invalid execution mode"
+  | wordAt 9 bytes > 4 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid bounty disposition"
+  | wordAt 9 bytes == 4 && (lifecycleStatus' /= 3 || wordAt 14 bytes /= 0) =
+      Left $ RpcJsonError "retained protection bounty requires a failed outcome and zero recipient"
   | terminalBlock == 0 || terminalBlock > maxUint64 =
       Left $ RpcJsonError "outcome(uint64) returned an invalid terminal block"
   | failedConstraint > 9 =
@@ -1020,6 +1027,9 @@ decodeOrderTerminalOutcome bytes
           , otoTerminalBlock = terminalBlock
           , otoExecutionPrice = wordAt 15 bytes
           , otoFailedConstraint = failedConstraint
+          , otoBountyDisposition = wordAt 9 bytes
+          , otoBountyUsdc = wordAt 16 bytes
+          , otoBountyRecipient = decodeAddress $ wordBytesAt 14 bytes
           , otoReceiptHash = wordBytesAt 22 bytes
           }
   where

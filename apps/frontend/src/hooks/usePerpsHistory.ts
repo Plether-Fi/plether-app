@@ -153,6 +153,8 @@ interface BackendOrderRow {
 export interface PerpsOrderReceiptEconomics {
   executionNotionalUsdc?: string
   executionBountyUsdc?: string
+  bountyDisposition?: number
+  bountyRecipient?: string
   realizedPnlUsdc?: string
   vpiUsdc?: string
   carryUsdc?: string

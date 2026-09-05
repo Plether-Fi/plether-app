@@ -98,6 +98,7 @@ library
         Plether.Indexer.Events
         Plether.Handlers.History
         Plether.Keeper
+        Plether.Keeper.Protection
         Plether.LiquidationWorker
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
@@ -314,6 +315,7 @@ test-suite plether-api-test
         Plether.Handlers.TestnetFaucetSpec
         Plether.Handlers.TestnetFaucetGuardSpec
         Plether.KeeperSpec
+        Plether.Keeper.ProtectionSpec
         Plether.LoggingSpec
         Plether.RequestLoggingSpec
         Plether.LiquidationWorkerSpec
@@ -377,6 +379,7 @@ test-suite plether-api-integration-test
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
         Plether.Keeper.LpSettlementDatabaseSpec
+        Plether.Keeper.ProtectionDatabaseSpec
         Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec

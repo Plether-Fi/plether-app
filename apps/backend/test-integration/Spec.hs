@@ -3,6 +3,7 @@ module Main (main) where
 import qualified Data.Text as T
 import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
 import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
+import Plether.Keeper.ProtectionDatabaseSpec (protectionDatabaseSpec)
 import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
@@ -21,6 +22,7 @@ main = do
     Just value ->
       hspec $ do
         criticalPathSpec $ T.pack value
+        protectionDatabaseSpec $ T.pack value
         lpSettlementDatabaseSpec $ T.pack value
         lpSettlementWorkerSpec $ T.pack value
         candleRollupSpec $ T.pack value

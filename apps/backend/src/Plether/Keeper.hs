@@ -113,6 +113,7 @@ import Plether.Ethereum.Client
   , ethCallWithTransactionGas
   )
 import qualified Plether.Ethereum.Contracts.Perps as Perps
+import qualified Plether.Keeper.Protection as Protection
 import qualified Plether.Ethereum.Contracts.SettlementMonitor as SettlementMonitor
 import Plether.Ethereum.Rpc
   ( TxReceipt (..)
@@ -307,23 +308,61 @@ runOrderKeeperSession cfg pool client mode dryRun =
               "keeper_lock_acquired"
               "Order keeper acquired its advisory lock"
               []
+            Protection.ensureProtectionSchema conn
+            book <- Protection.discoverProtectionBook cfg client >>= either (fail . T.unpack) pure
             case mode of
-              KeeperOnce -> void $ runKeeperIteration cfg conn client dryRun
-              KeeperLoop -> loop conn
+              KeeperOnce -> void $ runKeeperIteration cfg conn client book dryRun
+              KeeperLoop -> loop conn book
   where
-    loop conn = do
-      activity <- runKeeperIteration cfg conn client dryRun
+    loop conn book = do
+      activity <- runKeeperIteration cfg conn client book dryRun
       threadDelay $
         keeperPollDelayMicros
           (cfgKeeperPollSeconds cfg)
           (cfgKeeperIdlePollSeconds cfg)
           activity
-      loop conn
+      loop conn book
 
-runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IO KeeperIterationActivity
-runKeeperIteration cfg conn client dryRun = do
+runKeeperIteration :: Config -> Connection -> EthClient -> Text -> Bool -> IO KeeperIterationActivity
+runKeeperIteration cfg conn client book dryRun = do
   indexNewLogs cfg conn client
-  processQueueHead cfg conn client dryRun
+  activity <- processQueueHead cfg conn client dryRun
+  protectionPending <- Protection.processProtectionRetries cfg conn client book dryRun
+    (protectionOracleAvailable cfg conn client)
+    (submitProtectionRetry cfg conn client)
+  pure $ if protectionPending then KeeperPending else activity
+
+protectionOracleAvailable :: Config -> Connection -> EthClient -> IO Bool
+protectionOracleAvailable cfg conn client = do
+  policyResult <- Perps.getOrderExecutionPolicy client (cfgPerpsPletherOracle cfg) True
+  divergenceResult <- Perps.orderExecutionStalenessLimit client (cfgPerpsPletherOracle cfg)
+  nowResult <- ethLatestBlockTimestamp client
+  cached <- getLatestPythUpdatePayload conn
+  pure $ case (policyResult, divergenceResult, nowResult, cached) of
+    (Right policy, Right divergence, Right now, Just payload) ->
+      case decodePayload payload of
+        Right (times, updates) -> Protection.retryOracleReady now (Perps.oepMaxStaleness policy) divergence times updates
+        Left _ -> False
+    _ -> False
+
+submitProtectionRetry :: Config -> Connection -> EthClient -> Text -> ByteString -> IO (Either Text TxReceipt)
+submitProtectionRetry cfg conn client book callData = runExceptT $ do
+  privateKey <- maybe (ExceptT $ pure $ Left "KEEPER_PRIVATE_KEY is not configured") pure $ cfgKeeperPrivateKey cfg
+  signer <- ExceptT $ deriveAddress privateKey
+  estimated <- ExceptT $ fmap (either (Left . rpcErrorText) Right) $ ethEstimateGas client signer book 0 callData
+  let gasLimit = max 21_000 $ applyBuffer estimated (cfgKeeperGasBufferBps cfg)
+  unless (gasLimit <= v2OrderGasLimitCap) $ ExceptT $ pure $ Left "Protection retry exceeds keeper gas cap"
+  response <- ExceptT $ fmap (either (Left . rpcErrorText) Right) $
+    ethCallWithTransactionGas client (CallParams book callData) signer 0 gasLimit
+  unless (BS.length response == 32 && BS.any (/= 0) response) $ ExceptT $ pure $ Left "Protection retry simulation returned no order ID"
+  receipt <- ExceptT $ fmap (either (Left . snd) Right) $
+    submitKeeperTransactionTo cfg client book 0 callData (Just gasLimit) (const $ pure ())
+  -- Discover a newly queued child immediately, preserving its short TTL even
+  -- while the confirmed log cursor catches up. Later ingestion is idempotent.
+  when (receiptSucceeded receipt) $ liftIO $
+    forM_ (mapMaybe Perps.decodePerpsOrderEvent $ filter (isExpectedKeeperLog cfg) $ receiptLogs receipt)
+      (applyOrderEvent cfg conn client)
+  pure receipt
 
 runLpSettlementWorker
   :: SettlementMonitor.SettlementCodeHashes
@@ -2249,6 +2288,9 @@ reconcileTerminalOrder cfg conn order outcome = do
     , field "terminal_block" $ Perps.otoTerminalBlock outcome
     , field "execution_mode" $ Perps.otoExecutionMode outcome
     , field "failed_constraint_code" $ Perps.otoFailedConstraint outcome
+    , field "bounty_disposition" $ Perps.otoBountyDisposition outcome
+    , field "bounty_usdc" $ Perps.otoBountyUsdc outcome
+    , field "bounty_recipient" $ Perps.otoBountyRecipient outcome
     , field "receipt_hash" $ "0x" <> TE.decodeUtf8 (B16.encode $ Perps.otoReceiptHash outcome)
     ]
   where

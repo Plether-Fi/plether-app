@@ -2572,3 +2572,34 @@ CREATE INDEX IF NOT EXISTS idx_vault_request_events_controller
     ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, controller_address, request_id DESC);
 CREATE INDEX IF NOT EXISTS idx_vault_request_events_owner
     ON vault_request_events(chain_id, house_pool_address, deployment_block, vault_address, owner_address, request_id DESC);
+
+-- Durable protection intent may create many ordinary FIFO close attempts (core PR #78).
+CREATE TABLE IF NOT EXISTS perps_protection_indexer_state (
+    book TEXT PRIMARY KEY,
+    last_block BIGINT NOT NULL,
+    last_block_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS perps_protection_attempt_events (
+    book TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    log_index BIGINT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    protection_id BIGINT,
+    account TEXT,
+    order_id BIGINT NOT NULL,
+    previous_order_id BIGINT,
+    terminal_reason INTEGER,
+    relatched BOOLEAN,
+    PRIMARY KEY (book, tx_hash, log_index)
+);
+CREATE INDEX IF NOT EXISTS perps_protection_attempt_history
+    ON perps_protection_attempt_events (book, protection_id, order_id);
+CREATE TABLE IF NOT EXISTS perps_protection_retry_candidates (
+    book TEXT NOT NULL,
+    protection_id BIGINT NOT NULL,
+    checked_at TIMESTAMPTZ,
+    retry_after TIMESTAMPTZ,
+    PRIMARY KEY (book, protection_id)
+);

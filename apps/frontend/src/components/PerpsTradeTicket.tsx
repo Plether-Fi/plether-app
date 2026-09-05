@@ -1,3 +1,4 @@
+import { positionProtectionMessage } from '../contracts/perpsProtection'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
@@ -267,6 +268,7 @@ interface PerpsTradeTicketProps {
   ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
   activePositionProtectionId?: bigint
+  activePositionProtectionStatus?: number
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
   firstPendingOrderExpiryTime?: bigint
@@ -1804,6 +1806,7 @@ export function PerpsTradeTicket({
   ordersIndexedThroughBlockRaw,
   pendingOrderCount,
   activePositionProtectionId = 0n,
+  activePositionProtectionStatus = 0,
   maxPendingOrders,
   firstPendingOrderId,
   firstPendingOrderExpiryTime,
@@ -2839,7 +2842,7 @@ export function PerpsTradeTicket({
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
     if (activePositionProtectionId > 0n) {
-      return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
+      return positionProtectionMessage(activePositionProtectionId, activePositionProtectionStatus)
     }
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
     if (isZeroSize) return 'Enter an order quantity.'

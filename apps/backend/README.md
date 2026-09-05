@@ -841,6 +841,11 @@ ghcid --command="cabal repl plether-api" --test=":main"
 See [the LP settlement keeper runbook](../../docs/runbooks/lp-settlement-keeper.md)
 for the Sepolia activation, cost-cap, alarm, manual-review, and rollback procedure.
 
+The order keeper also retries latched SL/TP closes. See the
+[position protection retry runbook](../../docs/runbooks/position-protection-retries.md)
+for the V3 deployment gate, retry admission policy, retained-bounty accounting,
+and permanent attempt history.
+
 The critical-path gate runs the real Perps history indexer and HTTP API against
 PostgreSQL and an in-process scripted chain. It covers delayed Alchemy trace
 evidence, finalized-value stability, stale evidence guards, stale

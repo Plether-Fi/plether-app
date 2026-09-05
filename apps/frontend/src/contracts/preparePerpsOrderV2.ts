@@ -255,7 +255,7 @@ async function loadPerpsOrderReviewContext(
   }
   if (activeProtectionId !== 0n) {
     throw new Error(
-      `Position protection #${activeProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
+      `Position protection #${activeProtectionId.toString()} is active. Discretionary orders remain locked until protection is cancelled before triggering, or resolves.`
     )
   }
   if (BigInt(pendingOrders.length) >= maxPendingOrders) {

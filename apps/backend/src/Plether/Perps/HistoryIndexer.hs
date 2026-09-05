@@ -1753,6 +1753,8 @@ parseOrderFinalized logEntry = do
       economics = object
         [ "executionNotionalUsdc" .= show (wordAt bytes 29)
         , "executionBountyUsdc" .= show (wordAt bytes 19)
+        , "bountyDisposition" .= wordAt bytes 21
+        , "bountyRecipient" .= ("0x" <> TE.decodeUtf8 (B16.encode $ BS.drop 12 $ BS.take 32 $ BS.drop (20 * 32) bytes))
         , "realizedPnlUsdc" .= show (intWordAt bytes 30)
         , "vpiUsdc" .= show (intWordAt bytes 31)
         , "carryUsdc" .= show (intWordAt bytes 32)
@@ -1783,6 +1785,8 @@ parseOrderFinalized logEntry = do
         , "failedConstraint" .= failedConstraint
         , "executionPrice" .= show executionPrice
         , "executionBountyUsdc" .= show (wordAt bytes 19)
+        , "bountyDisposition" .= wordAt bytes 21
+        , "bountyRecipient" .= ("0x" <> TE.decodeUtf8 (B16.encode $ BS.drop 12 $ BS.take 32 $ BS.drop (20 * 32) bytes))
         , "economics" .= economics
         ]
   pure $

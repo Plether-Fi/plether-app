@@ -1,6 +1,6 @@
 import { decodeErrorResult, parseAbi } from 'viem'
 
-type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute'
+type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute' | 'retryProtection'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
@@ -63,6 +63,8 @@ const PERPS_ERROR_ABI = parseAbi([
   'error OrderRouter__ZeroPostLeverageBound()',
   'error OrderRouter__ExecutionBountyAboveGrossDebit(uint256 executionBountyUsdc,uint256 maximumGrossDebitUsdc)',
   'error OrderRouter__ProtectionActive()',
+  'error OrderRouter__ProtectionNotLatched()',
+  'error PositionProtectionBook__BountyMismatch()',
 
   'error OrderLifecycleBook__ZeroClientOrderId()',
   'error OrderLifecycleBook__ClientIdConflict(address account,bytes32 clientOrderId,bytes32 existingIntentHash,bytes32 suppliedIntentHash)',
@@ -388,8 +390,12 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'OrderRouter__ExecutionBountyAboveGrossDebit':
     case 'OrderLifecycleBook__ExecutionBountyAboveBound':
       return 'The current execution bounty exceeds the reviewed order bounds. Review a fresh order.'
+    case 'OrderRouter__ProtectionNotLatched':
+      return 'Protection is no longer waiting for a retry. Another keeper may have queued its close attempt. Refresh to see its current state.'
+    case 'PositionProtectionBook__BountyMismatch':
+      return 'The retained protection reward could not be verified. Refresh account state before retrying.'
     case 'OrderRouter__ProtectionActive':
-      return 'Active position protection blocks discretionary orders. Cancel or finalize the protection first.'
+      return 'Active position protection blocks discretionary orders. Triggered protection cannot be cancelled; it remains binding while close attempts are retried.'
     case 'CfdOrderPolicyEvaluator__ExecutionModeDisallowed':
       return 'The market regime changed after review. Review a fresh order for the current regime.'
     case 'CfdOrderPolicyEvaluator__ConstraintViolation': {
@@ -469,6 +475,8 @@ function fallbackMessage(action: PerpsAction): string {
       return 'Claim settlement failed. Refresh the Trading Account claim balance and retry.'
     case 'commit':
       return COMMIT_UNDECODED_FALLBACK_MESSAGE
+    case 'retryProtection':
+      return 'The protection retry reverted. Refresh its state; another keeper may already have queued a close attempt.'
     case 'execute':
       return 'Self-execute failed. Retry with fresh Pyth data; the previous update may have expired.'
   }

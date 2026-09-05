@@ -1,3 +1,4 @@
+import { PerpsPositionProtection } from '../components/PerpsPositionProtection'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
@@ -259,6 +260,13 @@ export function Perps() {
           ) : null}
         </div>
       ) : null}
+      <PerpsPositionProtection
+        key={perpsAccount.activePositionProtectionId.toString()}
+        id={perpsAccount.activePositionProtectionId}
+        status={perpsAccount.activePositionProtectionStatus}
+        linkedOrderId={perpsAccount.activePositionProtectionLinkedOrderId}
+        onRefresh={handleAccountRefresh}
+      />
       <div className="flex flex-col gap-3 sm:gap-6 xl:flow-root">
         <div className="min-w-0 xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
           <PerpsInstrumentPanel stats={instrumentStats} />
@@ -301,6 +309,7 @@ export function Perps() {
             ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
             activePositionProtectionId={perpsAccount.activePositionProtectionId}
+            activePositionProtectionStatus={perpsAccount.activePositionProtectionStatus}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
             firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}

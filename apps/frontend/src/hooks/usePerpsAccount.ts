@@ -628,6 +628,10 @@ export function usePerpsAccount(markPrice?: bigint) {
         readBigInt(activeProtection, 0, 'protectionId') ?? 0n,
       activePositionProtectionStatus:
         Number(tupleValue(activeProtection, 15, 'status') ?? 0),
+      activePositionProtectionLinkedOrderId:
+        readBigInt(activeProtection, 2, 'linkedOrderId') ?? 0n,
+      activePositionProtectionExecutionBountyUsdc:
+        readBigInt(activeProtection, 9, 'executionBountyUsdc') ?? 0n,
       firstPendingOrderId,
       firstPendingOrderExpiryTime,
       accountHasOpenPosition,
