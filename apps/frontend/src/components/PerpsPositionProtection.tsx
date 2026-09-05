@@ -5,8 +5,18 @@ import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 import { POSITION_PROTECTION_STATUS, POSITION_PROTECTION_STATUS_LABELS, positionProtectionMessage } from '../contracts/perpsProtection'
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { verifyProtectionRetryBindings } from '../contracts/verifyPerpsV2Bindings'
+import { formatDisplayDxyPrice } from '../utils/perps'
 
-export function PerpsPositionProtection({ id, status, linkedOrderId, onRefresh }: {
+interface ProtectionTriggerPrices {
+  takeProfitTriggerPrice?: bigint
+  stopLossTriggerPrice?: bigint
+}
+
+function formatTriggerPrice(price: bigint | undefined): string {
+  return price === 0n ? 'Not set' : formatDisplayDxyPrice(price)
+}
+
+export function PerpsPositionProtection({ id, status, linkedOrderId, takeProfitTriggerPrice, stopLossTriggerPrice, onRefresh }: ProtectionTriggerPrices & {
   id: bigint
   status: number
   linkedOrderId: bigint
@@ -60,6 +70,8 @@ export function PerpsPositionProtection({ id, status, linkedOrderId, onRefresh }
       id={id}
       status={status}
       linkedOrderId={linkedOrderId}
+      takeProfitTriggerPrice={takeProfitTriggerPrice}
+      stopLossTriggerPrice={stopLossTriggerPrice}
       pending={pending}
       error={error}
       queuedOrderId={queuedOrderId}
@@ -72,8 +84,9 @@ export function PerpsPositionProtection({ id, status, linkedOrderId, onRefresh }
 
 export function PerpsPositionProtectionPanel({
   id, status, linkedOrderId, pending = false, error, queuedOrderId,
+  takeProfitTriggerPrice, stopLossTriggerPrice,
   canRetry = false, walletOnNetwork = false, onRetry,
-}: {
+}: ProtectionTriggerPrices & {
   id: bigint
   status: number
   linkedOrderId: bigint
@@ -92,7 +105,19 @@ export function PerpsPositionProtectionPanel({
   return (
     <section aria-label="Position protection" className="mb-4 border-b border-brand-border/20 pb-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <p className="text-content-secondary">SL/TP <span className={latched ? 'ml-2 text-[#FFAB96]' : 'ml-2 text-content-primary'}>{statusLabel}</span></p>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <p className="text-content-secondary">SL/TP <span className={latched ? 'ml-2 text-[#FFAB96]' : 'ml-2 text-content-primary'}>{statusLabel}</span></p>
+          <dl className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+            <div className="flex gap-1.5" title="Stop-loss trigger price">
+              <dt className="text-content-secondary">SL</dt>
+              <dd aria-label="Stop-loss trigger price" className="text-content-primary">{formatTriggerPrice(stopLossTriggerPrice)}</dd>
+            </div>
+            <div className="flex gap-1.5" title="Take-profit trigger price">
+              <dt className="text-content-secondary">TP</dt>
+              <dd aria-label="Take-profit trigger price" className="text-content-primary">{formatTriggerPrice(takeProfitTriggerPrice)}</dd>
+            </div>
+          </dl>
+        </div>
         <button type="button" aria-expanded={expanded} aria-controls={detailsId}
           className="cursor-pointer text-xs text-content-secondary underline underline-offset-4 hover:text-content-primary"
           onClick={() => { setExpanded(!expanded) }}>

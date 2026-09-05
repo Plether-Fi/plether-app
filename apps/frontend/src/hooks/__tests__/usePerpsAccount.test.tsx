@@ -161,6 +161,23 @@ describe('usePerpsAccount', () => {
     })
   })
 
+  it.each([
+    { format: 'named', protection: { takeProfitTriggerPrice: 95_000_000n, stopLossTriggerPrice: 100_000_000n } },
+    { format: 'tuple', protection: [7n, 10n, 0n, ACCOUNT, 0, 2_000n, 95_000_000n, 100_000_000n] },
+  ])('reads protection trigger prices from the $format contract view', ({ protection }) => {
+    mocks.primaryData[10] = success(protection)
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.activePositionProtectionTakeProfitTriggerPrice).toBe(95_000_000n)
+    expect(result.current.activePositionProtectionStopLossTriggerPrice).toBe(100_000_000n)
+  })
+
+  it('does not turn unavailable protection prices into unset triggers', () => {
+    mocks.primaryData[10] = failure('protection read unavailable')
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.activePositionProtectionTakeProfitTriggerPrice).toBeUndefined()
+    expect(result.current.activePositionProtectionStopLossTriggerPrice).toBeUndefined()
+  })
+
   it('polls dynamic account state but refreshes timelocked config only on lifecycle boundaries', async () => {
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
     const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)

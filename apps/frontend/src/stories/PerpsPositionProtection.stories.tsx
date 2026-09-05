@@ -66,6 +66,9 @@ const meta = {
     id: 7n,
     status: POSITION_PROTECTION_STATUS.Latched,
     linkedOrderId: 11n,
+    // Stored oracle prices use the inverse of the displayed plDXY price.
+    takeProfitTriggerPrice: 95_000_000n, // Display: 1.0500
+    stopLossTriggerPrice: 100_000_000n, // Display: 1.0000
     canRetry: true,
     walletOnNetwork: true,
     onRetry: () => {},
@@ -73,6 +76,8 @@ const meta = {
   argTypes: {
     id: { control: false },
     linkedOrderId: { control: false },
+    takeProfitTriggerPrice: { control: false },
+    stopLossTriggerPrice: { control: false },
     queuedOrderId: { control: false },
     onRetry: { control: false },
   },
@@ -95,6 +100,14 @@ export const PendingOpen: Story = {
 export const Armed: Story = {
   name: 'Armed · Watching SL/TP levels',
   args: { status: POSITION_PROTECTION_STATUS.Armed, linkedOrderId: 0n },
+}
+
+export const StopLossOnly: Story = {
+  args: { status: POSITION_PROTECTION_STATUS.Armed, linkedOrderId: 0n, takeProfitTriggerPrice: 0n },
+}
+
+export const TakeProfitOnly: Story = {
+  args: { status: POSITION_PROTECTION_STATUS.Armed, linkedOrderId: 0n, stopLossTriggerPrice: 0n },
 }
 
 export const Latched: Story = {

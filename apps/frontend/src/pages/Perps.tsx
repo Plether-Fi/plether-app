@@ -338,6 +338,8 @@ export function Perps() {
                 id={perpsAccount.activePositionProtectionId}
                 status={perpsAccount.activePositionProtectionStatus}
                 linkedOrderId={perpsAccount.activePositionProtectionLinkedOrderId}
+                takeProfitTriggerPrice={perpsAccount.activePositionProtectionTakeProfitTriggerPrice}
+                stopLossTriggerPrice={perpsAccount.activePositionProtectionStopLossTriggerPrice}
                 onRefresh={handleAccountRefresh}
               />
             }
