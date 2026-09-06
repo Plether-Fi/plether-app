@@ -122,7 +122,7 @@ reviewedSettlementCodeHashes =
 supportedConfigSchemaVersion :: Integer
 supportedConfigSchemaVersion = 4
 
--- The deployed v1.2.1 facade writes CONFIG_SCHEMA_VERSION into observation
+-- The deployed v1.2.2 facade writes CONFIG_SCHEMA_VERSION into observation
 -- word zero. Keep the observation gate named separately so a future facade
 -- can version the two surfaces independently without weakening validation.
 supportedObservationSchemaVersion :: Integer

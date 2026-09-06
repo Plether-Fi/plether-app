@@ -17,14 +17,14 @@ describe('perps CFD engine lens ABI', () => {
   })
 })
 
-// Extracted verbatim from the checksum-verified v1.2.1 release ABI bundle.
-import releaseAbi from './fixtures/perps-v1.2.1.json'
+// Extracted verbatim from the checksum-verified v1.2.2 release ABI bundle.
+import releaseAbi from './fixtures/perps-v1.2.2.json'
 import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
 } from '../abis'
 
-describe('v1.2.1 changed return layouts', () => {
+describe('v1.2.2 return layouts', () => {
   const bindings = {
     riskParams: PERPS_CFD_ENGINE_ABI,
     previewLiquidation: PERPS_CFD_ENGINE_LENS_ABI,
@@ -47,6 +47,40 @@ describe('v1.2.1 changed return layouts', () => {
       // The outer tuple's Solidity variable name is not part of its decoded value.
       const fields = (outputs: readonly Parameter[]) => outputs[0]?.components ?? outputs
       expect(layout(fields(binding.outputs))).toEqual(layout(fields(expected)))
+    })
+  }
+})
+
+import { createHash } from 'node:crypto'
+import type { Abi, AbiParameter } from 'viem'
+import * as perpsBindings from '../abis/Perps'
+import { TRANCHE_VAULT_READ_ABI } from '../abis/TrancheVault'
+import releaseBindings from './fixtures/perps-v1.2.2-bindings.json'
+
+// Digests are computed from the matching entries in the checksum-verified
+// release bundle. Parameter names and Solidity internalType do not affect the
+// wire format; tuple order, event indexing, mutability and types do.
+describe('v1.2.2 application ABI compatibility', () => {
+  const bindings = { ...perpsBindings, TRANCHE_VAULT_READ_ABI }
+  const parameter = (value: AbiParameter & { indexed?: boolean }): unknown => ({
+    type: value.type,
+    ...(value.indexed !== undefined ? { indexed: value.indexed } : {}),
+    ...('components' in value ? { components: value.components.map(parameter) } : {}),
+  })
+  for (const [name, expected] of Object.entries(releaseBindings.bindings)) {
+    it(`matches all released entries used by ${name}`, () => {
+      const abi = bindings[name as keyof typeof bindings] as Abi
+      const layouts = abi.map(entry => ({
+        type: entry.type,
+        name: 'name' in entry ? entry.name : undefined,
+        inputs: 'inputs' in entry ? entry.inputs.map(parameter) : undefined,
+        outputs: 'outputs' in entry ? entry.outputs.map(parameter) : undefined,
+        stateMutability: 'stateMutability' in entry ? entry.stateMutability : undefined,
+        anonymous: entry.type === 'event' ? (entry.anonymous ?? false) : undefined,
+      })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      expect(abi).toHaveLength(expected.entries)
+      expect(createHash('sha256').update(JSON.stringify(layouts)).digest('hex'))
+        .toBe(expected.layoutSha256)
     })
   }
 })
