@@ -796,6 +796,13 @@ backfillChunk conn runtime kind fromTimestamp toTimestamp publish =
           fromTimestamp
           toTimestamp
     when publish $ do
+      -- The volume writer holds the dataset lock here. Recheck proof after
+      -- acquiring it so a reorg between planning and this chunk cannot publish
+      -- an empty range using a checkpoint that has since been revoked.
+      when (kind == VolumeRollup) $ do
+        currentBounds <- sourceBounds conn runtime kind
+        unless (maybe False (\bounds -> sbFrom bounds <= fromTimestamp && sbTo bounds >= toTimestamp) currentBounds) $
+          failWith "Canonical volume source bounds changed before publication"
       -- Extending coverage can change a formerly terminal page's rows or its
       -- has-earlier cursor. Allocate a new shared generation in the same
       -- transaction so generation-aware readers can reject the old terminal
@@ -2083,17 +2090,18 @@ sourceBounds conn runtime kind = do
         \ WHERE pinned.first_timestamp IS NULL AND epoch.market_id = ? \
         \   AND epoch.chain_id = ? AND epoch.release_router = ?), \
         \certified_release AS ( \
-        \ SELECT candidate.first_timestamp \
+        \ SELECT candidate.first_timestamp, \
+        \   (indexer_state.last_indexed_timestamp / 60) * 60 AS end_timestamp \
         \ FROM release_candidate candidate \
-        \ WHERE EXISTS ( \
-        \   SELECT 1 FROM perps_indexer_state indexer_state \
-        \   WHERE indexer_state.chain_id = candidate.chain_id \
+        \ JOIN perps_indexer_state indexer_state \
+        \   ON indexer_state.chain_id = candidate.chain_id \
         \   AND indexer_state.release_router = candidate.release_router \
         \   AND indexer_state.indexer_name \
         \     LIKE 'perps-history-costs-%:' || candidate.release_router \
         \   AND indexer_state.configured_start_block <= candidate.proof_block \
         \   AND indexer_state.last_indexed_block >= candidate.proof_block \
-        \   AND indexer_state.last_indexed_block_hash ~ '^0x[0-9a-f]{64}$') \
+        \   AND indexer_state.last_indexed_block_hash ~ '^0x[0-9a-f]{64}$' \
+        \ ORDER BY indexer_state.last_indexed_timestamp DESC NULLS LAST \
         \ LIMIT 1), \
         \event_bounds AS ( \
         \ SELECT MIN(timestamp) AS first_timestamp, MAX(timestamp) + 1 AS end_timestamp \
@@ -2104,10 +2112,15 @@ sourceBounds conn runtime kind = do
         \ AND activity_type IN ('Open', 'Close', 'Liquidated') \
         \ AND size_delta IS NOT NULL AND price IS NOT NULL) \
         \SELECT CASE \
+        \   WHEN event_bounds.first_timestamp IS NULL AND certified_release.end_timestamp IS NOT NULL \
+        \     AND certified_release.end_timestamp > certified_release.first_timestamp \
+        \     THEN certified_release.first_timestamp \
         \   WHEN event_bounds.first_timestamp IS NULL THEN NULL \
         \   WHEN certified_release.first_timestamp IS NULL THEN event_bounds.first_timestamp \
         \   ELSE LEAST(certified_release.first_timestamp, event_bounds.first_timestamp) END, \
-        \ event_bounds.end_timestamp, activity_count.row_count \
+        \ CASE WHEN certified_release.end_timestamp > certified_release.first_timestamp \
+        \   THEN GREATEST(event_bounds.end_timestamp, certified_release.end_timestamp) \
+        \   ELSE event_bounds.end_timestamp END, activity_count.row_count \
         \FROM event_bounds CROSS JOIN activity_count \
         \LEFT JOIN certified_release ON TRUE"
             ( pinnedDeploymentStart

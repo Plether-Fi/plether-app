@@ -108,6 +108,7 @@ import Plether.Database.Schema
   , lockPerpsReplayOrders
   , markPerpsExecutionEvidenceAttempt
   , setPerpsIndexerState
+  , setPerpsIndexerStateWithTimestamp
   , updatePerpsOrderEconomicsEvidence
   , updatePerpsOrderLifecycleIdentity
   , updatePerpsOrderLifecycleReceipt
@@ -1011,8 +1012,8 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
               (biTimestamp endInfo)
               0
         when certifiesCanonicalContinuity $
-          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-            (picStartBlock cfg) endBlock (Just $ biHash endInfo)
+          setPerpsIndexerStateWithTimestamp conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
+            (picStartBlock cfg) endBlock (Just $ biHash endInfo) (Just $ biTimestamp endInfo)
         pure certifiesCanonicalContinuity
       logInfoEvery
         300
