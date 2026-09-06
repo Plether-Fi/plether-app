@@ -1,4 +1,5 @@
-import { isAddressEqual, type Address, type PublicClient } from 'viem'
+import { isAddressEqual, keccak256, type Address, type PublicClient } from 'viem'
+import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
 import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -18,6 +19,16 @@ function requireSameAddress(
     throw new Error(
       `${label} binding mismatch: expected ${expected}, received ${actual}`
     )
+  }
+}
+
+export async function verifyProtectionDeployment(client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint): Promise<void> {
+  if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
+  for (const [key, address] of [['positionProtectionBook', manifest.positionProtectionBook], ['orderRouter', manifest.orderRouter], ['orderLifecycleBook', manifest.orderLifecycleBook]] as const) {
+    const contract = release.contracts[key]
+    requireSameAddress(`TP/SL ${key}`, address, contract.address as Address)
+    const code = await client.getCode({ address, blockNumber })
+    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match v1.2.1`)
   }
 }
 
@@ -140,7 +151,7 @@ export async function verifyPerpsV2DeploymentBindings(
   requireSameAddress(
     'Router position-protection Book',
     positionProtectionBook,
-    PERPS_ARBITRUM_SEPOLIA.positionProtectionBook
+    manifest.positionProtectionBook
   )
   requireSameAddress('Lifecycle Router', lifecycleRouter, manifest.orderRouter)
   requireSameAddress('Lifecycle Engine', lifecycleEngine, manifest.cfdEngine)

@@ -78,6 +78,9 @@ import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliatio
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { PerpsCloseReconciliationDisclosure } from './PerpsCloseReconciliationDetails'
+import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
+import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, type PositionProtectionParams } from '../contracts/positionProtection'
+import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
@@ -97,6 +100,7 @@ type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 interface PerpsOrderReviewSnapshot {
+  positionProtection?: PositionProtectionParams
   direction: Direction
   notionalUsdc: bigint
   sizeDelta: bigint
@@ -267,6 +271,8 @@ interface PerpsTradeTicketProps {
   ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
   activePositionProtectionId?: bigint
+  protectionConfiguration?: ProtectionConfiguration
+  protectionCapPrice?: bigint
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
   firstPendingOrderExpiryTime?: bigint
@@ -1804,6 +1810,8 @@ export function PerpsTradeTicket({
   ordersIndexedThroughBlockRaw,
   pendingOrderCount,
   activePositionProtectionId = 0n,
+  protectionConfiguration,
+  protectionCapPrice,
   maxPendingOrders,
   firstPendingOrderId,
   firstPendingOrderExpiryTime,
@@ -1861,6 +1869,8 @@ export function PerpsTradeTicket({
   const [orderReviewSummary, setOrderReviewSummary] = useState<PerpsOrderReviewSummary | undefined>()
   const [reviewFundingShortfallUsdc, setReviewFundingShortfallUsdc] = useState<bigint | undefined>()
   const [isExecutionProtectionsLoading, setIsExecutionProtectionsLoading] = useState(false)
+  const [protectionDraft, setProtectionDraft] = useState(EMPTY_PROTECTION_DRAFT)
+  const [isProtectionEnabled, setIsProtectionEnabled] = useState(false)
   const [executionProtectionsError, setExecutionProtectionsError] = useState<string | undefined>()
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
@@ -2830,6 +2840,15 @@ export function PerpsTradeTicket({
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
+  const canAttachProtection = !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
+  const protectionInput = useMemo(() => {
+    if (!canAttachProtection || !isProtectionEnabled) return {}
+    try {
+      if (!protectionConfiguration?.enabled) throw new Error('New TP/SL protections are currently disabled')
+      if (oraclePriceRaw === undefined || protectionCapPrice === undefined) throw new Error('Waiting for the current market price')
+      return { params: protectionParamsFromInputs({ ...protectionDraft, direction: effectiveOrderDirection, rawMark: oraclePriceRaw, cap: protectionCapPrice }) }
+    } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid TP/SL triggers' } }
+  }, [canAttachProtection, isProtectionEnabled, effectiveOrderDirection, oraclePriceRaw, protectionCapPrice, protectionConfiguration?.enabled, protectionDraft])
   const liveValidationError = (() => {
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
@@ -2838,6 +2857,7 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (protectionInput.error) return protectionInput.error
     if (activePositionProtectionId > 0n) {
       return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
     }
@@ -2963,6 +2983,7 @@ export function PerpsTradeTicket({
       slippagePercent: slippageNumber,
       isClose: isReducingCurrentPosition,
       selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+      positionProtection: protectionInput.params,
     })
   }, [
     activeLeverage,
@@ -2980,6 +3001,7 @@ export function PerpsTradeTicket({
     prepareOrder,
     reviewSnapshot,
     slippageNumber,
+    protectionInput.params,
   ])
   useEffect(() => {
     if (
@@ -4174,6 +4196,18 @@ export function PerpsTradeTicket({
             </span>
           </div>
 
+          {canAttachProtection && protectionConfiguration?.enabled ? <div>
+            <label className="flex cursor-pointer items-center gap-3 py-0.5 text-sm font-semibold text-content-primary transition-colors hover:text-[#FFAB96]">
+              <input type="checkbox" checked={isProtectionEnabled} disabled={isReviewOpen} onChange={event => { setIsProtectionEnabled(event.target.checked) }} className="h-4 w-4 accent-[#FFAB96]" />
+              <span>Take profit / stop loss</span>
+            </label>
+            {isProtectionEnabled ? <div className="mt-4 space-y-3">
+              <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
+              {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
+              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional {formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} USDC from free margin to trigger and execute the close.</p>
+            </div> : null}
+          </div> : null}
+
           <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
               id="perps-margin-call-simulator"
@@ -4466,6 +4500,13 @@ export function PerpsTradeTicket({
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Commit Preview</div>
                 <PreviewRows rows={previewRows} />
               </div>
+
+              {displayedExecutionProtections?.positionProtection ? <section className="space-y-3 border border-brand-border/20 bg-app-bg p-4">
+                <h3 className="text-sm font-semibold text-content-primary">Take profit & stop loss</h3>
+                <ProtectionPriceSummary params={displayedExecutionProtections.positionProtection.params} cap={protectionCapPrice} />
+                <p className="text-xs leading-5 text-content-secondary">Applies to 100% of your position after the opening order fills. The first trigger reached queues a close and cancels the other; the fill price may differ.</p>
+                <p className="text-xs text-content-secondary">Additional execution reserve: <span className="text-content-primary">{formatPerpsUsdc(displayedExecutionProtections.positionProtection.triggerBountyUsdc + displayedExecutionProtections.positionProtection.executionBountyUsdc)} USDC</span></p>
+              </section> : null}
 
               {shouldShowExecutionProtections ? (
                 <details className="border border-brand-border/20 bg-app-bg p-4">

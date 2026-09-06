@@ -1,4 +1,5 @@
 import { bytesToHex, type Address, type Hex } from 'viem'
+import type { PositionProtectionParams } from './positionProtection'
 
 export const PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX =
   '0x504c455448455221' as const
@@ -170,6 +171,7 @@ export interface PreparedPerpsOrderV2 {
   reviewedBlockHash: Hex
   reviewedPrice: bigint
   protection: PerpsExecutionProtectionSummary
+  positionProtection?: { book: Address; params: PositionProtectionParams; triggerBountyUsdc: bigint; executionBountyUsdc: bigint }
   /** Coherent-block economics used by the web review. Older persisted fixtures may omit it. */
   reviewSummary?: PerpsOrderReviewSummary
 }

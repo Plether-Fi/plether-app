@@ -7,7 +7,7 @@ This directory is a checked-in runtime package consumed through the frontend's
 
 - Repository: `plether-core`
 - Source path: `packages/perps-aa-client`
-- Reviewed commit: `c205cb450e98a3d40ba22c627ebce90f7ec1bf74`
+- Reviewed commit: `3472427ed15b0a478248af7d025535da349a8592`
 - Upstream package version: `0.1.0`
 
 `README.md`, `upstream-package.json`, and every file under `dist/` are

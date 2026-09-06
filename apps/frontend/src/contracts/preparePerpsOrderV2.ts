@@ -22,9 +22,10 @@ import {
   type PreparedPerpsOrderV2,
   type PerpsOrderRequestV2,
 } from './perpsOrderV2'
-import { verifyPerpsV2DeploymentBindings } from './verifyPerpsV2Bindings'
+import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from './verifyPerpsV2Bindings'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
 import { getPerpsTargetPrice, type PerpsDirection } from '../utils/perps'
+import { PROTECTION_CONFIG_ABI, validateProtectionParams, type PositionProtectionParams } from './positionProtection'
 
 const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
 const ZERO_HASH = `0x${'0'.repeat(64)}`
@@ -39,6 +40,7 @@ export interface PreparePerpsOrderV2Input {
   isClose: boolean
   selectedMaxLeverageBps: number
   clientOrderId?: Hex
+  positionProtection?: PositionProtectionParams
 }
 
 export interface ReviewedPerpsOrderV2 {
@@ -442,13 +444,38 @@ export async function reviewPerpsOrderV2(
   input: PreparePerpsOrderV2Input
 ): Promise<ReviewedPerpsOrderV2> {
   const context = await loadPerpsOrderReviewContext(client, manifest, input.account)
-  return reviewPerpsOrderWithContext(context, input, true)
+  const reviewed = await reviewPerpsOrderWithContext(context, input, true)
+  if (input.positionProtection) {
+    await verifyProtectionDeployment(client, manifest, context.blockNumber)
+    if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
+    validateProtectionParams(input.positionProtection, input.direction, context.lastMarkPrice, context.capPrice)
+    const [triggerBountyUsdc, position] = await Promise.all([
+      client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyUsdc', blockNumber: context.blockNumber }),
+      client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI, functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber }),
+    ])
+    if (position.exists) throw new Error('Protected opens require an account with no position')
+    reviewed.preparedOrder.positionProtection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
+    reviewed.reviewSummary.requiredFundingUsdc += triggerBountyUsdc + context.closeBounty
+  }
+  return reviewed
 }
 
 export async function simulateReviewedPerpsOrderV2(
   client: PublicClient,
   reviewedOrder: ReviewedPerpsOrderV2
 ): Promise<void> {
+  const protection = reviewedOrder.preparedOrder.positionProtection
+  if (protection) {
+    await client.simulateContract({
+      account: reviewedOrder.preparedOrder.account,
+      address: protection.book,
+      abi: PERPS_POSITION_PROTECTION_BOOK_ABI,
+      functionName: 'commitOpenOrderWithProtection',
+      args: [reviewedOrder.preparedOrder.request, protection.params],
+      blockNumber: reviewedOrder.reviewSummary.reviewedBlockNumber,
+    })
+    return
+  }
   await client.simulateContract({
     account: reviewedOrder.preparedOrder.account,
     address: reviewedOrder.preparedOrder.orderRouter,

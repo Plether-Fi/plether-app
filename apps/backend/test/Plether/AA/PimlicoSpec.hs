@@ -40,6 +40,7 @@ import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , july2026Competition
   )
+import qualified Plether.Perps.Manifest as Manifest
 import Test.Hspec
 
 spec :: Spec
@@ -233,6 +234,28 @@ spec = do
         `shouldSatisfy` isLeft
 
   describe "Plether whole-operation policy" $ do
+    it "accepts canonical Book calls at the deployed address and rejects malformed protection calldata" $ do
+      let book = T.toLower Manifest.positionProtectionBookAddress
+          create = smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]
+          replace = smartCall book $ encodeCall "replacePositionProtection(uint64,(uint256,uint256))" [encodeUint256 42, encodeUint256 0, encodeUint256 92000000]
+          cancel = smartCall book $ encodeCall "cancelPositionProtection(uint64)" [encodeUint256 42]
+          protectedOpen = smartCall book $ encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))" [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
+          disabledConfig = testConfig { cfgAaConfig = Just testAaConfig { aaProtectionCommitsEnabled = False } }
+      mapM_ (\call -> validate [call] `shouldSatisfy` isRight) [create, replace, cancel, protectedOpen]
+      validateActionSequence disabledConfig sender owner [create] `shouldSatisfy` isLeft
+      validateActionSequence disabledConfig sender owner [cancel] `shouldSatisfy` isRight
+      validate [create { smartCallValue = 1 }] `shouldSatisfy` isLeft
+      validate [create { smartCallTarget = router }] `shouldSatisfy` isLeft
+      validate [create { smartCallData = smartCallData create <> BS.singleton 0 }] `shouldSatisfy` isLeft
+      validate [smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 0, encodeUint256 0]] `shouldSatisfy` isLeft
+      validate [smartCall book $ encodeCall "cancelPositionProtection(uint64)" [encodeUint256 (2 ^ (64 :: Int))]] `shouldSatisfy` isLeft
+      validate [smartCall book $ encodeCall "retryPositionProtectionClose(uint64)" [encodeUint256 42]] `shouldSatisfy` isLeft
+
+    it "rejects protection calls to the retired v1.2.1 Book" $ do
+      let retiredBook = "0x63973eb0b5a862dfc95348d4d575fc55c9546f04"
+          call = smartCall retiredBook $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]
+      validate [call] `shouldSatisfy` isLeft
+
     it "accepts the five frontend action shapes" $ do
       validate depositCalls `shouldSatisfy` isRight
       validate withdrawalCalls `shouldSatisfy` isRight
@@ -392,6 +415,7 @@ testAaConfig =
     , aaPimlicoApiKey = "api-key"
     , aaSponsorshipPolicyId = "approved-policy"
     , aaSponsorshipEnabled = True
+    , aaProtectionCommitsEnabled = True
     , aaIpRateLimitPerMinute = 120
     , aaAccountRateLimitPerMinute = 30
     , aaMaxRequestBytes = 262144

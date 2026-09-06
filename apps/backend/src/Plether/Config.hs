@@ -200,6 +200,7 @@ data AaConfig = AaConfig
   , aaPimlicoApiKey :: Text
   , aaSponsorshipPolicyId :: Text
   , aaSponsorshipEnabled :: Bool
+  , aaProtectionCommitsEnabled :: Bool
   , aaIpRateLimitPerMinute :: Int
   , aaAccountRateLimitPerMinute :: Int
   , aaMaxRequestBytes :: Int
@@ -553,6 +554,7 @@ loadConfig = do
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
       aaSponsorshipEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_SPONSORSHIP_ENABLED"
+      aaProtectionCommitsEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_SPONSOR_PROTECTION_COMMITS_ENABLED"
       aaIpRateLimitStr <- fromMaybe "120" <$> lookupEnv "AA_IP_RATE_LIMIT_PER_MINUTE"
       aaAccountRateLimitStr <- fromMaybe "30" <$> lookupEnv "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE"
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
@@ -637,6 +639,8 @@ loadConfig = do
                   "AA_SPONSORSHIP_ENABLED must be one of true, false, 1, 0, yes, no, on, or off"
               (Just _, Nothing, Nothing, Nothing) -> Right Nothing
               (Just aaSponsorshipEnabled, Just originToken, Just apiKey, Just policyId)
+                | Nothing <- parseBoolStrict aaProtectionCommitsEnabledStr ->
+                    Left "AA_SPONSOR_PROTECTION_COMMITS_ENABLED must be a boolean"
                 | not $
                     validAaDeploymentAddresses
                       perpsUsdc
@@ -668,6 +672,7 @@ loadConfig = do
                           , aaPimlicoApiKey = T.pack apiKey
                           , aaSponsorshipPolicyId = T.pack policyId
                           , aaSponsorshipEnabled = aaSponsorshipEnabled
+                          , aaProtectionCommitsEnabled = parseBoolStrict aaProtectionCommitsEnabledStr == Just True
                           , aaIpRateLimitPerMinute = max 1 aaIpRateLimit
                           , aaAccountRateLimitPerMinute = max 1 aaAccountRateLimit
                           , aaMaxRequestBytes = max 1024 aaMaxRequestBytes

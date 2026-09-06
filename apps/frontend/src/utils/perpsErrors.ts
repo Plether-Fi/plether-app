@@ -1,4 +1,5 @@
 import { decodeErrorResult, parseAbi } from 'viem'
+import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
 type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute'
 
@@ -213,7 +214,7 @@ function decodePerpsError(error: unknown): { name?: string; args?: readonly unkn
   const data = extractRevertData(error)
   if (data) {
     try {
-      const decoded = decodeErrorResult({ abi: PERPS_ERROR_ABI, data: data as `0x${string}` })
+      const decoded = decodeErrorResult({ abi: [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI], data: data as `0x${string}` })
       return { name: decoded.errorName, args: decoded.args }
     } catch {
       // Fall back to viem's decoded metadata below.
@@ -390,6 +391,16 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The current execution bounty exceeds the reviewed order bounds. Review a fresh order.'
     case 'OrderRouter__ProtectionActive':
       return 'Active position protection blocks discretionary orders. Cancel or finalize the protection first.'
+    case 'OrderRouter__ProtectionDisabled':
+      return 'New TP/SL protections are currently disabled.'
+    case 'OrderRouter__InvalidProtectionPrices':
+    case 'OrderRouter__ProtectionTriggerAlreadyMet':
+      return 'The trigger price is no longer valid against the current market. Review fresh TP/SL prices.'
+    case 'OrderRouter__ProtectionNotFound':
+    case 'OrderRouter__ProtectionNotArmed':
+      return 'Protection state changed. Refresh the Protections tab before another action.'
+    case 'OrderRouter__ProtectionMarkTooStale':
+      return 'The cached market price is too old to create or edit TP/SL. Wait for a fresh update.'
     case 'CfdOrderPolicyEvaluator__ExecutionModeDisallowed':
       return 'The market regime changed after review. Review a fresh order for the current regime.'
     case 'CfdOrderPolicyEvaluator__ConstraintViolation': {

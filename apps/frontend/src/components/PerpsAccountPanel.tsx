@@ -12,8 +12,10 @@ import {
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 import { PerpsCloseReconciliationDetails } from './PerpsCloseReconciliationDetails'
+import type { PositionProtection } from '../contracts/positionProtection'
+import { protectionPrice, protectionStatusLabel } from '../utils/positionProtection'
 
-export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
+export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory' | 'protections'
 
 interface AccountTab {
   id: PerpsAccountTab
@@ -60,6 +62,9 @@ interface TradeRow {
 }
 
 interface PerpsAccountPanelProps {
+  protectionContent?: ReactNode
+  positionProtection?: PositionProtection
+  protectionCapPrice?: bigint
   initialTab?: PerpsAccountTab
   initialPositionMarginModalOpen?: boolean
   position?: PerpsPosition
@@ -84,6 +89,7 @@ interface PerpsAccountPanelProps {
 
 const ACCOUNT_TABS: AccountTab[] = [
   { id: 'position', label: 'Position' },
+  { id: 'protections', label: 'TP/SL' },
   { id: 'openOrders', label: 'Open Orders' },
   { id: 'orderHistory', label: 'Order History' },
   { id: 'tradeHistory', label: 'Transaction History' },
@@ -369,6 +375,9 @@ function TxLink({ hash }: { hash?: string }) {
 
 function PositionView({
   position,
+  positionProtection,
+  protectionCapPrice,
+  onManageProtection,
   equityUsdc,
   freeBuyingPowerUsdc,
   isConnected,
@@ -378,6 +387,9 @@ function PositionView({
   onClosePosition,
 }: {
   position?: PerpsPosition
+  positionProtection?: PositionProtection
+  protectionCapPrice?: bigint
+  onManageProtection?: () => void
   equityUsdc?: bigint
   freeBuyingPowerUsdc?: bigint
   isConnected?: boolean
@@ -521,6 +533,7 @@ function PositionView({
               analyticsId="close_position_from_panel"
               analyticsProperties={{ direction: position.direction }}
               onClick={onClosePosition}
+              disabled={positionProtection !== undefined}
             >
               Close position
             </Button>
@@ -563,6 +576,16 @@ function PositionView({
           tooltipDocsLink={DOCS_LINKS.positionCostOfCarry}
         />
       </div>
+      {onManageProtection ? <div className="mt-4 space-y-2 border-t border-brand-border/20 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium text-content-primary">TP/SL <span className="ml-2 font-normal text-content-secondary">{protectionStatusLabel(positionProtection?.status)}</span></p>
+            <p className="mt-1 text-xs text-content-secondary">{positionProtection ? `Take profit ${positionProtection.takeProfitTriggerPrice ? protectionPrice(positionProtection.takeProfitTriggerPrice, protectionCapPrice) : 'not set'} · Stop loss ${positionProtection.stopLossTriggerPrice ? protectionPrice(positionProtection.stopLossTriggerPrice, protectionCapPrice) : 'not set'} · USDC` : 'No automatic exit triggers on this position.'}</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={onManageProtection}>{positionProtection ? 'Manage TP/SL' : 'Add TP/SL'}</Button>
+        </div>
+        {positionProtection ? <p className="text-xs leading-5 text-content-secondary">{[3, 8].includes(positionProtection.status) ? 'A TP/SL close has triggered. Open TP/SL to see its progress.' : 'To close manually, remove TP/SL first.'}</p> : null}
+      </div> : null}
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>
         {' '}
@@ -954,6 +977,9 @@ function TraderClaimCard({
 function AccountTabContent({
   activeTab,
   position,
+  positionProtection,
+  protectionCapPrice,
+  onManageProtection,
   equityUsdc,
   freeBuyingPowerUsdc,
   traderClaimBalanceUsdc,
@@ -977,6 +1003,7 @@ function AccountTabContent({
   onCleanupExpiredOrder,
 }: PerpsAccountPanelProps & {
   activeTab: PerpsAccountTab
+  onManageProtection?: () => void
   nowSeconds: number
   cleanupOrderId?: bigint
   cleanupError?: string
@@ -1053,6 +1080,9 @@ function AccountTabContent({
         />
         <PositionView
           position={position ?? (isConnected === undefined ? mockPosition : undefined)}
+          positionProtection={positionProtection}
+          protectionCapPrice={protectionCapPrice}
+          onManageProtection={onManageProtection}
           equityUsdc={equityUsdc}
           freeBuyingPowerUsdc={freeBuyingPowerUsdc}
           isConnected={isConnected}
@@ -1130,13 +1160,13 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="border-b border-brand-border/20 px-2 pt-2 sm:px-4 sm:pt-4">
-        <div className="grid grid-cols-2 gap-x-1 sm:flex sm:overflow-x-auto">
-          {ACCOUNT_TABS.map((tab) => (
+        <div className={props.protectionContent !== undefined ? 'flex gap-x-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-2 gap-x-1 sm:flex sm:overflow-x-auto'}>
+          {ACCOUNT_TABS.filter(tab => tab.id !== 'protections' || props.protectionContent !== undefined).map((tab) => (
             <button
               key={tab.id}
               type="button"
               aria-pressed={activeTab === tab.id}
-              className={`min-w-0 px-2 py-2.5 text-xs font-semibold leading-5 transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:shrink-0 sm:px-4 sm:py-3 sm:text-sm ${
+              className={`min-w-0 shrink-0 whitespace-nowrap px-3 py-2.5 text-xs font-semibold leading-5 transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 sm:py-3 sm:text-sm ${
                 activeTab === tab.id
                   ? 'border-b-2 border-[#FFAB96] text-[#FFAB96]'
                   : 'text-content-secondary hover:text-content-primary'
@@ -1152,7 +1182,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
       </div>
 
       <div className="px-3 py-3 sm:px-5 sm:py-4">
-        <AccountTabContent
+        {activeTab === 'protections' ? props.protectionContent : <AccountTabContent
           activeTab={activeTab}
           nowSeconds={nowSeconds}
           cleanupOrderId={cleanupOrderId}
@@ -1163,7 +1193,8 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
                 void handleCleanupExpiredOrder(orderId)
               }}
           {...props}
-        />
+          onManageProtection={props.protectionContent !== undefined ? () => { setActiveTab('protections') } : undefined}
+        />}
       </div>
     </section>
   )

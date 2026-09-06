@@ -11,6 +11,7 @@ import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Database.Protection (ensureProtectionSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
@@ -73,6 +74,7 @@ main = do
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
+          withDb pool ensureProtectionSchema
           withDb pool ensureTestnetFaucetSchema
           withDb pool ensureVaultPerformanceSchema
           withDb pool ensureVaultActivitySchema

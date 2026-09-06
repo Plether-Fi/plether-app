@@ -53,6 +53,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL
+import qualified Plether.Perps.Manifest as Manifest
 import Data.Time.Clock
   ( NominalDiffTime
   , UTCTime
@@ -760,6 +761,7 @@ validateActionSequence cfg sender owner calls = do
     clearinghouse = normalizedConfigAddress $ cfgPerpsMarginClearinghouse cfg
     router = normalizedConfigAddress $ cfgPerpsOrderRouter cfg
     engine = normalizedConfigAddress $ cfgPerpsCfdEngine cfg
+    protectionBook = T.toLower Manifest.positionProtectionBookAddress
 
     validateDeposit approval deposit = do
       unless
@@ -789,6 +791,8 @@ validateActionSequence cfg sender owner calls = do
         $ Left $ policyDenied "Withdrawal must transfer the same amount to the verified owner"
 
     validateSingle single
+      | smartCallTarget single == protectionBook =
+          validateProtectionCall $ smartCallData single
       | smartCallTarget single == router =
           validateOrder $ smartCallData single
       | smartCallTarget single == engine =
@@ -844,6 +848,39 @@ validateActionSequence cfg sender owner calls = do
           when (closeWord == 1 && marginDelta /= 0) $
             Left $ policyDenied "Close orders must have zero margin delta"
         _ -> Left $ policyDenied "Order calldata shape is invalid"
+
+    validateProtectionCall dataBytes
+      | BS.take 4 dataBytes == decodeSelector "6f45144a" = do
+          protectionId <- decodeUintCall (decodeSelector "6f45144a") dataBytes
+          unless (protectionId > 0 && protectionId <= maxUint64) $
+            Left $ policyDenied "Protection ID is invalid"
+      | otherwise = do
+          unless (maybe False aaProtectionCommitsEnabled $ cfgAaConfig cfg) $
+            Left $ policyDenied "New protection sponsorship is disabled"
+          case BS.take 4 dataBytes of
+            selector | selector == decodeSelector "26129c8e" -> do
+              words' <- fixedWords selector 2 dataBytes
+              validateTriggers words'
+            selector | selector == decodeSelector "9368efce" -> do
+              words' <- fixedWords selector 3 dataBytes
+              case words' of
+                [idWord, tp, sl] -> do
+                  unless (bytesToInteger idWord > 0 && bytesToInteger idWord <= maxUint64) $
+                    Left $ policyDenied "Protection ID is invalid"
+                  validateTriggers [tp, sl]
+                _ -> Left $ policyDenied "Protection calldata shape is invalid"
+            selector | selector == decodeSelector "8df7504a" -> do
+              words' <- fixedWords selector 20 dataBytes
+              validateOrder $ selectorCommitOrder <> BS.concat (take 18 words')
+              unless (bytesToInteger (words' !! 5) == 0) $
+                Left $ policyDenied "Protected orders must open a position"
+              validateTriggers $ drop 18 words'
+            _ -> Left $ policyDenied "Protection selector is not approved"
+
+    validateTriggers [tp, sl] =
+      unless (bytesToInteger tp > 0 || bytesToInteger sl > 0) $
+        Left $ policyDenied "At least one protection trigger is required"
+    validateTriggers _ = Left $ policyDenied "Protection calldata shape is invalid"
 
     validateEngineCall dataBytes
       | BS.take 4 dataBytes == selectorAddMargin = do

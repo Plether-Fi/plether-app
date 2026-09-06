@@ -91,6 +91,7 @@ jobs:
         env:
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
           VITE_PERPS_AA_MANIFEST_URL: ${{ steps.target.outputs.perps_aa_manifest_url }}
+          VITE_PERPS_POSITION_PROTECTION_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA || 'false') || 'false' }}
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}

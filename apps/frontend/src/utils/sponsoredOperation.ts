@@ -9,6 +9,10 @@ export function sponsoredOperationActionLabel(
   return {
     deposit: 'Deposit margin',
     'place-order': 'Commit order',
+    'place-protected-order': 'Open with TP/SL',
+    'create-protection': 'Add TP/SL',
+    'replace-protection': 'Edit TP/SL',
+    'cancel-protection': 'Cancel TP/SL',
     'cancel-order': 'Cancel order',
     'add-margin': 'Add position margin',
     withdraw: 'Withdraw margin',

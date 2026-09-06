@@ -9,12 +9,16 @@ import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
 
 export interface DxyBasketPanelProps {
   liquidationPriceRaw?: bigint
+  takeProfitPriceRaw?: bigint
+  stopLossPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
 }
 
 export function DxyBasketPanel({
   liquidationPriceRaw,
+  takeProfitPriceRaw,
+  stopLossPriceRaw,
   marketPhase,
   marketCurrentDuration,
 }: DxyBasketPanelProps) {
@@ -31,6 +35,8 @@ export function DxyBasketPanel({
     <TradingViewAdvancedChart
       interval={chartInterval}
       liquidationPrice={liquidationPrice}
+      takeProfitPrice={takeProfitPriceRaw ? Number(oraclePriceToDisplayDxyPrice(takeProfitPriceRaw)) / 1e8 : undefined}
+      stopLossPrice={stopLossPriceRaw ? Number(oraclePriceToDisplayDxyPrice(stopLossPriceRaw)) / 1e8 : undefined}
       marketPhase={marketPhase}
       marketCurrentDuration={marketCurrentDuration}
       onIntervalChange={setChartInterval}

@@ -50,6 +50,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
     orderLifecycleBook: '0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C',
     policyEvaluator: '0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB',
+    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:

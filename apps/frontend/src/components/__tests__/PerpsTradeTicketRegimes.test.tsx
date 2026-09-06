@@ -285,6 +285,25 @@ function commitPreviewQueries() {
 }
 
 describe('perps ticket oracle regime matrix', () => {
+  it('keeps new-order TP/SL optional and preserves inputs while toggled off', () => {
+    render(<PerpsTradeTicket currentPositionAmount="0" oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n}
+      protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />)
+    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
+    fireEvent.click(toggle)
+    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.click(toggle)
+    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDC)')).toHaveAttribute('aria-invalid', 'false')
+  })
+
+  it('does not offer attached TP/SL on an existing position', () => {
+    render(<PerpsTradeTicket currentPosition={currentPosition} protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true }} />)
+    expect(screen.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     mockReadContractsData = [{
       status: 'success',

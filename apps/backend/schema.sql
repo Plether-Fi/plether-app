@@ -183,6 +183,60 @@ CREATE TABLE IF NOT EXISTS perps_indexer_state (
     )
 );
 
+-- v1.2.1 Book event history and independent trigger/retry worker checkpoints.
+CREATE TABLE IF NOT EXISTS perps_protection_checkpoints (
+    chain_id BIGINT NOT NULL,
+    book TEXT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, book, block_number)
+);
+CREATE TABLE IF NOT EXISTS perps_protection_events (
+    chain_id BIGINT NOT NULL,
+    book TEXT NOT NULL,
+    protection_id NUMERIC(20,0) NOT NULL,
+    account TEXT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    log_index BIGINT NOT NULL,
+    transaction_hash TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    event_data JSONB NOT NULL,
+    snapshot JSONB NOT NULL,
+    PRIMARY KEY (chain_id, book, block_number, log_index)
+);
+CREATE INDEX IF NOT EXISTS perps_protection_events_account
+    ON perps_protection_events(chain_id, book, account, protection_id DESC, block_number DESC, log_index DESC);
+CREATE INDEX IF NOT EXISTS perps_protection_events_id
+    ON perps_protection_events(chain_id, book, protection_id, block_number DESC, log_index DESC);
+CREATE TABLE IF NOT EXISTS perps_protection_transactions (
+    chain_id BIGINT NOT NULL,
+    book TEXT NOT NULL,
+    transaction_hash TEXT NOT NULL,
+    raw_transaction TEXT NOT NULL,
+    protection_id NUMERIC(20,0) NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'included', 'confirmed', 'reverted')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(chain_id, book, transaction_hash)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS perps_protection_one_pending_transaction
+    ON perps_protection_transactions(chain_id, book) WHERE status = 'pending';
+ALTER TABLE perps_protection_transactions ADD COLUMN IF NOT EXISTS linked_order_id NUMERIC(20,0);
+
+-- Advisory worker observations, separate from canonical contract/event state.
+CREATE TABLE IF NOT EXISTS perps_protection_observations (
+    chain_id BIGINT NOT NULL,
+    book TEXT NOT NULL,
+    protection_id NUMERIC(20,0) NOT NULL,
+    checked_block BIGINT NOT NULL,
+    checked_block_hash TEXT NOT NULL,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    observation JSONB NOT NULL,
+    PRIMARY KEY (chain_id, book, protection_id)
+);
+
 -- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution
 CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
     id SERIAL PRIMARY KEY,

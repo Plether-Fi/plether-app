@@ -19,7 +19,7 @@
   "pletherVendoredFrom": {
     "repository": "plether-core",
     "path": "packages/perps-aa-client",
-    "commit": "c205cb450e98a3d40ba22c627ebce90f7ec1bf74"
+    "commit": "3472427ed15b0a478248af7d025535da349a8592"
   },
   "dependencies": {
     "viem": "^2.38.0"

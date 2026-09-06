@@ -9,6 +9,10 @@ import {
   buildSettleTraderClaimAction,
   buildSmartAccountBalanceDepositAction,
   buildWithdrawToOwnerAction,
+  buildCreateProtectionAction,
+  buildReplaceProtectionAction,
+  buildCancelProtectionAction,
+  buildProtectedOpenAction,
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
 } from '@plether/perps-aa-client'
@@ -18,6 +22,7 @@ import {
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
   PERPS_ORDER_ROUTER_ABI,
   PERPS_PUBLIC_LENS_ABI,
+  PERPS_POSITION_PROTECTION_BOOK_ABI,
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
@@ -60,6 +65,8 @@ import {
 } from '../utils/perps'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
 import { buildPlaceOrderV2Action } from '../perps-aa/orderActionV2'
+import { persistProtectionIntent, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
+import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV2Bindings'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
@@ -70,6 +77,7 @@ interface PrepareOrderInput {
   slippagePercent: number
   isClose: boolean
   selectedMaxLeverageBps: number
+  positionProtection?: PositionProtectionParams
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -85,6 +93,7 @@ export interface CommitOrderResult {
   userOperationHash?: Hex
   orderId: bigint
   replayed: boolean
+  protectionId?: bigint
 }
 
 interface ExecuteOrderResult {
@@ -208,6 +217,7 @@ function commitOrderResult(
     orderRouter: Address
     orderLifecycleBook: Address
     clientOrderId: Hex
+    positionProtectionBook?: Address
   }
 ): CommitOrderResult {
   const hash = requireIncludedTransactionHash(result)
@@ -253,6 +263,15 @@ function commitOrderResult(
     )
   }
 
+  const expectedBook = expected.positionProtectionBook
+  const protectionEvents = expectedBook === undefined ? [] : parseEventLogs({
+    abi: PERPS_POSITION_PROTECTION_BOOK_ABI,
+    eventName: 'PositionProtectionCreated',
+    logs: result.receipt.logs.filter(log => isAddressEqual(log.address, expectedBook)),
+  }).filter(event => isAddressEqual(event.args.account, expected.accountAddress) && event.args.parentOrderId === committed[0].args.orderId)
+  if (expected.positionProtectionBook && protectionEvents.length !== 1) {
+    throw new Error('The protected open was included but its unique protection record could not be reconciled. Refresh activity before another submission.')
+  }
   return {
     account: expected.accountAddress,
     clientOrderId: expected.clientOrderId,
@@ -260,6 +279,7 @@ function commitOrderResult(
     userOperationHash: result.userOperationHash,
     orderId: committed[0].args.orderId,
     replayed: false,
+    protectionId: protectionEvents[0]?.args.protectionId,
   }
 }
 
@@ -452,7 +472,7 @@ export function usePerpsTrading() {
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
-      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey),
+      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey) || (query.queryKey[0] === 'perps' && (query.queryKey[1] === 'protections' || query.queryKey[1] === 'protection-events')),
     })
   }, [queryClient])
 
@@ -758,6 +778,7 @@ export function usePerpsTrading() {
     slippagePercent,
     isClose,
     selectedMaxLeverageBps,
+    positionProtection,
   }: PrepareOrderInput): Promise<PreparedPerpsOrderV2> => {
     try {
       if (!address) {
@@ -782,6 +803,8 @@ export function usePerpsTrading() {
       const activeOperation = useSponsoredOperationStore
         .getState()
         .getActiveOperation(sponsored.accountAddress)
+      if (activeOperation?.protectionIntent) throw new Error('A protection operation is awaiting recovery. Resolve it in account activity before reviewing another order.')
+      if (positionProtection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
       if (activeOperation?.orderRequestV2 !== undefined) {
         const request = restorePerpsOrderRequestV2(
           activeOperation.orderRequestV2
@@ -824,6 +847,7 @@ export function usePerpsTrading() {
         slippagePercent,
         isClose,
         selectedMaxLeverageBps,
+        positionProtection,
       })
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError) throw error
@@ -877,6 +901,8 @@ export function usePerpsTrading() {
         throw new Error('Order size must use 100 plDXY increments')
       }
       const request = preparedOrder.request
+      const protection = preparedOrder.positionProtection
+      if (protection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
       const marginDelta = request.marginDelta
       if (
         !isAddressEqual(preparedOrder.account, address) ||
@@ -931,6 +957,7 @@ export function usePerpsTrading() {
         )
       }
       if (resolution === PERPS_CLIENT_INTENT_RESOLUTION.EXACT_REPLAY) {
+        if (protection) throw new Error('This protected open already exists. Refresh protections and order history; it cannot be resubmitted.')
         const intent = await client.readContract({
           address: preparedOrder.orderLifecycleBook,
           abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -956,7 +983,10 @@ export function usePerpsTrading() {
         throw new Error('Order integrity error: unknown client-intent resolution')
       }
 
-      await client.simulateContract({
+      if (protection) {
+        if (!isAddressEqual(protection.book, sponsored.manifest.positionProtectionBook)) throw new Error('The reviewed protection deployment changed')
+        await client.simulateContract({ account: address, address: protection.book, abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName: 'commitOpenOrderWithProtection', args: [request, protection.params] })
+      } else await client.simulateContract({
         account: address,
         address: sponsored.manifest.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
@@ -964,7 +994,7 @@ export function usePerpsTrading() {
         args,
       })
 
-      const action = buildPlaceOrderV2Action({
+      const action = protection ? buildProtectedOpenAction({ account: sponsored.accountAddress, book: protection.book, request, params: protection.params }) : buildPlaceOrderV2Action({
         account: sponsored.accountAddress,
         orderRouter: sponsored.manifest.orderRouter,
         request,
@@ -974,6 +1004,7 @@ export function usePerpsTrading() {
         orderRouter: sponsored.manifest.orderRouter,
         orderLifecycleBook: preparedOrder.orderLifecycleBook,
         clientOrderId: request.clientOrderId,
+        positionProtectionBook: protection?.book,
       }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
@@ -981,6 +1012,7 @@ export function usePerpsTrading() {
         action,
         runtime: sponsored.runtime,
         orderRequestV2: persistPerpsOrderRequestV2(address, request),
+        protectionIntent: protection ? persistProtectionIntent(protection.book, protection.params) : undefined,
         onStatus,
         onIncluded: (includedResult) => {
           const includedCommit = commitOrderResult(
@@ -1137,7 +1169,44 @@ export function usePerpsTrading() {
     })
   }, [identity.accountAddress, identity.manifest, identity.ownerAddress])
 
+  const managePositionProtection = useCallback(async (input: {
+    action: 'create' | 'replace' | 'cancel'
+    protectionId?: bigint
+    params?: PositionProtectionParams
+    onStatus?: (status: SponsoredExecutionStatus) => void
+  }) => {
+    const sponsored = requireSponsoredExecution()
+    const client = requireClient(publicClient)
+    if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+    await verifyPerpsV2DeploymentBindings(client, sponsored.manifest)
+    await verifyProtectionDeployment(client, sponsored.manifest)
+    const book = sponsored.manifest.positionProtectionBook
+    const account = sponsored.accountAddress
+    if (input.action !== 'create' && input.protectionId === undefined) throw new Error('Select a protection first')
+    if (input.action !== 'cancel' && input.params === undefined) throw new Error('Enter TP/SL triggers first')
+    const protectionId = input.protectionId ?? 0n
+    const params = input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }
+    const action = input.action === 'cancel'
+      ? buildCancelProtectionAction({ account, book, protectionId })
+      : input.action === 'replace'
+        ? buildReplaceProtectionAction({ account, book, protectionId, params })
+        : buildCreateProtectionAction({ account, book, params })
+    await client.call({ account, to: book, data: action.calls[0].data, value: 0n })
+    const result = await executeSponsoredPerpsAction({
+      manifest: sponsored.manifest, ownerAddress: sponsored.ownerAddress, runtime: sponsored.runtime, action,
+      protectionIntent: persistProtectionIntent(book, input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }, input.protectionId),
+      onStatus: input.onStatus,
+    })
+    const eventName = input.action === 'create' ? 'PositionProtectionCreated' : input.action === 'replace' ? 'PositionProtectionReplaced' : 'PositionProtectionCancelled'
+    const events = parseEventLogs({ abi: PERPS_POSITION_PROTECTION_BOOK_ABI, eventName, logs: result.receipt.logs.filter(log => isAddressEqual(log.address, book)) })
+      .filter(event => isAddressEqual(event.args.account, account) && (input.protectionId === undefined || event.args.protectionId === input.protectionId))
+    invalidatePerpsReads()
+    if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
+    return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
+  }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
+
   return {
+    managePositionProtection,
     approveUsdcForMargin,
     fundTradingAccount,
     depositMargin,

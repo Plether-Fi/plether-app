@@ -27,6 +27,7 @@ function validManifest(): Record<string, unknown> {
     cfdEngine: '0x9999999999999999999999999999999999999999',
     orderRouter: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
     policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',

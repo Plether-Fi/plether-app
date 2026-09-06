@@ -1,5 +1,6 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, userEvent, within } from 'storybook/test'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
   PERPS_EXECUTION_MODE,
@@ -42,6 +43,7 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
   orderLifecycleBook: '0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C',
   policyEvaluator: '0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB',
+  positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -427,6 +429,31 @@ export const ExecutionProtections: Story = {
     executionProtectionsFixture,
   },
   render: (args) => <TicketFrame {...args} />,
+}
+
+export const AddTakeProfitStopLoss: Story = {
+  name: 'New order · Optional TP/SL',
+  parameters: { controls: { disable: true } },
+  render: () => <TicketFrame {...documentationMarketArgs} currentPositionAmount="0" initialOrderQuantity="2 000"
+    protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    await userEvent.type(canvas.getByLabelText('Take profit (USDC)'), '1.1')
+    await userEvent.type(canvas.getByLabelText('Stop loss (USDC)'), '0.98')
+    await expect(canvas.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+  },
+}
+
+export const ProtectedOpenReview: Story = {
+  name: 'New order · TP/SL confirmation',
+  parameters: { controls: { disable: true } },
+  render: () => <TicketFrame {...OpenLongPreview.args} protectionCapPrice={200_000_000n}
+    executionProtectionsFixture={{ ...executionProtectionsFixture, positionProtection: {
+      book: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+      params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n },
+      triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
+    } }} />,
 }
 
 export const IncreaseLongPreview: Story = {

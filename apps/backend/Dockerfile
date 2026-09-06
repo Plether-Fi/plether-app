@@ -27,6 +27,7 @@ RUN cabal update && cabal build --only-dependencies
 
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
+COPY apps/backend/schema.sql schema.sql
 COPY config/perps/arbitrum-sepolia-v2.json config/perps/arbitrum-sepolia-v2.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
@@ -47,6 +48,12 @@ COPY apps/backend/oracle-worker/package.json apps/backend/oracle-worker/package-
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.mjs
 
+FROM node:22-bookworm-slim AS protection-worker
+WORKDIR /protection
+COPY apps/backend/protection-worker/package*.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/backend/protection-worker/ ./
+
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -65,6 +72,8 @@ COPY --from=builder /build/plether-candle-admin-bin /usr/local/bin/plether-candl
 COPY --from=builder --chmod=0644 /tmp/aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
+COPY --from=protection-worker /protection /app/protection
+COPY config/perps/arbitrum-sepolia-v2.json /app/config/perps/arbitrum-sepolia-v2.json
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json

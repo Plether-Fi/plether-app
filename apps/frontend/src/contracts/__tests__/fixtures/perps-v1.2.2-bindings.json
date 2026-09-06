@@ -23,8 +23,8 @@
       "layoutSha256": "a865b4f77ab3ca609e75e9109c5aff9239e0ac0efb5770e336e552567e1e07f0"
     },
     "PERPS_POSITION_PROTECTION_BOOK_ABI": {
-      "entries": 2,
-      "layoutSha256": "0bd08e09bcec4ff0331217c86c7995915636c74598878ff0956e0f47a8af835f"
+      "entries": 103,
+      "layoutSha256": "196daad4058634efe9351a9c4b8a08d7a0e78adff4df01481bf28db17b84879e"
     },
     "PERPS_CFD_ENGINE_ABI": {
       "entries": 15,

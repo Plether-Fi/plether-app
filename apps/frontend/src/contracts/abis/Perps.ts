@@ -1030,22 +1030,13 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-export const PERPS_POSITION_PROTECTION_BOOK_ABI = [
-  {
-    type: 'function',
-    name: 'ROUTER',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address' }],
-  },
-  {
-    type: 'function',
-    name: 'activePositionProtectionId',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: 'protectionId', type: 'uint64' }],
-  },
-] as const
+import { positionProtectionBookAbi } from '@plether/perps-aa-client'
+
+// v1.2.2 removed this unused v1.2.1 error; the remaining wire layouts match
+// the checksum-verified release bundle, including all TP/SL actions and events.
+export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filter(
+  entry => !(entry.type === 'error' && entry.name === 'OrderRouter__ProtectionDisabled')
+)
 
 export const PERPS_CFD_ENGINE_ABI = [
   {

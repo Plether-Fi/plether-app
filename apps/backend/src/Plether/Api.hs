@@ -75,6 +75,7 @@ import Plether.Handlers.PerpsHistory
   , waitForPerpsOrderTerminal
   )
 import Plether.Handlers.VaultPerformance (getVaultPerformanceHistory)
+import Plether.Handlers.ProtectionHistory (getProtectionHistory, getProtectionEvents, getProtectionExecution, parseProtectionCursor, validProtectionBook)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -439,6 +440,36 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
               (_, Nothing) ->
                 handleError $ E.invalidAddress $ maybe "" id mRouter
           else handleError $ E.invalidAddress addr
+
+      get "/api/perps/accounts/:address/protections" $ do
+        addr <- pathParam "address"
+        limit <- perpsHistoryLimit
+        mCursor <- queryParamMaybe "cursor"
+        mBook <- queryParamMaybe "book"
+        if not (isValidAddress addr) then handleError $ E.invalidAddress addr
+        else if not (validProtectionBook mBook) then handleError $ E.invalidAmount "book must match the active v1.2.1 release"
+        else case traverse parseProtectionCursor mCursor of
+          Nothing -> handleError $ E.invalidAmount "cursor must be a positive protection ID"
+          Just cursor -> liftIO (getProtectionHistory pool cfg addr limit cursor) >>= handleResult
+
+      get "/api/perps/protections/:id/execution" $ do
+        protectionId <- pathParam "id"
+        mBook <- queryParamMaybe "book"
+        setHeader "Cache-Control" "no-store"
+        if not (validProtectionBook mBook) then handleError $ E.invalidAmount "book must match the active v1.2.1 release"
+        else case parseProtectionCursor protectionId of
+          Just pid -> liftIO (getProtectionExecution pool cfg pid) >>= handleResult
+          Nothing -> handleError $ E.invalidAmount "id must be a positive uint64"
+
+      get "/api/perps/protections/:id/events" $ do
+        protectionId <- pathParam "id"
+        limit <- perpsHistoryLimit
+        mCursor <- queryParamMaybe "cursor"
+        mBook <- queryParamMaybe "book"
+        if not (validProtectionBook mBook) then handleError $ E.invalidAmount "book must match the active v1.2.1 release"
+        else case (parseProtectionCursor protectionId, traverse parseHistoryCursor mCursor) of
+          (Just pid, Just cursor) -> liftIO (getProtectionEvents pool cfg pid limit cursor) >>= handleResult
+          _ -> handleError $ E.invalidAmount "id must be a positive uint64 and cursor must be blockNumber:logIndex"
 
       get "/api/perps/accounts/:address/activity" $ do
         addr <- pathParam "address"

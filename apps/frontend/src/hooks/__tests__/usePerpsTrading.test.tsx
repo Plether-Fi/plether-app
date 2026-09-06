@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   identityReady: false,
   intentResolution: 0,
   resolvedOrderId: 0n,
+  protectionParent: 42n,
   getBlock: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
@@ -41,6 +42,11 @@ vi.mock('viem', async (importOriginal) => {
     parseEventLogs: mocks.parseEventLogs,
   }
 })
+
+vi.mock('../../contracts/positionProtection', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../contracts/positionProtection')>(),
+  PROTECTION_RELEASE_ENABLED: true,
+}))
 
 vi.mock('wagmi', () => ({
   usePublicClient: () => ({
@@ -77,6 +83,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     cfdEngine: '0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352',
     orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
     orderLifecycleBook: '0x1111111111111111111111111111111111111111',
+    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
     policyEvaluator: '0x2222222222222222222222222222222222222222',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
@@ -164,6 +171,8 @@ function sponsoredResult() {
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
       }, {
         address: ORDER_LIFECYCLE_BOOK,
+      }, {
+        address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
       }],
       receipt: {
         transactionHash: TRANSACTION_HASH,
@@ -235,12 +244,14 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = false
     mocks.intentResolution = 0
     mocks.resolvedOrderId = 0n
+    mocks.protectionParent = 42n
     mocks.getBlock.mockResolvedValue({ timestamp: 1_700_000_000n })
     mocks.simulateContract.mockResolvedValue({})
     mocks.executeSponsoredPerpsAction.mockResolvedValue(sponsoredResult())
     mocks.parseEventLogs.mockImplementation(({ eventName }: { eventName: string }) =>
       eventName === 'IntentRegistered'
         ? [{ args: { account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, orderId: 42n } }]
+        : eventName === 'PositionProtectionCreated' ? [{ args: { account: ACCOUNT, protectionId: 7n, parentOrderId: mocks.protectionParent } }]
         : [{ args: { account: ACCOUNT, orderId: 42n } }]
     )
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
@@ -271,6 +282,37 @@ describe('usePerpsTrading', () => {
           throw new Error(`Unexpected readContract call: ${functionName}`)
       }
     })
+  })
+
+  it('commits protected opens atomically and reconciles the unique parent/protection pair', async () => {
+    mocks.identityReady = true
+    const input = commitInput()
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n, protectionId: 7n })
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [input.preparedOrder.request, input.preparedOrder.positionProtection.params] }))
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({ action: expect.objectContaining({ kind: 'place-protected-order' }), protectionIntent: expect.objectContaining({ takeProfitTriggerPrice: '90000000', stopLossTriggerPrice: '110000000' }) }))
+  })
+
+  it('never rebuilds an already committed protected-open composite', async () => {
+    mocks.identityReady = true
+    mocks.intentResolution = 1
+    mocks.resolvedOrderId = 42n
+    const input = commitInput()
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow('cannot be resubmitted')
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('rejects a protection event linked to a different opening order', async () => {
+    mocks.identityReady = true
+    mocks.protectionParent = 43n
+    const input = commitInput()
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow('unique protection record')
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
   })
 
   it('never exposes a direct owner-wallet approval path', async () => {
@@ -603,6 +645,8 @@ describe('usePerpsTrading', () => {
     const invalidateOptions = mocks.invalidateQueries.mock.calls[0][0] as {
       predicate: (query: { queryKey: readonly unknown[] }) => boolean
     }
+    expect(invalidateOptions.predicate({ queryKey: ['perps', 'protections', ACCOUNT] })).toBe(true)
+    expect(invalidateOptions.predicate({ queryKey: ['perps', 'protection-events', '7'] })).toBe(true)
     expect(invalidateOptions.predicate({
       queryKey: ['readContracts', {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
