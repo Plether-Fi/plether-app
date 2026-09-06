@@ -15,7 +15,8 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   its legacy sampled-price fallback has been removed.
 - Keep `PERPS_CANDLE_WRITE_MODE=off`, `PERPS_CANDLE_READ_MODE=legacy`, an
   empty `PERPS_CANDLE_READ_INTERVALS` until the corresponding backend gate
-  below passes. Deploy the frontend only after Gate 7 passes.
+  below passes. Frontend price and release-identity checks remain required;
+  volume completeness findings in Gate 7 are advisory.
 - Never enable public rollup reads with
   `PERPS_CANDLE_STRICT_COVERAGE=false`.
 - Run database mutations and controlled indexer replay only through
@@ -1056,14 +1057,22 @@ Pass criteria:
 
 ## Gate 7: frontend and edge
 
-The frontend uses the candle API exclusively. Do not deploy the Sepolia
-frontend until the current router's volume has been backfilled and verified.
+The frontend uses the candle API exclusively. Volume backfill and verification
+can continue independently of the Sepolia frontend deployment.
 The frontend deployment workflow always queries the direct backend
 current-candle endpoint for all seven canonical intervals before any Cloudflare
-operation. The workflow fails unless every response has complete, aligned price and
-volume coverage; a positive price and volume generation; the usable-volume
-generation bit; and the same chain/router as the checked-in Sepolia manifest.
+operation. The workflow fails unless every response has complete, aligned price
+coverage, a positive valid price generation, and the same chain/router as the
+checked-in Sepolia manifest. Incomplete volume coverage, invalid volume bounds,
+zero volume generation, and an unset usable-volume bit emit warnings rather
+than blocking deployment. This does not mark backend coverage as complete or
+convert unknown historical volume into verified zero.
 Each transient request gets at most three attempts with a ten-second timeout.
+
+Before the first complete post-deployment UTC day ends, the daily chart can
+display a labelled **0 USDC placeholder**, not a verified daily total. Unknown
+historical candle values remain null. Backend verification and repair
+requirements are unchanged.
 
 For the router deployed at block `306119399`, recovery starts at the first
 whole minute after the block timestamp. Never broaden this range to an earlier
@@ -1084,6 +1093,17 @@ run_candle_admin sepolia verify volume \
   -f from_timestamp="$VOLUME_FROM_UNIX" \
   -f to_timestamp="$VOLUME_TO_UNIX"
 ```
+
+Event-empty release history is publishable only when the matching, contiguous
+indexer cursor has a canonical block hash and a persisted
+`last_indexed_timestamp`. The indexer writes that timestamp in the same
+transaction as the cursor and events, and clears it on rewind. The volume admin
+command can use this proof to bound empty history without inventing trades;
+timestamps are rounded down to a whole minute, never beyond the indexed block.
+After upgrading from a version without this column, wait for a successful live
+indexer append before backfilling. Existing rows intentionally start without
+timestamp proof. Each publishing chunk rechecks its source bounds under the
+volume dataset lock so a concurrent rewind cannot reuse revoked proof.
 
 The standard helper supplies 86,400-second chunks, a 1,800,000 ms statement
 timeout, and a 250 ms inter-chunk throttle. Record the certified indexer event,

@@ -132,6 +132,23 @@ describe('TradingViewAdvancedChart', () => {
     queryClient.clear()
   })
 
+  it('labels the fresh daily zero as a placeholder without claiming a verified total', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-07T12:00:00Z'))
+    installReadyFakeTradingView()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval="1d" />
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(datafeedHarness.onVolumeCoverageChange).toBeTypeOf('function'))
+    act(() => datafeedHarness.onVolumeCoverageChange?.({ intervalSeconds: 86400, state: 'unavailable' }))
+    expect(view.getByText('Daily volume: 0 USDC')).toBeInTheDocument()
+    expect(view.getByText(/not a verified daily total/)).toBeInTheDocument()
+    view.unmount()
+    queryClient.clear()
+  })
+
   it('shows volume degradation only for the active interval and clears it after recovery', async () => {
     const fakeTradingView = installReadyFakeTradingView()
     const queryClient = new QueryClient({

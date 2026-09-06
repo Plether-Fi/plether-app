@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS perps_indexer_state (
     configured_start_block BIGINT,
     last_indexed_block BIGINT NOT NULL,
     last_indexed_block_hash TEXT,
+    last_indexed_timestamp BIGINT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (indexer_name, chain_id),
     CONSTRAINT perps_indexer_state_release_scope CHECK (

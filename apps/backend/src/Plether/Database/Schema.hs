@@ -160,6 +160,7 @@ module Plether.Database.Schema
   , configurePerpsReplayTransaction
   , lockPerpsIndexerTransaction
   , setPerpsIndexerState
+  , setPerpsIndexerStateWithTimestamp
   , deletePerpsHistoryFromBlock
   ) where
 
@@ -4446,6 +4447,8 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS configured_start_block BIGINT"
   _ <- execute_ conn
+    "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS last_indexed_timestamp BIGINT"
+  _ <- execute_ conn
     "DO $$ BEGIN\
     \ IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()\
     \   AND table_name = 'perps_indexer_state' AND column_name = 'updated_at'\
@@ -5272,19 +5275,26 @@ lockPerpsIndexerTransaction conn chainId indexerName releaseRouter = do
     fail "Could not acquire the Perps indexer transaction lock"
 
 setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Integer -> Maybe Text -> IO ()
-setPerpsIndexerState conn chainId indexerName releaseRouter configuredStartBlock blockNumber blockHash = do
+setPerpsIndexerState conn chainId indexerName releaseRouter configuredStartBlock blockNumber blockHash =
+  setPerpsIndexerStateWithTimestamp conn chainId indexerName releaseRouter configuredStartBlock blockNumber blockHash Nothing
+
+-- Only a contiguous, canonical append may supply the block timestamp. Legacy
+-- updates and reorg rewinds deliberately clear it rather than retain old proof.
+setPerpsIndexerStateWithTimestamp :: Connection -> Integer -> Text -> Text -> Integer -> Integer -> Maybe Text -> Maybe Integer -> IO ()
+setPerpsIndexerStateWithTimestamp conn chainId indexerName releaseRouter configuredStartBlock blockNumber blockHash blockTimestamp = do
   let scopedName = scopedIndexerName indexerName releaseRouter
   unless (configuredStartBlock > 0) $
     fail "Perps indexer configured start block must be positive"
   affected <- execute conn
     "INSERT INTO perps_indexer_state \
-    \(indexer_name, chain_id, release_router, configured_start_block, last_indexed_block, last_indexed_block_hash) \
-    \VALUES (?, ?, ?, ?, ?, ?) \
+    \(indexer_name, chain_id, release_router, configured_start_block, last_indexed_block, last_indexed_block_hash, last_indexed_timestamp) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (indexer_name, chain_id) DO UPDATE SET \
     \ release_router = EXCLUDED.release_router,\
     \ configured_start_block = COALESCE(perps_indexer_state.configured_start_block, EXCLUDED.configured_start_block),\
     \ last_indexed_block = EXCLUDED.last_indexed_block,\
     \ last_indexed_block_hash = EXCLUDED.last_indexed_block_hash,\
+    \ last_indexed_timestamp = EXCLUDED.last_indexed_timestamp,\
     \ updated_at = NOW() \
     \WHERE perps_indexer_state.configured_start_block IS NULL \
     \   OR perps_indexer_state.configured_start_block = EXCLUDED.configured_start_block"
@@ -5294,6 +5304,7 @@ setPerpsIndexerState conn chainId indexerName releaseRouter configuredStartBlock
     , configuredStartBlock
     , blockNumber
     , fmap T.toLower blockHash
+    , blockTimestamp
     )
   unless (affected == 1) $
     fail "Immutable Perps indexer configured start block mismatch; refusing to mix release history"

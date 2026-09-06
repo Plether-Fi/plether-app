@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import perpsRelease from '../../../../config/perps/arbitrum-sepolia-v2.json'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys, type PerpsCandleIntervalSeconds } from '../api'
 import { Alert } from '../components/ui'
@@ -538,6 +539,11 @@ export function TradingViewAdvancedChart({
   ) as PerpsCandleIntervalSeconds
   const volumeUnavailable =
     volumeCoverageByInterval[activeCandleInterval] === 'unavailable'
+  const releaseStart = perpsRelease.integration.volumeHistoryStartTimestamp
+  const nowSeconds = Date.now() / 1000
+  const freshDailyVolume = activeCandleInterval === 86400 &&
+    nowSeconds >= releaseStart &&
+    nowSeconds < Math.ceil(releaseStart / 86400) * 86400 + 86400
 
   return (
     <div
@@ -549,8 +555,10 @@ export function TradingViewAdvancedChart({
       <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
       {!unavailable && volumeUnavailable ? (
         <div className="pointer-events-none absolute inset-x-4 bottom-4 z-10 sm:right-auto sm:max-w-md">
-          <Alert variant="warning" title="Volume temporarily unavailable">
-            — Price data is still live. Volume is being indexed for this market.
+          <Alert variant="warning" title={freshDailyVolume ? 'Daily volume: 0 USDC' : 'Volume temporarily unavailable'}>
+            {freshDailyVolume
+              ? '0 is a placeholder until the first full UTC day is indexed, not a verified daily total. Price data is still live.'
+              : '— Price data is still live. Volume is being indexed for this market.'}
           </Alert>
         </div>
       ) : null}
