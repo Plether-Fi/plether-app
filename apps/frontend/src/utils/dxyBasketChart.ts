@@ -1,21 +1,11 @@
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest, PerpsBasketCandle } from '../api'
 
-export interface ChartPoint {
-  timestamp: number
-  price: number
-}
-
 export interface ChartCandle {
   timestamp: number
   open: number
   high: number
   low: number
   close: number
-}
-
-export interface OracleMarkPoint {
-  timestamp: number
-  basketPrice: string
 }
 
 const RAW_ORACLE_PRICE_SCALE = 100_000_000n
@@ -202,67 +192,4 @@ export function mergeLatestBasketPoint(
   }
 
   return [...historyPoints, livePoint]
-}
-
-export function alignBasketPointsToOracleMark(
-  historyPoints: BasketHistoryPoint[],
-  latest: BasketLatest | undefined,
-  oracleMark: OracleMarkPoint | undefined
-): BasketHistoryPoint[] {
-  const points = mergeLatestBasketPoint(historyPoints, latest)
-  if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
-
-  const components = latest?.components ?? points.at(-1)?.components
-  const replacedPoint = points.find((point) => point.timestamp === oracleMark.timestamp)
-  const markPoint: BasketHistoryPoint = {
-    timestamp: oracleMark.timestamp,
-    basketPrice: oracleMark.basketPrice,
-    volumeUsdc: replacedPoint?.volumeUsdc ?? '0',
-    ...(components ? { components } : {}),
-  }
-
-  return [
-    ...points.filter((point) => point.timestamp < oracleMark.timestamp),
-    markPoint,
-  ]
-}
-
-export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {
-  const candles: ChartCandle[] = []
-  let currentCandle: ChartCandle | undefined
-  let previousClose: number | null = null
-
-  const sortedPoints = [...points].sort((left, right) => left.timestamp - right.timestamp)
-
-  for (const point of sortedPoints) {
-    const timestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
-
-    if (currentCandle?.timestamp === timestamp) {
-      currentCandle.high = Math.max(currentCandle.high, point.price)
-      currentCandle.low = Math.min(currentCandle.low, point.price)
-      currentCandle.close = point.price
-      previousClose = point.price
-      continue
-    }
-
-    if (currentCandle) {
-      candles.push(currentCandle)
-    }
-
-    const open = previousClose ?? point.price
-    currentCandle = {
-      timestamp,
-      open,
-      high: Math.max(open, point.price),
-      low: Math.min(open, point.price),
-      close: point.price,
-    }
-    previousClose = point.price
-  }
-
-  if (currentCandle) {
-    candles.push(currentCandle)
-  }
-
-  return candles
 }

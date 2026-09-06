@@ -4,21 +4,16 @@ import {
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
 import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
-import type { OracleMarkPoint } from '../utils/dxyBasketChart'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
 
 export interface DxyBasketPanelProps {
-  oraclePriceRaw?: bigint
-  oraclePublishTime?: number
   liquidationPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
 }
 
 export function DxyBasketPanel({
-  oraclePriceRaw,
-  oraclePublishTime,
   liquidationPriceRaw,
   marketPhase,
   marketCurrentDuration,
@@ -26,14 +21,6 @@ export function DxyBasketPanel({
   const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>(
     DEFAULT_DXY_BASKET_CHART_INTERVAL
   )
-  const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
-    if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined
-
-    return {
-      timestamp: oraclePublishTime,
-      basketPrice: oraclePriceRaw.toString(),
-    }
-  }, [oraclePriceRaw, oraclePublishTime])
   const liquidationPrice = useMemo(() => {
     const displayPrice = oraclePriceToDisplayDxyPrice(liquidationPriceRaw)
     if (displayPrice === undefined || displayPrice <= 0n) return undefined
@@ -43,7 +30,6 @@ export function DxyBasketPanel({
   return (
     <TradingViewAdvancedChart
       interval={chartInterval}
-      oracleMark={oracleMark}
       liquidationPrice={liquidationPrice}
       marketPhase={marketPhase}
       marketCurrentDuration={marketCurrentDuration}

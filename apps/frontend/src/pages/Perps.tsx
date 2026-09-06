@@ -319,8 +319,6 @@ export function Perps() {
 
         <div className="min-w-0 xl:clear-left xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
           <DxyBasketPanel
-            oraclePriceRaw={perpsMarket.raw.markPrice}
-            oraclePublishTime={perpsMarket.oracleFreshnessTime}
             liquidationPriceRaw={perpsAccount.position?.liquidationPrice}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}

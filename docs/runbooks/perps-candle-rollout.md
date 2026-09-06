@@ -9,15 +9,13 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
 
 - Roll forward candle infrastructure and behavior one environment at a time:
   Sepolia before mainnet for Terraform candle configuration, migration, dual
-  writes, backfill, rollup reads, and frontend feature activation. The
-  repository's existing `master` push workflows may deploy this compatible,
-  inert backend/frontend code to mainnet first; that is not a candle rollout
-  gate. With no activation changes, backend defaults keep writes off, reads on
-  legacy with an empty interval allowlist, and an absent frontend repository
-  variable resolves the candle API flag to false.
+  writes, backfill, rollup reads, and frontend deployment. The
+  `master` push workflow publishes the mainnet redirect to Sepolia; it does
+  not activate mainnet candles. The Sepolia chart requires the candle API;
+  its legacy sampled-price fallback has been removed.
 - Keep `PERPS_CANDLE_WRITE_MODE=off`, `PERPS_CANDLE_READ_MODE=legacy`, an
-  empty `PERPS_CANDLE_READ_INTERVALS`, and the frontend flag off until the
-  corresponding gate below passes.
+  empty `PERPS_CANDLE_READ_INTERVALS` until the corresponding backend gate
+  below passes. Deploy the frontend only after Gate 7 passes.
 - Never enable public rollup reads with
   `PERPS_CANDLE_STRICT_COVERAGE=false`.
 - Run database mutations and controlled indexer replay only through
@@ -236,13 +234,10 @@ protected workflow.
 
 ## Gate 1: compatible deployment
 
-Merging compatible code to `master` may trigger the repository's automatic
-mainnet frontend deployment before Sepolia. Backend deployment is manual for
-both environments. This exception is safe only while the candle behavior
-remains inert: writes off, legacy reads, an empty interval allowlist, and the
-frontend candle flag false. Treat any automatic frontend deployment as code
-compatibility only; it does not authorize migration, dual writes, backfill,
-rollup reads, or frontend feature activation.
+Merging frontend code to `master` may trigger publication of the mainnet
+redirect to Sepolia. Sepolia frontend deployment and both backend deployments
+are manual. Publishing the redirect does not authorize migration, dual writes,
+backfill, rollup reads, or activation of the application on mainnet.
 
 Before activating any candle behavior in either environment, set that target's
 Terraform candle variables to the safe explicit values below, review the
@@ -672,8 +667,8 @@ Use `infra/terraform/sepolia-candle-rollout.tfvars` for that final Sepolia
 expansion. A batch does not waive interval correctness: after the resulting
 task replacement, collect a fresh three-period health window and run the full
 current, active, closed, inception, weekend-gap, pagination, invalid-request,
-cache, and latency matrix for every enabled interval. Keep the frontend flag
-off until the entire matrix passes. On any failure, restore the last accepted
+cache, and latency matrix for every enabled interval. Do not deploy the frontend
+until the entire matrix passes. On any failure, restore the last accepted
 allowlist. This batching exception does not apply to mainnet.
 
 For each interval, test an inception-clipped page, a fully closed page, the
@@ -692,9 +687,8 @@ until its component/headline consumers migrate and a separate follow-up
 removes it. Do not include it in Gate 6 rollover, latency, or performance
 acceptance evidence, and do not optimize it as part of this rollout.
 
-Run the frozen-finalizer control once, only for the Sepolia `3600` canary. Keep
-the frontend flag off and stop all native candle-page traffic and probes,
-including requests whose edge cache lookup performs an internal current-candle
+Run the frozen-finalizer control once, only for the Sepolia `3600` canary. Stop
+all native candle-page traffic and probes, including requests whose edge cache lookup performs an internal current-candle
 identity probe. Exactly the three operator requests below may reach the current
 endpoint during the bounded control window. Freeze Terraform, SSM rotations,
 manual ECS/service changes, and backend/frontend deployments from preflight
@@ -1016,7 +1010,7 @@ Any early or additional `503`,
 missing/extra event, metric mismatch, missing named-alarm transition, unrelated
 alarm transition, task or cleanup failure, generation change, failed
 watermark/endpoint recovery, or missing final `OK` fails Gate 6 and triggers
-the flag-based rollback. The normal mutation freeze ends only for controlled
+the backend rollback. The normal mutation freeze ends only for controlled
 failure recovery: first preserve the immutable evidence, then stop/reconcile
 the exact workflow-owned task (or wait for its bounded application deadline),
 prove its database lock is released, and only then permit the minimum manual
@@ -1062,14 +1056,11 @@ Pass criteria:
 
 ## Gate 7: frontend and edge
 
-Set the environment-specific repository variable
-`VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA=true` and deploy the frontend. The
-mainnet variable remains false. Do not enable that variable or redeploy an
-already-enabled Sepolia native-candle frontend until the current router's
-volume has been backfilled and verified. The frontend deployment workflow
-queries the direct backend current-candle endpoint for all seven canonical
-intervals before any Cloudflare operation. When the Sepolia flag is enabled,
-the workflow fails unless every response has complete, aligned price and
+The frontend uses the candle API exclusively. Do not deploy the Sepolia
+frontend until the current router's volume has been backfilled and verified.
+The frontend deployment workflow always queries the direct backend
+current-candle endpoint for all seven canonical intervals before any Cloudflare
+operation. The workflow fails unless every response has complete, aligned price and
 volume coverage; a positive price and volume generation; the usable-volume
 generation bit; and the same chain/router as the checked-in Sepolia manifest.
 Each transient request gets at most three attempts with a ten-second timeout.
@@ -1157,22 +1148,25 @@ owner in the change record. Before each gate, verify the deployed `master` SHA
 and ensure no duplicate workflow run targets it.
 
 Use smaller backfill chunks or a larger throttle when production RDS has less
-headroom. Mainnet read and frontend flags stay off until complete price and
-deployment-specific volume coverage has passed verification.
+headroom. Mainnet rollup reads and frontend deployment must wait until complete
+price and deployment-specific volume coverage has passed verification.
 
 ## Rollback
 
-Rollback is flag-based and does not delete data:
+Rollback preserves data. The current frontend has no legacy chart switch;
+restore a known-good compatible frontend/backend release pair through the
+GitHub deployment workflows when a code rollback is necessary.
 
-1. Set the environment-specific frontend candle flag to `false` and deploy the
-   frontend.
-2. Set `perps_candle_read_mode = "legacy"` and clear
-   `perps_candle_read_intervals`; apply Terraform, then deploy the backend so
-   the rollback task definitions and current image are registered together.
+1. Identify the last verified release pair and confirm that its candle API
+   supports the current contract deployment before deploying it.
+2. Keep healthy rollup intervals available. If an interval must be disabled,
+   remove it from `perps_candle_read_intervals`; the chart will report that
+   data is unavailable until coverage is restored.
 3. If rollup writers are implicated, set `perps_candle_write_mode = "off"` and
    apply Terraform, then deploy the API, basket worker, and Perps indexer
    together.
-4. Confirm legacy history, latest basket data, and chart rendering recover.
+4. Confirm price candles, current candles, and volume availability match the
+   restored release's verified coverage.
 5. Preserve candle tables, coverage state, raw observations, logs, task IDs,
    and the database snapshot for diagnosis.
 6. Repair a bounded range only after identifying the source of corruption.
@@ -1186,8 +1180,7 @@ Rollback is flag-based and does not delete data:
    ```
 
 7. Run `verify` before re-enabling any interval. Re-enter the rollout at the
-   failed gate; never skip directly to the frontend flag.
+   failed gate; never skip directly to frontend deployment.
 
-Rollback is complete only when rollup routes are closed, the frontend is back
-on the legacy feed, user-visible checks pass, and error/latency metrics have
-returned to baseline.
+Rollback is complete only when the restored chart data passes user-visible
+checks and error/latency metrics have returned to baseline.

@@ -4,10 +4,6 @@ import {
   apiQueryKeys,
   perpsApi,
   type ApiResponse,
-  type BasketHistory,
-  type BasketHistoryPoint,
-  type BasketHistoryRange,
-  type BasketLatest,
   type PerpsBasketCandle,
   type PerpsBasketCandlePage,
   type PerpsBasketCurrentCandle,
@@ -18,12 +14,8 @@ import {
   PERPS_CANDLE_PAGE_BUCKETS,
 } from '../api/candlePolicy'
 import {
-  alignBasketPointsToOracleMark,
-  buildCandles,
-  oracleNumberToDisplayDxyPrice,
   parsePerpsDisplayPriceCap,
   perpsBasketCandleToChartCandle,
-  type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
 import type {
@@ -50,15 +42,7 @@ export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '
 export const PERPS_CANDLE_MAX_HISTORY_PAGES = 24
 
 const MICRO_USDC_PER_USDC = 1_000_000n
-const LIVE_VOLUME_REFRESH_MS = 60_000
 const INITIAL_CURRENT_CANDLE_WAIT_MS = 250
-
-export function isPerpsCandleApiEnabled(
-  value = import.meta.env.VITE_PERPS_CANDLE_API_ENABLED as string | undefined
-): boolean {
-  const normalized = value?.trim().toLowerCase()
-  return normalized === 'true' || normalized === '1'
-}
 
 const SYMBOL_INFO: TradingViewSymbolInfo = {
   name: 'plDXY.P',
@@ -103,12 +87,6 @@ const DATAFEED_CONFIGURATION: TradingViewDatafeedConfiguration = {
 }
 
 export interface PletherChartDataSource {
-  getHistory: (
-    range: BasketHistoryRange,
-    intervalSeconds: number,
-    signal?: AbortSignal
-  ) => Promise<BasketHistory>
-  getLatest: (signal?: AbortSignal) => Promise<BasketLatest | undefined>
   getCandlePage?: (
     intervalSeconds: PerpsCandleIntervalSeconds,
     cursor: number,
@@ -139,10 +117,6 @@ interface Subscription {
 
 type TradingViewSeriesKind = 'price' | 'directional-volume'
 
-interface VolumeSnapshot {
-  byTime: Map<number, number>
-}
-
 interface CandleDatasetIdentity {
   seriesId: string
   configurationHash: string
@@ -172,10 +146,8 @@ export interface PletherDxyDatafeedOptions {
   dataSource?: PletherChartDataSource
   queryClient?: QueryClient
   pollIntervalMs?: number
-  oracleMark?: OracleMarkPoint
   onHistoryGap?: (intervalSeconds?: PerpsCandleIntervalSeconds) => void
   onVolumeCoverageChange?: (update: PletherVolumeCoverageUpdate) => void
-  useCandleApi?: boolean
 }
 
 export type PletherVolumeCoverageState = 'unknown' | 'available' | 'unavailable'
@@ -183,27 +155,6 @@ export type PletherVolumeCoverageState = 'unknown' | 'available' | 'unavailable'
 export interface PletherVolumeCoverageUpdate {
   intervalSeconds: PerpsCandleIntervalSeconds
   state: PletherVolumeCoverageState
-}
-
-async function fetchBasketHistory(
-  range: BasketHistoryRange,
-  intervalSeconds: number,
-  signal?: AbortSignal
-): Promise<ApiResponse<BasketHistory>> {
-  const result = await perpsApi.getPerpsBasketHistory(
-    range,
-    intervalSeconds,
-    false,
-    signal
-  )
-  if (Result.isError(result)) throw result.error
-  return result.value
-}
-
-async function fetchBasketLatest(signal?: AbortSignal): Promise<ApiResponse<BasketLatest>> {
-  const result = await perpsApi.getPerpsBasketLatest(signal)
-  if (Result.isError(result)) throw result.error
-  return result.value
 }
 
 async function fetchBasketCandlePage(
@@ -241,38 +192,6 @@ function createApiDataSource(queryClient: QueryClient | undefined): PletherChart
   const currentCandleRequests = new Map<string, SharedRequest<PerpsBasketCurrentCandle>>()
 
   return {
-    async getHistory(range, intervalSeconds, signal) {
-      if (!queryClient) return (await fetchBasketHistory(range, intervalSeconds, signal)).data
-
-      const response = await awaitWithAbort(
-        queryClient.fetchQuery({
-          queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
-          queryFn: ({ signal: querySignal }) => fetchBasketHistory(
-            range,
-            intervalSeconds,
-            querySignal
-          ),
-          staleTime: 60_000,
-          retry: retryTransientFailureOnce,
-        }),
-        signal
-      )
-      return response.data
-    },
-    async getLatest(signal) {
-      if (!queryClient) return (await fetchBasketLatest(signal)).data
-
-      const response = await awaitWithAbort(
-        queryClient.fetchQuery({
-          queryKey: apiQueryKeys.perps.basketLatest(),
-          queryFn: ({ signal: querySignal }) => fetchBasketLatest(querySignal),
-          staleTime: 5_000,
-          retry: retryTransientFailureOnce,
-        }),
-        signal
-      )
-      return response.data
-    },
     async getCandlePage(intervalSeconds, cursor, signal, revalidate = false) {
       // The Worker already caches fixed pages against an authoritative origin
       // identity and generation. Reusing a page locally under only
@@ -574,89 +493,6 @@ export function perpsBasketCandlesToDirectionalVolumeBars(
   return [...barsByTime.values()].sort((left, right) => left.time - right.time)
 }
 
-export function historyRangeForRequest(
-  from: number,
-  to: number,
-  countBack: number,
-  resolution: TradingViewResolution,
-  now = Math.floor(Date.now() / 1000)
-): BasketHistoryRange {
-  const minimumSeconds: Record<TradingViewResolution, number> = {
-    '1': 24 * 60 * 60,
-    '3': 7 * 24 * 60 * 60,
-    '5': 7 * 24 * 60 * 60,
-    '15': 7 * 24 * 60 * 60,
-    '30': 7 * 24 * 60 * 60,
-    '60': 30 * 24 * 60 * 60,
-    '1D': 365 * 24 * 60 * 60,
-  }
-  // Fine-grained bars are intentionally available for shorter lookback
-  // windows. Without this cap, scrolling a one-minute chart far enough back
-  // would ask the backend to materialize up to a year of minute snapshots.
-  const maximumSeconds: Record<TradingViewResolution, number> = {
-    '1': 7 * 24 * 60 * 60,
-    '3': 7 * 24 * 60 * 60,
-    '5': 30 * 24 * 60 * 60,
-    '15': 30 * 24 * 60 * 60,
-    '30': 30 * 24 * 60 * 60,
-    '60': 365 * 24 * 60 * 60,
-    '1D': 365 * 24 * 60 * 60,
-  }
-  const countBackSeconds = Math.max(0, countBack) * secondsForTradingViewResolution(resolution)
-  const earliestRequestedTime = Math.min(from, to - countBackSeconds)
-  const requestedSeconds = Math.min(
-    maximumSeconds[resolution],
-    Math.max(
-      minimumSeconds[resolution],
-      Math.max(0, to - from),
-      countBackSeconds,
-      Math.max(0, now - earliestRequestedTime)
-    )
-  )
-
-  if (requestedSeconds <= 24 * 60 * 60) return '24h'
-  if (requestedSeconds <= 7 * 24 * 60 * 60) return '7d'
-  if (requestedSeconds <= 30 * 24 * 60 * 60) return '30d'
-  return '1y'
-}
-
-export function basketPointsToTradingViewBars(
-  points: BasketHistoryPoint[],
-  resolution: TradingViewResolution,
-  volumePoints: BasketHistoryPoint[] = points
-): TradingViewBar[] {
-  const intervalSeconds = secondsForTradingViewResolution(resolution)
-  const chartPoints = points
-    .map((point) => ({
-      timestamp: point.timestamp,
-      price: oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8),
-    }))
-    .filter((point) => point.timestamp > 0 && point.price > 0)
-
-  const volumeByTimestamp = new Map<number, bigint>()
-  const seenVolumeTimestamps = new Set<number>()
-  for (const point of volumePoints) {
-    if (point.timestamp <= 0 || seenVolumeTimestamps.has(point.timestamp)) continue
-
-    seenVolumeTimestamps.add(point.timestamp)
-    const bucketTimestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
-    const currentVolume = volumeByTimestamp.get(bucketTimestamp) ?? 0n
-    volumeByTimestamp.set(
-      bucketTimestamp,
-      currentVolume + parseMicroUsdc(point.volumeUsdc)
-    )
-  }
-
-  return buildCandles(chartPoints, intervalSeconds).map((candle) => ({
-    time: candle.timestamp * 1000,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: microUsdcToHumanUsdc(volumeByTimestamp.get(candle.timestamp) ?? 0n),
-  }))
-}
-
 function parseOptionalMicroUsdc(value: string | null | undefined): bigint | undefined {
   const normalized = value?.trim()
   if (!normalized || !/^\d+$/.test(normalized)) return undefined
@@ -666,10 +502,6 @@ function parseOptionalMicroUsdc(value: string | null | undefined): bigint | unde
   } catch {
     return undefined
   }
-}
-
-function parseMicroUsdc(value: string | null | undefined): bigint {
-  return parseOptionalMicroUsdc(value) ?? 0n
 }
 
 function microUsdcToHumanUsdc(value: bigint): number {
@@ -712,41 +544,6 @@ function searchResult(): TradingViewSearchResult {
   }
 }
 
-function barFromLivePoint(
-  basketPrice: string,
-  timestamp: number,
-  resolution: TradingViewResolution,
-  previousBar: TradingViewBar | undefined,
-  volume: number | undefined
-): TradingViewBar | undefined {
-  const price = oracleNumberToDisplayDxyPrice(Number(basketPrice) / 1e8)
-  if (!Number.isFinite(price) || price <= 0 || timestamp <= 0) return undefined
-
-  const intervalMilliseconds = secondsForTradingViewResolution(resolution) * 1000
-  const time = Math.floor((timestamp * 1000) / intervalMilliseconds) * intervalMilliseconds
-
-  if (previousBar && time < previousBar.time) return undefined
-  if (previousBar?.time === time) {
-    return {
-      ...previousBar,
-      high: Math.max(previousBar.high, price),
-      low: Math.min(previousBar.low, price),
-      close: price,
-      volume: volume ?? previousBar.volume ?? 0,
-    }
-  }
-
-  const open = previousBar?.close ?? price
-  return {
-    time,
-    open,
-    high: Math.max(open, price),
-    low: Math.min(open, price),
-    close: price,
-    volume: volume ?? 0,
-  }
-}
-
 export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly dataSource: PletherChartDataSource
   private readonly pollIntervalMs: number
@@ -754,15 +551,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     ((intervalSeconds?: PerpsCandleIntervalSeconds) => void) | undefined
   private readonly onVolumeCoverageChange:
     ((update: PletherVolumeCoverageUpdate) => void) | undefined
-  private readonly useCandleApi: boolean
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
-  private readonly volumeSnapshots = new Map<TradingViewResolution, VolumeSnapshot>()
-  private readonly volumeRefreshes = new Map<
-    TradingViewResolution,
-    Promise<VolumeSnapshot | undefined>
-  >()
-  private readonly liveVolumeRefreshedAt = new Map<TradingViewResolution, number>()
   private readonly requestControllers = new Set<AbortController>()
   private readonly handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
@@ -778,7 +568,6 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       void this.pollSubscription(listenerGuid)
     }
   }
-  private oracleMark?: OracleMarkPoint
   private readonly datasetGenerations = new Map<PerpsCandleIntervalSeconds, number>()
   private readonly candleDatasetIdentities = new Map<
     PerpsCandleIntervalSeconds,
@@ -801,10 +590,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   constructor(options: PletherDxyDatafeedOptions = {}) {
     this.dataSource = options.dataSource ?? createApiDataSource(options.queryClient)
     this.pollIntervalMs = options.pollIntervalMs ?? PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS
-    this.oracleMark = options.oracleMark
     this.onHistoryGap = options.onHistoryGap
     this.onVolumeCoverageChange = options.onVolumeCoverageChange
-    this.useCandleApi = options.useCandleApi ?? isPerpsCandleApiEnabled()
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
     }
@@ -860,7 +647,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
 
     const seriesKind = seriesKindForSymbol(symbolInfo)
-    void this.runRequest((signal) => this.loadBars(resolution, periodParams, seriesKind, signal))
+    void this.runRequest((signal) => this.loadCandleBars(resolution, periodParams, seriesKind, signal))
       .then((bars) => {
         setTimeout(() => {
           if (!this.destroyed) {
@@ -885,7 +672,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     this.unsubscribeBars(listenerGuid)
 
     const seriesKind = seriesKindForSymbol(symbolInfo)
-    const primedCurrent = this.useCandleApi && seriesKind === 'price'
+    const primedCurrent = seriesKind === 'price'
       ? this.consumePrimedCurrentCandle(resolution)
       : undefined
 
@@ -920,33 +707,6 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     this.subscriptions.delete(listenerGuid)
   }
 
-  setOracleMark(oracleMark: OracleMarkPoint | undefined): void {
-    this.oracleMark = oracleMark
-    // Rollup candles are a coherent Pyth reference series. The independently
-    // sourced onchain mark remains separate trading UI state and must not
-    // rewrite historical or current OHLC.
-    if (this.useCandleApi) return
-    if (!oracleMark) return
-
-    let needsHistoryReset = false
-    for (const subscription of this.subscriptions.values()) {
-      const markTime = this.barTimeForTimestamp(subscription.resolution, oracleMark.timestamp)
-      if (subscription.currentBar && markTime < subscription.currentBar.time) {
-        subscription.currentBar = undefined
-        this.lastBars.delete(subscription.resolution)
-        this.scheduleCacheReset(subscription)
-        needsHistoryReset = true
-        continue
-      }
-      this.emitLiveBar(subscription, oracleMark.basketPrice, oracleMark.timestamp)
-    }
-    if (needsHistoryReset) {
-      setTimeout(() => {
-        if (!this.destroyed) this.onHistoryGap?.()
-      }, 0)
-    }
-  }
-
   destroy(): void {
     this.destroyed = true
     if (typeof document !== 'undefined') {
@@ -957,59 +717,6 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     for (const controller of this.requestControllers) controller.abort()
     this.requestControllers.clear()
-  }
-
-  private async loadBars(
-    resolution: TradingViewResolution,
-    periodParams: {
-      from: number
-      to: number
-      countBack: number
-      firstDataRequest: boolean
-    },
-    seriesKind: TradingViewSeriesKind,
-    signal?: AbortSignal
-  ): Promise<TradingViewBar[]> {
-    if (this.useCandleApi) {
-      return await this.loadCandleBars(resolution, periodParams, seriesKind, signal)
-    }
-
-    if (seriesKind === 'directional-volume') return []
-
-    const intervalSeconds = secondsForTradingViewResolution(resolution)
-    const range = historyRangeForRequest(
-      periodParams.from,
-      periodParams.to,
-      periodParams.countBack,
-      resolution
-    )
-    const [history, latest] = await Promise.all([
-      this.dataSource.getHistory(range, intervalSeconds, signal),
-      this.dataSource.getLatest(signal).catch((error: unknown) => {
-        if (isAbortError(error)) throw error
-        return undefined
-      }),
-    ])
-    const points = alignBasketPointsToOracleMark(history.points, latest, this.oracleMark)
-    const bars = basketPointsToTradingViewBars(points, resolution, history.points)
-      .filter((bar) => bar.time < periodParams.to * 1000)
-      .slice(-Math.max(1, periodParams.countBack))
-
-    this.rememberVolumeBars(resolution, bars)
-    const livePoint = this.oracleMark ?? latest
-    if (livePoint) {
-      const liveBarTime = this.barTimeForTimestamp(resolution, livePoint.timestamp)
-      if (bars.some((bar) => bar.time === liveBarTime)) {
-        this.liveVolumeRefreshedAt.set(resolution, Date.now())
-      }
-    }
-
-    const lastBar = bars.at(-1)
-    const previousLastBar = this.lastBars.get(resolution)
-    if (lastBar && (!previousLastBar || lastBar.time >= previousLastBar.time)) {
-      this.lastBars.set(resolution, lastBar)
-    }
-    return bars
   }
 
   private async loadCandleBars(
@@ -1289,29 +996,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
     subscription.polling = true
     try {
-      if (this.useCandleApi) {
-        await this.pollCurrentCandle(listenerGuid, subscription)
-        return
-      }
-
-      const latest = await this.runRequest(
-        (signal) => this.dataSource.getLatest(signal),
-        subscription
-      )
-      const current = this.subscriptions.get(listenerGuid)
-      if (!current) return
-      current.failureCount = 0
-      current.nextPollAt = 0
-
-      const livePoint = this.oracleMark ?? latest
-      if (livePoint) {
-        const barTime = this.barTimeForTimestamp(current.resolution, livePoint.timestamp)
-        const cachedVolume = this.volumeSnapshots
-          .get(current.resolution)
-          ?.byTime.get(barTime)
-        this.emitLiveBar(current, livePoint.basketPrice, livePoint.timestamp, cachedVolume)
-        this.queueLiveVolumeRefresh(listenerGuid, current.resolution, barTime)
-      }
+      await this.pollCurrentCandle(listenerGuid, subscription)
     } catch (error) {
       const current = this.subscriptions.get(listenerGuid)
       if (current && !isAbortError(error)) {
@@ -1664,8 +1349,6 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       if (secondsForTradingViewResolution(resolution) !== intervalSeconds) continue
       this.lastBars.delete(resolution)
       this.primedCurrentCandles.delete(resolution)
-      this.volumeSnapshots.delete(resolution)
-      this.liveVolumeRefreshedAt.delete(resolution)
     }
     for (const subscription of this.subscriptions.values()) {
       if (secondsForTradingViewResolution(subscription.resolution) !== intervalSeconds) continue
@@ -1683,109 +1366,6 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     this.candleCoverageBoundaries.delete(intervalSeconds)
     this.candleIntervalsNeedingRevalidation.add(intervalSeconds)
     this.dataSource.clearCandlePageCache?.(intervalSeconds)
-  }
-
-  private emitLiveBar(
-    subscription: Subscription,
-    basketPrice: string,
-    timestamp: number,
-    volume?: number
-  ): void {
-    const previousBar = subscription.currentBar
-    const bar = barFromLivePoint(
-      basketPrice,
-      timestamp,
-      subscription.resolution,
-      previousBar,
-      volume
-    )
-    if (!bar) return
-
-    const intervalMilliseconds = secondsForTradingViewResolution(subscription.resolution) * 1000
-    if (previousBar && bar.time > previousBar.time + intervalMilliseconds) {
-      this.scheduleCacheReset(subscription)
-      setTimeout(() => {
-        if (!this.destroyed) this.onHistoryGap?.()
-      }, 0)
-    }
-
-    subscription.currentBar = bar
-    this.lastBars.set(subscription.resolution, bar)
-    this.scheduleTick(subscription, bar)
-  }
-
-  private rememberVolumeBars(
-    resolution: TradingViewResolution,
-    bars: TradingViewBar[]
-  ): void {
-    const previous = this.volumeSnapshots.get(resolution)
-    const byTime = new Map(previous?.byTime)
-    for (const bar of bars) {
-      if (bar.volume !== undefined) byTime.set(bar.time, bar.volume)
-    }
-    this.volumeSnapshots.set(resolution, { byTime })
-  }
-
-  private barTimeForTimestamp(
-    resolution: TradingViewResolution,
-    timestamp: number
-  ): number {
-    const intervalMilliseconds = secondsForTradingViewResolution(resolution) * 1000
-    return Math.floor((timestamp * 1000) / intervalMilliseconds) * intervalMilliseconds
-  }
-
-  private queueLiveVolumeRefresh(
-    listenerGuid: string,
-    resolution: TradingViewResolution,
-    barTime: number
-  ): void {
-    let refresh = this.volumeRefreshes.get(resolution)
-    if (!refresh) {
-      const refreshedAt = this.liveVolumeRefreshedAt.get(resolution)
-      if (refreshedAt !== undefined && Date.now() - refreshedAt < LIVE_VOLUME_REFRESH_MS) return
-
-      const subscription = this.subscriptions.get(listenerGuid)
-      if (!subscription) return
-      refresh = this.runRequest(
-        (signal) => this.dataSource.getHistory(
-            '24h',
-            secondsForTradingViewResolution(resolution),
-            signal
-          )
-      )
-        .then((history) => {
-          const byTime = new Map<number, number>()
-          for (const bar of basketPointsToTradingViewBars(history.points, resolution)) {
-            byTime.set(bar.time, bar.volume ?? 0)
-          }
-          const snapshot = { byTime }
-          this.volumeSnapshots.set(resolution, snapshot)
-          this.liveVolumeRefreshedAt.set(resolution, Date.now())
-          return snapshot
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          this.volumeRefreshes.delete(resolution)
-        })
-
-      this.volumeRefreshes.set(resolution, refresh)
-    }
-
-    void refresh.then((snapshot) => {
-      if (!snapshot) return
-      const volume = snapshot.byTime.get(barTime)
-      if (volume === undefined) return
-
-      const subscription = this.subscriptions.get(listenerGuid)
-      if (subscription?.resolution !== resolution || subscription.currentBar?.time !== barTime) return
-      const currentBar = subscription.currentBar
-      if (currentBar.volume === volume) return
-
-      const correctedBar = { ...currentBar, volume }
-      subscription.currentBar = correctedBar
-      this.lastBars.set(resolution, correctedBar)
-      this.scheduleTick(subscription, correctedBar)
-    })
   }
 
   private isDocumentVisible(): boolean {

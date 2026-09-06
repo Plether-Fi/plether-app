@@ -99,9 +99,6 @@ jobs:
           VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
           VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
-          # Repository variables are selected explicitly because this job does
-          # not bind to GitHub environments. Each target defaults fail-closed.
-          VITE_PERPS_CANDLE_API_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false') || (vars.VITE_PERPS_CANDLE_API_ENABLED_MAINNET || 'false') }}
         run: npm run build
 
       - name: Validate TradingView runtime payload
@@ -164,18 +161,9 @@ jobs:
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
-          CANDLE_API_ENABLED: ${{ vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false' }}
           SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
           set -euo pipefail
-          case "${CANDLE_API_ENABLED,,}" in
-            true|1) ;;
-            *)
-              echo "Sepolia native candles are disabled; skipping the volume-coverage deployment gate."
-              exit 0
-              ;;
-          esac
-
           test -n "$SEPOLIA_BACKEND_URL"
           node scripts/validate-candle-volume-coverage.mjs \
             --backend-url "$SEPOLIA_BACKEND_URL" \
