@@ -1065,12 +1065,12 @@ volume coverage; a positive price and volume generation; the usable-volume
 generation bit; and the same chain/router as the checked-in Sepolia manifest.
 Each transient request gets at most three attempts with a ten-second timeout.
 
-For the router deployed at block `305627052`, recovery starts at the first
+For the router deployed at block `306119399`, recovery starts at the first
 whole minute after the block timestamp. Never broaden this range to an earlier
 router or fill unknown historical volume with zero:
 
 ```bash
-VOLUME_FROM_UNIX=1788596760
+VOLUME_FROM_UNIX=1788719520
 
 # Read VOLUME_TO_UNIX from the greatest whole-minute timestamp at or below the
 # latest perps_indexer_progress.indexed_through_timestamp whose

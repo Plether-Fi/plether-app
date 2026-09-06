@@ -459,7 +459,7 @@ shouldBeParsedAs parsed predicate =
 mkLog :: ByteString -> [ByteString] -> ByteString -> RpcLog
 mkLog topic indexedTopics eventData =
   RpcLog
-    { rlAddress = "0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B"
+    { rlAddress = "0xbd2f286efca5F761E21452673ab9b8C14e17aad7"
     , rlTopics = topic : indexedTopics
     , rlData = eventData
     , rlTxHash = "0xabc"

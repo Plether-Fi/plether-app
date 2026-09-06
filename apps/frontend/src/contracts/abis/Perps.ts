@@ -1286,7 +1286,7 @@ export const PERPS_HOUSE_POOL_ABI = [
   {
     type: 'function',
     name: 'minTrancheDepositUsdc',
-    stateMutability: 'view',
+    stateMutability: 'pure',
     inputs: [],
     outputs: [{ name: 'minimumAssets', type: 'uint256' }],
   },

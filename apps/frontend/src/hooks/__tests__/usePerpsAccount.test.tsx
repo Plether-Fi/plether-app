@@ -233,7 +233,7 @@ describe('usePerpsAccount', () => {
     expect(mocks.refetchImmutable).not.toHaveBeenCalled()
   })
 
-  it('reads P&L from the v1.2.1 ledger snapshot offsets', () => {
+  it('reads P&L from the v1.2.2 ledger snapshot offsets', () => {
     const snapshot = Array<bigint | boolean>(24).fill(0n)
     snapshot[12] = 400_000_000n // liquidation-reachable settlement
     snapshot[13] = 900_000_000n // separate terminal-price cap

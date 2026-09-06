@@ -27,7 +27,7 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "v1.2.1 Settlement Monitor ABI decoding" $ do
+  describe "v1.2.2 Settlement Monitor ABI decoding" $ do
     it "decodes the exact 109-word SettlementStatus layout" $ do
       let words' =
             setWords

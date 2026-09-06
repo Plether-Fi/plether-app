@@ -50,20 +50,20 @@ const manifest = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xAbEe441b564DC084857468fA244AEE0A444B07DF' as Address,
+  usdc: '0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0x91c85540A1f64C9AEC2C801fcc927F037d619f17' as Address,
+    '0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd' as Address,
   cfdEngine:
-    '0x2CEDc3f0059f0E9C1099bE96974f459E58c428d6' as Address,
+    '0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352' as Address,
   orderRouter:
-    '0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B' as Address,
+    '0xbd2f286efca5F761E21452673ab9b8C14e17aad7' as Address,
   orderLifecycleBook:
-    '0xca57215a3859462eb380ea40969762Ac89D99522' as Address,
+    '0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C' as Address,
   policyEvaluator:
-    '0x611b34a98261D60f0aE8584F4Dd1fF09CF663466' as Address,
+    '0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:

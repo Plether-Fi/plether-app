@@ -132,7 +132,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == "0xca57215a3859462eb380ea40969762ac89d99522"
+        || lower(var.perps_order_lifecycle_book) == "0x616ad381df40047e9b060a1e85085b3ed2cc6d3c"
       )
       error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
     }
@@ -148,14 +148,14 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
       condition = {
         for setting in local.keeper_environment : setting.name => setting.value
       }["PERPS_ORDER_ROUTER"] == var.perps_order_router
-      error_message = "The shared dedicated/consolidated keeper environment must include the v1.2.0 PERPS_ORDER_ROUTER."
+      error_message = "The shared dedicated/consolidated keeper environment must include the configured PERPS_ORDER_ROUTER."
     }
 
     precondition {
       condition = {
         for setting in local.keeper_environment : setting.name => setting.value
       }["PERPS_CFD_ENGINE"] == var.perps_cfd_engine
-      error_message = "The shared dedicated/consolidated keeper environment must include the v1.2.0 PERPS_CFD_ENGINE."
+      error_message = "The shared dedicated/consolidated keeper environment must include the configured PERPS_CFD_ENGINE."
     }
 
     precondition {
@@ -194,8 +194,8 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = lower(var.perps_settlement_monitor_lens) != "0x64b12febc33e056bf607c1dcc764bcdf3a5fe31b"
-      error_message = "The v1.2.0 Settlement Monitor sidecar must never be configured as the keeper facade."
+      condition     = lower(var.perps_settlement_monitor_lens) != "0x81c3a8d145c14f28334314fa67a0da0ba5c50c6b"
+      error_message = "The pinned Settlement Monitor sidecar must never be configured as the keeper facade."
     }
 
     precondition {
