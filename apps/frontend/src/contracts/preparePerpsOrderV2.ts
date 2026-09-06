@@ -449,12 +449,10 @@ export async function reviewPerpsOrderV2(
     await verifyProtectionDeployment(client, manifest, context.blockNumber)
     if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
     validateProtectionParams(input.positionProtection, input.direction, context.lastMarkPrice, context.capPrice)
-    const [enabled, triggerBountyUsdc, position] = await Promise.all([
-      client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionCommitsEnabled', blockNumber: context.blockNumber }),
+    const [triggerBountyUsdc, position] = await Promise.all([
       client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyUsdc', blockNumber: context.blockNumber }),
       client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI, functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber }),
     ])
-    if (!enabled) throw new Error('New TP/SL protections are currently disabled')
     if (position.exists) throw new Error('Protected opens require an account with no position')
     reviewed.preparedOrder.positionProtection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
     reviewed.reviewSummary.requiredFundingUsdc += triggerBountyUsdc + context.closeBounty

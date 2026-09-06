@@ -65,7 +65,6 @@ describe('preparePerpsOrderV2 leverage margin', () => {
   })
 
   it('reviews both protection rewards separately and simulates the exact atomic protected open', async () => {
-    let enabled = true
     let exists = false
     let available = 10_000_000_000n
     const params = { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n }
@@ -73,7 +72,6 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     const simulateContract = vi.fn(async () => ({ request: {} }))
     const values: Record<string, unknown> = { maxOrderAge: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n, maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyUsdc: 200_000n }
     const client = { getBlock: vi.fn(async () => block), simulateContract, readContract: vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
-      if (functionName === 'positionProtectionCommitsEnabled') return enabled
       if (functionName === 'getPosition') return { exists }
       if (functionName === 'getFreeBuyingPowerUsdc') return available
       if (functionName === 'assessOrder') return assessment(args?.[3] as bigint, (args?.[1] as { marginDelta: bigint }).marginDelta)
@@ -89,9 +87,6 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     available = protectedReview.reviewSummary.requiredFundingUsdc - 1n
     await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallUsdc: 1n })
     available = 10_000_000_000n
-    enabled = false
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('currently disabled')
-    enabled = true
     exists = true
     await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('no position')
     expect(simulateContract).toHaveBeenCalledTimes(1)

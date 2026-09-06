@@ -133,7 +133,6 @@ describe('TradingViewAdvancedChart', () => {
   })
 
   it('shows volume degradation only for the active interval and clears it after recovery', async () => {
-    vi.stubEnv('VITE_PERPS_CANDLE_API_ENABLED', 'true')
     const fakeTradingView = installReadyFakeTradingView()
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -314,8 +313,8 @@ describe('TradingViewAdvancedChart', () => {
     expect(widgetOptions?.disabled_features).not.toContain('timeframes_toolbar')
     expect(widgetOptions?.disabled_features).toContain('display_market_status')
     expect(widgetOptions?.disabled_features).toContain('volume_force_overlay')
-    expect(widgetOptions?.disabled_features).not.toContain('create_volume_indicator_by_default')
-    expect(widgetOptions?.custom_indicators_getter).toBeUndefined()
+    expect(widgetOptions?.disabled_features).toContain('create_volume_indicator_by_default')
+    expect(widgetOptions?.custom_indicators_getter).toBeTypeOf('function')
     expect(widgetOptions?.studies_overrides['volume.volume.color.0']).toBe('#FFAB96')
     expect(widgetOptions?.studies_overrides['volume.volume.color.1']).toBe('#FFAB96')
     expect(widgetOptions?.timeframe).toBe('5D')
@@ -541,7 +540,6 @@ describe('TradingViewAdvancedChart', () => {
   })
 
   it('shows an explicit unavailable state when the licensed runtime cannot load', async () => {
-    vi.stubEnv('VITE_PERPS_CANDLE_API_ENABLED', 'true')
     vi.stubEnv('VITE_TRADINGVIEW_LIBRARY_PATH', '/missing-charting-library/')
     const append = vi.spyOn(document.head, 'append').mockImplementation(() => {})
 

@@ -1,0 +1,54 @@
+{
+  "sourceCommit": "d704122c779d4d681d0fa2be517707b7f7df3902",
+  "bundleSha256": "685a309a2a0296a0ecef99a6efc77ba85d86de7132f3ee992c3cac46efa50b7a",
+  "bindings": {
+    "PERPS_PUBLIC_LENS_ABI": {
+      "entries": 15,
+      "layoutSha256": "cc6f28af5e139d1140bd3aecf287bf1e437968d2e84757bae397966c1a1b5023"
+    },
+    "PERPS_MARGIN_CLEARINGHOUSE_ABI": {
+      "entries": 6,
+      "layoutSha256": "f11048dd667be6e5d5c64dc2c513856ee1fa9134acdc61706cfe0e32670c4ead"
+    },
+    "PERPS_ORDER_ROUTER_ABI": {
+      "entries": 25,
+      "layoutSha256": "6475fa325ed6b9138540c9b3eda7b4f29bd161bd2d153c6b770a97be9944b72b"
+    },
+    "PERPS_ORDER_LIFECYCLE_BOOK_ABI": {
+      "entries": 16,
+      "layoutSha256": "e74a6097c67840faca42a398ba931db456b77c75a8490e201f3af1170d257634"
+    },
+    "PERPS_ORDER_POLICY_EVALUATOR_ABI": {
+      "entries": 3,
+      "layoutSha256": "a865b4f77ab3ca609e75e9109c5aff9239e0ac0efb5770e336e552567e1e07f0"
+    },
+    "PERPS_POSITION_PROTECTION_BOOK_ABI": {
+      "entries": 103,
+      "layoutSha256": "196daad4058634efe9351a9c4b8a08d7a0e78adff4df01481bf28db17b84879e"
+    },
+    "PERPS_CFD_ENGINE_ABI": {
+      "entries": 15,
+      "layoutSha256": "71819dca526204a8b875c114ff7dec7146f85983b27826c47289b348083d9b74"
+    },
+    "PERPS_HOUSE_POOL_ABI": {
+      "entries": 10,
+      "layoutSha256": "ca8b101bc2e7dc2a8a93c36b656c65919673fbe6bb6a55bebc78657e0da7a7d5"
+    },
+    "PERPS_PLETHER_ORACLE_ABI": {
+      "entries": 7,
+      "layoutSha256": "f19e42cc5c08aa52ea26de6b9be72bd325b541b9eedc2705b9395792a8e402a5"
+    },
+    "PERPS_CFD_ENGINE_LENS_ABI": {
+      "entries": 5,
+      "layoutSha256": "c5b40eca19b3cc793a1d96472cc0fa458bb5ece40c63a991c772b5d6baa8559e"
+    },
+    "PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI": {
+      "entries": 4,
+      "layoutSha256": "d57d30d2d8243940d4cfe17bec737a1eeb95c8ec79f6433fc2c61c36e95f0df1"
+    },
+    "TRANCHE_VAULT_READ_ABI": {
+      "entries": 23,
+      "layoutSha256": "e715d0eba9a1b538a8d25f38aa594db4a0f18b1d619eb19079d24845c7dd90c6"
+    }
+  }
+}

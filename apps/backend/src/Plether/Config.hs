@@ -811,7 +811,7 @@ loadConfig = do
               []
                 | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
                     == (T.toLower Manifest.settlementMonitorLensSidecarAddress) ->
-                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.1 monitor sidecar"
+                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.2 monitor sidecar"
                 | active
                 , invalid : _ <-
                     [ name

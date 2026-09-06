@@ -3,14 +3,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys, type PerpsCandleIntervalSeconds } from '../api'
 import { Alert } from '../components/ui'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
-import type { OracleMarkPoint } from '../utils/dxyBasketChart'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import {
   PLDXY_TRADINGVIEW_SYMBOL,
   PletherDxyDatafeed,
   TRADINGVIEW_FAVORITE_RESOLUTIONS,
   chartIntervalForTradingViewResolution,
-  isPerpsCandleApiEnabled,
   secondsForTradingViewResolution,
   tradingViewResolutionForInterval,
   type PletherVolumeCoverageState,
@@ -212,7 +210,6 @@ function loadTradingViewLibrary(libraryPath: string): Promise<TradingViewNamespa
 
 export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
-  oracleMark?: OracleMarkPoint
   liquidationPrice?: number
   takeProfitPrice?: number
   stopLossPrice?: number
@@ -223,7 +220,6 @@ export interface TradingViewAdvancedChartProps {
 
 export function TradingViewAdvancedChart({
   interval,
-  oracleMark,
   liquidationPrice,
   takeProfitPrice,
   stopLossPrice,
@@ -232,10 +228,8 @@ export function TradingViewAdvancedChart({
   onIntervalChange,
 }: TradingViewAdvancedChartProps) {
   const queryClient = useQueryClient()
-  const useCandleApi = isPerpsCandleApiEnabled()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetRef = useRef<TradingViewWidget | null>(null)
-  const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
   const marketStatusAdapterRef = useRef<TradingViewCustomSymbolStatusAdapter | null>(null)
   const liquidationLineRef = useRef<TradingViewEntityId | null>(null)
   const liquidationLineRevisionRef = useRef(0)
@@ -245,7 +239,6 @@ export function TradingViewAdvancedChart({
   })
   const intervalRef = useRef(interval)
   const readyRef = useRef(false)
-  const oracleMarkRef = useRef(oracleMark)
   const liquidationPriceRef = useRef(liquidationPrice)
   const protectionPricesRef = useRef({ takeProfitPrice, stopLossPrice })
   const protectionLinesRef = useRef<TradingViewEntityId[]>([])
@@ -321,10 +314,6 @@ export function TradingViewAdvancedChart({
   }, [onIntervalChange])
 
   useEffect(() => {
-    oracleMarkRef.current = oracleMark
-  }, [oracleMark])
-
-  useEffect(() => {
     liquidationPriceRef.current = liquidationPrice
     const widget = widgetRef.current
     if (!widget || !readyRef.current) return
@@ -352,15 +341,11 @@ export function TradingViewAdvancedChart({
     const libraryPath = normalizeLibraryPath()
     const datafeed = new PletherDxyDatafeed({
       queryClient,
-      oracleMark: oracleMarkRef.current,
-      useCandleApi,
       onHistoryGap: (intervalSeconds) => {
         const candleQueryKey = apiQueryKeys.perps.basketCandlesAll()
         void queryClient.invalidateQueries({
-          queryKey: useCandleApi
-            ? candleQueryKey
-            : apiQueryKeys.perps.basketHistoryAll(),
-          predicate: useCandleApi && intervalSeconds !== undefined
+          queryKey: candleQueryKey,
+          predicate: intervalSeconds !== undefined
             ? (query) => {
                 const suffix = query.queryKey.slice(candleQueryKey.length)
                 return suffix[0] === intervalSeconds || (
@@ -381,7 +366,6 @@ export function TradingViewAdvancedChart({
         ))
       },
     })
-    datafeedRef.current = datafeed
 
     void loadTradingViewLibrary(libraryPath)
       .then((tradingView) => {
@@ -410,7 +394,7 @@ export function TradingViewAdvancedChart({
             'header_quick_search',
             'display_market_status',
             'volume_force_overlay',
-            ...(useCandleApi ? ['create_volume_indicator_by_default'] : []),
+            'create_volume_indicator_by_default',
           ],
           enabled_features: [
             'determine_first_data_request_size_using_visible_range',
@@ -431,9 +415,7 @@ export function TradingViewAdvancedChart({
           overrides: { ...CHART_STYLE_OVERRIDES },
           settings_overrides: { ...CHART_STYLE_OVERRIDES },
           studies_overrides: { ...VOLUME_STUDY_OVERRIDES },
-          ...(useCandleApi
-            ? { custom_indicators_getter: getPletherCustomIndicators }
-            : {}),
+          custom_indicators_getter: getPletherCustomIndicators,
         })
         widgetRef.current = widget
         void Promise.all([widget.chartReady(), widget.headerReady()])
@@ -441,24 +423,22 @@ export function TradingViewAdvancedChart({
             if (cancelled) return
 
             const chart = widget.activeChart()
-            if (useCandleApi) {
-              void chart.createStudy(
-                PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
-                false,
-                true
-              ).then((studyId) => {
-                if (cancelled || studyId === null) return
-                const panes = chart.getPanes()
-                const volumePane = panes.find((pane) => !pane.hasMainSeries())
-                if (!volumePane) return
-                const totalPaneHeight = panes.reduce((height, pane) => height + pane.getHeight(), 0)
-                volumePane.setHeight(
-                  Math.round(totalPaneHeight * DIRECTIONAL_VOLUME_PANE_HEIGHT_SHARE)
-                )
-              }).catch(() => {
-                // Price remains useful if the optional direction pane cannot initialize.
-              })
-            }
+            void chart.createStudy(
+              PLETHER_DIRECTIONAL_VOLUME_STUDY_NAME,
+              false,
+              true
+            ).then((studyId) => {
+              if (cancelled || studyId === null) return
+              const panes = chart.getPanes()
+              const volumePane = panes.find((pane) => !pane.hasMainSeries())
+              if (!volumePane) return
+              const totalPaneHeight = panes.reduce((height, pane) => height + pane.getHeight(), 0)
+              volumePane.setHeight(
+                Math.round(totalPaneHeight * DIRECTIONAL_VOLUME_PANE_HEIGHT_SHARE)
+              )
+            }).catch(() => {
+              // Price remains useful if the optional direction pane cannot initialize.
+            })
             lastStableVisibleRange = chart.getVisibleRange()
             visibleRangeSubscription = chart.onVisibleRangeChanged()
             handleVisibleRangeChange = (range) => {
@@ -540,13 +520,8 @@ export function TradingViewAdvancedChart({
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeed.destroy()
-      if (datafeedRef.current === datafeed) datafeedRef.current = null
     }
-  }, [queryClient, syncLiquidationLine, syncProtectionLines, useCandleApi])
-
-  useEffect(() => {
-    datafeedRef.current?.setOracleMark(oracleMark)
-  }, [oracleMark])
+  }, [queryClient, syncLiquidationLine, syncProtectionLines])
 
   useEffect(() => {
     intervalRef.current = interval
@@ -561,7 +536,7 @@ export function TradingViewAdvancedChart({
   const activeCandleInterval = secondsForTradingViewResolution(
     tradingViewResolutionForInterval(interval)
   ) as PerpsCandleIntervalSeconds
-  const volumeUnavailable = useCandleApi &&
+  const volumeUnavailable =
     volumeCoverageByInterval[activeCandleInterval] === 'unavailable'
 
   return (

@@ -1,20 +1,21 @@
 # Arbitrum Sepolia perps release
 
-`arbitrum-sepolia-v2.json` pins plether-core v1.2.1 (the filename describes the
+`arbitrum-sepolia-v2.json` pins plether-core v1.2.2 (the filename describes the
 bounded V2 order intent protocol). It includes all 26 contract addresses and
 runtime hashes, immutable source provenance, and the release's bootstrap state.
-The frontend and backend target this stack; indexers start at block 305627052.
-The first full volume-history minute is 1788596760, derived from that block's
-onchain timestamp (1788596732).
+The frontend and backend target this stack; indexers start at block 306119399.
+The first full volume-history minute is 1788719520, derived from that block's
+onchain timestamp (1788719508).
 
-Source: https://github.com/Plether-Fi/plether-core/releases/tag/v1.2.1
+Source: https://github.com/Plether-Fi/plether-core/releases/tag/v1.2.2
 
 The published release is deployed but unseeded and trading inactive. Before
 shipping this configuration to live consumers, complete and verify bootstrap
 and activation using the tagged core deployment runbook. The competition has
 not started and is pinned exclusively to this deployment. Never combine multiple
 deployments within one competition; this deployment has no live-state migration.
-Protection creation remains disabled pending its separate readiness process.
+Position protection has no separate activation switch; normal pause, position,
+margin, and oracle checks still apply.
 This repository update does not deploy services or activate contracts.
 
 Order intents remain `PletherOrderIntentV2`; receipts and execution configuration

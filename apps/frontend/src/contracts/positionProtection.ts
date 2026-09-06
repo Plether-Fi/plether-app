@@ -8,7 +8,6 @@ export const EMPTY_PROTECTION_DRAFT: ProtectionDraft = { mode: 'price', takeProf
 export const PROTECTION_STATUS = ['None', 'PendingOpen', 'Armed', 'Triggered', 'Executed', 'Failed', 'Cancelled', 'Liquidated', 'Latched'] as const
 export const PROTECTION_LEG = ['None', 'TakeProfit', 'StopLoss'] as const
 export const PROTECTION_CONFIG_ABI = parseAbi([
-  'function positionProtectionCommitsEnabled() view returns (bool)',
   'function positionProtectionTriggerBountyUsdc() view returns (uint256)',
   'function closeOrderExecutionBountyUsdc() view returns (uint256)',
 ])

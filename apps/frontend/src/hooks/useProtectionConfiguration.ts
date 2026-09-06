@@ -5,10 +5,12 @@ import { PROTECTION_CONFIG_ABI, PROTECTION_RELEASE_ENABLED } from '../contracts/
 export interface ProtectionConfiguration { enabled: boolean; triggerBountyUsdc?: bigint; executionBountyUsdc?: bigint }
 export function useProtectionConfiguration(): ProtectionConfiguration {
   const { data } = useReadContracts({
-    contracts: (['positionProtectionCommitsEnabled', 'positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'] as const).map(functionName => ({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, address: PERPS_ARBITRUM_SEPOLIA.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName } as const)),
+    contracts: (['positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'] as const).map(functionName => ({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, address: PERPS_ARBITRUM_SEPOLIA.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName } as const)),
     query: { enabled: PROTECTION_RELEASE_ENABLED, refetchInterval: 15_000 },
   })
-  const triggerBountyUsdc = data?.[1]?.result as bigint | undefined
-  const executionBountyUsdc = data?.[2]?.result as bigint | undefined
-  return { enabled: PROTECTION_RELEASE_ENABLED && data?.[0]?.result === true && typeof triggerBountyUsdc === 'bigint' && typeof executionBountyUsdc === 'bigint', triggerBountyUsdc, executionBountyUsdc }
+  const triggerBountyUsdc = data?.[0]?.result
+  const executionBountyUsdc = data?.[1]?.result
+  // v1.2.2 removed the on-chain commits flag. Wait for both live reserves;
+  // the frontend release flag still controls whether this UI is exposed.
+  return { enabled: PROTECTION_RELEASE_ENABLED && typeof triggerBountyUsdc === 'bigint' && typeof executionBountyUsdc === 'bigint', triggerBountyUsdc, executionBountyUsdc }
 }

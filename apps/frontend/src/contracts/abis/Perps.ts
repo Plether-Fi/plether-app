@@ -1030,7 +1030,13 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-export { positionProtectionBookAbi as PERPS_POSITION_PROTECTION_BOOK_ABI } from '@plether/perps-aa-client'
+import { positionProtectionBookAbi } from '@plether/perps-aa-client'
+
+// v1.2.2 removed this unused v1.2.1 error; the remaining wire layouts match
+// the checksum-verified release bundle, including all TP/SL actions and events.
+export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filter(
+  entry => !(entry.type === 'error' && entry.name === 'OrderRouter__ProtectionDisabled')
+)
 
 export const PERPS_CFD_ENGINE_ABI = [
   {
@@ -1271,7 +1277,7 @@ export const PERPS_HOUSE_POOL_ABI = [
   {
     type: 'function',
     name: 'minTrancheDepositUsdc',
-    stateMutability: 'view',
+    stateMutability: 'pure',
     inputs: [],
     outputs: [{ name: 'minimumAssets', type: 'uint256' }],
   },

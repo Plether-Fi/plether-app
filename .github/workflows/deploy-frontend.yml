@@ -100,9 +100,6 @@ jobs:
           VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
           VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
-          # Repository variables are selected explicitly because this job does
-          # not bind to GitHub environments. Each target defaults fail-closed.
-          VITE_PERPS_CANDLE_API_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false') || (vars.VITE_PERPS_CANDLE_API_ENABLED_MAINNET || 'false') }}
         run: npm run build
 
       - name: Validate TradingView runtime payload
@@ -128,13 +125,13 @@ jobs:
         run: |
           test -s dist/perps-aa-manifest.json
           jq -e '
-            .version == "perps-aa-arbitrum-sepolia-20260905-v2" and
+            .version == "perps-aa-arbitrum-sepolia-20260906-v2" and
             .chainId == 421614 and
             .entryPointVersion == "0.8" and
             .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
-            .orderRouter == "0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B" and
-            .orderLifecycleBook == "0xca57215a3859462eb380ea40969762Ac89D99522" and
-            .policyEvaluator == "0x611b34a98261D60f0aE8584F4Dd1fF09CF663466" and
+            .orderRouter == "0xbd2f286efca5F761E21452673ab9b8C14e17aad7" and
+            .orderLifecycleBook == "0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C" and
+            .policyEvaluator == "0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB" and
             .sponsorshipEnabled == true
           ' dist/perps-aa-manifest.json >/dev/null
 
@@ -146,16 +143,16 @@ jobs:
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and
-              .deploymentBlock == 305627052 and
+              .deploymentBlock == 306119399 and
               .usdc == $manifest[0].usdc and
               .orderRouter == $manifest[0].orderRouter and
               .orderLifecycleBook == $manifest[0].orderLifecycleBook and
               .cfdEngine == $manifest[0].cfdEngine and
               .marginClearinghouse == $manifest[0].marginClearinghouse and
-              .housePool == "0x7b8b851cb3783611bcDA4CF2F7D5A2F8C6106F98" and
+              .housePool == "0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918" and
               .policyEvaluator == $manifest[0].policyEvaluator and
-              .positionProtectionBook == "0x63973Eb0B5a862dfc95348D4d575FC55C9546F04" and
-              .perpsPublicLens == "0x269db12a9A275F40b2d3826fDea7eadee8b7CBe9" and
+              .positionProtectionBook == "0x35f495fFDbB4d6ae395691D4632629f67603C926" and
+              .perpsPublicLens == "0x53B1B00748E7D1A87dc30433e87c331CeDe30149" and
               .calldataPolicy == "bounded-v2" and
               .bindingsVerified == true and
               .sponsorshipEnabled == true
@@ -165,18 +162,9 @@ jobs:
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
-          CANDLE_API_ENABLED: ${{ vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false' }}
           SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
         run: |
           set -euo pipefail
-          case "${CANDLE_API_ENABLED,,}" in
-            true|1) ;;
-            *)
-              echo "Sepolia native candles are disabled; skipping the volume-coverage deployment gate."
-              exit 0
-              ;;
-          esac
-
           test -n "$SEPOLIA_BACKEND_URL"
           node scripts/validate-candle-volume-coverage.mjs \
             --backend-url "$SEPOLIA_BACKEND_URL" \
