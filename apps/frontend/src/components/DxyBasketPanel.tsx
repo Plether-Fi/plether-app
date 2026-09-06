@@ -12,6 +12,8 @@ export interface DxyBasketPanelProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
   liquidationPriceRaw?: bigint
+  takeProfitPriceRaw?: bigint
+  stopLossPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
 }
@@ -20,6 +22,8 @@ export function DxyBasketPanel({
   oraclePriceRaw,
   oraclePublishTime,
   liquidationPriceRaw,
+  takeProfitPriceRaw,
+  stopLossPriceRaw,
   marketPhase,
   marketCurrentDuration,
 }: DxyBasketPanelProps) {
@@ -45,6 +49,8 @@ export function DxyBasketPanel({
       interval={chartInterval}
       oracleMark={oracleMark}
       liquidationPrice={liquidationPrice}
+      takeProfitPrice={takeProfitPriceRaw ? Number(oraclePriceToDisplayDxyPrice(takeProfitPriceRaw)) / 1e8 : undefined}
+      stopLossPrice={stopLossPriceRaw ? Number(oraclePriceToDisplayDxyPrice(stopLossPriceRaw)) / 1e8 : undefined}
       marketPhase={marketPhase}
       marketCurrentDuration={marketCurrentDuration}
       onIntervalChange={setChartInterval}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { zeroAddress } from 'viem'
+import { parsePositionProtection } from '../contracts/positionProtection'
 import { useReadContracts } from 'wagmi'
 import {
   ERC20_ABI,
@@ -626,6 +627,8 @@ export function usePerpsAccount(markPrice?: bigint) {
       maxOrderAge,
       activePositionProtectionId:
         readBigInt(activeProtection, 0, 'protectionId') ?? 0n,
+      activePositionProtection: parsePositionProtection(activeProtection),
+      capPrice,
       activePositionProtectionStatus:
         Number(tupleValue(activeProtection, 15, 'status') ?? 0),
       firstPendingOrderId,

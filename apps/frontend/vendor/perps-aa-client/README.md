@@ -79,3 +79,14 @@ Committed delayed orders are binding in the current perps protocol; there is no 
 ## UI errors and fallback
 
 Use `mapPerpsExecutionError` to turn nested wallet, bundler, paymaster, and contract failures into stable codes and user-safe messages. Do not silently fall back to an EOA transaction: it would create protocol state under a different `msg.sender` and split the user's account. If sponsorship is unavailable, show a retry/support state unless the product has explicitly implemented and disclosed user-paid smart-account gas.
+# Position protection (perps v1.2.1)
+
+`buildProtectedOpenAction`, `buildCreateProtectionAction`,
+`buildReplaceProtectionAction`, and `buildCancelProtectionAction` encode
+account-owned calls to the deployed PositionProtectionBook. Prices are raw
+basket prices with 8 decimals; zero disables one leg. Bounties are reserved
+from USDC collateral, so all four actions send zero ETH. Protected opens must
+use fresh bounded V2 requests and cannot be replayed after an ambiguous result;
+reconcile the exact UserOperation and Book events before another submission.
+`positionProtectionBookAbi` is generated from source commit
+`c3f60f58bcd5dc1b85a28739a5de7ec4a2ee114c` with Solidity 0.8.35.

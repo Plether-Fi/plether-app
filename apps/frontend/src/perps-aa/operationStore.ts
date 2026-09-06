@@ -3,6 +3,7 @@ import type {
   SponsoredExecutionStatus,
 } from '@plether/perps-aa-client'
 import type { Address, Hex } from 'viem'
+import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { create } from 'zustand'
 import {
   devtools,
@@ -45,6 +46,7 @@ export interface SponsoredOperation {
   action: PerpsActionKind
   /** Immutable bounded-order intent, journaled before UserOperation signing. */
   orderRequestV2?: PersistedPerpsOrderRequestV2
+  protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
   /** EIP-3009 nonce paired with authorizationToken for owned cleanup. */
   authorizationNonce?: Hex
@@ -109,6 +111,7 @@ interface BeginSponsoredOperationInput {
   manifestVersion: string
   action: PerpsActionKind
   orderRequestV2?: PersistedPerpsOrderRequestV2
+  protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
   authorizationNonce?: Hex
   lane?: string
@@ -690,6 +693,7 @@ function mergeOperationRecord(
       preferred.signedUserOperation ?? other.signedUserOperation,
     orderRequestV2:
       preferred.orderRequestV2 ?? other.orderRequestV2,
+    protectionIntent: preferred.protectionIntent ?? other.protectionIntent,
     submissionMetadataVersion:
       preferred.submissionMetadataVersion ??
       other.submissionMetadataVersion,
@@ -1445,10 +1449,10 @@ function mergeExactOperationJournals(
       preSignJournal.userOperationHash === undefined
     ) {
       if (
-        operation.orderRequestV2 === undefined ||
-        preSignJournal.orderRequestV2 === undefined ||
+        (operation.orderRequestV2 === undefined && operation.protectionIntent === undefined) ||
         JSON.stringify(operation.orderRequestV2) !==
           JSON.stringify(preSignJournal.orderRequestV2) ||
+        JSON.stringify(operation.protectionIntent) !== JSON.stringify(preSignJournal.protectionIntent) ||
         !operationMatchesLane(preSignJournal, operation)
       ) {
         throw new Error(
@@ -1710,7 +1714,7 @@ function writeExactOperationJournal(
   if (
     operation.userOperationHash === undefined &&
     existing === undefined &&
-    operation.orderRequestV2 === undefined
+    operation.orderRequestV2 === undefined && operation.protectionIntent === undefined
   ) {
     return undefined
   }
@@ -3364,6 +3368,14 @@ export function hasDurableSponsoredOperationOrderIntent(
   } catch {
     return false
   }
+}
+
+export function hasDurableSponsoredProtectionIntent(operationId: string, expected: PersistedProtectionIntent): boolean {
+  try {
+    const operation = useSponsoredOperationStore.getState().operations.find(candidate => candidate.id === operationId)
+    const journal = readExactOperationJournal(operationId)
+    return JSON.stringify(operation?.protectionIntent) === JSON.stringify(expected) && JSON.stringify(journal?.protectionIntent) === JSON.stringify(expected)
+  } catch { return false }
 }
 
 export function cancelSponsoredOperationRequest(operationId: string): void {

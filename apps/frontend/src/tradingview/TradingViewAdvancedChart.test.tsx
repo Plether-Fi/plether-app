@@ -113,6 +113,25 @@ function installReadyFakeTradingView() {
 }
 
 describe('TradingViewAdvancedChart', () => {
+  it('draws read-only TP/SL lines and removes them when protection is cleared', async () => {
+    const { chart } = installReadyFakeTradingView()
+    vi.mocked(chart.createShape).mockImplementation(async (_point, options) => options.text === 'Take profit' ? 'tp-line' : 'sl-line')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const content = (enabled: boolean) => <QueryClientProvider client={queryClient}><TradingViewAdvancedChart interval="1m" takeProfitPrice={enabled ? 1.1 : undefined} stopLossPrice={enabled ? 0.9 : undefined} /></QueryClientProvider>
+    const view = render(content(true))
+    await waitFor(() => {
+      expect(chart.createShape).toHaveBeenCalledWith({ price: 1.1 }, expect.objectContaining({ text: 'Take profit', lock: true, disableSelection: true }))
+      expect(chart.createShape).toHaveBeenCalledWith({ price: 0.9 }, expect.objectContaining({ text: 'Stop loss', lock: true, disableSelection: true }))
+    })
+    view.rerender(content(false))
+    await waitFor(() => {
+      expect(chart.removeEntity).toHaveBeenCalledWith('tp-line')
+      expect(chart.removeEntity).toHaveBeenCalledWith('sl-line')
+    })
+    view.unmount()
+    queryClient.clear()
+  })
+
   it('shows volume degradation only for the active interval and clears it after recovery', async () => {
     vi.stubEnv('VITE_PERPS_CANDLE_API_ENABLED', 'true')
     const fakeTradingView = installReadyFakeTradingView()

@@ -1,4 +1,5 @@
 import { getAddress, isAddress, type Address } from 'viem'
+import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
 
 export const PERPS_AA_MANIFEST_V2_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v2$/
@@ -30,6 +31,7 @@ export interface PerpsAaDeploymentManifest {
   cfdEngine: Address
   orderRouter: Address
   orderLifecycleBook: Address
+  positionProtectionBook: Address
   policyEvaluator: Address
   userOperationExplorerUrlTemplate: string
   transactionExplorerUrlTemplate: string
@@ -55,6 +57,7 @@ const MANIFEST_V2_KEYS = [
   'cfdEngine',
   'orderRouter',
   'orderLifecycleBook',
+  'positionProtectionBook',
   'policyEvaluator',
   'userOperationExplorerUrlTemplate',
   'transactionExplorerUrlTemplate',
@@ -361,6 +364,7 @@ export function parsePerpsAaManifest(
     ),
     cfdEngine: parseAddress(value.cfdEngine, 'cfdEngine'),
     orderRouter: parseAddress(value.orderRouter, 'orderRouter'),
+    positionProtectionBook: parsePinnedAddress(value.positionProtectionBook, 'positionProtectionBook', PERPS_ARBITRUM_SEPOLIA.positionProtectionBook),
     orderLifecycleBook: parseAddress(
       value.orderLifecycleBook,
       'orderLifecycleBook'

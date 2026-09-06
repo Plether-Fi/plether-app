@@ -390,6 +390,21 @@ describe('executeSponsoredPerpsAction', () => {
     expect(signUserOperation).toHaveBeenCalledOnce()
   })
 
+  it('durably journals a protection-only intent before requesting a signature', async () => {
+    const protectionIntent = { version: 1 as const, book: TARGET, protectionId: '7', takeProfitTriggerPrice: '90000000', stopLossTriggerPrice: '110000000' }
+    const signUserOperation = vi.fn(async (value: ManagedUserOperation) => {
+      const pendingOperation = useSponsoredOperationStore.getState().operations[0]!
+      expect(pendingOperation).toMatchObject({ status: 'awaiting-signature', protectionIntent })
+      expect(JSON.parse(globalThis.localStorage.getItem(`${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`)!)).toMatchObject({
+        operation: { id: pendingOperation.id, protectionIntent, status: 'awaiting-signature' },
+      })
+      expect(pendingOperation.orderRequestV2).toBeUndefined()
+      return value
+    })
+    await executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action: { ...action, kind: 'replace-protection' }, runtime: runtime({ signUserOperation }), protectionIntent })
+    expect(signUserOperation).toHaveBeenCalledOnce()
+  })
+
   it('does not pre-sign journal a generic hashless operation', async () => {
     const signUserOperation = vi.fn(async (value: ManagedUserOperation) => {
       const pendingOperation =

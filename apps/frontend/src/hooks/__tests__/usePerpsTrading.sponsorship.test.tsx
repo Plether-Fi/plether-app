@@ -49,6 +49,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     cfdEngine: '0x2CEDc3f0059f0E9C1099bE96974f459E58c428d6',
     orderRouter: '0x2b9790AD11cE5fB1B91aC3415B08cD1Ec7D0cE0B',
     orderLifecycleBook: '0xca57215a3859462eb380ea40969762Ac89D99522',
+    positionProtectionBook: '0x63973Eb0B5a862dfc95348D4d575FC55C9546F04',
     policyEvaluator: '0x611b34a98261D60f0aE8584F4Dd1fF09CF663466',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',

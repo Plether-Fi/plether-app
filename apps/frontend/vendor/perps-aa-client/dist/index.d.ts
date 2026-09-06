@@ -6,4 +6,6 @@ export * from "./errors.js";
 export * from "./orchestrator.js";
 export * from "./paymaster.js";
 export * from "./types.js";
+export * from "./protection.js";
+export * from "./protectionAbi.js";
 //# sourceMappingURL=index.d.ts.map

@@ -358,6 +358,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "AA_SPONSORSHIP_ENABLED", value = tostring(var.enable_aa_sponsorship) },
+      { name = "AA_SPONSOR_PROTECTION_COMMITS_ENABLED", value = tostring(var.aa_protection_commits_enabled) },
       { name = "AA_IP_RATE_LIMIT_PER_MINUTE", value = var.aa_ip_rate_limit_per_minute },
       { name = "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", value = var.aa_account_rate_limit_per_minute },
       { name = "AA_MAX_REQUEST_BYTES", value = var.aa_max_request_bytes },

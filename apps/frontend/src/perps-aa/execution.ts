@@ -31,6 +31,7 @@ import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
   hasDurableSponsoredOperationOrderIntent,
+  hasDurableSponsoredProtectionIntent,
   hasDurableSponsoredOperationSubmission,
   restoreSponsoredOperationLane,
   type SponsoredOperationInclusionObservation,
@@ -41,6 +42,7 @@ import type {
   PerpsAaSmartAccountRuntime,
 } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 
 export interface ExecuteSponsoredPerpsActionInput {
   manifest: PerpsAaDeploymentManifest
@@ -50,6 +52,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   authorizationTokenToClearOnConfirmation?: Address
   authorizationNonceToClearOnConfirmation?: Hex
   orderRequestV2?: PersistedPerpsOrderRequestV2
+  protectionIntent?: PersistedProtectionIntent
   lane?: string
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
@@ -373,6 +376,7 @@ export async function executeSponsoredPerpsAction(
       authorizationToken: input.authorizationTokenToClearOnConfirmation,
       authorizationNonce: input.authorizationNonceToClearOnConfirmation,
       orderRequestV2: input.orderRequestV2,
+      protectionIntent: input.protectionIntent,
       lane,
       walletFamily: input.runtime.walletFamily,
       walletVersion: input.runtime.walletVersion,
@@ -423,6 +427,9 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    if (input.protectionIntent && !hasDurableSponsoredProtectionIntent(activeTracker.id, input.protectionIntent)) {
+      throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The immutable protection intent could not be journaled before signing' })
+    }
     activeTracker.signal.throwIfAborted()
     status('awaiting-signature')
     const signedOperation =

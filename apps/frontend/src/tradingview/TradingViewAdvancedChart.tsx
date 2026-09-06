@@ -214,6 +214,8 @@ export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
   oracleMark?: OracleMarkPoint
   liquidationPrice?: number
+  takeProfitPrice?: number
+  stopLossPrice?: number
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
   onIntervalChange?: (interval: DxyBasketChartInterval) => void
@@ -223,6 +225,8 @@ export function TradingViewAdvancedChart({
   interval,
   oracleMark,
   liquidationPrice,
+  takeProfitPrice,
+  stopLossPrice,
   marketPhase = 'open',
   marketCurrentDuration,
   onIntervalChange,
@@ -243,6 +247,9 @@ export function TradingViewAdvancedChart({
   const readyRef = useRef(false)
   const oracleMarkRef = useRef(oracleMark)
   const liquidationPriceRef = useRef(liquidationPrice)
+  const protectionPricesRef = useRef({ takeProfitPrice, stopLossPrice })
+  const protectionLinesRef = useRef<TradingViewEntityId[]>([])
+  const protectionRevisionRef = useRef(0)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
   const [volumeCoverageByInterval, setVolumeCoverageByInterval] = useState<
@@ -291,6 +298,23 @@ export function TradingViewAdvancedChart({
       // The account panel still exposes the liquidation price if a chart drawing cannot be created.
     })
   }, [])
+
+  const syncProtectionLines = useCallback((chart: TradingViewChart, prices: { takeProfitPrice?: number; stopLossPrice?: number }) => {
+    const revision = ++protectionRevisionRef.current
+    for (const id of protectionLinesRef.current) chart.removeEntity(id)
+    protectionLinesRef.current = []
+    for (const [text, price, color] of [['Take profit', prices.takeProfitPrice, '#4ade80'], ['Stop loss', prices.stopLossPrice, '#fb7185']] as const) {
+      if (price === undefined || !Number.isFinite(price) || price <= 0) continue
+      void chart.createShape({ price }, { shape: 'horizontal_line', text, lock: true, disableSelection: true, disableSave: true, disableUndo: true, showInObjectsTree: false, zOrder: 'top', overrides: { linecolor: color, textcolor: color, linestyle: 2, linewidth: 2, showPrice: true, fontsize: 12, horzLabelsAlign: 'right' } }).then(id => {
+        if (revision !== protectionRevisionRef.current) { if (readyRef.current) chart.removeEntity(id); return }
+        if (readyRef.current) protectionLinesRef.current.push(id)
+      }).catch(() => { /* The Protections panel remains authoritative if a chart drawing fails. */ })
+    }
+  }, [])
+  useEffect(() => {
+    protectionPricesRef.current = { takeProfitPrice, stopLossPrice }
+    if (readyRef.current && widgetRef.current) syncProtectionLines(widgetRef.current.activeChart(), protectionPricesRef.current)
+  }, [takeProfitPrice, stopLossPrice, syncProtectionLines])
 
   useEffect(() => {
     onIntervalChangeRef.current = onIntervalChange
@@ -479,6 +503,7 @@ export function TradingViewAdvancedChart({
             applyPletherMarketStatus(marketStatusAdapter, marketStatusRef.current)
             readyRef.current = true
             syncLiquidationLine(widget.activeChart(), liquidationPriceRef.current)
+            syncProtectionLines(widget.activeChart(), protectionPricesRef.current)
 
             const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
             if (widget.activeChart().resolution() !== desiredResolution) {
@@ -501,6 +526,8 @@ export function TradingViewAdvancedChart({
       cancelled = true
       readyRef.current = false
       liquidationLineRevisionRef.current += 1
+      protectionRevisionRef.current += 1
+      protectionLinesRef.current = []
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
       }
@@ -515,7 +542,7 @@ export function TradingViewAdvancedChart({
       datafeed.destroy()
       if (datafeedRef.current === datafeed) datafeedRef.current = null
     }
-  }, [queryClient, syncLiquidationLine, useCandleApi])
+  }, [queryClient, syncLiquidationLine, syncProtectionLines, useCandleApi])
 
   useEffect(() => {
     datafeedRef.current?.setOracleMark(oracleMark)

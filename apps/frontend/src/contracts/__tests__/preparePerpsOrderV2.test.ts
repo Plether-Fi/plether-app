@@ -3,11 +3,12 @@ import type { Address, Hex, PublicClient } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
-import { preparePerpsOrderV2 } from '../preparePerpsOrderV2'
+import { preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
 import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
 
 vi.mock('../verifyPerpsV2Bindings', () => ({
   verifyPerpsV2DeploymentBindings: vi.fn(),
+  verifyProtectionDeployment: vi.fn(),
 }))
 
 const manifest = parsePerpsAaManifest(rawManifest)
@@ -61,6 +62,39 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       blockNumber: block.number,
       positionProtectionBook: manifest.positionProtectionBook,
     })
+  })
+
+  it('reviews both protection rewards separately and simulates the exact atomic protected open', async () => {
+    let enabled = true
+    let exists = false
+    let available = 10_000_000_000n
+    const params = { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n }
+    const input = { account, direction: 'short' as const, side: 1 as const, sizeDelta: 50n * 10n ** 20n, marginDelta: 1_000_000_000n, slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 50_000, clientOrderId: `0x${'33'.repeat(32)}` as Hex }
+    const simulateContract = vi.fn(async () => ({ request: {} }))
+    const values: Record<string, unknown> = { maxOrderAge: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n, maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyUsdc: 200_000n }
+    const client = { getBlock: vi.fn(async () => block), simulateContract, readContract: vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName === 'positionProtectionCommitsEnabled') return enabled
+      if (functionName === 'getPosition') return { exists }
+      if (functionName === 'getFreeBuyingPowerUsdc') return available
+      if (functionName === 'assessOrder') return assessment(args?.[3] as bigint, (args?.[1] as { marginDelta: bigint }).marginDelta)
+      if (functionName in values) return values[functionName]
+      throw new Error(`Unexpected read ${functionName}`)
+    }) } as unknown as PublicClient
+    const plain = await reviewPerpsOrderV2(client, manifest, input)
+    const protectedReview = await reviewPerpsOrderV2(client, manifest, { ...input, positionProtection: params })
+    expect(protectedReview.reviewSummary.requiredFundingUsdc - plain.reviewSummary.requiredFundingUsdc).toBe(400_000n)
+    expect(protectedReview.preparedOrder.request.bounds).toEqual(plain.preparedOrder.request.bounds)
+    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })
+    expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: manifest.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [prepared.request, params], blockNumber: block.number }))
+    available = protectedReview.reviewSummary.requiredFundingUsdc - 1n
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallUsdc: 1n })
+    available = 10_000_000_000n
+    enabled = false
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('currently disabled')
+    enabled = true
+    exists = true
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('no position')
+    expect(simulateContract).toHaveBeenCalledTimes(1)
   })
 
   it('reassesses and submits the exact reviewed margin buffer', async () => {

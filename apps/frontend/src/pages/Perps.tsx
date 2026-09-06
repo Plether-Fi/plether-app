@@ -14,6 +14,9 @@ import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps
 import { trackPerpsPageViewed } from '../analytics/perps'
 import { usePerpsIdentity } from '../perps-aa'
 import { DOCS_LINKS } from '../config/docs'
+import { useProtectionConfiguration } from '../hooks/useProtectionConfiguration'
+import { PerpsProtectionPanel } from '../components/PerpsProtectionPanel'
+import { PROTECTION_RELEASE_ENABLED } from '../contracts/positionProtection'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -50,6 +53,7 @@ function formatMarkAge(ageSeconds: number): string {
 export function Perps() {
   const perpsIdentity = usePerpsIdentity()
   const perpsMarket = usePerpsMarket()
+  const protectionConfiguration = useProtectionConfiguration()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const [isTransactionHistoryActive, setIsTransactionHistoryActive] = useState(false)
@@ -301,6 +305,8 @@ export function Perps() {
             ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
             activePositionProtectionId={perpsAccount.activePositionProtectionId}
+            protectionConfiguration={protectionConfiguration}
+            protectionCapPrice={perpsAccount.capPrice}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
             firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
@@ -322,6 +328,8 @@ export function Perps() {
             oraclePriceRaw={perpsMarket.raw.markPrice}
             oraclePublishTime={perpsMarket.oracleFreshnessTime}
             liquidationPriceRaw={perpsAccount.position?.liquidationPrice}
+            takeProfitPriceRaw={perpsAccount.activePositionProtection?.takeProfitTriggerPrice}
+            stopLossPriceRaw={perpsAccount.activePositionProtection?.stopLossTriggerPrice}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
           />
@@ -329,6 +337,9 @@ export function Perps() {
 
         <div className="min-w-0 xl:clear-left xl:float-left xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
           <PerpsAccountPanel
+            positionProtection={perpsAccount.activePositionProtection}
+            protectionCapPrice={perpsAccount.capPrice}
+            protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} onRefresh={() => void handleAccountRefresh()} /> : undefined}
             position={perpsAccount.position}
             equityUsdc={perpsAccount.equityUsdc}
             freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}

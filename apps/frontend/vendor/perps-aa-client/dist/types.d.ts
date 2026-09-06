@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-export type PerpsActionKind = "deposit" | "place-order" | "cancel-order" | "add-margin" | "withdraw" | "withdraw-to-owner" | "settle-claim";
+export type PerpsActionKind = "deposit" | "place-order" | "place-protected-order" | "create-protection" | "replace-protection" | "cancel-protection" | "cancel-order" | "add-margin" | "withdraw" | "withdraw-to-owner" | "settle-claim";
 /** A call that must be executed by the smart account, never by its owner EOA. */
 export interface SmartAccountCall {
     readonly to: Address;

@@ -7,6 +7,7 @@ import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
+import Plether.Perps.ProtectionExecutionSpec (protectionExecutionSpec)
 import Plether.Vaults.ActivityDatabaseSpec (vaultActivityDatabaseSpec)
 import Plether.Vaults.ActivityIndexerIntegrationSpec (vaultActivityIndexerIntegrationSpec)
 import System.Environment (lookupEnv)
@@ -21,6 +22,7 @@ main = do
     Just value ->
       hspec $ do
         criticalPathSpec $ T.pack value
+        protectionExecutionSpec $ T.pack value
         lpSettlementDatabaseSpec $ T.pack value
         lpSettlementWorkerSpec $ T.pack value
         candleRollupSpec $ T.pack value

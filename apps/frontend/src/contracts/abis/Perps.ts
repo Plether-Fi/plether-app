@@ -1030,22 +1030,7 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-export const PERPS_POSITION_PROTECTION_BOOK_ABI = [
-  {
-    type: 'function',
-    name: 'ROUTER',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address' }],
-  },
-  {
-    type: 'function',
-    name: 'activePositionProtectionId',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: 'protectionId', type: 'uint64' }],
-  },
-] as const
+export { positionProtectionBookAbi as PERPS_POSITION_PROTECTION_BOOK_ABI } from '@plether/perps-aa-client'
 
 export const PERPS_CFD_ENGINE_ABI = [
   {

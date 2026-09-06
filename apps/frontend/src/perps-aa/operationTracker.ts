@@ -41,6 +41,7 @@ export interface SponsoredOperationMetadata
   authorizationToken?: Address
   authorizationNonce?: Hex
   orderRequestV2?: PersistedPerpsOrderRequestV2
+  protectionIntent?: PersistedProtectionIntent
   lane?: string
 }
 
@@ -160,6 +161,7 @@ export function beginSponsoredOperationTracking(
     manifestVersion: metadata.manifestVersion,
     action: metadata.action,
     orderRequestV2: metadata.orderRequestV2,
+    protectionIntent: metadata.protectionIntent,
     authorizationToken: metadata.authorizationToken,
     authorizationNonce: metadata.authorizationNonce,
     lane: metadata.lane,
@@ -279,3 +281,4 @@ export function beginSponsoredOperationTracking(
     },
   }
 }
+import type { PersistedProtectionIntent } from '../contracts/positionProtection'
