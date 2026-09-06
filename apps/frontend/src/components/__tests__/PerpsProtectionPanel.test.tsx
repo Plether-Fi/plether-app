@@ -94,7 +94,6 @@ describe('position protection management', () => {
   it('keeps the reviewed percentage trigger prices fixed when the market moves', async () => {
     const view = render(<PerpsProtectionPanel {...props} />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
-    fireEvent.click(screen.getByRole('button', { name: '% change' }))
     expect(screen.getByLabelText('Take profit (%)')).toHaveValue('10')
     fireEvent.change(screen.getByLabelText('Take profit (%)'), { target: { value: '20' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))

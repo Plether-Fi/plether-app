@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
+import { parseGlobalHeaders } from './src/config/devServerHeaders';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
@@ -22,12 +23,7 @@ type RuntimeEnv = Record<string, string | undefined>;
 
 function parseHeadersFile(): Record<string, string> {
   const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
-  const headers: Record<string, string> = {};
-  for (const line of raw.split('\n')) {
-    const match = /^\s+([A-Za-z-]+):\s*(.+)$/.exec(line);
-    if (match) headers[match[1]] = match[2];
-  }
-  return headers;
+  return parseGlobalHeaders(raw);
 }
 
 function apiProxyConfig(

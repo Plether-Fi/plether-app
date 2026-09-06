@@ -3,7 +3,7 @@ import type { PositionProtectionParams } from '@plether/perps-aa-client'
 import type { PerpsDirection } from '../utils/perps'
 
 export type { PositionProtectionParams }
-export interface ProtectionDraft { mode: 'price' | 'percent'; takeProfit: string; stopLoss: string }
+export interface ProtectionDraft { mode: 'price' | 'percent'; takeProfit: string; stopLoss: string; takeProfitMode?: 'price' | 'percent'; stopLossMode?: 'price' | 'percent' }
 export const EMPTY_PROTECTION_DRAFT: ProtectionDraft = { mode: 'price', takeProfit: '', stopLoss: '' }
 export const PROTECTION_STATUS = ['None', 'PendingOpen', 'Armed', 'Triggered', 'Executed', 'Failed', 'Cancelled', 'Liquidated', 'Latched'] as const
 export const PROTECTION_LEG = ['None', 'TakeProfit', 'StopLoss'] as const
@@ -57,18 +57,19 @@ export function validateProtectionParams(params: PositionProtectionParams, direc
 
 /** UI prices are dollar-oriented; the Book consumes the inverse basket price. */
 export function protectionParamsFromInputs(input: {
-  takeProfit: string; stopLoss: string; mode: 'price' | 'percent'; direction: PerpsDirection; rawMark: bigint; cap: bigint
+  takeProfit: string; stopLoss: string; mode: 'price' | 'percent'; takeProfitMode?: 'price' | 'percent'; stopLossMode?: 'price' | 'percent'; direction: PerpsDirection; rawMark: bigint; cap: bigint
 }): PositionProtectionParams {
   const displayedMark = input.cap - input.rawMark
   function price(value: string, leg: 'tp' | 'sl'): bigint {
     if (!value.trim()) return 0n
-    const decimals = input.mode === 'price' ? 8 : 4
+    const mode = (leg === 'tp' ? input.takeProfitMode : input.stopLossMode) ?? input.mode
+    const decimals = mode === 'price' ? 8 : 4
     if (!new RegExp(`^\\d+(?:\\.\\d{1,${decimals.toString()}})?$`).test(value) || Number(value) <= 0) {
-      throw new Error(`Enter a positive ${input.mode === 'price' ? 'price (up to 8 decimals)' : 'percentage (up to 4 decimals)'}`)
+      throw new Error(`Enter a positive ${mode === 'price' ? 'price (up to 8 decimals)' : 'percentage (up to 4 decimals)'}`)
     }
     const amount = parseUnits(value, decimals)
     const increase = (input.direction === 'long') === (leg === 'tp')
-    const display = input.mode === 'price' ? amount : displayedMark + (increase ? 1n : -1n) * displayedMark * amount / 1_000_000n
+    const display = mode === 'price' ? amount : displayedMark + (increase ? 1n : -1n) * displayedMark * amount / 1_000_000n
     if (display <= 0n || display >= input.cap) throw new Error('Trigger price must be between zero and the price cap')
     return input.cap - display
   }

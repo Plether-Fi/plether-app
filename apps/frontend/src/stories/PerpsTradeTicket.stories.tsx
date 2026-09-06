@@ -438,7 +438,7 @@ export const AddTakeProfitStopLoss: Story = {
     protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('checkbox', { name: /Add take profit/ }))
+    await userEvent.click(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' }))
     await userEvent.type(canvas.getByLabelText('Take profit (USDC)'), '1.1')
     await userEvent.type(canvas.getByLabelText('Stop loss (USDC)'), '0.98')
     await expect(canvas.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')

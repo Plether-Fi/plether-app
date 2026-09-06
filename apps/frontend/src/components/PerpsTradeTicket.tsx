@@ -4156,18 +4156,6 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        {canAttachProtection && protectionConfiguration?.enabled ? <div className="border-t border-brand-border/20 py-3">
-          <label className="flex cursor-pointer items-center gap-3 text-sm text-content-primary">
-            <input type="checkbox" checked={isProtectionEnabled} disabled={isReviewOpen} onChange={event => { setIsProtectionEnabled(event.target.checked) }} className="h-4 w-4 accent-[#FFAB96]" />
-            <span>Add take profit / stop loss</span><span className="ml-auto text-[10px] uppercase tracking-wider text-content-secondary">Optional</span>
-          </label>
-          {isProtectionEnabled ? <div className="mt-4 space-y-3">
-            <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
-            {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
-            <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional {formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} USDC from free margin to trigger and execute the close.</p>
-          </div> : null}
-        </div> : null}
-
         <div className="space-y-2">
           <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
@@ -4207,6 +4195,18 @@ export function PerpsTradeTicket({
               </Tooltip>
             </span>
           </div>
+
+          {canAttachProtection && protectionConfiguration?.enabled ? <div>
+            <label className="flex cursor-pointer items-center gap-3 py-0.5 text-sm font-semibold text-content-primary transition-colors hover:text-[#FFAB96]">
+              <input type="checkbox" checked={isProtectionEnabled} disabled={isReviewOpen} onChange={event => { setIsProtectionEnabled(event.target.checked) }} className="h-4 w-4 accent-[#FFAB96]" />
+              <span>Take profit / stop loss</span>
+            </label>
+            {isProtectionEnabled ? <div className="mt-4 space-y-3">
+              <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
+              {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
+              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional {formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} USDC from free margin to trigger and execute the close.</p>
+            </div> : null}
+          </div> : null}
 
           <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
