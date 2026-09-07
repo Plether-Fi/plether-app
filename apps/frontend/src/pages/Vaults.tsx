@@ -1472,7 +1472,7 @@ function PoolStat({
     ? startsTabletRow
       ? 'sm:border-l-0 sm:pl-0 lg:border-l lg:border-brand-border/25 lg:pl-4'
       : 'sm:border-l sm:border-brand-border/25 sm:pl-4 sm:first:border-l-0 sm:first:pl-0'
-    : 'border-l border-brand-border/25 pl-4 first:border-l-0 first:pl-0'
+    : 'border-l border-brand-border/25 pl-4 first:border-l-0 first:pl-0 max-lg:odd:border-l-0 max-lg:odd:pl-0'
 
   return (
     <div className={`min-w-0 ${separatorClassName}`}>

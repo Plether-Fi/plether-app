@@ -1,6 +1,7 @@
 import type { Address } from 'viem'
 
 export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614
+export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = 306_119_399
 
 export interface PerpsContractAddresses {
   pyth: Address

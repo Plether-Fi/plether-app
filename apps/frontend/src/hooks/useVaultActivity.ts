@@ -11,12 +11,12 @@ import type {
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+  PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK,
 } from '../contracts/perpsAddresses'
 
 export type VaultActivityTranche = VaultActivityTrancheName
 export type VaultActivityKind = 'deposit' | 'withdraw'
 
-const VAULT_DEPLOYMENT_BLOCK = 302_257_125
 const ACTIVITY_LIMIT = 250
 
 interface RawVaultHolder {
@@ -240,7 +240,7 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
   const payload = result.value.data
   if (
     payload.deployment.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
-    || payload.deployment.deploymentBlock !== VAULT_DEPLOYMENT_BLOCK
+    || payload.deployment.deploymentBlock !== PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK
     || payload.deployment.housePool.toLowerCase() !== PERPS_ARBITRUM_SEPOLIA.housePool.toLowerCase()
     || payload.deployment.seniorVault.toLowerCase() !== PERPS_ARBITRUM_SEPOLIA.seniorVault.toLowerCase()
     || payload.deployment.juniorVault.toLowerCase() !== PERPS_ARBITRUM_SEPOLIA.juniorVault.toLowerCase()
@@ -255,7 +255,7 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
     || !Number.isSafeInteger(coverage.lagBlocks)
     || !Number.isSafeInteger(coverage.lagSeconds)
     || !Number.isSafeInteger(coverage.lastSuccessfulPoll)
-    || coverage.confirmedThroughBlock < VAULT_DEPLOYMENT_BLOCK
+    || coverage.confirmedThroughBlock < PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK
     || coverage.observedSafeHeadBlock < coverage.confirmedThroughBlock
     || coverage.lagBlocks !== coverage.observedSafeHeadBlock - coverage.confirmedThroughBlock
     || coverage.lagSeconds < 0
@@ -265,7 +265,7 @@ async function fetchVaultActivity(signal: AbortSignal): Promise<BackendVaultActi
     || (coverage.observedSafeHeadHash !== null && !isHash(coverage.observedSafeHeadHash))
     || (attribution !== undefined && (
       !Number.isSafeInteger(attribution.confirmedThroughBlock)
-      || attribution.confirmedThroughBlock < VAULT_DEPLOYMENT_BLOCK
+      || attribution.confirmedThroughBlock < PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK
       || attribution.confirmedThroughBlock > coverage.observedSafeHeadBlock
       || !Number.isSafeInteger(attribution.lastSuccessfulPoll)
       || attribution.lastSuccessfulPoll < 0

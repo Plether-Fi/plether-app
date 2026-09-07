@@ -19,12 +19,12 @@ const response: ApiResponse<VaultActivity> = {
       housePool: PERPS_ARBITRUM_SEPOLIA.housePool,
       seniorVault: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       juniorVault: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-      deploymentBlock: 302_257_125,
+      deploymentBlock: 306_119_399,
     },
     coverage: {
-      confirmedThroughBlock: 302_300_000,
+      confirmedThroughBlock: 306_300_000,
       confirmedThroughHash: `0x${'cc'.repeat(32)}`,
-      observedSafeHeadBlock: 302_300_000,
+      observedSafeHeadBlock: 306_300_000,
       observedSafeHeadHash: `0x${'cc'.repeat(32)}`,
       complete: true,
       stale: false,
@@ -32,7 +32,7 @@ const response: ApiResponse<VaultActivity> = {
       lagSeconds: 0,
       lastSuccessfulPoll: 1_700_000_000,
       shareAttribution: {
-        confirmedThroughBlock: 302_300_000,
+        confirmedThroughBlock: 306_300_000,
         confirmedThroughHash: `0x${'cc'.repeat(32)}`,
         complete: true,
         lastSuccessfulPoll: 1_700_000_000,
@@ -58,7 +58,7 @@ const response: ApiResponse<VaultActivity> = {
         rawAssets: '50',
         rawShares: null,
         timestamp: 1_700_000_000,
-        blockNumber: 302_300_000,
+        blockNumber: 306_300_000,
         transactionIndex: 0,
         logIndex: 1,
         transactionHash: TX_A,
@@ -86,7 +86,7 @@ const response: ApiResponse<VaultActivity> = {
         rawAssets: null,
         rawShares: '10',
         timestamp: 1_700_000_001,
-        blockNumber: 302_300_000,
+        blockNumber: 306_300_000,
         transactionIndex: 1,
         logIndex: 2,
         transactionHash: TX_B,
@@ -97,7 +97,7 @@ const response: ApiResponse<VaultActivity> = {
   },
   meta: {
     cached: false,
-    blockNumber: 302_300_000,
+    blockNumber: 306_300_000,
     chainId: 421_614,
   },
 }
@@ -113,6 +113,22 @@ afterEach(() => {
 })
 
 describe('useVaultActivity', () => {
+  it('rejects activity from the previous deployment block', async () => {
+    const previousDeployment = structuredClone(response)
+    previousDeployment.data.deployment.deploymentBlock = 302_257_125
+    vi.spyOn(perpsApi, 'getPerpsVaultActivity').mockResolvedValue(Result.ok(previousDeployment))
+    const client = new QueryClient()
+    const { result } = renderHook(() => useVaultActivity({
+      seniorTotalAssets: 1_000n,
+      seniorEffectiveSupply: 100n,
+    }), { wrapper: wrapper(client) })
+
+    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 })
+    expect(result.current.holders).toEqual([])
+    expect(result.current.activity).toEqual([])
+    client.clear()
+  })
+
   it('derives live NAV from backend shares and retains it after a refresh failure', async () => {
     const refreshFailure = Result.err(
       new PlethApiError('NETWORK_ERROR', 'Alchemy-backed activity is unavailable', 503),
