@@ -4204,7 +4204,7 @@ export function PerpsTradeTicket({
             {isProtectionEnabled ? <div className="mt-4 space-y-3">
               <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
               {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
-              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional {formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} USDC from free margin to trigger and execute the close.</p>
+              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional <TokenAmount amount={formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} /> from free margin to trigger and execute the close.</p>
             </div> : null}
           </div> : null}
 

@@ -1,186 +1,370 @@
 {
   "diagramCount": 30,
   "generator": "scripts/generate-diagrams.mjs",
+  "reviewedRelease": {
+    "version": "v1.2.2",
+    "sourceRepository": "Plether-Fi/plether-core",
+    "sourceCommit": "d704122c779d4d681d0fa2be517707b7f7df3902"
+  },
+  "design": {
+    "width": 640,
+    "minimumFontSize": 22,
+    "articleWidthsChecked": [
+      640,
+      360,
+      320
+    ],
+    "paletteSource": "https://plether.com/media-kit",
+    "positiveColorSource": "apps/frontend/src/index.css: --color-positive",
+    "palette": {
+      "orange": "#FF512F",
+      "peach": "#FFAB96",
+      "yellow": "#F7D977",
+      "paleYellow": "#F7E4B2",
+      "plum": "#250917",
+      "gray": "#9A8890",
+      "cream": "#FFF5F9",
+      "green": "#00FF99"
+    }
+  },
   "diagrams": [
     {
-      "title": "Delayed-order execution pipeline",
+      "title": "From review to execution",
       "source": "how-plether-works/how-orders-execute.md",
       "asset": ".gitbook/assets/diagrams/delayed-order-execution-pipeline.svg",
-      "alt": "Flowchart showing a Plether order moving from Preview through Commit, FIFO execution and final execution checks."
+      "alt": "A bounded order is committed, queued and assessed using the execution-time oracle regime. Success, temporary deferral and terminal failure are distinct.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy"
+      ]
     },
     {
-      "title": "Sponsored submission lifecycle",
+      "title": "The sponsored submission",
       "source": "how-plether-works/how-orders-execute.md",
       "asset": ".gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg",
-      "alt": "Five-stage sponsored submission lifecycle from Preparing through wallet confirmation to Confirmed."
+      "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Two-part order lifecycle",
+      "title": "One review, two onchain stages",
       "source": "how-plether-works/how-orders-execute.md",
       "asset": ".gitbook/assets/diagrams/preview-commit-finalize.svg",
-      "alt": "Three-stage order lifecycle: Preview, Commit and Finalize."
+      "alt": "Preview is not a transaction. Commitment and later keeper execution are separate onchain stages.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy"
+      ]
     },
     {
-      "title": "Final collection priority",
+      "title": "Two separate collection paths",
       "source": "how-plether-works/how-orders-execute.md",
       "asset": ".gitbook/assets/diagrams/final-collection-priority.svg",
-      "alt": "Collection priority from execution fee to base close obligation and frozen-close spread."
+      "alt": "Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc"
+      ]
     },
     {
-      "title": "PnL and close-settlement outcomes",
+      "title": "Price PnL is not cash settlement",
       "source": "how-plether-works/how-pnl-is-calculated.md",
       "asset": ".gitbook/assets/diagrams/pnl-and-close-settlement-outcomes.svg",
-      "alt": "Flowchart separating unrealized PnL and liquidation health from realized PnL and close-settlement outcomes."
+      "alt": "Unrealized price PnL contributes to price-risk equity. A close separates realized price PnL from action costs; positive residual price payouts may be funded or recorded as claims.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
+        "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
+      ]
     },
     {
-      "title": "Weekly market-state schedule",
+      "title": "The FX weekend, in New York time",
       "source": "how-plether-works/market-states-and-oracle-closures.md",
       "asset": ".gitbook/assets/diagrams/weekly-market-state-schedule.svg",
-      "alt": "Weekly timeline showing open, close-only live-oracle and close-only frozen-oracle periods."
+      "alt": "Regular weekly phases in America/New_York: open until Friday 16:30, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:15. UTC offsets change with US daylight saving.",
+      "evidence": [
+        "packages/perps/src/libraries/MarketCalendarLib.sol:marketStatus,newYorkMarketBoundary"
+      ]
     },
     {
-      "title": "Frozen-close collection priority",
+      "title": "Where frozen-close spread sits",
       "source": "how-plether-works/market-states-and-oracle-closures.md",
       "asset": ".gitbook/assets/diagrams/frozen-close-collection-priority.svg",
-      "alt": "Frozen-close collection priority from execution fee through base obligation to frozen-close spread."
+      "alt": "Frozen-close spread is an action charge, not a price change. Recovered spread is attributed only after execution fee, carry and positive VPI; unrecovered spread is waived.",
+      "evidence": [
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc",
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap"
+      ]
     },
     {
-      "title": "Close settlement and liquidity flow",
+      "title": "How a price payout reaches you",
       "source": "how-plether-works/settlement-liquidity-and-trader-claims.md",
       "asset": ".gitbook/assets/diagrams/settlement-liquidity-flow.svg",
-      "alt": "Flowchart showing margin release, positive close settlement, liquidity pool funding, trader claims and zero-or-negative settlement."
+      "alt": "After action costs are withheld, a residual price payout is paid in full only if free pool cash after existing claims covers it. Otherwise the full residual becomes a claim.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
+      ]
     },
     {
-      "title": "Claim and collateral collection order",
+      "title": "Claims, pledge and action costs",
       "source": "how-plether-works/settlement-liquidity-and-trader-claims.md",
       "asset": ".gitbook/assets/diagrams/claim-collateral-collection-order.svg",
-      "alt": "Collection order from execution fee to base close obligation and frozen-close spread."
+      "alt": "Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc"
+      ]
     },
     {
-      "title": "Liquidity pool tranche waterfall",
+      "title": "The Senior–Junior waterfall",
       "source": "how-plether-works/the-liquidity-pool-and-tranche-waterfall.md",
       "asset": ".gitbook/assets/diagrams/liquidity-pool-tranche-waterfall.svg",
-      "alt": "Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior."
+      "alt": "Reconciliation compares distributable assets after trader liabilities with claimant principal. Losses hit Junior first; revenue restores Senior impairment before reaching Junior.",
+      "evidence": [
+        "packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon"
+      ]
     },
     {
-      "title": "Trading price and settlement costs",
+      "title": "Price and costs are different inputs",
       "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
       "asset": ".gitbook/assets/diagrams/trading-price-and-settlement-costs.svg",
-      "alt": "Two-input flowchart showing oracle price determining directional PnL while fees, VPI, carry and frozen spread feed account settlement."
+      "alt": "Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap"
+      ]
     },
     {
-      "title": "Protocol close-collection order",
+      "title": "How close obligations are funded",
       "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
       "asset": ".gitbook/assets/diagrams/protocol-close-collection-order.svg",
-      "alt": "Protocol collection order from execution fee to base close obligation and frozen-close spread."
+      "alt": "Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.",
+      "evidence": [
+        "packages/perps/src/libraries/CfdEnginePlanLib.sol:_planIsolatedCloseSettlement,_planCloseActionSettlement,_maxPricePledgeUnlockPreservingTerminalCap",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:executeClose,_settleCloseActionCharge,_recoveredFrozenSpreadUsdc"
+      ]
     },
     {
-      "title": "How assigned margin reduces carry",
+      "title": "More pledge, less borrowed backing",
       "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
       "asset": ".gitbook/assets/diagrams/margin-reduces-future-carry.svg",
-      "alt": "Flow showing higher assigned position margin reducing the LP-backed borrow base and future carry."
+      "alt": "For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.",
+      "evidence": [
+        "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState"
+      ]
     },
     {
-      "title": "Senior–Junior waterfall rules",
+      "title": "Three rules for LP returns",
       "source": "liquidity-provider-quickstart.md",
       "asset": ".gitbook/assets/diagrams/senior-junior-waterfall-rules.svg",
-      "alt": "Three-lane diagram summarizing loss absorption, new-revenue allocation and Senior coupon funding."
+      "alt": "Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior.",
+      "evidence": [
+        "packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon"
+      ]
     },
     {
-      "title": "Quickstart sponsored-operation lifecycle",
+      "title": "From preparation to confirmation",
       "source": "trader-quickstart.md",
       "asset": ".gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg",
-      "alt": "Quickstart lifecycle from Preparing and wallet confirmation through sponsored submission to Confirmed."
+      "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Trader-claim lifecycle",
+      "title": "From unpaid payout to funded claim",
       "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
       "asset": ".gitbook/assets/diagrams/trader-claim-lifecycle.svg",
-      "alt": "Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal."
+      "alt": "An unfunded residual price payout becomes a claim. Claim settlement is all-or-nothing once aggregate cash coverage returns, and the credit bucket depends on whether a position remains open.",
+      "evidence": [
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Claim-settlement funding path",
+      "title": "Where settled claim funds go",
       "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
       "asset": ".gitbook/assets/diagrams/claim-settlement-funding-path.svg",
-      "alt": "Funding path from the liquidity pool through the Margin Clearinghouse to the trader Margin Account."
+      "alt": "Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free settlement otherwise.",
+      "evidence": [
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
+      ]
     },
     {
-      "title": "Wallet authorization and Trading Account ownership",
+      "title": "Your wallet controls the account",
       "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
       "asset": ".gitbook/assets/diagrams/wallet-trading-account-ownership.svg",
-      "alt": "Hierarchy showing the connected wallet signing for and controlling the Trading Account, which owns positions, orders, margin and trader claims."
+      "alt": "The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx",
+        "packages/perps/src/MarginClearinghouse.sol",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
+        "apps/frontend/vendor/perps-aa-client/dist/actions.js"
+      ]
     },
     {
-      "title": "Authorization and gas sponsorship",
+      "title": "Sponsorship before the signature",
       "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
       "asset": ".gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg",
-      "alt": "Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas."
+      "alt": "Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Sponsored withdrawal flow",
+      "title": "Withdraw to your owner wallet",
       "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
       "asset": ".gitbook/assets/diagrams/sponsored-withdrawal-flow.svg",
-      "alt": "Sponsored withdrawal sequence from amount selection and recipient review to owner-wallet receipt."
+      "alt": "Review the free amount and verified owner recipient, prepare sponsorship, sign and confirm. Withdrawal remains subject to onchain account-health and balance checks.",
+      "evidence": [
+        "packages/perps/src/MarginClearinghouse.sol",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
+        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Open or increase position lifecycle",
+      "title": "Open or increase a position",
       "source": "trading-on-plether-perps/open-or-increase-a-position.md",
       "asset": ".gitbook/assets/diagrams/open-increase-position-lifecycle.svg",
-      "alt": "Complete open-or-increase lifecycle from configuration through sponsored submission, FIFO execution and position update."
+      "alt": "Review and authorize a bounded commitment. A successfully submitted order joins FIFO, then executes, remains pending or fails without the requested position change.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Open-or-increase sponsored submission",
+      "title": "Authorize an opening order",
       "source": "trading-on-plether-perps/open-or-increase-a-position.md",
       "asset": ".gitbook/assets/diagrams/open-increase-sponsored-submission.svg",
-      "alt": "Open-or-increase sponsored submission states from Preparing to Confirmed."
+      "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Reading position and account health",
+      "title": "Read account health in context",
       "source": "trading-on-plether-perps/read-your-position-and-account-health.md",
       "asset": ".gitbook/assets/diagrams/account-health-reading-order.svg",
-      "alt": "Recommended reading order from market state through position, risk, pending orders and available balances."
+      "alt": "Recommended reading order, not a calculation or state transition: market regime, position, equity and margin, liquidation context, pending obligations and spendable balances.",
+      "evidence": [
+        "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
+        "packages/perps/src/MarginClearinghouse.sol",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
+        "apps/frontend/vendor/perps-aa-client/dist/actions.js"
+      ]
     },
     {
-      "title": "Reduce or close position lifecycle",
+      "title": "Reduce or close a position",
       "source": "trading-on-plether-perps/reduce-or-close-a-position.md",
       "asset": ".gitbook/assets/diagrams/reduce-close-position-lifecycle.svg",
-      "alt": "Complete reduce-or-close lifecycle from amount selection through sponsored submission, FIFO execution and account update."
+      "alt": "Review and authorize a bounded commitment. A successfully submitted order joins FIFO, then executes, remains pending or fails without the requested position change.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Reduce-or-close sponsored submission",
+      "title": "Authorize a closing order",
       "source": "trading-on-plether-perps/reduce-or-close-a-position.md",
       "asset": ".gitbook/assets/diagrams/reduce-close-sponsored-submission.svg",
-      "alt": "Reduce-or-close sponsored submission states from Preparing to Confirmed."
+      "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "From sponsored confirmation to position change",
+      "title": "Confirmed does not mean filled",
       "source": "trading-on-plether-perps/trader-troubleshooting.md",
       "asset": ".gitbook/assets/diagrams/confirmed-order-execution-path.svg",
-      "alt": "Sequence from sponsored operation confirmation through pending order execution to a changed position."
+      "alt": "A successful sponsored commitment creates a pending order. Only a successful order execution applies the requested position change.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Sponsored-operation troubleshooting states",
+      "title": "Check the submission stage",
       "source": "trading-on-plether-perps/trader-troubleshooting.md",
       "asset": ".gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg",
-      "alt": "Sponsored-operation troubleshooting lifecycle from Preparing through wallet confirmation to Confirmed."
+      "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
+      "evidence": [
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "Submission failures versus delayed-order outcomes",
+      "title": "Two lifecycles, different failures",
       "source": "trading-on-plether-perps/why-is-my-order-pending-or-failed.md",
       "asset": ".gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg",
-      "alt": "Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes."
+      "alt": "Sponsored transaction success and order execution are different lifecycles. V2 transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.",
+      "evidence": [
+        "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
+        "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
+        "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     },
     {
-      "title": "USDC flow across trader accounts",
+      "title": "USDC has distinct places to live",
       "source": "trading-on-plether-perps/your-margin-account.md",
       "asset": ".gitbook/assets/diagrams/usdc-account-flow.svg",
-      "alt": "USDC lifecycle from the funded Trading Account through Margin Account balances, settlement and withdrawal to the owner wallet."
+      "alt": "Trading Account wallet USDC can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.",
+      "evidence": [
+        "packages/perps/src/MarginClearinghouse.sol",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
+        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
+      ]
     },
     {
-      "title": "From trader claim to owner wallet",
+      "title": "A claim is not wallet cash",
       "source": "trading-on-plether-perps/your-margin-account.md",
       "asset": ".gitbook/assets/diagrams/claim-to-owner-wallet.svg",
-      "alt": "Sequence from a trader claim through owner authorization, sponsored settlement, Margin Account credit and sponsored withdrawal."
+      "alt": "Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free settlement and a separate authorized action.",
+      "evidence": [
+        "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
+        "packages/perps/src/MarginClearinghouse.sol",
+        "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
+        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
+        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
+        "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
+      ]
     }
   ]
 }

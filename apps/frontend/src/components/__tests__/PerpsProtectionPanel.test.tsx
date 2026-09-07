@@ -118,7 +118,7 @@ describe('position protection management', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
     fireEvent.change(screen.getByLabelText('Stop loss (USDC)'), { target: { value: '0.9' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
-    expect(screen.getByText(/from free margin/)).toHaveTextContent('0.4 USDC')
+    expect(screen.getByText(/from free margin/)).toHaveTextContent(/0\.4\s*USDC/)
     view.rerender(<PerpsProtectionPanel {...createProps} configuration={{ ...props.configuration, triggerBountyUsdc: 300_000n }} />)
     expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent('changed')

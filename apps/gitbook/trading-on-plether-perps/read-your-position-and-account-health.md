@@ -6,7 +6,7 @@ Plether evaluates liquidation with account-wide collateral. Free USDC[^usdc] and
 
 A useful reading order is:
 
-![Recommended reading order from market state through position, risk, pending orders and available balances.](../.gitbook/assets/diagrams/account-health-reading-order.svg)
+![Recommended reading order, not a calculation or state transition: market regime, position, equity and margin, liquidation context, pending obligations and spendable balances.](../.gitbook/assets/diagrams/account-health-reading-order.svg)
 
 ### Check the market state first
 

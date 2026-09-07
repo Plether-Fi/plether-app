@@ -114,7 +114,7 @@ The signed terminal price delta comes from one authenticated Terminal NAV snapsh
 
 The resulting reconciled LP-owned value or loss then passes through the waterfall:
 
-![Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.](../.gitbook/assets/diagrams/liquidity-pool-tranche-waterfall.svg)
+![Reconciliation compares distributable assets after trader liabilities with claimant principal. Losses hit Junior first; revenue restores Senior impairment before reaching Junior.](../.gitbook/assets/diagrams/liquidity-pool-tranche-waterfall.svg)
 
 #### When reconciliation applies a loss
 

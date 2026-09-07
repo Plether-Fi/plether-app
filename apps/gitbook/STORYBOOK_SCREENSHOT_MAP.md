@@ -36,8 +36,8 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/how-pnl-is-calculated.md:75` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:542` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
+| `how-plether-works/how-pnl-is-calculated.md:77` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `how-plether-works/how-pnl-is-calculated.md:544` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 
@@ -50,7 +50,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/market-states-and-oracle-closures.md:518` | Open followed by the three-hour close-only runway | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown |
+| `how-plether-works/market-states-and-oracle-closures.md:516` | Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown; not the contract calendar |
 
 ## Liquidity pool and tranche waterfall
 
@@ -62,7 +62,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `liquidity-provider-quickstart.md:93` | Vaults overview with current pool liquidity and Senior and Junior Vault cards | [Overview](http://localhost:6006/?path=/story/documentation-vaults--overview) | Current production components, illustrative values |
+| `liquidity-provider-quickstart.md:95` | Vaults overview with current pool liquidity and Senior and Junior Vault cards | [Overview](http://localhost:6006/?path=/story/documentation-vaults--overview) | Current production components, illustrative values |
 
 ## Providing liquidity
 

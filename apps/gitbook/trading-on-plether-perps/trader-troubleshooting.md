@@ -39,13 +39,13 @@ Do not commit a replacement order until the original is absent from **Open Order
 
 A successful commitment only creates an order. The position changes only after that order executes; depending on the action, its size, entry price or both may change.
 
-![Sequence from sponsored operation confirmation through pending order execution to a changed position.](../.gitbook/assets/diagrams/confirmed-order-execution-path.svg)
+![A successful sponsored commitment creates a pending order. Only a successful order execution applies the requested position change.](../.gitbook/assets/diagrams/confirmed-order-execution-path.svg)
 
 ### My sponsored operation did not confirm
 
 The sponsored-submission lifecycle is:
 
-![Sponsored-operation troubleshooting lifecycle from Preparing through wallet confirmation to Confirmed.](../.gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg)
+![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg)
 
 These failures occur before the delayed order lifecycle:
 
