@@ -371,6 +371,32 @@ describe('usePerpsTrading', () => {
     }
   })
 
+  it('does not restore an expired review while another pre-submission action is active', async () => {
+    mocks.identityReady = true
+    const store = useSponsoredOperationStore.getState()
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    try {
+      const original = preparedOrder()
+      store.beginOperation({
+        id: 'unsigned-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
+        chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
+        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
+          ...original.request, bounds: { ...original.request.bounds, validUntil: 1n },
+        }),
+      })
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.prepareOrder(commitInput()))
+        .rejects.toThrow('Finish or cancel it in account activity before reviewing a fresh order')
+      expect(mocks.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+      expect(store.getActiveOperation(ACCOUNT)?.id).toBe('unsigned-order')
+    } finally {
+      globalThis.localStorage.clear()
+      useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    }
+  })
+
   it('rejects an unaligned close before simulation or signing', async () => {
     mocks.identityReady = true
     const unalignedSizeDelta = 100_000_000_000_000_000_001n

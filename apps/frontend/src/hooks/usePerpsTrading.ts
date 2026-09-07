@@ -32,9 +32,7 @@ import {
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
   PERPS_LIFECYCLE_STATUS,
-  executionModeFromPinnedMask,
   persistPerpsOrderRequestV2,
-  restorePerpsOrderRequestV2,
   type PreparedPerpsOrderV2,
   type PerpsExecutionMode,
   type PerpsFailedConstraint,
@@ -810,37 +808,8 @@ export function usePerpsTrading() {
       }
       if (activeOperation?.protectionIntent) throw new Error('A protection operation is awaiting recovery. Resolve it in account activity before reviewing another order.')
       if (positionProtection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
-      if (activeOperation?.orderRequestV2 !== undefined) {
-        const request = restorePerpsOrderRequestV2(
-          activeOperation.orderRequestV2
-        )
-        if (
-          request.side !== directionToPerpsSide(direction) ||
-          request.sizeDelta !== sizeDelta ||
-          request.isClose !== isClose
-        ) {
-          throw new Error(
-            'A different immutable order is already awaiting recovery. Finish or cancel that sponsored operation before reviewing another order.'
-          )
-        }
-        return {
-          account: sponsored.accountAddress,
-          manifestVersion: activeOperation.manifestVersion,
-          orderRouter: sponsored.manifest.orderRouter,
-          orderLifecycleBook: sponsored.manifest.orderLifecycleBook,
-          request,
-          executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
-          reviewedBlockNumber: 0n,
-          reviewedBlockHash: `0x${'0'.repeat(64)}`,
-          reviewedPrice: oraclePrice,
-          protection: {
-            validUntil: request.bounds.validUntil,
-            executionMode: executionModeFromPinnedMask(
-              request.bounds.allowedExecutionModes
-            ),
-            executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
-          },
-        }
+      if (activeOperation) {
+        throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
       return await preparePerpsOrderV2(client, sponsored.manifest, {
