@@ -15,7 +15,7 @@ import {
   type PerpsLifecycleOutcomeSnapshot,
   type PerpsOrderReviewSummary,
 } from '../contracts/perpsOrderV2'
-import { PerpsOrderFundingShortfallError } from '../contracts/preparePerpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type {
@@ -45,6 +45,7 @@ import {
   oraclePriceToDisplayDxyPrice,
   parsePerpsPositionSize,
   parsePerpsUsdc,
+  perpsSideToDirection,
   quantizedDxyExposureFromContractNotional,
   quantizePerpsPositionSize,
   sizeDeltaToNotionalUsdc,
@@ -232,6 +233,8 @@ interface PerpsTradeTicketProps {
   /** Static full-close intent for deterministic finalized stories and tests. */
   initialCommittedIsFullClose?: boolean
   initialCommittedSizeDelta?: bigint
+  /** Static submitted position side for deterministic finalized stories and tests. */
+  initialCommittedDirection?: PerpsDirection
   /** Static execution-bound position-margin snapshot for deterministic stories and tests. */
   initialCommittedPrePositionMarginUsdc?: bigint
   initialFlowError?: string
@@ -758,6 +761,10 @@ function historyOrderIsClose(order: PerpsOrderHistoryRow | undefined): boolean |
   return undefined
 }
 
+function historyOrderDirection(order: PerpsOrderHistoryRow | undefined): PerpsDirection | undefined {
+  return order?.side === 'Long' ? 'long' : order?.side === 'Short' ? 'short' : undefined
+}
+
 function historyPostPositionSize(order: PerpsOrderHistoryRow | undefined): bigint | undefined {
   if (order?.status !== 'Executed') return undefined
   const value = order.receiptEconomics?.postPositionSize
@@ -875,7 +882,7 @@ function formatLeverageRaw(notionalUsdc: bigint | undefined, marginUsdc: bigint 
 
 function formatLeverageBps(leverageBps: bigint | undefined): string {
   if (leverageBps === undefined || leverageBps <= 0n) return '--'
-  return `${formatPerpsNumber(Number(leverageBps) / 10_000, 2)}x`
+  return `${formatPerpsNumber(Number(leverageBps) / 10_000, leverageBps % 100n === 0n ? 2 : 4)}x`
 }
 
 function formatBpsPercent(value: bigint | undefined): string {
@@ -1777,6 +1784,7 @@ export function PerpsTradeTicket({
   initialCommittedPositionVpiAccrued,
   initialCommittedIsFullClose,
   initialCommittedSizeDelta,
+  initialCommittedDirection,
   initialCommittedPrePositionMarginUsdc,
   initialFlowError,
   closePositionRequestId,
@@ -1900,6 +1908,8 @@ export function PerpsTradeTicket({
   const [committedPrePositionMarginUsdc, setCommittedPrePositionMarginUsdc] = useState<bigint | undefined>(
     initialCommittedPrePositionMarginUsdc
   )
+  const [committedDirection, setCommittedDirection] = useState<PerpsDirection | undefined>(initialCommittedDirection)
+  const [committedMarginDelta, setCommittedMarginDelta] = useState<bigint | undefined>()
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
@@ -2123,6 +2133,8 @@ export function PerpsTradeTicket({
       }
     }
 
+    const terminalDirection = historyOrderDirection(order)
+    if (terminalDirection !== undefined) setCommittedDirection(terminalDirection)
     const terminalCloseIntent = historyOrderIsClose(order)
     if (terminalCloseIntent !== undefined) {
       setCommittedIsClose(terminalCloseIntent)
@@ -2632,8 +2644,6 @@ export function PerpsTradeTicket({
   const contractNotionalUsdc = orderSizeDelta > 0n
     ? sizeDeltaToNotionalUsdc(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
     : 0n
-  const contractNotionalNumber = usdcRawToNumber(contractNotionalUsdc)
-  const marginNumber = isReducingCurrentPosition ? 0 : activeLeverage > 0 ? contractNotionalNumber / activeLeverage : 0
   const marginUsdc = isReducingCurrentPosition ? 0n : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
   const defaultMaxLeverageMarginUsdc = contractNotionalUsdc > 0n
     ? contractNotionalUsdc / BigInt(DEFAULT_MAX_LEVERAGE)
@@ -3045,6 +3055,9 @@ export function PerpsTradeTicket({
           setExecutionProtectionsError(
             `The protected order needs ${formatPerpsUsdc(error.shortfallUsdc)} USDC more. Reduce the order or deposit margin.`
           )
+        } else if (error instanceof PerpsOrderReviewError) {
+          setOrderReviewSummary(error.reviewSummary)
+          setExecutionProtectionsError(error.message)
         } else {
           setExecutionProtectionsError(
             error instanceof Error
@@ -3079,7 +3092,7 @@ export function PerpsTradeTicket({
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
   const reviewValidationError = enableLiveTrading
-    ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? liveValidationError
+    ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? executionProtectionsError ?? liveValidationError
     : orderQuantityValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
@@ -3148,16 +3161,20 @@ export function PerpsTradeTicket({
     return formatDisplayDxyPrice(openPreview.liquidationPrice)
   })()
   const previewResultingLeverage = (() => {
-    if (!enableLiveTrading) return formatLeverage(activeLeverage)
+    if (!enableLiveTrading) return isReducingCurrentPosition
+      ? isFullCloseOrder ? 'Position closed' : PREVIEW_UNAVAILABLE_VALUE
+      : formatLeverage(activeLeverage)
     if (isReviewOpen && isExecutionProtectionsLoading) return PREVIEW_LOADING_VALUE
     if (isReviewOpen && activeReviewSummary !== undefined) {
+      if (isReducingCurrentPosition && activeReviewSummary.currentAssessment.postPositionSize === 0n) return 'Position closed'
       return formatLeverageBps(activeReviewSummary.worstPostLeverageBps)
     }
+    if (isReviewOpen && executionProtectionsError) return PREVIEW_UNAVAILABLE_VALUE
     if (isTradePreviewPending) return PREVIEW_LOADING_VALUE
 
     if (isReducingCurrentPosition) {
-      if (closePreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(activeLeverage)
-      if (closePreview.remainingSize <= 0n) return 'Closed'
+      if (closePreview === undefined) return PREVIEW_UNAVAILABLE_VALUE
+      if (closePreview.remainingSize <= 0n) return 'Position closed'
 
       return formatLeverageRaw(
         sizeDeltaToNotionalUsdc(closePreview.remainingSize, closePreview.executionPrice),
@@ -3239,7 +3256,17 @@ export function PerpsTradeTicket({
         tooltip: MAINTENANCE_MARGIN_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.maintenanceMargin,
       },
-      { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
+      {
+        label: isReducingCurrentPosition
+          ? 'Estimated remaining leverage'
+          : isReviewOpen ? 'Highest reviewed leverage' : 'Resulting leverage',
+        value: previewResultingLeverage,
+        tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined,
+        tooltip: isReviewOpen && activeReviewSummary !== undefined
+          ? 'Highest leverage assessed across the reviewed price range using one block of market data. Final leverage depends on the execution price.'
+          : undefined,
+        tooltipDocsLink: DOCS_LINKS.positionLeverage,
+      },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       {
         label: 'Execution limit',
@@ -3286,6 +3313,7 @@ export function PerpsTradeTicket({
       },
     ],
     [
+      activeReviewSummary,
       enableLiveTrading,
       executionLimit,
       isExecutionProtectionsLoading,
@@ -3342,6 +3370,11 @@ export function PerpsTradeTicket({
   const finalIsClose = committedIsClose
     ?? historyOrderIsClose(executedOrderHistoryRow)
     ?? isReducingCurrentPosition
+  const finalDirection = committedDirection
+    ?? historyOrderDirection(executedOrderHistoryRow)
+    ?? (enableLiveTrading ? undefined : effectiveOrderDirection)
+  const finalPositionLabel = finalDirection === undefined ? 'Position' : `${directionLabel(finalDirection)} position`
+  const finalMarginPosted = committedMarginDelta ?? (enableLiveTrading ? undefined : marginUsdc)
   const observedPostPositionSize = historyPostPositionSize(executedOrderHistoryRow)
     ?? finalPostPositionSize
   const finalIsFullClose = finalIsClose && (
@@ -3455,9 +3488,9 @@ export function PerpsTradeTicket({
   const executedTitle = finalPriceDisplay === '--'
     ? finalIsFullClose ? 'Position closed' : finalIsClose ? 'Position reduced' : 'Trade executed'
     : finalIsFullClose
-      ? `${directionLabel(oppositeDirection(direction))} position closed at ${finalPriceDisplay} USDC`
+      ? `${finalPositionLabel} closed at ${finalPriceDisplay} USDC`
       : finalIsClose
-        ? `${directionLabel(oppositeDirection(direction))} position reduced at ${finalPriceDisplay} USDC`
+        ? `${finalPositionLabel} reduced at ${finalPriceDisplay} USDC`
         : `Trade executed at ${finalPriceDisplay} USDC`
   const isReviewingFullClose = isFullCloseOrder
   const reviewCtaLabel = enableLiveTrading && !isConnected
@@ -3724,6 +3757,8 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:mock-flow')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setCommittedSizeDelta(orderSizeDelta)
+      setCommittedDirection(effectiveOrderDirection)
+      setCommittedMarginDelta(marginUsdc)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
       setCommitExecutionStatus('awaiting-signature')
@@ -3744,6 +3779,8 @@ export function PerpsTradeTicket({
       setLifecycleState('commitPreparing')
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
+      setCommittedDirection(perpsSideToDirection(preparedOrder.request.side))
+      setCommittedMarginDelta(preparedOrder.request.marginDelta)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
       setFinalExecutionPrice(undefined)
@@ -3986,6 +4023,8 @@ export function PerpsTradeTicket({
     setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setCommittedSizeDelta(undefined)
+    setCommittedDirection(undefined)
+    setCommittedMarginDelta(undefined)
     setCommittedPrePositionMarginUsdc(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
@@ -4221,7 +4260,7 @@ export function PerpsTradeTicket({
             </div> : null}
           </div> : null}
 
-          <div className="flex items-center gap-3 py-0.5 text-content-primary">
+          {!isReduceOnly && !isReducingCurrentPosition ? <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
               id="perps-margin-call-simulator"
               type="checkbox"
@@ -4259,10 +4298,21 @@ export function PerpsTradeTicket({
                 </span>
               </Tooltip>
             </span>
-          </div>
+          </div> : null}
         </div>
 
-        <div>
+        {isReduceOnly || isReducingCurrentPosition ? (
+          <div className="space-y-2 border border-brand-border/20 p-3">
+            <AccountSummaryRow label="Current leverage" value={formatLeverageRaw(
+              currentPosition?.estimatedNotionalUsdc ?? sizeDeltaToNotionalUsdc(currentPosition?.size, calculationOraclePriceRaw),
+              currentPosition?.marginUsdc
+            )} />
+            <AccountSummaryRow label="Estimated remaining leverage" value={previewResultingLeverage} />
+            <p className="text-xs leading-5 text-content-secondary">
+              Leverage after a reduction is calculated from the remaining position. Protocol safety checks still apply.
+            </p>
+          </div>
+        ) : <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-sm font-medium text-content-secondary" htmlFor="perps-leverage-input">
               Leverage
@@ -4326,7 +4376,7 @@ export function PerpsTradeTicket({
             <span>1x</span>
             <span>{formatLeverage(maxLeverage)}</span>
           </div>
-        </div>
+        </div>}
 
         <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>
@@ -5061,9 +5111,7 @@ export function PerpsTradeTicket({
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     {
                       label: finalIsClose ? 'Position side' : 'Direction',
-                      value: finalIsClose
-                        ? directionLabel(oppositeDirection(direction))
-                        : directionLabel(direction),
+                      value: finalDirection === undefined ? 'Unavailable' : directionLabel(finalDirection),
                     },
                     { label: 'Final price', value: finalPriceDisplay },
                     {
@@ -5081,7 +5129,7 @@ export function PerpsTradeTicket({
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
                     ...(!finalIsClose ? [
-                      { label: 'Margin posted', value: formatUsdc(marginNumber) },
+                      { label: 'Margin posted', value: formatUsdcRaw(finalMarginPosted) },
                       { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
                       {
                         label: 'Oracle confidence spread',

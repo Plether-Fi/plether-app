@@ -231,6 +231,7 @@ function closeTicket({
       initialOrderQuantity={size}
       initialOrderId={42n}
       initialCommittedSizeDelta={500n * 10n ** 18n}
+      initialCommittedDirection={lifecycleState === 'executed' ? 'long' : undefined}
       initialCommittedIsFullClose={lifecycleState === 'executed' ? isFullClose : undefined}
       initialCommittedPositionVpiAccrued={
         lifecycleState === 'executed' ? positionVpiAccrued : undefined
