@@ -1163,7 +1163,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="border-b border-brand-border/20 px-1 pt-1 sm:px-2 sm:pt-2">
+      <div className="border-b border-brand-border/20 px-2 pt-2 sm:px-4 sm:pt-4">
         <div className={props.protectionContent !== undefined ? 'flex gap-x-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'grid grid-cols-2 gap-x-1 sm:flex sm:overflow-x-auto'}>
           {ACCOUNT_TABS.filter(tab => tab.id !== 'protections' || props.protectionContent !== undefined).map((tab) => (
             <button
@@ -1185,7 +1185,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
         </div>
       </div>
 
-      <div className="px-2 py-1.5 sm:px-3 sm:py-2">
+      <div className="panel-padding-x py-3 sm:py-4">
         {activeTab === 'protections' ? props.protectionContent : <AccountTabContent
           activeTab={activeTab}
           nowSeconds={nowSeconds}

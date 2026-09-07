@@ -4102,7 +4102,7 @@ export function PerpsTradeTicket({
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="space-y-4 px-2 py-1.5 sm:space-y-5 sm:px-3 sm:py-2">
+      <div className="space-y-4 panel-padding-x py-3 sm:space-y-5 sm:py-4">
         <div>
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
             <span>Direction</span>

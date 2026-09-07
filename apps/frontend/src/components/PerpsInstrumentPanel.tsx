@@ -509,7 +509,7 @@ function DirectionalLimitStat({
               {valueLabel}
             </span>
             <span
-              className={`whitespace-nowrap border px-1 py-0.5 text-[9px] font-semibold tracking-[0.03em] sm:px-2 sm:py-1 sm:text-[10px] sm:tracking-[0.08em] ${directionalBadgeClass(details.side)}`}
+              className={`inline-flex shrink-0 items-center justify-center whitespace-nowrap border px-1 py-0.5 font-mono text-[10px] font-semibold leading-none sm:px-1.5 sm:text-xs ${directionalBadgeClass(details.side)}`}
             >
               {directionalBadgeLabel(details.side, details.isLoading ?? false)}
             </span>
@@ -627,7 +627,7 @@ export function PerpsInstrumentPanel({
         <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
         <div className="@container min-w-0 flex-1">
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-3 @min-[22rem]:grid-cols-3 @min-[66rem]:grid-cols-6 sm:gap-4" data-perps-instrument-metrics>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-3 @min-[22rem]:grid-cols-3 @min-[52rem]:grid-cols-[repeat(3,minmax(0,1fr))_minmax(11rem,1.5fr)_repeat(2,minmax(0,1fr))] sm:gap-4" data-perps-instrument-metrics>
             {stats.map((stat) => {
               if (stat.directionalLimit) {
                 return (
