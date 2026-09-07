@@ -99,6 +99,43 @@ function primaryData({
   ]
 }
 
+// Arbitrum Sepolia block 306432516: the reported 192,000 plDXY position.
+function screenshotData(): ContractResult[] {
+  const data = primaryData({
+    positionResult: success({
+      exists: true,
+      side: 0,
+      size: 192_000n * 10n ** 18n,
+      entryPrice: 99_223_895n,
+      marginUsdc: 38_373_563_531n,
+      unrealizedPnlUsdc: -317_528_915n,
+      maintenanceMarginUsdc: 190_826_610n,
+      liquidatable: false,
+    }),
+    enginePositionResult: success([
+      192_000n * 10n ** 18n, 38_373_563_531n, 99_223_895n,
+      190_509_879_085n, 0, 1_788_797_525n, 25_857_538n,
+    ]),
+  })
+  data[7] = success({
+    liquidationReachableSettlementUsdc: 99_872_022_645n,
+    unrealizedPnlUsdc: -317_528_915n,
+    netEquityUsdc: 38_056_034_616n,
+  })
+  data.push(
+    success([152_136_315_554n, 5_287_315_765_581n, 1_788_797_525n]),
+    success(0n),
+    success([0n, 0n, 10n, 20n, 300n, 500n]),
+    success(60_003_610_699_152n),
+    success(1_788_797_607n),
+    success(5_301_042_300_334n),
+    success(1_788_797_581n),
+    success(9_277_623_571_807n),
+    success(0n), success(1_788_797_607n), success(0n),
+  )
+  return data
+}
+
 describe('usePerpsAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -181,7 +218,21 @@ describe('usePerpsAccount', () => {
       'isFadWindow',
       'positions',
       'getActivePositionProtection',
+      'positionCarryState',
+      'unsettledCarryUsdc',
+      'riskParams',
+      'totalAssets',
+      'getCurrentBlockTimestamp',
+      'sideCarryIndex',
+      'sideCarryTimestamp',
+      'sideBorrowBaseUsdc',
+      'sideCarryIndex',
+      'sideCarryTimestamp',
+      'sideBorrowBaseUsdc',
     ])
+    expect(dynamicCall?.batchSize).toBe(0)
+    expect(dynamicCall?.contracts.slice(16).map((contract: { args: bigint[] }) => contract.args))
+      .toEqual([[0n], [0n], [0n], [1n], [1n], [1n]])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'riskParams',
@@ -233,19 +284,64 @@ describe('usePerpsAccount', () => {
     expect(mocks.refetchImmutable).not.toHaveBeenCalled()
   })
 
-  it('reads P&L from the v1.2.2 ledger snapshot offsets', () => {
-    const snapshot = Array<bigint | boolean>(24).fill(0n)
-    snapshot[12] = 400_000_000n // liquidation-reachable settlement
-    snapshot[13] = 900_000_000n // separate terminal-price cap
-    snapshot[20] = 97_500_000n // entry price, not unrealized P&L
-    snapshot[21] = 25_000_000n
-    snapshot[22] = 415_000_000n
-    snapshot[23] = false
-    mocks.primaryData[7] = success(snapshot)
+  it('shows actual indexed carry instead of the screenshot’s 61,498.46 USDC of collateral', () => {
+    mocks.primaryData = screenshotData()
 
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
 
-    expect(result.current.position?.pendingCarryUsdc).toBe(10_000_000n)
+    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+  })
+
+  it('adds checkpointed unpaid carry and uses object-shaped getter results', () => {
+    mocks.primaryData = screenshotData()
+    mocks.primaryData[9] = success({ side: 0, vpiAccrued: -40_000_000n })
+    mocks.primaryData[11] = success({ borrowBaseUsdc: 152_136_315_554n, lastCarryIndex: 5_287_315_765_581n })
+    mocks.primaryData[12] = success(7_000_000n)
+    mocks.primaryData[13] = success({ baseCarryBps: 500n })
+
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+
+    expect(result.current.position?.pendingCarryUsdc).toBe(7_003_057n)
+  })
+
+  it('selects the new side’s carry inputs when the position direction changes', () => {
+    mocks.primaryData = screenshotData()
+    const { result, rerender } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+
+    mocks.primaryData = screenshotData()
+    mocks.primaryData[9] = success({ side: 1 })
+    mocks.primaryData[19] = success(5_301_042_300_334n)
+    mocks.primaryData[20] = success(1_788_797_581n)
+    mocks.primaryData[21] = success(9_277_623_571_807n)
+    mocks.primaryData[16] = failure('other side unavailable')
+    rerender()
+
+    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+  })
+
+  it.each([9, 11, 12, 13, 14, 15, 16, 17, 18])(
+    'leaves carry unavailable when required dynamic read %i fails', (index) => {
+      mocks.primaryData = screenshotData()
+      const { result, rerender } = renderHook(() => usePerpsAccount(98_000_000n))
+      expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+
+      mocks.primaryData = screenshotData()
+      mocks.primaryData[index] = failure('carry input unavailable')
+      rerender()
+
+      expect(result.current.position?.pendingCarryUsdc).toBeUndefined()
+    }
+  )
+
+  it('does not depend on the collateral snapshot or cached risk configuration for carry', () => {
+    mocks.primaryData = screenshotData()
+    mocks.primaryData[7] = failure('ledger unavailable')
+    mocks.riskParamsData = [success({ baseCarryBps: 9_000n }), success(15n)]
+
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+
+    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
   })
 
   it('keeps position data visible while pending-order details load', () => {
