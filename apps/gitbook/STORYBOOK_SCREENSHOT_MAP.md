@@ -28,6 +28,8 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Position, order history and position-margin modal | `PerpsAccountPanel` | Current application components with deterministic fixtures |
 | Executed close reconciliation | `PerpsTradeTicket` | Current application component with deterministic executed-receipt evidence |
 | Market-phase banner | `PerpsMarketStatePanel` | Current application component with deterministic countdown text |
+| New-order TP/SL checkbox and trigger inputs | `PerpsTradeTicket.stories.tsx` | Current application component with illustrative values; capture focuses on the trading controls |
+| Active protection, queued and latched closes, and activity | `PositionProtection.stories.tsx` | Current application components with illustrative protection and worker fixtures; Storybook-only preview notice omitted from captures |
 | Vault overview, detail, position, activity and transaction previews | `VaultsDocumentation.stories.tsx` | Current production Vaults components with deterministic pool, history, account and request fixtures |
 
 ## How PnL is calculated
@@ -85,7 +87,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/reduce-or-close-a-position.md:52` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `trading-on-plether-perps/reduce-or-close-a-position.md:56` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
 
 ## Your Margin Account
 
@@ -93,9 +95,19 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | --- | --- | --- | --- |
 | `trading-on-plether-perps/your-margin-account.md:207` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
+## Take profit and stop loss
+
+| Documentation reference | Required visual | Storybook target | Coverage |
+| --- | --- | --- | --- |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:37` | Trade ticket with Take profit / stop loss checked and both trigger inputs expanded | [New order with TP/SL](http://localhost:6006/?path=/story/perps-trade-ticket--add-take-profit-stop-loss) | Current component, illustrative values, no wallet transactions |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:59` | Active TP/SL with saved trigger prices and the worker monitoring notice | [Active TP/SL](http://localhost:6006/?path=/story/perps-position-protection--armed) | Current component, illustrative worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:100` | Close queued after a trigger, with the linked order awaiting execution | [Close Queued](http://localhost:6006/?path=/story/perps-position-protection--close-queued) | Current component, illustrative queued close |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:106` | Close delayed with a binding trigger and a queue-related retry delay | [Close Delayed](http://localhost:6006/?path=/story/perps-position-protection--latched) | Current component, illustrative latched close and worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:148` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
+
 ## Inventory result
 
-- Screenshot references found: **18**
-- Unique screenshot assets: **11**
-- References mapped to a Storybook target: **18**
+- Screenshot references found: **23**
+- Unique screenshot assets: **16**
+- References mapped to a Storybook target: **23**
 - Unmapped references: **0**

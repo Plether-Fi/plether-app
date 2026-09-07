@@ -31,6 +31,10 @@ Changing direction requires a complete close. Wait for that close to execute bef
 
 ### Before submitting an order
 
+For a new position, select **Take profit / stop loss** in the trade ticket to attach one or both full-position exit triggers. They become active only after the opening order fills and require an additional USDC execution reserve. For an existing position, manage triggers in the **TP/SL** tab instead. Read [Take profit and stop loss](take-profit-and-stop-loss.md).
+
+If the account already has active TP/SL, remove it before submitting a discretionary increase. Once a trigger has queued a close, or that close is delayed and latched, the protection cannot be edited or removed while unresolved.
+
 Check that:
 
 * The **Market State** is `Open`.

@@ -59,6 +59,8 @@ An expired row under **Open Orders** therefore shows **Keeper cleanup in progres
 
 ### What sponsorship pays
 
+Eligible [TP/SL](take-profit-and-stop-loss.md) creation, editing and removal also use owner-authorized sponsored operations when enabled for the deployment. This is separate from keeper execution: the protection worker triggers or retries a close, and the order keeper finalizes it. Sponsorship does not pay the protection's USDC trigger and execution reserve. A confirmed TP/SL update does not mean that its eventual close has executed.
+
 Plether pays the network gas required to include an eligible smart-account operation. The following still come from the Trading Account or the trade’s settlement:
 
 * USDC deposited into the Margin Account
@@ -67,6 +69,7 @@ Plether pays the network gas required to include an eligible smart-account opera
 * VPI charges or credits
 * Carry charges
 * The order execution reward
+* The TP/SL trigger and close-execution reserve
 * The current 50 bps[^bps] frozen-close spread, when applicable
 
 Gas sponsorship does not change execution price, FIFO priority, slippage protection, margin requirements, liquidation rules or protocol solvency checks. It also does not guarantee that a committed order will execute; oracle[^oracle] availability, market state, FIFO and execution-time checks still apply.
