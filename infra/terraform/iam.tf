@@ -13,7 +13,7 @@ locals {
   ]
 
   github_deploy_ecs_service_arns = [
-    for service in [
+    for service in concat([
       "plether-api",
       "plether-keeper",
       "plether-liquidation-worker",
@@ -21,7 +21,7 @@ locals {
       "plether-perps-indexer",
       "plether-insights-worker",
       "plether-workers",
-    ] : "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/plether-${var.environment}/${service}"
+    ], var.environment == "sepolia" ? ["plether-position-protection-worker"] : []) : "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/plether-${var.environment}/${service}"
   ]
 }
 

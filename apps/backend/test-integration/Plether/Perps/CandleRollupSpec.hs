@@ -124,6 +124,7 @@ import Plether.Database.Schema
   , insertPerpsActivity
   , insertPerpsEvent
   , setPerpsIndexerState
+  , setPerpsIndexerStateWithTimestamp
   )
 import Plether.Perps.Release
   ( perpsV2DeploymentBlock
@@ -1823,6 +1824,58 @@ candleRollupSpec databaseUrl =
         (stdout <> stderr)
           `shouldContain` "Requested range does not contain a full aligned bucket for every canonical interval"
 
+    it "backfills and verifies an event-empty certified release without fabricating trades" $
+      withCandleDatabase databaseUrl $ \pool -> do
+        let fromTimestamp = baseTime + 60
+            toTimestamp = baseTime + 3 * 86_400
+        seedCertifiedCandleAdminVolumeSource pool testChainId certifiedVolumeRouter
+          certifiedVolumeActivationBlock certifiedVolumeActivationBlock (baseTime + 17) (baseTime + 100)
+        withDb pool $ \connection -> do
+          void $ execute connection "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ?"
+            (testChainId, certifiedVolumeRouter)
+          setPerpsIndexerStateWithTimestamp connection testChainId certifiedVolumeIndexerName certifiedVolumeRouter
+            certifiedVolumeActivationBlock (certifiedVolumeActivationBlock + 100)
+            (Just $ "0x" <> Text.replicate 64 "d") (Just $ toTimestamp + 59)
+        (exitCode, stdout, stderr) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["backfill", "volume", "--from", show fromTimestamp, "--to", show (toTimestamp + 3600)]
+        exitCode `shouldBe` ExitSuccess
+        stderr `shouldBe` ""
+        stdout `shouldContain` ("\"to_timestamp\":" <> show toTimestamp)
+        (verified, _, _) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["verify", "volume", "--from", show fromTimestamp, "--to", show toTimestamp]
+        verified `shouldBe` ExitSuccess
+        (overrun, _, _) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["verify", "volume", "--from", show fromTimestamp, "--to", show (toTimestamp + 3600)]
+        overrun `shouldSatisfy` (/= ExitSuccess)
+        withDb pool $ \connection -> do
+          counts <- query connection "SELECT COUNT(*) FROM perps_market_volume_rollups WHERE chain_id = ? AND release_router = ?"
+            (testChainId, certifiedVolumeRouter) :: IO [Only Integer]
+          counts `shouldBe` [Only 0]
+          -- Rewinding through the existing API must discard timestamp proof.
+          setPerpsIndexerState connection testChainId certifiedVolumeIndexerName certifiedVolumeRouter
+            certifiedVolumeActivationBlock certifiedVolumeActivationBlock Nothing
+        (rewound, _, _) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["verify", "volume", "--from", show fromTimestamp, "--to", show toTimestamp]
+        rewound `shouldSatisfy` (/= ExitSuccess)
+
+    it "does not certify an event-empty release without a canonical timestamp" $
+      withCandleDatabase databaseUrl $ \pool -> do
+        seedCertifiedCandleAdminVolumeSource pool testChainId certifiedVolumeRouter
+          certifiedVolumeActivationBlock certifiedVolumeActivationBlock (baseTime + 17) (baseTime + 100)
+        withDb pool $ \connection -> do
+          void $ execute connection "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ?"
+            (testChainId, certifiedVolumeRouter)
+          setPerpsIndexerState connection testChainId certifiedVolumeIndexerName certifiedVolumeRouter
+            certifiedVolumeActivationBlock (certifiedVolumeActivationBlock + 100)
+            (Just $ "0x" <> Text.replicate 64 "d")
+        (exitCode, stdout, _) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["backfill", "volume", "--from", show baseTime, "--to", show (baseTime + 3 * 86_400)]
+        exitCode `shouldBe` ExitSuccess
+        stdout `shouldContain` "No source rows matched"
+        (verified, _, _) <- runCandleAdminWithRouter databaseUrl certifiedVolumeRouter
+          ["verify", "volume", "--from", show baseTime, "--to", show (baseTime + 3 * 86_400)]
+        verified `shouldSatisfy` (/= ExitSuccess)
+
     it "uses a release activation minute only after the matching indexer cursor is certified" $
       withCandleDatabase databaseUrl $ \pool -> do
         let activationTimestamp = baseTime + 17
@@ -3391,6 +3444,12 @@ cleanupCandleRows pool =
           connection
           "DELETE FROM perps_indexer_state \
           \WHERE chain_id = ? AND release_router = ?"
+          (testChainId, certifiedVolumeRouter)
+      void $
+        execute connection "DELETE FROM perps_market_volume_rollups WHERE chain_id = ? AND release_router = ?"
+          (testChainId, certifiedVolumeRouter)
+      void $
+        execute connection "DELETE FROM perps_rollup_coverage WHERE kind = 'volume' AND chain_id = ? AND release_router = ?"
           (testChainId, certifiedVolumeRouter)
       void $
         execute

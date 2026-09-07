@@ -158,7 +158,7 @@ jobs:
               .sponsorshipEnabled == true
             ' aa-status.json >/dev/null
 
-      - name: Require deployable Sepolia candle volume
+      - name: Validate Sepolia candle prices and report volume readiness
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:

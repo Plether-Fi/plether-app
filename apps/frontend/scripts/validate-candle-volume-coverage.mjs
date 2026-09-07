@@ -56,11 +56,6 @@ export function validateCurrentCandleCoverage(envelope, intervalSeconds, manifes
   }
   requireAlignedBounds(data, intervalSeconds, 'coverage')
 
-  if (data.volumeCoverageComplete !== true) {
-    throw new Error(`interval ${intervalSeconds}: volume coverage is incomplete`)
-  }
-  requireAlignedBounds(data, intervalSeconds, 'volumeCoverage')
-
   if (data.volumeChainId !== manifest.chainId) {
     throw new Error(`interval ${intervalSeconds}: volume chain does not match the manifest`)
   }
@@ -84,19 +79,27 @@ export function validateCurrentCandleCoverage(envelope, intervalSeconds, manifes
   ) {
     throw new Error(`interval ${intervalSeconds}: price generation is invalid`)
   }
-  if (
-    generation.volumeGeneration <= 0 ||
-    generation.volumeGeneration >= DATASET_GENERATION_LIMIT
-  ) {
-    throw new Error(`interval ${intervalSeconds}: volume generation is not positive`)
+  const warnings = []
+  if (data.volumeCoverageComplete !== true) {
+    warnings.push(`interval ${intervalSeconds}: volume coverage is incomplete`)
+  } else {
+    try {
+      requireAlignedBounds(data, intervalSeconds, 'volumeCoverage')
+    } catch (error) {
+      warnings.push(error.message)
+    }
+  }
+  if (generation.volumeGeneration <= 0 || generation.volumeGeneration >= DATASET_GENERATION_LIMIT) {
+    warnings.push(`interval ${intervalSeconds}: volume generation is not positive`)
   }
   if (!generation.usableVolume) {
-    throw new Error(`interval ${intervalSeconds}: usable-volume generation bit is not set`)
+    warnings.push(`interval ${intervalSeconds}: usable-volume generation bit is not set`)
   }
 
   return {
     intervalSeconds,
     datasetGeneration: data.datasetGeneration,
+    warnings,
     ...generation,
   }
 }
@@ -218,12 +221,13 @@ async function main() {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   const results = await validateDeploymentCoverage({ backendUrl, manifest })
   for (const result of results) {
+    for (const warning of result.warnings) process.stderr.write(`WARNING: ${warning}\n`)
     process.stdout.write(
       `interval=${result.intervalSeconds} price_generation=${result.priceGeneration} ` +
-      `volume_generation=${result.volumeGeneration} usable_volume=true\n`
+      `volume_generation=${result.volumeGeneration} usable_volume=${result.usableVolume}\n`
     )
   }
-  process.stdout.write('Sepolia native candle price and volume coverage is deployable.\n')
+  process.stdout.write('Sepolia candle price coverage is deployable; volume findings are advisory.\n')
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

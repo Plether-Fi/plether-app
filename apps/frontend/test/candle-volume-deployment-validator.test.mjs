@@ -45,6 +45,29 @@ function intervalFromRequest(input) {
 }
 
 describe('Sepolia candle volume deployment validator', () => {
+  it('allows incomplete volume on every interval without claiming usable coverage', async () => {
+    const results = await validateDeploymentCoverage({
+      backendUrl: 'https://backend.example.test', manifest,
+      fetchImpl: async input => response(payload(intervalFromRequest(input), {
+        volumeCoverageComplete: false,
+        volumeCoverageStart: null,
+        volumeCoverageEnd: null,
+        volumeFinalizedThrough: null,
+        datasetGeneration: DATASET_PRICE_GENERATION_FACTOR,
+      })),
+    })
+    assert.equal(results.length, CANDLE_INTERVALS.length)
+    assert.ok(results.every(result => !result.usableVolume &&
+      result.warnings.some(warning => warning.includes('volume coverage is incomplete'))))
+  })
+  it('still rejects incomplete price coverage', async () => {
+    await assert.rejects(validateDeploymentCoverage({
+      backendUrl: 'https://backend.example.test', manifest,
+      fetchImpl: async input => response(payload(intervalFromRequest(input), {
+        coverageComplete: false, volumeCoverageComplete: false,
+      })),
+    }), /price coverage is incomplete/)
+  })
   it('requires and validates every canonical current-candle interval', async () => {
     const requested = []
     const results = await validateDeploymentCoverage({
@@ -79,8 +102,8 @@ describe('Sepolia candle volume deployment validator', () => {
     }), /volume router does not match/)
   })
 
-  it('rejects null volume coverage bounds', async () => {
-    await assert.rejects(validateDeploymentCoverage({
+  it('warns about null volume coverage bounds', async () => {
+    const results = await validateDeploymentCoverage({
       backendUrl: 'https://backend.example.test',
       manifest,
       intervals: [300],
@@ -88,11 +111,12 @@ describe('Sepolia candle volume deployment validator', () => {
       fetchImpl: async () => response(payload(300, {
         volumeCoverageStart: null,
       })),
-    }), /volumeCoverageStart must be a non-negative aligned integer/)
+    })
+    assert.match(results[0].warnings.join(' '), /volumeCoverageStart must be a non-negative aligned integer/)
   })
 
-  it('rejects zero volume generation and an unset usable-volume bit', async () => {
-    await assert.rejects(validateDeploymentCoverage({
+  it('warns about zero volume generation and an unset usable-volume bit', async () => {
+    const zero = await validateDeploymentCoverage({
       backendUrl: 'https://backend.example.test',
       manifest,
       intervals: [60],
@@ -100,9 +124,10 @@ describe('Sepolia candle volume deployment validator', () => {
       fetchImpl: async () => response(payload(60, {
         datasetGeneration: DATASET_PRICE_GENERATION_FACTOR + 1,
       })),
-    }), /volume generation is not positive/)
+    })
+    assert.match(zero[0].warnings.join(' '), /volume generation is not positive/)
 
-    await assert.rejects(validateDeploymentCoverage({
+    const unset = await validateDeploymentCoverage({
       backendUrl: 'https://backend.example.test',
       manifest,
       intervals: [60],
@@ -110,7 +135,8 @@ describe('Sepolia candle volume deployment validator', () => {
       fetchImpl: async () => response(payload(60, {
         datasetGeneration: DATASET_PRICE_GENERATION_FACTOR + 2,
       })),
-    }), /usable-volume generation bit is not set/)
+    })
+    assert.match(unset[0].warnings.join(' '), /usable-volume generation bit is not set/)
   })
 
   it('retries a transient request and succeeds within three attempts', async () => {

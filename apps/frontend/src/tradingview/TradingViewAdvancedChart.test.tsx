@@ -132,6 +132,30 @@ describe('TradingViewAdvancedChart', () => {
     queryClient.clear()
   })
 
+  it('labels the fresh daily zero as a placeholder without claiming a verified total', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-07T12:00:00Z'))
+    const timers = vi.spyOn(window, 'setInterval')
+    installReadyFakeTradingView()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval="1d" />
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(datafeedHarness.onVolumeCoverageChange).toBeTypeOf('function'))
+    act(() => datafeedHarness.onVolumeCoverageChange?.({ intervalSeconds: 86400, state: 'unavailable' }))
+    expect(view.getByText('Daily volume: 0 USDC')).toBeInTheDocument()
+    expect(view.getByText(/not a verified daily total/)).toBeInTheDocument()
+    const tick = timers.mock.calls.find(([, delay]) => delay === 60_000)?.[0]
+    expect(tick).toBeTypeOf('function')
+    clock.mockReturnValue(Date.parse('2026-09-08T00:00:00Z'))
+    act(() => { if (typeof tick === 'function') tick() })
+    expect(view.queryByText('Daily volume: 0 USDC')).not.toBeInTheDocument()
+    expect(view.getByText('Volume temporarily unavailable')).toBeInTheDocument()
+    view.unmount()
+    queryClient.clear()
+  })
+
   it('shows volume degradation only for the active interval and clears it after recovery', async () => {
     const fakeTradingView = installReadyFakeTradingView()
     const queryClient = new QueryClient({
