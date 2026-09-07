@@ -2840,7 +2840,7 @@ export function PerpsTradeTicket({
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
-  const canAttachProtection = !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
+  const canAttachProtection = !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
   const protectionInput = useMemo(() => {
     if (!canAttachProtection || !isProtectionEnabled) return {}
     try {
@@ -4196,12 +4196,24 @@ export function PerpsTradeTicket({
             </span>
           </div>
 
-          {canAttachProtection && protectionConfiguration?.enabled ? <div>
-            <label className="flex cursor-pointer items-center gap-3 py-0.5 text-sm font-semibold text-content-primary transition-colors hover:text-[#FFAB96]">
-              <input type="checkbox" checked={isProtectionEnabled} disabled={isReviewOpen} onChange={event => { setIsProtectionEnabled(event.target.checked) }} className="h-4 w-4 accent-[#FFAB96]" />
+          {!isReduceOnly && protectionConfiguration?.enabled ? <div>
+            <div className="flex items-center gap-1.5">
+            <label className={`flex items-center gap-3 py-0.5 text-sm font-semibold transition-colors ${canAttachProtection && !isReviewOpen ? 'cursor-pointer text-content-primary hover:text-[#FFAB96]' : 'cursor-not-allowed text-content-secondary opacity-50'}`}>
+              <input type="checkbox" checked={canAttachProtection && isProtectionEnabled} disabled={!canAttachProtection || isReviewOpen} onChange={event => { setIsProtectionEnabled(event.target.checked) }} className="h-4 w-4 accent-[#FFAB96] disabled:cursor-not-allowed" />
               <span>Take profit / stop loss</span>
             </label>
-            {isProtectionEnabled ? <div className="mt-4 space-y-3">
+            {!canAttachProtection ? <Tooltip
+              content={`Manage ${activePositionProtectionId > 0n ? 'your active protection' : 'protection for your existing position'} in the TP/SL tab.`}
+              position="top"
+              className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+            >
+              <button type="button" aria-label="Take profit / stop loss unavailable info"
+                className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]">
+                i
+              </button>
+            </Tooltip> : null}
+            </div>
+            {canAttachProtection && isProtectionEnabled ? <div className="mt-4 space-y-3">
               <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
               {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
               <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional {formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} USDC from free margin to trigger and execute the close.</p>

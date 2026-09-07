@@ -445,6 +445,28 @@ export const AddTakeProfitStopLoss: Story = {
   },
 }
 
+export const DisabledAttachedProtection: Story = {
+  name: 'Existing position · TP/SL disabled',
+  render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition}
+    protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeDisabled()
+  },
+}
+
+export const ReduceOnlyHidesProtection: Story = {
+  name: 'Reduce only · TP/SL hidden',
+  render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition} initialReduceOnly
+    protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
+    await userEvent.click(canvas.getByRole('checkbox', { name: 'Reduce only' }))
+    await expect(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeDisabled()
+  },
+}
+
 export const ProtectedOpenReview: Story = {
   name: 'New order · TP/SL confirmation',
   parameters: { controls: { disable: true } },

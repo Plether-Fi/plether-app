@@ -299,9 +299,58 @@ describe('perps ticket oracle regime matrix', () => {
     expect(screen.getByLabelText('Take profit (USDC)')).toHaveAttribute('aria-invalid', 'false')
   })
 
-  it('does not offer attached TP/SL on an existing position', () => {
+  it('keeps attached TP/SL visible but disabled on an existing position', () => {
     render(<PerpsTradeTicket currentPosition={currentPosition} protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true }} />)
+    const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
+    expect(toggle).toBeDisabled()
+    expect(toggle.closest('label')).toHaveClass('opacity-50', 'cursor-not-allowed')
+    expect(screen.queryByText('Manage protection for your existing position in the TP/SL tab.')).not.toBeInTheDocument()
+    fireEvent.focus(screen.getByRole('button', { name: 'Take profit / stop loss unavailable info' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Manage protection for your existing position in the TP/SL tab.')
+  })
+
+  it('disables attached TP/SL when active protection loads', () => {
+    render(<PerpsTradeTicket activePositionProtectionId={42n} protectionConfiguration={{ enabled: true }} />)
+    const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
+    expect(toggle).toBeDisabled()
+    expect(screen.queryByText('Manage your active protection in the TP/SL tab.')).not.toBeInTheDocument()
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Take profit / stop loss unavailable info' }).parentElement!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Manage your active protection in the TP/SL tab.')
+  })
+
+  it('hides TP/SL only while reduce only is selected and preserves the draft', () => {
+    render(<PerpsTradeTicket oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true }} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
     expect(screen.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
+    expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeChecked()
+    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+  })
+
+  it('restores the disabled checkbox when reduce only is cleared on an existing position', () => {
+    render(<PerpsTradeTicket currentPosition={currentPosition} initialReduceOnly protectionConfiguration={{ enabled: true }} />)
+    expect(screen.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
+    expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeDisabled()
+  })
+
+  it('keeps the checkbox stable when a position loads and hides stale attachment inputs', () => {
+    const props = { oraclePriceRaw: 100_000_000n, protectionCapPrice: 200_000_000n, protectionConfiguration: { enabled: true } }
+    const view = render(<PerpsTradeTicket {...props} />)
+    const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
+    fireEvent.click(toggle)
+    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    view.rerender(<PerpsTradeTicket {...props} currentPosition={currentPosition} />)
+    expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBe(toggle)
+    expect(toggle).toBeDisabled()
+    expect(toggle).not.toBeChecked()
+    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    view.rerender(<PerpsTradeTicket {...props} />)
+    expect(toggle).toBeEnabled()
+    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
   })
 
   beforeEach(() => {
