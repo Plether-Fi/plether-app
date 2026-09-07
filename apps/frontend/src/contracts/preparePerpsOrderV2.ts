@@ -60,6 +60,16 @@ export class PerpsOrderFundingShortfallError extends Error {
   }
 }
 
+export class PerpsOrderReviewError extends Error {
+  readonly reviewSummary: PerpsOrderReviewSummary
+
+  constructor(reviewSummary: PerpsOrderReviewSummary, cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'The reviewed order is invalid', { cause })
+    this.name = 'PerpsOrderReviewError'
+    this.reviewSummary = reviewSummary
+  }
+}
+
 interface PerpsOrderReviewContext {
   client: PublicClient
   manifest: PerpsAaDeploymentManifest
@@ -124,9 +134,11 @@ function validateInput(input: PreparePerpsOrderV2Input): void {
     throw new Error('Close orders must use zero margin delta')
   }
   if (
-    !Number.isInteger(input.selectedMaxLeverageBps) ||
-    input.selectedMaxLeverageBps <= 0 ||
-    input.selectedMaxLeverageBps > 0xffff_ffff
+    !input.isClose && (
+      !Number.isInteger(input.selectedMaxLeverageBps) ||
+      input.selectedMaxLeverageBps <= 0 ||
+      input.selectedMaxLeverageBps > 0xffff_ffff
+    )
   ) {
     throw new Error('Selected maximum leverage is invalid')
   }
@@ -378,13 +390,6 @@ async function reviewPerpsOrderWithContext(
     }
   }
 
-  derivePerpsExecutionBounds({
-    validUntil,
-    expectedConfigHash: context.expectedConfigHash,
-    executionBountyUsdc,
-    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
-    assessments,
-  })
   const executionMode = assessments[0].mode
   const bounds = relaxedWebPerpsExecutionBounds({
     validUntil,
@@ -417,6 +422,24 @@ async function reviewPerpsOrderWithContext(
     reviewedBlockHash: blockHash,
     reviewedPrice: context.currentPrice,
     currentAssessment: finalAssessments[0],
+  }
+  try {
+    // Validate the same final assessments that the review displays. Reductions
+    // retain regime/equity/range checks, but do not inherit the opening slider.
+    derivePerpsExecutionBounds({
+      validUntil,
+      expectedConfigHash: context.expectedConfigHash,
+      executionBountyUsdc,
+      selectedMaxLeverageBps: permissiveBounds.maxPostLeverageBps,
+      assessments: finalAssessments,
+    })
+    if (!input.isClose && reviewSummary.worstPostLeverageBps > BigInt(input.selectedMaxLeverageBps)) {
+      throw new Error(
+        `Highest reviewed leverage is ${(Number(reviewSummary.worstPostLeverageBps) / 10_000).toString()}x, above your selected ${(input.selectedMaxLeverageBps / 10_000).toString()}x limit.`
+      )
+    }
+  } catch (error) {
+    throw new PerpsOrderReviewError(reviewSummary, error)
   }
   const preparedOrder: PreparedPerpsOrderV2 = {
     account: input.account,

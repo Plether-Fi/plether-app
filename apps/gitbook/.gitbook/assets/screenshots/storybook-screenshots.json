@@ -1,10 +1,10 @@
 {
   "manifest": "STORYBOOK_SCREENSHOT_MAP.md",
-  "mappedReferences": 18,
-  "uniqueStories": 11,
+  "mappedReferences": 23,
+  "uniqueStories": 16,
   "manifestReferencesUpdated": 0,
   "prunedAssets": 0,
-  "replacements": 18,
+  "replacements": 23,
   "retainedSupportInstructions": 0,
   "captures": [
     {
@@ -96,6 +96,51 @@
         "width": 496
       },
       "storyPath": "/?path=/story/perps-market-state-panel--open-then-close-only"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--armed.png",
+      "storyId": "perps-position-protection--armed",
+      "dimensions": {
+        "height": 763,
+        "width": 816
+      },
+      "storyPath": "/?path=/story/perps-position-protection--armed"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--close-queued.png",
+      "storyId": "perps-position-protection--close-queued",
+      "dimensions": {
+        "height": 720,
+        "width": 816
+      },
+      "storyPath": "/?path=/story/perps-position-protection--close-queued"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--closed.png",
+      "storyId": "perps-position-protection--closed",
+      "dimensions": {
+        "height": 931,
+        "width": 816
+      },
+      "storyPath": "/?path=/story/perps-position-protection--closed"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-position-protection--latched.png",
+      "storyId": "perps-position-protection--latched",
+      "dimensions": {
+        "height": 871,
+        "width": 816
+      },
+      "storyPath": "/?path=/story/perps-position-protection--latched"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--add-take-profit-stop-loss.png",
+      "storyId": "perps-trade-ticket--add-take-profit-stop-loss",
+      "dimensions": {
+        "height": 773,
+        "width": 448
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--add-take-profit-stop-loss"
     },
     {
       "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png",

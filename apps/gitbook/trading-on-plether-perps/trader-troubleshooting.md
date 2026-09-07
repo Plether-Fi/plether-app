@@ -6,6 +6,10 @@ Start by checking the operation and onchain state before submitting another acti
 
 ### Check these first
 
+For automatic exits, check the **TP/SL** tab as well as the linked order. **Active** means triggers are armed, not that a close has executed. **Close delayed** means an attempt failed but its original trigger remains binding, even if the price reverses. You can still add margin and inspect the worker notice; non-expiry failures require operator review. See the [TP/SL state and troubleshooting guide](take-profit-and-stop-loss.md#understand-every-protection-state).
+
+If **TP/SL activity** is unavailable, retry the history request and check the current onchain protection before submitting another operation. A history-service error does not cancel protection. If new protection or sponsorship is disabled, check service availability and transaction status rather than assuming a wallet signature saved the triggers.
+
 1. Confirm the connected owner wallet and active Trading Account.
 2. Confirm the supported network.
 3. Check the sponsorship status and any UserOperation hash.
@@ -78,6 +82,8 @@ The bundler accepted the UserOperation but stopped tracking it before confirmed 
 A replacement normally requires a new wallet signature, nonce and sponsorship decision.
 
 ### I cannot review or commit an open or increase
+
+An active TP/SL record can block discretionary orders. Remove untriggered protection in the **TP/SL** tab first and wait for confirmation. A triggered or latched exit cannot be removed while unresolved. See [Take profit and stop loss](take-profit-and-stop-loss.md).
 
 Common causes include:
 

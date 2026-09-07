@@ -336,6 +336,20 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
+  it('preserves the reviewed assessment when leverage validation rejects preparation', async () => {
+    mocks.identityReady = true
+    const reviewSummary = { worstPostLeverageBps: 50_001n } as orderV2.PerpsOrderReviewSummary
+    const error = new orderPreparation.PerpsOrderReviewError(reviewSummary, new Error('Leverage limit exceeded'))
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockRejectedValue(error)
+    try {
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.prepareOrder(commitInput())).rejects.toBe(error)
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
   it('blocks stale reviews while a failed submission is unresolved, then prepares a fresh order', async () => {
     mocks.identityReady = true
     const fresh = preparedOrder()

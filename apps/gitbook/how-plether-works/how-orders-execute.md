@@ -19,6 +19,8 @@ This introduces a short delay by design. The delay separates the trading decisio
 
 ### Two related lifecycles
 
+[Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) adds a trigger stage before close-order execution. Attached triggers wait for the opening order to fill; armed triggers wait for an eligible oracle price. A trigger transaction queues a full close, which still has to execute through the router. **Active**, **Close queued** and **Closed** are distinct states. If an attempt fails into **Close delayed** (`Latched`), the original exit remains binding even if the price reverses.
+
 The sponsored commitment first moves through:
 
 ![Five-stage sponsored submission lifecycle from Preparing through wallet confirmation to Confirmed.](../.gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg)

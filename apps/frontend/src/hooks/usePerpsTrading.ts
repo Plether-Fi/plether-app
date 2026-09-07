@@ -28,6 +28,7 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import {
   preparePerpsOrderV2,
   PerpsOrderFundingShortfallError,
+  PerpsOrderReviewError,
 } from '../contracts/preparePerpsOrderV2'
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
@@ -824,7 +825,7 @@ export function usePerpsTrading() {
         positionProtection,
       })
     } catch (error) {
-      if (error instanceof PerpsOrderFundingShortfallError) throw error
+      if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
       throw new Error(getPerpsErrorMessage(error, 'commit'), { cause: error })

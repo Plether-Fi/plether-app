@@ -1040,6 +1040,45 @@ export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filt
 
 export const PERPS_CFD_ENGINE_ABI = [
   {
+    type: 'function',
+    name: 'positionCarryState',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [
+      { name: 'borrowBaseUsdc', type: 'uint256' },
+      { name: 'lastCarryIndex', type: 'uint256' },
+      { name: 'lastCarryTimestamp', type: 'uint64' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'unsettledCarryUsdc',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sideCarryIndex',
+    stateMutability: 'view',
+    inputs: [{ name: 'side', type: 'uint256' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sideCarryTimestamp',
+    stateMutability: 'view',
+    inputs: [{ name: 'side', type: 'uint256' }],
+    outputs: [{ type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'sideBorrowBaseUsdc',
+    stateMutability: 'view',
+    inputs: [{ name: 'side', type: 'uint256' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
     type: 'event',
     name: 'PositionOpened',
     inputs: [

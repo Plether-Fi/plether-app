@@ -20,6 +20,7 @@
 * [Your Margin Account](trading-on-plether-perps/your-margin-account.md)
 * [Open or increase a position](trading-on-plether-perps/open-or-increase-a-position.md)
 * [Reduce or close a position](trading-on-plether-perps/reduce-or-close-a-position.md)
+* [Take profit and stop loss](trading-on-plether-perps/take-profit-and-stop-loss.md)
 * [Read your position and account health](trading-on-plether-perps/read-your-position-and-account-health.md)
 * [Why is my order pending or failed?](trading-on-plether-perps/why-is-my-order-pending-or-failed.md)
 * [Check and settle a trader claim](trading-on-plether-perps/check-and-settle-a-trader-claim.md)
