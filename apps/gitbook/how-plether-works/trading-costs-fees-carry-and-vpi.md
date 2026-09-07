@@ -13,7 +13,7 @@ The distinction matters:
 
 Only the oracle adjustment changes the price recorded on the position. The other items change the USDC economics around that price.
 
-![Two-input flowchart showing oracle price determining directional PnL while fees, VPI, carry and frozen spread feed account settlement.](../.gitbook/assets/diagrams/trading-price-and-settlement-costs.svg)
+![Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.](../.gitbook/assets/diagrams/trading-price-and-settlement-costs.svg)
 
 ### Sponsored network gas is not a trading discount
 
@@ -289,13 +289,13 @@ The active rate is part of the 48-hour timelocked risk configuration. It must re
 
 #### Collection priority and terminal waiver
 
-When the trader’s available value is limited, close settlement follows this order:
+V2 does not use a single fee → trading loss → spread collateral queue. It separates price-loss backing from action-charge funding:
 
-![Protocol collection order from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/protocol-close-collection-order.svg)
+![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/protocol-close-collection-order.svg)
 
-A partial reduction must settle its complete obligation, including the full frozen-close spread. If it cannot, the reduction does not execute.
+A price loss consumes the same account’s nettable trader claim, then collectible PnL pledge. Action charges first offset a price gain and then use their eligible reserves and free settlement. PnL pledge is not available to pay those charges.
 
-A terminal full close is not trapped solely by an uncollectible spread. Plether collects the portion that remains reachable and waives only the uncollectible spread.
+A partial reduction cannot waive action charges. On a full close, eligible committed-order margin is an additional action source and any remaining uncollectible action charge can be waived, including frozen spread.
 
 The waived amount:
 
@@ -303,7 +303,7 @@ The waived amount:
 * Does not become a trader claim
 * Does not become LP revenue or an LP receivable
 
-Genuine base trading-loss shortfall continues through the ordinary bad-debt rules.
+Price loss beyond the terminal collectible cap is recorded as a price-loss write-off, separately from waived action charges. Frozen-spread recovery is attributed after execution fee, carry and positive VPI, subject to the net action charge.
 
 The onchain close preview exposes:
 
@@ -512,7 +512,7 @@ Moving existing free USDC into assigned position margin does not add new account
 
 It can still reduce future carry:
 
-![Flow showing higher assigned position margin reducing the LP-backed borrow base and future carry.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
+![For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
 
 This is why adding position margin can matter even when it has little immediate effect on account-level liquidation health.
 

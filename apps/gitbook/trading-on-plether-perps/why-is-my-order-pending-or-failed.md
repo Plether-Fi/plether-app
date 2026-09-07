@@ -2,7 +2,7 @@
 
 An action can fail before an order exists or after a confirmed order commitment. These are separate lifecycles and require different responses.
 
-![Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
+![Sponsored transaction success and order execution are different lifecycles. V2 transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
 
 The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO[^fifo] queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
 
@@ -382,9 +382,9 @@ Plether then:
 
 Review the liquidation result and current Margin Account before creating new exposure.
 
-#### Failed: Engine panic
+#### Still pending: engine or receipt failure
 
-The engine encountered an unexpected internal failure.
+An unexpected engine panic, malformed response or receipt failure is not automatically a terminal V2 order failure. The execution attempt rolls back and the order can remain pending for retry. Known planner or signed-bound rejections have separate terminal reasons. Check the stored pending reason and terminal receipt instead of inferring failure from an error message alone.
 
 Save:
 

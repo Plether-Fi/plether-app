@@ -11,7 +11,9 @@ That first calculation is simple. Settlement is where the distinctions begin.
 
 Gross PnL, account equity, released margin, net settlement, trader claims and wallet balance are related—but they are not the same number.
 
-![Flowchart separating unrealized PnL and liquidation health from realized PnL and close-settlement outcomes.](../.gitbook/assets/diagrams/pnl-and-close-settlement-outcomes.svg)
+In the deployed V2 model, **price-risk equity** is PnL pledge plus the same account’s nettable claim plus unrealized price PnL. Fees, carry and VPI are separate action economics. Residual price payouts that cannot be funded in full become claims; an unpaid action rebate is waived. A funded price payout credits PnL pledge while a position remains open, not freely withdrawable USDC.
+
+![Unrealized price PnL contributes to price-risk equity. A close separates realized price PnL from action costs; positive residual price payouts may be funded or recorded as claims.](../.gitbook/assets/diagrams/pnl-and-close-settlement-outcomes.svg)
 
 ### Start with the displayed price
 

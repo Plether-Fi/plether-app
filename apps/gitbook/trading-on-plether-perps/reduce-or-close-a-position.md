@@ -4,7 +4,7 @@ Reducing removes part of an existing position. Closing removes the complete posi
 
 Both actions begin with a sponsored submission and then use Plether’s delayed-order process:
 
-![Complete reduce-or-close lifecycle from amount selection through sponsored submission, FIFO execution and account update.](../.gitbook/assets/diagrams/reduce-close-position-lifecycle.svg)
+![Review and authorize a bounded commitment. A successfully submitted order joins FIFO, then executes, remains pending or fails without the requested position change.](../.gitbook/assets/diagrams/reduce-close-position-lifecycle.svg)
 
 The sponsored operation is **Confirmed** when the close commitment reaches the chain. The position remains exposed until the committed order later executes.
 
@@ -151,7 +151,7 @@ After reviewing the close, confirm the wallet authorization. Plether submits the
 
 The interface reports:
 
-![Reduce-or-close sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/reduce-close-sponsored-submission.svg)
+![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/reduce-close-sponsored-submission.svg)
 
 If the wallet signature, sponsorship request or UserOperation[^useroperation] submission fails before confirmation, no close order is created. Check the operation status before retrying.
 

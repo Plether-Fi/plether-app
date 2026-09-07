@@ -50,6 +50,8 @@ Senior is **last-loss**, not risk-free. Its coupon is a target rather than a gua
 
 Junior takes losses first and funds the Senior target coupon, but receives the residual upside after Senior obligations are met.
 
+![Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior.](.gitbook/assets/diagrams/senior-junior-waterfall-rules.svg)
+
 Read [Choose Senior or Junior](providing-liquidity/choose-senior-or-junior.md) before selecting a tranche.
 
 ### 2. Know what your shares represent
