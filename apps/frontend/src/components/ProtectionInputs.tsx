@@ -3,6 +3,8 @@ import { formatUnits } from 'viem'
 import { protectionParamsFromInputs, type ProtectionDraft, type PositionProtectionParams } from '../contracts/positionProtection'
 import { protectionDistance, protectionPrice, type ProtectionPriceContext } from '../utils/positionProtection'
 import { InfoTooltip } from './ui/InfoTooltip'
+import { TokenAmount } from './ui/TokenAmount'
+import { TokenLabel } from './ui/TokenLabel'
 
 interface ProtectionInputsProps extends ProtectionPriceContext {
   value: ProtectionDraft
@@ -18,7 +20,7 @@ export function ProtectionInputs({ value, onChange, disabled = false, direction,
   return <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
     <legend className="sr-only">Take profit / Stop loss</legend>
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-xs text-content-secondary">{direction === 'long' ? 'Long' : 'Short'} · Current price <span className="font-medium tabular-nums text-content-primary">{protectionPrice(rawMark, cap)} USDC</span></p>
+      <p className="text-xs text-content-secondary">{direction === 'long' ? 'Long' : 'Short'} · Current price <TokenAmount amount={protectionPrice(rawMark, cap)} className="font-medium tabular-nums text-content-primary" /></p>
       <InfoTooltip ariaLabel="How take profit and stop loss work" content="Set either trigger or both. The first one reached queues a full close and cancels the other. The final execution price may differ. % change is measured from the current price, not leveraged return. Calculated percentages are rounded down to four decimals." />
     </div>
     {!marketReady ? <p className="text-xs text-content-secondary">Waiting for the current price to calculate percentage changes.</p> : null}
@@ -57,7 +59,7 @@ export function ProtectionInputs({ value, onChange, disabled = false, direction,
               onChange={event => { onChange({ ...value, [modeKey]: mode, [key]: event.target.value }) }}
               className="min-w-0 w-full bg-transparent text-lg tabular-nums text-content-primary placeholder:text-content-secondary/40 focus:outline-none"
             />
-            <span className="ml-2 text-xs text-content-secondary">{mode === 'percent' ? '%' : 'USDC'}</span>
+            <span className="ml-2 shrink-0 text-xs text-content-secondary">{mode === 'percent' ? '%' : <TokenLabel token="USDC" />}</span>
             </div>
           </div>
           )}
@@ -75,7 +77,7 @@ export function ProtectionPriceSummary({ params, cap, rawMark }: { params: Posit
     {([['Take profit', params.takeProfitTriggerPrice, 'text-positive'], ['Stop loss', params.stopLossTriggerPrice, 'text-[#FFAB96]']] as const).map(([label, price, tone]) => <div key={label} className="min-w-0 border border-brand-border/20 bg-app-bg p-3 sm:p-4">
       <dt className={`text-xs font-medium ${tone}`}>{label}</dt>
       <dd>
-        <p className="mt-2 break-words text-lg font-semibold tabular-nums text-content-primary sm:text-xl">{price ? protectionPrice(price, cap) : 'Not set'}{price ? <span className="ml-1 text-xs font-normal text-content-secondary">USDC</span> : null}</p>
+        <p className="mt-2 break-words text-lg font-semibold tabular-nums text-content-primary sm:text-xl">{price ? <TokenAmount amount={protectionPrice(price, cap)} wrap /> : 'Not set'}</p>
         {price ? <p className="mt-1 text-xs text-content-secondary">{protectionDistance(price, rawMark, cap)}</p> : <p className="mt-1 text-xs text-content-secondary">No {label.toLowerCase()} trigger</p>}
       </dd>
     </div>)}
