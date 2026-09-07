@@ -15,7 +15,7 @@ import {
   type PerpsLifecycleOutcomeSnapshot,
   type PerpsOrderReviewSummary,
 } from '../contracts/perpsOrderV2'
-import { PerpsOrderFundingShortfallError } from '../contracts/preparePerpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type {
@@ -875,7 +875,7 @@ function formatLeverageRaw(notionalUsdc: bigint | undefined, marginUsdc: bigint 
 
 function formatLeverageBps(leverageBps: bigint | undefined): string {
   if (leverageBps === undefined || leverageBps <= 0n) return '--'
-  return `${formatPerpsNumber(Number(leverageBps) / 10_000, 2)}x`
+  return `${formatPerpsNumber(Number(leverageBps) / 10_000, leverageBps % 100n === 0n ? 2 : 4)}x`
 }
 
 function formatBpsPercent(value: bigint | undefined): string {
@@ -3045,6 +3045,9 @@ export function PerpsTradeTicket({
           setExecutionProtectionsError(
             `The protected order needs ${formatPerpsUsdc(error.shortfallUsdc)} USDC more. Reduce the order or deposit margin.`
           )
+        } else if (error instanceof PerpsOrderReviewError) {
+          setOrderReviewSummary(error.reviewSummary)
+          setExecutionProtectionsError(error.message)
         } else {
           setExecutionProtectionsError(
             error instanceof Error
@@ -3079,7 +3082,7 @@ export function PerpsTradeTicket({
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
   const reviewValidationError = enableLiveTrading
-    ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? liveValidationError
+    ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? executionProtectionsError ?? liveValidationError
     : orderQuantityValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
@@ -3148,16 +3151,20 @@ export function PerpsTradeTicket({
     return formatDisplayDxyPrice(openPreview.liquidationPrice)
   })()
   const previewResultingLeverage = (() => {
-    if (!enableLiveTrading) return formatLeverage(activeLeverage)
+    if (!enableLiveTrading) return isReducingCurrentPosition
+      ? isFullCloseOrder ? 'Position closed' : PREVIEW_UNAVAILABLE_VALUE
+      : formatLeverage(activeLeverage)
     if (isReviewOpen && isExecutionProtectionsLoading) return PREVIEW_LOADING_VALUE
     if (isReviewOpen && activeReviewSummary !== undefined) {
+      if (isReducingCurrentPosition && activeReviewSummary.currentAssessment.postPositionSize === 0n) return 'Position closed'
       return formatLeverageBps(activeReviewSummary.worstPostLeverageBps)
     }
+    if (isReviewOpen && executionProtectionsError) return PREVIEW_UNAVAILABLE_VALUE
     if (isTradePreviewPending) return PREVIEW_LOADING_VALUE
 
     if (isReducingCurrentPosition) {
-      if (closePreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(activeLeverage)
-      if (closePreview.remainingSize <= 0n) return 'Closed'
+      if (closePreview === undefined) return PREVIEW_UNAVAILABLE_VALUE
+      if (closePreview.remainingSize <= 0n) return 'Position closed'
 
       return formatLeverageRaw(
         sizeDeltaToNotionalUsdc(closePreview.remainingSize, closePreview.executionPrice),
@@ -3239,7 +3246,17 @@ export function PerpsTradeTicket({
         tooltip: MAINTENANCE_MARGIN_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.maintenanceMargin,
       },
-      { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
+      {
+        label: isReducingCurrentPosition
+          ? 'Estimated remaining leverage'
+          : isReviewOpen ? 'Highest reviewed leverage' : 'Resulting leverage',
+        value: previewResultingLeverage,
+        tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined,
+        tooltip: isReviewOpen && activeReviewSummary !== undefined
+          ? 'Highest leverage assessed across the reviewed price range using one block of market data. Final leverage depends on the execution price.'
+          : undefined,
+        tooltipDocsLink: DOCS_LINKS.positionLeverage,
+      },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       {
         label: 'Execution limit',
@@ -3286,6 +3303,7 @@ export function PerpsTradeTicket({
       },
     ],
     [
+      activeReviewSummary,
       enableLiveTrading,
       executionLimit,
       isExecutionProtectionsLoading,
@@ -4221,7 +4239,7 @@ export function PerpsTradeTicket({
             </div> : null}
           </div> : null}
 
-          <div className="flex items-center gap-3 py-0.5 text-content-primary">
+          {!isReduceOnly && !isReducingCurrentPosition ? <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
               id="perps-margin-call-simulator"
               type="checkbox"
@@ -4259,10 +4277,21 @@ export function PerpsTradeTicket({
                 </span>
               </Tooltip>
             </span>
-          </div>
+          </div> : null}
         </div>
 
-        <div>
+        {isReduceOnly || isReducingCurrentPosition ? (
+          <div className="space-y-2 border border-brand-border/20 p-3">
+            <AccountSummaryRow label="Current leverage" value={formatLeverageRaw(
+              currentPosition?.estimatedNotionalUsdc ?? sizeDeltaToNotionalUsdc(currentPosition?.size, calculationOraclePriceRaw),
+              currentPosition?.marginUsdc
+            )} />
+            <AccountSummaryRow label="Estimated remaining leverage" value={previewResultingLeverage} />
+            <p className="text-xs leading-5 text-content-secondary">
+              Leverage after a reduction is calculated from the remaining position. Protocol safety checks still apply.
+            </p>
+          </div>
+        ) : <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-sm font-medium text-content-secondary" htmlFor="perps-leverage-input">
               Leverage
@@ -4326,7 +4355,7 @@ export function PerpsTradeTicket({
             <span>1x</span>
             <span>{formatLeverage(maxLeverage)}</span>
           </div>
-        </div>
+        </div>}
 
         <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>

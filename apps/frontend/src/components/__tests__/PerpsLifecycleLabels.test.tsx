@@ -52,7 +52,7 @@ import {
   BundlerRequestError,
   useSponsoredOperationStore,
 } from '../../perps-aa'
-import { PerpsOrderFundingShortfallError } from '../../contracts/preparePerpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../contracts/preparePerpsOrderV2'
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 
@@ -1272,9 +1272,85 @@ describe('perps lifecycle labels', () => {
     expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDC')
     expect(within(dialog).queryByText('Total funding required')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Available account funding')).not.toBeInTheDocument()
-    expect(within(dialog).getByText('Resulting leverage').closest('div')).toHaveTextContent('5x')
+    expect(within(dialog).getByText('Highest reviewed leverage').closest('div')).toHaveTextContent('5x')
     expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
   })
+
+  it('shows the exact rejected review leverage and a blocking reason beside confirmation', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: {
+      valid: true, executionPrice: 100_000_000n,
+      postSize: 100n * 10n ** 18n, postMarginUsdc: 20_120_724n,
+    } }]
+    const error = new PerpsOrderReviewError({
+      requiredMarginUsdc: 20_000_000n, executionBountyUsdc: 10_000n,
+      requiredFundingUsdc: 20_010_000n, availableFundingUsdc: 100_000_000n,
+      worstPostLeverageBps: 50_001n, reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}`, reviewedPrice: 100_000_000n,
+      currentAssessment: { postLeverageBps: 49_700n } as PerpsExecutionAssessment,
+    }, new Error('Highest reviewed leverage is 5.0001x, above your selected 5x limit.'))
+    perpsTradingMocks.prepareOrder.mockRejectedValue(error)
+    render(<PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} />)
+    const dialog = screen.getByRole('dialog')
+    await waitFor(() => {
+      expect(within(dialog).getByText('Highest reviewed leverage').closest('div')).toHaveTextContent('5.0001x')
+    })
+    const errors = within(dialog).getAllByText(error.message)
+    expect(errors.some(element => element.closest('details') === null)).toBe(true)
+    expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+  })
+
+  it.each(['reduce-only', 'opposite direction', 'full close'])(
+    'replaces opening controls with remaining leverage for %s', async (kind) => {
+      mockIsConnected = true
+      identityMocks.isAaManifestConfigured = true
+      const fullClose = kind === 'full close'
+      wagmiMocks.readContractsData = [{ status: 'success', result: {
+        valid: true, invalidReason: 0, executionPrice: 100_000_000n,
+        remainingSize: fullClose ? 0n : 100n * 10n ** 18n,
+        remainingMargin: fullClose ? 0n : 20_120_724n,
+      } }]
+      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+      const reviewSummary = {
+        requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
+        requiredFundingUsdc: 200_000n, availableFundingUsdc: 100_000_000n,
+        worstPostLeverageBps: fullClose ? 0n : 50_300n,
+        reviewedBlockNumber: 123n, reviewedBlockHash: original.reviewedBlockHash,
+        reviewedPrice: 100_000_000n,
+        currentAssessment: {
+          postPositionSize: fullClose ? 0n : 100n * 10n ** 18n,
+          postLeverageBps: fullClose ? 0n : 49_700n,
+        } as PerpsExecutionAssessment,
+      }
+      perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue({
+        ...original, reviewSummary,
+        request: { ...original.request, isClose: true, marginDelta: 0n, sizeDelta: 100n * 10n ** 18n },
+      })
+      render(<PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+        initialReduceOnly={kind === 'reduce-only'} initialDirection={kind === 'reduce-only' ? 'long' : 'short'}
+        initialLeverage={5} oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)} availableToTradeRaw={100_000_000n}
+        minOpenNotionalUsdc={0n} minNewPositionNotionalUsdc={0n}
+        currentPosition={{ exists: true, side: 0, direction: 'long',
+          size: (fullClose ? 100n : 200n) * 10n ** 18n, entryPrice: 100_000_000n,
+          marginUsdc: 40_000_000n, estimatedNotionalUsdc: 200_000_000n,
+          unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 0n, liquidatable: false,
+        }} />)
+      expect(screen.queryByLabelText('Leverage')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Margin Call Simulator')).not.toBeInTheDocument()
+      expect(screen.getByText('Current leverage').closest('div')).toHaveTextContent('5x')
+      const dialog = screen.getByRole('dialog')
+      await waitFor(() => {
+        expect(within(dialog).getByText('Estimated remaining leverage').closest('div'))
+          .toHaveTextContent(fullClose ? 'Position closed' : '5.03x')
+      })
+      expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+      expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginUsdc: 0n }))
+    }
+  )
 
   it('shows resulting position leverage in the margin action modal', () => {
     mockIsConnected = true

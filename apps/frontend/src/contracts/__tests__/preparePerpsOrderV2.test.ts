@@ -3,7 +3,7 @@ import type { Address, Hex, PublicClient } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
-import { preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
+import { PerpsOrderReviewError, preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
 import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
 
 vi.mock('../verifyPerpsV2Bindings', () => ({
@@ -185,5 +185,97 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       shortfallUsdc: 1_700_000n,
     })
     expect(simulateContract).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('reviewed leverage validation', () => {
+  const input = {
+    account, direction: 'short' as const, side: 1 as const,
+    sizeDelta: 50n * 10n ** 20n, marginDelta: 0n,
+    slippagePercent: 0.1, isClose: true, selectedMaxLeverageBps: 50_000,
+  }
+
+  function reviewClient(overrides: (price: bigint) => Partial<PerpsExecutionAssessment>) {
+    const values: Record<string, unknown> = {
+      maxOrderAge: 60n, currentExecutionConfigHash: configHash,
+      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
+      maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
+      lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
+      totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
+      activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
+      getFreeBuyingPowerUsdc: 10_000_000_000n,
+    }
+    const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName === 'assessOrder') {
+        const price = args?.[3] as bigint
+        return { ...assessment(price, 2_000_000_000n), ...overrides(price) }
+      }
+      if (functionName in values) return values[functionName]
+      throw new Error(`Unexpected read ${functionName}`)
+    })
+    const simulateContract = vi.fn(async () => ({ request: {} }))
+    const client = { getBlock: vi.fn(async () => block), readContract, simulateContract } as unknown as PublicClient
+    return { client, readContract, simulateContract }
+  }
+
+  beforeEach(() => {
+    vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+      blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
+    })
+  })
+
+  it('allows a reduction above the opening slider limit without adding margin', async () => {
+    const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    expect(prepared.reviewSummary?.worstPostLeverageBps).toBe(50_300n)
+    expect(prepared.request.marginDelta).toBe(0n)
+    expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      functionName: 'commitOrder', args: [prepared.request], blockNumber: block.number,
+    }))
+  })
+
+  it('reviews a full close with no remaining leverage independently of the opening slider', async () => {
+    const { client } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, selectedMaxLeverageBps: 0 })
+    expect(prepared.reviewSummary?.currentAssessment.postPositionSize).toBe(0n)
+    expect(prepared.reviewSummary?.worstPostLeverageBps).toBe(0n)
+  })
+
+  it('retains the exact worst reviewed leverage when an opening exceeds its selected limit', async () => {
+    const { client, readContract, simulateContract } = reviewClient(price => ({
+      postLeverageBps: price === 100_000_000n ? 49_700n : 50_001n,
+    }))
+    const error = await preparePerpsOrderV2(client, manifest, {
+      ...input, isClose: false, marginDelta: 2_000_000_000n,
+    }).catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(PerpsOrderReviewError)
+    expect(error).toMatchObject({
+      message: 'Highest reviewed leverage is 5.0001x, above your selected 5x limit.',
+      reviewSummary: {
+        worstPostLeverageBps: 50_001n, reviewedBlockNumber: block.number,
+        reviewedBlockHash: block.hash, currentAssessment: { postLeverageBps: 49_700n },
+      },
+    })
+    for (const [request] of readContract.mock.calls) {
+      expect(request).toMatchObject({ blockNumber: block.number })
+    }
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['negative position equity', () => ({ postPositionEquityUsdc: -1n })],
+    ['execution regime changed', (price: bigint) => ({ mode: price === 100_000_000n ? 1 : 2 })],
+    ['maximum leverage', () => ({ postLeverageBps: 0x1_0000_0000n })],
+  ])('still rejects a reduction with %s', async (message, overrides) => {
+    const { client, simulateContract } = reviewClient(overrides)
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow(message)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('still requires the close commit simulation to succeed', async () => {
+    const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
+    simulateContract.mockRejectedValueOnce(new Error('Protocol rejected close'))
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Protocol rejected close')
   })
 })
