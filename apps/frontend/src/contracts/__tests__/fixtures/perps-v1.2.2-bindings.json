@@ -27,8 +27,8 @@
       "layoutSha256": "196daad4058634efe9351a9c4b8a08d7a0e78adff4df01481bf28db17b84879e"
     },
     "PERPS_CFD_ENGINE_ABI": {
-      "entries": 15,
-      "layoutSha256": "71819dca526204a8b875c114ff7dec7146f85983b27826c47289b348083d9b74"
+      "entries": 20,
+      "layoutSha256": "ae43b5ea86463c8a13e2846ec754d80b0d97645ed9f2685afdbb4243f5f13e65"
     },
     "PERPS_HOUSE_POOL_ABI": {
       "entries": 10,
