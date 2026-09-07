@@ -82,6 +82,8 @@ export interface SponsoredOperation {
   includedTransactionHash?: Hex
   includedBlockNumber?: string
   includedBlockHash?: Hex
+  /** Undefined on legacy successful observations. False never releases a lane. */
+  includedSuccess?: boolean
   inclusionObservedAt?: number
   /**
    * Orders unsafe-inclusion observations and retractions across tabs. A
@@ -252,6 +254,11 @@ export function sponsoredOperationAutomaticRecoveryIsDue(
   operation: SponsoredOperation,
   now: number
 ): boolean {
+  if (hasObservedSponsoredOperationInclusion(operation)) {
+    return operation.lastAutomaticRecoveryAttemptAt === undefined ||
+      now - operation.lastAutomaticRecoveryAttemptAt >=
+        SPONSORED_OPERATION_AUTOMATIC_RECOVERY_INITIAL_DELAY_MS
+  }
   if (
     operation.automaticRecoveryExhaustedAt !== undefined ||
     now - sponsoredOperationAutomaticRecoveryStartedAt(operation) >=
@@ -270,6 +277,7 @@ export function sponsoredOperationAutomaticRecoveryIsExhausted(
   operation: SponsoredOperation,
   now: number
 ): boolean {
+  if (hasObservedSponsoredOperationInclusion(operation)) return false
   return operation.automaticRecoveryExhaustedAt !== undefined ||
     now - sponsoredOperationAutomaticRecoveryStartedAt(operation) >=
       SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
@@ -350,7 +358,9 @@ function operationMatchesInclusionObservation(
       observation.blockHash === undefined ||
       operation.includedBlockHash?.toLowerCase() ===
         observation.blockHash.toLowerCase()
-    )
+    ) &&
+    (observation.success === undefined ||
+      (operation.includedSuccess ?? true) === observation.success)
 }
 
 function observationReportsSuccessfulInclusion(
@@ -366,6 +376,7 @@ function sponsoredOperationInclusionEvidenceTieBreakKey(
     operation.includedTransactionHash?.toLowerCase() ?? '',
     operation.includedBlockNumber ?? '',
     operation.includedBlockHash?.toLowerCase() ?? '',
+    String(operation.includedSuccess ?? ''),
   ].join(':')
 }
 
@@ -731,6 +742,7 @@ function mergeOperationRecord(
       preferredInclusionEvidence.includedBlockNumber,
     includedBlockHash:
       preferredInclusionEvidence.includedBlockHash,
+    includedSuccess: preferredInclusionEvidence.includedSuccess,
     inclusionObservedAt:
       preferredInclusionEvidence.inclusionObservedAt,
     inclusionEvidenceRevision:
@@ -2609,6 +2621,8 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                       (sameTransaction
                         ? operation.includedBlockHash
                         : undefined),
+                    includedSuccess: observation.success ??
+                      (sameTransaction ? operation.includedSuccess : undefined),
                     inclusionObservedAt:
                       sameTransaction
                         ? operation.inclusionObservedAt ?? now
@@ -2842,6 +2856,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                     includedTransactionHash: undefined,
                     includedBlockNumber: undefined,
                     includedBlockHash: undefined,
+                    includedSuccess: undefined,
                     inclusionObservedAt: undefined,
                     inclusionEvidenceRevision: nextEvidenceRevision,
                     updatedAt: now,
@@ -2916,7 +2931,8 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           if (
             currentOperation?.userOperationHash === undefined ||
             isSponsoredOperationTerminal(currentOperation.status) ||
-            currentOperation.automaticRecoveryExhaustedAt !== undefined
+            (currentOperation.automaticRecoveryExhaustedAt !== undefined &&
+              !hasObservedSponsoredOperationInclusion(currentOperation))
           ) {
             return false
           }

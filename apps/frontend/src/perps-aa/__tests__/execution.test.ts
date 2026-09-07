@@ -668,7 +668,7 @@ describe('executeSponsoredPerpsAction', () => {
         reason: 'execution reverted',
         receipt: {
           ...receipt().receipt,
-          status: 'reverted',
+          status: 'success',
         },
       } as ManagedUserOperationReceipt
       const getUserOperationReceipt = vi.fn(async () => {
@@ -692,7 +692,10 @@ describe('executeSponsoredPerpsAction', () => {
       await vi.advanceTimersByTimeAsync(120_000)
       await expect(execution).resolves.toMatchObject({
         terminalStatus: 'receipt-timeout',
+        message: expect.stringContaining('failed onchain'),
       })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({ includedSuccess: false, includedTransactionHash: TRANSACTION_HASH })
     } finally {
       vi.useRealTimers()
     }

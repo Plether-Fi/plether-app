@@ -803,6 +803,11 @@ export function usePerpsTrading() {
       const activeOperation = useSponsoredOperationStore
         .getState()
         .getActiveOperation(sponsored.accountAddress)
+      if (activeOperation?.userOperationHash) {
+        throw new Error(activeOperation.includedSuccess === false
+          ? 'The previous order failed onchain. Waiting for safe confirmation before reviewing a fresh order.'
+          : 'A Trading Account action is awaiting confirmation. Check account activity before reviewing a fresh order.')
+      }
       if (activeOperation?.protectionIntent) throw new Error('A protection operation is awaiting recovery. Resolve it in account activity before reviewing another order.')
       if (positionProtection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
       if (activeOperation?.orderRequestV2 !== undefined) {

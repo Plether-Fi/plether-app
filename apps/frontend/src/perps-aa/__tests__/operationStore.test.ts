@@ -110,6 +110,30 @@ describe('sponsored operation store', () => {
     })
   })
 
+  it('persists failed inclusion across stale hydration and retracts its outcome on reorg', async () => {
+    begin('operation-1')
+    const store = useSponsoredOperationStore.getState()
+    store.recordUserOperationHash('operation-1', `0x${'12'.repeat(32)}`)
+    const stale = useSponsoredOperationStore.getState().operations[0]
+    const observation = {
+      transactionHash: `0x${'34'.repeat(32)}` as Hex,
+      blockNumber: '123', blockHash: `0x${'56'.repeat(32)}` as Hex,
+      success: false,
+    }
+    expect(store.recordObservedInclusion('operation-1', observation)).toBe(true)
+    useSponsoredOperationStore.setState({ operations: [stale], activeLanes: {} })
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({ includedSuccess: false, includedTransactionHash: observation.transactionHash })
+    expect(() => begin('operation-2')).toThrow(SponsoredOperationLockedError)
+    expect(store.clearObservedInclusion('operation-1')).toBe(true)
+    const retracted = useSponsoredOperationStore.getState().operations[0]
+    expect(retracted.includedSuccess).toBeUndefined()
+    expect(retracted.includedTransactionHash).toBeUndefined()
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().operations[0].includedSuccess).toBeUndefined()
+  })
+
   it('durably releases the lane after exact successful latest-chain inclusion', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-31T08:00:00.000Z'))

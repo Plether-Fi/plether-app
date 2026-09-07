@@ -1,3 +1,4 @@
+import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { createSmartAccountClient } from 'permissionless'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
 import { createPimlicoClient } from 'permissionless/clients/pimlico'
@@ -195,6 +196,12 @@ async function assertCanonicalSafeReceipt(input: {
     )
   }
   if (input.receipt.receipt.blockNumber > safeBlockNumber) {
+    reportRecoveryDiagnostic({
+      operationKey: input.expectedHash,
+      stage: 'awaiting_safe_head',
+      safeBlockNumber,
+      includedBlockNumber: input.receipt.receipt.blockNumber,
+    })
     throw new UserOperationReceiptNotSafeError(input.receipt)
   }
 }

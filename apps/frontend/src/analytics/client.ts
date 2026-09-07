@@ -51,6 +51,8 @@ const ALLOWED_LOG_ATTRIBUTE_KEYS = new Set([
   ...ALLOWED_PROPERTY_KEYS,
   'component',
   'http_status',
+  'safe_block_number',
+  'included_block_number',
   'operation',
   'outcome',
 ])

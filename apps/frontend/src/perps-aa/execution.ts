@@ -134,20 +134,13 @@ async function waitForPimlicoOutcome(input: {
   const reportInclusion = async (
     receipt: ManagedUserOperationReceipt
   ): Promise<boolean> => {
-    // A not-yet-safe exact receipt can also prove execution failure. Keep the
-    // submission lane locked until that result reaches the safe head and can
-    // be recorded as an authoritative terminal outcome.
-    if (!receipt.success || receipt.receipt.status !== 'success') {
-      return false
-    }
     const transactionHash = receipt.receipt.transactionHash
-    const observation: SponsoredOperationInclusionObservation & {
-      success: true
-    } = {
+    const success = receipt.success && receipt.receipt.status === 'success'
+    const observation: SponsoredOperationInclusionObservation = {
       transactionHash,
       blockNumber: receipt.receipt.blockNumber.toString(),
       blockHash: receipt.receipt.blockHash,
-      success: true,
+      success,
     }
     try {
       if (!input.onObservedInclusion(observation)) {
@@ -156,7 +149,10 @@ async function waitForPimlicoOutcome(input: {
         )
       }
       persistedInclusion = observation
-      if (!await input.onSuccessfulInclusion(observation)) {
+      // Preserve a failed inclusion for the UI and recovery, but keep the
+      // lane locked until safe confirmation makes the failure terminal.
+      if (!success) return false
+      if (!await input.onSuccessfulInclusion({ ...observation, success: true })) {
         throw new Error(
           'The successful inclusion could not durably release its submission lane'
         )
@@ -278,8 +274,9 @@ async function waitForPimlicoOutcome(input: {
   }
 
   throw new BundlerRequestError({
-    message:
-      'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+    message: persistedInclusion?.success === false
+      ? 'The transaction failed onchain. Waiting for safe confirmation before another Trading Account action can be submitted.'
+      : 'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
     retryable: false,
     terminalStatus: 'receipt-timeout',
     cause: lastReconciliationError,

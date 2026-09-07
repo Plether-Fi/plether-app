@@ -662,7 +662,7 @@ describe('SponsoredOperationRecovery', () => {
     releaseSponsoredOperationSignal('live-operation')
   })
 
-  it('retracts a successful inclusion replaced by a failed unsafe receipt', async () => {
+  it('replaces successful inclusion with failed evidence without relocking newer work', async () => {
     beginHashOperation({ id: 'failed-replacement' })
     const successfulObservation = {
       transactionHash: TRANSACTION_HASH,
@@ -732,23 +732,99 @@ describe('SponsoredOperationRecovery', () => {
       expect(useSponsoredOperationStore.getState().operations
         .find((operation) => operation.id === 'failed-replacement'))
         .toMatchObject({
-          status: 'receipt-timeout',
-          retryable: false,
+          status: 'confirming',
+          includedSuccess: false,
           laneReleasedAfterSuccessfulInclusion: true,
         })
     })
     expect(useSponsoredOperationStore.getState().operations
       .find((operation) => operation.id === 'failed-replacement')
-      ?.includedTransactionHash).toBeUndefined()
+      ?.includedTransactionHash).toBe(replacementTransactionHash)
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
       [`${ACCOUNT.toLowerCase()}:default`]: 'live-operation',
     })
-    expect(verifyObservedInclusion).toHaveBeenCalledWith({
-      transactionHash: TRANSACTION_HASH,
-      blockNumber: 123n,
-      blockHash: INCLUDED_BLOCK_HASH,
-    })
+    expect(verifyObservedInclusion).not.toHaveBeenCalled()
     releaseSponsoredOperationSignal('live-operation')
+  })
+
+  it('checks failed inclusion every five seconds beyond the recovery budget and unlocks only when safe', async () => {
+    vi.useFakeTimers()
+    let unmount: (() => void) | undefined
+    try {
+      beginHashOperation({ id: 'failed-awaiting-safe' })
+      // The bundle transaction succeeds even though this UserOperation reverts.
+      const failedReceipt = {
+        actualGasCost: 1n,
+        actualGasUsed: 1n,
+        entryPoint: '0x3333333333333333333333333333333333333333',
+        logs: [],
+        nonce: 7n,
+        sender: ACCOUNT,
+        success: false,
+        reason: 'OrderRouter__InvalidValidUntil()',
+        userOpHash: USER_OPERATION_HASH,
+        receipt: {
+          transactionHash: TRANSACTION_HASH,
+          status: 'success',
+          blockNumber: 123n,
+          blockHash: INCLUDED_BLOCK_HASH,
+        },
+      } as ManagedUserOperationReceipt
+      const receipt = vi.fn(async (): Promise<ManagedUserOperationReceipt> => {
+        throw new UserOperationReceiptNotSafeError(failedReceipt)
+      })
+      const runtime = runtimeValue({ receipt })
+      const view = render(
+        <PerpsAaRuntimeContext value={runtime}>
+          <SponsoredOperationRecovery />
+        </PerpsAaRuntimeContext>
+      )
+      unmount = view.unmount
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(35 * 60_000) })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirming', includedSuccess: false,
+          includedTransactionHash: TRANSACTION_HASH,
+        })
+      expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+        [`${ACCOUNT.toLowerCase()}:default`]: 'failed-awaiting-safe',
+      })
+      expect(runtime.getRecoverySnapshot).not.toHaveBeenCalled()
+      const calls = receipt.mock.calls.length
+      expect(calls).toBeGreaterThan(350)
+      receipt.mockResolvedValue(failedReceipt)
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      expect(receipt).toHaveBeenCalledTimes(calls + 1)
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({ status: 'execution-reverted' })
+      expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+    } finally {
+      unmount?.()
+      vi.useRealTimers()
+    }
+  })
+
+  it('resolves a previously exhausted submission from safe evidence after reload', async () => {
+    beginHashOperation({ id: 'exhausted-submission' })
+    useSponsoredOperationStore.getState().exhaustAutomaticRecovery('exhausted-submission', Date.now())
+    const runtime = runtimeValue({
+      userOperationEvidence: {
+        kind: 'included', success: false, transactionHash: TRANSACTION_HASH, blockNumber: 123n,
+      },
+    })
+    render(
+      <PerpsAaRuntimeContext value={runtime}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+    await waitFor(() => {
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({ status: 'execution-reverted', transactionHash: TRANSACTION_HASH })
+    })
+    expect(runtime.smartAccount.getUserOperationReceipt).not.toHaveBeenCalled()
+    expect(runtime.getRecoverySnapshot).toHaveBeenCalledOnce()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
   })
 
   it('expires a hash-verified operation only after its safe-chain deadline', async () => {

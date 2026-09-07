@@ -340,6 +340,26 @@ describe('SponsoredOperationHistoryButton', () => {
     )
   })
 
+  it('shows failed inclusion as awaiting confirmation instead of an unknown submission', () => {
+    const failed = {
+      ...operation({
+        id: 'failed-inclusion', action: 'place-order', status: 'receipt-timeout',
+        updatedAt: Date.now(), userOperationHash: USER_OPERATION_HASH,
+        includedTransactionHash: TRANSACTION_HASH,
+      }),
+      includedSuccess: false,
+    }
+    useSponsoredOperationStore.setState({ operations: [failed], activeLanes: {} })
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', { name: /Open Trading Account activity/ }))
+    expect(screen.getByText('Failed onchain · Awaiting confirmation')).toBeInTheDocument()
+    expect(screen.getByText(/Waiting for safe confirmation before you can submit another/)).toBeInTheDocument()
+    expect(screen.queryByText('Submission status unknown')).not.toBeInTheDocument()
+    expect(screen.queryByText(/No action is required/)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'View included transaction on Blockscout' }))
+      .toHaveAttribute('href', `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`)
+  })
+
   it('shows stable lifecycle times and sorts recent activity by action creation time', () => {
     const olderCreatedAt = Date.UTC(2026, 6, 31, 12, 0)
     const olderIncludedAt = Date.UTC(2026, 6, 31, 12, 2)

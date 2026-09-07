@@ -24,6 +24,8 @@ import {
   acquireSponsoredOperationBrowserRecoveryLock,
   type ReleaseSponsoredOperationBrowserLock,
 } from './laneLock'
+import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { SponsoredOperationLockedError } from './operationLockError'
 import { reconcilePimlicoUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
 import {
@@ -241,27 +243,22 @@ export function SponsoredOperationRecovery() {
         const userOperationHash = operation.userOperationHash
         if (!userOperationHash) continue
         const wallClockNow = Date.now()
-        if (
-          operation.status !== 'outcome-unknown' &&
-          sponsoredOperationAutomaticRecoveryIsExhausted(
-            operation,
-            wallClockNow
-          )
-        ) {
+        const exhausted = sponsoredOperationAutomaticRecoveryIsExhausted(
+          operation,
+          wallClockNow
+        )
+        const protocolOnly = operation.status === 'outcome-unknown' || exhausted
+        if (exhausted && operation.status !== 'outcome-unknown') {
           store.exhaustAutomaticRecovery(operation.id, wallClockNow)
-          continue
         }
         if (
-          operation.status !== 'outcome-unknown' &&
+          !protocolOnly &&
           !sponsoredOperationAutomaticRecoveryIsDue(operation, wallClockNow)
         ) {
           continue
         }
         const now = globalThis.performance.now()
-        if (
-          operation.status === 'outcome-unknown' &&
-          (nextProtocolCheckAt.get(operation.id) ?? 0) > now
-        ) {
+        if (protocolOnly && (nextProtocolCheckAt.get(operation.id) ?? 0) > now) {
           continue
         }
 
@@ -319,7 +316,12 @@ export function SponsoredOperationRecovery() {
             )
             if (!isStillRecoverable(latestOperation)) return
 
-            const protocolOnly = latestOperation.status === 'outcome-unknown'
+            // Exhausting discovery retries must not stop safe-chain recovery
+            // of an old, still-blocking submission after a reload.
+            const protocolOnly = latestOperation.status === 'outcome-unknown' ||
+              sponsoredOperationAutomaticRecoveryIsExhausted(
+                latestOperation, Date.now()
+              )
             if (!protocolOnly) {
               const attemptNow = Date.now()
               if (
@@ -379,6 +381,10 @@ export function SponsoredOperationRecovery() {
                 })
               }
             } catch {
+              reportRecoveryDiagnostic({
+                operationKey: userOperationHash,
+                stage: 'receipt_check_failed',
+              })
               const currentOperation =
                 useSponsoredOperationStore.getState().operations
                   .find((item) => item.id === latestOperation.id)
@@ -414,34 +420,26 @@ export function SponsoredOperationRecovery() {
             }
 
             if (outcome?.kind === 'included') {
-              // A failed exact receipt is not a successful nonce-consumption
-              // boundary. Keep the lane blocked until the safe head makes the
-              // execution-reverted terminal result authoritative.
+              // Preserve exact failed inclusion while keeping the lane blocked
+              // until safe confirmation makes the failure terminal.
               if (
                 !outcome.receipt.success ||
                 outcome.receipt.receipt.status !== 'success'
               ) {
-                const currentOperation =
-                  useSponsoredOperationStore.getState().operations
-                    .find((item) => item.id === latestOperation.id)
-                const inclusionWasReorged =
-                  currentOperation !== undefined &&
-                  hasObservedSponsoredOperationInclusion(currentOperation) &&
-                  await observedInclusionIsReorged(
-                    currentOperation,
-                    runtime
+                const persisted = useSponsoredOperationStore.getState()
+                  .recordObservedInclusion(
+                    latestOperation.id,
+                    {
+                      transactionHash: outcome.transactionHash,
+                      blockNumber: outcome.receipt.receipt.blockNumber.toString(),
+                      blockHash: outcome.receipt.receipt.blockHash,
+                      success: false,
+                    }
                   )
-                const inclusionWasRetracted =
-                  inclusionWasReorged &&
-                  useSponsoredOperationStore
-                    .getState()
-                    .clearObservedInclusion(latestOperation.id)
-                if (inclusionWasRetracted) {
-                  useSponsoredOperationStore.getState().failOperation({
-                    id: latestOperation.id,
-                    status: 'receipt-timeout',
-                    reason: 'BUNDLER_UNAVAILABLE',
-                    retryable: false,
+                if (!persisted) {
+                  reportRecoveryDiagnostic({
+                    operationKey: userOperationHash,
+                    stage: 'inclusion_persistence_failed',
                   })
                 }
                 return
@@ -635,7 +633,13 @@ export function SponsoredOperationRecovery() {
           } finally {
             await releaseBrowserLock?.()
           }
-        }).catch(() => {
+        }).catch((error: unknown) => {
+          if (!(error instanceof SponsoredOperationLockedError)) {
+            reportRecoveryDiagnostic({
+              operationKey: userOperationHash,
+              stage: 'coordination_failed',
+            })
+          }
           // Another tab owns either the live submission lane or this exact
           // operation's reconciliation lock. Any coordination or hydration
           // failure remains fail-closed.
