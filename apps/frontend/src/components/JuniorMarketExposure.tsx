@@ -38,7 +38,7 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
     : totalPositions === 0n ? 'No open trader positions'
       : exposure.netPositionSize === 0n ? 'Balanced trader exposure'
         : exposure.netPositionSize > 0n ? 'Pool benefits from USD weakening' : 'Pool benefits from USD strengthening'
-  const cardClass = 'border border-brand-border/30 bg-surface-panel p-4 sm:p-5'
+  const cardClass = 'border border-brand-border/30 bg-surface-panel panel-padding'
 
   return (
     <section id="market-exposure" data-vault-detail-section="market-exposure" style={{ scrollMarginTop }} aria-labelledby="junior-market-exposure" className="space-y-4">
@@ -88,7 +88,7 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         <div className={cardClass}>
           <h3 className="text-xs uppercase tracking-wider text-content-secondary">Capital split</h3>
           <div className="mt-4 flex items-baseline gap-2"><span className="text-3xl font-semibold tabular-nums text-content-primary">{percent(juniorPercent)}</span><span className="text-sm text-content-secondary">Junior</span></div>
@@ -125,7 +125,7 @@ export function JuniorMarketExposure({ pool, scrollMarginTop }: {
         </div>
       </div>
 
-      <details className="mt-4 border-t border-brand-border/30 pt-4 text-xs leading-5 text-content-secondary">
+      <details className="border-t border-brand-border/30 pt-4 text-xs leading-5 text-content-secondary">
         <summary className="cursor-pointer font-medium text-content-primary">How to read these estimates</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <p>Open exposure is combined LONG USD + SHORT USD exposure at the displayed index price, divided by Senior + Junior capital. Opposing positions offset directional sensitivity. Reserved cash includes trader backing and other reserves; it does not measure directional exposure.</p>

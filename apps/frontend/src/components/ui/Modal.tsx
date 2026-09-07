@@ -50,7 +50,7 @@ export function Modal({
   size = 'md',
   placement = 'center',
   contentClassName = '',
-  bodyClassName = 'p-4 sm:p-6',
+  bodyClassName = 'panel-padding',
   analyticsId,
   analyticsSurface = 'perps',
   analyticsProperties,
@@ -236,7 +236,7 @@ export function Modal({
         tabIndex={-1}
       >
         {hasHeader ? (
-          <div className="relative shrink-0 border-b border-brand-border/30 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="relative shrink-0 border-b border-brand-border/30 panel-padding-x py-3 sm:py-4">
             {title ? (
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <h2 id={titleId} className="min-w-0 text-lg font-semibold text-content-primary">{title}</h2>
@@ -268,7 +268,7 @@ export function Modal({
         {/* Body */}
         <div className={`min-h-0 overflow-y-auto overscroll-contain ${bodyClassName}`}>{children}</div>
         {footer ? (
-          <div className="shrink-0 border-t border-brand-border/30 bg-surface-panel px-4 py-4 sm:px-6">
+          <div className="shrink-0 border-t border-brand-border/30 bg-surface-panel panel-padding-x py-4">
             {footer}
           </div>
         ) : null}

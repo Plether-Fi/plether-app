@@ -14,8 +14,8 @@ export function WrongNetworkBanner() {
   if (!isWrongNetwork) return null
 
   return (
-    <div className="border-b border-brand-orange/50 bg-brand-orange/20 px-4 py-3">
-      <div className="mx-auto flex max-w-7xl flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+    <div className="border-b border-brand-orange/50 bg-brand-orange/20 py-3">
+      <div className="page-gutter mx-auto flex max-w-7xl flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <span className="material-symbols-outlined text-brand-orange">warning</span>
           <div className="space-y-1">

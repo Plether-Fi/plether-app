@@ -131,7 +131,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
 
   return <div className="space-y-5 text-sm text-content-primary">
     <section className="border border-brand-border/20 bg-app-bg">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-border/20 p-4 sm:p-5">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-border/20 panel-padding">
         <div>
           <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-content-secondary">Position exits</p>
           <h3 ref={heading} tabIndex={-1} className="text-lg font-semibold focus:outline-none">{view === 'edit' ? 'Set your TP/SL' : view === 'review' ? 'Review your TP/SL' : view === 'remove' ? 'Remove TP/SL?' : 'Take profit & stop loss'}</h3>
@@ -142,7 +142,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         </span>
       </header>
 
-      <div className="space-y-4 p-4 sm:p-5">
+      <div className="space-y-4 panel-padding">
         {view === 'overview' ? <>
           {protection ? <>
             <ProtectionPriceSummary params={protection} cap={cap} rawMark={rawMark} />
@@ -200,7 +200,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         {error ? <p role="alert" className="break-words text-sm text-brand-orange">{error}</p> : null}
         {success ? <p role="status" className="text-xs text-positive">{success}</p> : null}
       </div>
-      {protection && view === 'overview' ? <details className="border-t border-brand-border/20 px-4 py-3 text-xs text-content-secondary sm:px-5">
+      {protection && view === 'overview' ? <details className="border-t border-brand-border/20 panel-padding-x py-3 text-xs text-content-secondary">
         <summary className="cursor-pointer hover:text-content-primary">Execution details</summary>
         <dl className="mt-3 space-y-2">
           <div className="flex flex-wrap justify-between gap-2"><dt>Execution reserve remaining</dt><dd><TokenAmount amount={formatPerpsUsdc(reserve)} /></dd></div>

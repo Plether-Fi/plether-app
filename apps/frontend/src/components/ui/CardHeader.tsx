@@ -8,12 +8,12 @@ interface CardHeaderProps {
 
 export function CardHeader({ title, subtitle, action }: CardHeaderProps) {
   return (
-    <div className="flex items-center justify-between mb-4">
-      <div>
+    <div className="flex items-center justify-between gap-4 mb-4">
+      <div className="min-w-0 space-y-1">
         <h3 className="text-lg font-semibold text-content-primary">{title}</h3>
         {subtitle && <p className="text-sm text-content-secondary">{subtitle}</p>}
       </div>
-      {action && <div>{action}</div>}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }

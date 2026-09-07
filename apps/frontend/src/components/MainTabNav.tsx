@@ -63,7 +63,7 @@ export function MainTabNav({ activeTab, onTabChange }: MainTabNavProps) {
             type="button"
             onClick={() => { onTabChange(tab.id); }}
             className={`
-              -mb-[2px] flex min-h-12 min-w-0 cursor-pointer flex-col items-center justify-center gap-1 px-1 py-3 text-center transition-colors hover:underline hover:decoration-current hover:underline-offset-4 sm:min-h-0 sm:flex-row sm:justify-start sm:gap-3 sm:px-4 sm:py-4 sm:text-left lg:px-6 lg:py-5
+              -mb-0.5 flex min-h-12 min-w-0 cursor-pointer flex-col items-center justify-center gap-1 px-1 py-3 text-center transition-colors hover:underline hover:decoration-current hover:underline-offset-4 sm:min-h-0 sm:flex-row sm:justify-start sm:gap-3 sm:px-4 sm:py-4 sm:text-left lg:px-6
               ${isActive
                 ? `${styles.activeBg} ${styles.text} border-b-2 ${styles.border}`
                 : `group text-content-primary hover:bg-[#3B212D] border-b-2 border-transparent ${activeStyles.hoverBorder}`

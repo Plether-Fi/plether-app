@@ -73,7 +73,7 @@ function ViewHeader({ view }: { view: LpPrototypeView }) {
             : 'Withdrawal preview'
 
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-brand-border/20 px-5 py-4">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-brand-border/20 panel-padding-x py-4">
       <div>
         <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">HousePool</div>
         <h2 className="mt-1 text-xl font-semibold text-content-primary">{title}</h2>
@@ -109,7 +109,7 @@ function TrancheCard({
 }: TrancheCardProps) {
   return (
     <article className="border border-brand-border/25 bg-app-bg">
-      <div className="flex items-start justify-between gap-4 border-b border-brand-border/15 px-5 py-4">
+      <div className="flex items-start justify-between gap-4 border-b border-brand-border/15 panel-padding-x py-4">
         <div>
           <div className="text-lg font-semibold text-content-primary">{name} Vault</div>
           <div className="mt-1 text-xs text-content-secondary">
@@ -138,7 +138,7 @@ function TrancheCard({
           <div className="mt-1 text-lg font-semibold text-content-primary">0.00%</div>
         </div>
       </div>
-      <dl className="border-t border-brand-border/15 px-5">
+      <dl className="border-t border-brand-border/15 panel-padding-x">
         <SummaryRow label="Current deposit mode" value={<Badge variant="warning">Pending epoch</Badge>} />
         <SummaryRow
           label="Withdrawal availability"
@@ -562,7 +562,7 @@ export function LpPrototypePanel({ view }: LpPrototypePanelProps) {
   return (
     <section className="border border-brand-border/30 bg-surface-panel">
       <ViewHeader view={view} />
-      <div className="space-y-5 p-5">
+      <div className="space-y-5 panel-padding">
         <PrototypeLabel />
         {view === 'overview' ? <OverviewView /> : null}
         {view === 'deposit' ? <DepositView /> : null}

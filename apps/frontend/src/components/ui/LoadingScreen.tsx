@@ -48,7 +48,7 @@ export function LoadingScreen({
         </div>
       </div>
 
-      <div className="flex min-w-0 shrink-0 items-start justify-between gap-3 p-4 sm:p-8">
+      <div className="flex min-w-0 shrink-0 items-start justify-between gap-3 panel-padding">
         <h2 className="min-w-0 text-xl font-bold text-content-primary sm:text-2xl">
           {title}
         </h2>
@@ -64,7 +64,7 @@ export function LoadingScreen({
         )}
       </div>
 
-      <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-8 sm:pb-8">
+      <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain panel-padding-x pb-4 sm:pb-6">
         {steps.map((step, index) => {
           const isAfterError = hasError && index > errorIndex
           return (
@@ -96,7 +96,7 @@ export function LoadingScreen({
       </div>
 
       {(hasError && onRetry) || (isComplete && transactionUrl) ? (
-        <div className="shrink-0 border-t border-brand-border/30 p-4 sm:px-8">
+        <div className="shrink-0 border-t border-brand-border/30 panel-padding-x py-4">
           {hasError && onRetry && (
             <Button variant="secondary" onClick={onRetry} className="w-full">
               Try again

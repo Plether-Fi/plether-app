@@ -199,7 +199,7 @@ function InstrumentDetailsOverlay({
   return (
     <div
       ref={overlayRef}
-      className={`${interactive && isExpanded ? 'pointer-events-auto' : 'pointer-events-none'} absolute -inset-x-px top-full z-20 grid min-w-0 overflow-hidden border-x border-b bg-surface-panel px-3 transition-[grid-template-rows,opacity,transform,box-shadow,border-color,padding-bottom] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none sm:px-5 ${
+      className={`${interactive && isExpanded ? 'pointer-events-auto' : 'pointer-events-none'} absolute -inset-x-px top-full z-20 grid min-w-0 overflow-hidden border-x border-b bg-surface-panel panel-padding-x transition-[grid-template-rows,opacity,transform,box-shadow,border-color,padding-bottom] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none ${
         isExpanded
           ? 'grid-rows-[1fr] translate-y-0 border-brand-border/30 pb-3 opacity-100 shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)] sm:pb-4'
           : 'grid-rows-[0fr] -translate-y-1 border-transparent pb-0 opacity-0 shadow-none'
@@ -613,7 +613,7 @@ export function PerpsInstrumentPanel({
 
   return (
     <section className="relative z-10 overflow-visible border border-brand-border/30 bg-surface-panel">
-      <div className={`flex flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4 lg:flex-row ${
+      <div className={`flex flex-col gap-3 panel-padding-x py-3 sm:gap-4 sm:py-4 lg:flex-row ${
         hasDirectionalLimit ? 'lg:items-start' : 'lg:items-center'
       }`}>
         <div className="flex min-w-0 shrink-0 items-center gap-2.5 sm:min-w-[200px] sm:gap-3">

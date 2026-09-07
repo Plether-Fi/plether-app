@@ -42,7 +42,7 @@ export function RiskDisclaimer() {
         </div>
       }
     >
-      <div className="space-y-4 p-4 text-sm text-content-secondary sm:p-6">
+      <div className="space-y-4 panel-padding text-sm text-content-secondary">
         <p>
           Plether is a decentralized finance protocol. By using this application,
           you acknowledge and accept the following risks:

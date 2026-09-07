@@ -24,9 +24,9 @@ export function Stake() {
   }, [address, queryClient])
 
   return (
-    <div className="min-w-0 space-y-6 sm:space-y-10">
-      <div className="mb-6 sm:mb-8">
-        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Stake</h1>
+    <div className="min-w-0 page-stack">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold text-content-primary sm:text-3xl">Stake</h1>
         <p className="text-sm font-light text-content-secondary sm:text-base">Stake your tokens to use as collateral</p>
       </div>
 

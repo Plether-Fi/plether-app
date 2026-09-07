@@ -631,34 +631,36 @@ function PositionView({
             releases position margin proportionally.
           </div>
 
-          <Input
-            label="Add margin"
-            inputMode="decimal"
-            value={positionMarginAmount}
-            placeholder="0"
-            rightElement={<TokenLabel token="USDC" />}
-            error={isPositionMarginTooHigh ? 'Amount exceeds available free margin.' : undefined}
-            onChange={(event) => {
-              const nextValue = event.target.value
-              if (!isPositionMarginInput(nextValue)) return
-              setPositionMarginAmount(nextValue)
-              setPositionMarginError(undefined)
-              if (positionMarginStatus === 'failed') setPositionMarginStatus('idle')
-            }}
-          />
-
-          <div className="-mt-3 flex justify-end">
-            <button
-              type="button"
-              className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
-              disabled={positionMarginLimitRaw <= 0n || positionMarginStatus === 'pending'}
-              onClick={() => {
-                setPositionMarginAmount(formatPerpsUsdc(positionMarginLimitRaw, 6))
+          <div className="space-y-2">
+            <Input
+              label="Add margin"
+              inputMode="decimal"
+              value={positionMarginAmount}
+              placeholder="0"
+              rightElement={<TokenLabel token="USDC" />}
+              error={isPositionMarginTooHigh ? 'Amount exceeds available free margin.' : undefined}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                if (!isPositionMarginInput(nextValue)) return
+                setPositionMarginAmount(nextValue)
                 setPositionMarginError(undefined)
+                if (positionMarginStatus === 'failed') setPositionMarginStatus('idle')
               }}
-            >
-              Max: {formatPerpsUsdc(positionMarginLimitRaw, 2)} USDC
-            </button>
+            />
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+                disabled={positionMarginLimitRaw <= 0n || positionMarginStatus === 'pending'}
+                onClick={() => {
+                  setPositionMarginAmount(formatPerpsUsdc(positionMarginLimitRaw, 6))
+                  setPositionMarginError(undefined)
+                }}
+              >
+                Max: {formatPerpsUsdc(positionMarginLimitRaw, 2)} USDC
+              </button>
+            </div>
           </div>
 
           <dl className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
@@ -1183,7 +1185,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
         </div>
       </div>
 
-      <div className="px-3 py-3 sm:px-5 sm:py-4">
+      <div className="panel-padding-x py-3 sm:py-4">
         {activeTab === 'protections' ? props.protectionContent : <AccountTabContent
           activeTab={activeTab}
           nowSeconds={nowSeconds}

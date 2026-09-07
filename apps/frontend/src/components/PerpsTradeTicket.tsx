@@ -4102,7 +4102,7 @@ export function PerpsTradeTicket({
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="space-y-4 px-3 py-3 sm:space-y-5 sm:px-5 sm:py-4">
+      <div className="space-y-4 panel-padding-x py-3 sm:space-y-5 sm:py-4">
         <div>
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
             <span>Direction</span>
@@ -5416,37 +5416,39 @@ export function PerpsTradeTicket({
             </div>
           ) : null}
 
-          <Input
-            label="Amount"
-            value={marginActionAmount}
-            onChange={(event) => {
-              if (isNumericInput(event.target.value)) {
-                setMarginActionAmount(event.target.value)
-                setMarginActionStatus('idle')
-                setMarginActionError(undefined)
-              }
-            }}
-            rightElement={<TokenLabel token="USDC" />}
-            autoFocus
-          />
-          <div className="-mt-3 flex justify-end">
-            <button
-              type="button"
-              disabled={!canUseMarginActionMax || isMarginActionPending}
-              className="group inline-flex items-center gap-1 text-xs font-semibold text-content-secondary transition-colors enabled:hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => {
-                if (!canUseMarginActionMax) return
-                trackPerpsButtonClicked(`${marginAction ?? 'margin'}_max`, commonAnalyticsProperties)
-                setMarginActionAmount(marginActionLimitDisplay)
-                setMarginActionStatus('idle')
-                setMarginActionError(undefined)
+          <div className="space-y-2">
+            <Input
+              label="Amount"
+              value={marginActionAmount}
+              onChange={(event) => {
+                if (isNumericInput(event.target.value)) {
+                  setMarginActionAmount(event.target.value)
+                  setMarginActionStatus('idle')
+                  setMarginActionError(undefined)
+                }
               }}
-            >
-              <span>Max: </span>
-              <span className="group-enabled:group-hover:underline">
-                <TokenAmount amount={marginActionLimitDisplay} />
-              </span>
-            </button>
+              rightElement={<TokenLabel token="USDC" />}
+              autoFocus
+            />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                disabled={!canUseMarginActionMax || isMarginActionPending}
+                className="group inline-flex items-center gap-1 text-xs font-semibold text-content-secondary transition-colors enabled:hover:text-content-primary disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  if (!canUseMarginActionMax) return
+                  trackPerpsButtonClicked(`${marginAction ?? 'margin'}_max`, commonAnalyticsProperties)
+                  setMarginActionAmount(marginActionLimitDisplay)
+                  setMarginActionStatus('idle')
+                  setMarginActionError(undefined)
+                }}
+              >
+                <span>Max: </span>
+                <span className="group-enabled:group-hover:underline">
+                  <TokenAmount amount={marginActionLimitDisplay} />
+                </span>
+              </button>
+            </div>
           </div>
 
           <div className="border border-brand-border/20 bg-app-bg p-4">

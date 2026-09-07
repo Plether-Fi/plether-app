@@ -1,6 +1,6 @@
 export function Terms() {
   return (
-    <div className="max-w-3xl mx-auto space-y-8 text-sm text-content-secondary">
+    <div className="page-stack max-w-3xl mx-auto text-sm text-content-secondary">
       <div>
         <h1 className="text-2xl font-bold text-content-primary mb-2">Terms of Service</h1>
         <p className="text-xs text-content-secondary/70">Last updated: August 2026</p>

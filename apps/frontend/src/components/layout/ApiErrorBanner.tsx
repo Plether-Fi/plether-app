@@ -22,7 +22,7 @@ export function ApiErrorBanner() {
 
   return (
     <div className="border-b border-[#FFAB96] bg-[#FF572D] py-3">
-      <div className="mx-auto flex max-w-7xl flex-col items-stretch gap-3 px-4 sm:flex-row sm:items-center sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-7xl flex-col items-stretch gap-3 page-gutter sm:flex-row sm:items-center">
         <span className={`material-symbols-outlined text-[#FFF5F9] ${isRetrying ? 'animate-spin' : ''}`}>
           {isRetrying ? 'sync' : 'cloud_off'}
         </span>

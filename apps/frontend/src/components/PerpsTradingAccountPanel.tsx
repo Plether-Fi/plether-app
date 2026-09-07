@@ -101,12 +101,12 @@ export function PerpsTradingAccountPanel({
 
   return (
     <section className="border border-brand-border/30 bg-surface-panel">
-      <div className="border-b border-brand-border/20 px-5 py-4">
+      <div className="border-b border-brand-border/20 panel-padding-x py-4">
         <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">Account context</div>
         <h2 className="mt-1 text-xl font-semibold text-content-primary">Plether Trading Account</h2>
       </div>
 
-      <dl className="px-5">
+      <dl className="panel-padding-x">
         <DetailRow
           label="Owner Wallet"
           value={<span title={ownerWalletAddress}>{truncateAddress(ownerWalletAddress)}</span>}
@@ -123,7 +123,7 @@ export function PerpsTradingAccountPanel({
       </dl>
 
       {sponsorshipStatus !== 'available' ? (
-        <div className="p-5 pt-2">
+        <div className="panel-padding-x pb-4 pt-2 sm:pb-6">
           <div className={`border px-4 py-3 ${sponsorship.tone}`}>
             <div className="flex items-center justify-between gap-3">
               <span className="font-semibold">{sponsorship.label}</span>

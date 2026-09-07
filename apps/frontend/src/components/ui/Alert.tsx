@@ -34,7 +34,7 @@ export function Alert({ variant = 'info', title, children, icon, className = '' 
   const iconName = icon ?? styles.icon
 
   return (
-    <div className={`border p-4 flex items-start gap-3 ${styles.container} ${className}`}>
+    <div className={`border p-3 sm:p-4 flex items-start gap-3 ${styles.container} ${className}`}>
       <span className="material-symbols-outlined mt-0.5">{iconName}</span>
       <div>
         {title && <h3 className="font-medium text-sm">{title}</h3>}

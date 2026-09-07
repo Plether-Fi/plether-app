@@ -119,9 +119,9 @@ export function Mint() {
   const isActionDisabled = !inputAmount || parseFloat(inputAmount) <= 0 || isRunning || insufficientBalance || isPaused
 
   return (
-    <div className="mx-auto min-w-0 max-w-xl space-y-6 sm:space-y-10">
-      <div className="mb-6 sm:mb-8">
-        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Mint & Redeem</h1>
+    <div className="mx-auto min-w-0 max-w-xl page-stack">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold text-content-primary sm:text-3xl">Mint & Redeem</h1>
         <p className="text-sm font-light text-content-secondary sm:text-base">Create or redeem plDXY-BEAR + plDXY-BULL pairs</p>
       </div>
 
@@ -157,7 +157,7 @@ export function Mint() {
           </button>
         </div>
 
-        <div className="min-w-0 space-y-5 p-4 sm:space-y-6 sm:p-6 md:p-8">
+        <div className="min-w-0 space-y-5 panel-padding sm:space-y-6">
           {mode === 'mint' ? (
             <>
               <Alert variant="info">
@@ -195,7 +195,7 @@ export function Mint() {
                   </div>
                   <span className="min-w-0 break-all text-right font-semibold text-content-primary">{inputAmount || '0'}</span>
                 </div>
-                <div className="border-t border-brand-border/30 pt-3 mt-3">
+                <div className="border-t border-brand-border/30 pt-3">
                   <div className="flex min-w-0 items-start justify-between gap-3">
                     <span className="shrink-0 text-content-secondary">USDC required</span>
                     <span className="min-w-0 break-words text-right text-lg font-semibold text-content-primary">{outputDisplay} USDC</span>
