@@ -246,6 +246,11 @@ export function TradingViewAdvancedChart({
   const protectionRevisionRef = useRef(0)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
+  const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    const timer = window.setInterval(() => { setNowSeconds(Date.now() / 1000) }, 60_000)
+    return () => { window.clearInterval(timer) }
+  }, [])
   const [volumeCoverageByInterval, setVolumeCoverageByInterval] = useState<
     Partial<Record<PerpsCandleIntervalSeconds, PletherVolumeCoverageState>>
   >({})
@@ -540,7 +545,6 @@ export function TradingViewAdvancedChart({
   const volumeUnavailable =
     volumeCoverageByInterval[activeCandleInterval] === 'unavailable'
   const releaseStart = perpsRelease.integration.volumeHistoryStartTimestamp
-  const nowSeconds = Date.now() / 1000
   const freshDailyVolume = activeCandleInterval === 86400 &&
     nowSeconds >= releaseStart &&
     nowSeconds < Math.ceil(releaseStart / 86400) * 86400 + 86400
