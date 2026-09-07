@@ -3070,13 +3070,13 @@ export function PerpsTradeTicket({
     reviewSnapshot,
   ])
   const activeReviewSummary = preparedOrder?.reviewSummary ?? orderReviewSummary
-  const isPreparedOrderExpiring = preparedOrder?.reviewSummary !== undefined &&
+  const isPreparedOrderExpiring = preparedOrder !== undefined &&
     Number(preparedOrder.protection.validUntil) - nowSeconds <= 5
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
   const preparedOrderExpiryMessage = isPreparedOrderExpiring
-    ? 'This review is expiring. Retry execution protections before committing.'
+    ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
   const reviewValidationError = enableLiveTrading
     ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? liveValidationError
@@ -4013,6 +4013,7 @@ export function PerpsTradeTicket({
     setOrderReviewSummary(undefined)
     setReviewFundingShortfallUsdc(undefined)
     setExecutionProtectionsError(undefined)
+    setFlowError(undefined)
   }
 
   function closeReviewModal() {
@@ -5014,9 +5015,7 @@ export function PerpsTradeTicket({
                   variant="secondary"
                   analyticsId="back_to_preview"
                   analyticsProperties={commonAnalyticsProperties}
-                  onClick={() => {
-                    setLifecycleState('preview')
-                  }}
+                  onClick={resetReviewLifecycle}
                 >
                   Back to Preview
                 </Button>
@@ -5143,9 +5142,7 @@ export function PerpsTradeTicket({
                   variant="secondary"
                   analyticsId="back_to_preview"
                   analyticsProperties={commonAnalyticsProperties}
-                  onClick={() => {
-                    setLifecycleState('preview')
-                  }}
+                  onClick={resetReviewLifecycle}
                 >
                   Back to Preview
                 </Button>
@@ -5153,11 +5150,9 @@ export function PerpsTradeTicket({
                   className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                   analyticsId="retry_commit"
                   analyticsProperties={commonAnalyticsProperties}
-                  onClick={() => {
-                    void handleConfirmCommit()
-                  }}
+                  onClick={resetReviewLifecycle}
                 >
-                  Retry Commit
+                  Review again
                 </Button>
               </div>
             </>

@@ -1,3 +1,4 @@
+import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { isAddressEqual, type Hex } from 'viem'
 import type { SponsoredOperation } from './operationStore'
 import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
@@ -121,6 +122,10 @@ export async function resolveProtocolOperation(input: {
 
     return undefined
   } catch {
+    reportRecoveryDiagnostic({
+      operationKey: input.userOperationHash,
+      stage: 'protocol_check_failed',
+    })
     // Corrupt persisted metadata or an unavailable chain/index read cannot
     // prove that rebuilding is safe.
     return undefined

@@ -192,7 +192,7 @@ describe('perps lifecycle labels', () => {
         targetPrice: 100_100_000n,
         isClose: false,
         bounds: {
-          validUntil: 1_700_000_300n,
+          validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
           maxExecutionBountyUsdc: 10_000n,
@@ -211,11 +211,79 @@ describe('perps lifecycle labels', () => {
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 100_000_000n,
       protection: {
-        validUntil: 1_700_000_300n,
+        validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
         executionMode: 1,
         executionBountyUsdc: 10_000n,
       },
     })
+  })
+
+  it.each(['Review again', 'Back to Preview'])(
+    '%s prepares a new deadline and client order ID after a failed commit', async (button) => {
+      mockIsConnected = true
+      identityMocks.isAaManifestConfigured = true
+      wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+      const freshDeadline = original.protection.validUntil + 300n
+      const fresh: PreparedPerpsOrderV2 = {
+        ...original,
+        request: {
+          ...original.request,
+          clientOrderId: `0x${'ab'.repeat(32)}`,
+          bounds: { ...original.request.bounds, validUntil: freshDeadline },
+        },
+        protection: { ...original.protection, validUntil: freshDeadline },
+      }
+      perpsTradingMocks.prepareOrder.mockReset()
+        .mockResolvedValueOnce(original).mockResolvedValue(fresh)
+      perpsTradingMocks.commitOrder.mockRejectedValueOnce(new Error('The reviewed order deadline expired.'))
+        .mockReturnValue(new Promise(() => {}))
+      render(
+        <PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+          oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+          availableToTradeRaw={1_000_000_000n} />
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+      await screen.findByText('Commit transaction failed')
+      fireEvent.click(screen.getByRole('button', { name: button }))
+      await waitFor(() => {
+        expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
+        expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+      })
+      expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+      expect(screen.queryByText('The reviewed order deadline expired.')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+      expect(perpsTradingMocks.commitOrder).toHaveBeenCalledTimes(2)
+      expect(perpsTradingMocks.commitOrder.mock.calls[1][0].preparedOrder).toMatchObject({
+        request: { clientOrderId: fresh.request.clientOrderId, bounds: { validUntil: freshDeadline } },
+        protection: { validUntil: freshDeadline },
+      })
+    }
+  )
+
+  it('blocks an expired review without a review summary and refreshes its deadline', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const fresh = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const expired = {
+      ...fresh,
+      request: { ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n } },
+      protection: { ...fresh.protection, validUntil: 1n },
+    }
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValueOnce(expired).mockResolvedValue(fresh)
+    render(
+      <PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+        oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={1_000_000_000n} />
+    )
+    await screen.findAllByText('This review has expired or is about to expire. Refresh the review before committing.')
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry protections' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
   })
 
   async function startDelayedSponsoredCommit() {

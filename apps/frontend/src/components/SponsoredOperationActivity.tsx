@@ -195,7 +195,9 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
 
 function operationStatusLabel(operation: SponsoredOperation): string {
   if (isAwaitingSafeConfirmation(operation)) {
-    return 'Included onchain'
+    return operation.includedSuccess === false
+      ? 'Failed onchain · Awaiting confirmation'
+      : 'Included onchain'
   }
   if (!isSubmissionUncertain(operation)) {
     return sponsoredOperationStatusLabel(operation.status)
@@ -438,7 +440,9 @@ function OperationHistoryItem({
     (wasSafelyConfirmed || awaitingSafeConfirmation) && !submissionUncertain
       ? 'text-positive'
       : 'text-content-secondary'
-  const itemTone = isAttentionOperation(operation)
+  const awaitingFailedConfirmation = awaitingSafeConfirmation &&
+    operation.includedSuccess === false
+  const itemTone = isAttentionOperation(operation) || awaitingFailedConfirmation
     ? 'border-brand-orange/50'
     : awaitingSafeConfirmation
       ? 'border-positive/40'
@@ -468,9 +472,11 @@ function OperationHistoryItem({
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
           <Badge
             variant={
-              awaitingSafeConfirmation
-                ? 'success'
-                : statusBadgeVariant(operation.status)
+              awaitingFailedConfirmation
+                ? 'warning'
+                : awaitingSafeConfirmation
+                  ? 'success'
+                  : statusBadgeVariant(operation.status)
             }
           >
             {operationStatusLabel(operation)}
@@ -513,7 +519,11 @@ function OperationHistoryItem({
         </p>
       ) : null}
 
-      {awaitingSafeConfirmation ? (
+      {awaitingFailedConfirmation ? (
+        <p className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-xs leading-5 text-content-secondary">
+          The transaction was included but execution failed. Waiting for safe confirmation before you can submit another Trading Account action.
+        </p>
+      ) : awaitingSafeConfirmation ? (
         <p className="border border-positive/30 bg-positive/10 p-3 text-xs leading-5 text-content-secondary">
           The transaction is onchain. Safety verification continues in the background; no action is required.
         </p>
@@ -668,6 +678,9 @@ export function SponsoredOperationHistoryButton() {
   const includedOperations = accountOperations.filter(
     isAwaitingSafeConfirmation
   )
+  const hasIncludedFailure = includedOperations.some(
+    (operation) => operation.includedSuccess === false
+  )
   const openedAttentionOperationIds = new Set(
     openedActivity?.identityKey === identityKey
       ? openedActivity.attentionOperationIds
@@ -816,16 +829,20 @@ export function SponsoredOperationHistoryButton() {
       ? 'border-brand-orange text-brand-orange hover:bg-brand-orange/15'
       : inProgressCount > 0
         ? 'border-[#FFAB96] text-[#FFAB96] hover:bg-[#FFAB96]/15'
-        : includedCount > 0
-          ? 'border-positive text-positive hover:bg-positive/15'
-          : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
+        : hasIncludedFailure
+          ? 'border-brand-orange text-brand-orange hover:bg-brand-orange/15'
+          : includedCount > 0
+            ? 'border-positive text-positive hover:bg-positive/15'
+            : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
   const buttonIcon = unreviewedAttentionCount > 0
     ? 'warning'
     : inProgressCount > 0
       ? 'progress_activity'
-      : includedCount > 0
-        ? 'check_circle'
-        : 'history'
+      : hasIncludedFailure
+        ? 'hourglass_top'
+        : includedCount > 0
+          ? 'check_circle'
+          : 'history'
   const buttonTitle = showConfirmationFeedback
     ? 'Transaction confirmed'
     : unreviewedAttentionCount > 0
@@ -880,9 +897,12 @@ export function SponsoredOperationHistoryButton() {
       : includedCount > 0
         ? {
             title: `${actionCountLabel(includedCount)} included onchain`,
-            description:
-              'Safety verification continues in the background. No action is required.',
-            tone: 'border-positive/40 bg-positive/10',
+            description: hasIncludedFailure
+              ? 'A transaction failed onchain. Waiting for safe confirmation before another Trading Account action can be submitted.'
+              : 'Safety verification continues in the background. No action is required.',
+            tone: hasIncludedFailure
+              ? 'border-brand-orange/40 bg-brand-orange/10'
+              : 'border-positive/40 bg-positive/10',
           }
         : null
 

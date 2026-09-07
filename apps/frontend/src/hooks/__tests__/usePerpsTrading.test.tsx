@@ -9,6 +9,9 @@ import {
 } from '../../contracts/perpsAddresses'
 import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import { usePerpsTrading } from '../usePerpsTrading'
+import * as orderV2 from '../../contracts/perpsOrderV2'
+import * as orderPreparation from '../../contracts/preparePerpsOrderV2'
+import { useSponsoredOperationStore } from '../../perps-aa'
 
 const OWNER = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as Address
 const ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc' as Address
@@ -331,6 +334,67 @@ describe('usePerpsTrading', () => {
 
     expect(mocks.simulateContract).not.toHaveBeenCalled()
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('blocks stale reviews while a failed submission is unresolved, then prepares a fresh order', async () => {
+    mocks.identityReady = true
+    const fresh = preparedOrder()
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(fresh)
+    const store = useSponsoredOperationStore.getState()
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    try {
+      store.beginOperation({
+        id: 'expired-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
+        chainId: 421614, accountMode: 'simple', manifestVersion: 'v2',
+        action: 'place-order',
+        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
+          ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n },
+        }),
+      })
+      store.recordUserOperationHash('expired-order', USER_OPERATION_HASH)
+      store.recordObservedInclusion('expired-order', {
+        transactionHash: TRANSACTION_HASH, success: false,
+      })
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.prepareOrder(commitInput()))
+        .rejects.toThrow('Waiting for safe confirmation before reviewing a fresh order')
+      expect(prepare).not.toHaveBeenCalled()
+      store.recordTransactionHash('expired-order', TRANSACTION_HASH)
+      store.failOperation({ id: 'expired-order', status: 'execution-reverted', retryable: false })
+      await expect(result.current.prepareOrder(commitInput())).resolves.toBe(fresh)
+      expect(prepare).toHaveBeenCalledOnce()
+    } finally {
+      prepare.mockRestore()
+      globalThis.localStorage.clear()
+      useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    }
+  })
+
+  it('does not restore an expired review while another pre-submission action is active', async () => {
+    mocks.identityReady = true
+    const store = useSponsoredOperationStore.getState()
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    try {
+      const original = preparedOrder()
+      store.beginOperation({
+        id: 'unsigned-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
+        chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
+        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
+          ...original.request, bounds: { ...original.request.bounds, validUntil: 1n },
+        }),
+      })
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.prepareOrder(commitInput()))
+        .rejects.toThrow('Finish or cancel it in account activity before reviewing a fresh order')
+      expect(mocks.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+      expect(store.getActiveOperation(ACCOUNT)?.id).toBe('unsigned-order')
+    } finally {
+      globalThis.localStorage.clear()
+      useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    }
   })
 
   it('rejects an unaligned close before simulation or signing', async () => {
