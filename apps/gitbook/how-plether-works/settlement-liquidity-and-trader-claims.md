@@ -4,10 +4,10 @@ A profitable close and an immediately withdrawable balance are not always the sa
 
 When a position closes, Plether answers two separate questions:
 
-1. What is the position’s final net settlement?
-2. Can the liquidity pool fund the full amount immediately?
+1. What are the realized price PnL and the separate action charges or rebate?
+2. Can the liquidity pool fund the residual price payout immediately?
 
-Released position margin follows separately. The complete fresh pool-funded payout is either credited immediately to the Trading Account’s Margin Account or, when sufficient settlement liquidity is unavailable, recorded in full as a trader claim. Plether never splits one fresh payout between an immediate credit and a new claim.
+Pledge release follows separately and must preserve the terminal cap of any remaining position. The residual **price payout** is either funded in full or recorded in full as a trader claim. With an open position, funded price payouts credit PnL pledge; without one, they credit free settlement. A separate net action rebate is limited by available cash, and its unpaid remainder is waived rather than recorded as a claim.
 
 This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC[^usdc].
 
@@ -19,29 +19,29 @@ This separation prevents a temporary cash shortage from trapping traders in open
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Realized PnL**        | The result of the price movement on the closed position, before VPI, execution fees, carry and any frozen-close spread |
 | **Released margin**     | The trader’s existing collateral unlocked from the closed portion                                                      |
-| **Fresh trader payout** | A positive net settlement that must be funded by the liquidity pool                                                        |
-| **Trader claim**        | A complete fresh payout recorded in full because it could not be funded immediately                                    |
+| **Price payout**        | Positive price gain left after action charges withheld from it |
+| **Action rebate**       | A net action credit paid only from available cash; an unpaid remainder is waived |
+| **Trader claim**        | An entire residual price payout recorded because it could not be funded in full |
 | **Withdrawable USDC**   | Margin Account USDC that can currently leave the protocol after all account checks                                     |
 
 A profitable close may involve several of these values at once.
 
 ### The settlement flow
 
-![Flowchart showing margin release, positive close settlement, liquidity pool funding, trader claims and zero-or-negative settlement.](../.gitbook/assets/diagrams/settlement-liquidity-flow.svg)
+![After action costs are withheld, a residual price payout is paid in full only if free pool cash after existing claims covers it. Otherwise the full residual becomes a claim.](../.gitbook/assets/diagrams/settlement-liquidity-flow.svg)
 
-The process is the same for LONG USD and SHORT USD positions.
+The process is the same for LONG USD and SHORT USD positions. A same-account claim is also nettable price-risk backing; it is not a freely spendable balance or a general fee source.
 
-### Step 1: Calculate the net close settlement
+### Step 1: Separate price PnL from action economics
 
 Plether first calculates the economics of the closed size:
 
 ```
-Net close settlement
-= realized PnL
-− signed close VPI
-− execution fee
-− carry due at execution
-− frozen-close spread, when applicable
+Net action charge
+= signed close VPI
++ execution fee
++ carry due at execution
++ frozen-close spread, when applicable
 ```
 
 The VPI[^vpi] adjustment is signed:
@@ -70,13 +70,13 @@ The execution-time market state determines whether it applies. A close committed
 
 The rate is part of the protocol’s timelocked risk configuration. It must remain nonzero and cannot exceed `1,000 bps`[^bps], or `10.00%`. The live onchain value is authoritative.
 
-A positive net result is a fresh payout owed by the liquidity pool. A negative result is an amount owed by the trader’s account.
+A positive action charge first offsets a positive price gain. Any remainder uses eligible action funds. A negative net action charge is a rebate paid only from available pool cash; the unpaid portion is waived. Price losses use their separate claim-and-pledge backing.
 
-The net settlement is separate from the position margin being released.
+The residual price payout is the positive price gain remaining after withheld action charges. It is separate from both an action rebate and position pledge being released.
 
 ### Step 2: Release the closed portion’s margin
 
-The proportional margin assigned to the closed size is removed from active position margin.
+The planner calculates how much PnL pledge can be released while preserving the terminal collectible cap of any remaining position. This is not always the full unused pro-rata allocation on a losing partial close.
 
 That USDC already exists inside the Margin Account. It does not require a new transfer from the liquidity pool.
 
@@ -86,17 +86,13 @@ For a partial close, the margin supporting the remaining position stays locked.
 
 ### When the trader owes the protocol
 
-If a voluntary close produces an amount owed by the account, reachable value is allocated in this order:
+Price loss is netted against the same account’s trader claim, then collectible PnL pledge. Excess beyond the terminal cap is recorded as a price-loss write-off.
 
-1. Execution fee
-2. Base close obligation
-3. Frozen-close spread
-
-The base close obligation is the ordinary close settlement before the additional frozen spread. The spread is junior to both the execution fee and the base obligation.
+Separately, action charges offset a price gain first, then use the attributable VPI clawback reserve, spendable action reserve and free settlement. A full close can also use eligible committed-order margin. PnL pledge and protected execution bounties remain isolated from those charges.
 
 #### Partial reductions must settle in full
 
-A partial reduction must settle its complete obligation, including the full frozen-close spread.
+A partial reduction must settle its action charge without waiver, including any frozen-close spread in the net charge.
 
 If any part remains unpaid:
 
@@ -113,10 +109,10 @@ A terminal full close follows a different rule.
 
 Plether:
 
-1. Collects the execution fee.
-2. Collects the base close obligation.
-3. Applies any remaining reachable value to the frozen-close spread.
-4. Waives only the portion of the spread that still cannot be collected.
+1. Nets price loss against the account’s own claim and collectible PnL pledge.
+2. Withholds action charges from any price gain and collects from eligible action sources.
+3. Waives the remaining uncollectible action charge.
+4. Reports price-loss write-offs separately from waived action charges.
 
 The waived amount:
 
@@ -126,7 +122,7 @@ The waived amount:
 * Does not create a future liquidity pool reserve
 * Does not become protocol revenue
 
-Genuine uncovered base trading loss continues through the ordinary bad-debt rules. Only the uncollectible frozen-close spread receives the waiver treatment.
+Frozen spread is one component of the action charge. Uncollected fees and carry are not added to the price-loss write-off either.
 
 Every dollar of spread actually retained, collected or recovered from the same account belongs entirely to LPs. None of it credits the protocol treasury.
 
@@ -161,21 +157,23 @@ FrozenCloseSpreadSettled(
 
 #### Collection example
 
-Suppose a terminal full close has:
+Suppose a terminal full close has no price gain and these separate amounts:
 
 ```
-Execution fee:          10 USDC
-Base close obligation: 100 USDC
-Frozen-close spread:    50 USDC
-Collectible value:     130 USDC
+Price loss:                    100 USDC
+Collectible PnL pledge:         100 USDC
+Execution fee:                  10 USDC
+Carry and VPI:                   0 USDC
+Frozen-close spread:            50 USDC
+Eligible action funds:          30 USDC
 ```
 
-Settlement follows the required order:
+Price loss and action charges use different backing:
 
 ```
-10 USDC → execution fee
-100 USDC → base close obligation
-20 USDC → frozen-close spread
+100 USDC of pledge → price loss
+10 USDC of action funds → execution fee
+20 USDC of action funds → frozen-close spread
 ```
 
 The result is:
@@ -188,7 +186,7 @@ Frozen spread waived:   30 USDC
 
 The `30 USDC` waiver is not bad debt, a trader claim or an LP receivable.
 
-The same funding would be insufficient for a partial reduction. A partial reduction must fund the complete `160 USDC` obligation or it does not execute.
+The same action funding is insufficient for a partial reduction: its `60 USDC` action charge cannot be fully covered by `30 USDC`. Unused PnL pledge cannot be repurposed to cover the difference.
 
 ### Step 3: Fund or record the positive settlement
 
@@ -307,29 +305,15 @@ If the account still has an open position, carry is checkpointed before the clai
 
 Aggregate coverage is enforced onchain. A claim settled while a position remains open credits PnL pledge instead of free Margin Account balance. The current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
 
-### A claim is not position collateral
+### A claim is price-risk backing, not free USDC
 
-An unsettled claim cannot:
+An unsettled same-account claim is included in V2 price-risk equity and can be netted against that account’s price losses. This is distinct from free buying power, action-charge collateral or withdrawable USDC.
 
-* support a new position;
-* increase available buying power;
-* prevent liquidation;
-* make an under-margined position healthy;
-* be withdrawn as USDC.
+Price losses consume the same account’s claim before collectible PnL pledge, including on eligible partial closes. Action charges follow a separate funding path:
 
-There is one important exception: account-level terminal netting.
+![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
 
-If the same account later produces a terminal negative settlement, its existing trader claim can be consumed after physically reachable collateral.
-
-For an oracle-frozen voluntary full close, collection still follows:
-
-![Collection order from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
-
-Claim value used against the execution fee or base obligation can prevent genuine bad debt. Claim value remaining after those obligations can pay the frozen-close spread to LPs.
-
-Any spread still uncollectible after terminal account-level netting is waived rather than recorded as bad debt.
-
-This happens only during terminal settlement paths such as a full close or liquidation. It is not part of ordinary account health.
+Claim backing and PnL pledge are not general sources for execution fees, carry, VPI or frozen spread. A partial close must fund its action charge without waiver; a full close can waive the uncollectible remainder. Price-loss write-offs and waived action charges are reported separately.
 
 Claims belonging to other traders are never used.
 
@@ -337,7 +321,7 @@ Claims belonging to other traders are never used.
 
 A liquidation can produce either a positive or negative residual after the account is closed.
 
-Liquidations do not assess the frozen-close spread, including during `oracleFrozen`. The execution fee → base obligation → frozen spread collection order applies only to voluntary reductions and closes.
+Liquidations do not assess the frozen-close spread, including during `oracleFrozen`. They also separate price-loss backing from action charges and liquidation incentives.
 
 If the trader is still owed a positive amount, it follows the same rule as any other fresh payout:
 
@@ -346,9 +330,9 @@ If the trader is still owed a positive amount, it follows the same rule as any o
 
 If the account owes more than its reachable collateral:
 
-1. Reachable collateral is consumed.
-2. Any existing claim belonging to that account is netted against the remaining shortfall.
-3. Only the uncovered liquidation shortfall becomes bad debt.
+1. The same account’s claim is netted against its price loss.
+2. Collectible PnL pledge covers the remaining price loss within its cap.
+3. Excess price loss is recorded separately from action-charge collection or waiver.
 
 The liquidator’s bounty is separate. It is funded from reachable trader collateral and does not compete with trader-claim liquidity.
 
@@ -432,15 +416,15 @@ A waived spread is not recorded as:
 
 LP accounting recognizes only the amount actually paid.
 
-### Trader claims and bad debt are opposites
+### Trader claims and price-loss write-offs
 
-| Trader claim                                                 | Bad debt                                                                                         |
+| Trader claim                                                 | Price-loss write-off |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | The liquidity pool owes the trader                               | The trader account could not pay the protocol                                                    |
-| Created by a positive net settlement                         | Created by an uncovered terminal base trading-loss obligation                                    |
+| Created by an unfunded residual price payout                 | Price loss beyond the account’s terminal collectible cap |
 | Reserved ahead of LP withdrawals                             | Absorbed economically by LP capital                                                              |
-| Settles when aggregate claims are cash-covered               | Economic backing can recover through revenue or recapitalization; the telemetry counter clears only through recapitalization |
-| Can be netted against the same account’s later terminal loss | Represents uncovered base trading loss after reachable collateral and same-account claim netting |
+| Settles when aggregate claims are cash-covered               | Reported separately from waived action charges |
+| Can be netted against the same account’s price loss          | Calculated after the account’s own claim and collectible pledge |
 
 A waived frozen-close spread belongs to neither column.
 
@@ -555,13 +539,13 @@ Result:
 
 An account has a `300 USDC` trader claim.
 
-A later full close produces an uncovered base close obligation of `500 USDC` after all reachable collateral is consumed. Assume no frozen-close spread applies.
+A later full close realizes a price loss of `500 USDC`. Assume no collectible PnL pledge remains and no action charge applies.
 
 Result:
 
 * `300 USDC` of the account’s claim is consumed.
 * The claim falls to zero.
-* The remaining `200 USDC` becomes bad debt.
+* The remaining `200 USDC` is recorded as a price-loss write-off.
 * No other trader’s claim is affected.
 
 #### Example 5: an underfunded frozen-close spread
@@ -576,7 +560,7 @@ Frozen-close spread
 = 50 USDC
 ```
 
-After satisfying the execution fee and base close obligation, the account has only `20 USDC` available for the spread.
+Assume price loss has been settled separately, there is no negative VPI offset, and recovered action funds leave only `20 USDC` for spread after execution fee, carry and positive VPI.
 
 For a partial reduction:
 

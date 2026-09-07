@@ -10,7 +10,7 @@ Claims can arise from:
 
 The position action still completes. Released position margin follows the normal account settlement path, while the unfunded payment from the liquidity pool is recorded separately as a trader claim.
 
-![Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal.](../.gitbook/assets/diagrams/trader-claim-lifecycle.svg)
+![An unfunded residual price payout becomes a claim. Claim settlement is all-or-nothing once aggregate cash coverage returns, and the credit bucket depends on whether a position remains open.](../.gitbook/assets/diagrams/trader-claim-lifecycle.svg)
 
 ### How a claim is created
 
@@ -154,7 +154,7 @@ After confirmation:
 * Available to Trade and Withdrawable should be recalculated.
 * Any carry associated with an open position should be updated.
 
-![Funding path from the liquidity pool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
+![Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free settlement otherwise.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
 The sponsored settlement operation does not transfer USDC directly to the owner wallet.
 
@@ -202,28 +202,28 @@ Claim settlement and wallet withdrawal are separate sponsored operations.
 
 ### A claim can be consumed before settlement
 
-An outstanding claim belonging to the same account can be used against a shortfall from:
+An outstanding claim belonging to the same account is nettable price-risk backing and can be consumed by price losses from:
 
-* A losing terminal full close
+* A losing partial or full close
 * A liquidation
 
-Plether consumes the claim before recording protocol bad debt.
+V2 nets that claim before consuming collectible PnL pledge. It does not use the claim as a general source for fees, carry or frozen spread.
 
 Example:
 
 ```
 Existing trader claim:               3,000 USDC
-Terminal settlement shortfall:       1,200 USDC
+Realized price loss:                 1,200 USDC
 Claim consumed:                      1,200 USDC
 Remaining trader claim:              1,800 USDC
-Bad debt:                                0 USDC
+Price-loss write-off:                     0 USDC
 ```
 
 This consumption does not produce a Margin Account credit because the claim is being netted against an account obligation.
 
-A partial reduction cannot rely on an unsettled claim to cover underfunding. The partial reduction must be fully supported by eligible account collateral.
+A partial reduction can net the same account’s claim against price loss, but must still fund its separate action charge without waiver and preserve the remaining position’s terminal cap.
 
-If your claim balance falls without a claim-settlement transaction, review the account’s latest full close or liquidation.
+If your claim balance falls without a claim-settlement transaction, review the account’s latest partial close, full close or liquidation.
 
 ### Why settlement may be unavailable
 

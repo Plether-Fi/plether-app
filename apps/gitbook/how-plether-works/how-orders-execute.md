@@ -13,7 +13,7 @@ The order enters a global queue, then settles under the oracle regime active whe
 * Live and FAD-only[^fad] execution uses the first eligible post-commit observation.
 * An `oracleFrozen` voluntary close uses the bounded frozen-market policy.
 
-![Flowchart showing a Plether order moving from Preview through Commit, FIFO execution and final execution checks.](../.gitbook/assets/diagrams/delayed-order-execution-pipeline.svg)
+![A bounded order is committed, queued and assessed using the execution-time oracle regime. Success, temporary deferral and terminal failure are distinct.](../.gitbook/assets/diagrams/delayed-order-execution-pipeline.svg)
 
 This introduces a short delay by design. The delay separates the trading decision from the price used to settle it, reducing the surface for front-running and selective execution.
 
@@ -23,13 +23,13 @@ This introduces a short delay by design. The delay separates the trading decisio
 
 The sponsored commitment first moves through:
 
-![Five-stage sponsored submission lifecycle from Preparing through wallet confirmation to Confirmed.](../.gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg)
+![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg)
 
 Here, **Confirmed** means the order commitment reached the chain. It does not mean the trade has executed.
 
 The delayed order then follows the protocol stages:
 
-![Three-stage order lifecycle: Preview, Commit and Finalize.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
+![Preview is not a transaction. Commitment and later keeper execution are separate onchain stages.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
 
 The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper[^keeper] submits the separate finalization transaction.
 
@@ -369,13 +369,13 @@ The rate is fixed rather than dependent on VPI, skew[^skew] or oracle age. It be
 
 The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps`[^bps], or `10.00%`. The live onchain value is authoritative.
 
-If trader-owned value must be collected, settlement follows this priority:
+V2 separates price-loss collection from action-charge funding:
 
-![Collection priority from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/final-collection-priority.svg)
+![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/final-collection-priority.svg)
 
-A partial reduction must settle its complete obligation, including the full spread. If it cannot, the reduction does not execute.
+A price loss consumes the same account’s nettable claim before collectible PnL pledge. Fees, carry, VPI and frozen spread use separate action funds and cannot consume PnL pledge. A partial reduction cannot waive an uncollectible action charge.
 
-A terminal full close remains executable when the spread cannot be collected in full. Plether waives only the uncollectible spread.
+A terminal full close may waive uncollectible action charges, including frozen spread. Excess price loss beyond the collectible cap is recorded separately; it is not a fee shortfall.
 
 A waived spread:
 

@@ -25,7 +25,7 @@ Your wallet’s signature rules control the Trading Account, but protocol state 
 
 The round activity button beside the connected wallet opens **Trading Account activity**. It shows both addresses and provides copy and explorer actions.
 
-![Hierarchy showing the connected wallet signing for and controlling the Trading Account, which owns positions, orders, margin and trader claims.](../.gitbook/assets/diagrams/wallet-trading-account-ownership.svg)
+![The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account.](../.gitbook/assets/diagrams/wallet-trading-account-ownership.svg)
 
 ### Which actions Plether sponsors
 
@@ -87,7 +87,7 @@ For each eligible action, the owner wallet signs an authorization for the prepar
 
 Creating the signature is an offchain action and does not itself consume network gas. The sponsor and bundler[^bundler] can relay an authorized operation, but they cannot create the owner signature or replace its call data with a different action.
 
-![Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas.](../.gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg)
+![Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result.](../.gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg)
 
 ### Fund and deposit
 
@@ -123,7 +123,7 @@ The sponsored operation performs two exact calls as one batch:
 
 Plether’s sponsor rejects a withdrawal batch whose transfer recipient is not the verified owner or whose two amounts differ. Gas sponsorship does not increase the amount available for withdrawal.
 
-![Sponsored withdrawal sequence from amount selection and recipient review to owner-wallet receipt.](../.gitbook/assets/diagrams/sponsored-withdrawal-flow.svg)
+![Review the free amount and verified owner recipient, prepare sponsorship, sign and confirm. Withdrawal remains subject to onchain account-health and balance checks.](../.gitbook/assets/diagrams/sponsored-withdrawal-flow.svg)
 
 ### Account continuity
 

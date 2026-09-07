@@ -158,7 +158,7 @@ If everything matches your intent, select `Confirm Commit`. Your wallet authoriz
 
 The submission lifecycle is:
 
-![Quickstart lifecycle from Preparing and wallet confirmation through sponsored submission to Confirmed.](.gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg)
+![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](.gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg)
 
 **Confirmed** means the order commitment reached the chain. It does not mean the position has changed yet.
 

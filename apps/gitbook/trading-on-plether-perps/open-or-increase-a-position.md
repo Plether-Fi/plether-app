@@ -4,7 +4,7 @@ Use the trade ticket to open a **Long plDXY Perp** (LONG USD) or **Short plDXY P
 
 Both actions begin with a sponsored submission and then follow Plether’s delayed-order process:
 
-![Complete open-or-increase lifecycle from configuration through sponsored submission, FIFO execution and position update.](../.gitbook/assets/diagrams/open-increase-position-lifecycle.svg)
+![Review and authorize a bounded commitment. A successfully submitted order joins FIFO, then executes, remains pending or fails without the requested position change.](../.gitbook/assets/diagrams/open-increase-position-lifecycle.svg)
 
 The sponsored operation is **Confirmed** when the order commitment reaches the chain. The position changes only when that committed order later executes.
 
@@ -306,7 +306,7 @@ Select `Confirm Commit` and approve the wallet authorization. Plether then submi
 
 The interface reports:
 
-![Open-or-increase sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/open-increase-sponsored-submission.svg)
+![Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.](../.gitbook/assets/diagrams/open-increase-sponsored-submission.svg)
 
 If the wallet signature, sponsorship request or UserOperation[^useroperation] submission fails before confirmation, no order is created. Check the operation status before retrying.
 

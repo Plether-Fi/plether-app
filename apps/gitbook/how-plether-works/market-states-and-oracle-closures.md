@@ -16,18 +16,18 @@ These conditions are related, but they are not interchangeable.
 
 ### The weekly schedule
 
-Plether’s regular market calendar is defined in UTC[^utc] and does not move with daylight saving time.
+Plether’s regular market calendar follows **America/New_York**, including US daylight saving time. The Friday FX close and Sunday FX reopen are at 17:00 New York time: 21:00 UTC[^utc] during daylight time and 22:00 UTC during standard time.
 
-![Weekly timeline showing open, close-only live-oracle and close-only frozen-oracle periods.](../.gitbook/assets/diagrams/weekly-market-state-schedule.svg)
+![Regular weekly phases in America/New_York: open until Friday 16:30, close-only with live policy until 17:00, frozen until Sunday 17:00, then close-only until 17:15. UTC offsets change with US daylight saving.](../.gitbook/assets/diagrams/weekly-market-state-schedule.svg)
 
-| Time in UTC               | Public market state | Oracle policy | New risk |
+| Time in New York          | Public market state | Oracle policy | New risk |
 | ------------------------- | ------------------- | ------------- | -------- |
-| Sunday 22:00–Friday 19:00 | Open                | Live          | Allowed  |
-| Friday 19:00–22:00        | Close-only          | Live          | Blocked  |
-| Friday 22:00–Sunday 21:00 | Close-only          | Frozen        | Blocked  |
-| Sunday 21:00–22:00        | Close-only          | Live          | Blocked  |
+| Sunday 17:15–Friday 16:30 | Open                | Live          | Allowed  |
+| Friday 16:30–17:00        | Close-only          | Live          | Blocked  |
+| Friday 17:00–Sunday 17:00 | Close-only          | Frozen        | Blocked  |
+| Sunday 17:00–17:15        | Close-only          | Live          | Blocked  |
 
-The market is not fully open at Sunday 21:00. Frozen pricing ends then, but the close-only runway continues until Sunday 22:00.
+Frozen pricing ends at Sunday 17:00 New York time, but the market remains close-only for another 15 minutes. The pre-close runway on Friday is 30 minutes. Configured closure days can extend these restrictions.
 
 The contracts refer to the wider close-only period as the **FAD[^fad] window**, short for Friday Afternoon Deleverage. The public interface simply calls it **Close-only**.
 
@@ -94,7 +94,7 @@ The **Open** state means the calendar permits new risk. It does not guarantee th
 
 ### Scheduled close-only with a live oracle
 
-Scheduled close-only begins every Friday at 19:00 UTC and returns for the Sunday 21:00–22:00 reopening shoulder.
+Scheduled close-only begins every Friday at 16:30 New York time and ends Sunday at 17:15. Its live-oracle shoulders are the 30 minutes before Friday’s FX close and the 15 minutes after Sunday’s FX reopen.
 
 During these intervals:
 
@@ -174,15 +174,15 @@ The state at execution determines whether the spread applies. A close committed 
 
 #### How the spread is settled
 
-When collectible account value is limited, settlement follows this priority:
+Frozen spread is part of the action charge. Attribution of recovered spread follows the prior charges shown below; this is not a shared collateral queue for price losses:
 
-![Frozen-close collection priority from execution fee through base obligation to frozen-close spread.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
+![Frozen-close spread is an action charge, not a price change. Recovered spread is attributed only after execution fee, carry and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
 
-The base close obligation is the ordinary close settlement before the additional frozen spread.
+V2 settles price losses separately, using the same account’s nettable trader claim and then collectible PnL pledge. Action charges cannot consume that pledge.
 
-A partial reduction must settle its complete obligation, including the full frozen-close spread. If it cannot, the reduction does not execute.
+A partial reduction must settle its action charge without waiver. If eligible action funds are insufficient after any withholding from a price gain, the reduction does not execute.
 
-A terminal full close is not trapped solely because the entire spread cannot be collected. Plether collects the available spread and waives only the uncollectible portion.
+A terminal full close may waive uncollectible action charges, including frozen spread. The spread event distinguishes assessed, recovered and waived amounts.
 
 The waived amount:
 
@@ -190,7 +190,7 @@ The waived amount:
 * Does not become a trader claim
 * Does not become an LP receivable or LP revenue
 
-Any uncovered base trading-loss obligation continues through the protocol’s ordinary bad-debt accounting. Only the waived spread receives this special treatment.
+Price losses beyond the terminal collectible cap are recorded separately as price-loss write-offs. Unpaid action charges are not added to that price-loss amount.
 
 Close previews expose the result separately:
 
@@ -277,7 +277,7 @@ The close-only window activates a higher margin requirement for existing positio
 
 This happens as soon as the window begins—not when the oracle later becomes frozen.
 
-A position that was healthy immediately before Friday 19:00 UTC can become liquidatable after the boundary if its equity falls below the closure requirement.
+A position that was healthy immediately before Friday 16:30 New York time can become liquidatable after the boundary if its equity falls below the closure requirement.
 
 No position is closed automatically. A keeper[^keeper] must still submit a valid liquidation using an eligible oracle price.
 
@@ -327,12 +327,12 @@ A pending close uses the policy active when it is finalized.
 
 For example:
 
-* A close committed on Friday at 21:59:30 UTC may use live historical execution and pay no frozen-close spread if finalized before 22:00.
-* The same close, if finalized at 22:00:10 while still unexpired, uses frozen-market execution and is assessed the frozen-close spread.
+* A close committed on Friday at 16:59:30 New York time may use live historical execution and pay no frozen-close spread if finalized before 17:00.
+* The same close, if finalized at 17:00:10 while still unexpired and authorized for frozen execution, uses frozen-market execution and is assessed the frozen-close spread.
 
 The spread is determined by the state at execution, not the state at commitment.
 
-The acceptable-price boundary continues to constrain the oracle-derived execution price in either case. It does not cap the execution fee, VPI, carry or frozen-close spread.
+The acceptable-price boundary continues to constrain the oracle-derived execution price in either case. Separate signed V2 execution bounds constrain permitted modes and financial outcomes; the acceptable price alone is not a fee or carry limit.
 
 A pending close is not a completed close. The position remains exposed and liquidatable until execution succeeds.
 
@@ -454,11 +454,9 @@ Because closure days use UTC calendar boundaries, their relationship to a local 
 
 ### Daylight saving time and reopening gaps
 
-The weekly schedule does not move with daylight saving time.
+The weekly schedule moves with US daylight saving time. The contracts evaluate Friday and Sunday independently, so a clock-change weekend can have different UTC offsets at its two boundaries.
 
-This means the calendar and actual FX publication schedule can briefly diverge.
-
-The most visible example is Sunday 21:00–22:00 UTC:
+During the 15 minutes after Sunday 17:00 New York time:
 
 * Oracle-frozen policy has ended
 * The market remains close-only
@@ -467,7 +465,7 @@ The most visible example is Sunday 21:00–22:00 UTC:
 
 If no eligible live observation exists, closes and liquidations remain blocked despite the oracle-frozen flag being off.
 
-The reverse can happen around the Friday close: updates may stop before the protocol’s 22:00 frozen boundary. During that gap, close-only remains active but live freshness is still required.
+Actual oracle publication can still be delayed or stop early. Until Friday 17:00 New York time, the live-oracle policy requires fresh eligible data; the calendar does not manufacture missing observations.
 
 Calendar permission never overrides oracle validation.
 
@@ -515,7 +513,9 @@ Check the oracle freshness indicator as well:
 * `updated … ago`
 * `checking backend for a fresh update`
 
-![Open followed by the three-hour close-only runway](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
+![Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
+
+This Storybook countdown is an illustrative UI fixture, not the current weekly schedule. Use the New York schedule above and the live application’s market state for timing.
 
 The weekly countdown is an interface estimate, not a protocol state transition. The onchain `fadWindow` and `oracleFrozen` flags are authoritative, including around configured holiday closures or if an interface countdown does not match the deployed calendar.
 
@@ -540,7 +540,7 @@ Live onchain values are authoritative.
 
 ### Trader checklist before closure
 
-Before Friday 19:00 UTC or an announced closure day:
+Before Friday 16:30 New York time or an announced closure day:
 
 * Check when close-only begins
 * Recalculate health using the closure margin requirement

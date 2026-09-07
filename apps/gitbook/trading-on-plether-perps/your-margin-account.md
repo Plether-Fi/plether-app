@@ -4,7 +4,7 @@ Every Plether trade settles through a USDC[^usdc] Margin Account associated with
 
 The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI[^vpi], carry[^carry] and realized PnL[^pnl] update it. Eligible USDC can then be withdrawn to the owner wallet.
 
-![USDC lifecycle from the funded Trading Account through Margin Account balances, settlement and withdrawal to the owner wallet.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
+![Trading Account wallet USDC can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
 
 ### Three places USDC can appear
 
@@ -264,7 +264,7 @@ If either step fails, neither step is applied. The USDC is not left behind in th
 
 ### Reductions, closes and account settlement
 
-A reduction releases the proportional position margin associated with the exposure being closed.
+A reduction releases only the PnL pledge permitted by the remaining position’s terminal collectible cap. A full close releases the unused remainder; a losing partial close may retain some of its unused pro-rata allocation.
 
 The account then receives the net close settlement:
 
@@ -285,25 +285,19 @@ Account movement
 + net close economics
 ```
 
-Released position margin follows separately. The complete fresh pool-funded payout is credited immediately when physical pool cash can cover it after protecting existing trader claims. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
+These equations summarize economic components, not an unconditional free-USDC credit. V2 separates price-loss backing from action costs. A residual price payout is funded in full or becomes a claim; a separate action rebate is cash-limited and its unpaid remainder is waived. Funded price payouts credit PnL pledge if a position remains open, otherwise free settlement.
 
 ### Trader claims
 
 A trader claim records a fixed USDC obligation owed to the Trading Account by the liquidity pool.
 
-While unsettled, the claim remains outside:
-
-* Available to Trade
-* Position margin
-* Portfolio value
-* Account health
-* Withdrawable
+An unsettled claim is not wallet USDC, free buying power or withdrawable cash. However, the same account’s claim **is** included in V2 price-risk equity and can be netted against that account’s price losses. It remains a distinct balance rather than deposited PnL pledge, and cannot be spent as a general source for fees or carry.
 
 Claim settlement becomes available once the liquidity pool has enough physical cash to cover aggregate trader claims. Settlement credits the account’s complete claim balance; partial claim servicing is unavailable.
 
 The flow is:
 
-![Sequence from a trader claim through owner authorization, sponsored settlement, Margin Account credit and sponsored withdrawal.](../.gitbook/assets/diagrams/claim-to-owner-wallet.svg)
+![Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free settlement and a separate authorized action.](../.gitbook/assets/diagrams/claim-to-owner-wallet.svg)
 
 Claim settlement and wallet withdrawal are separate sponsored operations.
 
