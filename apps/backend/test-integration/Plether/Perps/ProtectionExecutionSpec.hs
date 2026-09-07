@@ -9,7 +9,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple
 import Plether.Database.Protection (ensureProtectionSchema)
-import Plether.Handlers.ProtectionHistory (protectionExecutionSql)
+import Plether.Handlers.ProtectionHistory (parseProtectionCursor, protectionExecutionSql, readProtectionHistoryPage)
 import Test.Hspec
 
 protectionExecutionSpec :: T.Text -> Spec
@@ -46,6 +46,58 @@ protectionExecutionSpec databaseUrl = describe "protection execution observation
       void $ execute_ conn "UPDATE perps_protection_observations SET checked_at=NOW()-INTERVAL '2 minutes'"
       [(_, stale)] <- readReport conn 421614 "book" 7
       field "ageSeconds" stale `shouldSatisfy` maybe False (\v -> case v of Number n -> n >= 120; _ -> False)
+
+  describe "protection history pages" $ do
+    it "decodes a populated NUMERIC protection ID and scopes history to its account and deployment" $
+      withFixture databaseUrl $ \conn -> do
+        insertHistory conn 1 100 0 "created"
+        (rows, cursor) <- readProtectionHistoryPage conn 421614 "book" "ACCOUNT" 25 Nothing
+        map (field "protectionId") rows `shouldBe` [Just (String "1")]
+        cursor `shouldBe` Nothing
+        readProtectionHistoryPage conn 1 "book" "account" 25 Nothing `shouldReturn` ([], Nothing)
+        readProtectionHistoryPage conn 421614 "other-book" "account" 25 Nothing `shouldReturn` ([], Nothing)
+        readProtectionHistoryPage conn 421614 "book" "other-account" 25 Nothing `shouldReturn` ([], Nothing)
+
+    it "paginates numerically and preserves IDs across the full uint64 range" $
+      withFixture databaseUrl $ \conn -> do
+        let ids = [2, 10, 9223372036854775808, 18446744073709551615]
+        mapM_ (\(i, pid) -> insertHistory conn pid 100 i "armed") $ zip [0..] ids
+        (first, next) <- readProtectionHistoryPage conn 421614 "book" "account" 1 Nothing
+        map (field "protectionId") first `shouldBe` [Just (String "18446744073709551615")]
+        next `shouldBe` Just "18446744073709551615"
+        (second, nextSecond) <- readProtectionHistoryPage conn 421614 "book" "account" 2 (next >>= parseProtectionCursor)
+        map (field "protectionId") second `shouldBe` [Just (String "9223372036854775808"), Just (String "10")]
+        nextSecond `shouldBe` Just "10"
+        (lastPage, end) <- readProtectionHistoryPage conn 421614 "book" "account" 2 (nextSecond >>= parseProtectionCursor)
+        map (field "protectionId") lastPage `shouldBe` [Just (String "2")]
+        end `shouldBe` Nothing
+        readProtectionHistoryPage conn 421614 "book" "account" 25 (Just 2) `shouldReturn` ([], Nothing)
+
+    it "returns only the latest snapshot by block and log index" $
+      withFixture databaseUrl $ \conn -> do
+        insertHistory conn 1 100 9 "created"
+        insertHistory conn 1 101 0 "armed"
+        insertHistory conn 1 101 1 "cancelled"
+        (rows, cursor) <- readProtectionHistoryPage conn 421614 "book" "account" 1 Nothing
+        map (field "phase") rows `shouldBe` [Just (String "cancelled")]
+        map (field "updatedBlock") rows `shouldBe` [Just (String "101")]
+        cursor `shouldBe` Nothing
+
+    it "handles empty history and clamps page size to the supported bounds" $
+      withFixture databaseUrl $ \conn -> do
+        readProtectionHistoryPage conn 421614 "book" "account" 25 Nothing `shouldReturn` ([], Nothing)
+        mapM_ (\pid -> insertHistory conn pid 100 pid "armed") [1..101]
+        (small, smallCursor) <- readProtectionHistoryPage conn 421614 "book" "account" 0 Nothing
+        length small `shouldBe` 1
+        smallCursor `shouldBe` Just "101"
+        (large, largeCursor) <- readProtectionHistoryPage conn 421614 "book" "account" 200 Nothing
+        length large `shouldBe` 100
+        largeCursor `shouldBe` Just "2"
+
+insertHistory :: Connection -> Integer -> Integer -> Integer -> T.Text -> IO ()
+insertHistory conn protectionId block logIndex phase = void $ execute conn
+  "INSERT INTO perps_protection_events(chain_id,book,protection_id,account,block_number,block_hash,log_index,transaction_hash,event_name,event_data,snapshot) VALUES(421614,'book',?,'account',?,'block-hash',?,'tx-hash','PositionProtectionCreated','{}',?)"
+  (protectionId, block, logIndex, object ["protectionId" .= show protectionId, "phase" .= phase])
 
 field :: T.Text -> Value -> Maybe Value
 field name (Object fields) = KM.lookup (Key.fromText name) fields

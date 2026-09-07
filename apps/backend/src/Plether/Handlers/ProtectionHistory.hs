@@ -3,6 +3,7 @@ module Plether.Handlers.ProtectionHistory
   , getProtectionEvents
   , getProtectionExecution
   , protectionExecutionSql
+  , readProtectionHistoryPage
   , parseProtectionCursor
   , validProtectionBook
   ) where
@@ -11,7 +12,7 @@ import Data.Aeson (Value, object, (.=))
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.PostgreSQL.Simple (Only (..), Query, query)
+import Database.PostgreSQL.Simple (Connection, Only (..), Query, query)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import qualified Plether.Perps.Manifest as Manifest
@@ -50,23 +51,31 @@ getProtectionExecution pool cfg protectionId = withDb pool $ \conn -> do
 
 getProtectionHistory :: DbPool -> Config -> Text -> Int -> Maybe Integer -> IO (Either ApiError (ApiResponse Value))
 getProtectionHistory pool cfg account requestedLimit cursor = withDb pool $ \conn -> do
-  let limit = max 1 $ min 100 requestedLimit
-      chain = cfgPerpsChainId cfg
+  let chain = cfgPerpsChainId cfg
       book = T.toLower Manifest.positionProtectionBookAddress
-  rows <- query conn
-    "SELECT protection_id, snapshot || jsonb_build_object('updatedBlock',block_number::text) FROM (\
-    \SELECT DISTINCT ON (protection_id) protection_id,snapshot,block_number FROM perps_protection_events \
-    \WHERE chain_id=? AND book=? AND account=? AND (?::numeric IS NULL OR protection_id < ?) \
-    \ORDER BY protection_id DESC,block_number DESC,log_index DESC) latest ORDER BY protection_id DESC LIMIT ?"
-    (chain, book, T.toLower account, cursor, cursor, limit + 1) :: IO [(Integer, Value)]
+  (page, nextCursor) <- readProtectionHistoryPage conn chain book account requestedLimit cursor
   checkpoints <- query conn
     "SELECT block_number FROM perps_protection_checkpoints WHERE chain_id=? AND book=? ORDER BY block_number DESC LIMIT 1"
     (chain, book) :: IO [Only Integer]
-  let page = take limit rows
-      nextCursor = if length rows > limit then T.pack . show . fst <$> listToMaybe (reverse page) else Nothing
-      indexedBlock = maybe 0 fromOnly $ listToMaybe checkpoints
+  let indexedBlock = maybe 0 fromOnly $ listToMaybe checkpoints
   pure $ Right $ mkResponse indexedBlock chain $ object
-    [ "protections" .= map snd page, "nextCursor" .= nextCursor, "indexedThroughBlock" .= show indexedBlock ]
+    [ "protections" .= page, "nextCursor" .= nextCursor, "indexedThroughBlock" .= show indexedBlock ]
+
+readProtectionHistoryPage :: Connection -> Integer -> Text -> Text -> Int -> Maybe Integer -> IO ([Value], Maybe Text)
+readProtectionHistoryPage conn chain book account requestedLimit cursor = do
+  let limit = max 1 $ min 100 requestedLimit
+  -- postgresql-simple does not decode NUMERIC directly as Integer. Return the
+  -- uint64 ID as exact text for the cursor, but retain numeric ordering/filtering.
+  -- Casting to BIGINT instead would reject IDs above the signed int64 maximum.
+  rows <- query conn
+    "SELECT latest.protection_id::text, snapshot || jsonb_build_object('updatedBlock',block_number::text) FROM (\
+    \SELECT DISTINCT ON (protection_id) protection_id,snapshot,block_number FROM perps_protection_events \
+    \WHERE chain_id=? AND book=? AND account=? AND (?::numeric IS NULL OR protection_id < ?) \
+    \ORDER BY protection_id DESC,block_number DESC,log_index DESC) latest ORDER BY latest.protection_id DESC LIMIT ?"
+    (chain, book, T.toLower account, cursor, cursor, limit + 1) :: IO [(Text, Value)]
+  let page = take limit rows
+      nextCursor = if length rows > limit then fst <$> listToMaybe (reverse page) else Nothing
+  pure (map snd page, nextCursor)
 
 getProtectionEvents :: DbPool -> Config -> Integer -> Int -> Maybe (Integer, Integer) -> IO (Either ApiError (ApiResponse Value))
 getProtectionEvents pool cfg protectionId requestedLimit cursor = withDb pool $ \conn -> do
