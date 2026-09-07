@@ -78,20 +78,25 @@ export function useVaultTransactions({
           label: 'Queue deposit',
           action: async () => {
             const context = requireTransactionContext(expectedAddress)
-            await context.publicClient.simulateContract({
+            const request = {
               account: context.address,
               address: vaultAddress,
               abi: TRANCHE_VAULT_READ_ABI,
               functionName: 'requestDeposit',
               args: [amount, context.address],
-            })
+            } as const
+            await context.publicClient.simulateContract(request)
+            // Estimate inside the deposit step, after approval has confirmed,
+            // and repeat on retry. Wallet estimates have exhausted their gas
+            // limits on these calls; allow 50% headroom, rounded up, for changes
+            // between estimation and execution instead of fixing a gas ceiling.
+            const estimatedGas = await context.publicClient.estimateContractGas(request)
+            const gas = estimatedGas + (estimatedGas + 1n) / 2n
+            requireTransactionContext(expectedAddress)
             return writeContractAsync({
-              account: context.address,
+              ...request,
               chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-              address: vaultAddress,
-              abi: TRANCHE_VAULT_READ_ABI,
-              functionName: 'requestDeposit',
-              args: [amount, context.address],
+              gas,
             })
           },
         })

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
   reset: vi.fn(),
   simulateContract: vi.fn(),
+  estimateContractGas: vi.fn(),
   writeContractAsync: vi.fn(),
 }))
 
@@ -16,6 +17,7 @@ vi.mock('wagmi', () => ({
   useConfig: () => ({ id: 'test-config' }),
   usePublicClient: () => ({
     simulateContract: mocks.simulateContract,
+    estimateContractGas: mocks.estimateContractGas,
   }),
   useWriteContract: () => ({
     writeContractAsync: mocks.writeContractAsync,
@@ -61,6 +63,7 @@ describe('useVaultTransactions', () => {
     mocks.chainId = 421614
     mocks.execute.mockResolvedValue(undefined)
     mocks.simulateContract.mockResolvedValue({ request: {} })
+    mocks.estimateContractGas.mockResolvedValue(1_000_000n)
     mocks.writeContractAsync.mockResolvedValue('0xabc')
   })
 
@@ -80,6 +83,7 @@ describe('useVaultTransactions', () => {
     expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
 
     await steps[0].action()
+    expect(mocks.estimateContractGas).not.toHaveBeenCalled()
     await steps[1].action()
 
     expect(mocks.simulateContract).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -93,6 +97,79 @@ describe('useVaultTransactions', () => {
       args: [2_000_000n, mocks.address],
     }))
     expect(mocks.writeContractAsync).toHaveBeenCalledTimes(2)
+    expect(mocks.writeContractAsync.mock.calls[0][0]).not.toHaveProperty('gas')
+    expect(mocks.writeContractAsync.mock.calls[1][0]).toHaveProperty('gas', 1_500_000n)
+  })
+
+  it.each([
+    ['Senior', PERPS_ARBITRUM_SEPOLIA.seniorVault],
+    ['Junior', PERPS_ARBITRUM_SEPOLIA.juniorVault],
+  ] as const)('passes a rounded-up gas buffer for %s deposits', async (_name, vaultAddress) => {
+    mocks.estimateContractGas.mockResolvedValue(883_429n)
+    const { result } = renderHook(() => useVaultTransactions({ vaultAddress, allowance: 5_000_000n }))
+    act(() => result.current.requestDeposit(2_000_000n))
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    await config.buildSteps()[0].action()
+
+    expect(mocks.estimateContractGas).toHaveBeenCalledWith({
+      ...mocks.simulateContract.mock.calls[0][0],
+      account: mocks.address,
+      address: vaultAddress,
+      functionName: 'requestDeposit',
+      args: [2_000_000n, mocks.address],
+    })
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith({
+      ...mocks.estimateContractGas.mock.calls[0][0],
+      chainId: 421614,
+      gas: 1_325_144n,
+    })
+  })
+
+  it('gets a fresh gas estimate when the deposit step is retried', async () => {
+    mocks.estimateContractGas.mockResolvedValueOnce(1_000_000n).mockResolvedValueOnce(2_000_000n)
+    mocks.writeContractAsync.mockRejectedValueOnce(new Error('Wallet rejected transaction'))
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault, allowance: 5_000_000n,
+    }))
+    act(() => result.current.requestDeposit(2_000_000n))
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    const [deposit] = config.buildSteps()
+    await expect(deposit.action()).rejects.toThrow('Wallet rejected transaction')
+    await deposit.action()
+    expect(mocks.estimateContractGas).toHaveBeenCalledTimes(2)
+    expect(mocks.writeContractAsync.mock.calls[0][0].gas).toBe(1_500_000n)
+    expect(mocks.writeContractAsync.mock.calls[1][0].gas).toBe(3_000_000n)
+  })
+
+  it.each(['simulation', 'estimation'])('does not submit when deposit %s fails', async (stage) => {
+    const error = new Error('Deposit preflight failed')
+    if (stage === 'simulation') mocks.simulateContract.mockRejectedValueOnce(error)
+    else mocks.estimateContractGas.mockRejectedValueOnce(error)
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault, allowance: 5_000_000n,
+    }))
+    act(() => result.current.requestDeposit(2_000_000n))
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    await expect(config.buildSteps()[0].action()).rejects.toThrow('Deposit preflight failed')
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    if (stage === 'simulation') expect(mocks.estimateContractGas).not.toHaveBeenCalled()
+  })
+
+  it.each(['account', 'chain'])('rechecks the wallet %s after estimating deposit gas', async (change) => {
+    mocks.estimateContractGas.mockImplementationOnce(async () => {
+      if (change === 'account') mocks.address = '0x2222222222222222222222222222222222222222'
+      else mocks.chainId = 1
+      return 1_000_000n
+    })
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault, allowance: 5_000_000n,
+    }))
+    act(() => result.current.requestDeposit(2_000_000n))
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    await expect(config.buildSteps()[0].action()).rejects.toThrow(
+      change === 'account' ? 'wallet account changed' : 'Switch to Arbitrum Sepolia'
+    )
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
   it('skips approval when the current allowance covers a queued deposit', () => {
