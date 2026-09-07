@@ -17,6 +17,30 @@ export function RiskDisclaimer() {
       closeOnBackdrop={false}
       closeOnEscape={false}
       bodyClassName="p-0"
+      footer={
+        <div className="space-y-3">
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-content-secondary">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => {
+                setChecked(e.target.checked)
+              }}
+              className="h-4 w-4 accent-brand-orange"
+            />
+            I understand and accept the risks described above
+          </label>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={acceptRisk}
+            disabled={!checked}
+            className="w-full"
+          >
+            Proceed
+          </Button>
+        </div>
+      }
     >
       <div className="space-y-4 p-4 text-sm text-content-secondary sm:p-6">
         <p>
@@ -67,28 +91,6 @@ export function RiskDisclaimer() {
         </p>
       </div>
 
-      <div className="space-y-3 border-t border-brand-border/30 px-4 py-4 sm:px-6">
-        <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-content-secondary">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => {
-              setChecked(e.target.checked)
-            }}
-            className="h-4 w-4 accent-brand-orange"
-          />
-          I understand and accept the risks described above
-        </label>
-        <Button
-          type="button"
-          variant="danger"
-          onClick={acceptRisk}
-          disabled={!checked}
-          className="w-full"
-        >
-          Proceed
-        </Button>
-      </div>
     </Modal>
   )
 }

@@ -65,6 +65,42 @@ export function TestnetWelcomeModalView({
       title="Welcome to Plether on Sepolia"
       size="lg"
       bodyClassName="p-0"
+      footer={
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Button
+            type="button"
+            variant={!isWalletConnected ? 'danger' : isRecipientReady ? 'primary' : 'secondary'}
+            onClick={isWalletConnected ? onRequestFunds : onConnectWallet}
+            isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
+            disabled={
+              isWalletConnected &&
+              (!isRecipientReady || (!!activeClaim && !isPendingClaim))
+            }
+            className="w-full"
+          >
+            {isRecipientReady ? (
+              isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
+            ) : isWalletConnected ? (
+              recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
+            ) : (
+              <>
+                <span aria-hidden="true" className="material-symbols-outlined text-xl">
+                  account_balance_wallet
+                </span>
+                Connect Wallet
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleSecondaryAction}
+            className="w-full"
+          >
+            {isCompletedClaim ? 'Deposit' : activeClaim ? 'Close' : 'Maybe later'}
+          </Button>
+        </div>
+      }
     >
       <div className="space-y-5 p-4 text-sm text-content-secondary sm:p-6">
         <p>
@@ -173,40 +209,6 @@ export function TestnetWelcomeModalView({
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-brand-border/30 px-4 py-4 sm:flex-row sm:px-6">
-        <Button
-          type="button"
-          variant={!isWalletConnected ? 'danger' : isRecipientReady ? 'primary' : 'secondary'}
-          onClick={isWalletConnected ? onRequestFunds : onConnectWallet}
-          isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
-          disabled={
-            isWalletConnected &&
-            (!isRecipientReady || (!!activeClaim && !isPendingClaim))
-          }
-          className="w-full"
-        >
-          {isRecipientReady ? (
-            isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
-          ) : isWalletConnected ? (
-            recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
-          ) : (
-            <>
-              <span aria-hidden="true" className="material-symbols-outlined text-xl">
-                account_balance_wallet
-              </span>
-              Connect Wallet
-            </>
-          )}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={handleSecondaryAction}
-          className="w-full"
-        >
-          {isCompletedClaim ? 'Deposit' : activeClaim ? 'Close' : 'Maybe later'}
-        </Button>
-      </div>
     </Modal>
   )
 }

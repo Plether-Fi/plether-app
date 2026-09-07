@@ -4551,6 +4551,217 @@ export function PerpsTradeTicket({
         analyticsId="trade_review"
         analyticsProperties={commonAnalyticsProperties}
         initialFocus="dialog"
+        footer={
+          lifecycleState === 'preview' ? (
+            <div className="flex gap-3">
+              <Button
+                className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                variant="secondary"
+                analyticsId="cancel_review"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={closeReviewModal}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1"
+                variant={direction === 'short' ? 'danger' : 'primary'}
+                disabled={Boolean(reviewValidationError) || (enableLiveTrading && (
+                  isExecutionProtectionsLoading ||
+                  Boolean(executionProtectionsError) ||
+                  preparedOrder === undefined
+                ))}
+                analyticsId="confirm_commit"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={() => {
+                  void handleConfirmCommit()
+                }}
+              >
+                Confirm Commit
+              </Button>
+            </div>
+          ) : lifecycleState === 'commitPending' ? (
+            !enableLiveTrading ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Button
+                  className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
+                  variant="secondary"
+                  analyticsId="mock_commit_failed"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    setLifecycleState('failed')
+                  }}
+                >
+                  Transaction Failed
+                </Button>
+                <Button
+                  className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  analyticsId="mock_commit_confirmed"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    setLifecycleState('revealPending')
+                  }}
+                >
+                  Transaction Confirmed
+                </Button>
+              </div>
+            ) : null
+          ) : lifecycleState === 'commitConfirmed' ? (
+            <Button
+              className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+              analyticsId="continue_to_finalize"
+              analyticsProperties={commonAnalyticsProperties}
+              onClick={() => {
+                setLifecycleState('revealPending')
+              }}
+            >
+              Continue to Finalize
+            </Button>
+          ) : lifecycleState === 'revealPending' ? (
+            isKeeperRevealGraceActive ? null : !enableLiveTrading ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <>
+                  <Button
+                    className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
+                    variant="secondary"
+                    analyticsId="show_manual_finalize_option"
+                    analyticsProperties={commonAnalyticsProperties}
+                    onClick={() => {
+                      setLifecycleState('selfExecuteAvailable')
+                    }}
+                  >
+                    Show Manual Option
+                  </Button>
+                  <Button
+                    className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                    analyticsId="mock_auto_finalized"
+                    analyticsProperties={commonAnalyticsProperties}
+                    onClick={() => {
+                      setLifecycleState('executed')
+                    }}
+                  >
+                    Auto Finalized
+                  </Button>
+                </>
+              </div>
+            ) : (
+              <Button
+                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                analyticsId="finalize_trade"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={() => {
+                  void handleSelfExecute()
+                }}
+              >
+                Finalize Trade
+              </Button>
+            )
+          ) : lifecycleState === 'selfExecuteAvailable' ? (
+            <Button
+              className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+              size="lg"
+              analyticsId={flowError && isRetryableSelfExecuteMessage(flowError) ? 'retry_finalize_trade' : 'finalize_trade'}
+              analyticsProperties={commonAnalyticsProperties}
+              onClick={() => {
+                void handleSelfExecute()
+              }}
+            >
+              {flowError && isRetryableSelfExecuteMessage(flowError) ? 'Retry Finalizing' : 'Finalize Trade'}
+            </Button>
+          ) : lifecycleState === 'selfExecutePending' ? (
+            !enableLiveTrading ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Button
+                  className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
+                  variant="secondary"
+                  analyticsId="mock_finalize_failed"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    setLifecycleState('selfExecuteFailed')
+                  }}
+                >
+                  Transaction Failed
+                </Button>
+                <Button
+                  className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  analyticsId="mock_finalize_confirmed"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    setLifecycleState('executed')
+                  }}
+                >
+                  Transaction Confirmed
+                </Button>
+              </div>
+            ) : null
+          ) : lifecycleState === 'selfExecuteFailed' ? (
+            isTerminalRevealError ? (
+              <Button
+                className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
+                variant="secondary"
+                analyticsId="back_to_preview"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={resetReviewLifecycle}
+              >
+                Back to Preview
+              </Button>
+            ) : (
+              <div className="flex gap-3">
+                <Button
+                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                  variant="secondary"
+                  analyticsId="back_to_finalize"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    setLifecycleState('selfExecuteAvailable')
+                  }}
+                >
+                  Back
+                </Button>
+                <Button
+                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  analyticsId="retry_finalize_trade"
+                  analyticsProperties={commonAnalyticsProperties}
+                  onClick={() => {
+                    void handleSelfExecute()
+                  }}
+                >
+                  Retry Finalizing
+                </Button>
+              </div>
+            )
+          ) : lifecycleState === 'executed' ? (
+            <Button
+              className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+              variant="secondary"
+              analyticsId="done_trade"
+              analyticsProperties={commonAnalyticsProperties}
+              onClick={closeReviewModal}
+            >
+              Done
+            </Button>
+          ) : lifecycleState === 'failed' ? (
+            <div className="flex gap-3">
+              <Button
+                className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                variant="secondary"
+                analyticsId="back_to_preview"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={resetReviewLifecycle}
+              >
+                Back to Preview
+              </Button>
+              <Button
+                className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                analyticsId="retry_commit"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={resetReviewLifecycle}
+              >
+                Review again
+              </Button>
+            </div>
+          ) : null
+        }
       >
         <div className="space-y-5">
           {lifecycleState === 'preview' ? (
@@ -4701,33 +4912,6 @@ export function PerpsTradeTicket({
                 </div>
               ) : null}
 
-              <div className="flex gap-3">
-                <Button
-                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
-                  variant="secondary"
-                  analyticsId="cancel_review"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={closeReviewModal}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="flex-1"
-                  variant={direction === 'short' ? 'danger' : 'primary'}
-                  disabled={Boolean(reviewValidationError) || (enableLiveTrading && (
-                    isExecutionProtectionsLoading ||
-                    Boolean(executionProtectionsError) ||
-                    preparedOrder === undefined
-                  ))}
-                  analyticsId="confirm_commit"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={() => {
-                    void handleConfirmCommit()
-                  }}
-                >
-                  Confirm Commit
-                </Button>
-              </div>
             </>
           ) : null}
 
@@ -4790,31 +4974,6 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              {!enableLiveTrading ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Button
-                    className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
-                    variant="secondary"
-                    analyticsId="mock_commit_failed"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      setLifecycleState('failed')
-                    }}
-                  >
-                    Transaction Failed
-                  </Button>
-                  <Button
-                    className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                    analyticsId="mock_commit_confirmed"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      setLifecycleState('revealPending')
-                    }}
-                  >
-                    Transaction Confirmed
-                  </Button>
-                </div>
-              ) : null}
             </>
           ) : null}
 
@@ -4827,16 +4986,6 @@ export function PerpsTradeTicket({
                   { label: 'Commit tx', value: displayCommitTxValue },
                 ]}
               />
-              <Button
-                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                analyticsId="continue_to_finalize"
-                analyticsProperties={commonAnalyticsProperties}
-                onClick={() => {
-                  setLifecycleState('revealPending')
-                }}
-              >
-                Continue to Finalize
-              </Button>
             </>
           ) : null}
 
@@ -4879,44 +5028,6 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              {isKeeperRevealGraceActive ? null : !enableLiveTrading ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <>
-                    <Button
-                      className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
-                      variant="secondary"
-                      analyticsId="show_manual_finalize_option"
-                      analyticsProperties={commonAnalyticsProperties}
-                      onClick={() => {
-                        setLifecycleState('selfExecuteAvailable')
-                      }}
-                    >
-                      Show Manual Option
-                    </Button>
-                    <Button
-                      className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                      analyticsId="mock_auto_finalized"
-                      analyticsProperties={commonAnalyticsProperties}
-                      onClick={() => {
-                        setLifecycleState('executed')
-                      }}
-                    >
-                      Auto Finalized
-                    </Button>
-                  </>
-                </div>
-              ) : (
-                <Button
-                  className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                  analyticsId="finalize_trade"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={() => {
-                    void handleSelfExecute()
-                  }}
-                >
-                  Finalize Trade
-                </Button>
-              )}
             </>
           ) : null}
 
@@ -4964,17 +5075,6 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              <Button
-                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                size="lg"
-                analyticsId={flowError && isRetryableSelfExecuteMessage(flowError) ? 'retry_finalize_trade' : 'finalize_trade'}
-                analyticsProperties={commonAnalyticsProperties}
-                onClick={() => {
-                  void handleSelfExecute()
-                }}
-              >
-                {flowError && isRetryableSelfExecuteMessage(flowError) ? 'Retry Finalizing' : 'Finalize Trade'}
-              </Button>
             </>
           ) : null}
 
@@ -4998,31 +5098,6 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              {!enableLiveTrading ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Button
-                    className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
-                    variant="secondary"
-                    analyticsId="mock_finalize_failed"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      setLifecycleState('selfExecuteFailed')
-                    }}
-                  >
-                    Transaction Failed
-                  </Button>
-                  <Button
-                    className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                    analyticsId="mock_finalize_confirmed"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      setLifecycleState('executed')
-                    }}
-                  >
-                    Transaction Confirmed
-                  </Button>
-                </div>
-              ) : null}
             </>
           ) : null}
 
@@ -5059,41 +5134,6 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              {isTerminalRevealError ? (
-                <Button
-                  className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
-                  variant="secondary"
-                  analyticsId="back_to_preview"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={resetReviewLifecycle}
-                >
-                  Back to Preview
-                </Button>
-              ) : (
-                <div className="flex gap-3">
-                  <Button
-                    className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
-                    variant="secondary"
-                    analyticsId="back_to_finalize"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      setLifecycleState('selfExecuteAvailable')
-                    }}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                    analyticsId="retry_finalize_trade"
-                    analyticsProperties={commonAnalyticsProperties}
-                    onClick={() => {
-                      void handleSelfExecute()
-                    }}
-                  >
-                    Retry Finalizing
-                  </Button>
-                </div>
-              )}
             </>
           ) : null}
 
@@ -5166,15 +5206,6 @@ export function PerpsTradeTicket({
                   </div>
                 ) : null}
               </div>
-              <Button
-                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                variant="secondary"
-                analyticsId="done_trade"
-                analyticsProperties={commonAnalyticsProperties}
-                onClick={closeReviewModal}
-              >
-                Done
-              </Button>
             </>
           ) : null}
 
@@ -5184,25 +5215,6 @@ export function PerpsTradeTicket({
                 title="Commit transaction failed"
                 description={flowError ?? 'The wallet rejected the transaction or the commit failed before the order could wait for finalization.'}
               />
-              <div className="flex gap-3">
-                <Button
-                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
-                  variant="secondary"
-                  analyticsId="back_to_preview"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={resetReviewLifecycle}
-                >
-                  Back to Preview
-                </Button>
-                <Button
-                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                  analyticsId="retry_commit"
-                  analyticsProperties={commonAnalyticsProperties}
-                  onClick={resetReviewLifecycle}
-                >
-                  Review again
-                </Button>
-              </div>
             </>
           ) : null}
         </div>
@@ -5217,6 +5229,35 @@ export function PerpsTradeTicket({
         size="lg"
         analyticsId="margin_call_simulator"
         analyticsProperties={commonAnalyticsProperties}
+        footer={
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className={DARK_CANCEL_BUTTON_CLASS}
+              analyticsId="cancel_margin_call_simulator"
+              analyticsProperties={commonAnalyticsProperties}
+              onClick={() => {
+                setIsMarginCallSimulatorConfirmationOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+              disabled={!canEnableMarginCallSimulator}
+              analyticsId="enable_margin_call_simulator"
+              analyticsProperties={commonAnalyticsProperties}
+              onClick={() => {
+                setIsMarginCallSimulatorEnabled(true)
+                setIsMarginCallSimulatorConfirmationOpen(false)
+              }}
+            >
+              Enable Simulator
+            </Button>
+          </div>
+        }
       >
         <div className="space-y-5">
           <div className="border border-[#FFAB96]/40 bg-[#250917] p-4">
@@ -5297,33 +5338,6 @@ export function PerpsTradeTicket({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className={DARK_CANCEL_BUTTON_CLASS}
-              analyticsId="cancel_margin_call_simulator"
-              analyticsProperties={commonAnalyticsProperties}
-              onClick={() => {
-                setIsMarginCallSimulatorConfirmationOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
-              disabled={!canEnableMarginCallSimulator}
-              analyticsId="enable_margin_call_simulator"
-              analyticsProperties={commonAnalyticsProperties}
-              onClick={() => {
-                setIsMarginCallSimulatorEnabled(true)
-                setIsMarginCallSimulatorConfirmationOpen(false)
-              }}
-            >
-              Enable Simulator
-            </Button>
-          </div>
         </div>
       </Modal>
 
@@ -5339,6 +5353,44 @@ export function PerpsTradeTicket({
         size="md"
         analyticsId={marginAction === 'withdraw' ? 'withdraw_margin' : 'deposit_margin'}
         analyticsProperties={commonAnalyticsProperties}
+        footer={
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className={DARK_CANCEL_BUTTON_CLASS}
+                disabled={isMarginActionPending}
+                analyticsId="cancel_margin_action"
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={() => {
+                  setMarginAction(null)
+                  setLocallyConfirmedFundingBalances(null)
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+                isLoading={isMarginActionPending}
+                disabled={isMarginActionSubmitDisabled}
+                analyticsId={marginAction === 'withdraw' ? 'submit_withdraw_margin' : 'submit_deposit_margin'}
+                analyticsProperties={commonAnalyticsProperties}
+                onClick={() => {
+                  void handleMarginActionSubmit()
+                }}
+              >
+                {marginActionCtaLabel}
+              </Button>
+            </div>
+            {enableLiveTrading && isConnected && !isCorrectChain && networkSwitchError ? (
+              <div className="text-xs leading-4 text-[#FFAB96]">
+                {networkSwitchError}
+              </div>
+            ) : null}
+          </div>
+        }
       >
         <div className="space-y-5">
           <p className="text-sm leading-6 text-content-secondary">
@@ -5480,40 +5532,6 @@ export function PerpsTradeTicket({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className={DARK_CANCEL_BUTTON_CLASS}
-              disabled={isMarginActionPending}
-              analyticsId="cancel_margin_action"
-              analyticsProperties={commonAnalyticsProperties}
-              onClick={() => {
-                setMarginAction(null)
-                setLocallyConfirmedFundingBalances(null)
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
-              isLoading={isMarginActionPending}
-              disabled={isMarginActionSubmitDisabled}
-              analyticsId={marginAction === 'withdraw' ? 'submit_withdraw_margin' : 'submit_deposit_margin'}
-              analyticsProperties={commonAnalyticsProperties}
-              onClick={() => {
-                void handleMarginActionSubmit()
-              }}
-            >
-              {marginActionCtaLabel}
-            </Button>
-          </div>
-          {enableLiveTrading && isConnected && !isCorrectChain && networkSwitchError ? (
-            <div className="text-xs leading-4 text-[#FFAB96]">
-              {networkSwitchError}
-            </div>
-          ) : null}
         </div>
       </Modal>
     </section>

@@ -32,8 +32,8 @@ export function LoadingScreen({
     : ((1 + completedCount) / (steps.length + 1)) * 100
 
   return (
-    <div className="w-full">
-      <div className="py-2 -my-2 overflow-x-clip">
+    <div className="flex min-h-0 w-full flex-col">
+      <div className="shrink-0 py-2 -my-2 overflow-x-clip">
         <div className="h-1.5 w-full bg-brand-border/30">
           <div
             className={`h-full transition-all duration-500 ${
@@ -48,64 +48,62 @@ export function LoadingScreen({
         </div>
       </div>
 
-      <div className="p-4 sm:p-8">
-        <div className="mb-6 flex min-w-0 items-start justify-between gap-3 sm:mb-8">
-          <h2 className="min-w-0 text-xl font-bold text-content-primary sm:text-2xl">
-            {title}
-          </h2>
-          {onClose && (
-            <button
-              type="button"
-              aria-label="Close transaction"
-              onClick={onClose}
-              className="-mr-2 -mt-2 inline-flex h-11 w-11 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
-            >
-              <span className="material-symbols-outlined">close</span>
-            </button>
-          )}
-        </div>
+      <div className="flex min-w-0 shrink-0 items-start justify-between gap-3 p-4 sm:p-8">
+        <h2 className="min-w-0 text-xl font-bold text-content-primary sm:text-2xl">
+          {title}
+        </h2>
+        {onClose && (
+          <button
+            type="button"
+            aria-label="Close transaction"
+            onClick={onClose}
+            className="-mr-2 -mt-2 inline-flex h-11 w-11 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        )}
+      </div>
 
-        <div className="space-y-5">
-          {steps.map((step, index) => {
-            const isAfterError = hasError && index > errorIndex
-            return (
-              <div key={`${step.label}-${String(index)}`}>
-                <div className={`flex items-center gap-4 ${isAfterError ? 'opacity-20' : ''}`}>
-                  <StepIndicator status={step.status} />
-                  <span
-                    className={
-                      step.status === 'pending'
-                        ? 'text-content-secondary'
-                        : step.status === 'error'
-                          ? 'text-brand-orange'
-                          : step.status === 'confirming'
-                            ? 'text-positive'
-                            : 'text-content-primary'
-                    }
-                  >
-                    {index + 1}. {step.label}
-                  </span>
-                </div>
-                {step.status === 'error' && errorMessage && (
-                  <div className="mt-3 border border-brand-orange/30 bg-brand-orange/10 p-3 sm:ml-10">
-                    <p className="break-words text-sm text-brand-orange">{errorMessage}</p>
-                  </div>
-                )}
+      <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-8 sm:pb-8">
+        {steps.map((step, index) => {
+          const isAfterError = hasError && index > errorIndex
+          return (
+            <div key={`${step.label}-${String(index)}`}>
+              <div className={`flex items-center gap-4 ${isAfterError ? 'opacity-20' : ''}`}>
+                <StepIndicator status={step.status} />
+                <span
+                  className={
+                    step.status === 'pending'
+                      ? 'text-content-secondary'
+                      : step.status === 'error'
+                        ? 'text-brand-orange'
+                        : step.status === 'confirming'
+                          ? 'text-positive'
+                          : 'text-content-primary'
+                  }
+                >
+                  {index + 1}. {step.label}
+                </span>
               </div>
-            )
-          })}
-        </div>
+              {step.status === 'error' && errorMessage && (
+                <div className="mt-3 border border-brand-orange/30 bg-brand-orange/10 p-3 sm:ml-10">
+                  <p className="break-words text-sm text-brand-orange">{errorMessage}</p>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
 
-        {hasError && onRetry && (
-          <div className="mt-6">
+      {(hasError && onRetry) || (isComplete && transactionUrl) ? (
+        <div className="shrink-0 border-t border-brand-border/30 p-4 sm:px-8">
+          {hasError && onRetry && (
             <Button variant="secondary" onClick={onRetry} className="w-full">
               Try again
             </Button>
-          </div>
-        )}
+          )}
 
-        {isComplete && transactionUrl && (
-          <div className="mt-6">
+          {isComplete && transactionUrl && (
             <a
               href={transactionUrl}
               target="_blank"
@@ -115,9 +113,9 @@ export function LoadingScreen({
               Show transaction
               <span className="material-symbols-outlined text-lg">open_in_new</span>
             </a>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

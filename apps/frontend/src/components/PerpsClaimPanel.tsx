@@ -128,6 +128,14 @@ export function PerpsClaimPanel({
         onClose={() => { setIsConfirmationOpen(false) }}
         title="Settle trader claim"
         size="md"
+        footer={
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Button variant="secondary" onClick={() => { setIsConfirmationOpen(false) }}>
+              Cancel
+            </Button>
+            <Button>Authorize settlement</Button>
+          </div>
+        }
       >
         <div className="space-y-5">
           <p className="text-sm leading-6 text-content-secondary">
@@ -138,12 +146,6 @@ export function PerpsClaimPanel({
             <ClaimRow label="Destination" value={settlementDestination} />
             <ClaimRow label="Network gas" value={<span className="text-positive">Sponsored</span>} />
           </dl>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Button variant="secondary" onClick={() => { setIsConfirmationOpen(false) }}>
-              Cancel
-            </Button>
-            <Button>Authorize settlement</Button>
-          </div>
         </div>
       </Modal>
     </>

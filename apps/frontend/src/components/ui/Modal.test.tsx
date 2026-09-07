@@ -133,8 +133,14 @@ describe('Modal analytics', () => {
 
   it('can focus the dialog without weakening the focus trap', async () => {
     render(
-      <Modal isOpen onClose={vi.fn()} title="Review order" initialFocus="dialog">
-        <button type="button">Confirm order</button>
+      <Modal
+        isOpen
+        onClose={vi.fn()}
+        title="Review order"
+        initialFocus="dialog"
+        footer={<button type="button">Confirm order</button>}
+      >
+        Order details
       </Modal>
     )
 

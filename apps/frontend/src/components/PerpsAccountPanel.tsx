@@ -596,6 +596,30 @@ function PositionView({
         onClose={handleClosePositionMarginModal}
         title="Edit Position Margin"
         size="md"
+        footer={
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className={DARK_CANCEL_BUTTON_CLASS}
+              disabled={positionMarginStatus === 'pending'}
+              onClick={handleClosePositionMarginModal}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+              isLoading={positionMarginStatus === 'pending'}
+              disabled={!canSubmitPositionMargin}
+              onClick={() => {
+                void handleAddPositionMargin()
+              }}
+            >
+              Add Margin
+            </Button>
+          </div>
+        }
       >
         <div className="space-y-5">
           <p className="text-sm leading-5 text-content-secondary">
@@ -651,28 +675,6 @@ function PositionView({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className={DARK_CANCEL_BUTTON_CLASS}
-              disabled={positionMarginStatus === 'pending'}
-              onClick={handleClosePositionMarginModal}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
-              isLoading={positionMarginStatus === 'pending'}
-              disabled={!canSubmitPositionMargin}
-              onClick={() => {
-                void handleAddPositionMargin()
-              }}
-            >
-              Add Margin
-            </Button>
-          </div>
         </div>
       </Modal>
     </div>

@@ -12,6 +12,7 @@ interface ModalProps {
   closeOnBackdrop?: boolean
   closeOnEscape?: boolean
   children: ReactNode
+  footer?: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
   placement?: 'center' | 'right'
   contentClassName?: string
@@ -45,6 +46,7 @@ export function Modal({
   closeOnBackdrop = true,
   closeOnEscape = true,
   children,
+  footer,
   size = 'md',
   placement = 'center',
   contentClassName = '',
@@ -265,6 +267,11 @@ export function Modal({
 
         {/* Body */}
         <div className={`min-h-0 overflow-y-auto overscroll-contain ${bodyClassName}`}>{children}</div>
+        {footer ? (
+          <div className="shrink-0 border-t border-brand-border/30 bg-surface-panel px-4 py-4 sm:px-6">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body
