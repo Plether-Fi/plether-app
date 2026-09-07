@@ -102,7 +102,7 @@ export function TestnetWelcomeModalView({
         </div>
       }
     >
-      <div className="space-y-5 p-4 text-sm text-content-secondary sm:p-6">
+      <div className="space-y-5 panel-padding text-sm text-content-secondary">
         <p>
           This is a testnet version of Plether Perps, built for trying deposits, trades, and order
           execution without real funds.

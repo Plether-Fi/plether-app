@@ -48,7 +48,7 @@ function PanelHeader({
   status?: ReactNode
 }) {
   return (
-    <div className="flex items-start justify-between gap-5 border-b border-brand-border/20 px-5 py-4">
+    <div className="flex items-start justify-between gap-5 border-b border-brand-border/20 panel-padding-x py-4">
       <div>
         <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">{eyebrow}</div>
         <h2 className="mt-1 text-xl font-semibold text-content-primary">{title}</h2>
@@ -208,7 +208,7 @@ function Overview() {
           title="Margin Account"
           status={<StatusBadge>Account healthy</StatusBadge>}
         />
-        <div className="space-y-4 p-5">
+        <div className="space-y-4 panel-padding">
           <div className="grid gap-3 md:grid-cols-3">
             <Metric
               label="Available to Trade"
@@ -241,7 +241,7 @@ function Overview() {
           title="Long plDXY Perp"
           status={<StatusBadge tone="neutral">5.00x leverage</StatusBadge>}
         />
-        <div className="grid gap-3 p-5 md:grid-cols-4">
+        <div className="grid gap-3 panel-padding md:grid-cols-4">
           <Metric label="Position margin" value={<TokenAmount amount="400.00" />} />
           <Metric label="Maintenance margin" value={<TokenAmount amount="20.00" />} />
           <Metric label="Unrealized PnL" value={<TokenAmount amount="+48.25" />} tone="positive" />
@@ -260,7 +260,7 @@ function Deposit() {
         title="Deposit USDC"
         status={<StatusBadge>Network gas sponsored</StatusBadge>}
       />
-      <div className="space-y-5 p-5">
+      <div className="space-y-5 panel-padding">
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Owner-wallet balance"
@@ -312,7 +312,7 @@ function PendingReservations() {
           title="Pending reservations"
           status={<StatusBadge tone="warning">Order #72 pending</StatusBadge>}
         />
-        <div className="grid gap-3 p-5 md:grid-cols-4">
+        <div className="grid gap-3 panel-padding md:grid-cols-4">
           <Metric
             label="Available before commit"
             value={<TokenAmount amount="5 000.00" />}
@@ -355,7 +355,7 @@ function AddPositionMargin() {
         title="Edit Position Margin"
         status={<StatusBadge>Sponsored account action</StatusBadge>}
       />
-      <div className="space-y-5 p-5">
+      <div className="space-y-5 panel-padding">
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Available to Trade"
@@ -396,7 +396,7 @@ function Withdrawal() {
         title="Withdraw USDC"
         status={<StatusBadge>Network gas sponsored</StatusBadge>}
       />
-      <div className="space-y-5 p-5">
+      <div className="space-y-5 panel-padding">
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Withdrawable"
@@ -446,7 +446,7 @@ function TraderClaim() {
           title="Claim destination"
           status={<StatusBadge>Eligible</StatusBadge>}
         />
-        <div className="space-y-5 p-5">
+        <div className="space-y-5 panel-padding">
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <SummaryRow label="Claim owner" value={<AddressValue value={TRADING_ACCOUNT} />} />
             <SummaryRow label="Complete claim" value={<TokenAmount amount="800.00" />} />

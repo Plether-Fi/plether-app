@@ -148,15 +148,15 @@ export function Dashboard() {
   })()
 
   return (
-    <div className="min-w-0 space-y-6 sm:space-y-10">
+    <div className="page-stack">
       {/* Page title */}
-      <div className="mb-6 sm:mb-8">
-        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Dashboard</h1>
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold text-content-primary sm:text-3xl">Dashboard</h1>
         <p className="text-sm font-light text-content-secondary sm:text-base">Your portfolio overview</p>
       </div>
 
       {/* Portfolio tiles - always visible */}
-      <div className="mb-8 grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:mb-10 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
         <DashboardTile
           variant="BULL"
           title="Total BULL Position"
@@ -217,7 +217,7 @@ export function Dashboard() {
             <MainTabNav activeTab={mainTab} onTabChange={handleTabChange} />
 
             {/* Tab content */}
-            <div className="min-w-0 p-4 sm:p-6 md:p-8 lg:p-12">
+            <div className="min-w-0 panel-padding">
               {mainTab === 'trade' && (
                 <TradeCard
                   usdcBalance={usdcBalance}
@@ -259,7 +259,7 @@ export function Dashboard() {
           </div>
 
           {/* Transaction History link */}
-          <div className="mt-6 pb-6 text-center sm:mt-8 sm:pb-8">
+          <div className="text-center">
             <Link
               to="/history"
               className="inline-flex min-h-11 items-center gap-2 px-2 text-sm font-medium text-brand-orange transition-colors hover:text-brand-orange/80"

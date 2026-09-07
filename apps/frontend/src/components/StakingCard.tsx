@@ -97,7 +97,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
 
   return (
     <div className="min-w-0 overflow-hidden border border-brand-border/30 bg-surface-panel">
-      <div className={`border-b border-brand-border/30 px-4 py-4 sm:px-6 ${isBear ? 'bg-brand-orange/10' : 'bg-positive/10'}`}>
+      <div className={`border-b border-brand-border/30 panel-padding-x py-4 ${isBear ? 'bg-brand-orange/10' : 'bg-positive/10'}`}>
         <div className="flex min-w-0 items-center gap-3">
           <span className="shrink-0">
             <TokenIcon side={side} />
@@ -109,7 +109,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         </div>
       </div>
 
-      <div className="min-w-0 space-y-5 p-4 sm:space-y-6 sm:p-6">
+      <div className="min-w-0 space-y-5 panel-padding sm:space-y-6">
         <div className={`min-w-0 border bg-surface-muted p-3 sm:p-4 ${isBear ? 'border-brand-orange/30' : 'border-positive/30'}`}>
           <div className="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <span className="shrink-0 text-sm text-content-secondary">Staked Balance</span>

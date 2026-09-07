@@ -21,8 +21,8 @@ export function PositionsSection({
   const hasLowHealth = positions.some((p) => p.healthFactor > 0 && p.healthFactor < HEALTH_FACTOR_WARNING)
 
   return (
-    <div className="mb-8 min-w-0 sm:mb-12">
-      <h2 className="mb-4 text-lg font-semibold text-content-primary sm:text-xl">Open Leveraged Positions</h2>
+    <div className="min-w-0 space-y-4">
+      <h2 className="text-lg font-semibold text-content-primary sm:text-xl">Open Leveraged Positions</h2>
 
       {isLoading ? (
         <div className="border border-brand-border/30 bg-surface-panel p-6 text-center sm:p-8">
@@ -38,7 +38,7 @@ export function PositionsSection({
       ) : (
         <>
           {hasLowHealth && (
-            <Alert variant="warning" title="Low Health Factor Warning" className="mb-6">
+            <Alert variant="warning" title="Low Health Factor Warning">
               One or more positions have low health factors and may be at risk of liquidation.
             </Alert>
           )}

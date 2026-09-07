@@ -154,7 +154,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   return (
     <div className="mx-auto min-w-0 max-w-xl space-y-5 sm:space-y-6">
-      <div className="mb-6 flex min-w-0 border border-brand-border/30 bg-surface-muted p-1 text-sm font-medium sm:mb-8">
+      <div className="flex min-w-0 border border-brand-border/30 bg-surface-muted p-1 text-sm font-medium">
         <button
           onClick={() => { setMode('buy'); setInputAmount('') }}
           className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 sm:px-4 ${

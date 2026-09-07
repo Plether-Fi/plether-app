@@ -10,7 +10,7 @@ const paddingStyles = {
   none: '',
   sm: 'p-3',
   md: 'p-4',
-  lg: 'p-6',
+  lg: 'panel-padding',
 }
 
 export function Card({ children, className = '', padding = 'md' }: CardProps) {

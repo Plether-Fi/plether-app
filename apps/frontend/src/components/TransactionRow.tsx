@@ -82,7 +82,7 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
   const decimals = transaction.tokenSymbol === 'USDC' ? 6 : 18
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 px-4 py-4 transition-colors hover:bg-[#3B212D] sm:gap-x-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_7rem_7rem_14rem_5rem] xl:gap-y-0">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 panel-padding-x py-4 transition-colors hover:bg-[#3B212D] sm:gap-x-4 xl:grid-cols-[minmax(0,1fr)_7rem_7rem_14rem_5rem] xl:gap-y-0">
       <div className="col-span-2 flex min-w-0 items-center gap-3 sm:gap-4 xl:col-span-1">
         <div className={`h-10 w-10 shrink-0 ${getIconBg(transaction.type)} flex items-center justify-center`}>
           <span className={`material-symbols-outlined ${getIconColor(transaction.type)}`}>

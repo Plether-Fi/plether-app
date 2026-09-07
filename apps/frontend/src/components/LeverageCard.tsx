@@ -172,7 +172,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
       </div>
 
       <div className="min-w-0 space-y-2 border border-brand-border/20 bg-app-bg p-3 sm:p-4">
-        <div className="mb-3 text-xs font-medium uppercase text-content-secondary">PREVIEW</div>
+        <div className="text-xs font-medium uppercase text-content-secondary">PREVIEW</div>
         <div className="grid min-h-6 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
           <span className="text-sm text-content-secondary">Position Value</span>
           <span className="min-w-0 break-words text-right font-semibold text-content-primary [overflow-wrap:anywhere]">{positionSizeDisplay} USDC</span>

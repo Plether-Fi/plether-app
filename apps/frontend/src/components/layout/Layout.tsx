@@ -7,7 +7,7 @@ import { SepoliaNoticeBar } from './SepoliaNoticeBar'
 import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
 import { useAccount } from 'wagmi'
 import { useTransactionStore } from '../../stores/transactionStore'
-import { isPrimaryAppDeployment, isSepoliaDeployment } from '../../utils/deployment'
+import { isSepoliaDeployment } from '../../utils/deployment'
 
 interface LayoutProps {
   children: ReactNode
@@ -17,7 +17,6 @@ export function Layout({ children }: LayoutProps) {
   const { isConnected } = useAccount()
   const { pathname } = useLocation()
   const fullWidth = pathname === '/'
-  const hasMobileNav = !isPrimaryAppDeployment()
   const cleanupOldTransactions = useTransactionStore((s) => s.cleanupOldTransactions)
 
   useEffect(() => {
@@ -31,7 +30,7 @@ export function Layout({ children }: LayoutProps) {
         {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
       </div>
-      <main className={`w-full min-w-0 flex-grow px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10 ${hasMobileNav ? 'pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-10' : 'pb-8 lg:pb-10'} ${fullWidth ? '' : 'mx-auto max-w-7xl'}`}>
+      <main className={`w-full min-w-0 flex-grow ${fullWidth ? 'p-4 sm:p-6' : 'page-gutter py-6 sm:py-8 mx-auto max-w-7xl'}`}>
         {children}
       </main>
       <Footer />

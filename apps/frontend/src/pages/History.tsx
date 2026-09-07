@@ -16,7 +16,7 @@ const filterOptions = [
 
 function TransactionSkeleton() {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 panel-padding-x py-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
         <div className="h-10 w-10 shrink-0 rounded bg-surface-muted" />
         <div className="min-w-0">
@@ -59,9 +59,9 @@ export function History() {
   }, [transactions, filter])
 
   return (
-    <div className="min-w-0 space-y-6 sm:space-y-10">
-      <div className="mb-6 sm:mb-8">
-        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Transaction History</h1>
+    <div className="min-w-0 page-stack">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold text-content-primary sm:text-3xl">Transaction History</h1>
         <p className="text-sm font-light text-content-secondary sm:text-base">View your past transactions</p>
       </div>
 

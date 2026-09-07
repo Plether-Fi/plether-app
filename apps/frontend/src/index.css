@@ -38,6 +38,9 @@
 
   /* Font family */
   --font-family-sans: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
+
+  /* Shared by the fixed navigation and its footer clearance. */
+  --spacing-mobile-nav: 3.5rem;
 }
 
 :root {
@@ -75,6 +78,23 @@ select:not(:disabled) {
 #root {
   min-height: 100vh;
   min-height: 100dvh;
+}
+
+/* Shared layout spacing. See docs/spacing.md for roles and exceptions. */
+@utility page-gutter {
+  @apply px-4 sm:px-6 lg:px-8;
+}
+
+@utility page-stack {
+  @apply flex min-w-0 flex-col gap-6 sm:gap-8;
+}
+
+@utility panel-padding {
+  @apply p-4 sm:p-6;
+}
+
+@utility panel-padding-x {
+  @apply px-4 sm:px-6;
 }
 
 /* Safe area for mobile bottom nav */

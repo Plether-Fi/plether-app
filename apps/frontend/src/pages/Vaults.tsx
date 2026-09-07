@@ -1750,7 +1750,7 @@ function TrancheCard({
       className="group block h-full border border-brand-border/30 bg-surface-panel transition-colors hover:border-brand-peach/70 focus-visible:border-brand-peach focus-visible:outline-none"
     >
       <article className="flex h-full flex-col">
-        <div className="flex items-start gap-4 border-b border-brand-border/25 p-5">
+        <div className="flex items-start gap-4 border-b border-brand-border/25 panel-padding">
           <div className="flex min-w-0 items-start gap-3">
             <TrancheMark tranche={tranche} size="md" />
             <div className="min-w-0">
@@ -1762,7 +1762,7 @@ function TrancheCard({
           </div>
         </div>
 
-        <div className="flex-1 space-y-5 p-5">
+        <div className="flex-1 space-y-5 panel-padding">
           <p className="min-h-12 text-sm leading-6 text-content-secondary">
             {tranche.shortDescription}
           </p>
@@ -1839,7 +1839,7 @@ function TrancheCard({
           </dl>
         </div>
 
-        <div className="flex items-center justify-between border-t border-brand-border/25 px-5 py-4 text-sm font-semibold text-content-primary transition-colors group-hover:text-brand-peach group-focus-visible:text-brand-peach">
+        <div className="flex items-center justify-between border-t border-brand-border/25 panel-padding-x py-4 text-sm font-semibold text-content-primary transition-colors group-hover:text-brand-peach group-focus-visible:text-brand-peach">
           <span className="group-hover:underline group-hover:underline-offset-4 group-focus-visible:underline group-focus-visible:underline-offset-4">
             Explore {tranche.name}
           </span>
@@ -2055,7 +2055,7 @@ function VaultActivitySection({
           </p>
         ) : null}
         <div className="border border-brand-border/30 bg-surface-panel">
-          <div className="flex flex-col gap-2 border-b border-brand-border/25 p-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-2 border-b border-brand-border/25 panel-padding sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Holder distribution</h3>
               <p className="mt-1 max-w-2xl text-sm leading-5 text-content-secondary">
@@ -2071,7 +2071,7 @@ function VaultActivitySection({
           {isLoading && scopedHolders.length === 0 ? (
             <div className="flex min-h-36 items-center justify-center"><Spinner /></div>
           ) : scopedHolders.length === 0 ? (
-            <p className="p-6 text-sm text-content-secondary">
+            <p className="panel-padding text-sm text-content-secondary">
               {isError ? 'Holder data is temporarily unavailable.' : 'No attributed vault share positions are available yet.'}
             </p>
           ) : (
@@ -2081,15 +2081,15 @@ function VaultActivitySection({
                   <caption className="sr-only">Vault holder distribution</caption>
                   <thead className="text-xs uppercase tracking-[0.12em] text-content-secondary">
                     <tr>
-                      <th scope="col" className="px-5 py-3 font-medium">Holder</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Current value</th>
-                      <th scope="col" className="px-5 py-3 font-medium">% of attributed value</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Holder</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Current value</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">% of attributed value</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pagedHolders.map((holder) => (
                       <tr key={holder.address} className="border-t border-brand-border/20">
-                        <td className="px-5 py-4">
+                        <td className="panel-padding-x py-4">
                           <a
                             href={`${EXPLORER_BASE_URL}/${holder.address}`}
                             target="_blank"
@@ -2102,10 +2102,10 @@ function VaultActivitySection({
                             </span>
                           </a>
                         </td>
-                        <td className="px-5 py-4 text-sm font-semibold text-content-primary">
+                        <td className="panel-padding-x py-4 text-sm font-semibold text-content-primary">
                           <TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} />
                         </td>
-                        <td className="px-5 py-4">
+                        <td className="panel-padding-x py-4">
                           <span className="inline-flex items-center gap-3 text-sm font-semibold text-content-primary">
                             <DistributionRing percentage={holder.shareOfVaultNav} />
                             {holder.shareOfVaultNav.toFixed(2)}%
@@ -2119,7 +2119,7 @@ function VaultActivitySection({
 
               <ul className="divide-y divide-brand-border/20 md:hidden">
                 {pagedHolders.map((holder) => (
-                  <li key={holder.address} className="space-y-4 p-5">
+                  <li key={holder.address} className="space-y-4 panel-padding">
                     <a
                       href={`${EXPLORER_BASE_URL}/${holder.address}`}
                       target="_blank"
@@ -2153,7 +2153,7 @@ function VaultActivitySection({
         </div>
 
         <div className="border border-brand-border/30 bg-surface-panel">
-          <div className="flex flex-col gap-4 border-b border-brand-border/25 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-4 border-b border-brand-border/25 panel-padding sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Recent deposits and withdrawals</h3>
               <p className="mt-1 text-sm text-content-secondary">The latest activity submitted to the {trancheName} Vault.</p>
@@ -2167,7 +2167,7 @@ function VaultActivitySection({
           {isLoading && scopedActivity.length === 0 ? (
             <div className="flex min-h-36 items-center justify-center"><Spinner /></div>
           ) : pagedActivity.length === 0 ? (
-            <p className="p-6 text-sm text-content-secondary">
+            <p className="panel-padding text-sm text-content-secondary">
               {isError ? 'Recent activity is temporarily unavailable.' : `No ${trancheName} Vault activity found yet.`}
             </p>
           ) : (
@@ -2177,20 +2177,20 @@ function VaultActivitySection({
                   <caption className="sr-only">Recent vault activity</caption>
                   <thead className="text-xs uppercase tracking-[0.12em] text-content-secondary">
                     <tr>
-                      <th scope="col" className="px-5 py-3 font-medium">Date</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Type</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Amount</th>
-                      <th scope="col" className="px-5 py-3 font-medium">User</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Transaction</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Date</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Type</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Amount</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">User</th>
+                      <th scope="col" className="panel-padding-x py-3 font-medium">Transaction</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pagedActivity.map((item) => (
                       <tr key={item.id} className="border-t border-brand-border/20 text-sm">
-                        <td className="whitespace-nowrap px-5 py-4 text-content-secondary">{formatActivityDate(item.timestamp)}</td>
-                        <td className="whitespace-nowrap px-5 py-4"><ActivityTypeLabel activity={item} /></td>
-                        <td className="whitespace-nowrap px-5 py-4 font-semibold text-content-primary">{activityAmount(item)}</td>
-                        <td className="px-5 py-4">
+                        <td className="whitespace-nowrap panel-padding-x py-4 text-content-secondary">{formatActivityDate(item.timestamp)}</td>
+                        <td className="whitespace-nowrap panel-padding-x py-4"><ActivityTypeLabel activity={item} /></td>
+                        <td className="whitespace-nowrap panel-padding-x py-4 font-semibold text-content-primary">{activityAmount(item)}</td>
+                        <td className="panel-padding-x py-4">
                           <a
                             href={`${EXPLORER_BASE_URL}/${item.account}`}
                             target="_blank"
@@ -2201,7 +2201,7 @@ function VaultActivitySection({
                             {formatAddress(item.account)}
                           </a>
                         </td>
-                        <td className="px-5 py-4">
+                        <td className="panel-padding-x py-4">
                           <a
                             href={`${EXPLORER_TX_BASE_URL}/${item.transactionHash}`}
                             target="_blank"
@@ -2220,7 +2220,7 @@ function VaultActivitySection({
 
               <ul className="divide-y divide-brand-border/20 lg:hidden">
                 {pagedActivity.map((item) => (
-                  <li key={item.id} className="space-y-4 p-5">
+                  <li key={item.id} className="space-y-4 panel-padding">
                     <div className="flex items-start justify-between gap-4">
                       <ActivityTypeLabel activity={item} />
                     </div>
@@ -2280,9 +2280,9 @@ export function VaultsOverview({
     ? (Number(pool.freeUsdc) / Number(pool.totalAssetsUsdc)) * 100
     : undefined
   return (
-    <div className="space-y-8">
+    <div className="page-stack">
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="flex flex-col gap-6 border-b border-brand-border/25 p-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-6 border-b border-brand-border/25 panel-padding lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-peach">
               Plether vaults
@@ -2309,7 +2309,7 @@ export function VaultsOverview({
           </a>
         </div>
 
-        <dl className="grid grid-cols-1 gap-x-4 gap-y-6 p-6 sm:grid-cols-2 lg:grid-cols-4">
+        <dl className="grid grid-cols-1 gap-x-4 gap-y-6 panel-padding sm:grid-cols-2 lg:grid-cols-4">
           <PoolStat
             label="Total pool funds"
             value={formatCompactUsd(pool.totalAssetsUsdc)}
@@ -2386,7 +2386,7 @@ export function VaultsOverview({
             Trading capacity and loss protection
           </h2>
         </div>
-        <div className="border border-brand-border/30 bg-surface-panel p-5">
+        <div className="border border-brand-border/30 bg-surface-panel panel-padding">
           <PerpsPoolLiquidityDetails
             longCapacity={formatPoolCapacity(pool.longOpenCapacityUsdc, pool.markPrice)}
             shortCapacity={formatPoolCapacity(pool.shortOpenCapacityUsdc, pool.markPrice)}
@@ -2560,7 +2560,7 @@ export function OverviewTab({
       </div>
 
       <div className="grid gap-x-3 gap-y-6 xl:grid-cols-2">
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
             <DetailRow label="Asset" value="USDC" />
@@ -2704,7 +2704,7 @@ export function OverviewTab({
           </dl>
         </section>
 
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">Shared pool status</h3>
           <dl className="mt-3">
             <DetailRow label="Total pool funds" value={formatFullUsd(pool.totalAssetsUsdc, 0)} />
@@ -2764,7 +2764,7 @@ export function OverviewTab({
       </div>
 
       {tranche.id === 'senior' ? (
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
               Senior protection
@@ -2787,7 +2787,7 @@ export function OverviewTab({
           </div>
         </section>
       ) : (
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-positive">
               Senior loss protection
@@ -2811,7 +2811,7 @@ export function OverviewTab({
       )}
 
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
+        <div className="border-b border-brand-border/25 panel-padding">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
             Change safeguards
           </p>
@@ -2833,14 +2833,14 @@ export function OverviewTab({
           >
             <thead className="bg-app-bg text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
               <tr>
-                <th scope="col" className="px-5 py-3">Setting</th>
-                <th scope="col" className="px-5 py-3">Notice period</th>
+                <th scope="col" className="panel-padding-x py-3">Setting</th>
+                <th scope="col" className="panel-padding-x py-3">Notice period</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-brand-border/20">
               {VAULT_GOVERNANCE_TIMELOCKS.map((timelock) => (
                 <tr key={timelock.mechanism}>
-                  <th scope="row" className="px-5 py-4 text-left">
+                  <th scope="row" className="panel-padding-x py-4 text-left">
                     <span className="block text-sm font-semibold text-content-primary">
                       {timelock.mechanism}
                     </span>
@@ -2848,7 +2848,7 @@ export function OverviewTab({
                       {timelock.effect}
                     </span>
                   </th>
-                  <td className="w-36 whitespace-nowrap px-5 py-4 align-top font-mono text-sm font-semibold text-brand-peach">
+                  <td className="w-36 whitespace-nowrap panel-padding-x py-4 align-top font-mono text-sm font-semibold text-brand-peach">
                     {timelock.delay}
                   </td>
                 </tr>
@@ -3086,7 +3086,7 @@ function PerformanceChart({
 
   return (
     <figure className="border border-brand-border/30 bg-surface-panel">
-      <div className="flex flex-col gap-4 border-b border-brand-border/25 p-5 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-brand-border/25 panel-padding sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-lg font-semibold text-content-primary">Seven-day share price</h3>
           <p className="mt-1 text-sm text-content-secondary">
@@ -3098,7 +3098,7 @@ function PerformanceChart({
         </span>
       </div>
 
-      <div ref={chartContainerRef} className="relative p-3 sm:p-5">
+      <div ref={chartContainerRef} className="relative panel-padding">
         <svg
           ref={chartSvgRef}
           viewBox={`0 0 ${String(width)} ${String(height)}`}
@@ -3299,7 +3299,7 @@ function PerformanceTab({
       </div>
 
       <div className="grid gap-3 xl:grid-cols-2">
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">What can increase share value</h3>
           <ul className="mt-4 space-y-3">
             {shareValueFactors.increase.map((item) => (
@@ -3323,7 +3323,7 @@ function PerformanceTab({
           </ul>
         </section>
 
-        <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">What can reduce share value</h3>
           <ul className="mt-4 space-y-3">
             {shareValueFactors.reduce.map((item) => (
@@ -3459,7 +3459,7 @@ export function ActivityTab({
 
   return (
     <div className="space-y-6">
-      <section className="border border-brand-border/30 bg-surface-panel p-5">
+      <section className="border border-brand-border/30 bg-surface-panel panel-padding">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
             Your active position
@@ -3504,7 +3504,7 @@ export function ActivityTab({
       </section>
 
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
+        <div className="border-b border-brand-border/25 panel-padding">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending deposits</h3>
@@ -3546,7 +3546,7 @@ export function ActivityTab({
               const hasProcessedDeposit = request.claimableShares > 0n || request.refundableAssets > 0n
 
               return (
-                <article key={String(request.requestId)} className="space-y-4 p-5">
+                <article key={String(request.requestId)} className="space-y-4 panel-padding">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
@@ -3698,7 +3698,7 @@ export function ActivityTab({
       </section>
 
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
+        <div className="border-b border-brand-border/25 panel-padding">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending withdrawals</h3>
@@ -3733,7 +3733,7 @@ export function ActivityTab({
               const hasProcessedWithdrawal = request.claimableAssets > 0n || request.refundableShares > 0n
 
               return (
-                <article key={String(request.requestId)} className="space-y-4 p-5">
+                <article key={String(request.requestId)} className="space-y-4 panel-padding">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
@@ -4843,14 +4843,14 @@ function VaultActionPanel({
   return (
     <>
       <aside className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
+        <div className="border-b border-brand-border/25 panel-padding">
           <div>
             <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? 'Deposit USDC' : 'Withdraw USDC'}</h2>
             <p className="mt-1 text-sm text-content-secondary">{tranche.name}</p>
           </div>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="space-y-5 panel-padding">
           <div className="grid grid-cols-2 border border-brand-border/30 bg-app-bg p-1">
             {(['deposit', 'withdraw'] as const).map((item) => (
               <button
@@ -5050,7 +5050,7 @@ function VaultActionPanel({
         </div>
 
         {depositRequests.length + redeemRequests.length > 0 ? (
-          <div className="border-t border-brand-border/30 p-5">
+          <div className="border-t border-brand-border/30 panel-padding">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
@@ -5254,7 +5254,7 @@ export function VaultDetailView({
   }, [sectionScrollOffset, sections])
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <Link
         to="/vaults"
         className="group inline-flex items-center gap-2 text-sm font-semibold text-content-secondary transition-colors hover:text-brand-peach"
@@ -5264,7 +5264,7 @@ export function VaultDetailView({
       </Link>
 
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="flex flex-col gap-6 border-b border-brand-border/25 p-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-6 border-b border-brand-border/25 panel-padding lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
             <TrancheMark tranche={tranche} />
             <div className="min-w-0">
@@ -5292,7 +5292,7 @@ export function VaultDetailView({
           </div>
         </div>
 
-        <dl className={`grid grid-cols-2 gap-x-4 gap-y-6 p-6 ${
+        <dl className={`grid grid-cols-2 gap-x-4 gap-y-6 panel-padding ${
           hasPerformance ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
         }`}>
           <PoolStat

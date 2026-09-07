@@ -12,8 +12,8 @@ export function Footer() {
 
   return (
     <>
-      <footer className={`border-t border-brand-border/30 bg-surface-panel/50 ${hasMobileNav ? 'pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0' : ''}`}>
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-4 py-5 text-center text-xs text-content-secondary sm:px-6 lg:flex-row lg:px-8 lg:py-4 lg:text-left">
+      <footer className={`border-t border-brand-border/30 bg-surface-panel/50 ${hasMobileNav ? 'pb-[calc(var(--spacing-mobile-nav)+1px+env(safe-area-inset-bottom))] lg:pb-0' : ''}`}>
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 page-gutter py-4 text-center text-xs text-content-secondary lg:flex-row lg:text-left">
           <span>&copy; 2026 Plether Labs Limited. All rights reserved.</span>
           <nav className="flex flex-wrap justify-center gap-x-4 gap-y-2 lg:justify-end">
             <a href="https://docs.plether.com" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>

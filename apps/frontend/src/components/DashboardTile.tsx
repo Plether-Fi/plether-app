@@ -37,7 +37,7 @@ const variantStyles: Record<TileVariant, { text: string; border: string; divider
 
 function TileSkeleton() {
   return (
-    <div className="h-full min-w-0 border border-brand-border/50 bg-surface-panel p-4 sm:p-5">
+    <div className="h-full min-w-0 border border-brand-border/50 bg-surface-panel panel-padding">
       <div className="flex items-center justify-between mb-2">
         <Skeleton className="h-5 w-32 max-w-[75%]" />
         <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
@@ -82,7 +82,7 @@ export function DashboardTile({
 
   return (
     <div
-      className={`h-full min-w-0 border bg-surface-panel p-4 transition-colors duration-200 sm:p-5 ${styles.border}`}
+      className={`h-full min-w-0 border bg-surface-panel panel-padding transition-colors duration-200 ${styles.border}`}
     >
       <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
         <h3 className={`min-w-0 break-words font-semibold ${styles.text}`}>{title}</h3>

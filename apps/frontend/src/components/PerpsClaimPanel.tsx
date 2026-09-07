@@ -54,12 +54,12 @@ export function PerpsClaimPanel({
   return (
     <>
       <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/20 px-5 py-4">
+        <div className="border-b border-brand-border/20 panel-padding-x py-4">
           <div className="text-xs font-medium uppercase tracking-wide text-content-secondary">Margin Account</div>
           <h2 className="mt-1 text-xl font-semibold text-content-primary">Trader claim</h2>
         </div>
 
-        <dl className="px-5">
+        <dl className="panel-padding-x">
           <ClaimRow label="Claim owner" value={<span title={tradingAccountAddress}>{truncateAddress(tradingAccountAddress)}</span>} />
           <ClaimRow label="Account claim" value={<TokenAmount amount={claimUsdc} />} />
           {aggregateClaimsUsdc && housePoolAssetsUsdc ? (
@@ -104,7 +104,7 @@ export function PerpsClaimPanel({
           ) : null}
         </dl>
 
-        <div className="px-5 pb-5 pt-2">
+        <div className="panel-padding-x pb-4 sm:pb-6 pt-2">
           {status === 'waiting' ? (
             <p className="border border-brand-orange/30 bg-brand-orange/10 px-4 py-3 text-sm leading-5 text-content-secondary">
               Aggregate HousePool assets do not yet cover all outstanding trader claims. The claim remains recorded but cannot be used as margin or withdrawn.
