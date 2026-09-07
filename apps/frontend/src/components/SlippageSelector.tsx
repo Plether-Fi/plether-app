@@ -66,6 +66,15 @@ export function SlippageSelector() {
         onClose={() => { setIsOpen(false); }}
         title="Trade Settings"
         size="sm"
+        footer={
+          <Button
+            variant="primary"
+            onClick={() => { setIsOpen(false); }}
+            className="w-full"
+          >
+            Save
+          </Button>
+        }
       >
         <div className="space-y-6">
           <div className="space-y-3">
@@ -132,13 +141,6 @@ export function SlippageSelector() {
             </div>
           </div>
 
-          <Button
-            variant="primary"
-            onClick={() => { setIsOpen(false); }}
-            className="w-full"
-          >
-            Save
-          </Button>
         </div>
       </Modal>
     </>

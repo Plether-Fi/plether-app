@@ -3986,12 +3986,14 @@ export function VaultRequestQueuedState({
   transactionHash,
   onClose,
   onViewRequest,
+  showActions = true,
 }: {
   mode: ActionMode
   targetSettlement: string
   transactionHash?: string | null
   onClose: () => void
   onViewRequest: () => void
+  showActions?: boolean
 }) {
   return (
     <div className="space-y-5 text-center">
@@ -4015,14 +4017,23 @@ export function VaultRequestQueuedState({
           <span className="material-symbols-outlined text-lg">open_in_new</span>
         </a>
       ) : null}
-      <div className="grid grid-cols-2 gap-3 pt-2">
-        <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
-          Done
-        </Button>
-        <Button type="button" className="w-full" onClick={onViewRequest}>
-          View activity
-        </Button>
-      </div>
+      {showActions ? <VaultRequestQueuedActions onClose={onClose} onViewRequest={onViewRequest} /> : null}
+    </div>
+  )
+}
+
+export function VaultRequestQueuedActions({ onClose, onViewRequest }: {
+  onClose: () => void
+  onViewRequest: () => void
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
+        Done
+      </Button>
+      <Button type="button" className="w-full" onClick={onViewRequest}>
+        View activity
+      </Button>
     </div>
   )
 }
@@ -4212,6 +4223,42 @@ function VaultRequestActionModal({
       analyticsId="vault_request_action_flow"
       analyticsSurface="vaults"
       analyticsProperties={{ tranche: tranche.id, action: action.kind }}
+      footer={
+        transactionStatus === 'idle' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
+                Back
+              </Button>
+              <Button
+                type="button"
+                variant={copy.confirmVariant}
+                className="w-full"
+                onClick={onSubmit}
+              >
+                {copy.confirmLabel}
+              </Button>
+            </div>
+          </div>
+        ) : transactionStatus === 'error' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
+                Back to review
+              </Button>
+              <Button type="button" className="w-full" onClick={onSubmit}>
+                Try again
+              </Button>
+            </div>
+          </div>
+        ) : transactionStatus === 'success' ? (
+          <div className="space-y-3">
+            <Button type="button" className="w-full" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        ) : null
+      }
     >
       {transactionStatus === 'idle' ? (
         <div className="space-y-5">
@@ -4225,19 +4272,6 @@ function VaultRequestActionModal({
           <section className="border border-brand-border/25 bg-app-bg p-4">
             <PreviewRow label={copy.amountLabel} value={copy.amount} />
           </section>
-          <div className="grid grid-cols-2 gap-3">
-            <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
-              Back
-            </Button>
-            <Button
-              type="button"
-              variant={copy.confirmVariant}
-              className="w-full"
-              onClick={onSubmit}
-            >
-              {copy.confirmLabel}
-            </Button>
-          </div>
         </div>
       ) : null}
 
@@ -4279,14 +4313,6 @@ function VaultRequestActionModal({
               {submissionError}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-3">
-            <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
-              Back to review
-            </Button>
-            <Button type="button" className="w-full" onClick={onSubmit}>
-              Try again
-            </Button>
-          </div>
         </div>
       ) : null}
 
@@ -4308,9 +4334,6 @@ function VaultRequestActionModal({
               <span className="material-symbols-outlined text-lg">open_in_new</span>
             </a>
           ) : null}
-          <Button type="button" className="w-full" onClick={onClose}>
-            Done
-          </Button>
         </div>
       ) : null}
     </Modal>
@@ -4394,6 +4417,52 @@ export function VaultPreviewModal({
       analyticsId={`vault_${mode}_flow`}
       analyticsSurface="vaults"
       analyticsProperties={{ tranche: tranche.id }}
+      footer={
+        transactionStatus === 'idle' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                onClick={onClose}
+                analyticsId="vault_preview_closed"
+                analyticsSurface="vaults"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant={mode === 'withdraw' ? 'secondary' : 'primary'}
+                className="w-full"
+                disabled={!canSubmit}
+                onClick={onSubmit}
+                analyticsId={`vault_${mode}_submitted`}
+                analyticsSurface="vaults"
+                analyticsProperties={{ tranche: tranche.id }}
+              >
+                {canSubmit ? `Confirm ${actionName}` : 'Unavailable'}
+              </Button>
+            </div>
+            {mode === 'deposit' && needsApproval ? (
+              <p className="text-center text-xs leading-5 text-content-secondary">
+                Your wallet will first ask you to approve this USDC amount, then confirm the deposit.
+              </p>
+            ) : null}
+          </div>
+        ) : transactionStatus === 'error' ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
+                Back to review
+              </Button>
+              <Button type="button" className="w-full" onClick={onSubmit}>
+                Try again
+              </Button>
+            </div>
+          </div>
+        ) : transactionStatus === 'success' ? (<VaultRequestQueuedActions onClose={onClose} onViewRequest={onViewRequest} />) : null
+      }
     >
       {transactionStatus === 'idle' ? (
         <div className="space-y-5">
@@ -4457,35 +4526,6 @@ export function VaultPreviewModal({
             </Alert>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full"
-              onClick={onClose}
-              analyticsId="vault_preview_closed"
-              analyticsSurface="vaults"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant={mode === 'withdraw' ? 'secondary' : 'primary'}
-              className="w-full"
-              disabled={!canSubmit}
-              onClick={onSubmit}
-              analyticsId={`vault_${mode}_submitted`}
-              analyticsSurface="vaults"
-              analyticsProperties={{ tranche: tranche.id }}
-            >
-              {canSubmit ? `Confirm ${actionName}` : 'Unavailable'}
-            </Button>
-          </div>
-          {mode === 'deposit' && needsApproval ? (
-            <p className="text-center text-xs leading-5 text-content-secondary">
-              Your wallet will first ask you to approve this USDC amount, then confirm the deposit.
-            </p>
-          ) : null}
         </div>
       ) : null}
 
@@ -4529,19 +4569,12 @@ export function VaultPreviewModal({
               {submissionError}
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-3">
-            <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
-              Back to review
-            </Button>
-            <Button type="button" className="w-full" onClick={onSubmit}>
-              Try again
-            </Button>
-          </div>
         </div>
       ) : null}
 
       {transactionStatus === 'success' ? (
         <VaultRequestQueuedState
+          showActions={false}
           mode={mode}
           targetSettlement={targetSettlement}
           transactionHash={transactionHash}

@@ -20,7 +20,7 @@ function TransactionNavigator({
   if (total <= 1) return null
 
   return (
-    <div className="flex items-center justify-center gap-3 py-3 border-b border-brand-border/30">
+    <div className="flex shrink-0 items-center justify-center gap-3 py-3 border-b border-brand-border/30">
       <button
         type="button"
         aria-label="Previous transaction"
@@ -108,7 +108,7 @@ export function TransactionModal() {
       <div className="pointer-events-none fixed inset-0 z-[70] flex items-end justify-center sm:items-start sm:justify-end sm:p-4">
         <div className="flex max-h-dvh w-full max-w-md flex-col sm:max-h-[calc(100dvh-2rem)]">
           <div
-            className="pointer-events-auto min-h-0 overflow-y-auto overscroll-contain border border-brand-border/50 bg-surface-panel/95 shadow-2xl shadow-app-bg/50 backdrop-blur-xl"
+            className="pointer-events-auto flex min-h-0 flex-col border border-brand-border/50 bg-surface-panel/95 pb-[env(safe-area-inset-bottom)] shadow-2xl shadow-app-bg/50 backdrop-blur-xl sm:pb-0"
             role="dialog"
             aria-modal="true"
             aria-label={currentTx.title}

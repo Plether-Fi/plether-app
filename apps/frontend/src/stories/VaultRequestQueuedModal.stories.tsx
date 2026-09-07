@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import {
   VaultLifecycleSteps,
+  VaultRequestQueuedActions,
   VaultRequestQueuedState,
 } from '../pages/Vaults'
 import { Modal } from '../components/ui/Modal'
@@ -37,8 +38,9 @@ const meta: Meta<typeof VaultRequestQueuedState> = {
       showCloseButton={false}
       size="lg"
       inertBackground
+      footer={<VaultRequestQueuedActions onClose={args.onClose} onViewRequest={args.onViewRequest} />}
     >
-      <VaultRequestQueuedState {...args} />
+      <VaultRequestQueuedState {...args} showActions={false} />
     </Modal>
   ),
 }

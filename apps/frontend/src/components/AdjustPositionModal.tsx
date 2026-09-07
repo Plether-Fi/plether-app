@@ -81,7 +81,20 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
   const isDisabled = !amount || parseFloat(amount) <= 0 || isPending || insufficientBalance
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Adjust ${position.side} Position`}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Adjust ${position.side} Position`}
+      footer={
+        <button
+          onClick={handleConfirm}
+          disabled={isDisabled}
+          className="w-full bg-positive px-6 py-3 font-semibold text-app-bg transition-colors enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {getButtonText()}
+        </button>
+      }
+    >
       <div className="space-y-4">
         <div className="flex gap-2">
           <button
@@ -148,13 +161,6 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
           </div>
         </div>
 
-        <button
-          onClick={handleConfirm}
-          disabled={isDisabled}
-          className="w-full bg-positive px-6 py-3 font-semibold text-app-bg transition-colors enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {getButtonText()}
-        </button>
       </div>
     </Modal>
   )
