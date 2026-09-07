@@ -20,7 +20,7 @@ export function Header() {
 
   return (
     <header className="border-b border-brand-border/30 bg-surface-panel py-1.5 sm:py-4">
-      <div className="flex w-full min-w-0 items-center justify-between gap-2 page-gutter">
+      <div className={`flex w-full min-w-0 items-center justify-between gap-2 ${location.pathname === '/' ? 'panel-padding-x' : 'page-gutter'}`}>
         <div className="flex min-w-0 items-center gap-4 lg:gap-10">
           <Link to={homePath} className="flex shrink-0 items-center gap-2 py-0.5 transition-opacity hover:opacity-90 sm:gap-2.5">
             <img src="/logomark.svg" alt="Plether" className="h-7 w-7 sm:h-8 sm:w-8" />

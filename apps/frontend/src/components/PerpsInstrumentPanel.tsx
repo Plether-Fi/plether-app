@@ -485,7 +485,7 @@ function DirectionalLimitStat({
   return (
     <>
       <div
-        className="min-w-0 sm:col-span-2 xl:col-span-1"
+        className="min-w-0"
         data-perps-instrument-stat
         onMouseEnter={openFromPointer}
         onMouseLeave={leaveFromPointer}
@@ -494,7 +494,7 @@ function DirectionalLimitStat({
         <dd>
           <button
             type="button"
-            className="mt-1.5 flex min-w-0 max-w-full items-center gap-px text-left min-[430px]:gap-1 sm:mt-2 sm:gap-2"
+            className="mt-1.5 flex min-w-0 max-w-full flex-wrap items-center gap-1 text-left sm:mt-2 sm:gap-2"
             aria-label={`${stat.label} details`}
             aria-controls={detailsId}
             aria-expanded={isExpanded}
@@ -509,7 +509,7 @@ function DirectionalLimitStat({
               {valueLabel}
             </span>
             <span
-              className={`whitespace-nowrap border px-px py-0.5 text-[8px] font-semibold tracking-normal min-[430px]:px-1 min-[430px]:text-[9px] min-[430px]:tracking-[0.03em] sm:px-2 sm:py-1 sm:text-[10px] sm:tracking-[0.08em] ${directionalBadgeClass(details.side)}`}
+              className={`whitespace-nowrap border px-1 py-0.5 text-[9px] font-semibold tracking-[0.03em] sm:px-2 sm:py-1 sm:text-[10px] sm:tracking-[0.08em] ${directionalBadgeClass(details.side)}`}
             >
               {directionalBadgeLabel(details.side, details.isLoading ?? false)}
             </span>
@@ -626,38 +626,40 @@ export function PerpsInstrumentPanel({
 
         <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
-        <dl className="grid flex-1 grid-cols-2 gap-x-2 gap-y-3 min-[360px]:grid-cols-3 min-[430px]:gap-x-3 sm:grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] sm:gap-y-4 2xl:gap-x-4" data-perps-instrument-metrics>
-          {stats.map((stat) => {
-            if (stat.directionalLimit) {
-              return (
-                <DirectionalLimitStat
-                  key={stat.label}
-                  stat={stat}
-                  forceExpanded={directionalLimitDetailsExpanded}
-                  isSuppressed={activeDetails !== undefined && activeDetails !== 'directional'}
-                  onActivate={() => { setActiveDetails('directional') }}
-                />
-              )
-            }
+        <div className="@container min-w-0 flex-1">
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-3 @min-[22rem]:grid-cols-3 @min-[66rem]:grid-cols-6 sm:gap-4" data-perps-instrument-metrics>
+            {stats.map((stat) => {
+              if (stat.directionalLimit) {
+                return (
+                  <DirectionalLimitStat
+                    key={stat.label}
+                    stat={stat}
+                    forceExpanded={directionalLimitDetailsExpanded}
+                    isSuppressed={activeDetails !== undefined && activeDetails !== 'directional'}
+                    onActivate={() => { setActiveDetails('directional') }}
+                  />
+                )
+              }
 
-            if (stat.hoverDetails) {
-              const detailsType = stat.hoverDetailsType ?? 'price'
-              return (
-                <HoverDetailsStat
-                  key={stat.label}
-                  stat={stat}
-                  forceExpanded={detailsType === 'pool-liquidity'
-                    ? poolLiquidityDetailsExpanded
-                    : priceDetailsExpanded}
-                  isSuppressed={activeDetails !== undefined && activeDetails !== detailsType}
-                  onActivate={() => { setActiveDetails(detailsType) }}
-                />
-              )
-            }
+              if (stat.hoverDetails) {
+                const detailsType = stat.hoverDetailsType ?? 'price'
+                return (
+                  <HoverDetailsStat
+                    key={stat.label}
+                    stat={stat}
+                    forceExpanded={detailsType === 'pool-liquidity'
+                      ? poolLiquidityDetailsExpanded
+                      : priceDetailsExpanded}
+                    isSuppressed={activeDetails !== undefined && activeDetails !== detailsType}
+                    onActivate={() => { setActiveDetails(detailsType) }}
+                  />
+                )
+              }
 
-            return <InstrumentStat key={stat.label} stat={stat} />
-          })}
-        </dl>
+              return <InstrumentStat key={stat.label} stat={stat} />
+            })}
+          </dl>
+        </div>
       </div>
     </section>
   )

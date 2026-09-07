@@ -130,7 +130,10 @@ export function ConnectButton() {
           aria-label={`Open wallet account ${formatAddress(address ?? '')}`}
           className={`group h-11 w-11 !px-0 sm:w-auto sm:!px-3 ${WALLET_BUTTON_CLASS}`}
         >
-          <div className="w-2 h-2 rounded-full bg-positive" />
+          {isPerpsRoute ? (
+            <span className="material-symbols-outlined text-lg sm:hidden" aria-hidden="true">account_balance_wallet</span>
+          ) : null}
+          <div className={`w-2 h-2 rounded-full bg-positive ${isPerpsRoute ? 'hidden sm:block' : ''}`} />
           <span className="hidden whitespace-nowrap text-xs font-medium group-hover:underline group-hover:underline-offset-4 sm:inline sm:text-sm">
             {formatAddress(address ?? '')}
           </span>
