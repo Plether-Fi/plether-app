@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import publicManifest from '../../../public/perps-aa-manifest.json'
-import { PERPS_ARBITRUM_SEPOLIA } from '../perpsAddresses'
+import {
+  PERPS_ARBITRUM_SEPOLIA,
+  PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK,
+} from '../perpsAddresses'
 
 interface PinnedContract {
   address: string
@@ -49,6 +52,7 @@ describe('pinned bounded-V2 Sepolia release', () => {
   })
 
   it('keeps the frontend registry and public manifest on the same release', () => {
+    expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(pinnedRelease.release.deploymentBlock)
     expect(publicManifest).toMatchObject({
       version: 'perps-aa-arbitrum-sepolia-20260906-v2',
       chainId: pinnedRelease.network.chainId,

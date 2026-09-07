@@ -701,7 +701,7 @@ function OrdersView({
     <div className="space-y-3">
       <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
       <div
-        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        className="max-w-full overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
         role="region"
         aria-label={includeStatus ? 'Order history table' : 'Open orders table'}
         tabIndex={0}
@@ -846,7 +846,7 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
     <div className="space-y-3">
       <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
       <div
-        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        className="max-w-full overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
         role="region"
         aria-label="Transaction history table"
         tabIndex={0}

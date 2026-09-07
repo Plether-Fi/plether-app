@@ -7,6 +7,7 @@ import { PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+  PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK,
 } from '../contracts/perpsAddresses'
 
 const NEARBY_EPOCH_LOOKBACK = 4n
@@ -115,7 +116,7 @@ async function discoverRequestIds(
       page.tranche !== (isSenior ? 'senior' : 'junior')
       || page.account.toLowerCase() !== controller.toLowerCase()
       || !Number.isSafeInteger(page.confirmedThroughBlock)
-      || page.confirmedThroughBlock < 302_257_125
+      || page.confirmedThroughBlock < PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK
       || typeof page.stale !== 'boolean'
       || (page.nextCursor !== null && !/^\d+$/.test(page.nextCursor))
       || page.requestIds.length > 250
