@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { zeroAddress } from 'viem'
+import { multicall3Abi, zeroAddress } from 'viem'
+import { arbitrumSepolia } from 'viem/chains'
 import { parsePositionProtection } from '../contracts/positionProtection'
 import { useReadContracts } from 'wagmi'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
+  PERPS_HOUSE_POOL_ABI,
   PERPS_MARGIN_CLEARINGHOUSE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
   PERPS_ORDER_ROUTER_ABI,
@@ -13,6 +15,7 @@ import {
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { usePerpsIdentity } from '../perps-aa'
+import { calculatePendingCarryUsdc } from '../utils/perpsCarry'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 interface ContractResult {
@@ -23,6 +26,20 @@ interface ContractResult {
 const PERPS_DYNAMIC_REFETCH_INTERVAL_MS = 15_000
 const PERPS_CONFIG_STALE_TIME_MS = 5 * 60_000
 const PERPS_CONFIG_GC_TIME_MS = Number.POSITIVE_INFINITY
+
+function sideCarryContracts(side: bigint) {
+  const engine = {
+    chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+    address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+    abi: PERPS_CFD_ENGINE_ABI,
+    args: [side],
+  } as const
+  return [
+    { ...engine, functionName: 'sideCarryIndex' },
+    { ...engine, functionName: 'sideCarryTimestamp' },
+    { ...engine, functionName: 'sideBorrowBaseUsdc' },
+  ] as const
+}
 
 export interface PerpsPendingOrder {
   orderId: bigint
@@ -141,29 +158,25 @@ function readBigInt(value: unknown, index: number, key: string): bigint | undefi
   return undefined
 }
 
-function derivePendingCarryUsdc({
-  terminalReachableUsdc,
-  unrealizedPnlUsdc,
-  netEquityUsdc,
-  vpiAccrued,
-}: {
-  terminalReachableUsdc?: bigint
-  unrealizedPnlUsdc?: bigint
-  netEquityUsdc?: bigint
-  vpiAccrued?: bigint
-}): bigint | undefined {
-  if (
-    terminalReachableUsdc === undefined ||
-    unrealizedPnlUsdc === undefined ||
-    netEquityUsdc === undefined
-  ) {
-    return undefined
-  }
+function readPendingCarryUsdc(data: readonly ContractResult[] | undefined): bigint | undefined {
+  const side = readBigInt(readResult(data, 9), 4, 'side')
+  if (side !== 0n && side !== 1n) return undefined
+  const sideOffset = side === 0n ? 16 : 19
+  const carryState = readResult(data, 11)
 
-  const vpiClawbackUsdc = vpiAccrued !== undefined && vpiAccrued < 0n ? -vpiAccrued : 0n
-  const pendingCarryUsdc = terminalReachableUsdc - vpiClawbackUsdc + unrealizedPnlUsdc - netEquityUsdc
-
-  return pendingCarryUsdc > 0n ? pendingCarryUsdc : 0n
+  // netEquityUsdc is price-risk equity, not carry-adjusted account equity.
+  // Subtracting it from settlement would incorrectly label free collateral as carry.
+  return calculatePendingCarryUsdc({
+    borrowBaseUsdc: readBigInt(carryState, 0, 'borrowBaseUsdc'),
+    lastCarryIndex: readBigInt(carryState, 1, 'lastCarryIndex'),
+    unsettledCarryUsdc: readResult(data, 12) as bigint | undefined,
+    baseCarryBps: readBigInt(readResult(data, 13), 5, 'baseCarryBps'),
+    poolAssetsUsdc: readResult(data, 14) as bigint | undefined,
+    blockTimestamp: readResult(data, 15) as bigint | undefined,
+    sideCarryIndex: readResult(data, sideOffset) as bigint | undefined,
+    sideCarryTimestamp: readResult(data, sideOffset + 1) as bigint | undefined,
+    sideBorrowBaseUsdc: readResult(data, sideOffset + 2) as bigint | undefined,
+  })
 }
 
 function isLiquidatableAtPrice({
@@ -295,6 +308,9 @@ export function usePerpsAccount(markPrice?: bigint) {
     error: dynamicContractsError,
     refetch: refetchDynamicContracts,
   } = useReadContracts({
+    // Keep the position checkpoint, both side indexes, rate, assets and chain time
+    // together in one multicall, including across position-side changes.
+    batchSize: 0,
     contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -372,6 +388,40 @@ export function usePerpsAccount(markPrice?: bigint) {
         functionName: 'getActivePositionProtection',
         args: [account],
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'positionCarryState',
+        args: [account],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'unsettledCarryUsdc',
+        args: [account],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'riskParams',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'totalAssets',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: arbitrumSepolia.contracts.multicall3.address,
+        abi: multicall3Abi,
+        functionName: 'getCurrentBlockTimestamp',
+      },
+      ...sideCarryContracts(0n),
+      ...sideCarryContracts(1n),
     ],
     query: {
       enabled: isConnected && accountAddress !== undefined,
@@ -544,18 +594,11 @@ export function usePerpsAccount(markPrice?: bigint) {
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
     const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'liquidationReachableSettlementUsdc')
     const traderClaimBalanceUsdc = readBigInt(accountLedgerSnapshot, 9, 'traderClaimBalanceUsdc')
-    const snapshotUnrealizedPnlUsdc = readBigInt(accountLedgerSnapshot, 21, 'unrealizedPnlUsdc')
-    const netEquityUsdc = readBigInt(accountLedgerSnapshot, 22, 'netEquityUsdc')
     const maintenanceMarginBps = isFadWindow
       ? readBigInt(riskParams, 4, 'fadMarginBps')
       : readBigInt(riskParams, 2, 'maintMarginBps')
     const vpiAccrued = readBigInt(enginePosition, 6, 'vpiAccrued')
-    const pendingCarryUsdc = derivePendingCarryUsdc({
-      terminalReachableUsdc,
-      unrealizedPnlUsdc: snapshotUnrealizedPnlUsdc,
-      netEquityUsdc,
-      vpiAccrued,
-    })
+    const pendingCarryUsdc = readPendingCarryUsdc(dynamicContractData)
     const liquidationPrice = position?.exists
       ? findLiquidationPrice({
           capPrice,
