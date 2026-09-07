@@ -260,6 +260,14 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
 
     await page.waitForTimeout(storyId.startsWith('perps-trade-ticket--') ? 1_600 : 300)
 
+    // Keep Storybook-only instructions out of published component captures.
+    // The article labels its screenshots as illustrative; the live story keeps
+    // its no-transactions notice unchanged.
+    if (storyId.startsWith('perps-position-protection--')) {
+      await page.getByText('Interactive preview · changes stay in this browser. No wallet transactions.', { exact: true })
+        .evaluate((element) => { element.style.display = 'none' })
+    }
+
     const errorDisplay = page.locator('.sb-errordisplay')
     const errorVisible = await errorDisplay.isVisible().catch(() => false)
     if (errorVisible) {
@@ -270,7 +278,7 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
       throw new Error(`Story ${storyId} failed to render.${diagnostics ? `\n${diagnostics}` : ''}`)
     }
 
-    const clip = await page.evaluate(() => {
+    let clip = await page.evaluate(() => {
       const visible = (element) => {
         const style = window.getComputedStyle(element)
         const rect = element.getBoundingClientRect()
@@ -315,6 +323,23 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
         height: Math.max(1, Math.ceil(bottom - top)),
       }
     })
+
+    if (storyId === 'perps-trade-ticket--add-take-profit-stop-loss') {
+      // Frame the actual trading controls through the TP/SL reserve notice.
+      // Exclude the empty story canvas and unrelated lower ticket sections.
+      clip = await page.getByText(/^Active after the opening order fills\./).evaluate((notice) => {
+        const ticket = notice.closest('section')
+        if (!ticket) throw new Error('TP/SL trade ticket section was not found')
+        const ticketRect = ticket.getBoundingClientRect()
+        const noticeRect = notice.getBoundingClientRect()
+        return {
+          x: Math.floor(ticketRect.left + window.scrollX),
+          y: Math.floor(ticketRect.top + window.scrollY),
+          width: Math.ceil(ticketRect.width),
+          height: Math.ceil(noticeRect.bottom - ticketRect.top + 8),
+        }
+      })
+    }
 
     const viewport = page.viewportSize()
     const useFullPage = clip === undefined
@@ -521,8 +546,11 @@ async function mergeSelectiveCaptureIndex(
   manifestSyncResult
 ) {
   const existingIndex = JSON.parse(await fs.readFile(outputIndexPath, 'utf8'))
+  const mappedStoryIds = new Set(records.map((record) => record.storyId))
   const capturesByStoryId = new Map(
-    existingIndex.captures.map((capture) => [capture.storyId, capture])
+    existingIndex.captures
+      .filter((capture) => mappedStoryIds.has(capture.storyId))
+      .map((capture) => [capture.storyId, capture])
   )
   for (const capture of captures) capturesByStoryId.set(capture.storyId, capture)
 

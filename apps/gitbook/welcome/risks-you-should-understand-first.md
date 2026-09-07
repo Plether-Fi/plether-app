@@ -53,6 +53,8 @@ A profitable close can complete even when its complete fresh pool-funded payout 
 
 ### No counterparty ADL does not mean no forced exit
 
+[Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) also does not prevent liquidation or guarantee a maximum loss. A trigger queues a close rather than executing at a promised price. Oracle availability, queue delays and keeper failures can leave the position exposed; a latched close remains binding even if the price reverses.
+
 Plether does not reduce or close an unrelated profitable position to cover another trader’s loss.
 
 There is no counterparty auto-deleveraging between traders.

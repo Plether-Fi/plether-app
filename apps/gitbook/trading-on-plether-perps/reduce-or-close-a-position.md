@@ -35,6 +35,10 @@ Changing direction requires closing the existing position before opening exposur
 
 ### Before you start
 
+If your position has untriggered TP/SL, remove it in the **TP/SL** tab and wait for confirmation before submitting a discretionary reduction or close. Removing TP/SL leaves the position open. If protection is **Close queued** or **Close delayed**, its triggered exit remains binding and cannot be edited or removed; you can still add margin. See [Take profit and stop loss](take-profit-and-stop-loss.md).
+
+Selecting **Reduce only** hides the trade-ticket TP/SL checkbox. That checkbox attaches triggers to new positions; it does not attach partial exits to a reduction.
+
 Check:
 
 * The account has an executed open position.

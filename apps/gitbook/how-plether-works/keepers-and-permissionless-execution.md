@@ -25,6 +25,16 @@ The current Plether order keeper automates the perps order queue. It indexes ord
 
 Liquidation is automated by a separate `plether-liquidation-worker`. It discovers accounts from `PositionOpened` events, verifies their current position state onchain, uses the latest cached Pyth payload and simulates the canonical liquidation call before submitting it. Onchain mark updates can also be automated by the separate, optional `plether-oracle-worker`. These programs are reference operators, not privileged protocol roles.
 
+### The TP/SL protection worker
+
+TP/SL monitoring is handled by a separate `plether-position-protection-worker`. It indexes protection events, reads current contract state and submits eligible trigger transactions. The resulting full-position close enters the order router's queue, where the order keeper handles execution.
+
+The protection worker also considers retries for latched close attempts that expired, checks pending orders and queue capacity, and can clear an eligible expired queue entry before retrying. Other failure reasons require operator review. A retry does not require another crossing of the original trigger: a latched exit remains binding.
+
+These are separate services with separate responsibilities, not privileged contract roles. The protection worker needs a funded dedicated signer to submit transactions; monitoring-only mode does not execute triggers or retries. Its status notice is advisory, not proof that a close executed. Read [Take profit and stop loss](../trading-on-plether-perps/take-profit-and-stop-loss.md) for states, reserves and limitations.
+
+The reference implementation is in [`apps/backend/protection-worker`](https://github.com/Plether-Fi/plether-app/tree/master/apps/backend/protection-worker). It is a Node.js service, separate from the Haskell order-keeper commands below.
+
 ### Why keepers matter
 
 Keepers provide **liveness**. Smart contracts validate transactions, but they do not wake up and submit transactions by themselves. Without a finalizer, a committed order remains pending until someone executes or clears it.
