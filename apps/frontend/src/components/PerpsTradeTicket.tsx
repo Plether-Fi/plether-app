@@ -45,6 +45,7 @@ import {
   oraclePriceToDisplayDxyPrice,
   parsePerpsPositionSize,
   parsePerpsUsdc,
+  perpsSideToDirection,
   quantizedDxyExposureFromContractNotional,
   quantizePerpsPositionSize,
   sizeDeltaToNotionalUsdc,
@@ -232,6 +233,8 @@ interface PerpsTradeTicketProps {
   /** Static full-close intent for deterministic finalized stories and tests. */
   initialCommittedIsFullClose?: boolean
   initialCommittedSizeDelta?: bigint
+  /** Static submitted position side for deterministic finalized stories and tests. */
+  initialCommittedDirection?: PerpsDirection
   /** Static execution-bound position-margin snapshot for deterministic stories and tests. */
   initialCommittedPrePositionMarginUsdc?: bigint
   initialFlowError?: string
@@ -756,6 +759,10 @@ function historyOrderIsClose(order: PerpsOrderHistoryRow | undefined): boolean |
   if (order.type === 'Close') return true
   if (order.type === 'Open') return false
   return undefined
+}
+
+function historyOrderDirection(order: PerpsOrderHistoryRow | undefined): PerpsDirection | undefined {
+  return order?.side === 'Long' ? 'long' : order?.side === 'Short' ? 'short' : undefined
 }
 
 function historyPostPositionSize(order: PerpsOrderHistoryRow | undefined): bigint | undefined {
@@ -1777,6 +1784,7 @@ export function PerpsTradeTicket({
   initialCommittedPositionVpiAccrued,
   initialCommittedIsFullClose,
   initialCommittedSizeDelta,
+  initialCommittedDirection,
   initialCommittedPrePositionMarginUsdc,
   initialFlowError,
   closePositionRequestId,
@@ -1900,6 +1908,8 @@ export function PerpsTradeTicket({
   const [committedPrePositionMarginUsdc, setCommittedPrePositionMarginUsdc] = useState<bigint | undefined>(
     initialCommittedPrePositionMarginUsdc
   )
+  const [committedDirection, setCommittedDirection] = useState<PerpsDirection | undefined>(initialCommittedDirection)
+  const [committedMarginDelta, setCommittedMarginDelta] = useState<bigint | undefined>()
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
@@ -2123,6 +2133,8 @@ export function PerpsTradeTicket({
       }
     }
 
+    const terminalDirection = historyOrderDirection(order)
+    if (terminalDirection !== undefined) setCommittedDirection(terminalDirection)
     const terminalCloseIntent = historyOrderIsClose(order)
     if (terminalCloseIntent !== undefined) {
       setCommittedIsClose(terminalCloseIntent)
@@ -2632,8 +2644,6 @@ export function PerpsTradeTicket({
   const contractNotionalUsdc = orderSizeDelta > 0n
     ? sizeDeltaToNotionalUsdc(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
     : 0n
-  const contractNotionalNumber = usdcRawToNumber(contractNotionalUsdc)
-  const marginNumber = isReducingCurrentPosition ? 0 : activeLeverage > 0 ? contractNotionalNumber / activeLeverage : 0
   const marginUsdc = isReducingCurrentPosition ? 0n : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
   const defaultMaxLeverageMarginUsdc = contractNotionalUsdc > 0n
     ? contractNotionalUsdc / BigInt(DEFAULT_MAX_LEVERAGE)
@@ -3360,6 +3370,11 @@ export function PerpsTradeTicket({
   const finalIsClose = committedIsClose
     ?? historyOrderIsClose(executedOrderHistoryRow)
     ?? isReducingCurrentPosition
+  const finalDirection = committedDirection
+    ?? historyOrderDirection(executedOrderHistoryRow)
+    ?? (enableLiveTrading ? undefined : effectiveOrderDirection)
+  const finalPositionLabel = finalDirection === undefined ? 'Position' : `${directionLabel(finalDirection)} position`
+  const finalMarginPosted = committedMarginDelta ?? (enableLiveTrading ? undefined : marginUsdc)
   const observedPostPositionSize = historyPostPositionSize(executedOrderHistoryRow)
     ?? finalPostPositionSize
   const finalIsFullClose = finalIsClose && (
@@ -3473,9 +3488,9 @@ export function PerpsTradeTicket({
   const executedTitle = finalPriceDisplay === '--'
     ? finalIsFullClose ? 'Position closed' : finalIsClose ? 'Position reduced' : 'Trade executed'
     : finalIsFullClose
-      ? `${directionLabel(oppositeDirection(direction))} position closed at ${finalPriceDisplay} USDC`
+      ? `${finalPositionLabel} closed at ${finalPriceDisplay} USDC`
       : finalIsClose
-        ? `${directionLabel(oppositeDirection(direction))} position reduced at ${finalPriceDisplay} USDC`
+        ? `${finalPositionLabel} reduced at ${finalPriceDisplay} USDC`
         : `Trade executed at ${finalPriceDisplay} USDC`
   const isReviewingFullClose = isFullCloseOrder
   const reviewCtaLabel = enableLiveTrading && !isConnected
@@ -3742,6 +3757,8 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:mock-flow')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setCommittedSizeDelta(orderSizeDelta)
+      setCommittedDirection(effectiveOrderDirection)
+      setCommittedMarginDelta(marginUsdc)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
       setCommitExecutionStatus('awaiting-signature')
@@ -3762,6 +3779,8 @@ export function PerpsTradeTicket({
       setLifecycleState('commitPreparing')
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
+      setCommittedDirection(perpsSideToDirection(preparedOrder.request.side))
+      setCommittedMarginDelta(preparedOrder.request.marginDelta)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
       setFinalExecutionPrice(undefined)
@@ -4004,6 +4023,8 @@ export function PerpsTradeTicket({
     setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
     setCommittedSizeDelta(undefined)
+    setCommittedDirection(undefined)
+    setCommittedMarginDelta(undefined)
     setCommittedPrePositionMarginUsdc(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
@@ -5090,9 +5111,7 @@ export function PerpsTradeTicket({
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     {
                       label: finalIsClose ? 'Position side' : 'Direction',
-                      value: finalIsClose
-                        ? directionLabel(oppositeDirection(direction))
-                        : directionLabel(direction),
+                      value: finalDirection === undefined ? 'Unavailable' : directionLabel(finalDirection),
                     },
                     { label: 'Final price', value: finalPriceDisplay },
                     {
@@ -5110,7 +5129,7 @@ export function PerpsTradeTicket({
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
                     ...(!finalIsClose ? [
-                      { label: 'Margin posted', value: formatUsdc(marginNumber) },
+                      { label: 'Margin posted', value: formatUsdcRaw(finalMarginPosted) },
                       { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
                       {
                         label: 'Oracle confidence spread',

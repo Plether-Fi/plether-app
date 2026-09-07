@@ -800,6 +800,85 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText(/Order quantity stays fixed between size-changing trades\. plDXY Perp exposure moves with the current price\./)).toBeInTheDocument()
   })
 
+  it.each([
+    ['long', true, false], ['short', true, false],
+    ['long', false, false], ['short', false, false],
+    ['long', true, true], ['short', true, true],
+  ] as const)('keeps the submitted %s side after reduction (reduce-only=%s, full=%s)', async (positionDirection, reduceOnly, fullClose) => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: {
+      valid: true, executionPrice: 100_000_000n,
+      remainingSize: fullClose ? 0n : 100n * 10n ** 18n, remainingMargin: 20_000_000n,
+    } }]
+    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const prepared = { ...original, request: { ...original.request,
+      side: positionDirection === 'long' ? 0 as const : 1 as const,
+      isClose: true, marginDelta: 0n, sizeDelta: 100n * 10n ** 18n,
+    } }
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue(prepared)
+    perpsTradingMocks.commitOrder.mockResolvedValue({ account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID, orderId: 90n })
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({ timedOut: false, order: {
+      orderId: 90n, account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID,
+      time: '12:00', market: 'plDXY Perp', side: '', type: 'Close', size: '100', price: '1',
+      status: 'Executed', executionPriceRaw: 100_000_000n,
+      receiptHash: V2_RECEIPT_HASH, receiptEconomics: { postPositionSize: fullClose ? '0' : '100000000000000000000' },
+      executionEconomicsVersion: 2,
+    } })
+    const props = {
+      enableLiveTrading: true, initialReviewOpen: true, initialReduceOnly: reduceOnly,
+      initialDirection: reduceOnly ? positionDirection : positionDirection === 'long' ? 'short' as const : 'long' as const,
+      initialOrderQuantity: '100', oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: Math.floor(Date.now() / 1_000), availableToTradeRaw: 100_000_000n,
+      minOpenNotionalUsdc: 0n, minNewPositionNotionalUsdc: 0n,
+    }
+    const { rerender } = render(<PerpsTradeTicket {...props} currentPosition={{
+      exists: true, side: prepared.request.side, direction: positionDirection,
+      size: (fullClose ? 100n : 200n) * 10n ** 18n, entryPrice: 100_000_000n,
+      marginUsdc: 40_000_000n, estimatedNotionalUsdc: 200_000_000n,
+      unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 0n, liquidatable: false,
+    }} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await screen.findByText('Final Result')
+    // The account refresh can remove the closed position; the result must retain its side.
+    rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={101_000_000n} />)
+    const sideLabel = positionDirection === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
+    expect(screen.getByText(`${sideLabel} position ${fullClose ? 'closed' : 'reduced'} at 1.0000 USDC`)).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Position side').closest('div')).toHaveTextContent(sideLabel)
+  })
+
+  it('shows the submitted margin buffer after prices and the ticket leverage change', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const prepared = { ...original, request: { ...original.request,
+      marginDelta: 2_129_400_000n, sizeDelta: 10_000n * 10n ** 18n,
+    } }
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue(prepared)
+    perpsTradingMocks.commitOrder.mockResolvedValue({ account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID, orderId: 91n })
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({ timedOut: false, order: {
+      orderId: 91n, account: V2_ACCOUNT, clientOrderId: V2_CLIENT_ORDER_ID,
+      time: '12:00', market: 'plDXY Perp', side: 'Long', type: 'Open', size: '10 000', price: '1',
+      status: 'Executed', executionPriceRaw: 100_000_000n,
+      receiptHash: V2_RECEIPT_HASH, executionEconomicsVersion: 2,
+    } })
+    const props = { enableLiveTrading: true, initialReviewOpen: true, initialOrderQuantity: '10000',
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 100_000_000_000n,
+    }
+    const { rerender } = render(<PerpsTradeTicket {...props} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await screen.findByText('Final Result')
+    rerender(<PerpsTradeTicket {...props} oraclePriceRaw={105_000_000n} />)
+    fireEvent.change(screen.getByLabelText('Leverage'), { target: { value: '10' } })
+    fireEvent.blur(screen.getByLabelText('Leverage'))
+    expect(within(screen.getByRole('dialog')).getByText('Margin posted').closest('div')).toHaveTextContent('2 129.4USDC')
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: prepared }))
+  })
+
   it('uses terminal post-position evidence instead of committed full-close intent', () => {
     render(
       <PerpsTradeTicket
