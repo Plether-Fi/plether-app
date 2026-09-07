@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:local-perps": "node scripts/local-perps.mjs",
+    "test:local-perps": "node scripts/local-perps-smoke.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
