@@ -1,127 +1,60 @@
 # AI trading agents
 
-> **A fair venue where people and AI agents compete on strategy, not on exploiting execution and accounting loopholes.**
+> **On Plether, an agent's edge has to come from being right about the dollar. Being fast, well-connected or first in line buys nothing.**
 
-An autonomous trading strategy needs a market it can reason about. Its decisions depend on more than the next price: who supplies the capital, how an order gets its execution price, which costs can change, and whether the result can be independently verified.
+Most trading venues are quietly hostile to autonomous software. The durable edges are latency edges, so a strategy that reasons for ten seconds loses to one that reacts in ten milliseconds. Execution quality depends on an operator you cannot inspect. Access runs through an API key that can be throttled or revoked. And when something goes wrong, the only record of what your agent actually did is its own logs.
 
-Plether brings those questions into the protocol. External oracle data supplies the reference price. Liquidity providers commit USDC to back bounded payouts. Traders authorize orders with explicit financial limits. Onchain records establish what was requested and what happened.
+Plether removes each of those problems at the protocol level. Humans and agents trade under identical rules; there is no agent API and no agent tier. What the protocol offers instead is a market whose mechanics an agent can fully reason about: where prices come from, what execution will cost, what the worst case is, and how to prove afterwards what happened.
 
-Human traders and agents participate under the same rules. The opportunity for an agent is to make better market decisions and manage risk consistently within them.
+### There is no speed game to lose
 
-### A market organized around judgment and capital
+Plether's dollar index is derived from external Pyth FX data. Trading changes your position and the pool's exposure; it never moves the reference price. There is no local reserve curve or order book, which means there is also no stale quote to snipe, no resting order to pick off, and no price to push around a victim in a sandwich.
 
-Plether's trading economics form a loop between traders and the liquidity pool. Collected trading losses flow into the pool; the pool funds trader gains. LPs supply the capital that makes those obligations possible and receive the economics of underwriting them.
+Execution closes the remaining gap. Orders commit first and price later: once committed, an order is binding, sits in a first-in-first-out queue, and executes at the first eligible oracle observation published after commitment. Keepers must prove they did not skip an observation, and a trader cannot watch the next price land and cancel only the commitments that turned unfavourable. Nobody on either side of the trade gets to see the price and then decide. [How orders execute](../how-plether-works/how-orders-execute.md) walks through the full policy, including validated oracle confidence and the separate frozen-market rules.
 
-The pool is the counterparty to every position. A LONG USD trader does not need an equivalent SHORT USD trader to appear before a position can open.
+For a model-driven agent this is the whole ballgame. The market can still move against you between commitment and execution — that is ordinary market risk, and you should size for it. What cannot happen is another participant using superior speed to take the difference from you at execution time. An agent that spends thirty seconds thinking competes on the quality of its forecast, not on the quality of its network connection.
 
-Plether separates market pricing from capital provision:
+The same separation holds during stress. Closing a liquidated position does not mechanically push the next account's reference price toward liquidation, so Plether's liquidations do not feed a local forced-selling spiral. A large external FX move can still make many accounts liquidatable at once; the point is that the venue itself does not amplify it.
 
-| Role | Contribution | Economic result |
-| --- | --- | --- |
-| Traders, including agents | Choose exposure and manage market risk | Directional gains or losses, after trading costs |
-| Liquidity providers | Commit USDC to underwrite bounded payouts | Pool returns and losses, allocated through Senior and Junior tranches |
-| Keepers | Execute orders and maintain protocol progress | Explicit execution rewards |
-| Protocol | Enforce trading and settlement rules | Explicit protocol fees |
+### The counterparty is a pool with published rules
 
-LPs occupy the economic market-making role by supplying the market's backing capital. They do not quote or control the reference price. Carry compensates them over time for the payout capacity their capital supports, and Virtual Price Impact (VPI) prices changes in the pool's directional imbalance. Carry varies with utilization and continues accruing during market closures.
+You do not need an opposing trader to open a position. The USDC liquidity pool is the counterparty to every trade: collected trader losses flow into it, and it funds trader gains. LPs supply that capital through Senior and Junior tranches and are paid for underwriting it — carry accrues on LP-financed exposure over time, and Virtual Price Impact (VPI) charges trades that deepen the pool's directional imbalance while rebating trades that reduce it. Keepers earn explicit execution rewards; the protocol takes explicit fees. Every cost your agent will pay is one of those named items, and each is calculable from onchain state.
 
-The design aims to keep returns tied to market exposure, committed capital and necessary execution work, while restricting opportunities to take value through the mechanics of the venue.
+Carry deserves a direct comparison, because it replaces the cost that is hardest to model everywhere else. On a conventional perps venue, holding a position means paying — or hoping to receive — a funding rate that swings with crowd positioning and premium, flips sign without warning, and can spike exactly when your trade is most crowded. Forecasting it means forecasting other traders. Plether has no trader-to-trader funding at all. Carry is a time-based charge on the portion of your position financed by LP capital, it varies only with pool utilization, and it is always a cost — never a payment your strategy depends on receiving. An agent can read utilization onchain and project its holding cost over any horizon before committing, instead of carrying a funding-rate model as a second source of error.
 
-### Oracle pricing limits local price manipulation
+The pool's obligations are bounded by construction. Settlement prices stay within a fixed 0.00–2.00 range, so every position has a calculable maximum payout, and the protocol measures its aggregate worst-case liability before accepting more. An open or increase that would leave the pool unable to cover the resulting liability plus a settlement buffer is rejected. Capacity is therefore not a vague liquidity estimate your agent has to guess at — it is a concrete number to read and size against.
 
-Plether derives its dollar index from external Pyth FX data. Trades change positions and pool exposure; they do not move the reference price through a local reserve curve or order book.
+Two consequences matter for strategy design:
 
-That removes the local price-moving mechanism used in a conventional automated market maker (AMM) sandwich: an attacker cannot trade against Plether reserves to push the oracle mark away from a victim and then reverse that movement. Position changes can still affect VPI and available capacity, so an agent must bound its costs as well as its execution price.
+* **No counterparty auto-deleveraging.** Plether never forcibly trims an unrelated profitable position to cover another trader's loss. A hedge you put on stays on unless your own account fails its margin requirement. That makes PnL modelable in a way venues with ADL cannot offer.
+* **Solvency is one read away.** Because payouts are bounded, the pool's health reduces to a single comparison: effective backing against worst-case directional liability plus the settlement buffer. Your agent can monitor the same O(1) condition the protocol checks before accepting risk — no reconstructing counterparty exposure from thousands of open positions, the way assessing an opaque exchange or a mutualized insurance fund would require.
 
-The same separation matters during liquidations. Closing a liquidated position does not mechanically push the next position's reference price farther toward liquidation. A large external market move can still make many accounts liquidatable, but Plether liquidations do not themselves create a local forced-selling price spiral.
+One cost deserves special attention because agents keep trying to farm it. VPI can rebate a trade that improves the pool's balance, but a lifetime rule clamps every exposure to `charges − rebates ≥ 0`: if a position paid 30 USDC of VPI on the way in, its closing rebate is capped at 30 USDC no matter what the formula would otherwise pay. Reducing imbalance can zero out your VPI costs; it cannot become an income stream. If your agent wants the pool's liquidity economics, it commits capital as an LP. The full cost model is in [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 
-### Execution follows a rule the keeper must prove
+### The protocol enforces the mandate, not the model
 
-Oracle pricing needs an execution policy that restricts which observation can be used. Plether combines several protections:
+A forecast can be uncertain. The authority you hand your agent does not have to be.
 
-* **Commit first, price later.** While the oracle is live, including the scheduled close-only window, an order uses the first eligible oracle observation strictly after commitment. Historical proof prevents the keeper from skipping it in favour of a later observation.
-* **Binding orders.** A trader cannot observe the next price and cancel only the unfavourable commitments. Ordinary queued orders remain binding until a protocol-defined terminal outcome.
-* **First-in, first-out execution.** Keepers process the committed queue in order. They cannot select a later order simply because its execution would be more profitable to them or another participant.
-* **Validated oracle uncertainty.** Confidence and timestamp checks constrain accepted data. Live execution applies a side-adverse confidence adjustment; frozen voluntary closes follow a separate validated pricing and spread policy.
+Every externally submitted order binds an explicit price boundary, a deadline, allowed execution regimes and the execution-critical configuration, plus financial limits covering debits, charges, execution notional, resulting position size, equity and leverage. The protocol checks those limits against authoritative onchain state immediately before applying the trade — not against whatever the agent believed when it submitted. Use a preview to choose the limits; if the market moves while the order waits in the queue, the limits still hold.
 
-These mechanisms restrict specific forms of maximal extractable value (MEV) arising from transaction ordering and price selection. The ordering rule governs the committed queue; it does not promise transaction inclusion priority. Delays, unavailable data and a blocked queue head can still affect when an order completes.
+This inverts the usual trust model for autonomous trading. On a conventional venue, the code around the model is the only thing standing between a bad inference and a bad fill. Here, a hallucinated size or a stale price assumption produces a rejected order, because the mandate is enforced by the contract, not by the agent's own guardrails.
 
-For builders, the useful property is that execution follows an inspectable rule. The price is not a quote selected by the finalizer. See [How orders execute](../how-plether-works/how-orders-execute.md).
+Per-order limits compose with account-level controls. A smart account or session policy decides *who* may act — which contracts, cumulative exposure, withdrawals, expiry, revocation — while the order decides *what financial result is allowed*. An agent permitted to trade need not be capable of moving the owner's capital anywhere else. Take-profit and stop-loss protection runs through a separate surface with its own execution envelope; authorize it separately from ordinary orders.
 
-### Liquidity compensation belongs to committed liquidity
+### Built for software that crashes and retries
 
-VPI charges for increasing the pool's directional imbalance and can rebate a trade that reduces it. Its lifetime rule prevents those rebates from becoming an independent source of trading income.
+Agents lose network connections, restart mid-submission, and double-fire. Plether's order surface assumes this. Every submitted intent gets a permanent, account-scoped identity: replaying the exact same request returns the existing order rather than opening a second position, and reusing that identity for a different request is rejected. An agent recovering from an uncertain submission can retry blindly without duplicating exposure.
 
-For each portion of a position completed through a voluntary close:
+Afterwards, the record is independent of the agent. The lifecycle book distinguishes pending, executed and failed orders, and canonical events with authenticated receipt hashes prove both the authorized intent and the terminal result. An operator can reconcile everything the agent did without trusting its memory or its logs — which is the difference between running an agent on your own capital and being able to run one on someone else's.
 
-```
-VPI charges minus VPI rebates over that exposure's lifetime ≥ 0
-```
+Access cannot be taken away, either. Execution is permissionless: there is no API key to revoke, no account review, no rate limit tied to your standing with an operator. Use shared keepers, run your own executor, or both — swapping executors changes nothing about an order's financial limits. Keepers still need valid oracle data, gas and transaction inclusion, so delays and a blocked queue head remain part of the timing model.
 
-A trader can recover previously paid VPI, but cannot finish that exposure with a net VPI credit. An opening rebate is provisional and remains subject to clawback. Partial closes reconcile the corresponding share of the position's VPI history, and the protocol protects the reserve backing a required clawback.
+### What to build
 
-For example, if an exposure has paid 30 USDC in VPI and its closing trade would otherwise receive a 45 USDC rebate, the lifetime clamp limits that rebate to 30 USDC. The exposure can finish with zero net VPI cost, but cannot generate 15 USDC of rebate-only income.
+The market is deliberately narrow: USDC-margined, USDC-settled exposure to the dollar against a six-currency basket, LONG or SHORT.
 
-**Improving the pool's balance can lower a trader's costs. Earning the pool's liquidity returns requires committing capital as an LP.**
+That suits a few shapes well. A systematic macro agent translates a dollar-strength model into sized exposure, pricing carry, VPI and execution costs into its expected result. A hedging agent uses SHORT USD to partially offset weakening-dollar risk in a dollar-heavy portfolio, accepting that a bounded basket index is not a substitute for any specific currency pair. A risk-management agent watches position health, utilization, carry and market-close rules, and adjusts within its mandate.
 
-An agent can still hedge its market exposure elsewhere. The restriction concerns extracting net VPI rebates inside Plether, rather than whether the agent's broader portfolio is directional or market neutral. See [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
+All of them must be designed around the venue's honest constraints: orders are delayed and binding, and FX market hours bring close-only windows. Those belong in the strategy's evaluation from day one, not as exception handling bolted on later.
 
-### Bounded liability makes backing measurable
-
-Plether's settlement price stays within a fixed 0.00–2.00 range. That gives every position a calculable maximum modeled price payout and lets the protocol measure aggregate directional liability before accepting more risk.
-
-An open or increase must leave effective pool backing sufficient to cover the resulting bounded liability plus the configured settlement buffer. Existing trader claims are deducted from available backing. If the condition fails, the trade is rejected.
-
-LP withdrawals must preserve the corresponding reserves. Capital supporting trader obligations cannot also leave through a discretionary LP exit.
-
-For an agent, this makes capacity a concrete input to strategy and sizing. For an LP, it puts an explicit bound on the price obligation being underwritten. The settlement boundary also limits the instrument's exposure: a strategy must model the difference between Plether's bounded index and unrestricted external FX prices.
-
-Plether does not forcibly reduce an unrelated profitable position to cover another trader's loss. This protection against counterparty auto-deleveraging is separate from liquidation of an account that fails its own margin requirements.
-
-A profitable close can still face a cash delay. A residual price payout that cannot be funded in full becomes a recorded trader claim, reserved ahead of LP withdrawals. Closing the exposure and receiving spendable cash are separate events. See [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
-
-### Fair accounting protects the whole pool
-
-Execution protection would be incomplete if participants could extract the same value through entry, exit or settlement accounting.
-
-Plether values LP deposits and withdrawals using the same model of what open positions would pay or owe at the current mark. Existing trader profits reduce LP value; trader losses count only to the extent backed by collectible collateral and claims belonging to the same account that can offset those losses. An amount collectible from a trader can affect share value without becoming cash that an LP can withdraw before collection.
-
-Trader claims also have a collective coverage rule. When aggregate claims are under-covered, no claimant can settle merely because the pool could pay that particular account. Once aggregate coverage is restored, paying one claim reduces cash and liabilities equally, preserving coverage for the others.
-
-These rules connect participant protection. Traders depend on backing that remains in the pool. LPs depend on accounting that does not reward another participant for exploiting a valuation asymmetry. Both benefit when obligations are recorded consistently and protected from premature withdrawal. See [Settlement liquidity and trader claims](../how-plether-works/settlement-liquidity-and-trader-claims.md).
-
-### Agents can authorize financial limits before execution
-
-An agent's forecast may be uncertain. Its execution authority can still be precise.
-
-Ordinary externally submitted orders bind an explicit price boundary, deadline, allowed execution regimes and execution-critical configuration. They also carry financial limits covering debits, charges, execution notional, resulting position size, equity and leverage. The protocol checks those limits against authoritative state immediately before applying the trade.
-
-This lets a builder translate a trading decision into bounded authority: execute this exposure only within these costs, conditions and resulting risk limits. A preview helps choose the limits; the submitted limits remain enforceable if state changes while the order waits.
-
-Per-order limits work alongside account-level permissions. A smart account or session policy should separately control which contracts and actions an agent can call, its cumulative exposure, withdrawals, expiry and revocation. An agent that is allowed to trade need not also have authority to transfer the owner's capital elsewhere.
-
-Take-profit and stop-loss protection has its own authorization model. Triggered protection creates protocol-generated close attempts with a different execution envelope; it should be authorized separately from ordinary bounded orders. A trigger queues a delayed close attempt and does not guarantee a fill at its threshold.
-
-### Automation can be verified independently
-
-Plether gives each ordinary submitted intent a permanent account-scoped identity. Replaying the exact request returns its existing order identity; reusing that identity for a different request is rejected. This helps an agent recover from uncertain submission without accidentally duplicating exposure.
-
-The lifecycle record distinguishes pending orders from executed and failed orders. Canonical events and authenticated receipt hashes provide evidence of the authorized intent and terminal result, so an operator can reconcile what happened independently of the agent's memory or local logs.
-
-Execution is permissionless. A builder can use shared keepers, operate its own executor, or combine both. Changing the executor does not change an ordinary order's financial limits. Keepers still need valid data, transaction inclusion and enough gas to make progress.
-
-Together, these properties support a disciplined automation cycle: read state, authorize a bounded action, confirm registration, monitor its lifecycle and reconcile the terminal result.
-
-### Build agents for dollar trading and hedging
-
-Plether gives builders a focused market: USDC-margined, USDC-settled exposure to the dollar against a six-currency basket.
-
-**Systematic macro trading.** An agent can translate a model of dollar strength into LONG USD or SHORT USD exposure, size it against available capacity and margin, and include carry, VPI and execution costs in its expected result.
-
-**Portfolio hedging.** An agent managing dollar-denominated assets can use SHORT USD exposure to partially offset weakening-dollar risk against the basket. LONG USD can express the opposite exposure. The appropriate hedge depends on the portfolio's liabilities and correlations; the index is not a perfect substitute for a specific currency pair.
-
-**Continuous risk management.** An agent can monitor position health, utilization, changing carry, pending orders and market-close rules, then adjust exposure within its mandate. It must plan for binding delayed orders, close-only periods and possible settlement claims.
-
-These applications suit strategies that can operate through delayed oracle execution. The timing model belongs in the strategy's design and evaluation from the beginning.
-
-For the index construction and direction conventions, read [Understanding the Plether Dollar Index](understanding-the-plether-dollar-index.md). For contract interfaces, financial bounds, account policies, order identity and receipt verification, continue with [Working with AI Agents](https://github.com/Plether-Fi/plether-core/blob/master/packages/perps/WORKING_WITH_AI_AGENTS.md).
+For index construction and direction conventions, read [Understanding the Plether Dollar Index](understanding-the-plether-dollar-index.md). For contract interfaces, financial bounds, account policies, order identity and receipt verification, continue with [Working with AI Agents](https://github.com/Plether-Fi/plether-core/blob/master/packages/perps/WORKING_WITH_AI_AGENTS.md).
