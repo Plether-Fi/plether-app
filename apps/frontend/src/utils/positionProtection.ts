@@ -1,11 +1,13 @@
 import { formatUnits } from 'viem'
-import { protectionParamsFromInputs, type ProtectionDraft } from '../contracts/positionProtection'
+import { protectionParamsFromInputs, protectionReturnPercent, type ProtectionDraft, type ProtectionPositionBasis } from '../contracts/positionProtection'
 import type { PerpsDirection } from './perps'
 
 export interface ProtectionPriceContext {
   direction: PerpsDirection
   rawMark?: bigint
   cap?: bigint
+  position?: ProtectionPositionBasis
+  liquidationPrice?: bigint
 }
 
 export function protectionPrice(rawPrice?: bigint, cap?: bigint): string {
@@ -26,19 +28,17 @@ export function convertProtectionInputMode(draft: ProtectionDraft, mode: Protect
   if (!draft.takeProfit && !draft.stopLoss) return { ...draft, mode }
   const params = protectionParamsFromInputs({ ...draft, ...context, rawMark: context.rawMark ?? 0n, cap: context.cap ?? 0n })
   const cap = context.cap ?? 0n
-  const displayedMark = cap - (context.rawMark ?? 0n)
-  const convert = (raw: bigint) => {
+  const convert = (raw: bigint, isProfit: boolean) => {
     if (!raw) return ''
     if (mode === 'price') return formatUnits(cap - raw, 8)
-    const delta = cap - raw - displayedMark
-    const percent = (delta < 0n ? -delta : delta) * 1_000_000n / displayedMark
-    if (!percent) throw new Error('This price change is too small to express as a percentage. Keep price input.')
-    return formatUnits(percent, 4)
+    const percent = protectionReturnPercent(raw, context.direction, context.position)
+    if (percent === undefined) throw new Error('Position entry price, size and margin are required to calculate return percentages.')
+    return formatUnits(isProfit ? percent : -percent, 4)
   }
-  const converted = { mode, takeProfit: convert(params.takeProfitTriggerPrice), stopLoss: convert(params.stopLossTriggerPrice) }
-  const roundTrip = protectionParamsFromInputs({ ...converted, direction: context.direction, rawMark: context.rawMark ?? 0n, cap })
+  const converted = { mode, takeProfit: convert(params.takeProfitTriggerPrice, true), stopLoss: convert(params.stopLossTriggerPrice, false) }
+  const roundTrip = protectionParamsFromInputs({ ...converted, ...context, rawMark: context.rawMark ?? 0n, cap })
   if (roundTrip.takeProfitTriggerPrice !== params.takeProfitTriggerPrice || roundTrip.stopLossTriggerPrice !== params.stopLossTriggerPrice) {
-    throw new Error('These prices need more precision than % change supports. Keep price input to preserve them.')
+    throw new Error('These prices need more precision than return % supports. Keep price input to preserve them.')
   }
   return converted
 }

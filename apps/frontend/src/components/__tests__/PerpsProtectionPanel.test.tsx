@@ -92,15 +92,47 @@ describe('position protection management', () => {
     expect(screen.queryByRole('button', { name: 'Add TP/SL' })).not.toBeInTheDocument()
   })
   it('keeps the reviewed percentage trigger prices fixed when the market moves', async () => {
-    const view = render(<PerpsProtectionPanel {...props} />)
+    const activeProps = { ...props, position, protection: { ...protection, status: 2 } }
+    const view = render(<PerpsProtectionPanel {...activeProps} />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
-    expect(screen.getByLabelText('Take profit (%)')).toHaveValue('10')
+    expect(screen.getByLabelText('Take profit (%)')).toHaveValue('100')
     fireEvent.change(screen.getByLabelText('Take profit (%)'), { target: { value: '20' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
-    view.rerender(<PerpsProtectionPanel {...props} rawMark={99_000_000n} />)
-    expect(screen.getByText('1.2000')).toBeInTheDocument()
+    view.rerender(<PerpsProtectionPanel {...activeProps} rawMark={99_000_000n} />)
+    expect(screen.getByText('1.0200')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
-    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 80_000_000n, stopLossTriggerPrice: 110_000_000n } }) })
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'replace', protectionId: 7n, params: { takeProfitTriggerPrice: 98_000_000n, stopLossTriggerPrice: 110_000_000n } }) })
+  })
+  it('uses the position basis for a 90% short loss and submits a stop before liquidation', async () => {
+    const short = { ...position, direction: 'short' as const, side: 1, entryPrice: 99_500_000n, size: 10_000n * 10n ** 18n, marginUsdc: 250_000_000n, liquidationPrice: 97_000_000n }
+    render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} position={short} rawMark={99_500_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
+    expect(screen.getByLabelText('Stop loss (USDC)')).toHaveValue('1.0275')
+    fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
+    expect(screen.getByText('-90% return on margin')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm TP/SL' }))
+    await waitFor(() => { expect(mocks.manage).toHaveBeenCalledWith({ action: 'create', protectionId: undefined, params: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 97_250_000n } }) })
+  })
+  it('blocks review of a stop beyond liquidation', () => {
+    render(<PerpsProtectionPanel {...props} protection={undefined} pendingOrders={0} position={{ ...position, liquidationPrice: 108_000_000n }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('liquidation price')
+    expect(screen.queryByRole('button', { name: 'Confirm TP/SL' })).not.toBeInTheDocument()
+  })
+  it.each(['margin', 'liquidation'] as const)('blocks confirmation when %s changes invalidate the review', change => {
+    const createProps = { ...props, protection: undefined, pendingOrders: 0, position: { ...position, liquidationPrice: 110_000_000n } }
+    const view = render(<PerpsProtectionPanel {...createProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add TP/SL' }))
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
+    const changedPosition = change === 'margin' ? { ...createProps.position, marginUsdc: 200_000n } : { ...createProps.position, liquidationPrice: 108_000_000n }
+    view.rerender(<PerpsProtectionPanel {...createProps} position={changedPosition} />)
+    expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(change === 'margin' ? 'changed' : 'liquidation price')
+    expect(mocks.manage).not.toHaveBeenCalled()
   })
   it('keeps invalid inputs editable and blocks review', () => {
     render(<PerpsProtectionPanel {...props} />)

@@ -80,7 +80,7 @@ import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { PerpsCloseReconciliationDisclosure } from './PerpsCloseReconciliationDetails'
 import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
-import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, type PositionProtectionParams } from '../contracts/positionProtection'
+import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, validateProtectionParams, type PositionProtectionParams } from '../contracts/positionProtection'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
@@ -2851,14 +2851,30 @@ export function PerpsTradeTicket({
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
   const canAttachProtection = !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
-  const protectionInput = useMemo(() => {
+  const protectionPriceContext = {
+    direction: effectiveOrderDirection,
+    rawMark: oraclePriceRaw,
+    cap: protectionCapPrice,
+    position: openPreview?.valid && !isTradePreviewPending
+      ? { entryPrice: openPreview.postEntryPrice, size: openPreview.postSize, marginUsdc: openPreview.postMarginUsdc }
+      : !enableLiveTrading && oraclePriceRaw !== undefined
+        ? { entryPrice: oraclePriceRaw, size: orderSizeDelta, marginUsdc }
+        : undefined,
+    liquidationPrice: openPreview?.valid && !isTradePreviewPending && openPreview.hasLiquidationPrice ? openPreview.liquidationPrice : undefined,
+  }
+  const protectionInput = (() => {
     if (!canAttachProtection || !isProtectionEnabled) return {}
     try {
       if (!protectionConfiguration?.enabled) throw new Error('New TP/SL protections are currently disabled')
       if (oraclePriceRaw === undefined || protectionCapPrice === undefined) throw new Error('Waiting for the current market price')
-      return { params: protectionParamsFromInputs({ ...protectionDraft, direction: effectiveOrderDirection, rawMark: oraclePriceRaw, cap: protectionCapPrice }) }
+      // Recheck the fixed review prices when market/account previews refresh.
+      if (isReviewOpen && reviewSnapshot?.positionProtection) {
+        validateProtectionParams(reviewSnapshot.positionProtection, effectiveOrderDirection, oraclePriceRaw, protectionCapPrice, protectionPriceContext.liquidationPrice)
+        return { params: reviewSnapshot.positionProtection }
+      }
+      return { params: protectionParamsFromInputs({ ...protectionDraft, ...protectionPriceContext, rawMark: oraclePriceRaw, cap: protectionCapPrice }) }
     } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid TP/SL triggers' } }
-  }, [canAttachProtection, isProtectionEnabled, effectiveOrderDirection, oraclePriceRaw, protectionCapPrice, protectionConfiguration?.enabled, protectionDraft])
+  })()
   const liveValidationError = (() => {
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
@@ -4254,7 +4270,7 @@ export function PerpsTradeTicket({
             </Tooltip> : null}
             </div>
             {canAttachProtection && isProtectionEnabled ? <div className="mt-4 space-y-3">
-              <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} direction={effectiveOrderDirection} rawMark={oraclePriceRaw} cap={protectionCapPrice} />
+              <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} {...protectionPriceContext} />
               {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
               <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional <TokenAmount amount={formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} /> from free margin to trigger and execute the close.</p>
             </div> : null}

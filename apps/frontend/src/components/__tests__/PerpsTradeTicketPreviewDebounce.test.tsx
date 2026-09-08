@@ -4,6 +4,7 @@ import { PerpsTradeTicket } from '../PerpsTradeTicket'
 
 const wagmiMocks = vi.hoisted(() => ({
   useReadContracts: vi.fn(),
+  prepareOrder: vi.fn(),
 }))
 
 vi.mock('../../perps-aa', () => {
@@ -56,6 +57,7 @@ vi.mock('wagmi', () => ({
 
 vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
+    prepareOrder: wagmiMocks.prepareOrder,
     cleanupExpiredOrder: vi.fn(),
     commitOrder: vi.fn(),
     depositMargin: vi.fn(),
@@ -133,6 +135,7 @@ describe('Perps trade preview debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     wagmiMocks.useReadContracts.mockReset()
+    wagmiMocks.prepareOrder.mockReset().mockImplementation(() => new Promise(() => {}))
     wagmiMocks.useReadContracts.mockReturnValue({
       data: [{ status: 'success', result: openPreviewResult }],
       isFetching: false,
@@ -142,6 +145,61 @@ describe('Perps trade preview debounce', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('uses the opening preview margin and entry for TP/SL and rejects a stop beyond preview liquidation', async () => {
+    wagmiMocks.useReadContracts.mockReturnValue({
+      data: [{ status: 'success', result: { ...openPreviewResult, liquidationPrice: 110_000_000n } }],
+      isFetching: false, isLoading: false,
+    })
+    render(<PerpsTradeTicket enableLiveTrading initialDirection="long" initialOrderQuantity="100"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n}
+      protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
+    expect(screen.getByLabelText('Stop loss (USDC)')).toHaveValue('0.96') // 5 USDC loss / 20 USDC preview margin.
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
+    expect(screen.getByLabelText('Stop loss (%)')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent('liquidation price')
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Leverage' }), { target: { value: '6' } })
+    expect(screen.getByLabelText('Stop loss (USDC)')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+    wagmiMocks.useReadContracts.mockReturnValue({
+      data: [{ status: 'success', result: { ...openPreviewResult, postMarginUsdc: 40_000_000n, liquidationPrice: 110_000_000n } }],
+      isFetching: false, isLoading: false,
+    })
+    await act(async () => { vi.advanceTimersByTime(300) })
+    expect(screen.getByLabelText('Stop loss (USDC)')).toHaveValue('0.91')
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
+  })
+
+  it('revalidates the fixed reviewed stop when the opening preview liquidation changes', () => {
+    wagmiMocks.useReadContracts.mockReturnValue({
+      data: [{ status: 'success', result: { ...openPreviewResult, liquidationPrice: 110_000_000n } }],
+      isFetching: false, isLoading: false,
+    })
+    const props = { enableLiveTrading: true, initialDirection: 'long' as const, initialOrderQuantity: '100',
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n,
+      protectionCapPrice: 200_000_000n, protectionConfiguration: { enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n } }
+    const view = render(<PerpsTradeTicket {...props} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
+    fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ positionProtection: { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 104_000_000n } }))
+    // Recomputing 25% with this new margin would produce a valid .99 stop,
+    // but the reviewed .96 stop is now beyond the .97 liquidation boundary.
+    wagmiMocks.useReadContracts.mockReturnValue({
+      data: [{ status: 'success', result: { ...openPreviewResult, postEntryPrice: 100_000_000n, postMarginUsdc: 4_000_000n, liquidationPrice: 103_000_000n } }],
+      isFetching: false, isLoading: false,
+    })
+    view.rerender(<PerpsTradeTicket {...props} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('liquidation price')
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
   })
 
   it('waits for size, leverage, and direction edits to settle before enabling the preview read', async () => {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { formatUnits } from 'viem'
+import { formatUnits, parseUnits } from 'viem'
 import { ProtectionInputs } from '../components/ProtectionInputs'
 import { PositionProtectionManager, type ProtectionManagementRequest } from '../components/PerpsProtectionPanel'
-import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, type PositionProtection } from '../contracts/positionProtection'
+import { EMPTY_PROTECTION_DRAFT, protectionParamsFromInputs, type PositionProtection, type ProtectionPositionBasis } from '../contracts/positionProtection'
 import type { PerpsPosition } from '../hooks/usePerpsAccount'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import { protectionPrice, protectionStatusLabel } from '../utils/positionProtection'
@@ -41,6 +41,9 @@ function LocalMarket() {
   const [margin, setMargin] = useState('500')
   const [price, setPrice] = useState('1')
   const [draft, setDraft] = useState({ ...EMPTY_PROTECTION_DRAFT, takeProfit: '1.1', stopLoss: '0.9' })
+  let protectionPosition: ProtectionPositionBasis | undefined
+  try { protectionPosition = { entryPrice: state?.protocol.lastMarkPrice ?? 0n, size: parseUnits(size, 18), marginUsdc: parseUnits(margin, 6) } }
+  catch { /* Keep incomplete quantity and margin inputs editable. */ }
   useEffect(() => {
     let active = true
     const refresh = () => { void api('state').then(next => { if (active) setState(next) }).catch((cause: unknown) => { if (active) setError(String(cause)) }) }
@@ -54,7 +57,7 @@ function LocalMarket() {
   function run(path: string, data: unknown = {}) { void act(path, data).catch(() => { /* act displays the error */ }) }
   function open() {
     if (!state) return
-    try { run('open', { direction, size, margin, params: protectionParamsFromInputs({ ...draft, direction, rawMark: state.protocol.lastMarkPrice, cap: state.cap }) }) }
+    try { run('open', { direction, size, margin, params: protectionParamsFromInputs({ ...draft, direction, rawMark: state.protocol.lastMarkPrice, cap: state.cap, position: protectionPosition }) }) }
     catch (cause) { setError(String(cause)) }
   }
   return <main className="mx-auto max-w-5xl space-y-6 p-5 text-content-primary">
@@ -83,7 +86,7 @@ function LocalMarket() {
           <h2 className="font-semibold">Open a protected position</h2>
           <div className="flex gap-2">{(['long', 'short'] as const).map(side => <button key={side} aria-pressed={direction === side} className={`${button} ${direction === side ? 'bg-[#FFAB96] !text-app-bg' : ''}`} onClick={() => { setDirection(side); setDraft({ ...EMPTY_PROTECTION_DRAFT, takeProfit: side === 'long' ? '1.1' : '0.9', stopLoss: side === 'long' ? '0.9' : '1.1' }) }}>{side === 'long' ? 'Long' : 'Short'}</button>)}</div>
           <div className="grid grid-cols-2 gap-3"><label>Quantity · plDXY<input aria-label="Order quantity" className={input} value={size} onChange={e => { setSize(e.target.value) }} /></label><label>Margin · USDC<input aria-label="Order margin" className={input} value={margin} onChange={e => { setMargin(e.target.value) }} /></label></div>
-          <ProtectionInputs value={draft} onChange={setDraft} direction={direction} rawMark={state.protocol.lastMarkPrice} cap={state.cap} disabled={busy || state.position.exists || state.pendingOrders > 0} />
+          <ProtectionInputs value={draft} onChange={setDraft} direction={direction} rawMark={state.protocol.lastMarkPrice} cap={state.cap} position={protectionPosition} disabled={busy || state.position.exists || state.pendingOrders > 0} />
           <button className={`${button} bg-[#FFAB96] !text-app-bg`} disabled={busy || state.position.exists || state.pendingOrders > 0} onClick={open}>{busy ? 'Submitting local transaction…' : 'Open with TP/SL on Anvil'}</button>
         </section>
         <section className="space-y-4 border border-brand-border bg-surface-panel p-4">

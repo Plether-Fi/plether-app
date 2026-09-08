@@ -1,6 +1,6 @@
 import { useId } from 'react'
 import { formatUnits } from 'viem'
-import { protectionParamsFromInputs, type ProtectionDraft, type PositionProtectionParams } from '../contracts/positionProtection'
+import { hasProtectionPositionBasis, protectionParamsFromInputs, protectionReturnPercent, type ProtectionDraft, type PositionProtectionParams } from '../contracts/positionProtection'
 import { protectionDistance, protectionPrice, type ProtectionPriceContext } from '../utils/positionProtection'
 import { InfoTooltip } from './ui/InfoTooltip'
 import { TokenAmount } from './ui/TokenAmount'
@@ -12,18 +12,21 @@ interface ProtectionInputsProps extends ProtectionPriceContext {
   disabled?: boolean
 }
 
-export function ProtectionInputs({ value, onChange, disabled = false, direction, rawMark, cap }: ProtectionInputsProps) {
+export function ProtectionInputs({ value, onChange, disabled = false, direction, rawMark, cap, position, liquidationPrice }: ProtectionInputsProps) {
   const id = useId()
-  const context = { direction, rawMark, cap }
+  const context = { direction, rawMark, cap, position, liquidationPrice }
   const marketReady = rawMark !== undefined && cap !== undefined && rawMark > 0n && rawMark < cap
 
   return <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
     <legend className="sr-only">Take profit / Stop loss</legend>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-content-secondary">{direction === 'long' ? 'Long' : 'Short'} · Current price <TokenAmount amount={protectionPrice(rawMark, cap)} className="font-medium tabular-nums text-content-primary" /></p>
-      <InfoTooltip ariaLabel="How take profit and stop loss work" content="Set either trigger or both. The first one reached queues a full close and cancels the other. The final execution price may differ. % change is measured from the current price, not leveraged return. Calculated percentages are rounded down to four decimals." />
+      <InfoTooltip ariaLabel="How take profit and stop loss work" content="Set either trigger or both. The first one reached queues a full close and cancels the other. Gain/Loss % is gross PnL from entry divided by position margin, accounting for position size and leverage. It excludes fees, carry and VPI. Negative Loss % locks in a gain; negative Gain % targets a loss. Calculated percentages are truncated to four decimals. Stop loss must trigger before the estimated liquidation price. The final execution price may differ." />
     </div>
-    {!marketReady ? <p className="text-xs text-content-secondary">Waiting for the current price to calculate percentage changes.</p> : null}
+    <p className="text-xs text-content-secondary">Gain/Loss % is return on position margin from entry, before fees and carry.</p>
+    {liquidationPrice !== undefined ? <p className="text-xs text-content-secondary">Liquidation price <TokenAmount amount={protectionPrice(liquidationPrice, cap)} className="tabular-nums text-[#FFAB96]" /></p> : null}
+    {!marketReady ? <p className="text-xs text-content-secondary">Waiting for the current price to validate triggers.</p> : null}
+    {!hasProtectionPositionBasis(position) ? <p className="text-xs text-content-secondary">Waiting for position entry price, size and margin to calculate return percentages. You can enter a trigger price instead.</p> : null}
     <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-3">
       {(['takeProfit', 'stopLoss'] as const).map(key => {
         const isProfit = key === 'takeProfit'
@@ -41,8 +44,8 @@ export function ProtectionInputs({ value, onChange, disabled = false, direction,
         }
         const hint = error ?? `${goesUp ? 'Above' : 'Below'} the current price`
         const price = inputMode === 'price' ? value[key] : trigger && cap !== undefined ? formatUnits(cap - trigger, 8) : ''
-        const delta = trigger !== undefined && rawMark !== undefined ? rawMark - trigger : 0n
-        const percent = inputMode === 'percent' ? value[key] : trigger && marketReady ? formatUnits((delta < 0n ? -delta : delta) * 1_000_000n / (cap - rawMark), 4) : ''
+        const returnPercent = trigger ? protectionReturnPercent(trigger, direction, position) : undefined
+        const percent = inputMode === 'percent' ? value[key] : returnPercent !== undefined ? formatUnits(isProfit ? returnPercent : -returnPercent, 4) : ''
         return <div key={key} className="min-w-0 border border-brand-border/20 bg-app-bg p-3">
           <div className="mb-3 flex items-center justify-between gap-2 text-sm font-medium">
             <span className={isProfit ? 'text-positive' : 'text-[#FFAB96]'}>{label}</span>
@@ -72,14 +75,17 @@ export function ProtectionInputs({ value, onChange, disabled = false, direction,
   </fieldset>
 }
 
-export function ProtectionPriceSummary({ params, cap, rawMark }: { params: PositionProtectionParams; cap?: bigint; rawMark?: bigint }) {
+export function ProtectionPriceSummary({ params, cap, rawMark, position, direction }: { params: PositionProtectionParams } & Partial<ProtectionPriceContext>) {
   return <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3">
-    {([['Take profit', params.takeProfitTriggerPrice, 'text-positive'], ['Stop loss', params.stopLossTriggerPrice, 'text-[#FFAB96]']] as const).map(([label, price, tone]) => <div key={label} className="min-w-0 border border-brand-border/20 bg-app-bg p-3 sm:p-4">
+    {([['Take profit', params.takeProfitTriggerPrice, 'text-positive'], ['Stop loss', params.stopLossTriggerPrice, 'text-[#FFAB96]']] as const).map(([label, price, tone]) => {
+      const percent = price && direction ? protectionReturnPercent(price, direction, position) : undefined
+      return <div key={label} className="min-w-0 border border-brand-border/20 bg-app-bg p-3 sm:p-4">
       <dt className={`text-xs font-medium ${tone}`}>{label}</dt>
       <dd>
         <p className="mt-2 break-words text-lg font-semibold tabular-nums text-content-primary sm:text-xl">{price ? <TokenAmount amount={protectionPrice(price, cap)} wrap /> : 'Not set'}</p>
+        {percent !== undefined ? <p className="mt-1 text-xs text-content-secondary">{formatUnits(percent, 4)}% return on margin</p> : null}
         {price ? <p className="mt-1 text-xs text-content-secondary">{protectionDistance(price, rawMark, cap)}</p> : <p className="mt-1 text-xs text-content-secondary">No {label.toLowerCase()} trigger</p>}
       </dd>
-    </div>)}
+    </div>})}
   </dl>
 }
