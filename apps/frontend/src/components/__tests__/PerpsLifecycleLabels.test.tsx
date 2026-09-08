@@ -278,9 +278,9 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n} />
     )
-    await screen.findAllByText('This review has expired or is about to expire. Refresh the review before committing.')
+    await screen.findAllByText('This review has expired or is about to expire. Retry review for fresh order terms.')
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Retry protections' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Retry review' })[0])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
     expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
@@ -1291,7 +1291,7 @@ describe('perps lifecycle labels', () => {
       sizeDelta: 400n * 10n ** 18n, maxSize: { minimumSizeDelta: 100n * 10n ** 18n },
     }))
     const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Checking order…' })).toBeDisabled()
     await act(async () => resolveReview(prepared))
     expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('300')
     expect(within(dialog).getByText(/Max adjusted from 400 to 300 plDXY/)).toBeInTheDocument()
@@ -2127,6 +2127,11 @@ describe('perps lifecycle labels', () => {
     const positionSize = 2_000n * 10n ** 18n
     const positionSizeToUsdcScale = 10n ** 20n
     const priceCap = 200_000_000n
+
+    const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue({
+      ...reviewed, request: { ...reviewed.request, sizeDelta: positionSize, isClose: true, marginDelta: 0n },
+    })
 
     wagmiMocks.readContractsData = [{
       status: 'success',

@@ -13,8 +13,10 @@ import {
   PERPS_TERMINAL_REASON_LABELS,
   type PreparedPerpsOrderV2,
   type PerpsLifecycleOutcomeSnapshot,
-  type PerpsOrderReviewSummary,
 } from '../contracts/perpsOrderV2'
+import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
+import { PerpsReviewFooter } from './PerpsReviewFooter'
+import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
@@ -101,6 +103,8 @@ type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 interface PerpsOrderReviewSnapshot {
+  preparationKey?: string
+  identityKey?: string
   positionProtection?: PositionProtectionParams
   maxSize?: { minimumSizeDelta: bigint }
   direction: Direction
@@ -1853,6 +1857,7 @@ export function PerpsTradeTicket({
     cleanupExpiredOrder,
   } = usePerpsTrading()
   const sponsoredOperations = useSponsoredOperationStore((state) => state.operations)
+  const activeAccountOperation = useSponsoredOperationStore((state) => address ? state.getActiveOperation(address) : undefined)
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
   const slippageOptions = SLIPPAGE_OPTIONS
@@ -1874,14 +1879,9 @@ export function PerpsTradeTicket({
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
-  const [preparedOrder, setPreparedOrder] = useState<PreparedPerpsOrderV2 | undefined>()
   const [reviewSnapshot, setReviewSnapshot] = useState<PerpsOrderReviewSnapshot | undefined>()
-  const [orderReviewSummary, setOrderReviewSummary] = useState<PerpsOrderReviewSummary | undefined>()
-  const [reviewFundingShortfallUsdc, setReviewFundingShortfallUsdc] = useState<bigint | undefined>()
-  const [isExecutionProtectionsLoading, setIsExecutionProtectionsLoading] = useState(false)
   const [protectionDraft, setProtectionDraft] = useState(EMPTY_PROTECTION_DRAFT)
   const [isProtectionEnabled, setIsProtectionEnabled] = useState(false)
-  const [executionProtectionsError, setExecutionProtectionsError] = useState<string | undefined>()
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
@@ -1990,7 +1990,7 @@ export function PerpsTradeTicket({
   const canEnableMarginCallSimulator = simulatorEntryMaxLeverage !== undefined &&
     simulatorEntryMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
-  const activeLeverage = Math.min(leverage, maxLeverage)
+  const activeLeverage = isReviewOpen && reviewSnapshot ? reviewSnapshot.selectedMaxLeverageBps / 10_000 : Math.min(leverage, maxLeverage)
   const normalizedAccountAddress = address?.toLowerCase()
   const latestSponsoredOperation = useMemo(
     () => sponsoredOperations
@@ -2548,9 +2548,9 @@ export function PerpsTradeTicket({
   const enteredOrderSizeRaw = parsePerpsPositionSize(orderQuantity)
   const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionDxyExposureRaw > 0n)
   const isOppositePositionDirection = hasCurrentPosition && currentPosition !== undefined && direction !== currentPosition.direction
-  const isReducingCurrentPosition = hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
+  const isReducingCurrentPosition = isReviewOpen && reviewSnapshot ? reviewSnapshot.isClose : hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
   const isOracleFrozenClose = oracleFrozen && isReducingCurrentPosition
-  const effectiveOrderDirection = isReducingCurrentPosition && currentPosition?.direction
+  const effectiveOrderDirection = isReviewOpen && reviewSnapshot ? reviewSnapshot.direction : isReducingCurrentPosition && currentPosition?.direction
     ? currentPosition.direction
     : direction
   const pendingCloseOrders = currentPosition?.exists
@@ -2626,8 +2626,8 @@ export function PerpsTradeTicket({
   const orderQuantityInputValue = isFullCloseIntent && isReducingCurrentPosition
     ? maxOrderQuantityInputAmount
     : orderQuantity
-  const orderSizeDelta = effectiveOrderSizeRaw
-  const calculationOraclePriceRaw = oraclePriceRaw ?? (
+  const orderSizeDelta = isReviewOpen && reviewSnapshot && !reviewSnapshot.maxSize ? reviewSnapshot.sizeDelta : effectiveOrderSizeRaw
+  const calculationOraclePriceRaw = (isReviewOpen && reviewSnapshot ? reviewSnapshot.oraclePrice : oraclePriceRaw) ?? (
     enableLiveTrading ? undefined : BigInt(Math.round(MOCK_PREVIEW_PRICE * 100_000_000))
   )
   const orderDxyExposureUsdc = orderSizeDelta > 0n
@@ -2662,7 +2662,7 @@ export function PerpsTradeTicket({
   const protocolExecutionFeeRaw = executionFeeUsdcRaw(contractNotionalUsdc, executionFeeBpsRaw)
   const slippageNumber = isOracleFrozenClose
     ? DEFAULT_ORACLE_FROZEN_SLIPPAGE
-    : Math.max(slippage, 0)
+    : isReviewOpen && reviewSnapshot ? reviewSnapshot.slippagePercent : Math.max(slippage, 0)
   const previewPrice = oraclePriceRaw
     ? displayDxyPriceNumber(oraclePriceRaw)
     : enableLiveTrading
@@ -2671,14 +2671,6 @@ export function PerpsTradeTicket({
   const rawExecutionLimit = oraclePriceRaw
     ? getPerpsTargetPrice({ direction: effectiveOrderDirection, isClose: isReducingCurrentPosition, oraclePrice: oraclePriceRaw, slippagePercent: slippageNumber })
     : undefined
-  const executionLimit = rawExecutionLimit === 0n
-    ? null
-    : rawExecutionLimit ? displayDxyPriceNumber(rawExecutionLimit) : !enableLiveTrading && Number.isFinite(slippageNumber)
-      ? (2 - MOCK_PREVIEW_PRICE) * (direction === 'long' ? 1 + slippageNumber / 100 : 1 - slippageNumber / 100)
-      : undefined
-  const committedExecutionLimit = committedTargetPrice === undefined
-    ? executionLimit
-    : committedTargetPrice
   const committedSlippageNumber = committedSlippage ?? slippageNumber
   const liquidationPrice = previewPrice === undefined
     ? undefined
@@ -3001,129 +2993,91 @@ export function PerpsTradeTicket({
     }
     return undefined
   })()
+  const preparationIdentityKey = orderPreparationKey([
+    identity.ownerAddress?.toLowerCase(), address?.toLowerCase(), chainId, identity.manifest,
+  ])
+  const reviewIdentityRef = useRef(preparationIdentityKey)
   useEffect(() => {
-    if (
-      !enableLiveTrading ||
-      !isReviewOpen ||
-      lifecycleState !== 'preview' ||
-      reviewSnapshot !== undefined ||
-      liveValidationError ||
-      typeof prepareOrder !== 'function'
-    ) return
-
-    setReviewSnapshot({
-      direction: effectiveOrderDirection,
-      notionalUsdc: contractNotionalUsdc,
-      sizeDelta: orderSizeDelta,
-      marginUsdc,
-      oraclePrice: oraclePriceRaw ?? 0n,
-      slippagePercent: slippageNumber,
-      isClose: isReducingCurrentPosition,
-      selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
-      positionProtection: protectionInput.params,
-      maxSize: isMaxOpenIntent && !isReducingCurrentPosition
-        ? { minimumSizeDelta: minimumOpenSizeForMax }
-        : undefined,
-    })
-  }, [
-    activeLeverage,
-    availableToTradeRaw,
-    contractNotionalUsdc,
-    effectiveOrderDirection,
-    enableLiveTrading,
-    isReducingCurrentPosition,
-    isReviewOpen,
-    lifecycleState,
-    liveValidationError,
+    if (reviewIdentityRef.current === preparationIdentityKey) return
+    reviewIdentityRef.current = preparationIdentityKey
+    setReviewSnapshot(undefined)
+    if (lifecycleState === 'preview') setIsReviewOpen(false)
+  }, [preparationIdentityKey, lifecycleState])
+  const draftSnapshot = useMemo<PerpsOrderReviewSnapshot>(() => ({
+    direction: effectiveOrderDirection,
+    notionalUsdc: contractNotionalUsdc,
+    sizeDelta: orderSizeDelta,
     marginUsdc,
-    oraclePriceRaw,
-    orderSizeDelta,
-    prepareOrder,
-    reviewSnapshot,
-    slippageNumber,
-    protectionInput.params,
-    isMaxOpenIntent,
-    minimumOpenSizeForMax,
+    oraclePrice: oraclePriceRaw ?? 0n,
+    slippagePercent: slippageNumber,
+    isClose: isReducingCurrentPosition,
+    selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+    positionProtection: protectionInput.params,
+    maxSize: isMaxOpenIntent && !isReducingCurrentPosition
+      ? { minimumSizeDelta: minimumOpenSizeForMax } : undefined,
+  }), [effectiveOrderDirection, contractNotionalUsdc, orderSizeDelta, marginUsdc, oraclePriceRaw,
+    slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent, minimumOpenSizeForMax])
+  const preparationAccountContextKey = orderPreparationKey([
+    availableToTradeRaw,
+    currentPosition && [currentPosition.exists, currentPosition.side, currentPosition.size,
+      currentPosition.entryPrice, currentPosition.marginUsdc, currentPosition.vpiAccrued],
+    pendingOrders.map(order => [order.orderId, order.sizeDelta, order.isReduceOnly, order.status]),
+    pendingOrderCount, activePositionProtectionId, protectionConfiguration, oracleFrozen, marketPhase,
   ])
+  const draftPreparationKey = orderPreparationKey([
+    preparationIdentityKey, draftSnapshot, oraclePublishTime, availableToTradeRaw,
+    currentPosition, pendingOrders, pendingOrderCount, activePositionProtectionId,
+    protectionConfiguration, marketPhase, activeAccountOperation?.id,
+  ])
+  const candidateSnapshot = useMemo(() => isReviewOpen && reviewSnapshot
+    ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
+  [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
+  const candidateKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
+  const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
+    (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation &&
+    typeof prepareOrder === 'function'
+  const preparation = usePerpsOrderPreparation({
+    candidate: { key: candidateKey, input: candidateSnapshot },
+    identityKey: preparationIdentityKey,
+    contextKey: preparationAccountContextKey,
+    reviewValid: !liveValidationError && !activeAccountOperation,
+    mode: !canPrepare ? 'inactive' : isReviewOpen ? 'review'
+      : !liveValidationError && !isTradePreviewPending && currentTradePreview?.valid ? 'background' : 'inactive',
+    prepare: (input, signal) => prepareOrder({ ...input, signal }),
+  })
+  // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
-    if (
-      !enableLiveTrading ||
-      !isReviewOpen ||
-      lifecycleState !== 'preview' ||
-      reviewSnapshot === undefined ||
-      typeof prepareOrder !== 'function'
-    ) {
-      setPreparedOrder(undefined)
-      setIsExecutionProtectionsLoading(false)
-      return
+    if (canPrepare && isReviewOpen && !reviewSnapshot && !liveValidationError) {
+      setReviewSnapshot({ ...candidateSnapshot, preparationKey: candidateKey, identityKey: preparationIdentityKey })
     }
-
-    let cancelled = false
-    const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => {
-      if (cancelled) return
-      cancelled = true
-      controller.abort()
-      setIsExecutionProtectionsLoading(false)
-      setExecutionProtectionsError(
-        'Execution protections took too long to prepare. Retry with a fresh market snapshot.'
-      )
-    }, 30_000)
-    setPreparedOrder(undefined)
-    setOrderReviewSummary(undefined)
-    setReviewFundingShortfallUsdc(undefined)
-    setIsExecutionProtectionsLoading(true)
-    setExecutionProtectionsError(undefined)
-    void prepareOrder({
-      ...reviewSnapshot,
-      signal: controller.signal,
-    }).then((prepared) => {
-      if (!cancelled) {
-        if (reviewSnapshot.maxSize) {
-          setOrderQuantity(formatPerpsPositionSize(prepared.request.sizeDelta, 0))
-        }
-        setPreparedOrder(prepared)
-        setOrderReviewSummary(prepared.reviewSummary)
-      }
-    }).catch((error: unknown) => {
-      if (!cancelled) {
-        if (error instanceof PerpsOrderFundingShortfallError) {
-          setOrderReviewSummary(error.reviewedOrder.reviewSummary)
-          setReviewFundingShortfallUsdc(error.shortfallUsdc)
-          setExecutionProtectionsError(
-            `The protected order needs ${formatPerpsUsdc(error.shortfallUsdc)} USDC more. Reduce the order or deposit margin.`
-          )
-        } else if (error instanceof PerpsOrderReviewError) {
-          setOrderReviewSummary(error.reviewSummary)
-          setExecutionProtectionsError(error.message)
-        } else {
-          setExecutionProtectionsError(
-            error instanceof Error
-              ? error.message
-              : 'Execution protections could not be prepared'
-          )
-        }
-      }
-    }).finally(() => {
-      window.clearTimeout(timeoutId)
-      if (!cancelled) setIsExecutionProtectionsLoading(false)
-    })
-
-    return () => {
-      cancelled = true
-      controller.abort()
-      window.clearTimeout(timeoutId)
+  }, [canPrepare, isReviewOpen, reviewSnapshot, liveValidationError, candidateSnapshot, candidateKey, preparationIdentityKey])
+  const preparedOrder = isReviewOpen && preparation.matches ? preparation.result : undefined
+  useEffect(() => {
+    if (reviewSnapshot?.maxSize && preparedOrder) {
+      setOrderQuantity(formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0))
     }
-  }, [
-    enableLiveTrading,
-    isReviewOpen,
-    lifecycleState,
-    prepareOrder,
-    reviewSnapshot,
-  ])
-  const activeReviewSummary = preparedOrder?.reviewSummary ?? orderReviewSummary
+  }, [reviewSnapshot?.maxSize, preparedOrder])
+  const preparationError = isReviewOpen && preparation.matches ? preparation.error : undefined
+  const orderReviewSummary = preparationError instanceof PerpsOrderFundingShortfallError
+    ? preparationError.reviewedOrder.reviewSummary
+    : preparationError instanceof PerpsOrderReviewError ? preparationError.reviewSummary : undefined
+  const reviewFundingShortfallUsdc = preparationError instanceof PerpsOrderFundingShortfallError ? preparationError.shortfallUsdc : undefined
+  const isExecutionProtectionsLoading = canPrepare && isReviewOpen && (preparation.status === 'pending' || !preparation.matches)
+  const executionProtectionsError = preparationError instanceof Error ? preparationError.message
+    : preparationError ? 'Order checks failed. Retry review.' : undefined
+  const reviewChanges = perpsReviewChanges(preparation.previous, preparedOrder)
+  const reviewedExecutionLimit = preparedOrder?.request.targetPrice ?? rawExecutionLimit
+  const executionLimit = reviewedExecutionLimit === 0n
+    ? null
+    : reviewedExecutionLimit ? displayDxyPriceNumber(reviewedExecutionLimit) : !enableLiveTrading && Number.isFinite(slippageNumber)
+      ? (2 - MOCK_PREVIEW_PRICE) * (direction === 'long' ? 1 + slippageNumber / 100 : 1 - slippageNumber / 100)
+      : undefined
+  const committedExecutionLimit = committedTargetPrice === undefined
+    ? executionLimit
+    : committedTargetPrice
+  const activeReviewSummary = orderReviewSummary ?? preparedOrder?.reviewSummary
   const isPreparedOrderExpiring = preparedOrder !== undefined &&
-    Number(preparedOrder.protection.validUntil) - nowSeconds <= 5
+    Number(preparedOrder.protection.validUntil) - nowSeconds <= REVIEW_REFRESH_SECONDS
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
@@ -3131,7 +3085,7 @@ export function PerpsTradeTicket({
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
   const reviewValidationError = enableLiveTrading
-    ? fundingShortfallMessage ?? preparedOrderExpiryMessage ?? executionProtectionsError ?? liveValidationError
+    ? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
     : orderQuantityValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
@@ -3149,10 +3103,10 @@ export function PerpsTradeTicket({
     : openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
   const previewExecutionFeeUsdc = isReducingCurrentPosition
-    ? closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
+    ? activeReviewSummary?.currentAssessment.executionFeeUsdc ?? closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
     : activeReviewSummary?.currentAssessment.executionFeeUsdc ?? openPreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
   const previewVpiUsdc = isReducingCurrentPosition
-    ? closePreview?.vpiDeltaUsdc
+    ? activeReviewSummary?.currentAssessment.vpiUsdc ?? closePreview?.vpiDeltaUsdc
     : activeReviewSummary?.currentAssessment.vpiUsdc ?? openPreview?.vpiUsdc
   const previewLensFallbackValue = isTradePreviewPending ? PREVIEW_LOADING_VALUE : PREVIEW_UNAVAILABLE_VALUE
   const previewLensFallbackTone = isTradePreviewPending ? 'muted' : undefined
@@ -3203,7 +3157,7 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading) return isReducingCurrentPosition
       ? isFullCloseOrder ? 'Position closed' : PREVIEW_UNAVAILABLE_VALUE
       : formatLeverage(activeLeverage)
-    if (isReviewOpen && isExecutionProtectionsLoading) return PREVIEW_LOADING_VALUE
+    if (isReviewOpen && isExecutionProtectionsLoading && !preparedOrder) return PREVIEW_LOADING_VALUE
     if (isReviewOpen && activeReviewSummary !== undefined) {
       if (isReducingCurrentPosition && activeReviewSummary.currentAssessment.postPositionSize === 0n) return 'Position closed'
       return formatLeverageBps(activeReviewSummary.worstPostLeverageBps)
@@ -3280,7 +3234,7 @@ export function PerpsTradeTicket({
       ...orderDetailRows(orderDxyExposureUsdc, orderSizeDelta),
       {
         label: enableLiveTrading && !isReviewOpen ? 'Estimated initial margin' : 'Required margin',
-        value: enableLiveTrading && isReviewOpen && isExecutionProtectionsLoading
+        value: enableLiveTrading && isReviewOpen && isExecutionProtectionsLoading && !preparedOrder
           ? PREVIEW_LOADING_VALUE
           : formatUsdcRaw(previewInitialMarginUsdc),
         tooltip: enableLiveTrading && !isReviewOpen
@@ -3356,6 +3310,7 @@ export function PerpsTradeTicket({
       enableLiveTrading,
       executionLimit,
       isExecutionProtectionsLoading,
+      preparedOrder,
       isReviewOpen,
       keeperBounty,
       oraclePriceDisplay,
@@ -3747,6 +3702,12 @@ export function PerpsTradeTicket({
   }
 
   async function handleConfirmCommit() {
+    if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
+      Number(preparedOrder.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000 ||
+      document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
+      setFlowError('Wait for a fresh order review before confirming.')
+      return
+    }
     const commitAttemptId = commitAttemptIdRef.current + 1
     commitAttemptIdRef.current = commitAttemptId
     deferredSafeConfirmationErrorRef.current = undefined
@@ -3816,7 +3777,7 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:lifecycle:commitPreparing')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setLifecycleState('commitPreparing')
-      const sizeDelta = orderSizeDelta
+      const sizeDelta = preparedOrder.request.sizeDelta
       setCommittedSizeDelta(sizeDelta)
       setCommittedDirection(perpsSideToDirection(preparedOrder.request.side))
       setCommittedMarginDelta(preparedOrder.request.marginDelta)
@@ -4072,12 +4033,7 @@ export function PerpsTradeTicket({
     setCommittedVpiUsdc(undefined)
     setCommittedPositionVpiAccrued(undefined)
     setCommittedShowsPositionVpiBalance(false)
-    setPreparedOrder(undefined)
     setReviewSnapshot(undefined)
-    setOrderReviewSummary(undefined)
-    setReviewFundingShortfallUsdc(undefined)
-    setIsExecutionProtectionsLoading(false)
-    setExecutionProtectionsError(undefined)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)
@@ -4086,11 +4042,7 @@ export function PerpsTradeTicket({
   }, [])
 
   function retryExecutionProtections() {
-    setPreparedOrder(undefined)
-    setReviewSnapshot(undefined)
-    setOrderReviewSummary(undefined)
-    setReviewFundingShortfallUsdc(undefined)
-    setExecutionProtectionsError(undefined)
+    preparation.retry()
     setFlowError(undefined)
   }
 
@@ -4516,6 +4468,7 @@ export function PerpsTradeTicket({
               setFlowError(displayedValidationError)
               return
             }
+            if (canPrepare) setReviewSnapshot({ ...draftSnapshot, preparationKey: draftPreparationKey, identityKey: preparationIdentityKey })
             setIsReviewOpen(true)
           }}
         >
@@ -4600,33 +4553,19 @@ export function PerpsTradeTicket({
         initialFocus="dialog"
         footer={
           lifecycleState === 'preview' ? (
-            <div className="flex gap-3">
-              <Button
-                className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
-                variant="secondary"
-                analyticsId="cancel_review"
-                analyticsProperties={commonAnalyticsProperties}
-                onClick={closeReviewModal}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1"
-                variant={direction === 'short' ? 'danger' : 'primary'}
-                disabled={Boolean(reviewValidationError) || (enableLiveTrading && (
-                  isExecutionProtectionsLoading ||
-                  Boolean(executionProtectionsError) ||
-                  preparedOrder === undefined
-                ))}
-                analyticsId="confirm_commit"
-                analyticsProperties={commonAnalyticsProperties}
-                onClick={() => {
-                  void handleConfirmCommit()
-                }}
-              >
-                Confirm Commit
-              </Button>
-            </div>
+            <PerpsReviewFooter
+              preparing={isExecutionProtectionsLoading}
+              refreshing={preparation.refreshing}
+              slow={preparation.slow}
+              error={executionProtectionsError}
+              changes={reviewChanges}
+              direction={direction}
+              canConfirm={!reviewValidationError && (!enableLiveTrading || preparation.ready)}
+              onCancel={closeReviewModal}
+              onConfirm={() => { void handleConfirmCommit() }}
+              onRetry={reviewFundingShortfallUsdc === undefined ? retryExecutionProtections : undefined}
+              analyticsProperties={commonAnalyticsProperties}
+            />
           ) : lifecycleState === 'commitPending' ? (
             !enableLiveTrading ? (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -4843,16 +4782,6 @@ export function PerpsTradeTicket({
                       <p className="text-sm text-brand-orange">
                         {executionProtectionsError}
                       </p>
-                      {reviewFundingShortfallUsdc === undefined ? (
-                        <Button
-                          className={`mt-3 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                          size="sm"
-                          variant="secondary"
-                          onClick={retryExecutionProtections}
-                        >
-                          Retry protections
-                        </Button>
-                      ) : null}
                     </div>
                   ) : displayedExecutionProtections ? (
                     <div className="mt-3">
@@ -4940,16 +4869,6 @@ export function PerpsTradeTicket({
                       }}
                     >
                       {cleanupStatus === 'pending' ? 'Cleaning Up...' : 'Clean Up Oldest Order'}
-                    </Button>
-                  ) : null}
-                  {isPreparedOrderExpiring ? (
-                    <Button
-                      className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                      size="sm"
-                      variant="secondary"
-                      onClick={retryExecutionProtections}
-                    >
-                      Retry protections
                     </Button>
                   ) : null}
                   {cleanupError ? (

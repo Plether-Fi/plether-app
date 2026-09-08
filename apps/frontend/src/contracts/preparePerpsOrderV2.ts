@@ -159,8 +159,8 @@ async function loadPerpsOrderReviewContext(
   const orderLifecycleBook = manifest.orderLifecycleBook
   const policyEvaluator = manifest.policyEvaluator
   const verified = await verifyPerpsV2DeploymentBindings(client, manifest)
-  const blockNumber = verified.blockNumber
-  const block = await client.getBlock({ blockNumber })
+  // Reuse the exact block already fetched for deployment verification.
+  const { blockNumber, block } = verified
   if (block.number > 0xffff_ffff_ffff_ffffn) {
     throw new Error('The reviewed block number cannot fit the V2 order format')
   }

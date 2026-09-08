@@ -1,4 +1,4 @@
-import { isAddressEqual, keccak256, type Address, type PublicClient } from 'viem'
+import { isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
 import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
 import {
   PERPS_CFD_ENGINE_ABI,
@@ -39,7 +39,11 @@ export async function verifyProtectionDeployment(client: PublicClient, manifest:
 export async function verifyPerpsV2DeploymentBindings(
   client: PublicClient,
   manifest: PerpsAaDeploymentManifest
-): Promise<{ positionProtectionBook: Address; blockNumber: bigint }> {
+): Promise<{
+  positionProtectionBook: Address
+  blockNumber: bigint
+  block: { number: bigint; hash: Hex; timestamp: bigint }
+}> {
   const block = await client.getBlock({ blockTag: 'latest' })
   const blockNumber = block.number
   const [
@@ -56,6 +60,7 @@ export async function verifyPerpsV2DeploymentBindings(
     lensEngine,
     lensRouter,
     lensHousePool,
+    protectionRouter,
   ] = await Promise.all([
     client.readContract({
       address: manifest.orderRouter,
@@ -135,6 +140,14 @@ export async function verifyPerpsV2DeploymentBindings(
       functionName: 'HOUSE_POOL',
       blockNumber,
     }),
+    // The router's returned book is checked against this manifest address below,
+    // so its reverse binding can be read in the same parallel group.
+    client.readContract({
+      address: manifest.positionProtectionBook,
+      abi: PERPS_POSITION_PROTECTION_BOOK_ABI,
+      functionName: 'ROUTER',
+      blockNumber,
+    }),
   ])
 
   requireSameAddress('Router Engine', routerEngine, manifest.cfdEngine)
@@ -179,17 +192,11 @@ export async function verifyPerpsV2DeploymentBindings(
     PERPS_ARBITRUM_SEPOLIA.housePool
   )
 
-  const protectionRouter = await client.readContract({
-    address: positionProtectionBook,
-    abi: PERPS_POSITION_PROTECTION_BOOK_ABI,
-    functionName: 'ROUTER',
-    blockNumber,
-  })
   requireSameAddress(
     'Position-protection Router',
     protectionRouter,
     manifest.orderRouter
   )
 
-  return { positionProtectionBook, blockNumber }
+  return { positionProtectionBook, blockNumber, block }
 }

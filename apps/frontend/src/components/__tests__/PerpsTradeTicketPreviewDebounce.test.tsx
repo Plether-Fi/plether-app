@@ -1,10 +1,13 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { prepared } from '../../test/fixtures/preparedOrder'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 
 const wagmiMocks = vi.hoisted(() => ({
   useReadContracts: vi.fn(),
+  accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
   prepareOrder: vi.fn(),
+  commitOrder: vi.fn(),
 }))
 
 vi.mock('../../perps-aa', () => {
@@ -15,7 +18,7 @@ vi.mock('../../perps-aa', () => {
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: address,
-      accountAddress: address,
+      accountAddress: wagmiMocks.accountAddress,
       chainId: 421614,
       isAaManifestConfigured: false,
       sponsorshipEnabled: false,
@@ -27,8 +30,8 @@ vi.mock('../../perps-aa', () => {
       confirmIdentityAfterContinuityCheck: () => false,
       reloadIdentity: () => undefined,
     }),
-    useSponsoredOperationStore: (selector: (state: { operations: readonly unknown[] }) => unknown) => (
-      selector({ operations: [] })
+    useSponsoredOperationStore: (selector: (state: { operations: readonly unknown[]; getActiveOperation: () => undefined }) => unknown) => (
+      selector({ operations: [], getActiveOperation: () => undefined })
     ),
   }
 })
@@ -59,7 +62,7 @@ vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
     prepareOrder: wagmiMocks.prepareOrder,
     cleanupExpiredOrder: vi.fn(),
-    commitOrder: vi.fn(),
+    commitOrder: wagmiMocks.commitOrder,
     depositMargin: vi.fn(),
     executeOrder: vi.fn(),
     fundTradingAccount: vi.fn(),
@@ -134,7 +137,9 @@ function latestReadOptions(): ReadContractsOptions {
 describe('Perps trade preview debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    wagmiMocks.accountAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     wagmiMocks.useReadContracts.mockReset()
+    wagmiMocks.commitOrder.mockReset()
     wagmiMocks.prepareOrder.mockReset().mockImplementation(() => new Promise(() => {}))
     wagmiMocks.useReadContracts.mockReturnValue({
       data: [{ status: 'success', result: openPreviewResult }],
@@ -145,6 +150,78 @@ describe('Perps trade preview debounce', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('prepares while the ticket is idle, reuses the result on opening, and never submits in the background', async () => {
+    const result = prepared()
+    result.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    result.request.sizeDelta = 100n * 10n ** 18n
+    wagmiMocks.prepareOrder.mockResolvedValue(result)
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="100" oraclePriceRaw={100_000_000n}
+      oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    expect(screen.getByRole('dialog')).toHaveFocus()
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+  })
+
+  it('refreshes automatically and displays exact changed terms before enabling updated confirmation', async () => {
+    const first = prepared(20)
+    first.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    first.request.sizeDelta = 100n * 10n ** 18n
+    let resolveRefresh!: (value: typeof first) => void
+    wagmiMocks.prepareOrder.mockResolvedValueOnce(first).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve }))
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="100" initialReviewOpen oraclePriceRaw={100_000_000n}
+      oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(screen.getByRole('button', { name: 'Updating review…' })).toBeDisabled()
+    const updated = { ...first, protection: { ...first.protection, validUntil: BigInt(Math.floor(Date.now() / 1000) + 60) },
+      request: { ...first.request, marginDelta: first.request.marginDelta + 1n } }
+    await act(async () => { resolveRefresh(updated) })
+    expect(screen.getByRole('button', { name: 'Confirm updated order' })).toBeEnabled()
+    expect(screen.getByText('Required margin: 20 USDC → 20.000001 USDC')).toBeInTheDocument()
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+  })
+
+  it('closes a review after an account switch and ignores its late response', async () => {
+    let resolve!: (value: ReturnType<typeof prepared>) => void
+    wagmiMocks.prepareOrder.mockImplementation(() => new Promise(yes => { resolve = yes }))
+    const props = { enableLiveTrading: true, initialReviewOpen: true, initialOrderQuantity: '100', oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
+    const view = render(<PerpsTradeTicket {...props} />)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    wagmiMocks.accountAddress = '0x0000000000000000000000000000000000000002'
+    view.rerender(<PerpsTradeTicket {...props} />)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await act(async () => { resolve(prepared()) })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a frozen close with Exact slippage while retaining the selected quantity', async () => {
+    const result = prepared()
+    result.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    result.request.isClose = true
+    result.request.sizeDelta = 100n * 10n ** 18n
+    result.request.marginDelta = 0n
+    wagmiMocks.prepareOrder.mockResolvedValue(result)
+    const props = { enableLiveTrading: true, initialReviewOpen: true, initialReduceOnly: true, initialOrderQuantity: '100',
+      currentPosition: existingLongPosition, oraclePriceRaw: 100_000_000n, oraclePublishTime: 1_700_000_000, availableToTradeRaw: 1_000_000_000n }
+    const view = render(<PerpsTradeTicket {...props} oracleFrozen={false} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    view.rerender(<PerpsTradeTicket {...props} oracleFrozen />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
+    expect(wagmiMocks.prepareOrder).toHaveBeenLastCalledWith(expect.objectContaining({ slippagePercent: 0, sizeDelta: 100n * 10n ** 18n, isClose: true }))
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
   it('uses the opening preview margin and entry for TP/SL and rejects a stop beyond preview liquidation', async () => {
@@ -198,7 +275,7 @@ describe('Perps trade preview debounce', () => {
     })
     view.rerender(<PerpsTradeTicket {...props} />)
     expect(screen.getByRole('alert')).toHaveTextContent('liquidation price')
-    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Checking order…' })).toBeDisabled()
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
   })
 
