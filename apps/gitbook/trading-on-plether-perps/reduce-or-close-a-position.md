@@ -57,7 +57,9 @@ Risk-reducing close orders remain available during normal trading, FAD-only[^fad
 
 ### 1. Choose the amount in the trade ticket
 
-Use the Position panel to review the exposure you currently hold, then create the exit in the trade ticket. The Position panel does not have separate **Reduce** or **Close** controls.
+Use the Position panel to review the exposure you currently hold. For a full close, select `Close position` to fill the available position quantity and open **Commit Preview**. Review and wallet authorization are still required before the close is submitted; earlier pending reductions can affect the amount available, as explained below.
+
+For a partial reduction, or to set up the exit manually, use the trade ticket:
 
 In the trade ticket, enable `Reduce only`. This ensures the order can only reduce or close the current position; it cannot increase exposure or open a position in the opposite direction.
 
