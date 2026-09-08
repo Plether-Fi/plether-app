@@ -80,6 +80,8 @@ Before using Plether, understand that:
 
 Onchain finance already runs on dollars. Plether makes the dollar itself a market.
 
+Building an automated strategy? [AI trading agents](welcome/ai-trading-agents.md) explains how oracle execution, bounded liability and verifiable financial limits support systematic dollar trading and hedging.
+
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
