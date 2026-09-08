@@ -1,6 +1,8 @@
 # GitBook screenshot-to-Storybook map
 
-This inventory maps every screenshot currently embedded in a published `apps/gitbook` article to its deterministic Storybook state. Full capture runs remove unused screenshot assets so the GitBook directory contains only mapped, current-interface visuals.
+This inventory maps the Storybook screenshots embedded in published `apps/gitbook` articles to their deterministic states. Full capture runs remove unused PNGs from `.gitbook/assets/screenshots`.
+
+Live Firefox and MetaMask captures for `trader-quickstart.md` are stored separately in `.gitbook/assets/trader-quickstart`. They are refreshed manually from the Sepolia interface and are outside the Storybook capture and pruning process.
 
 References use the article path and current screenshot line so the capture script can locate and synchronize each embed.
 
@@ -106,6 +108,8 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | `trading-on-plether-perps/take-profit-and-stop-loss.md:148` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
 
 ## Inventory result
+
+The counts below cover the Storybook screenshots only.
 
 - Screenshot references found: **23**
 - Unique screenshot assets: **16**
