@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within } from 'storybook/test'
+import { expect, fireEvent, userEvent, within } from 'storybook/test'
 import { PositionProtectionManager, ProtectionHistoryRow, type ProtectionManagementRequest } from '../components/PerpsProtectionPanel'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import type { PositionProtection } from '../contracts/positionProtection'
@@ -25,6 +25,7 @@ interface PreviewProps {
   executionState: 'automatic' | 'unavailable' | 'stale' | 'transaction-pending' | 'loading' | 'error' | ProtectionExecutionReason
   managementOutcome: 'success' | 'rejected' | 'pending'
   legs: 'both' | 'take-profit' | 'stop-loss'
+  percentageExample: 'none' | '90-percent' | 'beyond-liquidation'
 }
 function protectionFixture(scenario: PreviewProps['scenario'], direction: PreviewProps['direction'], legs: PreviewProps['legs'] = 'both'): PositionProtection | undefined {
   if (scenario === 'empty') return undefined
@@ -71,7 +72,7 @@ function historyEvents(protection: PositionProtection, latestFailureReason = 2):
   if (protection.status === 6) events.unshift(event('PositionProtectionCancelled', 120))
   return events
 }
-function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosition, narrow, executionState, managementOutcome, legs }: PreviewProps) {
+function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosition, narrow, executionState, managementOutcome, legs, percentageExample }: PreviewProps) {
   const fixture = protectionFixture(scenario, direction, legs)
   const terminal = [4, 5, 6, 7].includes(scenarioStatus[scenario])
   const [protection, setProtection] = useState(() => terminal ? undefined : fixture)
@@ -85,7 +86,11 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
     exists: !['pending', 'closed', 'failed', 'liquidated'].includes(scenario), side: direction === 'long' ? 0 : 1, direction,
     size: 2_000n * 10n ** 18n, entryPrice: 101_000_000n, marginUsdc: 400_000_000n,
     unrealizedPnlUsdc: 20_000_000n, maintenanceMarginUsdc: 2_000_000n, liquidatable: false,
-    estimatedNotionalUsdc: 2_000_000_000n, liquidationPrice: 120_000_000n, pendingCarryUsdc: 600_000n,
+    estimatedNotionalUsdc: 2_000_000_000n, liquidationPrice: direction === 'long' ? 120_000_000n : 80_000_000n, pendingCarryUsdc: 600_000n,
+    ...(percentageExample !== 'none' ? {
+      size: 10_000n * 10n ** 18n, entryPrice: 99_500_000n, marginUsdc: 250_000_000n,
+      unrealizedPnlUsdc: 0n, estimatedNotionalUsdc: 9_950_000_000n, liquidationPrice: 97_000_000n,
+    } : {}),
   }
   async function manage(request: ProtectionManagementRequest) {
     if (managementOutcome === 'rejected') throw new Error('Wallet request rejected. Your existing TP/SL is unchanged.')
@@ -117,7 +122,7 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
     },
   }
   const content = <PositionProtectionManager
-    protection={protection} position={position} accountAddress={account} rawMark={100_000_000n} cap={200_000_000n}
+    protection={protection} position={position} accountAddress={account} rawMark={percentageExample !== 'none' ? 99_500_000n : 100_000_000n} cap={200_000_000n}
     configuration={{ enabled: commitsEnabled, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }}
     pendingOrders={scenario === 'pending' ? 1 : 0} onManage={manage}
     executionReport={executionState === 'loading' ? undefined : executionReport} executionLoading={executionState === 'loading'} executionError={executionState === 'error'}
@@ -151,8 +156,9 @@ const meta = {
     executionState: { control: 'select', options: ['automatic', ...PROTECTION_EXECUTION_REASONS, 'transaction-pending', 'unavailable', 'stale', 'loading', 'error'] },
     managementOutcome: { control: 'select', options: ['success', 'rejected', 'pending'] },
     legs: { control: 'inline-radio', options: ['both', 'take-profit', 'stop-loss'] },
+    percentageExample: { control: 'select', options: ['none', '90-percent', 'beyond-liquidation'] },
   },
-  args: { scenario: 'active', direction: 'long', commitsEnabled: true, showPosition: false, narrow: false, executionState: 'automatic', managementOutcome: 'success', legs: 'both' },
+  args: { scenario: 'active', direction: 'long', commitsEnabled: true, showPosition: false, narrow: false, executionState: 'automatic', managementOutcome: 'success', legs: 'both', percentageExample: 'none' },
 } satisfies Meta<typeof ProtectionPreview>
 export default meta
 type Story = StoryObj<typeof meta>
@@ -188,6 +194,28 @@ export const Inputs: Story = {
   name: 'Edit TP/SL',
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByRole('button', { name: 'Edit TP/SL' }))
+  },
+}
+export const LeveragedLoss: Story = {
+  name: '90% loss · before liquidation',
+  args: { scenario: 'empty', direction: 'short', percentageExample: '90-percent' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Add TP/SL' }))
+    fireEvent.change(canvas.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
+    await expect(canvas.getByLabelText('Stop loss (USDC)')).toHaveValue('1.0275')
+    await expect(canvas.getByText('Liquidation price')).toHaveTextContent('1.0300')
+  },
+}
+export const LossBeyondLiquidation: Story = {
+  name: 'Loss target · beyond liquidation',
+  args: { scenario: 'empty', direction: 'short', percentageExample: 'beyond-liquidation' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Add TP/SL' }))
+    fireEvent.change(canvas.getByLabelText('Stop loss (%)'), { target: { value: '110' } })
+    await expect(canvas.getByLabelText('Stop loss (%)')).toHaveAttribute('aria-invalid', 'true')
+    await expect(canvas.getByText(/Liquidation would occur before this stop loss/)).toBeVisible()
   },
 }
 export const Review: Story = {
