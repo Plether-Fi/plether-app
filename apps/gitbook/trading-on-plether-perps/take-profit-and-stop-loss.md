@@ -22,15 +22,17 @@ Use the dollar-oriented plDXY Perp price displayed in the application. The appli
 Each trigger has two editable fields:
 
 * **Price**, in USDC: the absolute trigger price.
-* **Gain** or **Loss**, in percent: a positive percentage distance from the current displayed price. Position direction determines whether the resulting price is above or below the market.
+* **Gain** or **Loss**, in percent: gross price PnL from entry as a percentage of position margin. The calculation uses entry price, position quantity and margin, so it accounts for leverage. A negative Loss % locks in a gain; a negative Gain % targets a loss.
 
-Editing either field recalculates the other when a valid current price is available. You can enter one trigger as a price and the other as a percentage. Prices support up to eight decimal places; percentages support up to four. Calculated percentage distances are rounded down to four decimals.
+Editing either field recalculates the other when position data and a valid current price are available. You can enter one trigger as a price and the other as a percentage. Prices support up to eight decimal places; percentages support up to four. Calculated percentages are truncated to four decimals. If position data is unavailable, including while an attached opening order is waiting to fill, use absolute trigger prices.
 
-For example, at a displayed price of 1.00 USDC, a long position with a 5% gain trigger and a 3% loss trigger has TP at 1.05 and SL at 0.97. For a short position, those distances give TP at 0.95 and SL at 1.03. These are illustrative inputs, not recommended settings.
+For example, a position with entry at 1.00 USDC, quantity of 1,000 and margin of 100 USDC has a 50% gain target of 50 USDC and a 20% loss target of 20 USDC. For a long, those give TP at 1.05 and SL at 0.98. For a short, TP is 0.95 and SL is 1.02. These are illustrative inputs, not recommended settings.
 
-**Gain/Loss is price movement, not leveraged return or net PnL.** It is measured from the current price used by the editor, not necessarily your entry price, and excludes fees, carry and VPI. Read [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md).
+**Gain/Loss is gross return on position margin, not net PnL.** It excludes fees, carry and VPI. New orders use the preview's estimated entry, quantity and margin. Read [How PnL is calculated](../how-plether-works/how-pnl-is-calculated.md).
 
-While you edit a percentage, its calculated price can move with the market. Review fixes the absolute trigger prices for confirmation. Saved triggers do not trail the market or reset to a new percentage distance. Their displayed distance from the current price can change while their absolute prices stay fixed.
+The editor shows the estimated liquidation price when available and rejects stop losses at or beyond it. A 90% loss target can still be beyond liquidation because maintenance margin and account collateral affect the liquidation boundary. Choose a stop before that boundary; a trigger still does not guarantee execution before liquidation.
+
+An existing position's percentage target is anchored to its entry and margin. A new order's preview can change before review. Review fixes the absolute trigger prices for confirmation; changes to position entry or margin require another review, and the stop is checked again against the latest available liquidation price. Saved triggers do not trail the market or reset to a new return percentage. Their displayed return and distance from the current price can change while their absolute prices stay fixed.
 
 ### Attach TP/SL to a new position
 

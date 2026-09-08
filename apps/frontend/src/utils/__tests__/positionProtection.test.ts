@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { convertProtectionInputMode, protectionDistance, protectionPrice, protectionStatusLabel } from '../positionProtection'
 
-const context = { direction: 'long' as const, rawMark: 100_000_000n, cap: 200_000_000n }
+const context = { direction: 'long' as const, rawMark: 100_000_000n, cap: 200_000_000n, position: { entryPrice: 100_000_000n, size: 10n ** 18n, marginUsdc: 1_000_000n } }
 describe('TP/SL presentation', () => {
   it('preserves the full precision of a trigger price', () => {
     expect(protectionPrice(87_654_321n, context.cap)).toBe('1.12345679')

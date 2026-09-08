@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatUnits } from 'viem'
 import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
-import { EMPTY_PROTECTION_DRAFT, type ProtectionDraft, protectionParamsFromInputs, type PositionProtection, type PositionProtectionParams } from '../contracts/positionProtection'
+import { EMPTY_PROTECTION_DRAFT, type ProtectionDraft, protectionParamsFromInputs, validateProtectionParams, type PositionProtection, type PositionProtectionParams } from '../contracts/positionProtection'
 import { useProtectionEvents, useProtectionHistory, useProtectionExecution, type ProtectionHistoryEvent, type ProtectionHistoryRecord } from '../hooks/useProtectionHistory'
 import { usePerpsTrading } from '../hooks/usePerpsTrading'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
@@ -34,6 +34,7 @@ interface ProtectionReview extends ProtectionManagementRequest {
   cap: bigint
   rawMark: bigint
   reward: bigint
+  position?: PerpsPosition
 }
 
 const ACTION_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-app-bg enabled:hover:!bg-[#FF572D]'
@@ -69,12 +70,18 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
   const [review, setReview] = useState<ProtectionReview>()
   const heading = useRef<HTMLHeadingElement>(null)
   const previousView = useRef(view)
-  const targetKey = [accountAddress, position?.exists, position?.direction, position?.size, protection?.protectionId, protection?.status, protection?.takeProfitTriggerPrice, protection?.stopLossTriggerPrice].join(':')
+  const targetKey = [accountAddress, position?.exists, position?.direction, position?.size, position?.entryPrice, position?.marginUsdc, protection?.protectionId, protection?.status, protection?.takeProfitTriggerPrice, protection?.stopLossTriggerPrice].join(':')
   const [reviewTarget, setReviewTarget] = useState<string>()
   const targetChanged = reviewTarget !== undefined && reviewTarget !== targetKey
   const editable = protection !== undefined && [1, 2].includes(protection.status)
   const creatable = !protection && position?.exists && pendingOrders === 0
   const direction = position?.exists ? position.direction : perpsSideToDirection(protection?.side)
+  const priceContext = { direction, rawMark, cap, position: position?.exists ? position : undefined, liquidationPrice: position?.exists ? position.liquidationPrice : undefined }
+  let reviewPriceError: string | undefined
+  if (review) {
+    try { validateProtectionParams(review.params, direction, rawMark ?? 0n, cap ?? 0n, priceContext.liquidationPrice) }
+    catch (cause) { reviewPriceError = cause instanceof Error ? cause.message : 'Review your TP/SL prices again.' }
+  }
   const reward = (configuration.triggerBountyUsdc ?? 0n) + (configuration.executionBountyUsdc ?? 0n)
   const reviewChanged = targetChanged || (review?.action === 'create' && (review.reward !== reward || pendingOrders > 0))
   const delayed = protection?.status === 8
@@ -101,8 +108,8 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
     try {
       if (targetChanged) throw new Error(STATE_CHANGED)
       if (!rawMark || !cap) throw new Error('Waiting for a current market price. Please try again.')
-      const params = protectionParamsFromInputs({ ...draft, direction, rawMark, cap })
-      setReview({ action: protection ? 'replace' : 'create', protectionId: protection?.protectionId, params, rawMark, cap, reward })
+      const params = protectionParamsFromInputs({ ...draft, ...priceContext, rawMark, cap })
+      setReview({ action: protection ? 'replace' : 'create', protectionId: protection?.protectionId, params, rawMark, cap, reward, position: priceContext.position })
       setView('review')
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Check your TP/SL prices') }
   }
@@ -119,6 +126,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         request = { action: 'cancel', protectionId: protection.protectionId }
       } else {
         if (!review || !configuration.enabled) throw new Error('Review your TP/SL again before confirming.')
+        if (reviewPriceError) throw new Error(reviewPriceError)
         request = { action: review.action, protectionId: review.protectionId, params: review.params }
       }
       await onManage(request)
@@ -145,7 +153,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       <div className="space-y-4 panel-padding">
         {view === 'overview' ? <>
           {protection ? <>
-            <ProtectionPriceSummary params={protection} cap={cap} rawMark={rawMark} />
+            <ProtectionPriceSummary params={protection} {...priceContext} />
             {protection.status === 1 ? <p className="text-sm leading-6 text-content-secondary">Your triggers will become active after opening order #{protection.parentOrderId.toString()} fills. They are not monitoring a position yet.</p> : null}
             {protection.status === 2 ? <p className="text-sm leading-6 text-content-secondary">The first trigger reached queues a close for your full position. The other trigger is then cancelled.</p> : null}
             {closing ? <div className={`border-l-2 p-3 ${delayed ? 'border-[#F7D977] bg-[#F7D977]/5' : 'border-[#FFAB96] bg-[#FFAB96]/5'}`}>
@@ -169,14 +177,14 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
             {editable ? <Button size="sm" variant="secondary" onClick={() => { setReviewTarget(targetKey); setView('remove'); setError(undefined); setSuccess(undefined) }}>Remove TP/SL</Button> : null}
           </div>
         </> : view === 'edit' ? <>
-          <ProtectionInputs value={draft} onChange={setDraft} disabled={pending || targetChanged} direction={direction} rawMark={rawMark} cap={cap} />
+          <ProtectionInputs value={draft} onChange={setDraft} disabled={pending || targetChanged} {...priceContext} />
           <p className="text-xs text-content-secondary">{protection ? 'Your current triggers stay in place until the update is confirmed.' : <><TokenAmount amount={formatPerpsUsdc(reward)} /> will be reserved from free margin to pay for triggering and executing the close.</>}</p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" className={ACTION_CLASS} disabled={pending || targetChanged || !configuration.enabled || (!draft.takeProfit && !draft.stopLoss)} onClick={reviewChanges}>Review TP/SL</Button>
             <Button size="sm" variant="secondary" onClick={() => { setView('overview'); setError(undefined) }}>Back</Button>
           </div>
         </> : view === 'review' && review ? <>
-          <ProtectionPriceSummary params={review.params} cap={review.cap} rawMark={review.rawMark} />
+          <ProtectionPriceSummary params={review.params} cap={review.cap} rawMark={review.rawMark} position={review.position} direction={direction} />
           <dl className="space-y-2 border-y border-brand-border/20 py-3 text-xs">
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Amount to close</dt><dd>100% of the position</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve</dt><dd><TokenAmount amount={formatPerpsUsdc(protection ? reserve : review.reward)} /> {protection ? '· already reserved' : '· from free margin'}</dd></div>
@@ -184,7 +192,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </dl>
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={reviewChanged || !configuration.enabled} onClick={() => void submit()}>Confirm TP/SL</Button>
+            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={reviewChanged || Boolean(reviewPriceError) || !configuration.enabled} onClick={() => void submit()}>Confirm TP/SL</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('edit'); setError(undefined) }}>Back to edit</Button>
           </div>
         </> : view === 'remove' ? <>
@@ -198,6 +206,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         {pending ? <p role="status" className="text-xs text-content-secondary">Confirm in your wallet, then wait for the update.</p> : null}
         {view !== 'overview' && (targetChanged || (view === 'review' && reviewChanged)) ? <p role="alert" className="text-xs text-brand-orange">{STATE_CHANGED}</p> : null}
         {error ? <p role="alert" className="break-words text-sm text-brand-orange">{error}</p> : null}
+        {view === 'review' && reviewPriceError ? <p role="alert" className="text-sm text-brand-orange">{reviewPriceError}</p> : null}
         {success ? <p role="status" className="text-xs text-positive">{success}</p> : null}
       </div>
       {protection && view === 'overview' ? <details className="border-t border-brand-border/20 panel-padding-x py-3 text-xs text-content-secondary">
