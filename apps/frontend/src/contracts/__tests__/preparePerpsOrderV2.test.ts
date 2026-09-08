@@ -59,6 +59,7 @@ function assessment(
 describe('preparePerpsOrderV2 leverage margin', () => {
   beforeEach(() => {
     vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+      block,
       blockNumber: block.number,
       positionProtectionBook: manifest.positionProtectionBook,
     })
@@ -143,6 +144,9 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     })
 
     expect(prepared.request.marginDelta).toBe(1_001_500_000n)
+    expect(client.getBlock).not.toHaveBeenCalled()
+    expect(prepared.reviewedBlockHash).toBe(block.hash)
+    expect(prepared.protection.validUntil).toBe(block.timestamp + 60n)
     expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBe(
       (1n << 256n) - 1n
     )
@@ -221,6 +225,7 @@ describe('reviewed leverage validation', () => {
 
   beforeEach(() => {
     vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+      block,
       blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
   })
