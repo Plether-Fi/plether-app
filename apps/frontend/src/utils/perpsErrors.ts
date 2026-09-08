@@ -528,6 +528,13 @@ export function getPerpsOpenRevertMessage(code: number | undefined): string {
   return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
 }
 
+/** Only decoded opening planner failures may guide a size search. RPC failures must surface. */
+export function getPerpsOpenFailureCode(error: unknown): number | undefined {
+  const decoded = decodePerpsError(error)
+  if (decoded.name !== 'CfdEngine__TypedOrderFailure' || decoded.args?.[2] !== false) return undefined
+  return argNumber(decoded.args, 1)
+}
+
 export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): string {
   return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${codeSuffix(reason)}.`
 }
