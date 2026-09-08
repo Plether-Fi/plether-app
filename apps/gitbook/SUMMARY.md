@@ -5,6 +5,7 @@
 * [What is Plether Perps DEX?](README.md)
 * [How Plether works in 5 minutes](welcome/how-plether-works-in-5-minutes.md)
 * [Understanding the Plether Dollar Index](welcome/understanding-the-plether-dollar-index.md)
+* [AI trading agents](welcome/ai-trading-agents.md)
 * [Risks you should understand first](welcome/risks-you-should-understand-first.md)
 
 ## Get started
