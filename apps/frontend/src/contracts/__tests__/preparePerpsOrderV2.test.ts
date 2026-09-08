@@ -226,7 +226,7 @@ describe('reviewed leverage validation', () => {
   beforeEach(() => {
     vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
       block,
-      blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
+      block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
   })
 
@@ -282,5 +282,141 @@ describe('reviewed leverage validation', () => {
     const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
     simulateContract.mockRejectedValueOnce(new Error('Protocol rejected close'))
     await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Protocol rejected close')
+  })
+})
+
+describe('Max opening review', () => {
+  const quantum = 100n * 10n ** 18n
+  const input = {
+    account, direction: 'short' as const, side: 1,
+    sizeDelta: 329n * quantum, marginDelta: 996_969_697n,
+    slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 330_000,
+    maxSize: { minimumSizeDelta: quantum },
+  }
+
+  function maxClient({ rebate = false, available = 1_000_000_000n, failure }: {
+    rebate?: boolean
+    available?: bigint
+    failure?: unknown
+  } = {}) {
+    const values: Record<string, unknown> = {
+      maxOrderAge: 60n, currentExecutionConfigHash: configHash,
+      openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
+      maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
+      lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
+      totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
+      activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
+      getFreeBuyingPowerUsdc: available,
+      positionProtectionTriggerBountyUsdc: 200_000n, getPosition: { exists: false },
+    }
+    const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+      if (functionName !== 'assessOrder') {
+        if (functionName in values) return values[functionName]
+        throw new Error(`Unexpected read ${functionName}`)
+      }
+      if (failure) throw failure
+      const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }
+      const price = args?.[3] as bigint
+      const notional = sizeDelta * price / 10n ** 20n
+      const fee = notional / 1_000n
+      const vpi = rebate ? -notional / 100n : 0n
+      const cost = fee + vpi
+      const locked = marginDelta - (cost > 0n ? cost : 0n)
+      const freeAfterCosts = available - marginDelta + (cost < 0n ? -cost : 0n)
+      const reserveFromPledge = -vpi > freeAfterCosts ? -vpi - freeAfterCosts : 0n
+      // Match the protocol's separation of rebate reserve and liquidation
+      // reserve from price collateral. More supplied margin can merely move
+      // rebate reserve out of free cash without increasing position equity.
+      const equity = locked - reserveFromPledge - 20_000_000n
+      if (equity <= 0n) throw { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 9, false] }
+      return {
+        ...assessment(price, marginDelta),
+        executionNotionalUsdc: notional,
+        postPositionSize: sizeDelta,
+        postPositionEquityUsdc: equity,
+        postPositionMarginUsdc: equity,
+        postLeverageBps: (notional * 10_000n + equity - 1n) / equity,
+        executionFeeUsdc: fee,
+        vpiUsdc: vpi,
+        actionChargeCollectedUsdc: cost > 0n ? cost : 0n,
+      } satisfies PerpsExecutionAssessment
+    })
+    const simulateContract = vi.fn(async () => ({ request: {} }))
+    const client = { getBlock: vi.fn(async () => block), readContract, simulateContract } as unknown as PublicClient
+    return { client, readContract, simulateContract }
+  }
+
+  beforeEach(() => {
+    vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+      block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
+    })
+  })
+
+  it.each([false, true])('fits Max after fees and reserves (VPI rebate: %s), then simulates exactly that size', async (rebate) => {
+    vi.mocked(verifyPerpsV2DeploymentBindings).mockClear()
+    const { client, readContract, simulateContract } = maxClient({ rebate })
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    expect(prepared.request.sizeDelta).toBe(312n * quantum)
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBeLessThanOrEqual(1_000_000_000n)
+    expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(330_000n)
+    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      args: [prepared.request], blockNumber: block.number,
+    }))
+    // One more lot cannot pass the same funding/leverage review.
+    const next = await reviewPerpsOrderV2(client, manifest, {
+      ...input, maxSize: undefined, sizeDelta: prepared.request.sizeDelta + quantum,
+      marginDelta: 948_484_849n,
+    }).catch((error: unknown) => error)
+    if (next instanceof PerpsOrderReviewError) {
+      expect(next.reason).toBe('leverage')
+    } else {
+      expect((next as Awaited<ReturnType<typeof reviewPerpsOrderV2>>).reviewSummary.requiredFundingUsdc)
+        .toBeGreaterThan(1_000_000_000n)
+    }
+    expect(verifyPerpsV2DeploymentBindings).toHaveBeenCalledTimes(2)
+    for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
+  })
+
+  it('preserves a smaller capacity cap and includes attached protection rewards in affordability', async () => {
+    const { client } = maxClient()
+    const capacityLimited = await preparePerpsOrderV2(client, manifest, { ...input, sizeDelta: 200n * quantum })
+    expect(capacityLimited.request.sizeDelta).toBe(200n * quantum)
+    const protectedOrder = await preparePerpsOrderV2(client, manifest, {
+      ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
+    })
+    expect(protectedOrder.reviewSummary?.requiredFundingUsdc).toBeLessThanOrEqual(1_000_000_000n)
+    expect(protectedOrder.positionProtection?.triggerBountyUsdc).toBe(200_000n)
+  })
+
+  it('does not submit when even the minimum cannot be funded', async () => {
+    const { client, simulateContract } = maxClient({ available: 1_000_000n })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('cannot fund the minimum')
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    new Error('RPC connection lost'),
+    { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 2, false] },
+    { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 5, true] },
+  ])('surfaces RPC and unrelated protocol failures without searching further', async (failure) => {
+    const { client, readContract, simulateContract } = maxClient({ failure })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toBe(failure)
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')).toHaveLength(3)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('stops probing when the review is cancelled', async () => {
+    const controller = new AbortController()
+    const { client, readContract, simulateContract } = maxClient()
+    const read = readContract.getMockImplementation()!
+    readContract.mockImplementation(async (request) => {
+      const result = await read(request)
+      if (request.functionName === 'assessOrder') controller.abort()
+      return result
+    })
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')).toHaveLength(3)
+    expect(simulateContract).not.toHaveBeenCalled()
   })
 })

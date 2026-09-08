@@ -106,6 +106,7 @@ interface PerpsOrderReviewSnapshot {
   preparationKey?: string
   identityKey?: string
   positionProtection?: PositionProtectionParams
+  maxSize?: { minimumSizeDelta: bigint }
   direction: Direction
   notionalUsdc: bigint
   sizeDelta: bigint
@@ -1868,6 +1869,7 @@ export function PerpsTradeTicket({
   )
   const [orderQuantity, setOrderQuantity] = useState(initialOrderQuantity)
   const [isFullCloseIntent, setIsFullCloseIntent] = useState(false)
+  const [isMaxOpenIntent, setIsMaxOpenIntent] = useState(false)
   const [leverage, setLeverage] = useState(initialLeverage)
   const [leverageInputValue, setLeverageInputValue] = useState(initialLeverage.toString())
   const [slippage, setSlippage] = useState(
@@ -2624,7 +2626,7 @@ export function PerpsTradeTicket({
   const orderQuantityInputValue = isFullCloseIntent && isReducingCurrentPosition
     ? maxOrderQuantityInputAmount
     : orderQuantity
-  const orderSizeDelta = isReviewOpen && reviewSnapshot ? reviewSnapshot.sizeDelta : effectiveOrderSizeRaw
+  const orderSizeDelta = isReviewOpen && reviewSnapshot && !reviewSnapshot.maxSize ? reviewSnapshot.sizeDelta : effectiveOrderSizeRaw
   const calculationOraclePriceRaw = (isReviewOpen && reviewSnapshot ? reviewSnapshot.oraclePrice : oraclePriceRaw) ?? (
     enableLiveTrading ? undefined : BigInt(Math.round(MOCK_PREVIEW_PRICE * 100_000_000))
   )
@@ -2831,6 +2833,13 @@ export function PerpsTradeTicket({
   const effectiveMinOpenDxyExposureUsdc = isOpeningFromZero
     ? maxBigInt(minOpenDxyExposureUsdc ?? 0n, minNewPositionDxyExposureUsdc ?? 0n)
     : minOpenDxyExposureUsdc
+  const minimumOpenSizeForMax = oraclePriceRaw === undefined || oraclePriceRaw <= 0n
+    ? 0n
+    : notionalUsdcToQuantizedSizeDelta(
+      isOpeningFromZero ? maxBigInt(minOpenNotionalUsdc ?? 0n, minNewPositionNotionalUsdc ?? 0n) : minOpenNotionalUsdc ?? 0n,
+      oraclePriceRaw,
+      'up'
+    )
   const selectedOpenDxyCapacityUsdc = selectedOpenCapacityUsdc === undefined
     ? undefined
     : quantizedDxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw, 'down') ?? selectedOpenCapacityUsdc
@@ -2963,11 +2972,13 @@ export function PerpsTradeTicket({
         ? `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Wait for the keeper to finalize or clean up an order before committing a new one.`
         : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
-    if (marginShortfall > 0n) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
+    if (marginShortfall > 0n && !isMaxOpenIntent) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
       return 'Waiting for fresh oracle publish time before previewing this order.'
     }
-    if (shouldReadTradePreview) {
+    // Max's instant estimate can fail the point preview. Its final review must
+    // be allowed to resize using authoritative assessments before confirmation.
+    if (shouldReadTradePreview && !(isMaxOpenIntent && !isReducingCurrentPosition)) {
       if (tradePreviewFailure) {
         return 'Trade preview failed. Refresh market data and retry before reviewing this order.'
       }
@@ -3002,8 +3013,10 @@ export function PerpsTradeTicket({
     isClose: isReducingCurrentPosition,
     selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
     positionProtection: protectionInput.params,
+    maxSize: isMaxOpenIntent && !isReducingCurrentPosition
+      ? { minimumSizeDelta: minimumOpenSizeForMax } : undefined,
   }), [effectiveOrderDirection, contractNotionalUsdc, orderSizeDelta, marginUsdc, oraclePriceRaw,
-    slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params])
+    slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent, minimumOpenSizeForMax])
   const preparationAccountContextKey = orderPreparationKey([
     availableToTradeRaw,
     currentPosition && [currentPosition.exists, currentPosition.side, currentPosition.size,
@@ -3030,7 +3043,7 @@ export function PerpsTradeTicket({
     reviewValid: !liveValidationError && !activeAccountOperation,
     mode: !canPrepare ? 'inactive' : isReviewOpen ? 'review'
       : !liveValidationError && !isTradePreviewPending && currentTradePreview?.valid ? 'background' : 'inactive',
-    prepare: prepareOrder,
+    prepare: (input, signal) => prepareOrder({ ...input, signal }),
   })
   // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
@@ -3039,6 +3052,11 @@ export function PerpsTradeTicket({
     }
   }, [canPrepare, isReviewOpen, reviewSnapshot, liveValidationError, candidateSnapshot, candidateKey, preparationIdentityKey])
   const preparedOrder = isReviewOpen && preparation.matches ? preparation.result : undefined
+  useEffect(() => {
+    if (reviewSnapshot?.maxSize && preparedOrder) {
+      setOrderQuantity(formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0))
+    }
+  }, [reviewSnapshot?.maxSize, preparedOrder])
   const preparationError = isReviewOpen && preparation.matches ? preparation.error : undefined
   const orderReviewSummary = preparationError instanceof PerpsOrderFundingShortfallError
     ? preparationError.reviewedOrder.reviewSummary
@@ -3482,7 +3500,7 @@ export function PerpsTradeTicket({
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(liveValidationError) || isTradePreviewPending)
+    (Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
   ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -3759,7 +3777,7 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:lifecycle:commitPreparing')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setLifecycleState('commitPreparing')
-      const sizeDelta = orderSizeDelta
+      const sizeDelta = preparedOrder.request.sizeDelta
       setCommittedSizeDelta(sizeDelta)
       setCommittedDirection(perpsSideToDirection(preparedOrder.request.side))
       setCommittedMarginDelta(preparedOrder.request.marginDelta)
@@ -4034,6 +4052,7 @@ export function PerpsTradeTicket({
     if (shouldResetSize) {
       setOrderQuantity('0')
       setIsFullCloseIntent(false)
+      setIsMaxOpenIntent(false)
     }
     setIsReviewOpen(false)
   }
@@ -4052,6 +4071,7 @@ export function PerpsTradeTicket({
     setDirection(currentPosition?.direction ?? currentPositionSide)
     setIsReduceOnly(true)
     setIsFullCloseIntent(true)
+    setIsMaxOpenIntent(false)
     setOrderQuantity(formatPerpsPositionSize(availableCloseSizeRaw, 0))
     setIsReviewOpen(true)
   }, [
@@ -4100,6 +4120,7 @@ export function PerpsTradeTicket({
                 onClick={() => {
                   trackPerpsButtonClicked(`direction_${item}`, commonAnalyticsProperties)
                   setIsFullCloseIntent(false)
+                  setIsMaxOpenIntent(false)
                   setDirection(item)
                 }}
               >
@@ -4118,6 +4139,7 @@ export function PerpsTradeTicket({
               if (canUseAvailableToTrade) {
                 trackPerpsButtonClicked('fill_available_to_trade', commonAnalyticsProperties)
                 setIsFullCloseIntent(false)
+                setIsMaxOpenIntent(false)
                 setOrderQuantity(availableToTradeFillQuantity)
               }
             }}
@@ -4130,6 +4152,7 @@ export function PerpsTradeTicket({
               if (canUseCurrentPosition) {
                 trackPerpsButtonClicked('fill_current_position', commonAnalyticsProperties)
                 setIsFullCloseIntent(isReducingCurrentPosition)
+                setIsMaxOpenIntent(false)
                 setOrderQuantity(currentPositionFillQuantity)
               }
             }}
@@ -4143,6 +4166,7 @@ export function PerpsTradeTicket({
             onChange={(event) => {
               if (isNumericInput(event.target.value)) {
                 setIsFullCloseIntent(false)
+                setIsMaxOpenIntent(false)
                 setOrderQuantity(event.target.value)
               }
             }}
@@ -4157,6 +4181,7 @@ export function PerpsTradeTicket({
                 if (canUseMaxOrderQuantity) {
                   trackPerpsButtonClicked('fill_max_quantity', commonAnalyticsProperties)
                   setIsFullCloseIntent(isReducingCurrentPosition)
+                  setIsMaxOpenIntent(!isReducingCurrentPosition)
                   setOrderQuantity(maxOrderQuantityInputAmount)
                 }
               }}
@@ -4181,6 +4206,7 @@ export function PerpsTradeTicket({
                   reduce_only: event.target.checked,
                 })
                 setIsFullCloseIntent(false)
+                setIsMaxOpenIntent(false)
                 setIsReduceOnly(event.target.checked)
               }}
               className="h-4 w-4 accent-[#FFAB96]"
@@ -4799,6 +4825,12 @@ export function PerpsTradeTicket({
                   This submits your order. Final execution settles shortly after with your accepted price constraints.
                 </div>
               </div>
+
+              {reviewSnapshot?.maxSize && preparedOrder && preparedOrder.request.sizeDelta < reviewSnapshot.sizeDelta ? (
+                <p role="status" className="text-sm text-content-secondary">
+                  Max adjusted from {formatPerpsPositionSize(reviewSnapshot.sizeDelta, 0)} to {formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0)} plDXY to fit your available margin and leverage limit after fees and reserves.
+                </p>
+              ) : null}
 
               {reviewValidationError ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">

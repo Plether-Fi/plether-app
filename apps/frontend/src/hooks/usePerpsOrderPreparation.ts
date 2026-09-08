@@ -28,7 +28,7 @@ interface Options<T> {
   contextKey?: string
   reviewValid?: boolean
   mode: Mode
-  prepare: (input: T) => Promise<PreparedPerpsOrderV2>
+  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV2>
 }
 interface PreparationState {
   key?: string
@@ -54,6 +54,7 @@ class PreparationController<T> {
   state = { ...initialState, visible: typeof document === 'undefined' || document.visibilityState !== 'hidden' }
   listeners = new Set<() => void>()
   options?: Options<T>
+  abortController?: AbortController
   generation = 0
   timer?: ReturnType<typeof setTimeout>
   slowTimer?: ReturnType<typeof setTimeout>
@@ -71,7 +72,7 @@ class PreparationController<T> {
   clearTimers() {
     clearTimeout(this.timer); clearTimeout(this.slowTimer)
   }
-  invalidate() { this.generation++; this.clearTimers() }
+  invalidate() { this.generation++; this.abortController?.abort(); this.clearTimers() }
   reusable() {
     return Date.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
       (this.state.status === 'pending' || (this.state.status === 'ready' && this.hasDeadline()))
@@ -145,6 +146,8 @@ class PreparationController<T> {
     if (!options?.candidate || options.mode === 'inactive' || !this.state.visible || this.disposed) return
     if (source === 'background' && (options.mode !== 'background' || this.backgroundGeneration !== undefined)) return
     this.invalidate()
+    const abortController = new AbortController()
+    this.abortController = abortController
     const candidate = options.candidate
     const generation = this.generation
     const startedAt = Date.now()
@@ -180,10 +183,10 @@ class PreparationController<T> {
       if (!this.disposed && this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()
     }
     this.slowTimer = setTimeout(() => { if (current()) this.publish({ slow: true }) }, 3000)
-    const jobTimeout = setTimeout(() => { finish(undefined, new Error('Order checks took too long. Retry review.')) }, PREPARATION_TIMEOUT_MS)
+    const jobTimeout = setTimeout(() => { abortController.abort(); finish(undefined, new Error('Order checks took too long. Retry review.')) }, PREPARATION_TIMEOUT_MS)
     this.jobs.add(jobTimeout)
     try {
-      void options.prepare(candidate.input).then(
+      void options.prepare(candidate.input, abortController.signal).then(
         result => { finish(result) }, (error: unknown) => { finish(undefined, error) }).finally(releaseBackground)
     } catch (error) { finish(undefined, error); releaseBackground() }
   }

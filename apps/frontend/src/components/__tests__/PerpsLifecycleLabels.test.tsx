@@ -1267,6 +1267,80 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText(/calculating executable max/i)).not.toBeInTheDocument()
   })
 
+  it('reviews and commits the adjusted Max quantity even when its instant preview is underfunded', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: false, invalidReason: 5 } }]
+    const base = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const prepared = { ...base, request: { ...base.request, sizeDelta: 300n * 10n ** 18n, marginDelta: 65_000_000n } }
+    let resolveReview!: (order: PreparedPerpsOrderV2) => void
+    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV2>((resolve) => { resolveReview = resolve }))
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
+    render(<PerpsTradeTicket
+      enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
+      minOpenNotionalUsdc={100_000_000n} minNewPositionNotionalUsdc={100_000_000n}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
+      sizeDelta: 400n * 10n ** 18n, maxSize: { minimumSizeDelta: 100n * 10n ** 18n },
+    }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'Checking order…' })).toBeDisabled()
+    await act(async () => resolveReview(prepared))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('300')
+    expect(within(dialog).getByText(/Max adjusted from 400 to 300 plDXY/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm Commit' }))
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({
+      sizeDelta: 300n * 10n ** 18n, preparedOrder: prepared,
+    }))
+  })
+
+  it('clears Max intent when the quantity is edited manually', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    render(<PerpsTradeTicket
+      enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '300' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
+      sizeDelta: 300n * 10n ** 18n, maxSize: undefined,
+    })))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('300')
+  })
+
+  it('ignores a Max result delivered after the review is cancelled', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    const prepared = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    let resolveReview!: (order: PreparedPerpsOrderV2) => void
+    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV2>((resolve) => { resolveReview = resolve }))
+    render(<PerpsTradeTicket
+      enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(perpsTradingMocks.prepareOrder.mock.calls[0][0].signal.aborted).toBe(true)
+    await act(async () => resolveReview(prepared))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+  })
+
   it('shows protected margin and exact shortfall without enabling confirmation', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true

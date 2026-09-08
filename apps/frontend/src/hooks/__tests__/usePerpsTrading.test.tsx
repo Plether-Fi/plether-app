@@ -336,6 +336,21 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
+  it('passes explicit Max intent and cancellation to the review', async () => {
+    mocks.identityReady = true
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(preparedOrder())
+    const maxSize = { minimumSizeDelta: 100n * 10n ** 18n }
+    const signal = new AbortController().signal
+    try {
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await result.current.prepareOrder({ ...commitInput(), maxSize, signal })
+      expect(prepare).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ maxSize, signal }))
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
   it('preserves the reviewed assessment when leverage validation rejects preparation', async () => {
     mocks.identityReady = true
     const reviewSummary = { worstPostLeverageBps: 50_001n } as orderV2.PerpsOrderReviewSummary

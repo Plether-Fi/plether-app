@@ -157,6 +157,7 @@ describe('order preparation lifecycle', () => {
     view.update({ mode: 'review' })
     await advance(28_000)
     expect(view.result.current.status).toBe('error')
+    expect(view.prepare.mock.calls[0][1].aborted).toBe(true)
     await act(async () => { pending.resolve(prepared()) })
     expect(view.result.current.ready).toBe(false)
   })
@@ -220,7 +221,7 @@ describe('order preparation lifecycle', () => {
     await advance(0)
     expect(view.result.current.previous).toBe(before)
     expect(prepare).toHaveBeenCalledTimes(2)
-    expect(prepare).toHaveBeenLastCalledWith(input)
+    expect(prepare).toHaveBeenLastCalledWith(input, expect.any(AbortSignal))
   })
 
   it('refreshes changed context on returning from a briefly hidden tab even inside the reuse window', async () => {

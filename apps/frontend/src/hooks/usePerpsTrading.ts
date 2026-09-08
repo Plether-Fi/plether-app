@@ -77,6 +77,8 @@ interface PrepareOrderInput {
   isClose: boolean
   selectedMaxLeverageBps: number
   positionProtection?: PositionProtectionParams
+  maxSize?: { minimumSizeDelta: bigint }
+  signal?: AbortSignal
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
@@ -778,6 +780,8 @@ export function usePerpsTrading() {
     isClose,
     selectedMaxLeverageBps,
     positionProtection,
+    maxSize,
+    signal,
   }: PrepareOrderInput): Promise<PreparedPerpsOrderV2> => {
     try {
       if (!address) {
@@ -823,6 +827,8 @@ export function usePerpsTrading() {
         isClose,
         selectedMaxLeverageBps,
         positionProtection,
+        maxSize,
+        signal,
       })
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error

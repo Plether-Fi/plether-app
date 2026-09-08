@@ -13,6 +13,7 @@ export function perpsReviewChanges(before?: PreparedPerpsOrderV2, after?: Prepar
   const usdc = (value: bigint | string | number) => `${formatUnits(BigInt(value), 6)} USDC`
   const price = (value: bigint | string | number) => BigInt(value) === 0n ? 'No limit' : `${formatUnits(200_000_000n - BigInt(value), 8)} USDC`
   const leverage = (value: bigint | string | number) => `${formatUnits(BigInt(value), 4)}×`
+  add('Order quantity', before.request.sizeDelta, after.request.sizeDelta, value => `${formatUnits(BigInt(value), 18)} plDXY`)
   add('Execution limit', before.request.targetPrice, after.request.targetPrice, price)
   add('Required margin', before.request.marginDelta, after.request.marginDelta, usdc)
   add('Required funding', before.reviewSummary?.requiredFundingUsdc, after.reviewSummary?.requiredFundingUsdc, usdc)

@@ -23,6 +23,15 @@ describe('refreshed review changes', () => {
       { label: 'Required margin', before: '20 USDC', after: '20.000001 USDC' },
     ])
   })
+  it('highlights a changed Max quantity at full precision', () => {
+    const before = prepared()
+    const after = structuredClone(before)
+    before.request.sizeDelta = 300n * 10n ** 18n
+    after.request.sizeDelta = before.request.sizeDelta + 1n
+    expect(perpsReviewChanges(before, after)).toEqual([
+      { label: 'Order quantity', before: '300 plDXY', after: '300.000000000000000001 plDXY' },
+    ])
+  })
   it('identifies changed execution rules, protection prices, and rewards', () => {
     const before = prepared()
     const after = structuredClone(before)

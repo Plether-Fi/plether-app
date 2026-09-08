@@ -11,6 +11,7 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
+import { PERPS_POSITION_SIZE_QUANTUM } from './perpsConstants'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
@@ -26,6 +27,7 @@ import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from './v
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
 import { getPerpsTargetPrice, type PerpsDirection } from '../utils/perps'
 import { PROTECTION_CONFIG_ABI, validateProtectionParams, type PositionProtectionParams } from './positionProtection'
+import { getPerpsOpenFailureCode } from '../utils/perpsErrors'
 
 const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
 const ZERO_HASH = `0x${'0'.repeat(64)}`
@@ -41,6 +43,9 @@ export interface PreparePerpsOrderV2Input {
   selectedMaxLeverageBps: number
   clientOrderId?: Hex
   positionProtection?: PositionProtectionParams
+  /** Explicit Max intent: review may reduce size, in whole lots, before confirmation. */
+  maxSize?: { minimumSizeDelta: bigint }
+  signal?: AbortSignal
 }
 
 export interface ReviewedPerpsOrderV2 {
@@ -62,11 +67,13 @@ export class PerpsOrderFundingShortfallError extends Error {
 
 export class PerpsOrderReviewError extends Error {
   readonly reviewSummary: PerpsOrderReviewSummary
+  readonly reason: 'validation' | 'leverage'
 
-  constructor(reviewSummary: PerpsOrderReviewSummary, cause: unknown) {
+  constructor(reviewSummary: PerpsOrderReviewSummary, cause: unknown, reason: 'validation' | 'leverage' = 'validation') {
     super(cause instanceof Error ? cause.message : 'The reviewed order is invalid', { cause })
     this.name = 'PerpsOrderReviewError'
     this.reviewSummary = reviewSummary
+    this.reason = reason
   }
 }
 
@@ -355,8 +362,9 @@ async function reviewPerpsOrderWithContext(
     isClose: input.isClose,
   }
   const prices = assessmentPrices(context.currentPrice, targetPrice)
-  const assessAtReviewedPrices = async (bounds = permissiveBounds) => Promise.all(prices.map(async (price) =>
-    asAssessment(await client.readContract({
+  const assessAtReviewedPrices = async (bounds = permissiveBounds) => {
+    input.signal?.throwIfAborted()
+    return Promise.all(prices.map(async (price) => asAssessment(await client.readContract({
       address: policyEvaluator,
       abi: PERPS_ORDER_POLICY_EVALUATOR_ABI,
       functionName: 'assessOrder',
@@ -371,11 +379,14 @@ async function reviewPerpsOrderWithContext(
         executionBountyUsdc,
       ],
       blockNumber,
-    }))
-  ))
+    }))))
+  }
   let assessments = await assessAtReviewedPrices()
 
-  if (!input.isClose) {
+  // Reserve funding can absorb a margin increase before it becomes position
+  // equity. Bound the retries and stop if equity no longer improves. A failed
+  // Max candidate can then be resized instead of loosening limits.
+  for (let attempt = 0; !input.isClose && attempt < 4; attempt += 1) {
     const additionalMargin = deriveAdditionalPerpsMarginForLeverage({
       selectedMaxLeverageBps: input.selectedMaxLeverageBps,
       marginDelta: reviewedMarginDelta,
@@ -383,11 +394,12 @@ async function reviewPerpsOrderWithContext(
       prices,
       capPrice: context.capPrice,
     })
-    if (additionalMargin > 0n) {
-      reviewedMarginDelta += additionalMargin
-      order = { ...order, marginDelta: reviewedMarginDelta }
-      assessments = await assessAtReviewedPrices()
-    }
+    if (additionalMargin === 0n) break
+    const previousEquities = assessments.map((assessment) => assessment.postPositionEquityUsdc)
+    reviewedMarginDelta += additionalMargin
+    order = { ...order, marginDelta: reviewedMarginDelta }
+    assessments = await assessAtReviewedPrices()
+    if (assessments.every((assessment, index) => assessment.postPositionEquityUsdc <= previousEquities[index])) break
   }
 
   const executionMode = assessments[0].mode
@@ -433,13 +445,13 @@ async function reviewPerpsOrderWithContext(
       selectedMaxLeverageBps: permissiveBounds.maxPostLeverageBps,
       assessments: finalAssessments,
     })
-    if (!input.isClose && reviewSummary.worstPostLeverageBps > BigInt(input.selectedMaxLeverageBps)) {
-      throw new Error(
-        `Highest reviewed leverage is ${(Number(reviewSummary.worstPostLeverageBps) / 10_000).toString()}x, above your selected ${(input.selectedMaxLeverageBps / 10_000).toString()}x limit.`
-      )
-    }
   } catch (error) {
     throw new PerpsOrderReviewError(reviewSummary, error)
+  }
+  if (!input.isClose && reviewSummary.worstPostLeverageBps > BigInt(input.selectedMaxLeverageBps)) {
+    throw new PerpsOrderReviewError(reviewSummary, new Error(
+      `Highest reviewed leverage is ${(Number(reviewSummary.worstPostLeverageBps) / 10_000).toString()}x, above your selected ${(input.selectedMaxLeverageBps / 10_000).toString()}x limit.`
+    ), 'leverage')
   }
   const preparedOrder: PreparedPerpsOrderV2 = {
     account: input.account,
@@ -466,8 +478,10 @@ export async function reviewPerpsOrderV2(
   manifest: PerpsAaDeploymentManifest,
   input: PreparePerpsOrderV2Input
 ): Promise<ReviewedPerpsOrderV2> {
+  input.signal?.throwIfAborted()
+  validateInput(input)
   const context = await loadPerpsOrderReviewContext(client, manifest, input.account)
-  const reviewed = await reviewPerpsOrderWithContext(context, input, true)
+  let protection: PreparedPerpsOrderV2['positionProtection']
   if (input.positionProtection) {
     await verifyProtectionDeployment(client, manifest, context.blockNumber)
     if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
@@ -477,10 +491,66 @@ export async function reviewPerpsOrderV2(
       client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI, functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber }),
     ])
     if (position.exists) throw new Error('Protected opens require an account with no position')
-    reviewed.preparedOrder.positionProtection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
-    reviewed.reviewSummary.requiredFundingUsdc += triggerBountyUsdc + context.closeBounty
+    protection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
   }
-  return reviewed
+  const review = async (candidate: PreparePerpsOrderV2Input, final: boolean) => {
+    input.signal?.throwIfAborted()
+    const reviewed = await reviewPerpsOrderWithContext(context, candidate, final)
+    if (protection) {
+      reviewed.preparedOrder.positionProtection = protection
+      reviewed.reviewSummary.requiredFundingUsdc += protection.triggerBountyUsdc + protection.executionBountyUsdc
+    }
+    return reviewed
+  }
+  if (!input.maxSize || input.isClose) return review(input, true)
+
+  const quantum = PERPS_POSITION_SIZE_QUANTUM
+  let low = (input.maxSize.minimumSizeDelta + quantum - 1n) / quantum
+  if (low < 1n) low = 1n
+  let high = input.sizeDelta / quantum
+  let best: PreparePerpsOrderV2Input | undefined
+  const clientOrderId = input.clientOrderId ?? generatePerpsClientOrderId()
+  // Start at the instant estimate. Every subsequent probe uses the same block,
+  // fees, balances and price range; only the selected result gets final bounds
+  // and a commit simulation. Never interpret a transport error as insufficient funds.
+  let units = high
+  while (low <= high) {
+    const sizeDelta = units * quantum
+    const notionalUsdc = sizeDelta * context.currentPrice / POSITION_SIZE_TO_USDC_SCALE
+    const leverageBps = BigInt(input.selectedMaxLeverageBps)
+    const candidate = {
+      ...input,
+      clientOrderId,
+      sizeDelta,
+      marginDelta: (notionalUsdc * 10_000n + leverageBps - 1n) / leverageBps,
+    }
+    let fits = false
+    let tooSmall = false
+    try {
+      const reviewed = await review(candidate, false)
+      fits = reviewed.reviewSummary.requiredFundingUsdc <= context.freeBuyingPowerUsdc
+      if (fits) best = { ...candidate, marginDelta: reviewed.preparedOrder.request.marginDelta }
+    } catch (error) {
+      const code = getPerpsOpenFailureCode(error)
+      tooSmall = code === 3
+      const canReduceSize = code !== undefined && [4, 5, 6, 7, 9, 10].includes(code)
+      if (!tooSmall && !canReduceSize && !(error instanceof PerpsOrderReviewError && error.reason === 'leverage')) {
+        throw error
+      }
+    }
+    if (fits) {
+      low = units + 1n
+    } else if (tooSmall) {
+      low = units + 1n
+    } else {
+      high = units - 1n
+    }
+    units = (low + high) / 2n
+  }
+  if (!best) {
+    throw new Error('Available margin cannot fund the minimum opening order after fees, reserves, and price impact.')
+  }
+  return review(best, true)
 }
 
 export async function simulateReviewedPerpsOrderV2(
@@ -526,6 +596,7 @@ export async function preparePerpsOrderV2(
         reviewedOrder.reviewSummary.availableFundingUsdc
     )
   }
+  input.signal?.throwIfAborted()
   await simulateReviewedPerpsOrderV2(client, reviewedOrder)
   return reviewedOrder.preparedOrder
 }
