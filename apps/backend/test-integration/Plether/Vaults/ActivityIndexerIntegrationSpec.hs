@@ -2,8 +2,9 @@ module Plether.Vaults.ActivityIndexerIntegrationSpec
   ( vaultActivityIndexerIntegrationSpec
   ) where
 
-import Control.Concurrent (forkIO, killThread, newEmptyMVar, takeMVar, threadDelay)
-import Control.Exception (SomeException, finally, try)
+import Control.Concurrent (MVar, forkFinally, forkIO, killThread, newEmptyMVar, putMVar, takeMVar, threadDelay)
+import Control.Exception (SomeException, bracket, displayException, finally, try)
+import Control.Monad (forM_)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -13,7 +14,10 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Either (isLeft)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List (isInfixOf)
 import Data.Pool (destroyAllResources)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, query)
+import Database.PostgreSQL.Simple.Types (Query)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -25,14 +29,18 @@ import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultActivityIndexerStateRow (..)
   , VaultAttributedHolderRow (..)
+  , VaultDepositAttributionStateRow (..)
   , VaultDepositRequestKey (..)
   , VaultHolderRow (..)
   , ensureVaultActivitySchema
   , getVaultActivityIndexerState
   , getVaultAttributedHolders
+  , getVaultDepositAttributionState
   , getVaultHolders
   , getVaultRequestIds
   , resetVaultActivityDeployment
+  , resetVaultDepositAttribution
+  , setVaultDepositAttributionState
   )
 import Plether.Ethereum.Abi (encodeAddress, encodeBool, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (newClient)
@@ -62,6 +70,8 @@ data FixtureState = FixtureState
   , fsMalformedAtThirteen :: Bool
   , fsLogRanges :: [(Text, Integer, Integer)]
   , fsUnexpected :: [Text]
+  , fsRequestPause :: Maybe (MVar (), MVar ())
+  , fsRequestBlocks :: [Text]
   }
 
 vaultActivityIndexerIntegrationSpec :: Text -> Spec
@@ -128,6 +138,99 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
           unexpected <- fsUnexpected <$> readIORef stateRef
           unexpected `shouldBe` []
 
+    it "commits the original pinned snapshot when activity advances during eth_call" $
+      withFixture $ \fixtureUrl stateRef ->
+        withVaultIndexerDatabase databaseUrl $ \pool -> do
+          client <- newClient fixtureUrl
+          runVaultActivityIndexerCycle client pool indexerConfig >>= \result -> assertCompleted result 12 2
+          (result, ()) <- withPausedAttribution stateRef
+            (runVaultDepositAttributionCycle client pool indexerConfig) $ do
+              atomicModifyIORef' stateRef $ \state -> (state {fsHead = 25}, ())
+              -- The attribution cycle retains its connection while this cycle
+              -- acquires another connection and the independent activity lock.
+              advanced <- runVaultActivityIndexerCycle client pool indexerConfig
+              assertCompleted advanced 13 2
+          either (expectationFailure . displayException) (\value -> assertAttributionCompleted value 12 1) result
+          assertPinnedAttribution pool 12 (fixedHash 'a' 12) 125
+          (fsRequestBlocks <$> readIORef stateRef) `shouldReturnValue` [quantity 12]
+          caughtUp <- runVaultDepositAttributionCycle client pool indexerConfig
+          assertAttributionCompleted caughtUp 13 1
+          assertPinnedAttribution pool 13 (fixedHash 'a' 13) 125
+
+    forM_
+      [ ("safe-head-only update", "safe_head_block = 13, safe_head_block_hash = '0x' || repeat('a', 62) || '13', safe_head_timestamp = 1700000013")
+      , ("success timestamp refresh", "last_success_at = last_success_at + INTERVAL '1 second'")
+      ] $ \(label, changes) ->
+        it ("allows a concurrent " <> label) $
+          withFixture $ \fixtureUrl stateRef ->
+            withVaultIndexerDatabase databaseUrl $ \pool -> do
+              client <- newClient fixtureUrl
+              runVaultActivityIndexerCycle client pool indexerConfig >>= \result -> assertCompleted result 12 2
+              (result, ()) <- withPausedAttribution stateRef
+                (runVaultDepositAttributionCycle client pool indexerConfig) $
+                  withDb pool $ \conn -> updateActivity conn changes
+              either (expectationFailure . displayException) (\value -> assertAttributionCompleted value 12 1) result
+              assertPinnedAttribution pool 12 (fixedHash 'a' 12) 125
+
+    forM_
+      [ ("regressed activity cursor", updateActivityWith "last_indexed_block = 11")
+      , ("deleted activity state", \conn -> do
+            affected <- execute conn ("DELETE FROM vault_activity_indexer_state" <> activityScope) deploymentScope
+            affected `shouldBe` 1)
+      , ("incomplete backfill", updateActivityWith "backfill_complete = FALSE")
+      , ("same-block replacement hash", updateActivityWith "last_indexed_block_hash = '0x' || repeat('b', 64)")
+      , ("same-block replacement timestamp", updateActivityWith "last_indexed_block_timestamp = last_indexed_block_timestamp + 1")
+      , ("missing block hash", updateActivityWith "last_indexed_block_hash = NULL")
+      , ("forward cursor missing its hash", updateActivityWith "last_indexed_block = 13, last_indexed_block_hash = NULL")
+      , ("deployment reset", \conn -> resetVaultActivityDeployment conn deployment)
+      ] $ \(label, mutate) ->
+        it ("rejects a concurrent " <> label <> " without writing attribution") $
+          withFixture $ \fixtureUrl stateRef ->
+            withVaultIndexerDatabase databaseUrl $ \pool -> do
+              client <- newClient fixtureUrl
+              runVaultActivityIndexerCycle client pool indexerConfig >>= \result -> assertCompleted result 12 2
+              (result, expected) <- withPausedAttribution stateRef
+                (runVaultDepositAttributionCycle client pool indexerConfig) $
+                  withDb pool $ \conn -> mutate conn >> attributionSnapshot conn
+              assertAttributionRejected "Vault activity cursor changed before request share attribution commit" result
+              withDb pool attributionSnapshot `shouldReturnValue` expected
+
+    forM_
+      [ ("new attribution cursor", False, \conn -> setVaultDepositAttributionState conn deployment 11 (fixedHash 'a' 11) 1_700_000_011 True)
+      , ("changed attribution cursor", True, \conn -> setVaultDepositAttributionState conn deployment 11 (fixedHash 'a' 11) 1_700_000_011 True)
+      , ("attribution reset", True, \conn -> resetVaultDepositAttribution conn deployment)
+      ] $ \(label, seedAttribution, mutate) ->
+        it ("rejects a concurrent " <> label <> " without overwriting it") $
+          withFixture $ \fixtureUrl stateRef ->
+            withVaultIndexerDatabase databaseUrl $ \pool -> do
+              client <- newClient fixtureUrl
+              runVaultActivityIndexerCycle client pool indexerConfig >>= \result -> assertCompleted result 12 2
+              if seedAttribution
+                then runVaultDepositAttributionCycle client pool indexerConfig >>= \result -> assertAttributionCompleted result 12 1
+                else pure ()
+              (result, expected) <- withPausedAttribution stateRef
+                (runVaultDepositAttributionCycle client pool indexerConfig) $
+                  withDb pool $ \conn -> mutate conn >> attributionSnapshot conn
+              assertAttributionRejected "Vault request share attribution cursor changed before commit" result
+              withDb pool attributionSnapshot `shouldReturnValue` expected
+
+    it "discards observations from a replaced branch and rebuilds on the next poll" $
+      withFixture $ \fixtureUrl stateRef ->
+        withVaultIndexerDatabase databaseUrl $ \pool -> do
+          client <- newClient fixtureUrl
+          runVaultActivityIndexerCycle client pool indexerConfig >>= \result -> assertCompleted result 12 2
+          runVaultDepositAttributionCycle client pool indexerConfig >>= \result -> assertAttributionCompleted result 12 1
+          (result, expected) <- withPausedAttribution stateRef
+            (runVaultDepositAttributionCycle client pool indexerConfig) $ do
+              atomicModifyIORef' stateRef $ \state -> (state {fsReplacementBranch = True}, ())
+              runVaultActivityIndexerCycle client pool indexerConfig >>= \value -> assertCompleted value 12 2
+              withDb pool attributionSnapshot
+          assertAttributionRejected "Vault request share attribution block changed during observation" result
+          withDb pool attributionSnapshot `shouldReturnValue` expected
+          expected `shouldBe` [[], [], []]
+          runVaultDepositAttributionCycle client pool indexerConfig >>= \value -> assertAttributionCompleted value 12 1
+          assertPinnedAttribution pool 12 (fixedHash 'b' 12) 225
+
     it "continues independently while a sibling Perps loop is blocked" $
       withFixture $ \fixtureUrl _ ->
         withVaultIndexerDatabase databaseUrl $ \pool -> do
@@ -138,6 +241,76 @@ vaultActivityIndexerIntegrationSpec databaseUrl =
           let stop = killThread vaultThread >> killThread siblingThread
           completed <- (`finally` stop) $ timeout 5_000_000 $ waitForBackfill pool
           completed `shouldBe` Just True
+
+-- Pause exactly one Public Lens request, with bounded waits and cleanup even
+-- when the concurrent mutation or an assertion fails.
+withPausedAttribution
+  :: IORef FixtureState
+  -> IO VaultDepositAttributionCycleResult
+  -> IO a
+  -> IO (Either SomeException VaultDepositAttributionCycleResult, a)
+withPausedAttribution stateRef observe mutate = do
+  entered <- newEmptyMVar
+  resume <- newEmptyMVar
+  finished <- newEmptyMVar
+  atomicModifyIORef' stateRef $ \state -> (state {fsRequestPause = Just (entered, resume)}, ())
+  bracket (forkFinally observe $ putMVar finished) killThread $ \_ -> do
+    await "Public Lens eth_call to pause" entered
+    changed <- mutate `finally` putMVar resume ()
+    result <- await "attribution cycle to finish" finished
+    (fsUnexpected <$> readIORef stateRef) `shouldReturnValue` []
+    pure (result, changed)
+ where
+  await label signal = do
+    result <- timeout 5_000_000 $ takeMVar signal
+    maybe (fail $ "Timed out waiting for " <> label) pure result
+
+activityScope :: Query
+activityScope = " WHERE chain_id = ? AND house_pool_address = ? AND senior_vault_address = ? AND junior_vault_address = ? AND deployment_block = ?"
+
+deploymentScope :: (Integer, Text, Text, Text, Integer)
+deploymentScope = (vadChainId deployment, housePool, seniorVault, juniorVault, vadDeploymentBlock deployment)
+
+updateActivity :: Connection -> Query -> IO ()
+updateActivity conn changes = do
+  affected <- execute conn ("UPDATE vault_activity_indexer_state SET " <> changes <> activityScope) deploymentScope
+  affected `shouldBe` 1
+
+updateActivityWith :: Query -> Connection -> IO ()
+updateActivityWith = flip updateActivity
+
+-- Include all persisted fields, including timestamps, so rejected observations
+-- cannot silently change request rows, holder balances, or the cursor.
+attributionSnapshot :: Connection -> IO [[Only Text]]
+attributionSnapshot conn = mapM readTable
+  [ "vault_deposit_attribution_state"
+  , "vault_deposit_request_states"
+  , "vault_attributed_holder_balances"
+  ]
+ where
+  readTable table = query conn
+    ("SELECT row_to_json(t)::text FROM " <> table <> " t WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ? ORDER BY row_to_json(t)::text")
+    (vadChainId deployment, housePool, vadDeploymentBlock deployment)
+
+assertAttributionRejected :: String -> Either SomeException VaultDepositAttributionCycleResult -> IO ()
+assertAttributionRejected message result = case result of
+  Left err -> displayException err `shouldSatisfy` isInfixOf message
+  Right value -> expectationFailure $ "Expected attribution to abort, received " <> show value
+
+assertPinnedAttribution :: DbPool -> Integer -> Text -> Integer -> IO ()
+assertPinnedAttribution pool block hash total = withDb pool $ \conn -> do
+  state <- getVaultDepositAttributionState conn deployment
+  fmap vdasConfirmedThroughBlock state `shouldBe` Just block
+  fmap vdasConfirmedThroughBlockHash state `shouldBe` Just (Just hash)
+  fmap vdasConfirmedThroughBlockTimestamp state `shouldBe` Just (1_700_000_000 + block)
+  rows <- query conn
+    "SELECT observed_block::text, observed_block_hash FROM vault_deposit_request_states WHERE chain_id = ? AND house_pool_address = ? AND deployment_block = ?"
+    (vadChainId deployment, housePool, vadDeploymentBlock deployment)
+  rows `shouldBe` [(T.pack $ show block, hash)]
+  getVaultHolders conn deployment seniorVault 10
+    `shouldReturnValue` [VaultHolderRow holderA (total - 25)]
+  getVaultAttributedHolders conn deployment seniorVault 10
+    `shouldReturnValue` [VaultAttributedHolderRow holderA (total - 25) 25 0 total]
 
 waitForBackfill :: DbPool -> IO Bool
 waitForBackfill pool = do
@@ -195,6 +368,8 @@ withFixture action = do
       , fsMalformedAtThirteen = False
       , fsLogRanges = []
       , fsUnexpected = []
+      , fsRequestPause = Nothing
+      , fsRequestBlocks = []
       }
 
 fixtureApplication :: IORef FixtureState -> Application
@@ -227,7 +402,21 @@ dispatchRpc stateRef requestId methodName params = do
     "eth_getCode" -> pure $ rpcSuccess requestId $ String "0x01"
     "eth_call" ->
       case callTargetAndData params >>= bindingResult state of
-        Just result -> pure $ rpcSuccess requestId $ String $ hexBytes result
+        Just result -> do
+          if callTargetAndData params == Just (publicLens, requestStateCallHex)
+            then do
+              gate <- atomicModifyIORef' stateRef $ \current ->
+                ( current
+                    { fsRequestPause = Nothing
+                    , fsRequestBlocks = fsRequestBlocks current <> [blockTag | _ : String blockTag : _ <- [arrayItems params]]
+                    }
+                , fsRequestPause current
+                )
+              case gate of
+                Just (entered, resume) -> putMVar entered () >> takeMVar resume
+                Nothing -> pure ()
+            else pure ()
+          pure $ rpcSuccess requestId $ String $ hexBytes result
         Nothing -> unexpected "unexpected eth_call"
     "eth_getBlockByNumber" ->
       case arrayItems params of

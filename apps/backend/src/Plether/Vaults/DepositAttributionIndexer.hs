@@ -210,7 +210,10 @@ runVaultDepositAttributionCycle client pool cfg =
       conn $ do
       currentActivity <- getVaultActivityIndexerState conn deployment
       currentAttribution <- getVaultDepositAttributionState conn deployment
-      unless (currentActivity == Just activityState) $
+      -- Activity polling can advance the cursor or refresh its safe head while
+      -- the pinned RPC reads are in flight. Only require compatibility with the
+      -- observed block; canonicalAfter above still validates that block itself.
+      unless (maybe False (activitySupportsTarget targetBlock targetHash targetTimestamp) currentActivity) $
         fail "Vault activity cursor changed before request share attribution commit"
       unless (currentAttribution == attributionState) $
         fail "Vault request share attribution cursor changed before commit"
@@ -246,6 +249,18 @@ runVaultDepositAttributionCycle client pool cfg =
           }
         targetBlock
     either (fail . T.unpack) pure $ decodeLpRequestState key targetBlock targetHash bytes
+
+activitySupportsTarget :: Integer -> Text -> Integer -> VaultActivityIndexerStateRow -> Bool
+activitySupportsTarget targetBlock targetHash targetTimestamp current =
+  vaisBackfillComplete current
+    && vaisLastIndexedBlock current >= targetBlock
+    && case vaisLastIndexedBlockHash current of
+      Nothing -> False
+      Just currentHash ->
+        vaisLastIndexedBlock current > targetBlock
+          || ( normalize currentHash == normalize targetHash
+                 && vaisLastIndexedBlockTimestamp current == targetTimestamp
+             )
 
 lpRequestStateCall
   :: VaultActivityDeployment
