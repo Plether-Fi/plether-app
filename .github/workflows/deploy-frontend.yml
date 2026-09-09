@@ -25,15 +25,20 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      packages: read
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 25.2.1
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
 
       - name: Pin npm
         run: npm install -g npm@11.6.2
@@ -42,6 +47,8 @@ jobs:
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Insights story dependencies
         if: env.TARGET_ENV == 'sepolia'
