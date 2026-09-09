@@ -25,7 +25,8 @@ The current interface places related values in several locations:
 | Value                       | Where it appears                    | Meaning                                                                |
 | --------------------------- | ----------------------------------- | ---------------------------------------------------------------------- |
 | **Available to Trade**      | Trade-ticket context row            | Free, unreserved USDC inside Plether                                   |
-| **Portfolio value**         | Margin Account card                 | Current account equity after PnL, carry and applicable VPI treatment   |
+| **Settlement balance** | Margin Account card | All credited settlement USDC, including locked buckets |
+| **Position equity**         | Margin Account card                 | Signed position margin + same-account claim + exact price PnL   |
 | **Unrealized PnL**          | Margin Account and Position panels  | Directional profit or loss under the latest usable mark                |
 | **Maintenance margin**      | Margin Account card                 | The account-equity threshold used to determine liquidation eligibility |
 | **Withdrawable**            | Margin Account card                 | The maximum amount that can currently reach the owner wallet           |
@@ -35,7 +36,9 @@ The current interface places related values in several locations:
 
 Pending-order margin and reserved execution rewards are internal account buckets, but the current Margin Account card does not show their aggregate values. **Open Orders** shows which commitments are active.
 
-These values answer different account questions. Portfolio value measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
+These values answer different account questions. Position equity measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
+
+![Settlement balance and signed Position equity are separate account metrics.](../.gitbook/assets/screenshots/storybook-documentation-margin-account--overview.png)
 
 ### How account USDC is allocated
 
@@ -61,27 +64,19 @@ Assigning margin or committing an order moves USDC between these buckets. The ac
 * Settled trader claims
 * Execution reward payments
 
-### Portfolio value
+### Settlement balance and Position equity
 
-**Portfolio value** is the interface label for current account equity.
+**Settlement balance** includes every USDC bucket credited to the clearinghouse account. It excludes unrealized PnL and unsettled claims.
 
-For an account with an open position, the simplified relationship is:
+**Position equity** is shown only while a position exists:
 
 ```
-Portfolio value
-≈ reachable account collateral
-+ unrealized PnL
-− accrued carry
-− provisional VPI rebate clawback, when applicable
+Position equity = assigned position margin + same-account trader claim + exact price PnL
 ```
 
-The calculation uses the latest mark accepted by the protocol.
+The value is signed and uses the engine’s accepted mark. Free settlement and reserves do not enter this formula. Carry must be covered by eligible free settlement; a negative VPI balance must have its dedicated reserve. Those checks can make an account liquidatable independently of price equity.
 
-Eligible free USDC, assigned position margin and committed order margin remain terminally reachable and can contribute to account equity. Reserved execution rewards are excluded from account health because they are already committed to terminal order processing.
-
-An unsettled trader claim also remains outside Portfolio value. It enters the Margin Account after successful claim settlement.
-
-Portfolio value can change as the accepted mark changes or carry accrues. Available to Trade may remain unchanged during the same period because unrealized PnL has not yet settled into account USDC.
+Unrealized profit can increase Position equity without increasing Available to Trade. Settling a claim on an open position turns it into assigned margin; while flat, settlement credits account funds.
 
 ### Depositing USDC
 
@@ -159,13 +154,13 @@ The reservation outcome depends on how the order finishes:
 
 Pending orders are binding and have no trader cancellation action. For the current sponsored Trading Account, keepers finalize orders and clean up expired orders before their margin becomes available again.
 
-Terminal account settlement has wider reach than an ordinary partial reduction. A full close or liquidation may consume committed margin from other orders when free USDC and position margin cannot cover the account obligation. Partial reductions leave committed order margin protected.
+Price-loss collection uses assigned position margin and same-account claims. Committed-order margin and dedicated reserves do not become price collateral during terminal settlement; order cleanup releases reservations separately.
 
 ### Position margin
 
 Position margin is USDC assigned directly to the open position.
 
-It determines the leverage displayed for that position. Free USDC elsewhere in the account can also support account health, although it remains outside the assigned position-margin amount.
+It determines the leverage displayed for that position. Free USDC pays carry separately; it must be assigned as margin to support price losses.
 
 This can produce two different views of the same account:
 
@@ -198,7 +193,7 @@ Additional position margin can:
 * Reduce the position’s LP-backed[^lp] borrow base
 * Reduce future carry accrual
 
-It normally does not increase immediate account-wide liquidation headroom: the same USDC already contributed while it was free collateral. Depositing new USDC adds collateral. Carry collected during the margin action can reduce equity.
+It increases price-risk backing by the amount assigned. Carry is realized from free settlement first, and the form’s maximum subtracts projected carry. A deposit alone increases free settlement and carry coverage.
 
 Adding margin is immediate and bypasses the delayed order queue. It remains available during stale, frozen and degraded market conditions and requires no current oracle mark.
 
@@ -241,7 +236,7 @@ The post-withdrawal requirement is stricter than the ordinary liquidation thresh
 
 During a scheduled oracle closure, Plether may use the stored mark within the frozen-market validity window. Once that mark exceeds the permitted age, Withdrawable falls to zero until an eligible mark becomes available.
 
-Withdrawing while a position remains open reduces the account buffer supporting that position. Exposure and assigned position margin remain unchanged.
+Withdrawing free funds reduces future carry coverage. It does not reduce position price equity or move the price threshold. The contract still requires the position to clear the stricter withdrawal health checks.
 
 The displayed Withdrawable value is an estimate based on the current state. Carry, accepted marks and account reservations can change before the withdrawal operation confirms.
 
@@ -349,9 +344,9 @@ When the position closes, its remaining margin is released separately. The compl
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | Deposit increased Available to Trade by less than the transferred amount | Accrued carry was collected during the deposit                               |
 | Available to Trade fell after committing an order                        | The execution reward—and, for an open or increase, order margin—was reserved  |
-| Portfolio value exceeds Withdrawable                                     | Part of the value comes from unrealized PnL or supports the open position    |
+| Position equity exceeds Withdrawable                                     | Part of the value comes from unrealized PnL or supports the open position    |
 | Free USDC is visible but Withdrawable is zero                            | Check mark freshness, degraded mode, carry and post-withdraw margin headroom |
-| Adding margin left Portfolio value nearly unchanged                      | Existing account USDC moved into the position-margin bucket                  |
+| Claim settlement left Position equity unchanged                      | The claim became position margin, preserving their sum                  |
 | A failed order still affects the account                                 | Terminal processing or cleanup may still be required                         |
 | A trader claim appears without increasing Available to Trade             | The claim awaits settlement into the Margin Account                          |
 | A pending close exists while health continues to decline                 | Exposure and carry remain active until the close executes                    |

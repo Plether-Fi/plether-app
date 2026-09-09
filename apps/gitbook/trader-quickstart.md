@@ -99,6 +99,6 @@ For partial closes or changing direction, see [reduce or close a position](tradi
 
 Select `Withdraw` in **Margin Account**. Enter an amount within **Withdrawable**, review it and authorize the sponsored action in MetaMask. It sends the exact withdrawal through your Trading Account to the connected owner wallet.
 
-Your withdrawable balance may be below your portfolio value because collateral or rewards are still reserved. Withdrawing while a position is open reduces its account buffer. See [your Margin Account](trading-on-plether-perps/your-margin-account.md) for the balance rules.
+Withdrawable can be below Settlement balance because margin or rewards are reserved and withdrawal checks apply. Free-fund withdrawals reduce carry coverage; price equity is backed separately by position margin and claims. See [your Margin Account](trading-on-plether-perps/your-margin-account.md) for the balance rules.
 
 For connection, sponsorship or validation problems, use [trader troubleshooting](trading-on-plether-perps/trader-troubleshooting.md).

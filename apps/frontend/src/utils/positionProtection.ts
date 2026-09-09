@@ -1,5 +1,6 @@
 import { formatUnits } from 'viem'
 import { protectionParamsFromInputs, protectionReturnPercent, type ProtectionDraft, type ProtectionPositionBasis } from '../contracts/positionProtection'
+import type { LiquidationThreshold } from './perpsRisk'
 import type { PerpsDirection } from './perps'
 
 export interface ProtectionPriceContext {
@@ -8,6 +9,7 @@ export interface ProtectionPriceContext {
   cap?: bigint
   position?: ProtectionPositionBasis
   liquidationPrice?: bigint
+  liquidationThreshold?: LiquidationThreshold
 }
 
 export function protectionPrice(rawPrice?: bigint, cap?: bigint): string {

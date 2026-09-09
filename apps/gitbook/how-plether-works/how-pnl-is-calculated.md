@@ -464,25 +464,14 @@ Not every uncollectible charge becomes LP bad debt. Any uncollectible frozen-clo
 
 Liquidation is not based on Unrealized PnL alone.
 
-Conceptually:
-
 ```
-Net account equity
-≈ reachable in-protocol USDC
-+ unrealized price PnL
-− accrued carry
-− any provisional VPI rebate adjustment
+Position equity
+= position margin + same-account trader claim + exact price PnL
 ```
 
-That equity is compared with the applicable maintenance-margin requirement.
+Price risk is liquidatable when this signed equity is less than or equal to maintenance. PnL uses canonical position lots and the exact stored entry cost, including rounding after increases and partial reductions.
 
-This explains why two positions with identical quantity, entry and mark can have different health:
-
-* One account may hold more free USDC.
-* One may have more position margin.
-* One may have accrued more carry.
-* One may have pending reservations.
-* One may have provisional VPI accounting attached to the position.
+Free settlement, pending orders and dedicated reserves do not enter price equity. Uncovered carry and insufficient VPI reserve backing are separate reasons for an account to be liquidatable. Deposits help carry coverage; assigning margin or adding claim backing changes the price threshold.
 
 The interface reflects these distinctions:
 
@@ -490,12 +479,12 @@ The interface reflects these distinctions:
 | ---------------------- | -------------------------------------------- |
 | **Unrealized PnL**     | Gross price result only                      |
 | **Cost of carry**      | Accrued unpaid carry in USDC                 |
-| **Portfolio value**    | Net account equity, floored at zero          |
+| **Position equity**    | Signed position margin + same-account claim + exact PnL          |
 | **Maintenance margin** | Minimum equity requirement                   |
 | **Available to Trade** | Free buying power after locked funds         |
 | **Withdrawable**       | Amount that can currently leave the protocol |
 
-Portfolio value is not the same as position margin, and Unrealized PnL does not automatically become free buying power.
+Position equity is not the same as position margin, and Unrealized PnL does not automatically become free buying power.
 
 ### Profitable closes: cash or trader claim
 
@@ -539,7 +528,7 @@ Released margin is existing collateral becoming unlocked. It is shown separately
 
 **Transaction History → Result** still shows gross realized price PnL before close VPI, execution fee, execution reward and carry. Select **View breakdown** on a matched executed close to open the same receipt-backed close and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 
-Trader claim balance and **Settle Claim** remain under **Position**. **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization, and Portfolio value does not include a separate outstanding trader claim.
+Trader claim balance and **Settle Claim** remain under **Position**. **Settle Claim** credits position margin while a position remains open, or account funds while flat, after owner-wallet authorization. Same-account claims already contribute to position equity.
 
 ![Executed close reconciliation in Final Result](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--executed.png)
 
@@ -585,7 +574,7 @@ To understand a Plether position, read the numbers in this order:
 1. Use the displayed dollar-oriented price `D = 2.00 − B`.
 2. Calculate gross price PnL from quantity and directional price movement.
 3. Keep position margin separate from profit.
-4. Adjust account equity for reachable collateral, carry and applicable VPI accounting.
+4. Calculate position equity from position margin, same-account claims and exact price PnL. Check carry coverage and dedicated VPI reserve backing separately.
 5. At close, use the execution price produced by the active oracle policy.
 6. Subtract close VPI, the execution fee and accrued carry.
 7. Subtract the frozen-close spread when it applies.

@@ -290,7 +290,8 @@ export function Perps() {
             oracleBasketComponents={perpsMarket.raw.basketComponents}
             availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
             availableToTradeAmount={perpsAccount.display.availableToTrade}
-            portfolioValueRaw={perpsAccount.equityUsdc}
+            settlementBalanceUsdcRaw={perpsAccount.settlementBalanceUsdc}
+            positionEquityUsdcRaw={perpsAccount.positionEquityUsdc}
             withdrawableUsdcRaw={perpsAccount.withdrawableUsdc}
             walletUsdcRaw={perpsAccount.walletUsdc}
             ownerWalletUsdcRaw={perpsAccount.ownerWalletUsdc}
@@ -326,6 +327,7 @@ export function Perps() {
         <div className="min-w-0 xl:clear-left xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
           <DxyBasketPanel
             liquidationPriceRaw={perpsAccount.position?.liquidationPrice}
+            capPrice={perpsAccount.capPrice}
             takeProfitPriceRaw={perpsAccount.activePositionProtection?.takeProfitTriggerPrice}
             stopLossPriceRaw={perpsAccount.activePositionProtection?.stopLossTriggerPrice}
             marketPhase={perpsMarket.marketPhase}
@@ -339,7 +341,7 @@ export function Perps() {
             protectionCapPrice={perpsAccount.capPrice}
             protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} onRefresh={() => void handleAccountRefresh()} /> : undefined}
             position={perpsAccount.position}
-            equityUsdc={perpsAccount.equityUsdc}
+            equityUsdc={perpsAccount.positionEquityUsdc}
             freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
             traderClaimBalanceUsdc={perpsAccount.traderClaimBalanceUsdc}
             pendingOrders={perpsAccount.pendingOrders}

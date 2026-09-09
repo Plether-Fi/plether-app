@@ -366,7 +366,7 @@ A new payment is not split between immediate settlement and a claim.
 
 Released position margin comes from the trader’s existing collateral. After losses and costs have been deducted, the remainder returns to the free Margin Account independently of liquidity pool payout liquidity.
 
-A trader claim remains outside Available to Trade, account equity and Withdrawable until it is settled. Settlement credits the Margin Account; withdrawal remains a separate action.
+A same-account claim contributes to position equity, but remains outside Available to Trade and Withdrawable. Settlement credits position margin while a position remains open, or account funds when flat. Withdrawal remains a separate action.
 
 An existing same-account claim can later be consumed when settling a losing terminal full close.
 

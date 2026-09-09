@@ -130,7 +130,7 @@ const marketArgs = {
   oracleFreshnessTooltip: 'validated oracle basket updated 18s ago',
   availableToTradeRaw: 18_420n * USDC,
   availableToTradeAmount: '18 420',
-  portfolioValueRaw: 18_420n * USDC,
+  settlementBalanceUsdcRaw: 18_420n * USDC,
   withdrawableUsdcRaw: 18_420n * USDC,
   walletUsdcRaw: 25_000n * USDC,
   longOpenCapacityUsdc: 250_000n * USDC,

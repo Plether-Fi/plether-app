@@ -261,7 +261,7 @@ export function TradingViewAdvancedChart({
     liquidationLineRef.current = null
     if (previousLine !== null) chart.removeEntity(previousLine)
 
-    if (price === undefined || !Number.isFinite(price) || price <= 0) return
+    if (price === undefined || !Number.isFinite(price) || price < 0) return
 
     void chart.createShape(
       { price },

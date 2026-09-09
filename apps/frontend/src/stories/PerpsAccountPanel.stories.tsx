@@ -1,3 +1,4 @@
+import { accountPositionFixture } from './perpsAccountFixtures'
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { userEvent, within } from 'storybook/test'
@@ -10,12 +11,10 @@ import {
 import type {
   PerpsOrderHistoryRow,
   PerpsPendingOrder,
-  PerpsPosition,
   PerpsTradeHistoryRow,
 } from '../hooks'
 
 const USDC = 1_000_000n
-const POSITION_SIZE = 2_000n * 10n ** 18n
 const NOW_SECONDS = Math.floor(Date.now() / 1_000)
 const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 
@@ -35,34 +34,9 @@ const STORY_IDENTITY: PerpsIdentityContextValue = {
   reloadIdentity: () => undefined,
 }
 
-const connectedPosition = {
-  exists: true,
-  side: 0,
-  direction: 'long',
-  size: POSITION_SIZE,
-  entryPrice: 98_300_000n,
-  marginUsdc: 400n * USDC,
-  unrealizedPnlUsdc: 48_250_000n,
-  maintenanceMarginUsdc: 20n * USDC,
-  liquidatable: false,
-  estimatedNotionalUsdc: 1_999_920_000n,
-  entryNotionalUsdc: 2_000_000_000n,
-  dxyExposureUsdc: 2_069_380_000n,
-  displayDxyPrice: 101_700_000n,
-  liquidationPrice: 110_000_000n,
-  pendingCarryUsdc: 1_250_000n,
-} satisfies PerpsPosition
+const connectedPosition = accountPositionFixture()
 
-const largeConnectedPosition = {
-  ...connectedPosition,
-  entryPrice: 96_880_000n,
-  marginUsdc: 800_000n * USDC,
-  unrealizedPnlUsdc: 247_932_780_000n,
-  estimatedNotionalUsdc: 3_826_052_100_000n,
-  entryNotionalUsdc: 3_826_052_100_000n,
-  dxyExposureUsdc: 4_073_013_780_000n,
-  pendingCarryUsdc: 108_429_670_000n,
-} satisfies PerpsPosition
+const largeConnectedPosition = accountPositionFixture({ size: 4_000_000n * 10n ** 18n, entryCostUsdcAtoms: 3_875_200_000_000n, positionMarginUsdc: 800_000_000_000n }, 95_651_300n)
 
 const pendingOrders = [
   {
@@ -211,7 +185,7 @@ export const ConnectedPosition: Story = {
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={1_248_250_000n}
+          equityUsdc={448_250_000n}
           freeBuyingPowerUsdc={848_250_000n}
           position={connectedPosition}
           onClosePosition={() => undefined}
@@ -227,7 +201,7 @@ export const LargeConnectedPosition: Story = {
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={1_048_250n * USDC}
+          equityUsdc={largeConnectedPosition.positionEquityUsdc}
           freeBuyingPowerUsdc={248_250n * USDC}
           position={largeConnectedPosition}
           onClosePosition={() => undefined}
@@ -245,7 +219,7 @@ function ClosePositionFlowStory() {
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={1_248_250_000n}
+          equityUsdc={448_250_000n}
           freeBuyingPowerUsdc={848_250_000n}
           position={connectedPosition}
           onClosePosition={() => {
@@ -273,7 +247,7 @@ export const EditPositionMargin: Story = {
         <PerpsAccountPanel
           initialPositionMarginModalOpen
           isConnected
-          equityUsdc={1_248_250_000n}
+          equityUsdc={448_250_000n}
           freeBuyingPowerUsdc={848_250_000n}
           position={connectedPosition}
         />
@@ -333,4 +307,19 @@ export const UnrealizedPnlTooltip: Story = {
     const canvas = within(canvasElement)
     await userEvent.hover(canvas.getByLabelText('Unrealized PnL details'))
   },
+}
+
+
+export const LiquidationRegression: Story = {
+  render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
+    equityUsdc={250_000_000n} freeBuyingPowerUsdc={750_000_000n}
+    position={accountPositionFixture({ size: 10_000n * 10n ** 18n, entryCostUsdcAtoms: 10_000_000_000n, positionMarginUsdc: 250_000_000n }, 100_000_000n)} /></div>,
+}
+export const UnavailableRisk: Story = {
+  render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
+    position={{ ...connectedPosition, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' }, pendingCarryUsdc: undefined }} /></div>,
+}
+export const LiquidatableCarry: Story = {
+  render: () => <div className="min-h-screen bg-app-bg p-8"><PerpsAccountPanel isConnected
+    position={{ ...accountPositionFixture({ positionMarginUsdc: 10_000_000_000n }), liquidatable: true, uncoveredCarryUsdc: 1_250_000n }} /></div>,
 }

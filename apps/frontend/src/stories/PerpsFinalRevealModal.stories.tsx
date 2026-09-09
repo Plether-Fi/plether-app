@@ -153,7 +153,7 @@ const baseModalArgs = {
   oracleFreshnessTooltip: 'backend updated just now',
   oraclePublishTime: Math.floor(Date.now() / 1_000),
   availableToTradeRaw: 18_420n * USDC,
-  portfolioValueRaw: 12_400n * USDC,
+  settlementBalanceUsdcRaw: 12_400n * USDC,
   withdrawableUsdcRaw: 8_100n * USDC,
   walletUsdcRaw: 5_000n * USDC,
   marginAllowanceUsdc: 5_000n * USDC,

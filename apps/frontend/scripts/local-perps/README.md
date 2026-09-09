@@ -80,3 +80,30 @@ The executor supplies a 15-million gas limit because the router's low-gas
 pending path makes bare gas estimation insufficient for deterministic execution.
 
 Stop both terminals with Ctrl-C when finished. The Anvil state is ephemeral.
+
+## Account-risk regression suite
+
+With the same dedicated fork and controller running, use Node 22.18 or newer
+(native TypeScript stripping) and run from `apps/frontend`:
+
+```sh
+LOCAL_PERPS_ABI_BUNDLE=/absolute/path/perps-arbitrum-sepolia-v1.2.2.zip \
+  npm run test:local-perps-risk
+```
+
+This suite checks the checksum-verified v1.2.2 deployed bytecode and compares
+the frontend threshold with `previewLiquidation` at the boundary and adjacent
+healthy tick. It covers both directions, open-preview agreement, deposits,
+margin additions, withdrawal limits, exact entry-cost rounding after real
+increases and partial reductions, and settlement of a real partial-close claim
+into live position margin. It resets this disposable sandbox before each
+scenario and on completion. Do not run it concurrently with other fork tests.
+
+The claim scenario temporarily removes pool cash by impersonating the pool on
+Anvil, then restores that cash before settlement. Execution never accepts a
+configurable RPC and is restricted to `127.0.0.1:18545`; it cannot write to the
+public deployment. If the public RPC no longer serves the fork's original
+state, restart both test processes with a fresh fork.
+
+See [the accounting and verification record](../../../../docs/runbooks/perps-account-risk-v1.2.2.md)
+for the pinned Solidity vectors and the frontend snapshot policy.
