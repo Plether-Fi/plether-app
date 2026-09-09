@@ -461,3 +461,24 @@ test-suite plether-api-integration-test
         LambdaCase
         RecordWildCards
     ghc-options: -threaded -rtsopts -with-rtsopts=-N1
+
+test-suite plether-aa-integration-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        hspec >= 2.11,
+        aeson >= 2.1,
+        async >= 2.2,
+        postgresql-simple >= 0.7,
+        text >= 2.0,
+        time >= 1.12
+    hs-source-dirs:   test-aa-integration
+    default-language: GHC2021
+    default-extensions:
+        LambdaCase
+        NumericUnderscores
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1

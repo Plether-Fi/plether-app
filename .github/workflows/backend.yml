@@ -136,3 +136,83 @@ jobs:
 
       - name: Run deterministic Perps critical path integration tests
         run: cabal test plether-api-integration-test --test-show-details=direct -j1
+
+  native-aa-integration:
+    name: Native AA integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/backend
+    env:
+      AA_INTEGRATION_REQUIRED: '1'
+      AA_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/plether_aa_integration
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: plether_aa_integration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d plether_aa_integration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpq-dev \
+            libsecp256k1-dev \
+            pkg-config \
+            postgresql-client
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: 'latest'
+          cabal-update: false
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+
+      - name: Update Cabal package index
+        run: |
+          for attempt in 1 2 3; do
+            if cabal update; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cabal update failed after 3 attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
+
+      - name: Install native AA integration dependencies
+        run: cabal build --only-dependencies plether-aa-integration-test
+
+      - name: Verify PostgreSQL prerequisite
+        run: |
+          pg_isready --dbname="$AA_INTEGRATION_DATABASE_URL"
+          psql "$AA_INTEGRATION_DATABASE_URL" --set ON_ERROR_STOP=1 --command "SELECT 1;"
+
+      - name: Run native AA integration tests
+        run: cabal test plether-aa-integration-test --test-show-details=direct -j1
