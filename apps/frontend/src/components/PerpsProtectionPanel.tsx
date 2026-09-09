@@ -76,10 +76,11 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
   const editable = protection !== undefined && [1, 2].includes(protection.status)
   const creatable = !protection && position?.exists && pendingOrders === 0
   const direction = position?.exists ? position.direction : perpsSideToDirection(protection?.side)
-  const priceContext = { direction, rawMark, cap, position: position?.exists ? position : undefined, liquidationPrice: position?.exists ? position.liquidationPrice : undefined }
+  const liquidationThreshold = position?.liquidationThreshold ?? (position?.liquidationPrice !== undefined ? { status: 'boundary' as const, price: position.liquidationPrice } : { status: 'unavailable' as const })
+  const priceContext = { direction, rawMark, cap, liquidationThreshold, position: position?.exists ? position : undefined, liquidationPrice: position?.exists ? position.liquidationPrice : undefined }
   let reviewPriceError: string | undefined
   if (review) {
-    try { validateProtectionParams(review.params, direction, rawMark ?? 0n, cap ?? 0n, priceContext.liquidationPrice) }
+    try { validateProtectionParams(review.params, direction, rawMark ?? 0n, cap ?? 0n, priceContext.liquidationPrice, priceContext.liquidationThreshold) }
     catch (cause) { reviewPriceError = cause instanceof Error ? cause.message : 'Review your TP/SL prices again.' }
   }
   const reward = (configuration.triggerBountyUsdc ?? 0n) + (configuration.executionBountyUsdc ?? 0n)

@@ -1,3 +1,5 @@
+import { accountPositionFixture, accountStoryIdentity } from './perpsAccountFixtures'
+import { PerpsIdentityContext } from '../perps-aa'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Button, TokenAmount } from '../components/ui'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
@@ -8,35 +10,17 @@ import {
   OperationStateCard,
   PerpsTradingAccountPanel,
 } from '../components/PerpsTradingAccountPanel'
-import type { PerpsPosition } from '../hooks'
+
 
 const USDC = 1_000_000n
-const POSITION_SIZE = 2_000n * 10n ** 18n
-
-const position = {
-  exists: true,
-  side: 0,
-  direction: 'long',
-  size: POSITION_SIZE,
-  entryPrice: 98_300_000n,
-  marginUsdc: 400n * USDC,
-  unrealizedPnlUsdc: 48_250_000n,
-  maintenanceMarginUsdc: 20n * USDC,
-  liquidatable: false,
-  estimatedNotionalUsdc: 1_999_920_000n,
-  entryNotionalUsdc: 2_000_000_000n,
-  dxyExposureUsdc: 2_069_380_000n,
-  displayDxyPrice: 101_700_000n,
-  liquidationPrice: 110_000_000n,
-  pendingCarryUsdc: 1_250_000n,
-} satisfies PerpsPosition
+const position = accountPositionFixture()
 
 const accountPanel = (
   <PerpsTradingAccountPanel
     ownerWalletAddress="0x9B2F4e0E78E36D97f91c80D5B1aED422d3C2e741"
     tradingAccountAddress="0x62A9c44fAbC68B6dE62059E827cE972bD09E6c18"
     accountModel="smart-account"
-    marginAccountUsdc="12 480.25"
+    marginAccountUsdc="1 248.25"
   />
 )
 
@@ -80,6 +64,7 @@ function DocumentationWorkspace() {
 const meta: Meta<typeof DocumentationWorkspace> = {
   title: 'Documentation/Trader Workspace',
   component: DocumentationWorkspace,
+  decorators: [(Story) => <PerpsIdentityContext.Provider value={accountStoryIdentity}><Story /></PerpsIdentityContext.Provider>],
   parameters: {
     layout: 'fullscreen',
   },
@@ -105,7 +90,7 @@ export const MarketAndAccountReadiness: Story = {
             <PerpsAccountPanel
               isConnected
               position={position}
-              equityUsdc={1_248_250_000n}
+              equityUsdc={448_250_000n}
               freeBuyingPowerUsdc={848_250_000n}
             />
           </div>
@@ -118,8 +103,9 @@ export const MarketAndAccountReadiness: Story = {
             oracleFreshnessTooltip="updated 18s ago"
             availableToTradeRaw={848_250_000n}
             availableToTradeAmount="848.25"
-            portfolioValueRaw={1_248_250_000n}
-            withdrawableUsdcRaw={648_250_000n}
+            settlementBalanceUsdcRaw={1_248_250_000n}
+            positionEquityUsdcRaw={position.positionEquityUsdc}
+            withdrawableUsdcRaw={847_000_000n}
             walletUsdcRaw={5_000_000_000n}
             currentPosition={position}
             maintenanceMarginBps={100n}
@@ -155,7 +141,7 @@ export const CloseOnlyReduceOnly: Story = {
             oracleFreshnessTooltip="using the validated stored basket"
             availableToTradeRaw={1_500n * USDC}
             availableToTradeAmount="1 500"
-            portfolioValueRaw={1_255n * USDC}
+            settlementBalanceUsdcRaw={1_255n * USDC}
             withdrawableUsdcRaw={1_000n * USDC}
             walletUsdcRaw={2_000n * USDC}
             currentPosition={position}
@@ -241,7 +227,7 @@ export const DegradedMarketAndAccount: Story = {
           <PerpsAccountPanel
             isConnected
             position={position}
-            equityUsdc={1_248_250_000n}
+            equityUsdc={448_250_000n}
             freeBuyingPowerUsdc={848_250_000n}
           />
         </div>

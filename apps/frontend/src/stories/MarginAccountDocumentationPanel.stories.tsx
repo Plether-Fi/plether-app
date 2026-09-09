@@ -1,9 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { MarginAccountDocumentationPanel } from '../components/documentation/MarginAccountDocumentationPanel'
+import { PerpsIdentityContext } from '../perps-aa'
+import { accountStoryIdentity } from './perpsAccountFixtures'
 
 const meta: Meta<typeof MarginAccountDocumentationPanel> = {
   title: 'Documentation/Margin Account',
   component: MarginAccountDocumentationPanel,
+  decorators: [(Story) => <PerpsIdentityContext.Provider value={accountStoryIdentity}><Story /></PerpsIdentityContext.Provider>],
   parameters: {
     layout: 'fullscreen',
   },

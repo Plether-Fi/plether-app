@@ -48,16 +48,16 @@ The current card shows:
 
 The current interface does not display aggregate claim coverage or a separate availability status. The contract performs the coverage check when the sponsored operation is simulated and executed. If coverage is insufficient, settlement fails and the complete claim remains recorded.
 
-Before settlement, the claim remains separate from your usable account collateral.
+Before settlement, the same-account claim supports price equity but remains separate from spendable account funds.
 
 | Account value          | Treatment of an unsettled claim |
 | ---------------------- | ------------------------------- |
 | Margin Account balance | Excluded                        |
-| Portfolio value        | Excluded                        |
+| Position equity        | Included for the same account  |
 | Available to Trade     | Excluded                        |
 | Withdrawable           | Excluded                        |
-| Position health        | Excluded                        |
-| Liquidation protection | Excluded                        |
+| Price health           | Included for the same account  |
+| Price-loss backing     | Included for the same account  |
 
 The claim remains denominated in USDC. It does not accrue interest or yield and has no expiry.
 
@@ -162,7 +162,7 @@ The sponsored settlement operation does not transfer USDC directly to the owner 
 
 Plether checkpoints carry before crediting a claim to an account with an open position.
 
-When the accrued carry can be collected from existing account collateral, it is collected before the claim credit. The visible change in your total Margin Account balance may therefore be smaller than the settled claim.
+Carry is collected from existing free settlement before the claim credit. Position margin and the claim cannot cover carry. The visible change in total Settlement balance may therefore be smaller than the settled claim.
 
 For example:
 
@@ -174,7 +174,7 @@ Net account balance change:         +4,880 USDC
 
 The claim itself is still settled for the full `5,000 USDC`.
 
-If the account cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry. It continues to affect account equity and later settlement checks.
+If free settlement cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry. It can independently make the account liquidatable; it does not reduce position price equity.
 
 ### Withdraw the credited USDC
 

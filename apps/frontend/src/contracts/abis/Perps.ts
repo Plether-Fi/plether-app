@@ -543,6 +543,13 @@ export const PERPS_PUBLIC_LENS_ABI = [
 export const PERPS_MARGIN_CLEARINGHOUSE_ABI = [
   {
     type: 'function',
+    name: 'vpiRebateReserveUsdc',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'depositMargin',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'amount', type: 'uint256' }],
@@ -1039,6 +1046,13 @@ export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filt
 )
 
 export const PERPS_CFD_ENGINE_ABI = [
+  {
+    type: 'function',
+    name: 'positionEntryCostUsdcAtoms',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
   {
     type: 'function',
     name: 'positionCarryState',

@@ -1512,7 +1512,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         walletUsdcRaw={1000000000n}
-        portfolioValueRaw={1000000000n}
+        settlementBalanceUsdcRaw={1000000000n}
         currentPosition={{
           exists: true,
           side: 0,
@@ -2060,7 +2060,7 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
 
     expect(screen.getByText('Edit Position Margin')).toBeInTheDocument()
-    expect(screen.getByText('This locks free USDC into the current position margin bucket. It does not change position size.')).toBeInTheDocument()
+    expect(screen.getByText(/This moves free USDC into position margin/)).toBeInTheDocument()
     expect(screen.getByText(/Direct margin removal is not supported/i)).toBeInTheDocument()
     expect(screen.queryByText(/by the current contracts/i)).not.toBeInTheDocument()
     expect(screen.getByText('Current position margin')).toBeInTheDocument()
@@ -2422,7 +2422,7 @@ describe('perps lifecycle labels', () => {
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 2_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
-      portfolioValueRaw: 2_000_000_000n,
+      settlementBalanceUsdcRaw: 2_000_000_000n,
       withdrawableUsdcRaw: 2_000_000_000n,
       minOpenNotionalUsdc: 100_000_000n,
       minNewPositionNotionalUsdc: 100_000_000n,
@@ -2491,7 +2491,7 @@ describe('perps lifecycle labels', () => {
             oraclePublishTime={Math.floor(Date.now() / 1000)}
             availableToTradeRaw={2_000_000_000n}
             walletUsdcRaw={2_000_000_000n}
-            portfolioValueRaw={2_000_000_000n}
+            settlementBalanceUsdcRaw={2_000_000_000n}
             withdrawableUsdcRaw={2_000_000_000n}
             minOpenNotionalUsdc={100_000_000n}
             minNewPositionNotionalUsdc={100_000_000n}
@@ -2627,7 +2627,7 @@ describe('perps lifecycle labels', () => {
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 2_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
-      portfolioValueRaw: 2_000_000_000n,
+      settlementBalanceUsdcRaw: 2_000_000_000n,
       withdrawableUsdcRaw: 2_000_000_000n,
       minOpenNotionalUsdc: 100_000_000n,
       minNewPositionNotionalUsdc: 100_000_000n,
@@ -2821,7 +2821,7 @@ describe('perps lifecycle labels', () => {
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 200_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
-      portfolioValueRaw: 200_000_000_000n,
+      settlementBalanceUsdcRaw: 200_000_000_000n,
       withdrawableUsdcRaw: 2_000_000_000n,
       minOpenNotionalUsdc: 100_000_000n,
       minNewPositionNotionalUsdc: 100_000_000n,
@@ -2913,7 +2913,7 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw: 98_391_482n,
       availableToTradeRaw: 2_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
-      portfolioValueRaw: 2_000_000_000n,
+      settlementBalanceUsdcRaw: 2_000_000_000n,
       withdrawableUsdcRaw: 2_000_000_000n,
       minOpenNotionalUsdc: 100_000_000n,
       minNewPositionNotionalUsdc: 100_000_000n,
@@ -3000,7 +3000,7 @@ describe('perps lifecycle labels', () => {
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
         walletUsdcRaw={2_000_000_000n}
-        portfolioValueRaw={2_000_000_000n}
+        settlementBalanceUsdcRaw={2_000_000_000n}
         withdrawableUsdcRaw={2_000_000_000n}
         minOpenNotionalUsdc={100_000_000n}
         minNewPositionNotionalUsdc={100_000_000n}
@@ -3050,7 +3050,7 @@ describe('perps lifecycle labels', () => {
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
         walletUsdcRaw={2_000_000_000n}
-        portfolioValueRaw={2_000_000_000n}
+        settlementBalanceUsdcRaw={2_000_000_000n}
         withdrawableUsdcRaw={2_000_000_000n}
         minOpenNotionalUsdc={100_000_000n}
         minNewPositionNotionalUsdc={100_000_000n}
@@ -3157,7 +3157,7 @@ describe('perps lifecycle labels', () => {
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
         walletUsdcRaw={2_000_000_000n}
-        portfolioValueRaw={2_000_000_000n}
+        settlementBalanceUsdcRaw={2_000_000_000n}
         withdrawableUsdcRaw={2_000_000_000n}
         minOpenNotionalUsdc={100_000_000n}
         minNewPositionNotionalUsdc={100_000_000n}
@@ -3199,4 +3199,41 @@ describe('perps lifecycle labels', () => {
       expect(screen.getByText('Final Result')).toBeInTheDocument()
     })
   })
+  it('shows exact risk thresholds, unavailable reads, and non-price liquidation separately', () => {
+    const position = { exists: true, side: 0, direction: 'long' as const, size: 10_000n * 10n ** 18n,
+      entryPrice: 100_000_000n, marginUsdc: 250_000_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 10_000_000n,
+      liquidatable: false, riskStatus: 'ready' as const, liquidationPrice: 102_397_603n,
+      liquidationThreshold: { status: 'boundary' as const, price: 102_397_603n }, pendingCarryUsdc: 20_000_000n }
+    const close = vi.fn()
+    const { rerender } = render(<PerpsAccountPanel isConnected position={position} freeBuyingPowerUsdc={750_000_000n} onClosePosition={close} />)
+    expect(screen.getByTitle('Exact liquidation threshold: 0.97602397')).toHaveTextContent('0.9760')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    expect(screen.getByRole('textbox')).toHaveValue('730')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    rerender(<PerpsAccountPanel isConnected position={{ ...position, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' } }} onClosePosition={close} />)
+    expect(screen.queryByText('Not in range')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Account risk unavailable')
+    fireEvent.click(screen.getByRole('button', { name: 'Close position' }))
+    expect(close).toHaveBeenCalledOnce()
+    rerender(<PerpsAccountPanel isConnected position={{ ...position, liquidatable: true, liquidationPrice: undefined, liquidationThreshold: { status: 'out-of-range' }, uncoveredCarryUsdc: 1n, vpiReserveUnderfunded: true }} />)
+    expect(screen.getByText('Not in range')).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('Liquidatable')
+    expect(screen.getByRole('alert')).toHaveTextContent('does not cover accrued carry')
+    expect(screen.getByRole('alert')).toHaveTextContent('VPI reserve is insufficient')
+  })
+
+  it('separates settlement from signed position equity and hides equity when flat', () => {
+    const position = { exists: true, side: 0, direction: 'long' as const, size: 10_000n * 10n ** 18n,
+      entryPrice: 100_000_000n, marginUsdc: 250_000_000n, unrealizedPnlUsdc: -255_000_000n,
+      maintenanceMarginUsdc: 10_000_000n, liquidatable: true }
+    const { rerender } = render(<PerpsTradeTicket settlementBalanceUsdcRaw={1_000_000_000n} positionEquityUsdcRaw={-5_000_000n} currentPosition={position} />)
+    expect(screen.queryByText('Portfolio value')).not.toBeInTheDocument()
+    expect(screen.getByText('Settlement balance').parentElement).toHaveTextContent('1 000')
+    expect(screen.getByText('Position equity').parentElement).toHaveTextContent('-5')
+    rerender(<PerpsTradeTicket settlementBalanceUsdcRaw={1_000_000_000n} />)
+    expect(screen.queryByText('Position equity')).not.toBeInTheDocument()
+    expect(screen.getByText('Settlement balance')).toBeVisible()
+  })
+
 })

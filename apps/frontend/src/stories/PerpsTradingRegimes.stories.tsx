@@ -190,7 +190,7 @@ function RegimePanel({ regime }: TradingRegimeStoryProps) {
           oracleFreshnessTooltip={config.oracleFreshnessTooltip}
           availableToTradeRaw={1_500n * USDC}
           availableToTradeAmount="1 500"
-          portfolioValueRaw={1_255n * USDC}
+          settlementBalanceUsdcRaw={1_255n * USDC}
           withdrawableUsdcRaw={1_000n * USDC}
           walletUsdcRaw={2_000n * USDC}
           currentPosition={currentPosition}

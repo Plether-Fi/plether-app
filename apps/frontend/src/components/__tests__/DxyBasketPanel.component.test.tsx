@@ -20,4 +20,9 @@ describe('DxyBasketPanel', () => {
 
     expect(screen.getByTestId('advanced-chart-liquidation-price')).toBeEmptyDOMElement()
   })
+  it.each([[0n, '2'], [200_000_000n, '0'], [102_397_603n, '0.97602397']])('keeps exact liquidation endpoint %s on the chart', (raw, display) => {
+    render(<DxyBasketPanel liquidationPriceRaw={BigInt(raw)} />)
+    expect(screen.getByTestId('advanced-chart-liquidation-price')).toHaveTextContent(String(display))
+  })
+
 })

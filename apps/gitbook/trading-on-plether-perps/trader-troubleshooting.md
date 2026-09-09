@@ -407,7 +407,7 @@ Available to Trade excludes:
 
 Carry can also reduce the balance when an account action checkpoints it.
 
-Unrealized profit can contribute to Portfolio value before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
+Unrealized profit can contribute to Position equity before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
 
 ### My liquidation price or account health changed
 
@@ -422,7 +422,7 @@ Check for changes in:
 * Execution-reward reservations
 * Current FAD margin requirement
 
-Account health uses physically reachable Margin Account collateral and excludes reserved execution rewards. Pending carry reduces equity before it is collected.
+Price health uses position margin plus same-account claims and exact PnL. Carry coverage and dedicated VPI reserve backing are checked separately; free settlement and order reservations do not increase price equity.
 
 Actual liquidation uses an adverse confidence-adjusted oracle price. A position close to the boundary can therefore become liquidatable before the central displayed mark reaches the estimated liquidation price.
 
@@ -442,7 +442,7 @@ During the wait:
 * The close execution reward has already been reserved.
 * Position margin may already have been used to back that reward.
 
-Depositing additional USDC can improve account-wide health while leaving position size unchanged.
+Depositing USDC can restore carry coverage. To increase the price-loss buffer without changing size, assign free funds using Add Margin.
 
 If liquidation executes first:
 

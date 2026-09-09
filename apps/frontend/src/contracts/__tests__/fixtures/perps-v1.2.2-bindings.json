@@ -7,8 +7,8 @@
       "layoutSha256": "cc6f28af5e139d1140bd3aecf287bf1e437968d2e84757bae397966c1a1b5023"
     },
     "PERPS_MARGIN_CLEARINGHOUSE_ABI": {
-      "entries": 6,
-      "layoutSha256": "f11048dd667be6e5d5c64dc2c513856ee1fa9134acdc61706cfe0e32670c4ead"
+      "entries": 7,
+      "layoutSha256": "34d31ded9c05902078719adc45c20223502ad536b83fcae38cb722a6c19fe3d7"
     },
     "PERPS_ORDER_ROUTER_ABI": {
       "entries": 25,
@@ -27,8 +27,8 @@
       "layoutSha256": "196daad4058634efe9351a9c4b8a08d7a0e78adff4df01481bf28db17b84879e"
     },
     "PERPS_CFD_ENGINE_ABI": {
-      "entries": 20,
-      "layoutSha256": "ae43b5ea86463c8a13e2846ec754d80b0d97645ed9f2685afdbb4243f5f13e65"
+      "entries": 21,
+      "layoutSha256": "37711fbbcc86ce4b5e91929afc4021ea8bd84d615286e14f35dfac7a2e2840d8"
     },
     "PERPS_HOUSE_POOL_ABI": {
       "entries": 10,

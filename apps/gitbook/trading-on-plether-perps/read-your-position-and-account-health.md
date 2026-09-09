@@ -2,7 +2,7 @@
 
 The **Current Position** panel shows executed exposure and price performance. The **Margin Account** shows the collateral supporting that position.
 
-Plether evaluates liquidation with account-wide collateral. Free USDC[^usdc] and eligible margin committed to pending orders can support an open position alongside its assigned position margin.
+Plether checks price equity, carry coverage and reserve backing separately. Position margin and same-account claims support price losses. Free USDC[^usdc] covers carry; committed-order funds and reserves do not increase price equity.
 
 A useful reading order is:
 
@@ -122,7 +122,7 @@ It is used to estimate:
 
 * Current exposure and contract notional
 * Unrealized PnL
-* Portfolio value
+* Position equity
 * Maintenance margin
 * Current liquidation status
 * Withdrawal headroom
@@ -158,7 +158,7 @@ Pending carry:
 
 * Reduces account equity as it accrues
 * Continues during stale and frozen oracle periods
-* Can consume free USDC or position margin when realized
+* Can consume eligible free USDC when realized; position margin remains protected
 * Reduces the settlement result of a close
 * Can move an account toward liquidation without a price change
 
@@ -178,15 +178,15 @@ current contract notional ÷ position margin
 
 This is the leverage shown beside the position.
 
-The leverage tooltip may also show effective account leverage:
+The leverage tooltip may also show equity leverage:
 
 ```
-Effective account leverage
+Equity leverage
 =
-current contract notional ÷ Portfolio value
+current contract notional ÷ Position equity
 ```
 
-Effective account leverage includes the effect of free USDC, PnL, carry and other account-wide health adjustments.
+Equity leverage uses position margin, same-account claims and exact price PnL. Free USDC and carry do not enter its denominator.
 
 Two accounts with the same position leverage can therefore have different liquidation buffers.
 
@@ -201,9 +201,9 @@ Adding position margin:
 * Reduces the LP-backed[^lp] carry base
 * Can lower future carry accrual
 
-This action reclassifies USDC already held in the account. Free USDC already contributes to account-wide liquidation health, so reclassification generally leaves immediate reachable collateral unchanged. Carry may be checkpointed during the transaction.
+This moves free settlement into price-risk backing and increases the price buffer. The maximum subtracts projected carry first. Keep free funds for future carry, since position margin cannot pay it.
 
-Depositing new USDC into the Margin Account adds collateral and increases account health.
+Depositing adds free settlement and improves carry coverage. Assigning funds to position margin increases the price-loss buffer.
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
@@ -215,55 +215,27 @@ The `Margin Account` card in the trade ticket currently shows four values:
 
 | Field                  | Meaning                                                                |
 | ---------------------- | ---------------------------------------------------------------------- |
-| **Portfolio value**    | Current account equity after PnL, carry and applicable VPI adjustments |
+| **Settlement balance** | All clearinghouse USDC, including locked margin and reserves; excludes price PnL and claims |
+| **Position equity**    | Signed position margin + same-account claim + exact price PnL |
 | **Unrealized PnL**     | Price-only PnL of the open position                                    |
 | **Maintenance margin** | Current equity requirement for avoiding liquidation                    |
 | **Withdrawable**       | Amount currently permitted to leave the protocol                       |
 
 `Available to Trade` is a separate context row above the exposure input. Aggregate pending-order margin and execution-reward reserves are not shown as rows in the current card; use **Open Orders** to identify active commitments. Assigned position margin appears in `Edit Position Margin`, and a claim appears in a separate **Trader claim** card when one exists.
 
-### Portfolio value
+### Settlement balance and Position equity
 
-With an open position, **Portfolio value** represents the account’s current risk equity.
+**Settlement balance** is all USDC credited to the clearinghouse account, including free funds, assigned margin and locked reserves. It excludes unrealized PnL and unsettled claims.
 
-The calculation can be summarized as:
-
-```
-Terminally reachable collateral
-=
-Margin Account settlement balance
-− pending execution-reward reserves
-```
+For an open position:
 
 ```
-Portfolio value
-=
-terminally reachable collateral
-+ unrealized PnL
-− pending carry
-− applicable VPI rebate clawback
+Position equity = assigned position margin + same-account trader claim + exact price PnL
 ```
 
-Terminally reachable collateral includes:
+The UI preserves negative signed position equity. This figure excludes free settlement, pending-order funds and reserves. Carry is paid from free settlement and checked separately; negative VPI requires its dedicated reserve.
 
-* Free Margin Account USDC
-* Assigned position margin
-* Margin committed to pending orders
-
-Pending execution rewards are excluded because they have already been reserved for terminal order processing.
-
-The VPI adjustment applies when the position carries an accumulated negative VPI balance. The risk calculation conservatively accounts for the portion subject to the lifetime rebate clamp.
-
-Portfolio value excludes:
-
-* Trader claims awaiting settlement
-* USDC held by another wallet
-* Future voluntary-close fees and VPI
-* A possible frozen-close spread
-
-The compact account view floors negative Portfolio value at zero. A displayed zero can therefore represent either zero or negative signed equity.
-
-With no open position, Portfolio value corresponds to physically credited Margin Account USDC.
+When no position exists, Position equity is omitted. Settlement balance remains visible. A failed or invalidated account snapshot makes current risk metrics unavailable until a successful refresh.
 
 ### Available to Trade
 
@@ -286,7 +258,7 @@ It can fund:
 * Loss settlement
 * Withdrawals that pass the withdrawal checks
 
-Unrealized profit increases Portfolio value but does not increase Available to Trade until it is realized and credited.
+Unrealized profit increases Position equity but does not increase Available to Trade until it is realized and credited.
 
 A pending opening order reduces Available to Trade immediately by reserving margin and its execution reward. Live position size remains unchanged until execution.
 
@@ -308,19 +280,7 @@ With an open position, Plether also checks:
 * Degraded mode
 * Existing account reservations
 
-A simplified calculation is:
-
-```
-Withdrawable
-=
-lower of:
-
-free USDC after carry realization
-and
-net equity − required post-withdraw initial margin
-```
-
-The result is floored at zero.
+The contract returns the full free settlement remaining after projected carry only if the position clears the stricter of initial margin and the active maintenance/FAD requirement and the other withdrawal checks pass. Otherwise it returns zero. Free settlement does not enter position equity, so withdrawing free funds does not move the price threshold.
 
 Withdrawable can be lower than Available to Trade. It becomes zero for an account with an open position when:
 
@@ -337,9 +297,9 @@ Margin committed to an opening or increase remains locked until the order execut
 While pending:
 
 * It is unavailable for another order or withdrawal.
-* It remains part of the account’s terminally reachable collateral.
+* It is separate from price-risk backing.
 * It creates no additional live exposure.
-* It can be consumed if the existing position is liquidated.
+* Terminal settlement can use eligible commitments for action obligations under its separate rules.
 
 After execution, the required amount moves into the active position-margin bucket.
 
@@ -350,7 +310,7 @@ Every queued order reserves an execution reward.
 Once reserved, that USDC:
 
 * Leaves Available to Trade
-* Stops contributing to account health
+* Remains separate from price equity and cannot cover carry
 * Pays the account that performs terminal processing
 * Remains payable after execution, terminal failure or expiry
 
@@ -364,19 +324,9 @@ A failed close still pays the execution reward. Review health again before submi
 
 ### Trader claims
 
-A trader claim is a pool obligation awaiting physical settlement.
+A same-account trader claim is included in position equity and can offset price losses. It is not free buying power, deposited settlement or withdrawable cash.
 
-Until settled, it remains outside:
-
-* Portfolio value
-* Position margin
-* Available to Trade
-* Withdrawable
-* Liquidation protection
-
-Claim settlement credits USDC into the Margin Account. The newly credited amount then contributes to collateral and account health.
-
-A same-account claim may later be netted during terminal close or liquidation settlement, but it does not delay the liquidation threshold.
+Settling a claim while a position is open turns it into position margin, preserving the combined margin-plus-claim price backing. Settling while flat credits account funds. Settlement and withdrawal are separate actions.
 
 ### Maintenance margin
 
@@ -396,12 +346,12 @@ Use the active value shown by the interface rather than relying on a previously 
 
 ### Read account health
 
-The interface does not display a named health percentage. For a practical screen check, compare **Portfolio value** with **Maintenance margin**. The underlying relationship can be expressed using signed net equity:
+The interface does not display a named health percentage. For a practical screen check, compare **Position equity** with **Maintenance margin**. The underlying relationship can be expressed using signed net equity:
 
 ```
 Health ratio
 =
-net account equity ÷ maintenance margin
+position equity ÷ maintenance margin
 ```
 
 The same value expressed as a percentage is:
@@ -409,20 +359,22 @@ The same value expressed as a percentage is:
 ```
 Health percentage
 =
-net account equity ÷ maintenance margin × 100%
+position equity ÷ maintenance margin × 100%
 ```
 
 | Health         | Meaning                                           |
 | -------------- | ------------------------------------------------- |
-| Above `100%`   | Account is above the current liquidation boundary |
+| Above `100%`   | Price equity exceeds maintenance; separate carry/reserve checks still apply |
 | Exactly `100%` | Position is liquidatable                          |
 | Below `100%`   | Position is liquidatable                          |
 
-The protocol test is:
+For positive maintenance, this ratio describes price risk only. With zero maintenance, the ratio is undefined; compare signed equity directly with zero. The contract’s account-liquidatable flag remains authoritative.
+
+The price-risk test is:
 
 ```
 Liquidatable when
-net account equity ≤ maintenance margin
+position equity ≤ maintenance margin
 ```
 
 There is no grace period after the condition is reached. An eligible keeper[^keeper] can submit a liquidation.
@@ -432,10 +384,10 @@ The absolute buffer is:
 ```
 Liquidation buffer
 =
-net account equity − maintenance margin
+position equity − maintenance margin
 ```
 
-This is the amount by which equity currently exceeds the requirement. Both sides of the equation can change: PnL and carry move equity, while price and market state can move maintenance margin.
+This is the amount by which equity currently exceeds the requirement. Both sides of the equation can change: Price PnL, pledged margin and claims move position equity; price and market state can move maintenance margin. Carry coverage is checked separately.
 
 ### Liquidation price
 
@@ -448,23 +400,15 @@ For the public Plether Dollar Index:
 
 The boundary is inclusive.
 
-The displayed price can change after:
+The price threshold changes when position margin, same-account claims, exact entry cost, size or the active maintenance/FAD rate changes. It does not move merely because the central market mark changes or free funds are deposited.
 
-* A USDC deposit or withdrawal
-* Carry realization
-* A position increase or reduction
-* Reserving an execution reward
-* Execution of another pending order
-* Activation of the FAD margin rate
-* A new oracle mark
-
-The current frontend liquidation-price projection does not subtract the separately displayed pending `Cost of carry`. Accrued carry still reduces protocol equity and can make the account liquidatable before the projected price is reached. Near the boundary, compare **Portfolio value** with **Maintenance margin** rather than relying on liquidation price alone.
+Carry and reserve deficiencies are independent conditions. The **Liquidatable** notice reports contract status and shows those reasons when verified. A failed refresh displays **Unavailable**, and stop-loss changes wait for current risk data.
 
 #### “Not in range”
 
 **Not in range** means the current calculation finds no liquidation threshold inside the fixed `0.00–2.00` settlement range.
 
-Carry, withdrawals, new reservations and FAD can later create an in-range threshold.
+A changed position, claim balance or FAD rate can create a price threshold. Carry and reserve deficiencies can independently cause liquidation even without a price boundary. **Unavailable** means required risk data is missing or awaiting refresh; it must not be read as **Not in range**.
 
 #### Execution-time liquidation price
 
@@ -475,7 +419,7 @@ Actual liquidation uses an eligible Pyth observation with the liquidation-specif
 
 The central displayed mark may therefore appear short of the projected threshold when the confidence-adjusted liquidation price has already crossed it.
 
-Near the boundary, compare Portfolio value with Maintenance margin and check the account’s liquidatable status. The liquidation-price display remains a projection.
+Near the boundary, compare Position equity with Maintenance margin and check the account’s liquidatable status. The liquidation-price display remains a projection.
 
 A liquidatable reading based on a stale stored mark does not guarantee immediate keeper execution. The keeper must still provide oracle data eligible under the current market state.
 
@@ -512,112 +456,45 @@ If liquidation happens first:
 * The position is closed through liquidation.
 * Account-local pending orders are cleared.
 * Pending execution rewards are forfeited under liquidation cleanup.
-* Eligible committed margin can be consumed in terminal settlement.
+* Committed-order funds are released through liquidation cleanup; they do not back price losses.
 
 ### Worked example
 
-Assume the account contains:
+Suppose settlement contains 3,000 USDC: 1,500 assigned margin, 500 committed-order margin, 10 dedicated VPI reserve, 20 liquidation reserve and 0.20 execution reserve. The same account also has a 250 USDC claim, a 600 USDC price loss, and 40 USDC pending carry.
 
 ```
-Margin Account balance:          3,000 USDC
-Position margin:                 1,500 USDC
-Committed-order margin:            500 USDC
-Execution-reward reserves:        0.20 USDC
-Trader claim:                      250 USDC
-
-Unrealized PnL:                   −600 USDC
-Pending carry:                      40 USDC
-VPI rebate clawback:                10 USDC
-Maintenance margin:                750 USDC
-Initial margin requirement:      1,125 USDC
+Free settlement = 3,000 − 1,500 − 500 − 10 − 20 − 0.20 = 969.80 USDC
+Position equity = 1,500 + 250 − 600 = 1,150 USDC
+Maintenance margin = 750 USDC
+Price health ratio = 1,150 ÷ 750 = 153.3%
+Price liquidation buffer = 1,150 − 750 = 400 USDC
+Free settlement after carry = 969.80 − 40 = 929.80 USDC
 ```
 
-Available to Trade is:
+If position equity also passes the applicable initial-margin withdrawal check, the mark is eligible and protocol state permits withdrawal, 929.80 USDC can be withdrawable. Use the contract-returned amount; withdrawal is not computed by subtracting maintenance from all account funds.
 
-```
-Available to Trade
-= 3,000 − 1,500 − 500 − 0.20
-= 999.80 USDC
-```
-
-Terminally reachable collateral excludes the execution reward:
-
-```
-Terminally reachable collateral
-= 3,000 − 0.20
-= 2,999.80 USDC
-```
-
-Portfolio value is:
-
-```
-Portfolio value
-= 2,999.80 − 600 − 40 − 10
-= 2,349.80 USDC
-```
-
-Health is:
-
-```
-Health
-= 2,349.80 ÷ 750
-= 313.3%
-```
-
-The current liquidation buffer is:
-
-```
-Liquidation buffer
-= 2,349.80 − 750
-= 1,599.80 USDC
-```
-
-If carry is collected from free USDC, free balance becomes:
-
-```
-Free USDC after carry
-= 999.80 − 40
-= 959.80 USDC
-```
-
-Initial-margin headroom is:
-
-```
-Initial-margin headroom
-= 2,349.80 − 1,125
-= 1,224.80 USDC
-```
-
-Assuming the mark is fresh and no protocol restriction applies:
-
-```
-Withdrawable
-= lower of 959.80 and 1,224.80
-= 959.80 USDC
-```
-
-The separate `250 USDC` trader claim does not enter these calculations. Once settled into the Margin Account, it increases account collateral.
+Settling the 250 USDC claim while this position stays open increases assigned margin to 1,750 USDC and reduces the claim to zero. Position equity remains 1,150 USDC before further price changes. Depositing free funds improves carry coverage but does not move the price threshold.
 
 ### Common readings
 
 | What you see                                            | Likely explanation                                                                                |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Portfolio value is higher than Available to Trade       | Position margin, unrealized profit or committed margin contributes to equity but is not free USDC |
+| Position equity is higher than Available to Trade       | Pledged margin, claims and price PnL differ from spendable free settlement |
 | Available to Trade is higher than Withdrawable          | Withdrawal must preserve initial-margin headroom and pass mark/state checks                       |
 | Position leverage stays unchanged after depositing USDC | The deposit entered free account collateral rather than assigned position margin                  |
-| Health improves while position leverage stays unchanged | Free USDC supports account-wide health                                                            |
-| Position margin fell after submitting a close           | Part of the execution reward came from position margin, or carry was realized                     |
+| Health improves while position leverage stays unchanged | Claims or price PnL improved price equity; free USDC only improves carry coverage                                                            |
+| Position margin fell after submitting a close           | A permitted close reward used position margin; carry only uses free settlement                     |
 | Pending close is visible but exposure is unchanged      | Reductions take effect at execution                                                               |
 | Liquidation price shows “Not in range”                  | No threshold exists inside `0.00–2.00` under the current inputs                                   |
-| A claim exists beside low Portfolio value               | Claims remain outside Margin Account equity until settlement                                      |
-| Withdrawable is zero despite positive Portfolio value   | Mark freshness, degraded mode or post-withdraw margin checks are blocking withdrawal              |
+| A claim exists beside low Position equity               | Same-account claims already support position equity, but are not free settlement                                      |
+| Withdrawable is zero despite positive Position equity   | Mark freshness, degraded mode or post-withdraw margin checks are blocking withdrawal              |
 
 ### A practical monitoring routine
 
 1. Check the mark timestamp and market state.
 2. Confirm direction and current exposure.
 3. Review Unrealized PnL and Cost of carry.
-4. Compare Portfolio value with Maintenance margin.
+4. Compare Position equity with Maintenance margin.
 5. Check the liquidation price and distance.
 6. Review pending orders and remember that each one has a reserved execution reward.
 7. Read Available to Trade and Withdrawable separately.
