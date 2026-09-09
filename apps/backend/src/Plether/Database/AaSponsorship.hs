@@ -33,6 +33,7 @@ module Plether.Database.AaSponsorship
 
 import Control.Monad (unless, void, when)
 import Data.Aeson (Value, encode)
+import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
 import Data.List (sort)
 import Data.Text (Text)
@@ -47,7 +48,16 @@ import Database.PostgreSQL.Simple
   , query_
   , withTransaction
   )
-import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Database.PostgreSQL.Simple.FromField
+  ( ResultError (ConversionFailed)
+  , returnError
+  )
+import Database.PostgreSQL.Simple.FromRow
+  ( FromRow (..)
+  , RowParser
+  , field
+  , fieldWith
+  )
 import Database.PostgreSQL.Simple.ToRow (ToRow)
 import Plether.Config (NativeAaConfig (..))
 import Text.Read (readMaybe)
@@ -93,13 +103,27 @@ instance FromRow SponsorshipAuthorization where
       <*> field
       <*> field
       <*> field
+      <*> numericIntegerField
+      <*> field
+      <*> field
+      <*> numericIntegerField
       <*> field
       <*> field
       <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
+
+-- PostgreSQL NUMERIC is not decoded as Integer by postgresql-simple. These
+-- fields are NUMERIC(78,0) so they can hold uint256-sized values; parse the
+-- exact wire value and reject fractional or malformed database state.
+numericIntegerField :: RowParser Integer
+numericIntegerField =
+  fieldWith $ \column raw ->
+    case raw >>= readMaybe . BS8.unpack of
+      Just integer -> pure integer
+      Nothing ->
+        returnError
+          ConversionFailed
+          column
+          "AA sponsorship NUMERIC value was not an integer"
 
 data SubmittedAuthorization = SubmittedAuthorization
   { subDigest :: Text
@@ -1376,9 +1400,10 @@ expireSponsorshipsThrough conn safeTimestamp = withTransaction conn $ do
     \WHERE state IN ('signed','submitted') AND valid_until < ? \
     \AND NOT EXISTS (SELECT 1 FROM aa_user_operation_events e \
     \WHERE e.digest=aa_sponsorship_authorizations.digest) \
-    \RETURNING digest,max_cost_wei" (Only safeTimestamp) :: IO [(Text, Integer)]
+    \RETURNING digest,max_cost_wei::TEXT" (Only safeTimestamp) :: IO [(Text, Text)]
   mapM_
-    (\(digest, amount) ->
+    (\(digest, rawAmount) -> do
+      amount <- parseNumericAmount rawAmount
       ensureLedgerEntryExact conn digest "release" amount
     )
     expired
@@ -1390,9 +1415,10 @@ cancelStaleUnsignedReservations conn = withTransaction conn $ do
   cancelled <- query_ conn
     "UPDATE aa_sponsorship_authorizations SET state='cancelled',settled_at=clock_timestamp(),updated_at=clock_timestamp() \
     \WHERE state='reserved' AND signature IS NULL AND created_at < clock_timestamp()-INTERVAL '10 minutes' \
-    \RETURNING digest,max_cost_wei" :: IO [(Text, Integer)]
+    \RETURNING digest,max_cost_wei::TEXT" :: IO [(Text, Text)]
   mapM_
-    (\(digest, amount) ->
+    (\(digest, rawAmount) -> do
+      amount <- parseNumericAmount rawAmount
       ensureLedgerEntryExact conn digest "release" amount
     )
     cancelled
@@ -1434,12 +1460,15 @@ queryAmount
 queryAmount conn statement params = do
   rows <- query conn statement params :: IO [Only Text]
   case rows of
-    [Only raw] ->
-      maybe
-        (fail "aa sponsorship budget aggregate is malformed")
-        pure
-        (readMaybe $ T.unpack raw)
+    [Only raw] -> parseNumericAmount raw
     _ -> fail "aa sponsorship budget aggregate did not return exactly one row"
+
+parseNumericAmount :: Text -> IO Integer
+parseNumericAmount raw =
+  maybe
+    (fail "aa sponsorship numeric amount is malformed")
+    pure
+    (readMaybe $ T.unpack raw)
 
 aaReconcilerIsFresh :: Connection -> NativeAaConfig -> IO Bool
 aaReconcilerIsFresh conn cfg = do

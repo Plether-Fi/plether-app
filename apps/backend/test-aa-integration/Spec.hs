@@ -14,6 +14,7 @@ import Database.PostgreSQL.Simple
   , Only (..)
   , close
   , connectPostgreSQL
+  , execute
   , execute_
   , query_
   )
@@ -23,9 +24,11 @@ import Plether.Database.AaSponsorship
   , SponsorshipAuthorization (..)
   , SponsorshipDraft (..)
   , advanceAaReconcilerCursor
+  , cancelStaleUnsignedReservations
   , consumeAaRateLimit
   , controlBootstrapReason
   , ensureAaSponsorshipSchema
+  , expireSponsorshipsThrough
   , getAaIssuancePause
   , getSponsorshipByDigest
   , getSponsorshipByUserOperationHash
@@ -158,6 +161,36 @@ aaIntegrationSpec databaseUrl =
           `shouldBe` [ ("actual_charge", "400")
                      , ("release", "600")
                      , ("reserve", "1000")
+                     ]
+
+    it "releases exact liability for stale unsigned and expired signed authorizations" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        unsigned <- reserveSponsorship conn testConfig (draft '1' '2' '3' 12 1_000 now)
+          >>= expectAuthorization
+        aged <- execute conn
+          "UPDATE aa_sponsorship_authorizations \
+          \SET created_at=clock_timestamp()-INTERVAL '11 minutes' WHERE digest=?"
+          (Only $ saDigest unsigned)
+        aged `shouldBe` 1
+        cancelStaleUnsignedReservations conn `shouldReturn` 1
+
+        signed <- reserveSponsorship conn testConfig (draft '4' '5' '6' 13 1_000 now)
+          >>= expectAuthorization
+        storeSponsorshipSignature
+          conn testConfig (saDigest signed) (signatureOf '7') (hashOf '8')
+          `shouldReturn` True
+        expireSponsorshipsThrough conn (now + 1_000) `shouldReturn` 1
+
+        ledger <- query_ conn
+          "SELECT digest,entry_type,amount_wei::TEXT FROM aa_sponsorship_ledger \
+          \ORDER BY digest,entry_type" :: IO [(Text, Text, Text)]
+        ledger
+          `shouldBe` [ (hashOf '2', "release", "1000")
+                     , (hashOf '2', "reserve", "1000")
+                     , (hashOf '5', "release", "1000")
+                     , (hashOf '5', "reserve", "1000")
                      ]
 
     it "fails closed when reconciliation is stale or issuance is paused" $
