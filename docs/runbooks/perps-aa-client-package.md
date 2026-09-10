@@ -2,9 +2,16 @@
 
 The replacement is `@plether-fi/perps-aa-client@0.1.0`, published by
 `Plether-Fi/plether-core` to GitHub Packages with tag
-`perps-aa-client-v0.1.0`. The existing vendor remains active until the upstream
-PR is merged and its package can be installed. This preserves the Core-first
-release order and keeps this branch installable during review.
+`perps-aa-client-v0.1.0`. The app now consumes this exact registry version;
+the legacy vendor directory and Core patch have been removed.
+
+[Core PR #94](https://github.com/Plether-Fi/plether-core/pull/94) was merged at
+`f9e29c1b3ac5937e0519108cebffb4d09048de36`. The
+[approved release run](https://github.com/Plether-Fi/plether-core/actions/runs/34480888502)
+published the tested tarball. Its immutable source, tag and SHA-512 integrity
+are recorded in `config/perps-aa-client-release.json` and the frontend lockfile.
+The package is public and `plether-app` has Actions Read access. Organization-wide
+public package creation remains disabled after the one-package visibility change.
 
 ## Release prerequisites
 
@@ -31,13 +38,12 @@ npm login --scope=@plether-fi --auth-type=legacy --registry=https://npm.pkg.gith
 GitHub requires authentication for public npm packages too; see
 [its registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry).
 
-## Prepare the app migration
+## Historical one-time migration
 
-Start from a clean committed app checkout. Substitute the published Core commit
-and the merged Core PR number:
+The following migration has been applied. Do not rerun it on the adopted branch:
 
 ```bash
-node scripts/migrate-perps-aa-client.mjs 0.1.0 CORE_COMMIT_SHA CORE_PR_NUMBER
+node scripts/migrate-perps-aa-client.mjs 0.1.0 f9e29c1b3ac5937e0519108cebffb4d09048de36 94
 ```
 
 The command first verifies public visibility, repository ownership, merged PR
@@ -50,11 +56,15 @@ vendor directory, and vendor refresh script. These deletions remain recoverable
 from git. Installation failures after the dependency edit leave a reviewable
 working diff and retain the vendor artifacts until the install succeeds.
 
+Only AA source references change in the diagram catalog and manifest. The
+independent contract-release review pin and SVGs are preserved; migrating the
+client is not evidence that every protocol diagram was re-reviewed.
+
 Review the resulting diff and run:
 
 ```bash
-node --test scripts/migrate-perps-aa-client.test.mjs
 npm ci --prefix apps/frontend
+node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs
 npm run lint --prefix apps/frontend
 npm test --prefix apps/frontend
 npm run build --prefix apps/frontend
