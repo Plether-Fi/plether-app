@@ -4,6 +4,9 @@ module Plether.Config
   , FaucetGuardConfig (..)
   , LpSettlementMode (..)
   , NativeAaConfig (..)
+  , AaRpcMode (..)
+  , aaRpcModeText
+  , resolveAaSecurityRpc
   , NativeAaSafetyInput (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
@@ -255,6 +258,7 @@ data NativeAaConfig = NativeAaConfig
   { naaProxyOriginToken :: Text
   , naaAltoRpcUrl :: Text
   , naaSecurityRpcUrl :: Text
+  , naaRpcMode :: AaRpcMode
   , naaPaymasterAddress :: Text
   , naaPaymasterCodeHash :: Text
   , naaPolicyId :: Text
@@ -309,6 +313,7 @@ instance Show NativeAaConfig where
     "NativeAaConfig {naaProxyOriginToken = <redacted>, naaAltoRpcUrl = "
       <> show (naaAltoRpcUrl cfg)
       <> ", naaSecurityRpcUrl = <redacted>"
+      <> ", naaRpcMode = " <> show (naaRpcMode cfg)
       <> ", naaPaymasterAddress = "
       <> show (naaPaymasterAddress cfg)
       <> ", naaPaymasterCodeHash = "
@@ -656,6 +661,7 @@ loadConfig = do
       nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
       mAltoRpcUrl <- firstEnv ["AA_ALTO_RPC_URL"]
       mNativeSecurityRpcUrl <- firstEnv ["AA_RECONCILER_SECONDARY_RPC_URL"]
+      aaRpcModeStr <- fromMaybe "dual-independent" <$> lookupEnv "AA_RPC_MODE"
       mPaymasterAddress <- firstEnv ["AA_PAYMASTER_ADDRESS"]
       mPaymasterCodeHash <- firstEnv ["AA_PAYMASTER_CODE_HASH"]
       mNativePolicyId <- firstEnv ["AA_PAYMASTER_POLICY_ID"]
@@ -808,6 +814,8 @@ loadConfig = do
               faucetGlobalRequestsPerHourStr
 
           nativeAaConfig = do
+            unlessEither (aaRpcModeStr `elem` ["dual-independent", "single-provider-sepolia"])
+              "AA_RPC_MODE must be dual-independent or single-provider-sepolia"
             enabled <-
               maybe
                 (Left "AA_NATIVE_SPONSORSHIP_ENABLED must be a boolean")
@@ -841,7 +849,10 @@ loadConfig = do
                 mAaProxyOriginToken
                 nativeSpecific
             if not nativeConfigured
-              then Right Nothing
+              then do
+                unlessEither (aaRpcModeStr == "dual-independent")
+                  "single-provider-sepolia requires complete native AA configuration"
+                Right Nothing
               else case (mAaProxyOriginToken, nativeSpecific) of
                 ( Just originToken
                   , [ Just altoRpcUrl
@@ -904,19 +915,11 @@ loadConfig = do
                     unlessEither
                       (validInternalRpcUrl $ T.pack altoRpcUrl)
                       "AA_ALTO_RPC_URL must be an http(s) URL without credentials or query parameters"
-                    primarySecurityRpc <-
-                      maybe
-                        (Left "PERPS_RPC_URL must be a normalized HTTPS/default-443 URL without credentials, query, fragment, or whitespace when native AA is configured")
-                        Right
-                        (normalizeExternalSecurityRpcUrl $ T.pack perpsRpcUrl)
-                    secondarySecurityRpc <-
-                      maybe
-                        (Left "AA_RECONCILER_SECONDARY_RPC_URL must be a normalized HTTPS/default-443 URL without credentials, query, fragment, or whitespace")
-                        Right
-                        (normalizeExternalSecurityRpcUrl $ T.pack securityRpcUrl)
-                    unlessEither
-                      (secondarySecurityRpc /= primarySecurityRpc)
-                      "AA_RECONCILER_SECONDARY_RPC_URL must be independent from PERPS_RPC_URL"
+                    (rpcMode, secondarySecurityRpc) <- resolveAaSecurityRpc
+                      aaRpcModeStr perpsChainId nativeGlobalRolloutEnabledStr nativeCanaryOwnersStr
+                      (T.pack perpsRpcUrl) (T.pack securityRpcUrl)
+                    unlessEither (rpcMode /= SingleProviderSepolia || perpsChainIdStr == "421614")
+                      "single-provider-sepolia requires explicit canonical PERPS_CHAIN_ID=421614"
                     unlessEither
                       (validNonzeroAddress $ T.pack paymasterAddress)
                       "AA_PAYMASTER_ADDRESS must be a nonzero 20-byte address"
@@ -932,6 +935,7 @@ loadConfig = do
                           { naaProxyOriginToken = T.pack originToken
                           , naaAltoRpcUrl = T.strip $ T.pack altoRpcUrl
                           , naaSecurityRpcUrl = secondarySecurityRpc
+                          , naaRpcMode = rpcMode
                           , naaPaymasterAddress = T.toLower $ T.strip $ T.pack paymasterAddress
                           , naaPaymasterCodeHash = T.toLower $ T.strip $ T.pack paymasterCodeHash
                           , naaPolicyId = T.toLower $ T.strip $ T.pack policyId
@@ -1432,6 +1436,42 @@ validInternalRpcUrl raw =
 -- default HTTPS port removes spelling aliases that could accidentally defeat
 -- the distinct-provider guard. DNS/provider independence remains an explicit
 -- rollout attestation because it cannot be proven from a URL alone.
+-- | Single-provider mode retains repeated consistency reads but cannot detect
+-- correlated bad provider data. Never infer it from equal URLs or an outage.
+data AaRpcMode = DualIndependent | SingleProviderSepolia
+  deriving stock (Eq, Show)
+
+aaRpcModeText :: AaRpcMode -> Text
+aaRpcModeText DualIndependent = "dual-independent"
+aaRpcModeText SingleProviderSepolia = "single-provider-sepolia"
+
+-- Shared by API and reconciler startup, before any signing or ledger mutation.
+-- The legacy SECONDARY env slot explicitly reuses primary only in single mode.
+resolveAaSecurityRpc
+  :: String -> Integer -> String -> String -> Text -> Text
+  -> Either String (AaRpcMode, Text)
+resolveAaSecurityRpc rawMode chainId rawGlobal rawOwners primaryRaw secondaryRaw = do
+  mode <- case rawMode of
+    "dual-independent" -> Right DualIndependent
+    "single-provider-sepolia" -> Right SingleProviderSepolia
+    _ -> Left "AA_RPC_MODE must be dual-independent or single-provider-sepolia"
+  primary <- maybe (Left "PERPS_RPC_URL must be normalized HTTPS/default-443") Right
+    (normalizeExternalSecurityRpcUrl primaryRaw)
+  secondary <- maybe (Left "AA_RECONCILER_SECONDARY_RPC_URL must be normalized HTTPS/default-443") Right
+    (normalizeExternalSecurityRpcUrl secondaryRaw)
+  case mode of
+    DualIndependent -> unlessEither (primary /= secondary)
+      "AA_RECONCILER_SECONDARY_RPC_URL must be independent from PERPS_RPC_URL"
+    SingleProviderSepolia -> do
+      global <- maybe (Left "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED must be a boolean") Right
+        (parseBoolStrict rawGlobal)
+      owners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" rawOwners
+      unlessEither (chainId == 421614 && not global && not (null owners))
+        "single-provider-sepolia requires chain 421614, a nonempty canary owner list, and global rollout disabled"
+      unlessEither (primary == secondary)
+        "single-provider-sepolia must explicitly reuse PERPS_RPC_URL in the verification RPC slot"
+  pure (mode, secondary)
+
 normalizeExternalSecurityRpcUrl :: Text -> Maybe Text
 normalizeExternalSecurityRpcUrl raw = do
   let prefix = "https://"

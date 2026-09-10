@@ -298,6 +298,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     aa_reconciler_start_block                   = var.aa_reconciler_start_block
     aa_reconciler_start_block_hash              = var.aa_reconciler_start_block_hash
     aa_reconciler_secondary_rpc_url_kms_key_arn = var.aa_reconciler_secondary_rpc_url_kms_key_arn
+    aa_rpc_mode                               = var.aa_rpc_mode
     alto_upstream_image                         = var.alto_upstream_image
     alto_entrypoint_address                     = var.alto_entrypoint_address
     aa_paymaster_address                        = var.aa_paymaster_address
@@ -421,12 +422,22 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition = !var.provision_self_hosted_aa || (
+      condition = var.aa_rpc_mode != "single-provider-sepolia" || (
+        var.environment == "sepolia" && var.perps_chain_id == "421614"
+        && !var.aa_native_global_rollout_enabled && var.aa_native_canary_owners != ""
+        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/sepolia/perps-rpc-url"
+        && var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
+      )
+      error_message = "Single-provider mode requires Arbitrum Sepolia, a nonempty canary allowlist, no global rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
+    }
+
+    precondition {
+      condition = !var.provision_self_hosted_aa || var.aa_rpc_mode == "single-provider-sepolia" || (
         startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/sepolia/")
         && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/sepolia/perps-rpc-url"
         && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != trimspace(var.alto_rpc_url_ssm_parameter_name)
       )
-      error_message = "The reconciler secondary RPC SecureString must be under /plether/sepolia/ and use a parameter distinct from both primary reconciliation/Perps RPC and Alto RPC; operators must also choose an independently operated provider."
+      error_message = "Dual-independent mode requires a secondary RPC parameter distinct from both primary Perps RPC and Alto RPC, operated by an independent provider."
     }
 
     precondition {

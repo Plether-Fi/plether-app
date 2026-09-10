@@ -17,7 +17,7 @@ import Plether.AA.Gateway
   , validateHardEconomicCaps
   )
 import Plether.AA.Pimlico (ProxyFailure (..))
-import Plether.Config (NativeAaConfig (..))
+import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Ethereum.Abi (keccak256)
 import Test.Hspec
 
@@ -151,6 +151,7 @@ fixtureConfig =
     { naaProxyOriginToken = "secret"
     , naaAltoRpcUrl = "http://alto:4337"
     , naaSecurityRpcUrl = "https://secondary-rpc.example.invalid"
+    , naaRpcMode = DualIndependent
     , naaPaymasterAddress = "0x1111111111111111111111111111111111111111"
     , naaPaymasterCodeHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     , naaPolicyId = "0x998b46b747647acb0e13177c7c5e2531452f3ac9c8b0cce56f2b0fdbfdf37781"
