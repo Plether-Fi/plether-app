@@ -164,6 +164,37 @@ resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "liquidation_risk_inputs_unavailable" {
+  count = var.liquidation_worker_desired_count > 0 ? 1 : 0
+
+  name           = "plether-${var.environment}-liquidation-risk-inputs-unavailable"
+  pattern        = "{ $.event = \"liquidation_risk_inputs_unavailable\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "LiquidationRiskInputsUnavailable-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "liquidation_risk_inputs_unavailable" {
+  count = var.liquidation_worker_desired_count > 0 ? 1 : 0
+
+  alarm_name          = "plether-${var.environment}-liquidation-risk-inputs-unavailable"
+  alarm_description   = "At least three liquidation scans per hour failed to construct fresh risk inputs for two consecutive hours; candidates remain fail-closed and may be delayed."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  metric_name         = aws_cloudwatch_log_metric_filter.liquidation_risk_inputs_unavailable[0].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.liquidation_risk_inputs_unavailable[0].metric_transformation[0].namespace
+  period              = 3600
+  statistic           = "Sum"
+  threshold           = 3
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
   count = var.lp_settlement_mode != "off" ? 1 : 0
 
