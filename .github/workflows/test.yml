@@ -85,7 +85,7 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs
 
       - name: Install Insights story dependencies
         working-directory: apps/insights

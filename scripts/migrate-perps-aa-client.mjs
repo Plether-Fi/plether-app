@@ -57,7 +57,15 @@ export function removeLegacyLockEntries(lock) {
   return lock
 }
 
+export function protectionWorkerProvenance(release) {
+  assert.match(release.version, /^v\d+\.\d+\.\d+$/)
+  assert.match(release.sourceCommit, /^[a-f0-9]{40}$/)
+  assert.match(release.bundleSha256, /^[a-f0-9]{64}$/)
+  return `The protection-worker ABI is generated separately from the deployed Core release bundle:\n\n\`\`\`bash\nnode scripts/generate-protection-worker-abi.mjs /path/to/perps-${release.version}-arbitrum-sepolia.tar.gz\n\`\`\`\n\nThe generator verifies the bundle SHA-256 against\n\`config/perps/arbitrum-sepolia-v2.json\` before extracting the\nPositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.\nDeployment source: \`${release.sourceCommit}\`.\nBundle SHA-256: \`${release.bundleSha256}\`.\nThe AA package release is independent of this deployment-specific ABI bundle;\npackage migration does not regenerate worker artifacts.`
+}
+
 export function migrateSources(directory, record) {
+  const { release } = readJson(path.join(directory, 'config/perps/arbitrum-sepolia-v2.json'))
   const edit = (file, change) => {
     const target = path.join(directory, file)
     writeFileSync(target, change(readFileSync(target, 'utf8')))
@@ -67,11 +75,11 @@ export function migrateSources(directory, record) {
   const sourceUrl = `https://github.com/${repository}/blob/${record.sourceCommit}/packages/perps-aa-client`
   const releaseUrl = `https://github.com/${repository}/releases/tag/${record.tag}`
   edit('docs/runbooks/self-hosted-aa-rollout.md', text => replaceSection(text,
-    'Until the AA package is merged into `plether-core`,', '### GitHub and AWS preflight',
+    'Until the AA package is published and adopted,', '### GitHub and AWS preflight',
     `The AA contracts and client come from [Core PR](${record.corePr}) and the\n[immutable package release](${releaseUrl}). The frontend consumes\n\`${packageName}@${record.version}\`; the lockfile records its registry integrity.\n\nCore source commit: \`${record.sourceCommit}\`.\nPackage integrity: \`${record.integrity}\`.\nThe machine-readable provenance is \`config/perps-aa-client-release.json\`.\nBuild and deploy the paymaster only from this reviewed clean Core commit.\nPackage publication is separate from contract deployment and sponsorship enablement.`))
   edit('docs/runbooks/position-protection.md', text => replaceSection(text,
     '## Build provenance', '## Worker and history',
-    `## Build provenance\n\nThe Book ABI and all four protection action builders are published with native\nsponsorship support in [${packageName}@${record.version}](${releaseUrl}).\nSource: [reviewed Core commit](${sourceUrl}), PR: ${record.corePr}.\n\`config/perps-aa-client-release.json\` and the frontend lockfile record the\npackage commit, version, tag, and integrity. Upgrade through a reviewed immutable\npackage release; never edit installed package files.\n\nThe protection-worker ABI is generated separately:\n\n\`\`\`bash\nnode scripts/generate-protection-worker-abi.mjs /path/to/built/plether-core\n\`\`\`\n\nThat generator consumes Foundry artifacts for PositionProtectionBook, OrderRouter,\nOrderLifecycleBook and PletherOracle from deployed source tree\n\`c3f60f58bcd5dc1b85a28739a5de7ec4a2ee114c\`. Keep its committed dependency\nrevisions and compiler settings; the generator rejects changed source trees and\ntracked dependency revisions. The package migration does not regenerate these\ndeployment-specific worker artifacts.`))
+    `## Build provenance\n\nThe Book ABI and all four protection action builders are published with native\nsponsorship support in [${packageName}@${record.version}](${releaseUrl}).\nSource: [reviewed Core commit](${sourceUrl}), PR: ${record.corePr}.\n\`config/perps-aa-client-release.json\` and the frontend lockfile record the\npackage commit, version, tag, and integrity. Upgrade through a reviewed immutable\npackage release; never edit installed package files.\n\n${protectionWorkerProvenance(release)}`))
   edit('apps/gitbook/DIAGRAM_REVIEW.md', text => {
     const original = 'Account-abstraction ordering was checked against the vendored client’s `sendSponsoredAction`, the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. The vendored client’s provenance is recorded in `apps/frontend/vendor/perps-aa-client/UPSTREAM.md`.'
     assert.ok(text.includes(original), 'Review changed GitBook provenance before migrating')
