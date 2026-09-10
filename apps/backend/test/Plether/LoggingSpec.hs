@@ -138,4 +138,6 @@ invalidSignerConfig =
     , lwcPendingReplacementSeconds = 60
     , lwcGasBufferBps = 0
     , lwcFeeBufferBps = 0
+    , lwcFuturePublishMaxRetries = 2
+    , lwcFuturePublishRetryMaxSeconds = 10
     }

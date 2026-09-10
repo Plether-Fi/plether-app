@@ -5,7 +5,7 @@ module Plether.LiquidationWorkerSpec (spec) where
 import Control.Exception (bracket)
 import Data.Aeson (Value, object, toJSON, (.=))
 import qualified Data.ByteString as BS
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Plether.Config
   ( Config (..)
@@ -42,6 +42,8 @@ import Plether.LiquidationWorker
   ( FreshLiquidationRiskInputs (..)
   , LiquidationBatchProgress (..)
   , LiquidationBasketComponent (..)
+  , LiquidationFuturePublishTime (..)
+  , LiquidationRiskInputError (..)
   , LiquidationRiskGlobals (..)
   , PythStoredPrice (..)
   , LiquidationPayloadCircuitDecision (..)
@@ -64,6 +66,7 @@ import Plether.LiquidationWorker
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
   , liquidationRiskCalls
+  , liquidationFuturePublishRetryDelaySeconds
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
   , liquidationTransactionGasLimit
@@ -73,9 +76,11 @@ import Plether.LiquidationWorker
   , sameNonceReplacementFees
   , selectLiquidationSimulationCandidates
   , pythStoredPriceCalls
+  , retryLiquidationRiskInputs
   , transactionMaximumCost
   , validateLiquidationBatchReceipt
   , validateMergedLiquidationBasket
+  , validateMergedLiquidationBasketDetailed
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
@@ -93,6 +98,20 @@ spec = do
       withUnsetEnv "LIQUIDATION_WORKER_POLL_SECONDS" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcPollSeconds workerCfg `shouldBe` 600
+
+    it "uses bounded future-publish retries by default" $
+      withUnsetEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" $
+        withUnsetEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS" $ do
+          workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+          lwcFuturePublishMaxRetries workerCfg `shouldBe` 2
+          lwcFuturePublishRetryMaxSeconds workerCfg `shouldBe` 10
+
+    it "clamps future-publish retry configuration" $
+      withEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" "99" $
+        withEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS" "0" $ do
+          workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+          lwcFuturePublishMaxRetries workerCfg `shouldBe` 5
+          lwcFuturePublishRetryMaxSeconds workerCfg `shouldBe` 1
 
     it "inherits the account lens and defaults to bounded scan, read, and execution batches" $ do
       withUnsetEnv "PERPS_ACCOUNT_LENS" $
@@ -365,6 +384,102 @@ spec = do
                   [] -> []
           validateMergedLiquidationBasket exactRiskGlobals wideConfidence
             `shouldSatisfy` isLeft
+
+    it "reports the exact future skew and component for retry decisions" $ do
+      case decodeCachedLiquidationComponents payload basketSnapshot of
+        Left err -> expectationFailure $ "expected valid cached components: " <> show err
+        Right components ->
+          validateMergedLiquidationBasketDetailed
+            exactRiskGlobals {lrgBlockTimestamp = 101}
+            components
+            `shouldBe`
+              Left
+                ( LiquidationRiskInputFuturePublishTime
+                    LiquidationFuturePublishTime
+                      { lfptBlockTimestamp = 101
+                      , lfptMinimumPublishTime = 101
+                      , lfptMaximumPublishTime = 102
+                      , lfptFutureSkewSeconds = 1
+                      , lfptFeedId = feedAText
+                      }
+                )
+
+  describe "future-publish exact-block retry" $ do
+    it "waits for the measured skew and succeeds at a newer exact block" $ do
+      attemptedBlocks <- newIORef []
+      availableBlocks <- newIORef [101, 102]
+      retryEvents <- newIORef []
+      delays <- newIORef []
+      let append ref value = modifyIORef' ref (<> [value])
+          futureAt blockNumber =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = blockNumber
+                , lfptMinimumPublishTime = 100
+                , lfptMaximumPublishTime = 102
+                , lfptFutureSkewSeconds = 102 - blockNumber
+                , lfptFeedId = "feed-a"
+                }
+          loadAtBlock blockNumber = do
+            append attemptedBlocks blockNumber
+            pure $
+              if blockNumber < 102
+                then Left $ futureAt blockNumber
+                else Right ("ready" :: Text)
+          getNextBlock = do
+            blocks <- readIORef availableBlocks
+            case blocks of
+              [] -> pure $ Left "no newer block"
+              nextBlock : remaining -> do
+                writeIORef availableBlocks remaining
+                pure $ Right nextBlock
+          onRetry blockNumber retryNumber delaySeconds _ =
+            append retryEvents (blockNumber, retryNumber, delaySeconds)
+          sleepSeconds = append delays
+
+      (finalBlock, retryCount, result) <-
+        retryLiquidationRiskInputs
+          2
+          10
+          onRetry
+          sleepSeconds
+          getNextBlock
+          loadAtBlock
+          100
+
+      finalBlock `shouldBe` 102
+      retryCount `shouldBe` 2
+      result `shouldBe` Right "ready"
+      readIORef attemptedBlocks `shouldReturn` [100, 101, 102]
+      readIORef retryEvents `shouldReturn` [(100, 1, 3), (101, 2, 2)]
+      readIORef delays `shouldReturn` [3, 2]
+
+    it "caps retry delay and does not retry unrelated failures" $ do
+      let futureError =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = 100
+                , lfptMinimumPublishTime = 100
+                , lfptMaximumPublishTime = 120
+                , lfptFutureSkewSeconds = 20
+                , lfptFeedId = "feed-a"
+                }
+          unrelatedError = LiquidationRiskInputUnavailable "RPC unavailable"
+      liquidationFuturePublishRetryDelaySeconds 5 futureError `shouldBe` Just 5
+      liquidationFuturePublishRetryDelaySeconds 5 unrelatedError `shouldBe` Nothing
+
+      (finalBlock, retryCount, result) <-
+        retryLiquidationRiskInputs
+          2
+          5
+          (\_ _ _ _ -> expectationFailure "unexpected retry")
+          (\_ -> expectationFailure "unexpected sleep")
+          (pure $ Left "unexpected block fetch")
+          (\_ -> pure (Left unrelatedError :: Either LiquidationRiskInputError Text))
+          100
+      finalBlock `shouldBe` 100
+      retryCount `shouldBe` 0
+      result `shouldBe` Left unrelatedError
 
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do

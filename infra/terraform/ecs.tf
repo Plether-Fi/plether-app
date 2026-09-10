@@ -641,6 +641,8 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       { name = "LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS", value = var.liquidation_worker_pending_replacement_seconds },
       { name = "LIQUIDATION_WORKER_GAS_BUFFER_BPS", value = var.liquidation_worker_gas_buffer_bps },
       { name = "LIQUIDATION_WORKER_FEE_BUFFER_BPS", value = var.liquidation_worker_fee_buffer_bps },
+      { name = "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES", value = var.liquidation_worker_future_publish_max_retries },
+      { name = "LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS", value = var.liquidation_worker_future_publish_retry_max_seconds },
     ]
   }, local.otel_log_router_container])
 }
