@@ -242,6 +242,7 @@ locals {
   )
 
   native_aa_environment = local.native_aa_backend_configured ? [
+    { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
     { name = "AA_NATIVE_SUBMISSION_ENABLED", value = tostring(var.enable_native_aa_submission) },

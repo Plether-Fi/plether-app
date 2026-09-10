@@ -12,6 +12,53 @@ manifest are separate gates. The public manifest is already v2 but still uses
 Pimlico; a version suffix alone never selects native routing. Passing one gate
 does not authorize the next one.
 
+## RPC verification modes
+
+The default remains `aa_rpc_mode="dual-independent"` (`AA_RPC_MODE` in the
+API/reconciler). All independent-provider gates below apply to that mode.
+
+An explicitly approved, Plether-controlled Arbitrum Sepolia canary may instead
+use `aa_rpc_mode="single-provider-sepolia"`. It requires a nonempty owner
+allowlist, global rollout disabled, and the verification SSM parameter set to
+`/plether/sepolia/perps-rpc-url` with the existing AWS-managed encryption mode.
+Both `PERPS_RPC_URL` and the legacy `AA_RECONCILER_SECONDARY_RPC_URL` environment
+slot then reference that same SecureString; do not create a duplicate secret
+or describe it as a second provider. API and reconciler must use the same mode.
+
+This exception keeps repeated safe-header, profile, log, canonicality and
+post-read checks, but both observations come from one provider. It cannot
+detect correlated false or stale provider evidence. Provider failure still
+fails closed; mode is never changed automatically on an outage. Startup emits
+`aa_single_provider_canary`, and deployment logs identify the exception.
+Backend budgets are not a defense against all incorrect settlement evidence:
+the small funded on-chain deposit remains the loss-exposure boundary.
+
+For the approved single-provider canary only, interpret the paired-provider
+commands and evidence below as repeated same-provider consistency checks. The
+`test "$PERPS_RPC_URL" != "$AA_RECONCILER_SECONDARY_RPC_URL"` independence gate
+is replaced by an exact normalized equality check plus the explicit mode and
+cohort gates. Do not claim independent qualification. All other gates remain:
+schema validation, KMS attestation, pinned contract/account identities, fresh
+safe reads, caps, pause/drain, alarms, negative tests, and no global/mainnet use.
+The current operator choices and unapplied overlay are recorded in
+[Sepolia canary preparation](sepolia-aa-canary-preparation.md).
+
+### Moving to our own node later
+
+1. Qualify an authenticated independent node endpoint for chain 421614, safe
+   and historical state, EntryPoint logs, freshness, and canonical block hashes.
+   A proxy back to Alchemy does not provide independence; review its upstream
+   dependencies as well as its hostname.
+2. Pause issuance and drain outstanding authorizations using the existing
+   runbook. Preserve the database ledger and reconciler cursor.
+3. Store the independent endpoint in the external secondary SecureString,
+   restore `aa_rpc_mode="dual-independent"`, and point its Terraform parameter
+   reference to that secret. Review the exact decrypt permissions.
+4. Deploy the API and reconciler with issuance disabled, verify both report
+   dual-independent mode, then rerun the independent agreement and negative
+   tests before resuming the same restricted cohort. A disagreement blocks
+   activation; do not reset the cursor or silently fall back to single mode.
+
 ## Fixed deployment identity
 
 Core deployment: **v1.2.3**, source

@@ -18,7 +18,7 @@ import Database.PostgreSQL.Simple
   , execute_
   , query_
   )
-import Plether.Config (NativeAaConfig (..))
+import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -221,6 +221,27 @@ aaIntegrationSpec databaseUrl =
         isSponsorshipDeliveryAllowed conn testConfig (saDigest authorization)
           `shouldReturn` False
 
+    it "preserves budgets, stale-reconciler rejection and pause in single-provider mode" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let cfg = testConfig
+              { naaRpcMode = SingleProviderSepolia
+              , naaSecurityRpcUrl = "https://primary-rpc.invalid"
+              }
+        reserveSponsorship conn cfg (draft '1' '2' '3' 20 10_001 now)
+          `shouldReturn` Left "PER_OPERATION_BUDGET_EXCEEDED"
+        void $ reserveSponsorship conn cfg (draft '4' '5' '6' 21 1_000 now)
+          >>= expectAuthorization
+        void $ execute_ conn
+          "UPDATE aa_reconciler_health SET last_success_at=clock_timestamp()-INTERVAL '5 minutes'"
+        reserveSponsorship conn cfg (draft '7' '8' '9' 22 1_000 now)
+          `shouldReturn` Left "RECONCILER_STALE"
+        recordAaReconcilerHeartbeat conn chainId paymasterAddress 100 deploymentBlockHash
+        pauseAaIssuance conn "single-provider test pause"
+        reserveSponsorship conn cfg (draft 'a' 'b' 'c' 23 1_000 now)
+          `shouldReturn` Left "PAYMASTER_PAUSED"
+
     it "shares rate limits across connections" $
       withFixture databaseUrl $ \firstConnection ->
         withPeerConnection databaseUrl $ \secondConnection -> do
@@ -348,6 +369,7 @@ testConfig =
     { naaProxyOriginToken = T.replicate 64 "1"
     , naaAltoRpcUrl = "http://alto.invalid"
     , naaSecurityRpcUrl = "https://secondary-rpc.invalid"
+    , naaRpcMode = DualIndependent
     , naaPaymasterAddress = paymasterAddress
     , naaPaymasterCodeHash = hashOf '4'
     , naaPolicyId = hashOf '5'

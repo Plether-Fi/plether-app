@@ -224,6 +224,9 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
       ]
 
       environment = [
+        { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
+        { name = "AA_NATIVE_CANARY_OWNERS", value = var.aa_native_canary_owners },
+        { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = tostring(var.aa_native_global_rollout_enabled) },
         { name = "HOME", value = "/tmp" },
         { name = "TMPDIR", value = "/tmp" },
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },

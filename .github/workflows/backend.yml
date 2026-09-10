@@ -20,6 +20,18 @@ jobs:
         working-directory: .
         run: ./scripts/check-no-blockscout-runtime.sh
 
+      - name: Setup Terraform for offline AA guard tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.1
+          terraform_wrapper: false
+
+      - name: Test AA RPC deployment mode guards
+        env:
+          AA_TERRAFORM_TEST_REQUIRED: '1'
+        working-directory: .
+        run: node --test scripts/aa-rpc-mode.test.mjs
+
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
 

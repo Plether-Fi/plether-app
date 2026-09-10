@@ -629,8 +629,16 @@ becomes configured only when all of `AA_ALTO_RPC_URL`,
 `AA_PAYMASTER_SIGNER_ADDRESS`, `AA_PAYMASTER_KMS_KEY_ID`, and
 `AA_PAYMASTER_ACCOUNT_CODE_HASH` are non-empty alongside a valid
 `AA_PROXY_ORIGIN_TOKEN` and `DATABASE_URL`. Partial configuration fails
-startup. The two external security RPCs must be distinct normalized HTTPS/443
-origins and operationally independent.
+startup. `AA_RPC_MODE` defaults to `dual-independent`: the two external security
+RPCs must be distinct normalized HTTPS/443 URLs and operationally independent.
+The explicit `single-provider-sepolia` exception requires chain 421614, a
+nonempty `AA_NATIVE_CANARY_OWNERS`, and global rollout disabled, even while
+issuance is off. In this mode the legacy `AA_RECONCILER_SECONDARY_RPC_URL` slot
+must equal `PERPS_RPC_URL` after normalization. Repeated checks still run, but
+they are not independent evidence. API and reconciler startup log the mode
+and warn `aa_single_provider_canary`; neither automatically falls back to it.
+Use the same mode on both services. See the rollout runbook for returning to
+dual-independent verification with a self-hosted node.
 
 `AA_NATIVE_SPONSORSHIP_ENABLED` and `AA_NATIVE_SUBMISSION_ENABLED` default to
 `false`; sponsorship cannot be enabled without submission. An enabled canary

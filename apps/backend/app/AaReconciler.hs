@@ -7,6 +7,7 @@ import Control.Exception
   , throwIO
   , try
   )
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Plether.AA.Reconciler
@@ -17,8 +18,8 @@ import Plether.AA.Reconciler
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Ethereum.Client (newClient)
-import Plether.Config (normalizeExternalSecurityRpcUrl)
-import Plether.Logging (field, logError, logInfo)
+import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..))
+import Plether.Logging (field, logError, logInfo, logWarn)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode, exitFailure)
 
@@ -34,17 +35,22 @@ runMain = do
   databaseUrl <- requireEnv "DATABASE_URL"
   rpcUrlRaw <- requireRawEnv "PERPS_RPC_URL"
   secondaryRpcUrlRaw <- requireRawEnv "AA_RECONCILER_SECONDARY_RPC_URL"
+  rpcModeRaw <- fromMaybe "dual-independent" <$> lookupEnv "AA_RPC_MODE"
+  globalRaw <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED"
+  ownersRaw <- fromMaybe "" <$> lookupEnv "AA_NATIVE_CANARY_OWNERS"
   rpcUrl <- maybe
     (fatal "aa_reconciler_configuration_invalid" "PERPS_RPC_URL must be a normalized HTTPS/default-443 external provider URL")
     pure
     (normalizeExternalSecurityRpcUrl rpcUrlRaw)
-  secondaryRpcUrl <- maybe
-    (fatal "aa_reconciler_configuration_invalid" "AA_RECONCILER_SECONDARY_RPC_URL must be a normalized HTTPS/default-443 external provider URL")
+  (rpcMode, secondaryRpcUrl) <- either
+    (fatal "aa_reconciler_configuration_invalid" . T.pack)
     pure
-    (normalizeExternalSecurityRpcUrl secondaryRpcUrlRaw)
-  if rpcUrl == secondaryRpcUrl
-    then fatal "aa_reconciler_configuration_invalid" "primary and secondary reconciliation RPC URLs must be distinct after normalization"
-    else pure ()
+    (resolveAaSecurityRpc rpcModeRaw (arcChainId cfg) globalRaw ownersRaw rpcUrlRaw secondaryRpcUrlRaw)
+  case rpcMode of
+    SingleProviderSepolia -> logWarn "aa_single_provider_canary"
+      "Sepolia canary uses one RPC provider; repeated reads are not independent verification"
+      [field "rpc_mode" $ aaRpcModeText rpcMode]
+    DualIndependent -> pure ()
   pool <- newDbPool databaseUrl
   schemaResult <- try @SomeException $ withDb pool ensureAaSponsorshipSchema
   case schemaResult of
@@ -59,6 +65,7 @@ runMain = do
     "aa_reconciler_started"
     "AA sponsorship reconciler started"
     [ field "chain_id" $ arcChainId cfg
+    , field "rpc_mode" $ aaRpcModeText rpcMode
     , field "paymaster" $ arcPaymaster cfg
     , field "start_block" $ arcStartBlock cfg
     , field "poll_seconds" $ arcPollSeconds cfg

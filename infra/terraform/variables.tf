@@ -807,6 +807,17 @@ variable "aa_reconciler_max_safe_lag_seconds" {
   }
 }
 
+variable "aa_rpc_mode" {
+  type        = string
+  default     = "dual-independent"
+  description = "RPC verification mode. single-provider-sepolia is an explicit trusted-canary exception, not independent verification or automatic failover."
+
+  validation {
+    condition     = contains(["dual-independent", "single-provider-sepolia"], var.aa_rpc_mode)
+    error_message = "aa_rpc_mode must be dual-independent or single-provider-sepolia."
+  }
+}
+
 variable "aa_reconciler_secondary_rpc_url_ssm_parameter_name" {
   type        = string
   default     = "/plether/sepolia/aa-reconciler-secondary-rpc-url"

@@ -163,6 +163,11 @@ jobs:
       id-token: write
 
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -209,6 +214,7 @@ jobs:
           parameter_refs=()
           execution_roles=()
           api_uses_secondary_rpc=false
+          rpc_modes=()
           reconciler_exists=false
 
           inspect_consumer() {
@@ -265,6 +271,13 @@ jobs:
             if [ "$container" = "plether-api" ]; then
               api_uses_secondary_rpc=true
             fi
+            local rpc_mode
+            if ! rpc_mode=$(jq -er --arg container "$container" \
+                -f .github/scripts/validate-aa-rpc-mode.jq "$definition_file"); then
+              echo "::error title=Unsafe AA RPC mode::${family}/${container} failed explicit single-provider/dual-independent configuration checks."
+              return 1
+            fi
+            rpc_modes+=("$rpc_mode")
             parameter_refs+=("$(jq -er --arg container "$container" \
               '.containerDefinitions[]
                | select(.name == $container)
@@ -287,6 +300,15 @@ jobs:
           fi
 
           mapfile -t unique_refs < <(printf '%s\n' "${parameter_refs[@]}" | sort -u)
+          mapfile -t unique_modes < <(printf '%s\n' "${rpc_modes[@]}" | sort -u)
+          if [ "${#unique_modes[@]}" -ne 1 ]; then
+            echo "::error title=AA RPC mode mismatch::API and reconciler must use the same explicit verification mode."
+            exit 1
+          fi
+          echo "AA verification mode: ${unique_modes[0]}"
+          if [ "${unique_modes[0]}" = single-provider-sepolia ]; then
+            echo "::warning::Single-provider Sepolia canary: repeated RPC reads are not independent verification."
+          fi
           if [ "${#unique_refs[@]}" -ne 1 ]; then
             echo "::error title=Secondary RPC reference mismatch::Every deployed consumer must use the same exact external SSM parameter ARN."
             exit 1
@@ -1286,6 +1308,9 @@ jobs:
                   and (($main.environment // []) | map(.name) | sort)
                       == ([
                             "AA_PAYMASTER_ADDRESS",
+                            "AA_RPC_MODE",
+                            "AA_NATIVE_CANARY_OWNERS",
+                            "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED",
                             "AA_PAYMASTER_CODE_HASH",
                             "AA_PAYMASTER_MIN_DEPOSIT_WEI",
                             "AA_RECONCILER_BATCH_BLOCKS",

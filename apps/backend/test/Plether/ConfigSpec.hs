@@ -7,6 +7,8 @@ import Plether.Config
   , FaucetGuardConfig (..)
   , LpSettlementMode (..)
   , NativeAaSafetyInput (..)
+  , AaRpcMode (..)
+  , resolveAaSecurityRpc
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , parseLpSettlementLimits
@@ -568,6 +570,37 @@ spec = do
       normalizeExternalSecurityRpcUrl "https://user@rpc.example.com" `shouldBe` Nothing
       normalizeExternalSecurityRpcUrl "https://rpc.example.com:8443" `shouldBe` Nothing
       normalizeExternalSecurityRpcUrl "https://rpc.example.com/?token=x" `shouldBe` Nothing
+
+  describe "AA RPC verification modes" $ do
+    let primary = "https://primary.example/rpc"
+        secondary = "https://secondary.example/rpc"
+        owner = "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B"
+        resolve mode chain global owners = resolveAaSecurityRpc mode chain global owners primary
+    it "preserves dual-provider mode and rejects aliases of the same URL" $ do
+      resolve "dual-independent" 421614 "false" "" secondary
+        `shouldBe` Right (DualIndependent, secondary)
+      resolve "dual-independent" 421614 "false" owner primary `shouldSatisfy` isLeft
+      resolve "dual-independent" 421614 "false" owner "https://PRIMARY.example:443/rpc"
+        `shouldSatisfy` isLeft
+    it "allows explicitly selected single-provider Sepolia with a nonempty cohort" $ do
+      resolve "single-provider-sepolia" 421614 "false" owner primary
+        `shouldBe` Right (SingleProviderSepolia, primary)
+      resolve "single-provider-sepolia" 421614 "false" owner "https://PRIMARY.example:443/rpc"
+        `shouldBe` Right (SingleProviderSepolia, primary)
+    it "rejects unknown modes and never infers a fallback" $ do
+      mapM_ (\mode -> resolve mode 421614 "false" owner primary `shouldSatisfy` isLeft)
+        ["", "single", " single-provider-sepolia", "SINGLE-PROVIDER-SEPOLIA"]
+      resolve "single-provider-sepolia" 421614 "false" owner secondary `shouldSatisfy` isLeft
+    it "rejects single-provider mainnet, global access and missing or invalid cohorts" $ do
+      mapM_ (\chain -> resolve "single-provider-sepolia" chain "false" owner primary `shouldSatisfy` isLeft)
+        [1, 42161, 11155111]
+      mapM_ (\global -> resolve "single-provider-sepolia" 421614 global owner primary `shouldSatisfy` isLeft)
+        ["true", "invalid"]
+      mapM_ (\owners -> resolve "single-provider-sepolia" 421614 "false" owners primary `shouldSatisfy` isLeft)
+        ["", "0x0000000000000000000000000000000000000000", "invalid", owner <> "," <> owner]
+    it "retains HTTPS and URL hygiene in single-provider mode" $ do
+      mapM_ (\url -> resolveAaSecurityRpc "single-provider-sepolia" 421614 "false" owner url url `shouldSatisfy` isLeft)
+        ["http://rpc.example", "https://user@rpc.example", "https://rpc.example:8443", "https://rpc.example/?key=secret"]
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True

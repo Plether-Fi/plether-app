@@ -59,7 +59,7 @@ import Plether.AA.Kms
   , newKmsPaymasterSigner
   )
 import qualified Plether.AA.Pimlico as Legacy
-import Plether.Config (Config (..), NativeAaConfig (..))
+import Plether.Config (Config (..), NativeAaConfig (..), AaRpcMode (..), aaRpcModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.AaSponsorship
   ( SponsorshipAuthorization (..)
@@ -87,7 +87,7 @@ import Plether.Ethereum.Client
   , newClient
   , rpcCall
   )
-import Plether.Logging (field, logError, logErrorEvery)
+import Plether.Logging (field, logError, logErrorEvery, logInfo, logWarn)
 import Web.Scotty
   ( ActionM
   , header
@@ -130,6 +130,12 @@ newNativeGatewayState manager cfg client =
   case cfgNativeAaConfig cfg of
     Nothing -> pure $ NativeGatewayState Nothing Nothing Nothing
     Just nativeCfg -> do
+      logInfo "aa_rpc_mode_configured" "Native AA verification RPC mode configured"
+        [field "rpc_mode" $ aaRpcModeText $ naaRpcMode nativeCfg]
+      case naaRpcMode nativeCfg of
+        SingleProviderSepolia -> logWarn "aa_single_provider_canary"
+          "Sepolia canary uses one RPC provider; repeated reads are not independent verification" []
+        DualIndependent -> pure ()
       securityClient <- newClient $ naaSecurityRpcUrl nativeCfg
       profile <- attestNativePaymasterProfile nativeCfg client securityClient
       case profile of
