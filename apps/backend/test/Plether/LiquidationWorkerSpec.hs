@@ -3,6 +3,7 @@
 module Plether.LiquidationWorkerSpec (spec) where
 
 import Control.Exception (bracket)
+import Control.Monad (when)
 import Data.Aeson (Value, object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
@@ -77,6 +78,7 @@ import Plether.LiquidationWorker
   , sameNonceReplacementFees
   , selectLiquidationSimulationCandidates
   , pythStoredPriceCalls
+  , processLiquidationBatches
   , retryLiquidationRiskInputs
   , transactionMaximumCost
   , validateLiquidationExecutionPayload
@@ -543,6 +545,60 @@ spec = do
       readIORef payloadFetchTimes `shouldReturn` [112]
       executionPayload `shouldBe` Right [BS.pack [0xaa]]
 
+    it "refreshes and requotes every batch after receipt time advances" $ do
+      clock <- newIORef (100 :: Integer)
+      availablePayloads <-
+        newIORef
+          [ executionPayloadAt 100 "0xaa"
+          , executionPayloadAt 112 "0xbb"
+          ]
+      payloadFetchTimes <- newIORef ([] :: [Integer])
+      quotedPayloads <- newIORef ([] :: [[BS.ByteString]])
+      executedBatches <- newIORef ([] :: [([Int], [BS.ByteString], Integer)])
+      let advanceClock seconds = modifyIORef' clock (+ seconds)
+          fetchLatestPayload = do
+            fetchedAt <- readIORef clock
+            modifyIORef' payloadFetchTimes (<> [fetchedAt])
+            payloads <- readIORef availablePayloads
+            case payloads of
+              [] -> pure Nothing
+              nextPayload : remaining -> do
+                writeIORef availablePayloads remaining
+                pure $ Just nextPayload
+          prepareBatch _ = do
+            executionPayload <-
+              loadFreshLiquidationExecutionPayload
+                10
+                (readIORef clock)
+                fetchLatestPayload
+            case executionPayload of
+              Left err -> expectationFailure (show err) >> pure Nothing
+              Right executionUpdateData -> do
+                modifyIORef' quotedPayloads (<> [executionUpdateData])
+                let updateFee =
+                      if executionUpdateData == [BS.pack [0xaa]]
+                        then 1
+                        else 2
+                pure $ Just (executionUpdateData, updateFee)
+          executeBatch batch (executionUpdateData, updateFee) = do
+            modifyIORef' executedBatches (<> [(batch, executionUpdateData, updateFee)])
+            when (batch == [1]) $ advanceClock 12
+            pure True
+
+      processLiquidationBatches
+        [[1], [2]]
+        prepareBatch
+        executeBatch
+
+      readIORef payloadFetchTimes `shouldReturn` [100, 112]
+      readIORef quotedPayloads
+        `shouldReturn` [[BS.pack [0xaa]], [BS.pack [0xbb]]]
+      readIORef executedBatches
+        `shouldReturn`
+          [ ([1], [BS.pack [0xaa]], 1)
+          , ([2], [BS.pack [0xbb]], 2)
+          ]
+
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
       decodeCachedPythPayload payload
@@ -803,6 +859,16 @@ payload =
     , puprUpdateData = toJSON (["0x0102", "0xff"] :: [String])
     , puprFetchedAt = 103
     , puprSource = "backend_hermes_latest_v2"
+    }
+
+executionPayloadAt :: Integer -> Text -> PythUpdatePayloadRow
+executionPayloadAt publishTime updateHex =
+  payload
+    { puprMinPublishTime = publishTime
+    , puprMaxPublishTime = publishTime
+    , puprPublishTimes = toJSON ([publishTime, publishTime] :: [Integer])
+    , puprUpdateData = toJSON [updateHex]
+    , puprFetchedAt = publishTime
     }
 
 basketSnapshot :: BasketSnapshotRow

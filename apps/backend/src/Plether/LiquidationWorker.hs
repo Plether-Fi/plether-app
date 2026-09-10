@@ -44,6 +44,7 @@ module Plether.LiquidationWorker
   , validateMergedLiquidationBasketDetailed
   , liquidationFuturePublishRetryDelaySeconds
   , retryLiquidationRiskInputs
+  , processLiquidationBatches
   , freshLiquidationRiskInputsFromCache
   ) where
 
@@ -1518,7 +1519,13 @@ processCandidates cfg conn client workerAddress dryRun = do
               (lwcCfdEngine cfg)
               (plcrAccount candidate)
 
-    processClassifiedPayload candidates = do
+    processClassifiedPayload candidates =
+      processLiquidationBatches
+        (chunksOf (lwcExecutionBatchSize cfg) candidates)
+        prepareExecutionBatch
+        executePreparedBatch
+
+    prepareExecutionBatch candidates = do
       rejectedPayload <-
         getPerpsLiquidationRejectedPayload
           conn
@@ -1547,6 +1554,7 @@ processCandidates cfg conn client workerAddress dryRun = do
                    , field "error" err
                    ]
             )
+          pure Nothing
         Right updateData -> do
           let payloadKey =
                 liquidationPayloadFingerprint
@@ -1560,7 +1568,7 @@ processCandidates cfg conn client workerAddress dryRun = do
             of
             SuppressRejectedLiquidationPayload ->
               case rejectedPayload of
-                Just rejected ->
+                Just rejected -> do
                   logWarnEvery
                     60
                     "liquidation_pyth_payload_suppressed"
@@ -1573,7 +1581,8 @@ processCandidates cfg conn client workerAddress dryRun = do
                            , field "error" $ plrprError rejected
                            ]
                     )
-                Nothing -> processPayload candidates payloadKey updateData
+                  pure Nothing
+                Nothing -> preparePayload candidates payloadKey updateData
             ClearRejectedLiquidationPayload -> do
               clearPerpsLiquidationRejectedPayload
                 conn
@@ -1583,14 +1592,14 @@ processCandidates cfg conn client workerAddress dryRun = do
                 "liquidation_pyth_payload_changed"
                 "Liquidation scan resumed with a new Pyth payload"
                 (workerLogFields cfg <> [field "payload_key" payloadKey])
-              processPayload candidates payloadKey updateData
+              preparePayload candidates payloadKey updateData
             ProcessLiquidationPayload ->
-              processPayload candidates payloadKey updateData
+              preparePayload candidates payloadKey updateData
 
-    processPayload candidates payloadKey updateData = do
+    preparePayload candidates payloadKey updateData = do
       feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
       case feeResult of
-        Left err ->
+        Left err -> do
           logWarnEvery
             60
             "liquidation_update_fee_fetch_failed"
@@ -1601,18 +1610,35 @@ processCandidates cfg conn client workerAddress dryRun = do
                    , field "error" $ rpcErrorText err
                    ]
             )
-        Right updateFee ->
-          processExecutionBatches
-            (chunksOf (lwcExecutionBatchSize cfg) candidates)
-            payloadKey
-            updateData
-            updateFee
+          pure Nothing
+        Right updateFee -> pure $ Just (payloadKey, updateData, updateFee)
 
-    processExecutionBatches [] _ _ _ = pure ()
-    processExecutionBatches (batch : rest) payloadKey updateData updateFee = do
-      canContinue <-
-        processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateData updateFee batch
-      when canContinue $ processExecutionBatches rest payloadKey updateData updateFee
+    executePreparedBatch candidates (payloadKey, updateData, updateFee) =
+      processLiquidationBatch
+        cfg
+        conn
+        client
+        workerAddress
+        dryRun
+        payloadKey
+        updateData
+        updateFee
+        candidates
+
+processLiquidationBatches
+  :: [[candidate]]
+  -> ([candidate] -> IO (Maybe prepared))
+  -> ([candidate] -> prepared -> IO Bool)
+  -> IO ()
+processLiquidationBatches [] _ _ = pure ()
+processLiquidationBatches (batch : rest) prepareBatch executeBatch = do
+  prepared <- prepareBatch batch
+  case prepared of
+    Nothing -> pure ()
+    Just batchInputs -> do
+      canContinue <- executeBatch batch batchInputs
+      when canContinue $
+        processLiquidationBatches rest prepareBatch executeBatch
 
 processLiquidationBatch
   :: LiquidationWorkerConfig
