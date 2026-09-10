@@ -1,7 +1,7 @@
 import type {
   PerpsActionPlan,
   SponsoredExecutionStatus,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import {
   isAddressEqual,
   type Address,

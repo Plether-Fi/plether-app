@@ -64,6 +64,12 @@ export function protectionWorkerProvenance(release) {
   return `The protection-worker ABI is generated separately from the deployed Core release bundle:\n\n\`\`\`bash\nnode scripts/generate-protection-worker-abi.mjs /path/to/perps-${release.version}-arbitrum-sepolia.tar.gz\n\`\`\`\n\nThe generator verifies the bundle SHA-256 against\n\`config/perps/arbitrum-sepolia-v2.json\` before extracting the\nPositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.\nDeployment source: \`${release.sourceCommit}\`.\nBundle SHA-256: \`${release.bundleSha256}\`.\nThe AA package release is independent of this deployment-specific ABI bundle;\npackage migration does not regenerate worker artifacts.`
 }
 
+export function migrateDiagramEvidence(text, sourceUrl) {
+  return text
+    .replaceAll('apps/frontend/vendor/perps-aa-client/dist/actions.js', `${sourceUrl}/src/actions.ts`)
+    .replaceAll('apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction', `${sourceUrl}/src/orchestrator.ts`)
+}
+
 export function migrateSources(directory, record) {
   const { release } = readJson(path.join(directory, 'config/perps/arbitrum-sepolia-v2.json'))
   const edit = (file, change) => {
@@ -85,9 +91,11 @@ export function migrateSources(directory, record) {
     assert.ok(text.includes(original), 'Review changed GitBook provenance before migrating')
     return text.replace(original, `Account-abstraction ordering was checked against [${packageName}@${record.version}](${sourceUrl}/src/orchestrator.ts), the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. Package provenance is recorded in \`config/perps-aa-client-release.json\`.`)
   })
-  edit('apps/gitbook/scripts/diagram-catalog.mjs', text => text
-    .replaceAll('apps/frontend/vendor/perps-aa-client/dist/actions.js', `${sourceUrl}/src/actions.ts`)
-    .replaceAll('apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction', `${sourceUrl}/src/orchestrator.ts`))
+  // Change only AA provenance. Full diagram regeneration has a separate
+  // contract-review gate that this package migration must not bypass or repin.
+  for (const file of ['apps/gitbook/scripts/diagram-catalog.mjs', 'apps/gitbook/.gitbook/assets/diagrams/diagram-manifest.json']) {
+    edit(file, text => migrateDiagramEvidence(text, sourceUrl))
+  }
   saveJson(path.join(directory, 'config/perps-aa-client-release.json'), record)
 }
 
@@ -143,7 +151,6 @@ async function main() {
   // Fixed repository-relative targets only. Git retains all removed artifacts.
   for (const file of ['.codex-artifacts/plether-core-self-hosted-aa.patch', '.codex-artifacts/plether-core-self-hosted-aa.manifest.txt', 'scripts/vendor-perps-aa-client.mjs']) rmSync(path.join(root, file))
   rmSync(path.join(frontend, 'vendor/perps-aa-client'), { recursive: true })
-  run(process.execPath, ['apps/gitbook/scripts/generate-diagrams.mjs'])
   console.log(`Migration prepared from ${record.corePr}. Review git diff, run frontend/AA/Storybook checks, and verify the PR's packages:read installation before merging.`)
 }
 

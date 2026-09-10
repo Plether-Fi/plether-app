@@ -1,7 +1,7 @@
 import {
   createAuthorizationNonce,
   type ReceiveWithAuthorization,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import { getAddress, type Address, type Hex } from 'viem'
 
 const AUTHORIZATION_STORAGE_PREFIX = 'plether_perps_eip3009_v2'

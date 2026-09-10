@@ -256,18 +256,15 @@ workflow run URLs, canary UserOperation hashes, and each gate decision. Record
 addresses and digests, never private keys, signatures, RPC credentials, origin
 tokens, or full signed UserOperations.
 
-Until the AA package is published and adopted, the app retains the vendored
-client and `.codex-artifacts/plether-core-self-hosted-aa.patch` as historical
-build provenance. [Core PR #94](https://github.com/Plether-Fi/plether-core/pull/94)
-is merged at `f9e29c1b3ac5937e0519108cebffb4d09048de36`; do not reapply the patch
-to current Core or deploy from the old patch base.
+The AA contracts and client come from [Core PR](https://github.com/Plether-Fi/plether-core/pull/94) and the
+[immutable package release](https://github.com/Plether-Fi/plether-core/releases/tag/perps-aa-client-v0.1.0). The frontend consumes
+`@plether-fi/perps-aa-client@0.1.0`; the lockfile records its registry integrity.
 
-Complete the protected `perps-aa-client` package release and verify its registry
-integrity, public visibility, and app Actions access before running
-`scripts/migrate-perps-aa-client.mjs`. Record the exact published Core commit
-and rerun artifact qualification before deployment. The Core protocol deployment
-source above and the independent AA package/paymaster source are distinct pins.
-Neither the PR merge nor npm publication deploys a paymaster or enables issuance.
+Core source commit: `f9e29c1b3ac5937e0519108cebffb4d09048de36`.
+Package integrity: `sha512-42HnUdMtfKHoYLZ8bVOYUEiA2p8fdeVe7QOeknj8ELpyPJPkgO2H1b8xwbS98g/Xj/zmv7nBi4c351cAQtLn1g==`.
+The machine-readable provenance is `config/perps-aa-client-release.json`.
+Build and deploy the paymaster only from this reviewed clean Core commit.
+Package publication is separate from contract deployment and sponsorship enablement.
 
 ### GitHub and AWS preflight
 

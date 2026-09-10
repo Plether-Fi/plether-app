@@ -2,7 +2,7 @@ import { createContext, use } from 'react'
 import type {
   PerpsActionKind,
   SmartAccountCall,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import type { Address, Hex } from 'viem'
 import type {
   UserOperation,

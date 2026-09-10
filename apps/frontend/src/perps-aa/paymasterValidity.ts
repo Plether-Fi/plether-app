@@ -3,7 +3,7 @@ import {
   PLETHER_PAYMASTER_DATA_BYTES,
   validatePletherPaymasterEnvelope,
   type PletherPaymasterProfile,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import {
   getAddress,
   hexToBigInt,

@@ -10,6 +10,25 @@ const manifest = JSON.parse(manifestText)
 const { release, contracts } = JSON.parse(read('config/perps/arbitrum-sepolia-v2.json'))
 const runbook = read('docs/runbooks/self-hosted-aa-rollout.md')
 
+test('published client provenance matches the dependency, lockfile and installed artifact', () => {
+  const record = JSON.parse(read('config/perps-aa-client-release.json'))
+  const pkg = JSON.parse(read('apps/frontend/package.json'))
+  const lock = JSON.parse(read('apps/frontend/package-lock.json'))
+  const installed = JSON.parse(read(`apps/frontend/node_modules/${record.package}/package.json`))
+  const locked = lock.packages[`node_modules/${record.package}`]
+  assert.equal(record.package, '@plether-fi/perps-aa-client')
+  assert.equal(pkg.dependencies[record.package], record.version)
+  assert.equal(pkg.dependencies['@plether/perps-aa-client'], undefined)
+  assert.equal(locked.version, record.version)
+  assert.equal(locked.resolved, record.tarball)
+  assert.equal(locked.integrity, record.integrity)
+  assert.equal(locked.link, undefined)
+  assert.equal(installed.version, record.version)
+  assert.equal(installed.gitHead, record.sourceCommit)
+  assert.ok(runbook.includes(record.sourceCommit))
+  assert.ok(runbook.includes(record.integrity))
+})
+
 test('rollout native candidate preserves every public manifest binding', () => {
   const candidates = [...runbook.matchAll(/```json\n([\s\S]*?)\n```/g)]
     .map(match => JSON.parse(match[1]))

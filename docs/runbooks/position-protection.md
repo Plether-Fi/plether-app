@@ -54,20 +54,12 @@ does not add a manual or sponsored retry action.
 
 ## Build provenance
 
-The vendored client combines the protection snapshot
-`3472427ed15b0a478248af7d025535da349a8592` with the reviewed native-AA patch.
-The exact source pins, patch checksum and build procedure are recorded in
-`apps/frontend/vendor/perps-aa-client/UPSTREAM.md`; vendor hashes are in
-`SHA256SUMS`. [Core PR #94](https://github.com/Plether-Fi/plether-core/pull/94)
-upstreams the combined package. Replace the vendor only after its immutable
-package publication and consumer-access checks pass. Do not edit generated
-vendor files by hand.
-
-From this repository's root, after building that upstream package:
-
-```bash
-node scripts/vendor-perps-aa-client.mjs /path/to/clean/plether-core
-```
+The Book ABI and all four protection action builders are published with native
+sponsorship support in [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/releases/tag/perps-aa-client-v0.1.0).
+Source: [reviewed Core commit](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client), PR: https://github.com/Plether-Fi/plether-core/pull/94.
+`config/perps-aa-client-release.json` and the frontend lockfile record the
+package commit, version, tag, and integrity. Upgrade through a reviewed immutable
+package release; never edit installed package files.
 
 The protection-worker ABI is generated separately from the deployed Core release bundle:
 

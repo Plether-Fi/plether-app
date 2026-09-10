@@ -11,6 +11,17 @@ React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
 ## Development
 
+The frontend installs `@plether-fi/perps-aa-client` from GitHub Packages.
+Authenticate npm before installing, even though the package is public. Use a
+read-only `read:packages` credential in your user npm configuration; never
+commit a token. The checked-in `.npmrc` selects the registry. CI uses its
+repository-scoped `GITHUB_TOKEN` with `packages: read` access.
+
+The exact client release, Core commit, and tarball integrity are recorded in
+`../../config/perps-aa-client-release.json` and `package-lock.json`. This client
+version is independent of the deployed Core contract release. The old vendored
+client and Core patch are no longer used.
+
 ```bash
 npm install
 npm run dev        # Dev server at http://localhost:5173
@@ -77,7 +88,7 @@ Local and hosted testnet deployments use the bundled
 `/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
 override that path. The manifest suffix identifies a deployment generation,
 not the AA provider. The current bundled manifest is
-`perps-aa-arbitrum-sepolia-20260830-v2` and deliberately uses Pimlico through
+`perps-aa-arbitrum-sepolia-20260910-v2` and deliberately uses Pimlico through
 the exact same-origin `pimlicoRpcUrl` field.
 
 Transport is selected only after exact-key validation. A v1 suffix accepts

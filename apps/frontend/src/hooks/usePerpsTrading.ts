@@ -15,7 +15,7 @@ import {
   buildProtectedOpenAction,
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_LENS_ABI,

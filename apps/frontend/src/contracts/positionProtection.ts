@@ -1,5 +1,5 @@
 import { formatUnits, parseAbi, parseUnits, type Address } from 'viem'
-import type { PositionProtectionParams } from '@plether/perps-aa-client'
+import type { PositionProtectionParams } from '@plether-fi/perps-aa-client'
 import type { LiquidationThreshold } from '../utils/perpsRisk'
 import type { PerpsDirection } from '../utils/perps'
 

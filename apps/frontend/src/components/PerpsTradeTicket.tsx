@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { SponsoredExecutionStatus } from '@plether/perps-aa-client'
+import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { openAppKit } from '../config/wagmi'

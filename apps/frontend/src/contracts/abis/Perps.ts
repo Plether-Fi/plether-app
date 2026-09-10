@@ -1054,7 +1054,7 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-import { positionProtectionBookAbi } from '@plether/perps-aa-client'
+import { positionProtectionBookAbi } from '@plether-fi/perps-aa-client'
 
 // The vendored client retains this retired error. All remaining entries match
 // the checksum-verified v1.2.3 bundle, including TP/SL actions and events.

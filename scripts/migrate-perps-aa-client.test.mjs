@@ -1,10 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { packageName, removeLegacyLockEntries, replaceSection, validatePublishedRelease } from './migrate-perps-aa-client.mjs'
+import { migrateDiagramEvidence, packageName, removeLegacyLockEntries, replaceSection, validatePublishedRelease } from './migrate-perps-aa-client.mjs'
 
 const sha = 'a'.repeat(40)
 const metadata = { name: packageName, version: '0.1.0', gitHead: sha,
   dist: { integrity: `sha512-${Buffer.alloc(64).toString('base64')}`, tarball: 'https://npm.pkg.github.com/download/@plether-fi/perps-aa-client/0.1.0/fixture' } }
+
+test('AA evidence migration preserves the independent protocol review and diagram content', () => {
+  const source = `https://github.com/Plether-Fi/plether-core/blob/${sha}/packages/perps-aa-client`
+  const original = {
+    reviewedRelease: { version: 'v1.2.2', sourceCommit: 'b'.repeat(40) },
+    diagrams: [{ title: 'Preserved', evidence: ['protocol/source.sol',
+      'apps/frontend/vendor/perps-aa-client/dist/actions.js',
+      'apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction'] }],
+  }
+  const updated = JSON.parse(migrateDiagramEvidence(JSON.stringify(original), source))
+  assert.deepEqual(updated.reviewedRelease, original.reviewedRelease)
+  assert.deepEqual(updated.diagrams, [{ title: 'Preserved', evidence: [
+    'protocol/source.sol', `${source}/src/actions.ts`, `${source}/src/orchestrator.ts`,
+  ] }])
+  assert.equal(migrateDiagramEvidence(JSON.stringify(updated), source), JSON.stringify(updated))
+})
 
 test('migration accepts only an immutable public release with matching source and tag', () => {
   const record = validatePublishedRelease(metadata, sha, '0.1.0', sha, 'public')

@@ -1,7 +1,7 @@
 import type {
   PerpsActionKind,
   SponsoredExecutionStatus,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import type { Address, Hex } from 'viem'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
 import { create } from 'zustand'
