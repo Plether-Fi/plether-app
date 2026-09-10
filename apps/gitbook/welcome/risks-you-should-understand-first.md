@@ -59,7 +59,7 @@ Plether does not reduce or close an unrelated profitable position to cover anoth
 
 There is no counterparty auto-deleveraging between traders.
 
-Your own position can still be fully liquidated if the account’s carry-adjusted equity, based on eligible liquidation-reachable collateral, falls to or below the applicable maintenance requirement.
+Your position can be fully liquidated if position margin plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
 
 That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
 
@@ -111,9 +111,9 @@ There is no partial-liquidation process that reduces an oversized position and l
 
 Do not assume that the margin figure displayed beside a position is always the maximum USDC that can be reached during terminal settlement.
 
-Plether uses account-level USDC accounting. Health is not calculated from assigned position margin alone: generic health and withdrawal checks include active position margin plus eligible free USDC belonging to the same account, while excluding other locked buckets. Terminal full-close and liquidation paths can reach additional eligible locked balances under explicit reservation rules before passing a deficit to the liquidity pool.
+Plether separates price risk from action obligations. Price equity is assigned position margin plus same-account claims and exact PnL. Free USDC covers carry, and reserves have dedicated purposes. Committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
 
-A trader claim is not generic collateral and cannot normally be reused as immediately spendable margin, although it can be netted under terminal settlement rules.
+A same-account trader claim supports price equity and can offset price losses. It is not cash available for carry, fees or withdrawal.
 
 The detailed rules for free balance, locked position margin, committed-order reservations and terminally reachable collateral should be understood before using leverage.
 
@@ -132,7 +132,7 @@ Carry can:
 
 Carry is not trader-to-trader funding. It is the cost of using LP-backed capital.
 
-A position does not need to move against the trader to become less healthy. Carry alone can reduce equity over time.
+A position can become liquidatable without an adverse price move if free settlement cannot cover carry, even while price equity remains positive.
 
 ### Binding-order risk
 

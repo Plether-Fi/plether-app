@@ -353,9 +353,9 @@ function completeHistoryFixture() {
     intervalSeconds: 3600 as const,
     deployment: {
       chainId: 421614,
-      housePool: '0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918',
-      seniorVault: '0x7Bf2B3d3912b5B8D367987C9ADfC6Bd1216E8129',
-      juniorVault: '0x41D785d3BcF4D0e306E491a66Ddb0d938135Cc1c',
+      housePool: '0x87622630fb1941fe02731d4a9fcdec0388efd78b',
+      seniorVault: '0x970ac2cfe9a19d4318806812719a5c291711b33a',
+      juniorVault: '0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79',
     },
     coverage: { start, end, complete: true },
     senior: {

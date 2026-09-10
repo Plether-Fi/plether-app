@@ -543,6 +543,30 @@ export const PERPS_PUBLIC_LENS_ABI = [
 export const PERPS_MARGIN_CLEARINGHOUSE_ABI = [
   {
     type: 'function',
+    name: 'getOrderReservation',
+    stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }],
+    outputs: [{
+      name: 'reservation', type: 'tuple', components: [
+        { name: 'account', type: 'address' },
+        { name: 'originalAmountUsdc', type: 'uint96' },
+        { name: 'remainingAmountUsdc', type: 'uint96' },
+        { name: 'previousOrderId', type: 'uint64' },
+        { name: 'nextOrderId', type: 'uint64' },
+        { name: 'bucket', type: 'uint8' },
+        { name: 'status', type: 'uint8' },
+      ],
+    }],
+  },
+  {
+    type: 'function',
+    name: 'vpiRebateReserveUsdc',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'depositMargin',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'amount', type: 'uint256' }],
@@ -1032,13 +1056,20 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
 
 import { positionProtectionBookAbi } from '@plether/perps-aa-client'
 
-// v1.2.2 removed this unused v1.2.1 error; the remaining wire layouts match
-// the checksum-verified release bundle, including all TP/SL actions and events.
+// The vendored client retains this retired error. All remaining entries match
+// the checksum-verified v1.2.3 bundle, including TP/SL actions and events.
 export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filter(
   entry => !(entry.type === 'error' && entry.name === 'OrderRouter__ProtectionDisabled')
 )
 
 export const PERPS_CFD_ENGINE_ABI = [
+  {
+    type: 'function',
+    name: 'positionEntryCostUsdcAtoms',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
   {
     type: 'function',
     name: 'positionCarryState',
@@ -1387,6 +1418,26 @@ export const PERPS_PLETHER_ORACLE_ABI = [
 ] as const
 
 export const PERPS_CFD_ENGINE_LENS_ABI = [
+  // Planner-valid maximum only; Router and terminal-book gates still apply.
+  {
+    type: 'function',
+    name: 'quoteMaxOpen',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'side', type: 'uint8' },
+      { name: 'marginDelta', type: 'uint256' },
+      { name: 'oraclePrice', type: 'uint256' },
+      { name: 'publishTime', type: 'uint64' },
+    ],
+    outputs: [{
+      name: 'quote', type: 'tuple', components: [
+        { name: 'maxSizeDelta', type: 'uint256' },
+        { name: 'preview', type: 'tuple', components: OPEN_PREVIEW_COMPONENTS },
+        { name: 'limitingReason', type: 'uint8' },
+      ],
+    }],
+  },
   {
     type: 'function',
     name: 'previewOpen',

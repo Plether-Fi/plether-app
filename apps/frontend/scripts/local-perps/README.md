@@ -10,24 +10,25 @@ with direct test-account transactions and explicit keeper controls.
 ## Start
 
 Requirements: Node/npm dependencies installed in `apps/frontend`, Foundry
-(Anvil and Solc 0.8.35), and the official v1.2.2 release ABI bundle.
+(Anvil and Solc 0.8.35), and the official v1.2.3 release ABI bundle.
 
-Download the bundle using `gh release download v1.2.2 --repo
-Plether-Fi/plether-core --pattern perps-arbitrum-sepolia-v1.2.2.zip --dir
+Download the bundle using `gh release download v1.2.3 --repo
+Plether-Fi/plether-core --pattern perps-v1.2.3-arbitrum-sepolia.tar.gz --dir
 /your/temporary/directory`. The controller verifies its pinned SHA-256 digest.
 
-Start a **new**, dedicated fork:
+Start a **new**, dedicated fork at the completed deployment, before the tiny live seeds.
+The harness supplies its own test liquidity on this historical fork:
 
 ```sh
 anvil --fork-url https://sepolia-rollup.arbitrum.io/rpc \
-  --chain-id 421614 --host 127.0.0.1 --port 18545 \
+  --fork-block-number 307397286 --chain-id 421614 --host 127.0.0.1 --port 18545 \
   --allow-origin http://127.0.0.1:5182 --block-time 2 --silent
 ```
 
 In another terminal, from `apps/frontend`:
 
 ```sh
-LOCAL_PERPS_ABI_BUNDLE=/absolute/path/perps-arbitrum-sepolia-v1.2.2.zip \
+LOCAL_PERPS_ABI_BUNDLE=/absolute/path/perps-v1.2.3-arbitrum-sepolia.tar.gz \
   node scripts/local-perps.mjs
 ```
 
@@ -80,3 +81,30 @@ The executor supplies a 15-million gas limit because the router's low-gas
 pending path makes bare gas estimation insufficient for deterministic execution.
 
 Stop both terminals with Ctrl-C when finished. The Anvil state is ephemeral.
+
+## Account-risk regression suite
+
+With the same dedicated fork and controller running, use Node 22.18 or newer
+(native TypeScript stripping) and run from `apps/frontend`:
+
+```sh
+LOCAL_PERPS_ABI_BUNDLE=/absolute/path/perps-v1.2.3-arbitrum-sepolia.tar.gz \
+  npm run test:local-perps-risk
+```
+
+This suite checks the checksum-verified v1.2.3 deployed bytecode and compares
+the frontend threshold with `previewLiquidation` at the boundary and adjacent
+healthy tick. It covers both directions, open-preview agreement, deposits,
+margin additions, withdrawal limits, exact entry-cost rounding after real
+increases and partial reductions, and settlement of a real partial-close claim
+into live position margin. It resets this disposable sandbox before each
+scenario and on completion. Do not run it concurrently with other fork tests.
+
+The claim scenario temporarily removes pool cash by impersonating the pool on
+Anvil, then restores that cash before settlement. Execution never accepts a
+configurable RPC and is restricted to `127.0.0.1:18545`; it cannot write to the
+public deployment. If the public RPC no longer serves the fork's original
+state, restart both test processes with a fresh fork.
+
+See [the accounting and verification record](../../../../docs/runbooks/perps-account-risk-v1.2.2.md)
+for the pinned Solidity vectors and the frontend snapshot policy.

@@ -1,18 +1,14 @@
 import fs from 'node:fs'
-import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 
-const core = process.argv[2]
-if (!core) throw new Error('Usage: node scripts/generate-protection-worker-abi.mjs <built-core-v1.2.1>')
-const release = JSON.parse(fs.readFileSync('config/perps/arbitrum-sepolia-v2.json'))
-// Imported structs/interfaces affect the ABI just as much as the facade files.
-execFileSync('git', ['-C', core, 'diff', '--exit-code', '--quiet', release.release.sourceCommit, '--', 'packages/perps/src', 'foundry.toml'])
-execFileSync('git', ['-C', core, 'diff', '--exit-code', '--quiet', release.release.sourceCommit, 'HEAD', '--', 'lib', 'foundry.toml'])
-for (const name of ['PositionProtectionBook', 'OrderRouter', 'OrderLifecycleBook', 'PletherOracle']) {
-  const source = `packages/perps/src/${name}.sol`
-  const current = execFileSync('git', ['-C', core, 'hash-object', source], { encoding: 'utf8' }).trim()
-  const pinned = execFileSync('git', ['-C', core, 'rev-parse', `${release.release.sourceCommit}:${source}`], { encoding: 'utf8' }).trim()
-  if (current !== pinned) throw new Error(`Source mismatch for ${name}`)
-}
-const contracts = Object.fromEntries(['PositionProtectionBook', 'OrderRouter', 'OrderLifecycleBook', 'PletherOracle'].map(name => [name, JSON.parse(fs.readFileSync(path.join(core, `out/${name}.sol/${name}.json`))).abi]))
-fs.writeFileSync('apps/backend/protection-worker/abi.mjs', `// Generated from perps v1.2.1 ${release.release.sourceCommit}. Do not edit.\nexport default ${JSON.stringify(contracts)}\n`)
+const bundle = process.argv[2]
+if (!bundle) throw new Error('Usage: node scripts/generate-protection-worker-abi.mjs <release-bundle.tar.gz>')
+const { release } = JSON.parse(fs.readFileSync('config/perps/arbitrum-sepolia-v2.json'))
+const digest = createHash('sha256').update(fs.readFileSync(bundle)).digest('hex')
+if (digest !== release.bundleSha256) throw new Error(`Expected the pinned ${release.version} ABI bundle`)
+const artifacts = { PositionProtectionBook: 'PositionProtectionBook', OrderRouter: 'ArbitrumSepoliaReleaseRouter', OrderLifecycleBook: 'OrderLifecycleBook', PletherOracle: 'ArbitrumSepoliaReleaseOracle' }
+const contracts = Object.fromEntries(Object.entries(artifacts).map(([name, artifact]) => [name,
+  JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.version}-arbitrum-sepolia/abi/${artifact}.json`], { encoding: 'utf8' })),
+]))
+fs.writeFileSync('apps/backend/protection-worker/abi.mjs', `// Generated from perps ${release.version} ${release.sourceCommit}, checksum-verified release bundle. Do not edit.\nexport default ${JSON.stringify(contracts)}\n`)

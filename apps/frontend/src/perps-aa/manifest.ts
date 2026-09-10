@@ -212,7 +212,7 @@ function parsePinnedAddress(
   expected: Address
 ): Address {
   const address = parseAddress(value, field)
-  if (address !== expected) {
+  if (address !== getAddress(expected)) {
     invalid(field, `must be the reviewed deployment ${expected}`)
   }
   return address

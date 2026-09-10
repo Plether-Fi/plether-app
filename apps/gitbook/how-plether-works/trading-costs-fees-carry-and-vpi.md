@@ -199,7 +199,7 @@ A positive value represents charges already paid. A negative value represents a 
 
 #### Why negative VPI is provisional
 
-A negative VPI amount may be credited into position settlement, but the same amount is deducted when calculating account risk equity.
+Negative accumulated VPI requires matching backing in its dedicated VPI rebate reserve. It is not deducted from position price-risk equity. An insufficient reserve can independently make the account liquidatable.
 
 Conceptually:
 
@@ -371,7 +371,7 @@ Borrow base = 0
 
 No new carry accrues on that basis.
 
-Free USDC elsewhere in the account supports liquidation health, but it does not reduce carry. It must be explicitly assigned as position margin to reduce the borrow base.
+Free USDC covers carry obligations but does not support price equity. Assigning it as position margin increases price-risk backing and can reduce the borrow base; retain free funds for future carry.
 
 > Carry is the price of keeping LP capital committed—not a payment from losing traders to winning traders.
 
@@ -460,12 +460,12 @@ Not executing a transaction does not pause carry.
 
 Carry accrues against the stored borrow base between checkpoints rather than recalculating the entire basis from every new mark price.
 
-Pending carry reduces account equity before it is physically collected. It can:
+Pending carry is a separate obligation against eligible free settlement. It can:
 
 * reduce withdrawable USDC;
 * lower the payout from a close;
 * make an increase invalid;
-* consume free balance or position margin;
+* consume eligible free settlement, while position margin stays protected;
 * contribute to liquidation without an index move.
 
 ### When carry is realized
@@ -494,27 +494,21 @@ Any voluntary reduction—including a partial close—settles all carry accrued 
 
 ### How carry is collected
 
-When carry is realized, Plether consumes:
+Carry is collected only from eligible free settlement. Position margin, claims, order commitments and dedicated reserves cannot cover it. Any uncovered remainder persists as carry debt and independently makes the position eligible for liquidation, even if its price equity exceeds maintenance.
 
-1. Free account USDC.
-2. Assigned position margin.
-3. If those are insufficient, the remainder persists as unsettled carry debt.
-
-Unsettled carry continues reducing account equity.
-
-A deposit can therefore be used partly to pay existing carry in the same transaction. Similarly, if carry reaches assigned position margin, the position’s LP-backed borrow base can increase, raising future carry all else equal.
+A deposit can settle existing carry immediately. An Add Margin action realizes carry first, then moves the requested free funds into position margin. Fully covered carry does not reduce price equity.
 
 Realized carry enters the liquidity pool as LP trading revenue.
 
 ### How additional margin affects carry
 
-Moving existing free USDC into assigned position margin does not add new account equity. The same USDC was already inside the shared-collateral account.
+Moving free USDC into assigned margin increases price equity without changing total settlement custody. It leaves less free settlement available for carry.
 
 It can still reduce future carry:
 
 ![For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
 
-This is why adding position margin can matter even when it has little immediate effect on account-level liquidation health.
+Adding position margin therefore improves price-risk backing and can reduce future carry. Keep enough free settlement for carry collection.
 
 ### Opening and increasing
 

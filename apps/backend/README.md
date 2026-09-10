@@ -281,7 +281,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=306119399 \
+PERPS_INDEXER_START_BLOCK=307397196 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -344,10 +344,10 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_USDC=0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B \
-PERPS_ORDER_ROUTER=0xbd2f286efca5F761E21452673ab9b8C14e17aad7 \
-PERPS_ORDER_LIFECYCLE_BOOK=0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C \
-PERPS_MARGIN_CLEARINGHOUSE=0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd \
+PERPS_USDC=0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8 \
+PERPS_ORDER_ROUTER=0x6215d36fcbd610ca1525252eebcbfd8b223a6072 \
+PERPS_ORDER_LIFECYCLE_BOOK=0x753eb48305ffb88bb70869ade2c4efa941879221 \
+PERPS_MARGIN_CLEARINGHOUSE=0xfa6e677ec1062757c1194d411a5e61e1e9644499 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker
@@ -531,21 +531,21 @@ Local URLs:
 | `VAULT_HISTORY_HOUSE_POOL_ADDRESS` | No | Arbitrum Sepolia HousePool deployment | HousePool identity used to isolate vault-performance snapshots across deployments |
 | `VAULT_HISTORY_SENIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Senior Vault deployment | Senior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
-| `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `306119399` | Earliest block eligible for the configured vault deployment's history |
+| `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `307397196` | Earliest block eligible for the configured vault deployment's history |
 | `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
-| `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
-| `PERPS_HOUSE_POOL` | No | v1.2.2 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
-| `PERPS_SENIOR_VAULT` | With active LP settlement | v1.2.2 Arbitrum Sepolia Senior Vault | Must match both the Settlement Monitor and HousePool binding |
-| `PERPS_JUNIOR_VAULT` | With active LP settlement | v1.2.2 Arbitrum Sepolia Junior Vault | Must match both the Settlement Monitor and HousePool binding |
-| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.2 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
+| `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0x753eb48305ffb88bb70869ade2c4efa941879221` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
+| `PERPS_HOUSE_POOL` | No | v1.2.3 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SENIOR_VAULT` | With active LP settlement | v1.2.3 Arbitrum Sepolia Senior Vault | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_JUNIOR_VAULT` | With active LP settlement | v1.2.3 Arbitrum Sepolia Junior Vault | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.3 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
 | `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
-| `PERPS_INDEXER_START_BLOCK` | No | `306119399` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `307397196` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
 | `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia mock-USDC signer; configuring it also requires the dedicated proxy token |
 | `FAUCET_PROXY_ORIGIN_TOKEN` | With faucet signer | - | Dedicated secret required from the exact trusted Pages/Vite faucet proxy path |
 | `FAUCET_CLIENT_REQUESTS_PER_HOUR` | No | `20` | Rolling-hour accepted request limit per pseudonymous trusted client IP |

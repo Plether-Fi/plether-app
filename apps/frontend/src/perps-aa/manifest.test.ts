@@ -32,7 +32,7 @@ function validManifest(): Record<string, unknown> {
     cfdEngine: '0x9999999999999999999999999999999999999999',
     orderRouter: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
     policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
@@ -67,7 +67,7 @@ describe('parsePerpsAaManifest', () => {
   it('validates the manifest served by the app', () => {
     const manifest = parsePerpsAaManifest(publicManifest)
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260906-v2')
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260910-v2')
     expect(manifest.chainId).toBe(421614)
     expect(isPerpsAaManifestV2(manifest)).toBe(false)
     expect(bundlerRpcUrlForManifest(manifest)).toBe(

@@ -9,6 +9,10 @@ type ContractResult =
   | { status: 'failure'; error: Error; result?: undefined }
 
 const mocks = vi.hoisted(() => ({
+  invalidated: false,
+  invalidateSnapshot: vi.fn(),
+  dynamicError: undefined as Error | undefined,
+  account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
   primaryData: [] as ContractResult[],
   configurationData: [] as ContractResult[],
   immutableData: [] as ContractResult[],
@@ -21,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   useReadContracts: vi.fn(),
 }))
 
+vi.mock('../usePerpsSnapshotInvalidated', () => ({ usePerpsSnapshotInvalidated: () => mocks.invalidated, useInvalidatePerpsSnapshot: () => mocks.invalidateSnapshot }))
+
 vi.mock('wagmi', () => ({
   useReadContracts: mocks.useReadContracts,
 }))
@@ -29,7 +35,7 @@ vi.mock('../../perps-aa', () => ({
   usePerpsIdentity: () => ({
     status: 'ready',
     ownerAddress: ACCOUNT,
-    accountAddress: ACCOUNT,
+    accountAddress: mocks.account,
     chainId: 421614,
     isAaManifestConfigured: true,
     sponsorshipEnabled: true,
@@ -136,9 +142,28 @@ function screenshotData(): ContractResult[] {
   return data
 }
 
+function riskData(side = 0): ContractResult[] {
+  const data = screenshotData()
+  data[0] = success({ hasOpenPosition: true, equityUsdc: 250_000_000n, withdrawableUsdc: 750_000_000n, liquidatable: false })
+  data[1] = success({ exists: true, side, size: 10_000n * 10n ** 18n, entryPrice: 100_000_000n,
+    marginUsdc: 250_000_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 10_000_000n, liquidatable: false })
+  data[7] = success({ settlementBalanceUsdc: 1_000_000_000n, freeSettlementUsdc: 750_000_000n,
+    traderClaimBalanceUsdc: 0n, netEquityUsdc: 250_000_000n, liquidationReachableSettlementUsdc: 1_000_000_000n })
+  data[9] = success({ side, vpiAccrued: 0n })
+  data[11] = success({ borrowBaseUsdc: 0n, lastCarryIndex: 0n })
+  data[12] = success(0n)
+  data[22] = success(10_000_000_000n)
+  data[23] = success(100_000_000n)
+  data[24] = success(0n)
+  return data
+}
+
 describe('usePerpsAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.invalidated = false
+    mocks.dynamicError = undefined
+    mocks.account = ACCOUNT
     mocks.primaryData = primaryData()
     mocks.configurationData = [
       success(1_000_000n),
@@ -157,7 +182,7 @@ describe('usePerpsAccount', () => {
         return {
           data: mocks.primaryData,
           isLoading: false,
-          error: undefined,
+          error: mocks.dynamicError,
           refetch: mocks.refetchDynamic,
         }
       }
@@ -229,9 +254,12 @@ describe('usePerpsAccount', () => {
       'sideCarryIndex',
       'sideCarryTimestamp',
       'sideBorrowBaseUsdc',
+      'positionEntryCostUsdcAtoms',
+      'lastMarkPrice',
+      'vpiRebateReserveUsdc',
     ])
     expect(dynamicCall?.batchSize).toBe(0)
-    expect(dynamicCall?.contracts.slice(16).map((contract: { args: bigint[] }) => contract.args))
+    expect(dynamicCall?.contracts.slice(16, 22).map((contract: { args: bigint[] }) => contract.args))
       .toEqual([[0n], [0n], [0n], [1n], [1n], [1n]])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
     expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
@@ -270,6 +298,7 @@ describe('usePerpsAccount', () => {
       await result.current.refetchDynamic()
     })
 
+    expect(mocks.invalidateSnapshot).toHaveBeenCalledOnce()
     expect(mocks.refetchDynamic).toHaveBeenCalledOnce()
     expect(mocks.refetchRiskParams).not.toHaveBeenCalled()
     expect(mocks.refetchConfiguration).not.toHaveBeenCalled()
@@ -430,4 +459,103 @@ describe('usePerpsAccount', () => {
     expect(result.current.hasOpenPosition).toBe(false)
     expect(result.current.position).toBeUndefined()
   })
+  it.each([[0, 102_397_603n], [1, 97_597_597n]])('uses canonical price collateral for side %s', (side, price) => {
+    mocks.primaryData = riskData(Number(side))
+    mocks.immutableData = [success(200_000_000n)]
+    const { result } = renderHook(() => usePerpsAccount(150_000_000n))
+    expect(result.current.position?.liquidationThreshold).toEqual({ status: 'boundary', price })
+    expect(result.current.position?.estimatedNotionalUsdc).toBe(10_000_000_000n)
+    expect(result.current.position?.displayDxyPrice).toBe(100_000_000n)
+    expect(result.current.positionEquityUsdc).toBe(250_000_000n)
+    expect(result.current.settlementBalanceUsdc).toBe(1_000_000_000n)
+    expect(result.current.snapshotStatus).toBe('ready')
+  })
+
+  it('reduces price backing for carry even with abundant free funds and backed VPI', () => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    mocks.primaryData[7] = success({ settlementBalanceUsdc: 2_000_000_000n, freeSettlementUsdc: 1_750_000_000n,
+      traderClaimBalanceUsdc: 0n, netEquityUsdc: 230_000_000n })
+    mocks.primaryData[12] = success(20_000_000n)
+    mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10_000_000n })
+    mocks.primaryData[24] = success(10_000_000n)
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(result.current.position?.liquidationPrice).toBe(102_197_803n)
+    expect(result.current.position?.uncoveredCarryUsdc).toBe(0n)
+    expect(result.current.position?.vpiReserveUnderfunded).toBe(false)
+  })
+
+  it('preserves signed equity and reports non-price liquidation reasons separately', () => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    mocks.primaryData[7] = success({ settlementBalanceUsdc: 250_000_000n, freeSettlementUsdc: 0n,
+      traderClaimBalanceUsdc: 0n, netEquityUsdc: -5n })
+    mocks.primaryData[0] = success({ hasOpenPosition: true, equityUsdc: 0n, liquidatable: true })
+    mocks.primaryData[12] = success(250_000_007n)
+    mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10n })
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(result.current.positionEquityUsdc).toBe(-5n)
+    expect(result.current.liquidatable).toBe(true)
+    expect(result.current.position?.uncoveredCarryUsdc).toBe(7n)
+    expect(result.current.position?.vpiReserveUnderfunded).toBe(true)
+  })
+
+  it.each([0, 1, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 22, 23, 24])('does not present missing read %i as no liquidation risk', index => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    const { result, rerender } = renderHook(() => usePerpsAccount())
+    expect(result.current.position?.liquidationPrice).toBeDefined()
+    mocks.primaryData = [...mocks.primaryData]
+    mocks.primaryData[index] = failure('temporarily unavailable')
+    rerender()
+    expect(result.current.snapshotStatus).toBe('unavailable')
+    expect(result.current.position?.liquidationThreshold).toEqual({ status: 'unavailable' })
+    expect(result.current.position?.liquidationPrice).toBeUndefined()
+  })
+
+  it('treats a missing engine mark sentinel as unavailable, without excluding zero price boundaries', () => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    mocks.primaryData[23] = success(0n)
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(result.current.snapshotStatus).toBe('unavailable')
+    expect(result.current.position?.liquidationThreshold).toEqual({ status: 'unavailable' })
+    expect(result.current.positionEquityUsdc).toBeUndefined()
+  })
+
+  it.each(['invalidated', 'failed'] as const)('hides cached thresholds during %s refreshes and restores them after success', state => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    const { result, rerender } = renderHook(() => usePerpsAccount())
+    if (state === 'invalidated') mocks.invalidated = true
+    else mocks.dynamicError = new Error('RPC unavailable')
+    rerender()
+    expect(result.current.position?.liquidationPrice).toBeUndefined()
+    expect(result.current.position?.riskStatus).toBe('unavailable')
+    expect(result.current.display.availableToTrade).toBe('--')
+    mocks.invalidated = false
+    mocks.dynamicError = undefined
+    rerender()
+    expect(result.current.position?.liquidationPrice).toBe(102_397_603n)
+  })
+
+  it('uses current FAD risk parameters despite stale cached configuration', () => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    mocks.primaryData[8] = success(true)
+    mocks.riskParamsData = [success({ maintMarginBps: 999n, fadMarginBps: 999n })]
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(result.current.position?.liquidationPrice).toBeLessThan(100_000_000n)
+  })
+
+  it('does not retain another account’s cached position', () => {
+    mocks.primaryData = riskData()
+    mocks.immutableData = [success(200_000_000n)]
+    const { result, rerender } = renderHook(() => usePerpsAccount())
+    mocks.account = '0x2222222222222222222222222222222222222222'
+    mocks.primaryData = []
+    rerender()
+    expect(result.current.position).toBeUndefined()
+  })
+
 })

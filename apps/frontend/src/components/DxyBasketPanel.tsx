@@ -5,10 +5,12 @@ import {
 } from './dxyBasketChartConfig'
 import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
+import { liquidationDisplayPrice } from '../utils/perpsRisk'
 import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
 
 export interface DxyBasketPanelProps {
   liquidationPriceRaw?: bigint
+  capPrice?: bigint
   takeProfitPriceRaw?: bigint
   stopLossPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
@@ -17,6 +19,7 @@ export interface DxyBasketPanelProps {
 
 export function DxyBasketPanel({
   liquidationPriceRaw,
+  capPrice = 200_000_000n,
   takeProfitPriceRaw,
   stopLossPriceRaw,
   marketPhase,
@@ -26,10 +29,10 @@ export function DxyBasketPanel({
     DEFAULT_DXY_BASKET_CHART_INTERVAL
   )
   const liquidationPrice = useMemo(() => {
-    const displayPrice = oraclePriceToDisplayDxyPrice(liquidationPriceRaw)
-    if (displayPrice === undefined || displayPrice <= 0n) return undefined
+    const displayPrice = liquidationDisplayPrice(liquidationPriceRaw, capPrice)
+    if (displayPrice === undefined || displayPrice < 0n) return undefined
     return Number(displayPrice) / 1e8
-  }, [liquidationPriceRaw])
+  }, [liquidationPriceRaw, capPrice])
 
   return (
     <TradingViewAdvancedChart

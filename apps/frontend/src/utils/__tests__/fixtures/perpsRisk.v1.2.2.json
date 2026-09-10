@@ -1,0 +1,212 @@
+{
+  "sourceCommit": "d704122c779d4d681d0fa2be517707b7f7df3902",
+  "generator": "perpsRisk.reference.sol / Solidity 0.8.35",
+  "cases": [
+    {
+      "name": "long",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "102397603"
+      }
+    },
+    {
+      "name": "short",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 1,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "97597597"
+      }
+    },
+    {
+      "name": "claim",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "750000000",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "109890110"
+      }
+    },
+    {
+      "name": "added-margin",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "1000000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "109890110"
+      }
+    },
+    {
+      "name": "fad",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "300"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "99514564"
+      }
+    },
+    {
+      "name": "zero-maintenance-long",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "0"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "102500000"
+      }
+    },
+    {
+      "name": "zero-maintenance-short",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 1,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "0"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "97500000"
+      }
+    },
+    {
+      "name": "no-boundary-long",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "20000000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "out-of-range"
+      }
+    },
+    {
+      "name": "no-boundary-short",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 1,
+        "entryCostUsdcAtoms": "10000000000",
+        "positionMarginUsdc": "20000000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "out-of-range"
+      }
+    },
+    {
+      "name": "long-zero-endpoint",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "0",
+        "positionMarginUsdc": "0",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "0"
+      }
+    },
+    {
+      "name": "short-cap-endpoint",
+      "input": {
+        "size": "10000000000000000000000",
+        "side": 1,
+        "entryCostUsdcAtoms": "20000000000",
+        "positionMarginUsdc": "0",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "200000000"
+      }
+    },
+    {
+      "name": "increased-basis-dust",
+      "input": {
+        "size": "10300000000000000000000",
+        "side": 0,
+        "entryCostUsdcAtoms": "10299999977",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "102324860"
+      }
+    },
+    {
+      "name": "reduced-basis-dust",
+      "input": {
+        "size": "7300000000000000000000",
+        "side": 1,
+        "entryCostUsdcAtoms": "7299999991",
+        "positionMarginUsdc": "250000000",
+        "traderClaimBalanceUsdc": "0",
+        "capPrice": "200000000",
+        "maintenanceMarginBps": "10"
+      },
+      "expected": {
+        "status": "boundary",
+        "price": "96672014"
+      }
+    }
+  ]
+}

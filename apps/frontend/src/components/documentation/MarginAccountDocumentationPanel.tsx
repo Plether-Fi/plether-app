@@ -209,7 +209,7 @@ function Overview() {
           status={<StatusBadge>Account healthy</StatusBadge>}
         />
         <div className="space-y-4 panel-padding">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2">
             <Metric
               label="Available to Trade"
               value={<TokenAmount amount="848.25" />}
@@ -217,13 +217,18 @@ function Overview() {
               detail="Free, unreserved collateral"
             />
             <Metric
-              label="Portfolio value"
+              label="Settlement balance"
               value={<TokenAmount amount="1 248.25" />}
-              detail="Account equity after unrealized PnL"
+              detail="USDC in the clearinghouse ledger, including locked funds"
+            />
+            <Metric
+              label="Position equity"
+              value={<TokenAmount amount="448.25" />}
+              detail="Position margin plus same-account claims and exact price PnL"
             />
             <Metric
               label="Withdrawable"
-              value={<TokenAmount amount="648.25" />}
+              value={<TokenAmount amount="847.00" />}
               detail="Maximum currently eligible for withdrawal"
             />
           </div>
@@ -239,11 +244,11 @@ function Overview() {
         <PanelHeader
           eyebrow="Current Position"
           title="Long plDXY Perp"
-          status={<StatusBadge tone="neutral">5.00x leverage</StatusBadge>}
+          status={<StatusBadge tone="neutral">4.92x leverage</StatusBadge>}
         />
         <div className="grid gap-3 panel-padding md:grid-cols-4">
           <Metric label="Position margin" value={<TokenAmount amount="400.00" />} />
-          <Metric label="Maintenance margin" value={<TokenAmount amount="20.00" />} />
+          <Metric label="Maintenance margin" value={<TokenAmount amount="1.97" />} />
           <Metric label="Unrealized PnL" value={<TokenAmount amount="+48.25" />} tone="positive" />
           <Metric label="Pending carry" value={<TokenAmount amount="1.25" />} />
         </div>
@@ -372,14 +377,14 @@ function AddPositionMargin() {
 
         <dl className="border border-brand-border/20 bg-app-bg px-4">
           <SummaryRow label="Amount being added" value={<TokenAmount amount="+300.00" />} tone="positive" />
-          <SummaryRow label="Resulting position margin" value={<TokenAmount amount="700.00" />} />
-          <SummaryRow label="Current leverage" value="5.00x" />
-          <SummaryRow label="Resulting leverage" value="2.86x" tone="positive" />
+          <SummaryRow label="Resulting position margin" value={<TokenAmount amount="698.75" />} />
+          <SummaryRow label="Current leverage" value="4.92x" />
+          <SummaryRow label="Resulting leverage" value="2.82x" tone="positive" />
           <SummaryRow label="Exposure" value="Unchanged" />
         </dl>
 
         <p className="border border-positive/30 bg-positive/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-          This action moves USDC from Available to Trade into Position margin. It is immediate after sponsored-operation confirmation and does not enter the delayed-order queue.
+          Adding margin increases position price-risk backing. Accrued carry of 1.25 USDC consumes existing position margin first, leaving free funds available to add. Future carry can reduce the new margin too. The action takes effect after confirmation and does not enter the delayed-order queue.
         </p>
 
         <Button className="w-full" size="lg">Authorize Add Margin</Button>
@@ -456,7 +461,7 @@ function TraderClaim() {
             <SummaryRow label="Network gas" value="Sponsored" tone="positive" />
           </dl>
           <p className="text-sm leading-6 text-content-secondary">
-            The connected owner wallet authorizes settlement. The complete claim is credited to the Margin Account; withdrawal to the owner wallet remains a separate sponsored operation.
+            Claims already support the same account's price risk. Settlement credits position margin while a position is open, or free account funds when flat. Withdrawal remains a separate action.
           </p>
         </div>
       </section>

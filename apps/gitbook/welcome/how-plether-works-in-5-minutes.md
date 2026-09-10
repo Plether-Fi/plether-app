@@ -43,7 +43,7 @@ The market price has a hard upper bound. This limits the maximum possible payout
 
 Every position starts with USDC margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
 
-Margin absorbs losses, while the account’s eligible reachable collateral determines how far the market can move before the position becomes liquidatable. Depositing more USDC into the Margin Account increases that buffer. Reassigning USDC already free in the same Margin Account to the position generally does not change immediate account-level liquidation health, although it can reduce the position’s carry base.
+Position margin and same-account trader claims back price losses. A deposit adds free settlement for carry and actions. Assigning free USDC to position margin increases the price-loss buffer and can reduce future carry; keep free funds available for carry collection.
 
 Each Trading Account can hold one live direction at a time. A trader can:
 
@@ -110,7 +110,7 @@ When collected, realized carry becomes pool trading revenue.
 
 #### Liquidation
 
-When the account’s carry-adjusted equity, calculated from eligible liquidation-reachable collateral, falls to or below the applicable maintenance requirement, its position becomes eligible for full liquidation.
+A position is eligible for liquidation when position margin plus same-account claims and exact price PnL is at or below maintenance. Uncovered carry or insufficient VPI reserve can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
 
 Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, an existing trader claim belonging to the same Trading Account can be netted against the terminal shortfall; any remainder becomes pool bad debt.
 

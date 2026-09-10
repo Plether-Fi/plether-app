@@ -125,7 +125,7 @@ For the same contract quantity:
 * More assigned margin produces lower displayed position leverage and a smaller LP-backed carry basis.
 * Less assigned margin produces higher displayed position leverage and may fail the position-level initial-margin check.
 
-Assigned margin comes from USDC already in the Margin Account. Moving existing free USDC into position margin does not by itself add account-wide collateral or immediate liquidation headroom. Depositing new USDC does.
+Assigned margin comes from settlement already in the Margin Account. Moving free USDC into position margin increases price-risk backing. A deposit by itself increases free settlement and carry coverage.
 
 For an increase, the resulting leverage applies to the complete combined position.
 
@@ -135,7 +135,7 @@ Plether checks both assigned position margin and total account equity. After exe
 * Account equity must also meet the initial margin requirement.
 * The resulting position must remain above its liquidation threshold.
 
-Free USDC elsewhere in the account can support account health. The position’s assigned margin still has to satisfy its own initial-margin check.
+Free USDC elsewhere in the account covers carry and actions. Price health uses assigned position margin, same-account claims and exact PnL; opening also checks the assigned-margin requirement.
 
 #### How costs affect resulting margin
 

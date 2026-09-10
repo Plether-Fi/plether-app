@@ -153,10 +153,10 @@ jobs:
               .smartAccountVersion == "permissionless-simple-v0.8" and
               .smartAccountIndex == "0" and
               (.smartAccountFactory | ascii_downcase) == "0x13e9ed32155810fdbd067d4522c492d6f68e5944" and
-              .orderRouter == "0xbd2f286efca5F761E21452673ab9b8C14e17aad7" and
-              .orderLifecycleBook == "0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C" and
-              .positionProtectionBook == "0x35f495fFDbB4d6ae395691D4632629f67603C926" and
-              .policyEvaluator == "0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB" and
+              .orderRouter == "0x6215d36fcbd610ca1525252eebcbfd8b223a6072" and
+              .orderLifecycleBook == "0x753eb48305ffb88bb70869ade2c4efa941879221" and
+              .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
+              .policyEvaluator == "0x43c93d3028fcd4c1f578a50639750b8fbfdee799" and
               .sponsorshipEnabled == true;
             def pimlico_transport:
               exact_keys(common_keys + ["pimlicoRpcUrl"]) and
@@ -172,7 +172,7 @@ jobs:
               .paymasterVersion == "plether-verifying-v1" and
               (has("pimlicoRpcUrl") | not);
             common_profile and
-            .version == "perps-aa-arbitrum-sepolia-20260906-v2" and
+            .version == "perps-aa-arbitrum-sepolia-20260910-v2" and
             (pimlico_transport or native_transport)
           ' dist/perps-aa-manifest.json >/dev/null
 
@@ -217,16 +217,16 @@ jobs:
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and
-              .deploymentBlock == 306119399 and
+              .deploymentBlock == 307397196 and
               .usdc == $manifest[0].usdc and
               .orderRouter == $manifest[0].orderRouter and
               .orderLifecycleBook == $manifest[0].orderLifecycleBook and
               .cfdEngine == $manifest[0].cfdEngine and
               .marginClearinghouse == $manifest[0].marginClearinghouse and
-              .housePool == "0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918" and
+              .housePool == "0x87622630fb1941fe02731d4a9fcdec0388efd78b" and
               .policyEvaluator == $manifest[0].policyEvaluator and
-              .positionProtectionBook == "0x35f495fFDbB4d6ae395691D4632629f67603C926" and
-              .perpsPublicLens == "0x53B1B00748E7D1A87dc30433e87c331CeDe30149" and
+              .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
+              .perpsPublicLens == "0x63a6ee8ef44cf13d0d1f393a1e9f8d25da1abfb4" and
               .calldataPolicy == "bounded-v2" and
               .bindingsVerified == true and
               .sponsorshipEnabled == true

@@ -21,9 +21,9 @@
 <circle cx="47" cy="418" r="14" fill="#9A8890"/>
 <circle cx="47" cy="418" r="5" fill="#250917"/>
 <text x="80" y="427" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Equity and margin</text>
-<text x="80" y="464" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Read portfolio value alongside</text>
-<text x="80" y="496" font-size="24" font-weight="400" fill="#250917" data-max-width="528">position-equity and maintenance</text>
-<text x="80" y="528" font-size="24" font-weight="400" fill="#250917" data-max-width="528">requirements.</text>
+<text x="80" y="464" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Compare signed position equity with</text>
+<text x="80" y="496" font-size="24" font-weight="400" fill="#250917" data-max-width="528">maintenance. Settlement balance is</text>
+<text x="80" y="528" font-size="24" font-weight="400" fill="#250917" data-max-width="528">separate.</text>
 <path d="M47 439 L47 553" stroke="#9A8890" stroke-width="2" fill="none"/>
 <circle cx="47" cy="581" r="14" fill="#9A8890"/>
 <circle cx="47" cy="581" r="5" fill="#250917"/>

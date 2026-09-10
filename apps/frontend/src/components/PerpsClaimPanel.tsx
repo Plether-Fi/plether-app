@@ -107,7 +107,7 @@ export function PerpsClaimPanel({
         <div className="panel-padding-x pb-4 sm:pb-6 pt-2">
           {status === 'waiting' ? (
             <p className="border border-brand-orange/30 bg-brand-orange/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-              Aggregate HousePool assets do not yet cover all outstanding trader claims. The claim remains recorded but cannot be used as margin or withdrawn.
+              Aggregate HousePool cash does not yet cover all outstanding trader claims. The claim still supports the same account's position price risk, but cannot be spent as free funds or withdrawn.
             </p>
           ) : null}
           {status === 'available' ? (
@@ -117,7 +117,7 @@ export function PerpsClaimPanel({
           ) : null}
           {status === 'settled' ? (
             <p className="border border-positive/30 bg-positive/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-              The complete claim was credited to the Trading Account&apos;s Margin Account. Wallet withdrawal remains a separate sponsored operation.
+              The complete claim was credited to position margin if a position remained open, or account funds if flat. Wallet withdrawal remains a separate sponsored operation.
             </p>
           ) : null}
         </div>
@@ -139,7 +139,7 @@ export function PerpsClaimPanel({
       >
         <div className="space-y-5">
           <p className="text-sm leading-6 text-content-secondary">
-            Your connected owner wallet authorizes settlement for the claim-owning Trading Account. Plether submits the eligible sponsored operation.
+            Your connected owner wallet authorizes settlement for the claim-owning Trading Account. Settlement converts the claim into position margin while open, or account funds while flat.
           </p>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <ClaimRow label="Complete claim" value={<TokenAmount amount={claimUsdc} />} />

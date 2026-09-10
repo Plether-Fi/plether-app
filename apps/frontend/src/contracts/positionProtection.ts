@@ -1,5 +1,6 @@
 import { formatUnits, parseAbi, parseUnits, type Address } from 'viem'
 import type { PositionProtectionParams } from '@plether/perps-aa-client'
+import type { LiquidationThreshold } from '../utils/perpsRisk'
 import type { PerpsDirection } from '../utils/perps'
 
 export type { PositionProtectionParams }
@@ -59,7 +60,7 @@ export function persistProtectionIntent(book: Address, params: PositionProtectio
   return { version: 1, book, protectionId: protectionId?.toString(), takeProfitTriggerPrice: params.takeProfitTriggerPrice.toString(), stopLossTriggerPrice: params.stopLossTriggerPrice.toString() }
 }
 
-export function validateProtectionParams(params: PositionProtectionParams, direction: PerpsDirection, rawMark: bigint, cap: bigint, liquidationPrice?: bigint): void {
+export function validateProtectionParams(params: PositionProtectionParams, direction: PerpsDirection, rawMark: bigint, cap: bigint, liquidationPrice?: bigint, liquidationThreshold?: LiquidationThreshold): void {
   const { takeProfitTriggerPrice: tp, stopLossTriggerPrice: sl } = params
   if (cap <= 0n || rawMark <= 0n || rawMark >= cap) throw new Error('A valid current market price is required')
   if (tp === 0n && sl === 0n) throw new Error('Enter a take-profit or stop-loss trigger')
@@ -70,6 +71,8 @@ export function validateProtectionParams(params: PositionProtectionParams, direc
   if (sl !== 0n && (direction === 'long' ? sl <= rawMark : sl >= rawMark)) {
     throw new Error(`Stop loss must be ${direction === 'long' ? 'below' : 'above'} the current displayed price`)
   }
+  if (sl !== 0n && liquidationThreshold?.status === 'unavailable') throw new Error('Waiting for current account risk data to validate the stop loss.')
+  if (liquidationThreshold?.status === 'boundary') liquidationPrice = liquidationThreshold.price
   if (sl !== 0n && liquidationPrice !== undefined && (direction === 'long' ? sl >= liquidationPrice : sl <= liquidationPrice)) {
     throw new Error(`Stop loss must be ${direction === 'long' ? 'above' : 'below'} the liquidation price (${formatUnits(cap - liquidationPrice, 8)} USDC). Liquidation would occur before this stop loss.`)
   }
@@ -80,6 +83,7 @@ export function protectionParamsFromInputs(input: {
   takeProfit: string; stopLoss: string; mode: 'price' | 'percent'; takeProfitMode?: 'price' | 'percent'; stopLossMode?: 'price' | 'percent'; direction: PerpsDirection; rawMark: bigint; cap: bigint
   position?: ProtectionPositionBasis
   liquidationPrice?: bigint
+  liquidationThreshold?: LiquidationThreshold
 }): PositionProtectionParams {
   function price(value: string, leg: 'tp' | 'sl'): bigint {
     if (!value.trim()) return 0n
@@ -102,7 +106,7 @@ export function protectionParamsFromInputs(input: {
     return input.cap - display
   }
   const params = { takeProfitTriggerPrice: price(input.takeProfit, 'tp'), stopLossTriggerPrice: price(input.stopLoss, 'sl') }
-  validateProtectionParams(params, input.direction, input.rawMark, input.cap, input.liquidationPrice)
+  validateProtectionParams(params, input.direction, input.rawMark, input.cap, input.liquidationPrice, input.liquidationThreshold)
   return params
 }
 

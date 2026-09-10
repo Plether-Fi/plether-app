@@ -18,8 +18,8 @@ const protection: PositionProtection = {
   takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
   armedAt: 0n, armedBlock: 0n, triggerMarkPrice: 0n, triggerPublishTime: 0n, triggeredLeg: 0, status: 1,
 }
-const props = { protection, rawMark: 100_000_000n, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }, pendingOrders: 1, onRefresh: vi.fn() }
-const position: PerpsPosition = { exists: true, side: 0, direction: 'long', size: 10n ** 18n, entryPrice: 100_000_000n, marginUsdc: 100_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 1_000n, liquidatable: false }
+const position: PerpsPosition = { exists: true, side: 0, direction: 'long', size: 10n ** 18n, entryPrice: 100_000_000n, marginUsdc: 100_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 1_000n, liquidatable: false, liquidationPrice: 120_000_000n }
+const props = { protection, position, rawMark: 100_000_000n, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }, pendingOrders: 1, onRefresh: vi.fn() }
 describe('position protection management', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.history = []; mocks.manage.mockResolvedValue({ protectionId: 7n }) })
   it('cancels only protection and discloses that the parent opening order survives', async () => {
@@ -178,4 +178,20 @@ describe('position protection management', () => {
     expect(screen.getByText('1.1000')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to edit' })).toBeEnabled()
   })
+  it('blocks a reviewed stop loss after risk data becomes unavailable but still allows cancellation', () => {
+    const { rerender } = render(<PerpsProtectionPanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit TP/SL' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review TP/SL' }))
+    rerender(<PerpsProtectionPanel {...props} position={{ ...position, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' } }} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Waiting for current account risk data')
+    expect(screen.getByRole('button', { name: 'Confirm TP/SL' })).toBeDisabled()
+    expect(mocks.manage).not.toHaveBeenCalled()
+  })
+  it('keeps cancellation available when the risk snapshot is missing', async () => {
+    render(<PerpsProtectionPanel {...props} position={undefined} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }))
+    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'cancel', protectionId: 7n }))
+  })
+
 })

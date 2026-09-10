@@ -194,7 +194,7 @@ A trader account separates USDC into several states:
 
 Reserved balances are not free buying power.
 
-Although the interface displays margin assigned to the position, Plether uses account-level collateral. Free USDC inside the same Plether account can contribute to position health.
+Price-risk backing is position margin plus same-account trader claims. Free USDC covers carry and action obligations separately; it does not move the price-liquidation threshold.
 
 This means a trader’s loss is not necessarily limited to the margin initially assigned on the trade ticket. A full close or liquidation can consume other economically reachable USDC held inside the Plether account.
 
@@ -212,7 +212,7 @@ The simplified value flow is:
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
 | **Losing close**      | Reachable trader USDC is collected               | The LP-owned portion becomes liquidity pool value; the execution fee belongs to the treasury |
 | **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
-| **Carry realization** | Carry is collected from reachable collateral     | Realized carry becomes LP revenue                 |
+| **Carry realization** | Carry is collected from eligible free settlement     | Realized carry becomes LP revenue                 |
 | **LP deposit**        | No change to trader margin                       | USDC enters through a tranche vault               |
 
 Protocol execution fees belong to the treasury rather than LPs. Order-execution rewards are funded from trader collateral rather than pool capital.

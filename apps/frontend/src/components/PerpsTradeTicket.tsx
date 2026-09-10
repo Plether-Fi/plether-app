@@ -79,6 +79,7 @@ import {
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { DOCS_LINKS } from '../config/docs'
+import { formatLiquidationPrice } from '../utils/perpsRisk'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { PerpsCloseReconciliationDisclosure } from './PerpsCloseReconciliationDetails'
 import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
@@ -267,7 +268,8 @@ interface PerpsTradeTicketProps {
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
   availableToTradeRaw?: bigint
   availableToTradeAmount?: string
-  portfolioValueRaw?: bigint
+  settlementBalanceUsdcRaw?: bigint
+  positionEquityUsdcRaw?: bigint
   withdrawableUsdcRaw?: bigint
   walletUsdcRaw?: bigint
   ownerWalletUsdcRaw?: bigint
@@ -372,7 +374,7 @@ const ESTIMATED_INITIAL_MARGIN_TOOLTIP =
 const EXECUTION_LIMIT_TOOLTIP =
   'The worst oracle execution price you accept. It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.'
 const MAINTENANCE_MARGIN_TOOLTIP =
-  'The minimum account equity required to avoid liquidation. At or below this amount, the entire position can be liquidated.'
+  'The minimum position equity required to avoid price liquidation. At or below this amount, the entire position can be liquidated.'
 const EXECUTION_REWARD_TOOLTIP =
   'USDC reserved for whoever finalizes or clears the order. It can still be paid if the order fails or expires.'
 const MANUAL_FINALIZATION_TOOLTIP =
@@ -1811,7 +1813,8 @@ export function PerpsTradeTicket({
   oracleFreshnessTooltip,
   availableToTradeRaw,
   availableToTradeAmount,
-  portfolioValueRaw,
+  settlementBalanceUsdcRaw,
+  positionEquityUsdcRaw,
   withdrawableUsdcRaw,
   walletUsdcRaw,
   ownerWalletUsdcRaw,
@@ -2865,6 +2868,9 @@ export function PerpsTradeTicket({
       : !enableLiveTrading && oraclePriceRaw !== undefined
         ? { entryPrice: oraclePriceRaw, size: orderSizeDelta, marginUsdc }
         : undefined,
+    liquidationThreshold: openPreview?.valid && !isTradePreviewPending
+      ? openPreview.hasLiquidationPrice ? { status: 'boundary' as const, price: openPreview.liquidationPrice } : { status: 'out-of-range' as const }
+      : enableLiveTrading ? { status: 'unavailable' as const } : undefined,
     liquidationPrice: openPreview?.valid && !isTradePreviewPending && openPreview.hasLiquidationPrice ? openPreview.liquidationPrice : undefined,
   }
   const protectionInput = (() => {
@@ -2874,7 +2880,7 @@ export function PerpsTradeTicket({
       if (oraclePriceRaw === undefined || protectionCapPrice === undefined) throw new Error('Waiting for the current market price')
       // Recheck the fixed review prices when market/account previews refresh.
       if (isReviewOpen && reviewSnapshot?.positionProtection) {
-        validateProtectionParams(reviewSnapshot.positionProtection, effectiveOrderDirection, oraclePriceRaw, protectionCapPrice, protectionPriceContext.liquidationPrice)
+        validateProtectionParams(reviewSnapshot.positionProtection, effectiveOrderDirection, oraclePriceRaw, protectionCapPrice, protectionPriceContext.liquidationPrice, protectionPriceContext.liquidationThreshold)
         return { params: reviewSnapshot.positionProtection }
       }
       return { params: protectionParamsFromInputs({ ...protectionDraft, ...protectionPriceContext, rawMark: oraclePriceRaw, cap: protectionCapPrice }) }
@@ -3154,8 +3160,9 @@ export function PerpsTradeTicket({
   const previewLiquidationPrice = (() => {
     if (!enableLiveTrading) return formatOptionalPrice(liquidationPrice)
     if (openPreview === undefined) return shouldReadTradePreview ? previewLensFallbackValue : PREVIEW_UNAVAILABLE_VALUE
-    if (!openPreview.hasLiquidationPrice) return PREVIEW_UNAVAILABLE_VALUE
-    return formatDisplayDxyPrice(openPreview.liquidationPrice)
+    if (!openPreview.valid || protectionCapPrice === undefined) return PREVIEW_UNAVAILABLE_VALUE
+    if (!openPreview.hasLiquidationPrice) return 'Not in range'
+    return formatLiquidationPrice(openPreview.liquidationPrice, protectionCapPrice)
   })()
   const previewResultingLeverage = (() => {
     if (!enableLiveTrading) return isReducingCurrentPosition
@@ -4488,7 +4495,8 @@ export function PerpsTradeTicket({
         <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Margin Account</div>
           <div className="space-y-2">
-            <AccountSummaryRow label="Portfolio value" value={<TokenAmount amount={formatPerpsUsdc(portfolioValueRaw)} />} />
+            <AccountSummaryRow label="Settlement balance" value={<TokenAmount amount={formatPerpsUsdc(settlementBalanceUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip="USDC held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims." />
+            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount amount={formatPerpsUsdc(positionEquityUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free settlement and dedicated reserves do not increase this price buffer." /> : null}
             <AccountSummaryRow
               label="Unrealized PnL"
               value={<TokenAmount amount={formatSignedPerpsUsdc(unrealizedPnlRaw)} />}
@@ -4496,7 +4504,7 @@ export function PerpsTradeTicket({
             />
             <AccountSummaryRow
               label="Maintenance margin"
-              value={<TokenAmount amount={formatPerpsUsdc(currentPosition?.maintenanceMarginUsdc)} />}
+              value={<TokenAmount amount={formatPerpsUsdc(currentPosition?.riskStatus === 'unavailable' ? undefined : currentPosition?.maintenanceMarginUsdc)} />}
             />
             <AccountSummaryRow
               label="Withdrawable"
@@ -4504,7 +4512,7 @@ export function PerpsTradeTicket({
               tooltip={
                 <span>
                   Amount that can leave the protocol right now. It can be lower than available to trade because withdrawals
-                  require a fresh mark and must pass protocol state, pending carry, and post-withdraw margin checks.
+                  use eligible mark data and must pass protocol state, carry-coverage, reserve-backing and position-equity checks.
                 </span>
               }
               tooltipDocsLink={DOCS_LINKS.withdrawable}
