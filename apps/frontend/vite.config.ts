@@ -12,8 +12,12 @@ import { playwright } from '@vitest/browser-playwright';
 import { parseGlobalHeaders } from './src/config/devServerHeaders';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
-const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
-const AA_BACKEND_PROXY_PATH = '/api/aa/pimlico';
+const AA_PROXY_PATHS = new Set([
+  '/api/perps/v1/aa/pimlico',
+  '/api/aa/pimlico',
+  '/api/perps/v1/aa/rpc',
+  '/api/aa/rpc',
+]);
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const FAUCET_BACKEND_PROXY_PATH = '/api/testnet/faucet';
@@ -46,10 +50,8 @@ function apiProxyConfig(
             proxyRequest.removeHeader(FAUCET_PROXY_AUTH_HEADER);
             const requestPath = request.url?.split('?', 1)[0];
             if (
-              (
-                requestPath === AA_PROXY_PATH ||
-                requestPath === AA_BACKEND_PROXY_PATH
-              ) &&
+              requestPath &&
+              AA_PROXY_PATHS.has(requestPath) &&
               env.AA_PROXY_ORIGIN_TOKEN
             ) {
               proxyRequest.removeHeader('CF-Connecting-IP');

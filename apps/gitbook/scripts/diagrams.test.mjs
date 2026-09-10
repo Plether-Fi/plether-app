@@ -29,6 +29,16 @@ test('all 30 diagrams have unique IDs, source articles and review evidence', () 
     for (const b of d.blocks.filter(b => b.type === 'lanes')) assert.equal(b.items.length, 2)
   }
 })
+test('manifest evidence matches the catalog without changing the protocol review pin', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../.gitbook/assets/diagrams/diagram-manifest.json', import.meta.url), 'utf8'))
+  for (const diagram of diagrams) {
+    const record = manifest.diagrams.find(item => item.asset.endsWith(`/${diagram.id}.svg`))
+    assert.ok(record, diagram.id)
+    assert.deepEqual(record.evidence, diagram.evidence.flatMap(key => evidence[key]))
+  }
+  const review = readFileSync(new URL('../DIAGRAM_REVIEW.md', import.meta.url), 'utf8')
+  assert.ok(review.includes(manifest.reviewedRelease.sourceCommit))
+})
 test('rendering is deterministic, portable and accessible', () => {
   for (const d of diagrams) {
     const svg = renderDiagram(d)

@@ -54,12 +54,17 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     defaults:
       run:
         working-directory: apps/frontend
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -67,9 +72,20 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+
+      - name: Pin npm to the frontend deployment version
+        run: npm install -g npm@11.6.2
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check AA package migration tooling
+        working-directory: .
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs
 
       - name: Install Insights story dependencies
         working-directory: apps/insights

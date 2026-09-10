@@ -1,7 +1,7 @@
 import type {
   PerpsActionKind,
   SponsoredExecutionStatus,
-} from '@plether/perps-aa-client'
+} from '@plether-fi/perps-aa-client'
 import type { Address, Hex } from 'viem'
 import { trackPerpsSponsoredOperation } from '../analytics/perps'
 import {
@@ -19,6 +19,7 @@ import {
   type SponsoredOperationInclusionObservation,
   useSponsoredOperationStore,
 } from './operationStore'
+import type { PersistedSponsorshipAuthorityV1 } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 
@@ -53,6 +54,7 @@ export interface SponsoredOperationTracker {
     hash: Hex,
     metadata: {
       signedUserOperation: ManagedUserOperation
+      sponsorshipAuthority?: PersistedSponsorshipAuthorityV1
     }
   ) => boolean
   onObservedInclusion: (

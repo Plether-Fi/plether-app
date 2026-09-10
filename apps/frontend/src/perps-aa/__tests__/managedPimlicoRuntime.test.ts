@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
+import type {
+  PerpsAaDeploymentManifestV1,
+  PerpsAaDeploymentManifestV2,
+} from '../manifest'
 import type { ManagedUserOperation } from '../runtimeContext'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
@@ -16,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   toSimpleSmartAccount: vi.fn(),
   createSmartAccountClient: vi.fn(),
   createPimlicoClient: vi.fn(),
+  createBundlerClient: vi.fn(),
+  createPaymasterClient: vi.fn(),
   getUserOperationHash: vi.fn(),
 }))
 
@@ -35,12 +41,14 @@ vi.mock('permissionless/clients/pimlico', () => ({
 
 vi.mock('viem/account-abstraction', async (importOriginal) => ({
   ...await importOriginal<typeof import('viem/account-abstraction')>(),
+  createBundlerClient: mocks.createBundlerClient,
+  createPaymasterClient: mocks.createPaymasterClient,
   getUserOperationHash: mocks.getUserOperationHash,
 }))
 
 import { createManagedPimlicoRuntime } from '../managedPimlicoRuntime'
 
-const manifest = {
+const manifest: PerpsAaDeploymentManifestV1 = {
   version: 'perps-aa-arbitrum-sepolia-v2',
   chainId: 421614,
   entryPoint: ENTRY_POINT,
@@ -50,26 +58,44 @@ const manifest = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B' as Address,
+  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd' as Address,
+    '0xfa6e677ec1062757c1194d411a5e61e1e9644499' as Address,
   cfdEngine:
-    '0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352' as Address,
+    '0xafece93321be41aa73474457e2f47cf7b2fb738f' as Address,
   orderRouter:
-    '0xbd2f286efca5F761E21452673ab9b8C14e17aad7' as Address,
+    '0x6215d36fcbd610ca1525252eebcbfd8b223a6072' as Address,
   orderLifecycleBook:
-    '0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C' as Address,
+    '0x753eb48305ffb88bb70869ade2c4efa941879221' as Address,
   policyEvaluator:
-    '0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB' as Address,
+    '0x43c93d3028fcd4c1f578a50639750b8fbfdee799' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:
     'https://example.com/transaction/{transactionHash}',
   testnetFaucet: null,
   sponsorshipEnabled: true,
+}
+
+const commonManifest = {
+  ...manifest,
+} as Partial<PerpsAaDeploymentManifestV1>
+delete commonManifest.version
+delete commonManifest.pimlicoRpcUrl
+const v2Manifest: PerpsAaDeploymentManifestV2 = {
+  ...commonManifest as Omit<
+    PerpsAaDeploymentManifestV1,
+    'version' | 'pimlicoRpcUrl'
+  >,
+  version: 'perps-aa-arbitrum-sepolia-v2',
+  bundlerRpcUrl: '/api/perps/v1/aa/rpc',
+  paymasterRpcUrl: '/api/perps/v1/aa/rpc',
+  paymasterAddress:
+    '0x1234567890123456789012345678901234567890',
+  paymasterVersion: 'plether-verifying-v1',
 }
 
 const operation = {
@@ -106,6 +132,25 @@ describe('createManagedPimlicoRuntime', () => {
         transactionHash: null,
       })),
       getUserOperationReceipt: vi.fn(async () => null),
+    })
+    mocks.createBundlerClient.mockReturnValue({
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'pimlico_getUserOperationGasPrice') {
+          return {
+            fast: {
+              maxFeePerGas: '0x2',
+              maxPriorityFeePerGas: '0x1',
+            },
+          }
+        }
+        return { status: 'submitted', transactionHash: null }
+      }),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationReceipt: vi.fn(),
+    })
+    mocks.createPaymasterClient.mockReturnValue({
+      getPaymasterStubData: vi.fn(),
+      getPaymasterData: vi.fn(),
     })
   })
 
@@ -161,6 +206,127 @@ describe('createManagedPimlicoRuntime', () => {
         entryPoint: ENTRY_POINT,
       },
     })
+  })
+
+  it('uses generic Alto and ERC-7677 clients for an exact v2 manifest', async () => {
+    const bundlerClient = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'pimlico_getUserOperationGasPrice') {
+          return {
+            fast: {
+              maxFeePerGas: '0x2',
+              maxPriorityFeePerGas: '0x1',
+            },
+          }
+        }
+        return { status: 'queued', transactionHash: null }
+      }),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationReceipt: vi.fn(),
+    }
+    const paymasterClient = {
+      getPaymasterStubData: vi.fn(async () => ({
+        paymaster: v2Manifest.paymasterAddress,
+        paymasterData: '0x1234',
+        paymasterVerificationGasLimit: 100_000n,
+        paymasterPostOpGasLimit: 0n,
+      })),
+      getPaymasterData: vi.fn(async () => ({
+        paymaster: v2Manifest.paymasterAddress,
+        paymasterData: '0x1234',
+      })),
+    }
+    mocks.createBundlerClient.mockReturnValue(bundlerClient)
+    mocks.createPaymasterClient.mockReturnValue(paymasterClient)
+
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: v2Manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: { chain: { id: 421614 } } as never,
+    })
+
+    expect(mocks.createPimlicoClient).not.toHaveBeenCalled()
+    expect(mocks.createPaymasterClient).toHaveBeenCalledOnce()
+    expect(mocks.createBundlerClient).toHaveBeenCalledWith(
+      expect.objectContaining({ chain: expect.objectContaining({ id: 421614 }) })
+    )
+    expect(mocks.createSmartAccountClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymaster: expect.objectContaining({
+          getPaymasterStubData: expect.any(Function),
+          getPaymasterData: expect.any(Function),
+        }),
+      })
+    )
+
+    await expect(runtime.smartAccount.sendUserOperation(operation))
+      .resolves.toBe(HASH)
+    expect(bundlerClient.sendUserOperation).toHaveBeenCalledWith({
+      ...operation,
+      entryPointAddress: ENTRY_POINT,
+    })
+    await expect(runtime.smartAccount.getUserOperationStatus(HASH))
+      .resolves.toEqual({ status: 'queued', transactionHash: null })
+
+    const smartClientConfig = mocks.createSmartAccountClient.mock.calls[0]?.[0]
+    await expect(
+      smartClientConfig.userOperation.estimateFeesPerGas()
+    ).resolves.toEqual({
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 1n,
+    })
+  })
+
+  it('strips signatures and prior paymaster data from v2 ERC-7677 calls', async () => {
+    const paymasterClient = {
+      getPaymasterStubData: vi.fn(async () => ({})),
+      getPaymasterData: vi.fn(async () => ({})),
+    }
+    mocks.createPaymasterClient.mockReturnValue(paymasterClient)
+
+    await createManagedPimlicoRuntime({
+      manifest: v2Manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: { chain: { id: 421614 } } as never,
+    })
+
+    const adapter = mocks.createSmartAccountClient.mock.calls[0]?.[0].paymaster
+    const request = {
+      chainId: 421614,
+      entryPointAddress: ENTRY_POINT,
+      sender: ACCOUNT,
+      nonce: 0n,
+      callData: '0x1234',
+      signature: '0xowner-stub',
+      paymaster: v2Manifest.paymasterAddress,
+      paymasterData: '0xold-stub',
+      paymasterVerificationGasLimit: 100_000n,
+      paymasterPostOpGasLimit: 0n,
+    }
+
+    await adapter.getPaymasterStubData(request)
+    await adapter.getPaymasterData(request)
+
+    for (const call of [
+      paymasterClient.getPaymasterStubData.mock.calls[0]?.[0],
+      paymasterClient.getPaymasterData.mock.calls[0]?.[0],
+    ]) {
+      expect(call).not.toHaveProperty('signature')
+      expect(call).not.toHaveProperty('paymaster')
+      expect(call).not.toHaveProperty('paymasterData')
+      expect(call).toMatchObject({
+        paymasterVerificationGasLimit: 100_000n,
+        paymasterPostOpGasLimit: 0n,
+      })
+    }
   })
 
   it('proves a reorg only when the canonical block hash changed', async () => {
@@ -452,6 +618,45 @@ describe('createManagedPimlicoRuntime', () => {
       args: [ACCOUNT, 0n],
       blockNumber: 555n,
     }))
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses the Alto receipt client for native recovery without Blockscout', async () => {
+    const getUserOperationReceipt = vi.fn(async () => null)
+    mocks.createBundlerClient.mockReturnValue({
+      request: vi.fn(),
+      sendUserOperation: vi.fn(),
+      getUserOperationReceipt,
+    })
+    const getBlock = vi.fn(async () => ({
+      number: 555n,
+      timestamp: 1_000n,
+      hash: SAFE_BLOCK_HASH,
+    }))
+    const readContract = vi.fn(async () => 7n)
+
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: v2Manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock,
+        readContract,
+      } as never,
+    })
+
+    await expect(runtime.getRecoverySnapshot?.(HASH)).resolves.toEqual({
+      blockNumber: 555n,
+      blockTimestamp: 1_000n,
+      accountNonce: 7n,
+      userOperationEvidence: { kind: 'not-located' },
+    })
+    expect(getUserOperationReceipt).toHaveBeenCalledWith({ hash: HASH })
+    expect(mocks.createPimlicoClient).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
   })
 

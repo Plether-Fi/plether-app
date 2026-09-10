@@ -58,5 +58,29 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.ecs.id]
   }
 
+  dynamic "ingress" {
+    for_each = local.self_hosted_aa_resource_count == 1 ? [1] : []
+
+    content {
+      description     = "PostgreSQL from the native-AA reconciler only"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = [aws_security_group.aa_reconciler_task[0].id]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = local.self_hosted_aa_resource_count == 1 ? [1] : []
+
+    content {
+      description     = "PostgreSQL from the one-off AA issuance-control task only"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = [aws_security_group.aa_admin_resume_issuance[0].id]
+    }
+  }
+
   lifecycle { create_before_destroy = true }
 }

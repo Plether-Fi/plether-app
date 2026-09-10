@@ -471,16 +471,16 @@ describe('usePerpsAccount', () => {
     expect(result.current.snapshotStatus).toBe('ready')
   })
 
-  it('does not move the boundary for free funds, carry, or reserve-backed negative VPI', () => {
+  it('reduces price backing for carry even with abundant free funds and backed VPI', () => {
     mocks.primaryData = riskData()
     mocks.immutableData = [success(200_000_000n)]
     mocks.primaryData[7] = success({ settlementBalanceUsdc: 2_000_000_000n, freeSettlementUsdc: 1_750_000_000n,
-      traderClaimBalanceUsdc: 0n, netEquityUsdc: 250_000_000n })
+      traderClaimBalanceUsdc: 0n, netEquityUsdc: 230_000_000n })
     mocks.primaryData[12] = success(20_000_000n)
     mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10_000_000n })
     mocks.primaryData[24] = success(10_000_000n)
     const { result } = renderHook(() => usePerpsAccount())
-    expect(result.current.position?.liquidationPrice).toBe(102_397_603n)
+    expect(result.current.position?.liquidationPrice).toBe(102_197_803n)
     expect(result.current.position?.uncoveredCarryUsdc).toBe(0n)
     expect(result.current.position?.vpiReserveUnderfunded).toBe(false)
   })
@@ -491,7 +491,7 @@ describe('usePerpsAccount', () => {
     mocks.primaryData[7] = success({ settlementBalanceUsdc: 250_000_000n, freeSettlementUsdc: 0n,
       traderClaimBalanceUsdc: 0n, netEquityUsdc: -5n })
     mocks.primaryData[0] = success({ hasOpenPosition: true, equityUsdc: 0n, liquidatable: true })
-    mocks.primaryData[12] = success(7n)
+    mocks.primaryData[12] = success(250_000_007n)
     mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10n })
     const { result } = renderHook(() => usePerpsAccount())
     expect(result.current.positionEquityUsdc).toBe(-5n)

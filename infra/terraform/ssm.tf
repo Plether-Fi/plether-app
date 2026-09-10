@@ -154,7 +154,7 @@ resource "aws_ssm_parameter" "pimlico_sponsorship_policy_id" {
 }
 
 resource "aws_ssm_parameter" "aa_proxy_origin_token" {
-  count = var.provision_aa_proxy ? 1 : 0
+  count = local.aa_gateway_enabled ? 1 : 0
 
   name  = "/plether/${var.environment}/aa-proxy-origin-token"
   type  = "SecureString"

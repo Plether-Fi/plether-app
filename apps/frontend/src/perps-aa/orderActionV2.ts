@@ -1,5 +1,5 @@
 import { encodeFunctionData, getAddress } from 'viem'
-import type { PerpsActionPlan } from '@plether/perps-aa-client'
+import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
 import { PERPS_ORDER_ROUTER_ABI } from '../contracts/abis'
 import type { PerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 

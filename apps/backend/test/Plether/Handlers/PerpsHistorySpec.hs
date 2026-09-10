@@ -39,7 +39,7 @@ spec = do
   describe "perpsHistoryRouter" $ do
     it "defaults to the configured current router" $
       perpsHistoryRouter testConfig Nothing
-        `shouldBe` "0xbd2f286efca5f761e21452673ab9b8c14e17aad7"
+        `shouldBe` "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
 
     it "normalizes an explicit release router" $
       perpsHistoryRouter testConfig (Just "  0x485703D16FE36369C134DEe2A61C057733E7830F  ")
@@ -229,17 +229,17 @@ testConfig =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B"
-    , cfgPerpsOrderRouter = "0xbd2f286efca5F761E21452673ab9b8C14e17aad7"
+    , cfgPerpsUsdc = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
+    , cfgPerpsOrderRouter = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
     , cfgPerpsOrderLifecycleBook = Nothing
-    , cfgPerpsCfdEngine = "0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352"
-    , cfgPerpsCfdEngineLens = "0xE004D20803B484fb62734b78d6144438669Bad18"
-    , cfgPerpsCfdEngineSettlementSidecar = "0x5CBb5A2f75ea005753a6C0AcCE01f7bB02B668D7"
-    , cfgPerpsMarginClearinghouse = "0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd"
+    , cfgPerpsCfdEngine = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
+    , cfgPerpsCfdEngineLens = "0x8fe702213241482d6e94327f9e70195ad183d1ad"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
+    , cfgPerpsMarginClearinghouse = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
-    , cfgPerpsAccountLens = "0xd949E5987c3d33299dA4Da4d06b064729000d2EB"
-    , cfgPerpsHousePool = "0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918"
-    , cfgPerpsSettlementMonitorLens = "0xf799Be4f8B5142C052d821F0067ADdFBF9Ce5820"
+    , cfgPerpsAccountLens = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
+    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
@@ -251,6 +251,7 @@ testConfig =
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -261,8 +262,8 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x7Bf2B3d3912b5B8D367987C9ADfC6Bd1216E8129"
-    , cfgLpSettlementJuniorVault = "0x41D785d3BcF4D0e306E491a66Ddb0d938135Cc1c"
+    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60

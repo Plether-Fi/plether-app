@@ -1,0 +1,1513 @@
+name: AA Admin
+run-name: AA admin / ${{ inputs.action }} / Sepolia / ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Allowlisted Sepolia AA administration operation
+        required: true
+        type: choice
+        options:
+          - attest-kms
+          - resume-issuance
+      expected_reason:
+        description: Exact active issuance-pause reason (resume-issuance only)
+        required: false
+        default: ''
+        type: string
+      operator_note:
+        description: Non-secret audit note (resume-issuance only; 1-512 printable ASCII characters)
+        required: false
+        default: ''
+        type: string
+      confirmation:
+        description: Type RUN <ACTION> ON SEPOLIA in uppercase
+        required: true
+        type: string
+
+concurrency:
+  # Shared with deploy-backend.yml so the deployed image source cannot change
+  # during a protected administration operation.
+  group: plether-backend-mutation-sepolia
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  ADMIN_ENVIRONMENT: aa-admin-sepolia
+  ECS_CLUSTER: plether-sepolia
+  API_SERVICE: plether-api
+  API_FAMILY: plether-sepolia
+  APP_REPOSITORY: plether-api-sepolia
+  LOG_ROUTER_REPOSITORY: plether-otel-log-router-sepolia
+  LOG_GROUP: /ecs/plether-sepolia
+  ADMIN_CONTAINER: plether-aa-admin
+  TMP_INIT_CONTAINER: aa-admin-tmp-init
+  LOG_ROUTER_CONTAINER: otel-log-router
+
+jobs:
+  protected-environment-preflight:
+    name: Require pre-provisioned protected environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+
+    steps:
+      - name: Verify protected environment and master-only policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error title=Unsupported workflow ref::AA administration must be dispatched from master."
+            exit 1
+          fi
+
+          environment_file="$RUNNER_TEMP/aa-admin-environment.json"
+          if ! gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" \
+              > "$environment_file"; then
+            echo "::error title=Admin environment unavailable::Provision and protect $ADMIN_ENVIRONMENT before dispatching this workflow."
+            exit 1
+          fi
+
+          if ! jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+              '.name == $name
+               and .can_admins_bypass == false
+               and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+               and .deployment_branch_policy.custom_branch_policies == true' \
+              "$environment_file" >/dev/null; then
+            echo "::error title=Unsafe admin environment::$ADMIN_ENVIRONMENT must disable administrator bypass, require an independent reviewer, and use a custom branch policy."
+            exit 1
+          fi
+
+          branch_policy_file="$RUNNER_TEMP/aa-admin-branch-policies.json"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+          if ! jq --exit-status \
+              '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+              "$branch_policy_file" >/dev/null; then
+            echo "::error title=Unsafe branch policy::$ADMIN_ENVIRONMENT must allow exactly the master branch."
+            exit 1
+          fi
+
+      - name: Record secret-safe dispatch fingerprint
+        env:
+          ACTION: ${{ inputs.action }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXPECTED_REASON: ${{ inputs.expected_reason }}
+          OPERATOR_NOTE: ${{ inputs.operator_note }}
+        run: |
+          set -euo pipefail
+
+          fingerprint=$(jq -cn \
+            --arg action "$ACTION" \
+            --arg confirmation "$CONFIRMATION" \
+            --arg expected_reason "$EXPECTED_REASON" \
+            --arg operator_note "$OPERATOR_NOTE" \
+            '{schema:1, action:$action, confirmation:$confirmation,
+              expectedReason:$expected_reason, operatorNote:$operator_note}' \
+            | sha256sum | cut -d' ' -f1)
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          echo "Dispatch input fingerprint: sha256:$fingerprint"
+          echo "Dispatch input fingerprint: \`sha256:$fingerprint\`" >> "$GITHUB_STEP_SUMMARY"
+
+  run:
+    name: Run ${{ inputs.action }} on Sepolia
+    needs: protected-environment-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: aa-admin-sepolia
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+      id-token: write
+    env:
+      EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
+    steps:
+      - name: Revalidate protected environment before credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          environment_file="$RUNNER_TEMP/aa-admin-environment-recheck.json"
+          branch_policy_file="$RUNNER_TEMP/aa-admin-branch-policies-recheck.json"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT" \
+            > "$environment_file"
+          gh api \
+            --method GET \
+            "repos/$GITHUB_REPOSITORY/environments/$ADMIN_ENVIRONMENT/deployment-branch-policies?per_page=100" \
+            > "$branch_policy_file"
+
+          jq --exit-status --arg name "$ADMIN_ENVIRONMENT" \
+            '.name == $name
+             and .can_admins_bypass == false
+             and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
+             and .deployment_branch_policy.custom_branch_policies == true' \
+            "$environment_file" >/dev/null
+          jq --exit-status \
+            '.branch_policies | length == 1 and .[0].name == "master" and .[0].type == "branch"' \
+            "$branch_policy_file" >/dev/null
+          [ "$GITHUB_REF" = "refs/heads/master" ]
+
+      - name: Validate allowlisted operation
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPECTED_REASON: ${{ inputs.expected_reason }}
+          OPERATOR_NOTE: ${{ inputs.operator_note }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+
+          case "$ACTION" in
+            attest-kms|resume-issuance) ;;
+            *)
+              echo "::error title=Unsupported action::Only attest-kms and resume-issuance are permitted."
+              exit 1
+              ;;
+          esac
+
+          expected_confirmation="RUN ${ACTION^^} ON SEPOLIA"
+          if [ "$CONFIRMATION" != "$expected_confirmation" ]; then
+            echo "::error title=Confirmation mismatch::Expected the exact phrase: $expected_confirmation"
+            exit 1
+          fi
+
+          if [ "$ACTION" = "attest-kms" ]; then
+            if [ -n "$EXPECTED_REASON" ] || [ -n "$OPERATOR_NOTE" ]; then
+              echo "::error title=Unexpected inputs::attest-kms does not accept an expected reason or operator note."
+              exit 1
+            fi
+          else
+            if ! jq --exit-status -n \
+                --arg reason "$EXPECTED_REASON" \
+                --arg note "$OPERATOR_NOTE" \
+                'def safe:
+                   type == "string"
+                   and length >= 1
+                   and length <= 512
+                   and test("^[ -~]+$")
+                   and (startswith(" ") | not)
+                   and (endswith(" ") | not);
+                 ($reason | safe) and ($note | safe)' >/dev/null; then
+              echo "::error title=Invalid recovery evidence::The expected reason and operator note must each contain 1-512 printable ASCII characters with no leading or trailing space."
+              exit 1
+            fi
+            echo "::add-mask::$EXPECTED_REASON"
+            echo "::add-mask::$OPERATOR_NOTE"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
+
+      - name: Preflight capability, topology, image, and network
+        id: target
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPECTED_REASON: ${{ inputs.expected_reason }}
+          OPERATOR_NOTE: ${{ inputs.operator_note }}
+          REGISTRATION_OWNER: aa-admin-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_MAX_ATTEMPTS: '3'
+          AWS_PAGER: ''
+          AWS_RETRY_MODE: standard
+        run: |
+          set -euo pipefail
+          umask 077
+
+          case "$ACTION" in
+            attest-kms)
+              task_family="plether-sepolia-aa-admin-kms-attest"
+              security_group_name="$task_family"
+              execution_role_name="${task_family}-execution"
+              task_role_name="${task_family}-task"
+              capability="fixed-digest-kms-attestation"
+              expected_event="aa_admin_kms_attested"
+              command_json='["/usr/local/bin/plether-aa-admin","attest-kms"]'
+              ;;
+            resume-issuance)
+              task_family="plether-sepolia-aa-admin-resume-issuance"
+              security_group_name="$task_family"
+              execution_role_name="${task_family}-execution"
+              task_role_name="${task_family}-task"
+              capability="resume-aa-issuance"
+              expected_event="aa_admin_issuance_resumed"
+              command_json=$(jq -cn \
+                --arg reason "$EXPECTED_REASON" \
+                --arg note "$OPERATOR_NOTE" \
+                '["/usr/local/bin/plether-aa-admin", "resume-issuance",
+                  "--expected-reason", $reason, "--operator-note", $note]')
+              ;;
+            *) exit 1 ;;
+          esac
+
+          if [[ ! "$REGISTRATION_OWNER" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+            echo "::error title=Unsafe registration owner::The generated workflow owner is invalid."
+            exit 1
+          fi
+          printf '%s\n' "$REGISTRATION_OWNER" > "$RUNNER_TEMP/aa-admin-registration-owner"
+          printf '%s\n' "$task_family" > "$RUNNER_TEMP/aa-admin-task-family"
+
+          identity_file="$RUNNER_TEMP/aa-admin-identity.json"
+          aws sts get-caller-identity --output json --no-cli-pager > "$identity_file"
+          account_id=$(jq -er '.Account | select(test("^[0-9]{12}$"))' "$identity_file")
+          if [ "$AWS_REGION" != "ap-southeast-1" ] \
+              || [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] \
+              || [ "$account_id" != "$EXPECTED_AWS_ACCOUNT_ID" ]; then
+            echo "::error title=Wrong AWS target::AWS_DEPLOY_ROLE_ARN, AWS_ACCOUNT_ID, and AWS_REGION in the protected aa-admin-sepolia environment must identify the exact approved deployment boundary."
+            exit 1
+          fi
+          identity_arn=$(jq -er '.Arn' "$identity_file")
+          partition=$(cut -d: -f1-2 <<< "$identity_arn")
+          if [[ ! "$partition" =~ ^arn:(aws|aws-us-gov|aws-cn)$ ]]; then
+            echo "::error title=Unsupported AWS partition::Could not derive a recognized partition from the caller identity."
+            exit 1
+          fi
+          execution_role_arn="$partition:iam::$account_id:role/$execution_role_name"
+          task_role_arn="$partition:iam::$account_id:role/$task_role_name"
+          database_parameter_arn="$partition:ssm:$AWS_REGION:$account_id:parameter/plether/sepolia/database-url"
+          log_parameter_arn="$partition:ssm:$AWS_REGION:$account_id:parameter/plether/sepolia/posthog-otlp-authorization-header"
+          log_group_stream_arn="$partition:logs:$AWS_REGION:$account_id:log-group:$LOG_GROUP:*"
+
+          execution_role_file="$RUNNER_TEMP/aa-admin-execution-role.json"
+          execution_attached_file="$RUNNER_TEMP/aa-admin-execution-attached-policies.json"
+          execution_inline_file="$RUNNER_TEMP/aa-admin-execution-inline-policies.json"
+          execution_policy_file="$RUNNER_TEMP/aa-admin-execution-policy.json"
+          task_role_file="$RUNNER_TEMP/aa-admin-task-role.json"
+          task_attached_file="$RUNNER_TEMP/aa-admin-task-attached-policies.json"
+          task_inline_file="$RUNNER_TEMP/aa-admin-task-inline-policies.json"
+          task_policy_file="$RUNNER_TEMP/aa-admin-task-policy.json"
+
+          if [ "$ACTION" = "attest-kms" ]; then
+            execution_policy_name=exact-log-secret-access
+            task_policy_name=fixed-digest-attestation-and-logs
+          else
+            execution_policy_name=exact-database-and-log-secret-access
+            task_policy_name=firelens-cloudwatch-logs
+          fi
+
+          aws iam get-role --role-name "$execution_role_name" --output json --no-cli-pager > "$execution_role_file"
+          aws iam list-attached-role-policies --role-name "$execution_role_name" --output json --no-cli-pager > "$execution_attached_file"
+          aws iam list-role-policies --role-name "$execution_role_name" --output json --no-cli-pager > "$execution_inline_file"
+          aws iam get-role-policy \
+            --role-name "$execution_role_name" \
+            --policy-name "$execution_policy_name" \
+            --output json \
+            --no-cli-pager > "$execution_policy_file"
+          aws iam get-role --role-name "$task_role_name" --output json --no-cli-pager > "$task_role_file"
+          aws iam list-attached-role-policies --role-name "$task_role_name" --output json --no-cli-pager > "$task_attached_file"
+          aws iam list-role-policies --role-name "$task_role_name" --output json --no-cli-pager > "$task_inline_file"
+          aws iam get-role-policy \
+            --role-name "$task_role_name" \
+            --policy-name "$task_policy_name" \
+            --output json \
+            --no-cli-pager > "$task_policy_file"
+
+          for role_spec in \
+            "$execution_role_file:$execution_role_name:$execution_role_arn" \
+            "$task_role_file:$task_role_name:$task_role_arn"; do
+            role_file=${role_spec%%:*}
+            role_tail=${role_spec#*:}
+            role_name=${role_tail%%:*}
+            role_arn=${role_tail#*:}
+            if ! jq --exit-status --arg name "$role_name" --arg arn "$role_arn" \
+                '.Role.RoleName == $name
+                 and .Role.Arn == $arn
+                 and .Role.Path == "/"
+                 and (.Role.PermissionsBoundary // null) == null
+                 and (.Role.AssumeRolePolicyDocument.Statement | length) == 1
+                 and .Role.AssumeRolePolicyDocument.Statement[0].Effect == "Allow"
+                 and .Role.AssumeRolePolicyDocument.Statement[0].Action == "sts:AssumeRole"
+                 and .Role.AssumeRolePolicyDocument.Statement[0].Principal == {"Service":"ecs-tasks.amazonaws.com"}' \
+                "$role_file" >/dev/null; then
+              echo "::error title=AA admin trust-policy drift::The capability role no longer has the exact ECS-task trust boundary."
+              exit 1
+            fi
+          done
+
+          if ! jq --exit-status \
+              '.AttachedPolicies == [{
+                 "PolicyName":"AmazonECSTaskExecutionRolePolicy",
+                 "PolicyArn":"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+               }]' "$execution_attached_file" >/dev/null \
+              || ! jq --exit-status --arg policy "$execution_policy_name" \
+                '.PolicyNames == [$policy]' "$execution_inline_file" >/dev/null \
+              || ! jq --exit-status '.AttachedPolicies == []' "$task_attached_file" >/dev/null \
+              || ! jq --exit-status --arg policy "$task_policy_name" \
+                '.PolicyNames == [$policy]' "$task_inline_file" >/dev/null; then
+            echo "::error title=AA admin IAM drift::The selected capability roles must contain only their exact managed/inline policy sets."
+            exit 1
+          fi
+
+          if ! jq --exit-status \
+              --arg action "$ACTION" \
+              --arg log_parameter "$log_parameter_arn" \
+              --arg database "$database_parameter_arn" \
+              '
+              def array: if type == "array" then . else [.] end;
+              .PolicyDocument.Version == "2012-10-17"
+              and (.PolicyDocument.Statement | length) == 1
+              and .PolicyDocument.Statement[0].Effect == "Allow"
+              and (.PolicyDocument.Statement[0].Action | array | sort)
+                  == (["ssm:GetParameter", "ssm:GetParameters"] | sort)
+              and (.PolicyDocument.Statement[0].Resource | array | sort)
+                  == (if $action == "attest-kms"
+                      then [$log_parameter]
+                      else [$database, $log_parameter] | sort
+                      end)
+              and (.PolicyDocument.Statement[0] | has("Condition") | not)
+              ' "$execution_policy_file" >/dev/null; then
+            echo "::error title=AA admin secret-policy drift::The execution role must read only its exact database/log SecureStrings."
+            exit 1
+          fi
+
+          # Both capability families must be idle. This also catches a task that
+          # a cancelled or response-lost workflow has already asked ECS to stop.
+          for family in \
+            plether-sepolia-aa-admin-kms-attest \
+            plether-sepolia-aa-admin-resume-issuance; do
+            for desired_status in PENDING RUNNING; do
+              tasks_file="$RUNNER_TEMP/aa-admin-${family}-${desired_status}.json"
+              aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --family "$family" \
+                --desired-status "$desired_status" \
+                --output json \
+                --no-cli-pager > "$tasks_file"
+              if ! jq --exit-status '(.taskArns // []) | length == 0' "$tasks_file" >/dev/null; then
+                echo "::error title=AA admin family is busy::Reconcile the existing $family task before starting another operation."
+                exit 1
+              fi
+            done
+
+            stopped_file="$RUNNER_TEMP/aa-admin-${family}-stopped.json"
+            aws ecs list-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --family "$family" \
+              --desired-status STOPPED \
+              --max-results 100 \
+              --output json \
+              --no-cli-pager > "$stopped_file"
+            mapfile -t stopped_tasks < <(jq -r '.taskArns[]?' "$stopped_file")
+            for ((offset = 0; offset < ${#stopped_tasks[@]}; offset += 100)); do
+              batch=("${stopped_tasks[@]:offset:100}")
+              described_file="$RUNNER_TEMP/aa-admin-${family}-stopping-$offset.json"
+              aws ecs describe-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --tasks "${batch[@]}" \
+                --output json \
+                --no-cli-pager > "$described_file"
+              if ! jq --exit-status \
+                  '(.failures | length) == 0
+                   and ([.tasks[] | .lastStatus == "STOPPED"] | all)' \
+                  "$described_file" >/dev/null; then
+                echo "::error title=AA admin task is still stopping::Wait for every prior $family task to reach terminal STOPPED state."
+                exit 1
+              fi
+            done
+
+            definitions_file="$RUNNER_TEMP/aa-admin-${family}-active-definitions.json"
+            aws ecs list-task-definitions \
+              --family-prefix "$family" \
+              --status ACTIVE \
+              --sort DESC \
+              --output json \
+              --no-cli-pager > "$definitions_file"
+            if ! jq --exit-status --arg family "$family" \
+                '([.taskDefinitionArns[]?
+                   | select((split("task-definition/")[1] | split(":")[0]) == $family)]
+                  | length) == 1' \
+                "$definitions_file" >/dev/null; then
+              echo "::error title=Unreconciled AA admin revision::$family must have exactly one ACTIVE Terraform-owned source revision."
+              exit 1
+            fi
+          done
+
+          service_file="$RUNNER_TEMP/aa-admin-api-service.json"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$API_SERVICE" \
+            --output json \
+            --no-cli-pager > "$service_file"
+          if ! jq --exit-status \
+              --arg cluster "$ECS_CLUSTER" \
+              --arg service "$API_SERVICE" \
+              '(.failures | length) == 0
+               and (.services | length) == 1
+               and .services[0].serviceName == $service
+               and .services[0].status == "ACTIVE"
+               and (.services[0].clusterArn | endswith("/" + $cluster))
+               and .services[0].platformVersion == "1.4.0"
+               and .services[0].desiredCount == 1
+               and .services[0].runningCount == 1
+               and .services[0].pendingCount == 0
+               and ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1
+               and ([.services[0].deployments[] | select(.status != "PRIMARY")] | length) == 0
+               and (.services[0].networkConfiguration.awsvpcConfiguration.subnets | length) > 0
+               and .services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp == "ENABLED"' \
+              "$service_file" >/dev/null; then
+            echo "::error title=Unstable API deployment::The Sepolia API must be healthy, single-deployment, and use the reviewed public-IP Fargate network."
+            exit 1
+          fi
+
+          api_task_definition=$(jq -er '.services[0].taskDefinition' "$service_file")
+          api_definition_file="$RUNNER_TEMP/aa-admin-api-task-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$api_task_definition" \
+            --output json \
+            --no-cli-pager > "$api_definition_file"
+          if ! jq --exit-status \
+              --arg family "$API_FAMILY" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg api "plether-api" \
+              --arg router "$LOG_ROUTER_CONTAINER" \
+              '.taskDefinition.family == $family
+               and .taskDefinition.status == "ACTIVE"
+               and .taskDefinition.networkMode == "awsvpc"
+               and (.taskDefinition.requiresCompatibilities | index("FARGATE") != null)
+               and .taskDefinition.runtimePlatform.cpuArchitecture == "ARM64"
+               and .taskDefinition.runtimePlatform.operatingSystemFamily == "LINUX"
+               and (.taskDefinition.containerDefinitions | length) == 2
+               and ([.taskDefinition.containerDefinitions[] | select(.name == $api)] | length) == 1
+               and ([.taskDefinition.containerDefinitions[] | select(.name == $router)] | length) == 1
+               and ([.taskDefinition.containerDefinitions[] | select(.name == $app)] | length) == 0' \
+              "$api_definition_file" >/dev/null; then
+            echo "::error title=Unexpected API topology::The deployed API task cannot be used as the reviewed admin image source."
+            exit 1
+          fi
+
+          registry="$account_id.dkr.ecr.$AWS_REGION.amazonaws.com"
+          resolve_ecr_image() {
+            local reference=$1
+            local repository=$2
+            local base="$registry/$repository"
+            local digest
+
+            if [[ "$reference" == "$base@"* ]]; then
+              digest=${reference#"$base@"}
+              if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                return 1
+              fi
+              aws ecr describe-images \
+                --repository-name "$repository" \
+                --image-ids "imageDigest=$digest" \
+                --output json \
+                --no-cli-pager >/dev/null
+            elif [[ "$reference" == "$base:"* ]]; then
+              local tag=${reference#"$base:"}
+              if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+                return 1
+              fi
+              digest=$(aws ecr describe-images \
+                --repository-name "$repository" \
+                --image-ids "imageTag=$tag" \
+                --query 'imageDetails[0].imageDigest' \
+                --output text \
+                --no-cli-pager)
+              if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                return 1
+              fi
+            else
+              return 1
+            fi
+
+            printf '%s@%s\n' "$base" "$digest"
+          }
+
+          deployed_app_reference=$(jq -er \
+            '.taskDefinition.containerDefinitions[] | select(.name == "plether-api") | .image' \
+            "$api_definition_file")
+          deployed_router_reference=$(jq -er \
+            --arg router "$LOG_ROUTER_CONTAINER" \
+            '.taskDefinition.containerDefinitions[] | select(.name == $router) | .image' \
+            "$api_definition_file")
+          if ! app_image=$(resolve_ecr_image "$deployed_app_reference" "$APP_REPOSITORY"); then
+            echo "::error title=Unqualified application image::The deployed API image must resolve to the exact Sepolia ECR repository and an existing digest."
+            exit 1
+          fi
+          if ! router_image=$(resolve_ecr_image "$deployed_router_reference" "$LOG_ROUTER_REPOSITORY"); then
+            echo "::error title=Unqualified log-router image::The deployed router image must resolve to the exact Sepolia ECR repository and an existing digest."
+            exit 1
+          fi
+
+          source_file="$RUNNER_TEMP/aa-admin-source-task-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$task_family" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$source_file"
+          source_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$source_file")
+          printf '%s\n' "$source_task_definition" > "$RUNNER_TEMP/aa-admin-source-task-definition-arn"
+
+          kms_key_arn=""
+          if [ "$ACTION" = "attest-kms" ]; then
+            kms_file="$RUNNER_TEMP/aa-admin-kms-key.json"
+            aws kms describe-key \
+              --key-id alias/plether-sepolia-aa-paymaster-signer \
+              --output json \
+              --no-cli-pager > "$kms_file"
+            if ! jq --exit-status \
+                '.KeyMetadata.Enabled == true
+                 and .KeyMetadata.KeyState == "Enabled"
+                 and .KeyMetadata.KeyUsage == "SIGN_VERIFY"
+                 and .KeyMetadata.CustomerMasterKeySpec == "ECC_SECG_P256K1"
+                 and .KeyMetadata.MultiRegion == false' \
+                "$kms_file" >/dev/null; then
+              echo "::error title=Unexpected paymaster key::The Sepolia signer alias does not target the reviewed enabled secp256k1 signing key."
+              exit 1
+            fi
+            kms_key_arn=$(jq -er '.KeyMetadata.Arn' "$kms_file")
+          fi
+
+          if [ "$ACTION" = "attest-kms" ]; then
+            if ! jq --exit-status \
+                --arg kms "$kms_key_arn" \
+                --arg logs "$log_group_stream_arn" \
+                '
+                def array: if type == "array" then . else [.] end;
+                def statement($sid): [.PolicyDocument.Statement[] | select(.Sid == $sid)];
+                .PolicyDocument.Version == "2012-10-17"
+                and (.PolicyDocument.Statement | length) == 3
+                and (statement("ReadPaymasterSignerPublicKey") | length) == 1
+                and (statement("SignFixedAttestationDigest") | length) == 1
+                and (statement("WriteFireLensCloudWatchCopy") | length) == 1
+                and (statement("ReadPaymasterSignerPublicKey")[0]) as $metadata
+                | (statement("SignFixedAttestationDigest")[0]) as $sign
+                | (statement("WriteFireLensCloudWatchCopy")[0]) as $log
+                | $metadata.Effect == "Allow"
+                  and ($metadata.Action | array | sort)
+                      == (["kms:DescribeKey", "kms:GetPublicKey"] | sort)
+                  and ($metadata.Resource | array) == [$kms]
+                  and ($metadata | has("Condition") | not)
+                  and $sign.Effect == "Allow"
+                  and ($sign.Action | array) == ["kms:Sign"]
+                  and ($sign.Resource | array) == [$kms]
+                  and $sign.Condition == {
+                    "StringEquals":{"kms:SigningAlgorithm":"ECDSA_SHA_256"}
+                  }
+                  and $log.Effect == "Allow"
+                  and ($log.Action | array | sort)
+                      == (["logs:CreateLogStream", "logs:DescribeLogStreams",
+                           "logs:PutLogEvents"] | sort)
+                  and ($log.Resource | array) == [$logs]
+                  and ($log | has("Condition") | not)
+                ' "$task_policy_file" >/dev/null; then
+              echo "::error title=KMS attestor policy drift::The task role must have only public-key metadata, constrained Sign, and exact log-stream permissions."
+              exit 1
+            fi
+          elif ! jq --exit-status \
+              --arg logs "$log_group_stream_arn" \
+              '
+              def array: if type == "array" then . else [.] end;
+              .PolicyDocument.Version == "2012-10-17"
+              and (.PolicyDocument.Statement | length) == 1
+              and .PolicyDocument.Statement[0].Effect == "Allow"
+              and (.PolicyDocument.Statement[0].Action | array | sort)
+                  == (["logs:CreateLogStream", "logs:DescribeLogStreams",
+                       "logs:PutLogEvents"] | sort)
+              and (.PolicyDocument.Statement[0].Resource | array) == [$logs]
+              and (.PolicyDocument.Statement[0] | has("Condition") | not)
+              ' "$task_policy_file" >/dev/null; then
+            echo "::error title=Issuance-control policy drift::The task role must have only exact log-stream permissions and no KMS access."
+            exit 1
+          fi
+
+          source_app_reference=$(jq -er \
+            --arg container "$ADMIN_CONTAINER" \
+            '.taskDefinition.containerDefinitions[] | select(.name == $container) | .image' \
+            "$source_file")
+          source_tmp_reference=$(jq -er \
+            --arg container "$TMP_INIT_CONTAINER" \
+            '.taskDefinition.containerDefinitions[] | select(.name == $container) | .image' \
+            "$source_file")
+          source_router_reference=$(jq -er \
+            --arg container "$LOG_ROUTER_CONTAINER" \
+            '.taskDefinition.containerDefinitions[] | select(.name == $container) | .image' \
+            "$source_file")
+          if [[ "$source_app_reference" != "$registry/$APP_REPOSITORY:"* ]] \
+              || [ "$source_tmp_reference" != "$source_app_reference" ] \
+              || [[ "$source_router_reference" != "$registry/$LOG_ROUTER_REPOSITORY:"* ]]; then
+            echo "::error title=Unexpected source repositories::The Terraform-owned task must use only the reviewed application and log-router ECR repositories."
+            exit 1
+          fi
+
+          if ! jq --exit-status \
+              --arg action "$ACTION" \
+              --arg family "$task_family" \
+              --arg execution_role "$execution_role_arn" \
+              --arg task_role "$task_role_arn" \
+              --arg capability "$capability" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg tmp "$TMP_INIT_CONTAINER" \
+              --arg router "$LOG_ROUTER_CONTAINER" \
+              --arg kms "$kms_key_arn" \
+              --arg database "$database_parameter_arn" \
+              --arg log_parameter "$log_parameter_arn" \
+              '
+              def containers($name): [.taskDefinition.containerDefinitions[] | select(.name == $name)];
+              def envmap($definition):
+                ($definition.environment // []) | map({key: .name, value: .value}) | from_entries;
+              def secrets($definition):
+                ($definition.secrets // []) | map({key: .name, value: .valueFrom}) | from_entries;
+              .taskDefinition.family == $family
+              and .taskDefinition.status == "ACTIVE"
+              and .taskDefinition.networkMode == "awsvpc"
+              and (.taskDefinition.requiresCompatibilities | index("FARGATE") != null)
+              and .taskDefinition.runtimePlatform.cpuArchitecture == "ARM64"
+              and .taskDefinition.runtimePlatform.operatingSystemFamily == "LINUX"
+              and .taskDefinition.cpu == "256"
+              and .taskDefinition.memory == "512"
+              and .taskDefinition.executionRoleArn == $execution_role
+              and .taskDefinition.taskRoleArn == $task_role
+              and .taskDefinition.enableFaultInjection == false
+              and (.taskDefinition.volumes | length) == 1
+              and .taskDefinition.volumes[0].name == "aa-admin-tmp"
+              and (.taskDefinition.containerDefinitions | length) == 3
+              and (containers($app) | length) == 1
+              and (containers($tmp) | length) == 1
+              and (containers($router) | length) == 1
+              and ((.tags | map({key: .key, value: .value}) | from_entries) == {
+                    "Capability":$capability,
+                    "Environment":"sepolia",
+                    "ManagedBy":"terraform",
+                    "Project":"plether"
+                  })
+              and (containers($app)[0]) as $main
+              | (containers($tmp)[0]) as $init
+              | (containers($router)[0]) as $log_router
+              | (envmap($main)) as $environment
+              | (secrets($main)) as $secret_map
+              | (envmap($log_router)) as $router_environment
+              | $main.essential == true
+                and $main.readonlyRootFilesystem == true
+                and $main.user == "65534:65534"
+                and $main.stopTimeout == 120
+                and (($main.portMappings // []) | length) == 0
+                and (($main.environmentFiles // []) | length) == 0
+                and (($main.environment // []) | length) == ($environment | keys | length)
+                and (($main.secrets // []) | length) == ($secret_map | keys | length)
+                and (($main.systemControls // []) | length) == 0
+                and (($main.volumesFrom // []) | length) == 0
+                and (($main.entryPoint // []) | length) == 0
+                and (($main.healthCheck // null) == null)
+                and (($main.privileged // false) == false)
+                and $main.linuxParameters.initProcessEnabled == true
+                and $main.linuxParameters.capabilities.drop == ["ALL"]
+                and $main.mountPoints == [{"containerPath":"/tmp","readOnly":false,"sourceVolume":"aa-admin-tmp"}]
+                and ($main.dependsOn | sort_by(.containerName))
+                    == ([{"containerName":$tmp,"condition":"SUCCESS"},
+                         {"containerName":$router,"condition":"START"}] | sort_by(.containerName))
+                and $main.logConfiguration.logDriver == "awsfirelens"
+                and $main.logConfiguration.secretOptions == [{"name":"Header","valueFrom":$log_parameter}]
+                and $main.logConfiguration.options == {
+                  "Name":"opentelemetry",
+                  "Host":"eu.i.posthog.com",
+                  "Port":"443",
+                  "logs_uri":"/i/v1/logs",
+                  "logs_body_key":"$message",
+                  "logs_body_key_attributes":"true",
+                  "logs_severity_text_message_key":"$SeverityText",
+                  "logs_severity_number_message_key":"$SeverityNumber",
+                  "log-driver-buffer-limit":"4096",
+                  "batch_size":"100",
+                  "compress":"gzip",
+                  "grpc":"off",
+                  "http2":"off",
+                  "log_response_payload":"false",
+                  "log_suppress_interval":"60",
+                  "tls":"on",
+                  "tls.verify":"on",
+                  "tls.verify_hostname":"on",
+                  "Retry_Limit":"no_limits"
+                }
+                and $init.essential == false
+                and $init.readonlyRootFilesystem == true
+                and $init.user == "0:0"
+                and $init.entryPoint == ["/bin/sh", "-c"]
+                and $init.command == ["chmod 1777 /tmp"]
+                and $init.linuxParameters.initProcessEnabled == true
+                and $init.linuxParameters.capabilities.drop == ["ALL"]
+                and $init.mountPoints == [{"containerPath":"/tmp","readOnly":false,"sourceVolume":"aa-admin-tmp"}]
+                and (($init.environment // []) | length) == 0
+                and (($init.secrets // []) | length) == 0
+                and (($init.portMappings // []) | length) == 0
+                and (($init.logConfiguration // null) == null)
+                and (($init.healthCheck // null) == null)
+                and (($init.dependsOn // []) | length) == 0
+                and $log_router.essential == true
+                and $log_router.user == "0"
+                and $log_router.memoryReservation == 128
+                and $log_router.stopTimeout == 120
+                and (($log_router.mountPoints // []) | length) == 0
+                and (($log_router.portMappings // []) | length) == 0
+                and (($log_router.systemControls // []) | length) == 0
+                and (($log_router.volumesFrom // []) | length) == 0
+                and (($log_router.secrets // []) | length) == 0
+                and (($log_router.environment // []) | length) == ($router_environment | keys | length)
+                and $router_environment == {
+                  "AWS_REGION":env.AWS_REGION,
+                  "CLOUDWATCH_LOG_GROUP":"/ecs/plether-sepolia",
+                  "DEPLOYMENT_ENVIRONMENT":"sepolia",
+                  "ECS_CLUSTER_NAME":"plether-sepolia",
+                  "SERVICE_VERSION":"unknown"
+                }
+                and $log_router.firelensConfiguration.type == "fluentbit"
+                and $log_router.firelensConfiguration.options == {
+                  "enable-ecs-log-metadata":"true",
+                  "config-file-type":"file",
+                  "config-file-value":"/fluent-bit/etc/otel-enrichment.conf"
+                }
+                and $log_router.logConfiguration.logDriver == "awslogs"
+                and $log_router.logConfiguration.options == {
+                  "awslogs-group":"/ecs/plether-sepolia",
+                  "awslogs-region":env.AWS_REGION,
+                  "awslogs-stream-prefix":"router"
+                }
+                and (
+                  ($action == "attest-kms"
+                   and $main.command == ["/usr/local/bin/plether-aa-admin", "attest-kms"]
+                   and $secret_map == {}
+                   and $environment == {
+                     "HOME":"/tmp",
+                     "TMPDIR":"/tmp",
+                     "AWS_REGION":env.AWS_REGION,
+                     "AA_PAYMASTER_KMS_KEY_ID":$kms,
+                     "AA_PAYMASTER_SIGNER_ADDRESS":$environment.AA_PAYMASTER_SIGNER_ADDRESS
+                   }
+                   and ($environment.AA_PAYMASTER_SIGNER_ADDRESS
+                        | test("^0x[0-9A-Fa-f]{40}$"))
+                   and ($environment.AA_PAYMASTER_SIGNER_ADDRESS
+                        | ascii_downcase) != "0x0000000000000000000000000000000000000000")
+                  or
+                  ($action == "resume-issuance"
+                   and $main.command == ["/usr/local/bin/plether-aa-admin", "resume-issuance",
+                                         "--expected-reason", "__WORKFLOW_REQUIRED__",
+                                         "--operator-note", "__WORKFLOW_REQUIRED__"]
+                   and $secret_map == {"DATABASE_URL":$database}
+                   and $environment == {"HOME":"/tmp", "TMPDIR":"/tmp"})
+                )' \
+              "$source_file" >/dev/null; then
+            echo "::error title=AA admin topology rejected::Apply the reviewed capability-separated Terraform task definitions before using this workflow."
+            exit 1
+          fi
+
+          expected_signer=$(jq -er \
+            --arg container "$ADMIN_CONTAINER" \
+            '.taskDefinition.containerDefinitions[] | select(.name == $container)
+             | (.environment // [])[]
+             | select(.name == "AA_PAYMASTER_SIGNER_ADDRESS")
+             | .value' \
+            "$source_file" 2>/dev/null || true)
+
+          mapfile -t subnets < <(jq -r \
+            '.services[0].networkConfiguration.awsvpcConfiguration.subnets[]' \
+            "$service_file")
+          subnet_file="$RUNNER_TEMP/aa-admin-subnets.json"
+          aws ec2 describe-subnets \
+            --subnet-ids "${subnets[@]}" \
+            --output json \
+            --no-cli-pager > "$subnet_file"
+          if ! jq --exit-status --argjson expected "${#subnets[@]}" \
+              '(.Subnets | length) == $expected
+               and $expected == 2
+               and ([.Subnets[].VpcId] | unique | length) == 1
+               and ([.Subnets[] | .State == "available" and .MapPublicIpOnLaunch == true] | all)
+               and ([.Subnets[].Tags[]?
+                     | select(.Key == "Name")
+                     | .Value] | sort)
+                   == ["plether-sepolia-public-1", "plether-sepolia-public-2"]' \
+              "$subnet_file" >/dev/null; then
+            echo "::error title=Unsafe admin subnets::The inherited API subnets must be available public-IP subnets in one VPC."
+            exit 1
+          fi
+          vpc_id=$(jq -er '.Subnets[0].VpcId' "$subnet_file")
+
+          for subnet_id in "${subnets[@]}"; do
+            route_table_file="$RUNNER_TEMP/aa-admin-route-table-$subnet_id.json"
+            aws ec2 describe-route-tables \
+              --filters "Name=association.subnet-id,Values=$subnet_id" \
+              --output json \
+              --no-cli-pager > "$route_table_file"
+            if ! jq --exit-status --arg vpc "$vpc_id" --arg subnet "$subnet_id" \
+                '(.RouteTables | length) == 1
+                 and .RouteTables[0].VpcId == $vpc
+                 and ([.RouteTables[0].Associations[]?
+                       | select(.SubnetId == $subnet
+                                and .AssociationState.State == "associated")] | length) == 1
+                 and ([.RouteTables[0].Routes[]?
+                       | select(.DestinationCidrBlock == "0.0.0.0/0"
+                                and .State == "active"
+                                and (.GatewayId | startswith("igw-")))] | length) == 1' \
+                "$route_table_file" >/dev/null; then
+              echo "::error title=Unsafe admin route::Each capability task subnet must have one active default route through the VPC internet gateway."
+              exit 1
+            fi
+          done
+
+          security_groups_file="$RUNNER_TEMP/aa-admin-security-groups.json"
+          aws ec2 describe-security-groups \
+            --filters \
+              "Name=tag:Name,Values=$security_group_name" \
+              "Name=vpc-id,Values=$vpc_id" \
+            --output json \
+            --no-cli-pager > "$security_groups_file"
+          if ! jq --exit-status --arg name "$security_group_name" --arg vpc "$vpc_id" \
+              '.SecurityGroups | length == 1
+               and .[0].VpcId == $vpc
+               and ([.[0].Tags[]? | select(.Key == "Name" and .Value == $name)] | length) == 1' \
+              "$security_groups_file" >/dev/null; then
+            echo "::error title=Admin security group unavailable::Expected one capability-specific security group in the API VPC."
+            exit 1
+          fi
+          security_group_id=$(jq -er '.SecurityGroups[0].GroupId' "$security_groups_file")
+
+          security_group_rules_file="$RUNNER_TEMP/aa-admin-security-group-rules.json"
+          aws ec2 describe-security-group-rules \
+            --filters "Name=group-id,Values=$security_group_id" \
+            --output json \
+            --no-cli-pager > "$security_group_rules_file"
+          if [ "$ACTION" = "attest-kms" ]; then
+            if ! jq --exit-status \
+                '(.SecurityGroupRules | length) == 1
+                 and .SecurityGroupRules[0].IsEgress == true
+                 and .SecurityGroupRules[0].IpProtocol == "tcp"
+                 and .SecurityGroupRules[0].FromPort == 443
+                 and .SecurityGroupRules[0].ToPort == 443
+                 and .SecurityGroupRules[0].CidrIpv4 == "0.0.0.0/0"' \
+                "$security_group_rules_file" >/dev/null; then
+              echo "::error title=KMS attestor network drift::The attestor security group must expose no ingress and only HTTPS egress."
+              exit 1
+            fi
+          else
+            if ! jq --exit-status \
+                '(.SecurityGroupRules | length) == 2
+                 and ([.SecurityGroupRules[]
+                       | select(.IsEgress == true
+                                and .IpProtocol == "tcp"
+                                and .FromPort == 443
+                                and .ToPort == 443
+                                and .CidrIpv4 == "0.0.0.0/0")] | length) == 1
+                 and ([.SecurityGroupRules[]
+                       | select(.IsEgress == true
+                                and .IpProtocol == "tcp"
+                                and .FromPort == 5432
+                                and .ToPort == 5432
+                                and (.ReferencedGroupInfo.GroupId | type == "string"))] | length) == 1' \
+                "$security_group_rules_file" >/dev/null; then
+              echo "::error title=Issuance-control network drift::The recovery task must expose no ingress and only HTTPS plus RDS security-group egress."
+              exit 1
+            fi
+
+            rds_group_id=$(jq -er \
+              '.SecurityGroupRules[]
+               | select(.IsEgress == true and .FromPort == 5432 and .ToPort == 5432)
+               | .ReferencedGroupInfo.GroupId' \
+              "$security_group_rules_file")
+            rds_file="$RUNNER_TEMP/aa-admin-rds-security-group.json"
+            aws ec2 describe-security-groups \
+              --group-ids "$rds_group_id" \
+              --output json \
+              --no-cli-pager > "$rds_file"
+            if ! jq --exit-status --arg vpc "$vpc_id" --arg source "$security_group_id" \
+                '.SecurityGroups | length == 1
+                 and .[0].VpcId == $vpc
+                 and (.[0].GroupName | startswith("plether-rds-"))
+                 and ([.[0].IpPermissions[]?
+                       | select(.IpProtocol == "tcp"
+                                and .FromPort == 5432
+                                and .ToPort == 5432)
+                       | .UserIdGroupPairs[]?
+                       | select(.GroupId == $source)] | length) == 1' \
+                "$rds_file" >/dev/null; then
+              echo "::error title=RDS ingress unavailable::The database must explicitly admit only the issuance-control security group on PostgreSQL."
+              exit 1
+            fi
+          fi
+
+          network_file="$RUNNER_TEMP/aa-admin-network.json"
+          jq -n \
+            --argjson subnets "$(printf '%s\n' "${subnets[@]}" | jq -R . | jq -s .)" \
+            --arg security_group "$security_group_id" \
+            '{awsvpcConfiguration: {
+              subnets: $subnets,
+              securityGroups: [$security_group],
+              assignPublicIp: "ENABLED"
+            }}' > "$network_file"
+
+          registration_file="$RUNNER_TEMP/aa-admin-registration.json"
+          jq \
+            --arg app "$ADMIN_CONTAINER" \
+            --arg tmp "$TMP_INIT_CONTAINER" \
+            --arg router "$LOG_ROUTER_CONTAINER" \
+            --arg app_image "$app_image" \
+            --arg router_image "$router_image" \
+            --argjson command "$command_json" \
+            --arg owner "$REGISTRATION_OWNER" \
+            --arg capability "$capability" \
+            '.taskDefinition
+             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                   .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+             | .containerDefinitions |= map(
+                 if .name == $app then .image = $app_image | .command = $command
+                 elif .name == $tmp then .image = $app_image
+                 elif .name == $router then .image = $router_image
+                 else . end)
+             | .tags = [
+                 {key: "Capability", value: $capability},
+                 {key: "WorkflowOwner", value: $owner}
+               ]' \
+            "$source_file" > "$registration_file"
+
+          normalization_filter='del(
+              .taskDefinitionArn, .revision, .status, .requiresAttributes,
+              .compatibilities, .registeredAt, .registeredBy, .deregisteredAt,
+              .tags
+            )
+            | .containerDefinitions |= map(
+                if .name == "plether-aa-admin" then
+                  .image = "<application-image>" | .command = ["<reviewed-command>"]
+                elif .name == "aa-admin-tmp-init" then
+                  .image = "<application-image>"
+                elif .name == "otel-log-router" then
+                  .image = "<router-image>"
+                else . end)'
+          if ! diff -u \
+              <(jq -S ".taskDefinition | $normalization_filter" "$source_file") \
+              <(jq -S "$normalization_filter" "$registration_file"); then
+            echo "::error title=Unsafe task registration::The generated task definition changed reviewed configuration outside the immutable images, exact command, and owner tags."
+            exit 1
+          fi
+          if ! jq --exit-status \
+              --arg family "$task_family" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg tmp "$TMP_INIT_CONTAINER" \
+              --arg router "$LOG_ROUTER_CONTAINER" \
+              --arg app_image "$app_image" \
+              --arg router_image "$router_image" \
+              --argjson command "$command_json" \
+              --arg owner "$REGISTRATION_OWNER" \
+              --arg capability "$capability" \
+              '.family == $family
+               and ([.containerDefinitions[] | select(.name == $app and .image == $app_image and .command == $command)] | length) == 1
+               and ([.containerDefinitions[] | select(.name == $tmp and .image == $app_image)] | length) == 1
+               and ([.containerDefinitions[] | select(.name == $router and .image == $router_image)] | length) == 1
+               and ([.containerDefinitions[].image | test("@sha256:[0-9a-f]{64}$")] | all)
+               and ((.tags | map({key: .key, value: .value}) | from_entries) == {
+                 "Capability":$capability,
+                 "WorkflowOwner":$owner
+               })' \
+              "$registration_file" >/dev/null; then
+            echo "::error title=Unsafe task registration::The generated task definition changed something outside the reviewed immutable image and exact-command envelope."
+            exit 1
+          fi
+
+          registration_result="$RUNNER_TEMP/aa-admin-registration-result.json"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs register-task-definition \
+              --cli-input-json "file://$registration_file" \
+              --output json \
+              --no-cli-pager > "$registration_result"; then
+            echo "::error title=Ambiguous task registration::The cleanup step will search only for this workflow's owner tag; inspect ECS before retrying."
+            exit 1
+          fi
+          registered_task_definition=$(jq -er '.taskDefinition.taskDefinitionArn' "$registration_result")
+          printf '%s\n' "$registered_task_definition" > "$RUNNER_TEMP/aa-admin-registered-task-definition-arn"
+
+          registered_file="$RUNNER_TEMP/aa-admin-registered-task-definition.json"
+          aws ecs describe-task-definition \
+            --task-definition "$registered_task_definition" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$registered_file"
+          if ! jq --exit-status \
+              --arg arn "$registered_task_definition" \
+              --arg source "$source_task_definition" \
+              --arg family "$task_family" \
+              --arg owner "$REGISTRATION_OWNER" \
+              --arg capability "$capability" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg tmp "$TMP_INIT_CONTAINER" \
+              --arg router "$LOG_ROUTER_CONTAINER" \
+              --arg app_image "$app_image" \
+              --arg router_image "$router_image" \
+              --argjson command "$command_json" \
+              '.taskDefinition.taskDefinitionArn == $arn
+               and .taskDefinition.taskDefinitionArn != $source
+               and .taskDefinition.family == $family
+               and .taskDefinition.status == "ACTIVE"
+               and ((.tags | map({key: .key, value: .value}) | from_entries) == {
+                 "Capability":$capability,
+                 "WorkflowOwner":$owner
+               })
+               and ([.taskDefinition.containerDefinitions[]
+                     | select(.name == $app and .image == $app_image and .command == $command)] | length) == 1
+               and ([.taskDefinition.containerDefinitions[]
+                     | select(.name == $tmp and .image == $app_image)] | length) == 1
+               and ([.taskDefinition.containerDefinitions[]
+                     | select(.name == $router and .image == $router_image)] | length) == 1' \
+              "$registered_file" >/dev/null; then
+            echo "::error title=Registered task mismatch::ECS did not preserve the reviewed immutable task definition."
+            exit 1
+          fi
+
+          echo "task_definition=$registered_task_definition" >> "$GITHUB_OUTPUT"
+          echo "network_file=$network_file" >> "$GITHUB_OUTPUT"
+          echo "owner=$REGISTRATION_OWNER" >> "$GITHUB_OUTPUT"
+          echo "capability=$capability" >> "$GITHUB_OUTPUT"
+          echo "expected_event=$expected_event" >> "$GITHUB_OUTPUT"
+          echo "expected_signer=$expected_signer" >> "$GITHUB_OUTPUT"
+
+      - name: Start exact one-off task without overrides
+        id: task
+        env:
+          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
+          NETWORK_FILE: ${{ steps.target.outputs.network_file }}
+          REGISTRATION_OWNER: ${{ steps.target.outputs.owner }}
+          CAPABILITY: ${{ steps.target.outputs.capability }}
+          AWS_PAGER: ''
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [[ ! "$TASK_DEFINITION" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-aa-admin-(kms-attest|resume-issuance):[1-9][0-9]*$ ]]; then
+            echo "::error title=Unsafe task target::The registered AA admin task-definition ARN is invalid."
+            exit 1
+          fi
+          case "$CAPABILITY" in
+            fixed-digest-kms-attestation|resume-aa-issuance) ;;
+            *)
+              echo "::error title=Unsafe task capability::The preflighted AA admin capability is invalid."
+              exit 1
+              ;;
+          esac
+          if [ ! -s "$NETWORK_FILE" ] || \
+             ! jq --exit-status \
+               '.awsvpcConfiguration.assignPublicIp == "ENABLED"
+                and (.awsvpcConfiguration.subnets | length) > 0
+                and (.awsvpcConfiguration.securityGroups | length) == 1' \
+               "$NETWORK_FILE" >/dev/null; then
+            echo "::error title=Unsafe task network::The preflighted capability network is unavailable."
+            exit 1
+          fi
+
+          started_ms=$(( $(date +%s) * 1000 - 5000 ))
+          printf '%s\n' "$started_ms" > "$RUNNER_TEMP/aa-admin-started-ms"
+          : > "$RUNNER_TEMP/aa-admin-run-attempted"
+          run_result="$RUNNER_TEMP/aa-admin-run-task.json"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs run-task \
+              --cluster "$ECS_CLUSTER" \
+              --launch-type FARGATE \
+              --platform-version 1.4.0 \
+              --count 1 \
+              --task-definition "$TASK_DEFINITION" \
+              --network-configuration "file://$NETWORK_FILE" \
+              --client-token "$REGISTRATION_OWNER" \
+              --started-by "$REGISTRATION_OWNER" \
+              --enable-ecs-managed-tags \
+              --tags \
+                "key=Capability,value=$CAPABILITY" \
+                "key=WorkflowOwner,value=$REGISTRATION_OWNER" \
+              --output json \
+              --no-cli-pager > "$run_result"; then
+            echo "::error title=Ambiguous task start::The cleanup step will find and stop only tasks bearing this workflow's exact started-by value. Do not retry until cleanup completes."
+            exit 1
+          fi
+
+          if ! jq --exit-status \
+              --arg definition "$TASK_DEFINITION" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '(.failures | length) == 0
+               and (.tasks | length) == 1
+               and .tasks[0].taskDefinitionArn == $definition
+               and .tasks[0].startedBy == $owner
+               and .tasks[0].launchType == "FARGATE"
+               and .tasks[0].platformVersion == "1.4.0"
+               and ((.tasks[0].overrides.containerOverrides // []) | length) == 0' \
+              "$run_result" >/dev/null; then
+            echo "::error title=ECS rejected exact admin task::No accepted task may contain a container-command override."
+            exit 1
+          fi
+
+          task_arn=$(jq -er '.tasks[0].taskArn' "$run_result")
+          printf '%s\n' "$task_arn" > "$RUNNER_TEMP/aa-admin-task-arn"
+          echo "task_arn=$task_arn" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for terminal state and verify audit-log readback
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPECTED_REASON: ${{ inputs.expected_reason }}
+          OPERATOR_NOTE: ${{ inputs.operator_note }}
+          EXPECTED_EVENT: ${{ steps.target.outputs.expected_event }}
+          EXPECTED_SIGNER: ${{ steps.target.outputs.expected_signer }}
+          CAPABILITY: ${{ steps.target.outputs.capability }}
+          REGISTRATION_OWNER: ${{ steps.target.outputs.owner }}
+          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
+          TASK_ARN: ${{ steps.task.outputs.task_arn }}
+          AWS_PAGER: ''
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [ "$ACTION" = "resume-issuance" ]; then
+            echo "::add-mask::$EXPECTED_REASON"
+            echo "::add-mask::$OPERATOR_NOTE"
+          fi
+
+          if ! aws ecs wait tasks-stopped \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "$TASK_ARN" \
+              --no-cli-pager; then
+            echo "::error title=AA admin task did not stop::Cleanup will request a stop and verify its terminal state."
+            exit 1
+          fi
+
+          status_file="$RUNNER_TEMP/aa-admin-task-status.json"
+          aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --include TAGS \
+            --output json \
+            --no-cli-pager > "$status_file"
+          if ! jq --exit-status \
+              --arg arn "$TASK_ARN" \
+              --arg definition "$TASK_DEFINITION" \
+              --arg app "$ADMIN_CONTAINER" \
+              --arg init "$TMP_INIT_CONTAINER" \
+              --arg capability "$CAPABILITY" \
+              --arg owner "$REGISTRATION_OWNER" \
+              '(.failures | length) == 0
+               and (.tasks | length) == 1
+               and .tasks[0].taskArn == $arn
+               and .tasks[0].taskDefinitionArn == $definition
+               and .tasks[0].desiredStatus == "STOPPED"
+               and .tasks[0].lastStatus == "STOPPED"
+               and .tasks[0].launchType == "FARGATE"
+               and .tasks[0].platformVersion == "1.4.0"
+               and ((.tasks[0].overrides.containerOverrides // []) | length) == 0
+               and ([.tasks[0].tags[]?
+                     | select(.key == "Capability" and .value == $capability)] | length) == 1
+               and ([.tasks[0].tags[]?
+                     | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1
+               and ([.tasks[0].containers[]
+                     | select(.name == $app and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1
+               and ([.tasks[0].containers[]
+                     | select(.name == $init and .lastStatus == "STOPPED" and .exitCode == 0)] | length) == 1' \
+              "$status_file" >/dev/null; then
+            echo "::error title=AA admin operation failed::The exact one-off task did not reach a successful terminal state. Inspect its task-scoped restricted CloudWatch logs."
+            exit 1
+          fi
+
+          started_ms=$(<"$RUNNER_TEMP/aa-admin-started-ms")
+          log_events_file="$RUNNER_TEMP/aa-admin-log-events.json"
+          evidence_file="$RUNNER_TEMP/aa-admin-log-evidence.json"
+          found=false
+          for attempt in {1..20}; do
+            aws logs filter-log-events \
+              --log-group-name "$LOG_GROUP" \
+              --start-time "$started_ms" \
+              --filter-pattern "\"$EXPECTED_EVENT\"" \
+              --output json \
+              --no-cli-pager > "$log_events_file"
+            jq -c \
+              --arg task "$TASK_ARN" \
+              --arg container "$ADMIN_CONTAINER" \
+              --arg event "$EXPECTED_EVENT" \
+              '[.events[]?
+                | (.message | fromjson?)
+                | select(.ecs_task_arn == $task
+                         and .container_name == $container
+                         and .event == $event
+                         and .log_schema_version == 1
+                         and .level == "INFO")]' \
+              "$log_events_file" > "$evidence_file"
+            if jq --exit-status 'length > 0' "$evidence_file" >/dev/null; then
+              found=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$found" != true ]; then
+            echo "::error title=Missing audit evidence::The successful task emitted no matching task-scoped CloudWatch audit event within 100 seconds."
+            exit 1
+          fi
+
+          if [ "$ACTION" = "attest-kms" ]; then
+            if ! jq --exit-status --arg signer "${EXPECTED_SIGNER,,}" \
+                'any(.[];
+                  (.signer_address | ascii_downcase) == $signer
+                  and .signature_length == 65
+                  and (.recovery_parity == 0 or .recovery_parity == 1))' \
+                "$evidence_file" >/dev/null; then
+              echo "::error title=Invalid KMS attestation evidence::The fixed-digest signature did not produce the reviewed signer/recovery evidence."
+              exit 1
+            fi
+            echo "The isolated KMS signer passed public-key and fixed-digest signing attestation."
+          else
+            operator_note_length=${#OPERATOR_NOTE}
+            if ! jq --exit-status \
+                --arg reason "$EXPECTED_REASON" \
+                --argjson note_length "$operator_note_length" \
+                'any(.[];
+                  .previous_reason == $reason
+                  and .operator_note_length == $note_length)' \
+                "$evidence_file" >/dev/null; then
+              echo "::error title=Invalid issuance-control evidence::The terminal audit event did not confirm the exact previous pause reason and operator-note length."
+              exit 1
+            fi
+            echo "The issuance breaker was cleared only after the exact expected-reason check, with task-scoped audit evidence."
+          fi
+
+      - name: Stop any owned task and deregister the temporary revision
+        if: always()
+        env:
+          REGISTRATION_OWNER: aa-admin-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_PAGER: ''
+        run: |
+          set -euo pipefail
+          umask 077
+          cleanup_failed=false
+
+          family_file="$RUNNER_TEMP/aa-admin-task-family"
+          owner_file="$RUNNER_TEMP/aa-admin-registration-owner"
+          if [ -s "$owner_file" ] && [ "$(<"$owner_file")" != "$REGISTRATION_OWNER" ]; then
+            echo "::error title=Unsafe cleanup owner::The persisted workflow owner does not match this run."
+            exit 1
+          fi
+
+          expected_family=""
+          if [ -s "$family_file" ]; then
+            expected_family=$(<"$family_file")
+          fi
+
+          task_arns=()
+          task_arn_file="$RUNNER_TEMP/aa-admin-task-arn"
+          if [ -s "$task_arn_file" ]; then
+            task_arns+=("$(<"$task_arn_file")")
+          elif [ -e "$RUNNER_TEMP/aa-admin-run-attempted" ]; then
+            discovered_file="$RUNNER_TEMP/aa-admin-cleanup-tasks-running.json"
+            if aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --started-by "$REGISTRATION_OWNER" \
+                --output json \
+                --no-cli-pager > "$discovered_file"; then
+              mapfile -t discovered < <(jq -r '.taskArns[]?' "$discovered_file")
+              task_arns+=("${discovered[@]}")
+            else
+              cleanup_failed=true
+            fi
+
+            # ListTasks requires started-by to be the only task filter. Search
+            # recent STOPPED tasks by the exact family, then inspect startedBy
+            # locally to recover a task whose RunTask response was lost.
+            stopped_candidates_file="$RUNNER_TEMP/aa-admin-cleanup-stopped-candidates.json"
+            stopped_described_file="$RUNNER_TEMP/aa-admin-cleanup-stopped-described.json"
+            if [ -n "$expected_family" ] && aws ecs list-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --family "$expected_family" \
+                --desired-status STOPPED \
+                --max-results 100 \
+                --output json \
+                --no-cli-pager > "$stopped_candidates_file"; then
+              mapfile -t stopped_candidates < <(jq -r '.taskArns[]?' "$stopped_candidates_file")
+              for ((offset = 0; offset < ${#stopped_candidates[@]}; offset += 100)); do
+                batch=("${stopped_candidates[@]:offset:100}")
+                if aws ecs describe-tasks \
+                    --cluster "$ECS_CLUSTER" \
+                    --tasks "${batch[@]}" \
+                    --include TAGS \
+                    --output json \
+                    --no-cli-pager > "$stopped_described_file"; then
+                  mapfile -t discovered < <(jq -r --arg owner "$REGISTRATION_OWNER" \
+                    '.tasks[]?
+                     | select(.startedBy == $owner)
+                     | select([.tags[]?
+                               | select(.key == "WorkflowOwner" and .value == $owner)] | length == 1)
+                     | .taskArn' \
+                    "$stopped_described_file")
+                  task_arns+=("${discovered[@]}")
+                else
+                  cleanup_failed=true
+                fi
+              done
+            else
+              cleanup_failed=true
+            fi
+          fi
+
+          if [ "${#task_arns[@]}" -gt 0 ]; then
+            mapfile -t task_arns < <(printf '%s\n' "${task_arns[@]}" | awk 'NF' | sort -u)
+          fi
+          if [ "${#task_arns[@]}" -gt 1 ]; then
+            echo "::error title=Duplicate AA admin tasks::More than one task bears this workflow's exact owner; stopping all of them and failing cleanup."
+            cleanup_failed=true
+          fi
+
+          for task_arn in "${task_arns[@]}"; do
+            if [[ ! "$task_arn" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task/ ]]; then
+              echo "::error title=Unsafe cleanup target::Refusing to stop a malformed task ARN."
+              cleanup_failed=true
+              continue
+            fi
+            task_file="$RUNNER_TEMP/aa-admin-cleanup-task.json"
+            if ! aws ecs describe-tasks \
+                --cluster "$ECS_CLUSTER" \
+                --tasks "$task_arn" \
+                --include TAGS \
+                --output json \
+                --no-cli-pager > "$task_file"; then
+              cleanup_failed=true
+              continue
+            fi
+            if ! jq --exit-status \
+                --arg task "$task_arn" \
+                --arg owner "$REGISTRATION_OWNER" \
+                --arg family "$expected_family" \
+                '(.failures | length) == 0
+                 and (.tasks | length) == 1
+                 and .tasks[0].taskArn == $task
+                 and .tasks[0].startedBy == $owner
+                 and ([.tasks[0].tags[]?
+                       | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1
+                 and (.tasks[0].taskDefinitionArn
+                      | split("task-definition/")[1]
+                      | split(":")[0]) == $family' \
+                "$task_file" >/dev/null; then
+              echo "::error title=Unsafe cleanup target::Refusing to stop a task outside this workflow's exact owner and family."
+              cleanup_failed=true
+              continue
+            fi
+            if [ "$(jq -r '.tasks[0].lastStatus' "$task_file")" != "STOPPED" ]; then
+              if ! aws ecs stop-task \
+                  --cluster "$ECS_CLUSTER" \
+                  --task "$task_arn" \
+                  --reason "Cancelled or completed protected AA admin workflow" \
+                  --no-cli-pager >/dev/null; then
+                cleanup_failed=true
+                continue
+              fi
+              if ! aws ecs wait tasks-stopped \
+                  --cluster "$ECS_CLUSTER" \
+                  --tasks "$task_arn" \
+                  --no-cli-pager; then
+                cleanup_failed=true
+              fi
+            fi
+          done
+
+          source_arn=""
+          source_arn_file="$RUNNER_TEMP/aa-admin-source-task-definition-arn"
+          [ ! -s "$source_arn_file" ] || source_arn=$(<"$source_arn_file")
+          definition_arns=()
+          registered_arn_file="$RUNNER_TEMP/aa-admin-registered-task-definition-arn"
+          if [ -s "$registered_arn_file" ]; then
+            definition_arns+=("$(<"$registered_arn_file")")
+          elif [ -s "$family_file" ] && [ -s "$owner_file" ]; then
+            definitions_file="$RUNNER_TEMP/aa-admin-cleanup-definitions.json"
+            if aws ecs list-task-definitions \
+                --family-prefix "$expected_family" \
+                --status ACTIVE \
+                --sort DESC \
+                --output json \
+                --no-cli-pager > "$definitions_file"; then
+              while IFS= read -r candidate; do
+                [ "$candidate" = "$source_arn" ] && continue
+                candidate_file="$RUNNER_TEMP/aa-admin-cleanup-definition-${candidate##*:}.json"
+                if aws ecs describe-task-definition \
+                    --task-definition "$candidate" \
+                    --include TAGS \
+                    --output json \
+                    --no-cli-pager > "$candidate_file" \
+                    && jq --exit-status --arg owner "$REGISTRATION_OWNER" \
+                      '([.tags[]? | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                      "$candidate_file" >/dev/null; then
+                  definition_arns+=("$candidate")
+                fi
+              done < <(jq -r --arg family "$expected_family" \
+                '.taskDefinitionArns[]?
+                 | select((split("task-definition/")[1] | split(":")[0]) == $family)' \
+                "$definitions_file")
+            else
+              cleanup_failed=true
+            fi
+          fi
+
+          if [ "${#definition_arns[@]}" -gt 0 ]; then
+            mapfile -t definition_arns < <(printf '%s\n' "${definition_arns[@]}" | awk 'NF' | sort -u)
+          fi
+          if [ "${#definition_arns[@]}" -gt 1 ]; then
+            echo "::error title=Duplicate temporary definitions::More than one ACTIVE revision belongs to this workflow; deregistering all owned revisions and failing cleanup."
+            cleanup_failed=true
+          fi
+
+          for definition_arn in "${definition_arns[@]}"; do
+            if [ "$definition_arn" = "$source_arn" ] || \
+               [[ ! "$definition_arn" =~ ^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-sepolia-aa-admin-(kms-attest|resume-issuance):[1-9][0-9]*$ ]]; then
+              echo "::error title=Unsafe deregistration target::Refusing to deregister the Terraform source or a malformed ARN."
+              cleanup_failed=true
+              continue
+            fi
+            definition_file="$RUNNER_TEMP/aa-admin-cleanup-definition.json"
+            if ! aws ecs describe-task-definition \
+                --task-definition "$definition_arn" \
+                --include TAGS \
+                --output json \
+                --no-cli-pager > "$definition_file" \
+                || ! jq --exit-status \
+                  --arg arn "$definition_arn" \
+                  --arg owner "$REGISTRATION_OWNER" \
+                  --arg family "$expected_family" \
+                  '.taskDefinition.taskDefinitionArn == $arn
+                   and .taskDefinition.status == "ACTIVE"
+                   and .taskDefinition.family == $family
+                   and ([.tags[]? | select(.key == "WorkflowOwner" and .value == $owner)] | length) == 1' \
+                  "$definition_file" >/dev/null; then
+              echo "::error title=Unsafe deregistration evidence::The temporary task definition is not ACTIVE and owned by this exact workflow."
+              cleanup_failed=true
+              continue
+            fi
+            if ! aws ecs deregister-task-definition \
+                --task-definition "$definition_arn" \
+                --no-cli-pager >/dev/null; then
+              cleanup_failed=true
+              continue
+            fi
+            if ! aws ecs describe-task-definition \
+                --task-definition "$definition_arn" \
+                --query taskDefinition.status \
+                --output text \
+                --no-cli-pager | grep -qx INACTIVE; then
+              cleanup_failed=true
+            fi
+          done
+
+          if [ "$cleanup_failed" = true ]; then
+            echo "::error title=AA admin cleanup incomplete::Reconcile this workflow's task and temporary task-definition revision before retrying."
+            exit 1
+          fi
+
+      - name: Remove temporary local evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          find "$RUNNER_TEMP" -maxdepth 1 -type f -name 'aa-admin-*' -delete

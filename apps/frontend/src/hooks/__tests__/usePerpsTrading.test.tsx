@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex } from 'viem'
+import { getAddress, type Address, type Hex } from 'viem'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -78,15 +78,15 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B',
+    usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
     usdcEip712Version: null,
-    marginClearinghouse: '0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd',
-    cfdEngine: '0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352',
-    orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
+    marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
+    cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
+    orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
     orderLifecycleBook: '0x1111111111111111111111111111111111111111',
-    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
     policyEvaluator: '0x2222222222222222222222222222222222222222',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
@@ -727,7 +727,7 @@ describe('usePerpsTrading', () => {
           account: ACCOUNT,
           calls: [
             expect.objectContaining({
-              to: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+              to: getAddress(PERPS_ARBITRUM_SEPOLIA.cfdEngine),
               value: 0n,
             }),
           ],

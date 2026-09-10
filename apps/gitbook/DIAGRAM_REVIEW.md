@@ -4,9 +4,11 @@ Reviewed on 2026-09-07. Covers all 30 current diagram assets and their article r
 
 ## Source of truth
 
-Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122c779d4d681d0fa2be517707b7f7df3902`, pinned by `config/perps/arbitrum-sepolia-v2.json`. The source was read at that exact commit, not from a possibly newer working tree. This is a release-source review, not a claim that mutable live parameters were freshly queried.
+Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122c779d4d681d0fa2be517707b7f7df3902`, the deployment pin at the time of that review. The source was read at that exact commit, not from a possibly newer working tree. This is a release-source review, not a claim that mutable live parameters were freshly queried.
 
-Account-abstraction ordering was checked against the vendored client’s `sendSponsoredAction`, the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. The vendored client’s provenance is recorded in `apps/frontend/vendor/perps-aa-client/UPSTREAM.md`.
+The app now pins v1.2.3. The 2026-09-10 AA package migration updates only client-source references in the catalog and manifest; it does not certify all 30 diagrams against v1.2.3 or change their SVGs. Full regeneration remains blocked by the existing contract-review guard until a separate semantic review updates this record and the generator's reviewed commit.
+
+Account-abstraction ordering was checked against [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts), the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. Package provenance is recorded in `config/perps-aa-client-release.json`.
 
 Each of the 30 records in [the manifest](.gitbook/assets/diagrams/diagram-manifest.json) lists its article, SVG, accessible description and reviewed source functions. `diagram-catalog.mjs` is the editable content source. Regeneration fails when the pinned contract commit changes so that a visual rebuild cannot silently masquerade as a new semantic review.
 
@@ -17,7 +19,7 @@ Each of the 30 records in [the manifest](.gitbook/assets/diagrams/diagram-manife
 | Weekly calendar | Replace fixed UTC hours and the three-hour runway with New York time, US DST, a 30-minute Friday lead and 15-minute Sunday lag. Label the timeline as not to scale and retain override/data-availability qualifications. | `MarketCalendarLib.marketStatus`, `newYorkMarketBoundary` |
 | Order lifecycle | Separate successful submission from execution. Pending and terminal failure do not imply the requested position update. | `OrderRouterV2ExecutionSidecar.executeOrder`, `OrderV2Types` |
 | Order failures | Distinguish V2 pending reasons from terminal reasons; unexpected engine/receipt failures are not automatically terminal. Executed and Failed are alternatives, never consecutive steps. | `OrderV2Types.PendingReason`, `TerminalReason`; sidecar rollback boundary |
-| Sponsorship | Obtain final paymaster data before the wallet signs. Do not equate a transaction’s inclusion with successful execution of the inner operation. | Vendored `orchestrator.js`; frontend receipt recovery |
+| Sponsorship | Obtain final paymaster data before the wallet signs. Do not equate a transaction’s inclusion with successful execution of the inner operation. | Released client `orchestrator.ts`; frontend receipt recovery |
 | Price risk | Use PnL pledge + nettable own claim + price PnL for V2 price-risk equity. Keep action charges separate. | `PositionRiskAccountingLib.buildExactPriceRiskState` |
 | Close funding | Replace the obsolete shared fee → base obligation → spread queue. Price losses net the same account’s claim before collectible pledge. Charges have separate eligible funds; partial closes cannot waive them. | `CfdEnginePlanLib._planIsolatedCloseSettlement`, `_planCloseActionSettlement` |
 | Frozen spread | Show recovery attribution after fee, carry and positive VPI, not an all-purpose collateral queue. Note net negative-VPI offsets and waiver. | `CfdEngineSettlementSidecar._recoveredFrozenSpreadUsdc` |

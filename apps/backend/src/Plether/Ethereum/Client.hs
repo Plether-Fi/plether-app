@@ -18,6 +18,7 @@ module Plether.Ethereum.Client
   , CallParams (..)
   , BlockTag (..)
   , renderBlockTag
+  , decodeRpcResponseEnvelope
   ) where
 
 import Control.Exception
@@ -33,6 +34,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -42,25 +44,29 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Word (Word64)
-import GHC.Generics (Generic)
 import GHC.Clock (getMonotonicTimeNSec)
-import Plether.Utils.Hex (hexToInteger, intToHex)
-import Plether.Logging (field, logInfo, logWarnEvery)
+import GHC.Generics (Generic)
 import Network.HTTP.Client
-  ( HttpException (..)
+  ( BodyReader
+  , HttpException (..)
   , HttpExceptionContent (..)
   , Manager
   , Request (..)
   , RequestBody (..)
-  , httpLbs
+  , brRead
   , newManager
   , parseRequest
   , responseBody
   , responseStatus
+  , responseTimeoutMicro
+  , withResponse
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
+import Plether.Logging (field, logInfo, logWarnEvery)
+import Plether.Utils.Hex (hexToInteger, intToHex)
 import System.IO.Unsafe (unsafePerformIO)
+import System.Timeout (timeout)
 
 data EthClient = EthClient
   { clientManager :: Manager
@@ -120,7 +126,9 @@ instance ToJSON RpcRequest where
       ]
 
 data RpcResponse = RpcResponse
-  { rpcResult :: Maybe Value
+  { rpcResponseVersion :: Text
+  , rpcResponseId :: Integer
+  , rpcResult :: Maybe Value
   , rpcError :: Maybe RpcResponseError
   }
   deriving stock (Generic)
@@ -134,11 +142,13 @@ data RpcResponseError = RpcResponseError
 
 instance FromJSON RpcResponse where
   parseJSON = withObject "RpcResponse" $ \v -> do
+    version <- v .: "jsonrpc"
+    responseId <- v .: "id"
     let result = KM.lookup (Key.fromText "result") v
     err <- case KM.lookup (Key.fromText "error") v of
       Just value -> Just <$> parseJSON value
       Nothing -> pure Nothing
-    pure $ RpcResponse result err
+    pure $ RpcResponse version responseId result err
 
 instance FromJSON RpcResponseError where
   parseJSON = withObject "RpcResponseError" $ \v ->
@@ -193,40 +203,43 @@ rpcCall client method params = do
           , rpcId = reqId
           }
 
-  eResult <- try @SomeException $ do
-    req <- parseRequest $ T.unpack $ clientRpcUrl client
-    let req' =
-          req
-            { method = "POST"
-            , requestHeaders =
-                ("Content-Type", "application/json")
-                  : maybe
-                    []
-                    (\token -> [("Authorization", "Bearer " <> TE.encodeUtf8 token)])
-                    (clientBearerToken client)
-            , requestBody = RequestBodyLBS $ Aeson.encode rpcReq
-            }
-    response <- httpLbs req' (clientManager client)
-    pure (statusCode $ responseStatus response, responseBody response)
-
   outcome <-
-    case eResult of
-      Left err ->
-        case fromException err :: Maybe SomeAsyncException of
-          Just _ -> throwIO err
-          Nothing -> pure $ Left $ RpcHttpError $ rpcHttpExceptionText err
-      Right (httpStatus, body)
-        | httpStatus < 200 || httpStatus >= 300 ->
-            pure $ Left $ RpcHttpError $ "statusCode = " <> T.pack (show httpStatus)
-        | otherwise ->
-            pure $ case Aeson.eitherDecode body of
-              Left err -> Left $ RpcJsonError $ T.pack err
-              Right RpcResponse {rpcResult = Just result, rpcError = Nothing} ->
-                Right result
-              Right RpcResponse {rpcError = Just RpcResponseError {..}} ->
-                Left $ RpcNodeError rpcErrCode rpcErrMessage (renderErrorData <$> rpcErrData)
-              Right _ ->
-                Left $ RpcJsonError "No result or error in response"
+    if not $ validRpcScheme $ clientRpcUrl client
+      then pure $ Left $ RpcHttpError "invalid RPC endpoint"
+      else do
+        eResult <- try @SomeException $
+          timeout rpcRequestTimeoutMicros $ do
+            req <- parseRequest $ T.unpack $ clientRpcUrl client
+            let req' =
+                  req
+                    { method = "POST"
+                    , requestHeaders =
+                        ("Content-Type", "application/json")
+                          : maybe
+                            []
+                            (\token -> [("Authorization", "Bearer " <> TE.encodeUtf8 token)])
+                            (clientBearerToken client)
+                    , requestBody = RequestBodyLBS $ Aeson.encode rpcReq
+                    , responseTimeout = responseTimeoutMicro rpcRequestTimeoutMicros
+                    , redirectCount = 0
+                    , checkResponse = \_ _ -> pure ()
+                    }
+            withResponse req' (clientManager client) $ \response -> do
+              body <- readBoundedBody maxRpcResponseBytes $ responseBody response
+              pure (statusCode $ responseStatus response, body)
+        case eResult of
+          Left err ->
+            case fromException err :: Maybe SomeAsyncException of
+              Just _ -> throwIO err
+              Nothing -> pure $ Left $ RpcHttpError $ rpcHttpExceptionText err
+          Right Nothing ->
+            pure $ Left $ RpcHttpError "response timeout"
+          Right (Just (_, Left err)) ->
+            pure $ Left $ RpcHttpError err
+          Right (Just (httpStatus, Right _))
+            | httpStatus < 200 || httpStatus >= 300 ->
+                pure $ Left $ RpcHttpError $ "statusCode = " <> T.pack (show httpStatus)
+          Right (Just (_, Right body)) -> pure $ decodeRpcResponseEnvelope reqId body
   finishedAt <- getMonotonicTimeNSec
   recordRpcCall client method (finishedAt - startedAt) (either (const True) (const False) outcome)
   pure outcome
@@ -302,6 +315,50 @@ isLegacyAlchemyCredentialUrl endpoint =
               && normalized /= "YOUR_KEY"
               && not ("$" `T.isPrefixOf` normalized)
       _ -> False
+
+decodeRpcResponseEnvelope :: Integer -> ByteString -> Either RpcError Value
+decodeRpcResponseEnvelope expectedId body =
+  case Aeson.eitherDecodeStrict' body of
+    Left err -> Left $ RpcJsonError $ T.pack err
+    Right RpcResponse
+      { rpcResponseVersion = "2.0"
+      , rpcResponseId = responseId
+      , rpcResult = Just result
+      , rpcError = Nothing
+      }
+      | responseId == expectedId -> Right result
+    Right RpcResponse
+      { rpcResponseVersion = "2.0"
+      , rpcResponseId = responseId
+      , rpcResult = Nothing
+      , rpcError = Just RpcResponseError {..}
+      }
+      | responseId == expectedId ->
+          Left $ RpcNodeError rpcErrCode rpcErrMessage (renderErrorData <$> rpcErrData)
+    Right _ -> Left $ RpcJsonError "Invalid or mismatched JSON-RPC response envelope"
+
+validRpcScheme :: Text -> Bool
+validRpcScheme url =
+  "https://" `T.isPrefixOf` url || "http://" `T.isPrefixOf` url
+
+readBoundedBody :: Int -> BodyReader -> IO (Either Text ByteString)
+readBoundedBody limit = go 0 []
+ where
+  go total chunks reader = do
+    chunk <- brRead reader
+    if BS.null chunk
+      then pure $ Right $ BS.concat $ reverse chunks
+      else
+        let next = total + BS.length chunk
+         in if next > limit
+              then pure $ Left "Ethereum RPC response exceeded the configured size limit"
+              else go next (chunk : chunks) reader
+
+rpcRequestTimeoutMicros :: Int
+rpcRequestTimeoutMicros = 20_000_000
+
+maxRpcResponseBytes :: Int
+maxRpcResponseBytes = 1024 * 1024
 
 renderErrorData :: Value -> Text
 renderErrorData = \case

@@ -45,7 +45,7 @@
       "asset": ".gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -173,7 +173,7 @@
       "asset": ".gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -185,7 +185,7 @@
       "alt": "An unfunded residual price payout becomes a claim. Claim settlement is all-or-nothing once aggregate cash coverage returns, and the credit bucket depends on whether a position remains open.",
       "evidence": [
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -205,12 +205,12 @@
       "asset": ".gitbook/assets/diagrams/wallet-trading-account-ownership.svg",
       "alt": "The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "apps/frontend/vendor/perps-aa-client/dist/actions.js"
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts"
       ]
     },
     {
@@ -219,7 +219,7 @@
       "asset": ".gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg",
       "alt": "Prepare the action, request stub data, estimate gas and attach final paymaster data before the owner signs. Then submit the signed operation and verify the result.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -232,8 +232,8 @@
       "evidence": [
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -247,7 +247,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -258,7 +258,7 @@
       "asset": ".gitbook/assets/diagrams/open-increase-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -272,7 +272,7 @@
         "packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "apps/frontend/vendor/perps-aa-client/dist/actions.js"
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts"
       ]
     },
     {
@@ -284,7 +284,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -295,7 +295,7 @@
       "asset": ".gitbook/assets/diagrams/reduce-close-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -309,7 +309,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -320,7 +320,7 @@
       "asset": ".gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg",
       "alt": "Preparation and sponsorship precede the wallet signature. Successful operation confirmation is separate from delayed-order execution.",
       "evidence": [
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -334,7 +334,7 @@
         "packages/perps/src/OrderV2Types.sol:TerminalReason,PendingReason,ExecutionBounds",
         "packages/perps/src/OrderRouterV2ExecutionSidecar.sol:executeOrder,executeOrderBatch",
         "packages/perps/src/libraries/OrderOraclePolicyLib.sol:getOracleExecutionPolicy",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]
@@ -347,7 +347,7 @@
       "evidence": [
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts"
       ]
     },
@@ -360,8 +360,8 @@
         "packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts",
         "packages/perps/src/MarginClearinghouse.sol",
         "packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw",
-        "apps/frontend/vendor/perps-aa-client/dist/actions.js",
-        "apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts",
+        "https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts",
         "apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel",
         "apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx"
       ]

@@ -9,7 +9,7 @@ import {
 } from '../../api'
 import { BUILD_COMMIT, DEV_API_PROXY_TARGET } from '../../config/buildInfo'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../../contracts/perpsAddresses'
-import { usePerpsIdentity } from '../../perps-aa'
+import { isPerpsAaManifestV2, usePerpsIdentity } from '../../perps-aa'
 import { Modal } from '../ui/Modal'
 
 interface BuildDetailsModalProps {
@@ -172,7 +172,21 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
               'Trading Account': perpsIdentity.accountAddress,
               EntryPoint: perpsIdentity.manifest?.entryPoint,
               Factory: perpsIdentity.manifest?.smartAccountFactory,
-              'Pimlico proxy': perpsIdentity.manifest?.pimlicoRpcUrl,
+              ...(perpsIdentity.manifest &&
+                isPerpsAaManifestV2(perpsIdentity.manifest)
+                ? {
+                    'Bundler proxy':
+                      perpsIdentity.manifest.bundlerRpcUrl,
+                    'Paymaster proxy':
+                      perpsIdentity.manifest.paymasterRpcUrl,
+                    Paymaster: perpsIdentity.manifest.paymasterAddress,
+                    'Paymaster version':
+                      perpsIdentity.manifest.paymasterVersion,
+                  }
+                : {
+                    'Pimlico proxy':
+                      perpsIdentity.manifest?.pimlicoRpcUrl,
+                  }),
               Error: perpsIdentity.error?.message,
             }}
           />

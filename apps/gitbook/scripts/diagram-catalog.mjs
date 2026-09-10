@@ -155,6 +155,6 @@ export const evidence = {
   claim: ['packages/perps/src/CfdEngine.sol:settleTraderClaim,_settleTraderClaimBalance,_payOrRecordTraderClaim,_availableCashForFreshPoolPayouts'],
   risk: ['packages/perps/src/libraries/PositionRiskAccountingLib.sol:computeBorrowBaseUsdc,computeIndexedCarryUsdc,buildExactPriceRiskState'],
   waterfall: ['packages/perps/src/libraries/HousePoolWaterfallAccountingLib.sol:absorbLoss,distributeRevenue,paySeniorCoupon'],
-  accounts: ['packages/perps/src/MarginClearinghouse.sol', 'packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw', 'apps/frontend/vendor/perps-aa-client/dist/actions.js'],
-  aa: ['apps/frontend/vendor/perps-aa-client/dist/orchestrator.js:sendSponsoredAction', 'apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel', 'apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx'],
+  accounts: ['packages/perps/src/MarginClearinghouse.sol', 'packages/perps/src/CfdEngineSettlementSidecar.sol:validateWithdraw', 'https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/actions.ts'],
+  aa: ['https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts', 'apps/frontend/src/utils/sponsoredOperation.ts:sponsoredOperationStatusLabel', 'apps/frontend/src/perps-aa/SponsoredOperationRecovery.tsx'],
 }

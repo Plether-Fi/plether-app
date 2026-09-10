@@ -13,7 +13,7 @@ import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 import { PerpsCloseReconciliationDetails } from './PerpsCloseReconciliationDetails'
 import type { PositionProtection } from '../contracts/positionProtection'
-import { formatLiquidationPrice, freeSettlementAfterCarry, liquidationDisplayPrice, type LiquidationThreshold } from '../utils/perpsRisk'
+import { formatLiquidationPrice, projectCarry, liquidationDisplayPrice, type LiquidationThreshold } from '../utils/perpsRisk'
 import { protectionPrice, protectionStatusLabel } from '../utils/positionProtection'
 
 export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory' | 'protections'
@@ -403,9 +403,12 @@ function PositionView({
 
   const positionMarginAmountRaw = parsePerpsUsdc(positionMarginAmount)
   const riskUnavailable = position.riskStatus === 'unavailable'
-  const positionMarginLimitRaw = riskUnavailable ? 0n : freeSettlementAfterCarry(freeBuyingPowerUsdc, position.pendingCarryUsdc) ?? 0n
+  const carryProjection = !riskUnavailable && freeBuyingPowerUsdc !== undefined && position.pendingCarryUsdc !== undefined
+    ? projectCarry(position.marginUsdc, freeBuyingPowerUsdc, position.pendingCarryUsdc)
+    : undefined
+  const positionMarginLimitRaw = carryProjection?.freeSettlementUsdc ?? 0n
   const isPositionMarginTooHigh = positionMarginAmountRaw > positionMarginLimitRaw
-  const resultingPositionMargin = position.marginUsdc + positionMarginAmountRaw
+  const resultingPositionMargin = (carryProjection?.positionMarginUsdc ?? position.marginUsdc) + positionMarginAmountRaw
   const canSubmitPositionMargin =
     positionMarginAmountRaw > 0n &&
     !isPositionMarginTooHigh &&
@@ -439,14 +442,14 @@ function PositionView({
   const currentPnl = position.unrealizedPnlUsdc
   const pendingCarryTooltip = (
     <span>
-      Pending carry is paid from eligible free settlement, separately from position equity.
-      If free settlement cannot cover it, the account can become liquidatable even before its price threshold.
-      Position margin and reserved funds do not cover carry.
+      Pending carry is paid from active position margin first, then eligible free settlement.
+      This reduces the margin backing price losses. If both sources cannot cover carry, the account can become liquidatable.
+      Claims and other reserved funds do not cover carry.
     </span>
   )
   const liquidationTooltip = (
     <span>
-      Price liquidation occurs when position margin plus same-account claims and price PnL reach maintenance margin. Free settlement does not increase this price buffer.
+      Price liquidation occurs when position margin after carry plus same-account claims and price PnL reach maintenance margin. Free settlement does not increase this price buffer.
       <br />
       <br />
       <strong>Not in range</strong> means there is no liquidation threshold inside the protocol&apos;s
@@ -537,7 +540,7 @@ function PositionView({
       {riskUnavailable ? <p role="status" className="mb-3 text-sm text-content-secondary">Account risk unavailable. Waiting for a current account snapshot.</p> : null}
       {position.liquidatable ? <div role="alert" className="mb-3 border border-brand-orange/40 p-3 text-sm text-brand-orange">
         <strong>Liquidatable</strong> — {riskUnavailable ? 'Last known contract status; current risk data is unavailable.' : 'The contract reports this position is eligible for liquidation.'}
-        {!riskUnavailable && (position.uncoveredCarryUsdc ?? 0n) > 0n ? <p>Free settlement does not cover accrued carry.</p> : null}
+        {!riskUnavailable && (position.uncoveredCarryUsdc ?? 0n) > 0n ? <p>Position margin plus free settlement does not cover accrued carry.</p> : null}
         {!riskUnavailable && position.vpiReserveUnderfunded ? <p>The dedicated VPI reserve is insufficient.</p> : null}
       </div> : null}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
@@ -589,7 +592,7 @@ function PositionView({
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>
         {' '}
-        <span>Position margin and same-account claims back price losses. Keep free settlement available to cover carry separately.</span>
+        <span>Position margin after carry and same-account claims back price losses. Carry consumes position margin first, then free settlement.</span>
       </p>
       <Modal
         isOpen={isPositionMarginModalOpen}
@@ -623,7 +626,7 @@ function PositionView({
       >
         <div className="space-y-5">
           <p className="text-sm leading-5 text-content-secondary">
-            This moves free USDC into position margin, increasing the price-loss buffer without changing position size. The maximum reserves accrued carry first; future carry still needs free settlement.
+            This moves free USDC into position margin, increasing the price-loss buffer without changing position size. The maximum accounts for accrued carry consuming existing position margin first, then free settlement. Future carry can reduce the new margin too.
           </p>
 
           <div className="border border-brand-border/20 bg-app-bg p-4 text-sm leading-5 text-content-secondary">

@@ -10,6 +10,9 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 4
     defaults:
       run:
@@ -17,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,9 +29,16 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: apps/frontend/package-lock.json
+          registry-url: https://npm.pkg.github.com
+          scope: '@plether-fi'
+
+      - name: Pin npm to the frontend deployment version
+        run: npm install -g npm@11.6.2
 
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Arbitrum Sepolia mark price from backend cache
         env:

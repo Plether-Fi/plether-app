@@ -1,11 +1,27 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.35;
-// Reference vectors for plether-core d704122c779d4d681d0fa2be517707b7f7df3902.
+// Reference vectors for plether-core ffe45937b7f38133133ad292c5435828bf99357d.
 // Run with the pinned CfdMath, CfdTypes, and PositionRiskAccountingLib sources.
 // @plether/perps/ must resolve to those unmodified sources, not the frontend solver.
 import {CfdTypes} from "@plether/perps/CfdTypes.sol";
 import {PositionRiskAccountingLib as Risk} from "@plether/perps/libraries/PositionRiskAccountingLib.sol";
+import {IMarginClearinghouse} from "@plether/perps/interfaces/IMarginClearinghouse.sol";
+import {MarginClearinghouseAccountingLib as Accounting} from "@plether/perps/libraries/MarginClearinghouseAccountingLib.sol";
 contract PerpsRiskReferenceTest {
+    function testCarryProjection() external pure {
+        IMarginClearinghouse.AccountUsdcBuckets memory buckets = IMarginClearinghouse.AccountUsdcBuckets({
+            settlementBalanceUsdc: 1100, totalLockedMarginUsdc: 350,
+            activePositionMarginUsdc: 250, otherLockedMarginUsdc: 100, freeSettlementUsdc: 750
+        });
+        (Accounting.SettlementConsumption memory consumption, IMarginClearinghouse.AccountUsdcBuckets memory afterBuckets) = Accounting.projectCarryLoss(buckets, 20);
+        require(afterBuckets.activePositionMarginUsdc == 230 && afterBuckets.freeSettlementUsdc == 750 && consumption.uncoveredUsdc == 0);
+        (consumption, afterBuckets) = Accounting.projectCarryLoss(buckets, 300);
+        require(afterBuckets.activePositionMarginUsdc == 0 && afterBuckets.freeSettlementUsdc == 700 && consumption.uncoveredUsdc == 0);
+        (consumption, afterBuckets) = Accounting.projectCarryLoss(buckets, 1007);
+        require(afterBuckets.activePositionMarginUsdc == 0 && afterBuckets.freeSettlementUsdc == 0 && consumption.uncoveredUsdc == 7);
+        require(afterBuckets.otherLockedMarginUsdc == 100 && buckets.activePositionMarginUsdc == 250);
+    }
+
     event log_named_uint(string key, uint256 value);
     function record(string memory name, uint8 side, uint256 size, uint256 entryCost, uint256 margin, uint256 claim, uint256 bps) internal {
         CfdTypes.Position memory pos;
@@ -26,6 +42,7 @@ contract PerpsRiskReferenceTest {
         emit log_named_uint(name, low);
     }
     function testReferenceVectors() external {
+        record("long-after-carry", 0, 10000000000000000000000, 10000000000, 230000000, 0, 10);
         record("long", 0, 10000000000000000000000, 10000000000, 250000000, 0, 10);
         record("short", 1, 10000000000000000000000, 10000000000, 250000000, 0, 10);
         record("claim", 0, 10000000000000000000000, 10000000000, 250000000, 750000000, 10);

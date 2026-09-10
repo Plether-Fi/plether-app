@@ -41,7 +41,7 @@ function validManifest(): Record<string, unknown> {
     cfdEngine: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     orderRouter: '0xcccccccccccccccccccccccccccccccccccccccc',
     orderLifecycleBook: '0xdddddddddddddddddddddddddddddddddddddddd',
-    positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
     policyEvaluator: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
@@ -182,7 +182,7 @@ describe('PerpsIdentityProvider', () => {
     ).toBe(true)
 
     const nextManifest = validManifest()
-    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260906-v2'
+    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260910-v2'
     const fetchManifest = vi.fn(async () => new Response(
       JSON.stringify(nextManifest),
       {
@@ -221,7 +221,7 @@ describe('PerpsIdentityProvider', () => {
       expect(result.current.status).toBe('ready')
     })
     expect(result.current.identity?.manifestVersion).toBe(
-      'perps-aa-arbitrum-sepolia-20260906-v2'
+      'perps-aa-arbitrum-sepolia-20260910-v2'
     )
   })
 

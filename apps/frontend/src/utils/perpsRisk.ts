@@ -1,6 +1,8 @@
 import { formatUnits } from 'viem'
 
-/** v1.2.2 PositionRiskAccountingLib.buildExactPriceRiskState, source d704122c. */
+/** v1.2.3 PositionRiskAccountingLib.buildExactPriceRiskState, source ffe45937.
+ * Supply position margin after projecting carry; claims cannot pay carry.
+ */
 export interface PerpsPriceRiskInputs {
   size: bigint
   side: number
@@ -64,7 +66,14 @@ export function formatLiquidationPrice(rawPrice: bigint | undefined, capPrice: b
   return Number(formatUnits(display, 8)).toFixed(decimals)
 }
 
-export function freeSettlementAfterCarry(freeUsdc?: bigint, carryUsdc?: bigint): bigint | undefined {
-  if (freeUsdc === undefined || carryUsdc === undefined) return undefined
-  return freeUsdc > carryUsdc ? freeUsdc - carryUsdc : 0n
+/** MarginClearinghouseAccountingLib.projectCarryLoss: active margin, then free funds. */
+export function projectCarry(positionMarginUsdc: bigint, freeUsdc: bigint, carryUsdc: bigint) {
+  const fromMargin = carryUsdc < positionMarginUsdc ? carryUsdc : positionMarginUsdc
+  const residual = carryUsdc - fromMargin
+  const fromFree = residual < freeUsdc ? residual : freeUsdc
+  return {
+    positionMarginUsdc: positionMarginUsdc - fromMargin,
+    freeSettlementUsdc: freeUsdc - fromFree,
+    uncoveredCarryUsdc: residual - fromFree,
+  }
 }

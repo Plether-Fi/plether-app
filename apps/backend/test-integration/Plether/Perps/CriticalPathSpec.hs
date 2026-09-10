@@ -34,6 +34,7 @@ import Network.Wai.Test
   , runSession
   , setPath
   )
+import Plether.AA.Gateway (newNativeGatewayState)
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
@@ -219,8 +220,9 @@ makeApiApplication manager pool config rpcUrl = do
       manager
       perpsRequestId
       (RpcClientOptions rpcUrl Nothing "integration-api-perps")
+  nativeGatewayState <- newNativeGatewayState manager config perpsClient
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState
+    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =
@@ -476,12 +478,12 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsMarginClearinghouse = testClearinghouse
     , cfgPerpsPletherOracle = testOracle
     , cfgPerpsAccountLens = testLens
-    , cfgPerpsHousePool = "0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918"
-    , cfgPerpsSettlementMonitorLens = "0xf799Be4f8B5142C052d821F0067ADdFBF9Ce5820"
+    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
-    , cfgVaultHistoryHousePoolAddress = "0x21D52509Bb9b9857DaBc8c7FD36dD7fed9118918"
-    , cfgVaultHistorySeniorVaultAddress = "0x7Bf2B3d3912b5B8D367987C9ADfC6Bd1216E8129"
-    , cfgVaultHistoryJuniorVaultAddress = "0x41D785d3BcF4D0e306E491a66Ddb0d938135Cc1c"
+    , cfgVaultHistoryHousePoolAddress = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+    , cfgVaultHistorySeniorVaultAddress = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+    , cfgVaultHistoryJuniorVaultAddress = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
@@ -489,6 +491,7 @@ testConfig databaseUrl rpcUrl =
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetGuardConfig = Nothing
+    , cfgNativeAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
@@ -499,8 +502,8 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x7Bf2B3d3912b5B8D367987C9ADfC6Bd1216E8129"
-    , cfgLpSettlementJuniorVault = "0x41D785d3BcF4D0e306E491a66Ddb0d938135Cc1c"
+    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60

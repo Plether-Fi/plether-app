@@ -23,9 +23,9 @@ const owner = release.release.owner
 const trader = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const keeper = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
-if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified v1.2.2 release zip')
-if (release.release.version !== 'v1.2.2' || createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== '685a309a2a0296a0ecef99a6efc77ba85d86de7132f3ee992c3cac46efa50b7a') throw new Error('Expected the pinned v1.2.2 ABI bundle')
-const loadAbi = name => JSON.parse(execFileSync('unzip', ['-p', bundle, `abi/${name}.json`], { encoding: 'utf8' }))
+if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified v1.2.3 release tar.gz')
+if (release.release.version !== 'v1.2.3' || createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('Expected the pinned v1.2.3 ABI bundle')
+const loadAbi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
 const abis = { mockUsdc: loadAbi('MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
 const log = []
 const note = (action, tx) => { log.unshift({ action, tx, time: new Date().toISOString() }); log.splice(40); console.log(action, tx ?? '') }

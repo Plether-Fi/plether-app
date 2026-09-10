@@ -54,27 +54,26 @@ does not add a manual or sponsored retry action.
 
 ## Build provenance
 
-The complete Book ABI and the four AA action builders come from
-`packages/perps-aa-client` in the local upstream branch
-`codex/sl-tp-aa-client`, commit `3472427ed15b0a478248af7d025535da349a8592`.
-That commit restores the previously removed package on the v1.2.1 artifact
-tree and adds protection support. It has not been pushed by this task.
-Publish/review that upstream commit before treating the vendor pin as remotely
-reproducible. Do not edit generated vendor files by hand.
+The Book ABI and all four protection action builders are published with native
+sponsorship support in [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/releases/tag/perps-aa-client-v0.1.0).
+Source: [reviewed Core commit](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client), PR: https://github.com/Plether-Fi/plether-core/pull/94.
+`config/perps-aa-client-release.json` and the frontend lockfile record the
+package commit, version, tag, and integrity. Upgrade through a reviewed immutable
+package release; never edit installed package files.
 
-From this repository's root, after building that upstream package:
+The protection-worker ABI is generated separately from the deployed Core release bundle:
 
 ```bash
-node scripts/vendor-perps-aa-client.mjs /path/to/clean/plether-core
-node scripts/generate-protection-worker-abi.mjs /path/to/built/plether-core
+node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.2.3-arbitrum-sepolia.tar.gz
 ```
 
-The second command consumes Foundry artifacts for PositionProtectionBook,
-OrderRouter, OrderLifecycleBook and PletherOracle, built with the deployed
-source tree (`c3f60f58bcd5dc1b85a28739a5de7ec4a2ee114c`). Use the committed
-dependency revisions and compiler settings; the generator rejects changed
-contract source trees and tracked dependency revisions. Vendor hashes are in
-`SHA256SUMS`.
+The generator verifies the bundle SHA-256 against
+`config/perps/arbitrum-sepolia-v2.json` before extracting the
+PositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.
+Deployment source: `ffe45937b7f38133133ad292c5435828bf99357d`.
+Bundle SHA-256: `5705b875ea07f26b872724d3559a3a686fc0332695e657398a85d2fa65ab7256`.
+The AA package release is independent of this deployment-specific ABI bundle;
+package migration does not regenerate worker artifacts.
 
 ## Worker and history
 
