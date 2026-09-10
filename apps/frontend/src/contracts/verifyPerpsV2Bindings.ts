@@ -28,7 +28,7 @@ export async function verifyProtectionDeployment(client: PublicClient, manifest:
     const contract = release.contracts[key]
     requireSameAddress(`TP/SL ${key}`, address, contract.address as Address)
     const code = await client.getCode({ address, blockNumber })
-    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match v1.2.1`)
+    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version}`)
   }
 }
 

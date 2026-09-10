@@ -373,18 +373,18 @@ function AddPositionMargin() {
           />
         </div>
 
-        <AmountInput label="Amount to add" value="300" max="847.00" />
+        <AmountInput label="Amount to add" value="300" max="848.25" />
 
         <dl className="border border-brand-border/20 bg-app-bg px-4">
           <SummaryRow label="Amount being added" value={<TokenAmount amount="+300.00" />} tone="positive" />
-          <SummaryRow label="Resulting position margin" value={<TokenAmount amount="700.00" />} />
+          <SummaryRow label="Resulting position margin" value={<TokenAmount amount="698.75" />} />
           <SummaryRow label="Current leverage" value="4.92x" />
-          <SummaryRow label="Resulting leverage" value="2.81x" tone="positive" />
+          <SummaryRow label="Resulting leverage" value="2.82x" tone="positive" />
           <SummaryRow label="Exposure" value="Unchanged" />
         </dl>
 
         <p className="border border-positive/30 bg-positive/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-          Adding margin increases position price-risk backing. The maximum leaves 1.25 USDC for accrued carry; future carry still needs free funds. The action takes effect after confirmation and does not enter the delayed-order queue.
+          Adding margin increases position price-risk backing. Accrued carry of 1.25 USDC consumes existing position margin first, leaving free funds available to add. Future carry can reduce the new margin too. The action takes effect after confirmation and does not enter the delayed-order queue.
         </p>
 
         <Button className="w-full" size="lg">Authorize Add Margin</Button>

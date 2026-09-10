@@ -1,5 +1,10 @@
 # Perps account-risk display verification
 
+> Historical v1.2.2 verification record. The v1.2.3 carry priority and current
+> integration are documented in [the release configuration](../../config/perps/README.md).
+> v1.2.3 pays carry from position margin first, then free settlement; the
+> free-settlement-only rules below do not apply to the current stack.
+
 ## Contract baseline and accounting
 
 Source: `Plether-Fi/plether-core` commit

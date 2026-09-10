@@ -17,16 +17,19 @@ describe('perps CFD engine lens ABI', () => {
   })
 })
 
-// Extracted verbatim from the checksum-verified v1.2.2 release ABI bundle.
-import releaseAbi from './fixtures/perps-v1.2.2.json'
+// Extracted verbatim from the checksum-verified v1.2.3 release ABI bundle.
+import releaseAbi from './fixtures/perps-v1.2.3.json'
 import {
   PERPS_CFD_ENGINE_ABI,
+  PERPS_MARGIN_CLEARINGHOUSE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
 } from '../abis'
 
-describe('v1.2.2 return layouts', () => {
+describe('v1.2.3 return layouts', () => {
   const bindings = {
     riskParams: PERPS_CFD_ENGINE_ABI,
+    getOrderReservation: PERPS_MARGIN_CLEARINGHOUSE_ABI,
+    quoteMaxOpen: PERPS_CFD_ENGINE_LENS_ABI,
     previewLiquidation: PERPS_CFD_ENGINE_LENS_ABI,
     getAccountLedgerSnapshot: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
     getAccountCollateralView: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
@@ -55,12 +58,12 @@ import { createHash } from 'node:crypto'
 import type { Abi, AbiParameter } from 'viem'
 import * as perpsBindings from '../abis/Perps'
 import { TRANCHE_VAULT_READ_ABI } from '../abis/TrancheVault'
-import releaseBindings from './fixtures/perps-v1.2.2-bindings.json'
+import releaseBindings from './fixtures/perps-v1.2.3-bindings.json'
 
 // Digests are computed from the matching entries in the checksum-verified
 // release bundle. Parameter names and Solidity internalType do not affect the
 // wire format; tuple order, event indexing, mutability and types do.
-describe('v1.2.2 application ABI compatibility', () => {
+describe('v1.2.3 application ABI compatibility', () => {
   const bindings = { ...perpsBindings, TRANCHE_VAULT_READ_ABI }
   const parameter = (value: AbiParameter & { indexed?: boolean }): unknown => ({
     type: value.type,

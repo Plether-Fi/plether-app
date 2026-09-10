@@ -4492,7 +4492,7 @@ export function PerpsTradeTicket({
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Margin Account</div>
           <div className="space-y-2">
             <AccountSummaryRow label="Settlement balance" value={<TokenAmount amount={formatPerpsUsdc(settlementBalanceUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip="USDC held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims." />
-            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount amount={formatPerpsUsdc(positionEquityUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin plus same-account claims and exact price PnL. Free settlement, carry and dedicated reserves are accounted for separately." /> : null}
+            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount amount={formatPerpsUsdc(positionEquityUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free settlement and dedicated reserves do not increase this price buffer." /> : null}
             <AccountSummaryRow
               label="Unrealized PnL"
               value={<TokenAmount amount={formatSignedPerpsUsdc(unrealizedPnlRaw)} />}

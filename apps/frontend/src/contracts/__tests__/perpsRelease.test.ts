@@ -39,11 +39,11 @@ describe('pinned bounded-V2 Sepolia release', () => {
       network: { chainId: 421614 },
       release: {
         sourceRepository: 'Plether-Fi/plether-core',
-        sourceArtifact: 'perps-arbitrum-sepolia-v1.2.2-manifest.json',
-        tag: 'v1.2.2',
-        manifestSha256: '235455758f9ac7f6be6b0a8c3fb29a168d13df4c8d422d93e7aae77b4e9ba9ad',
-        sourceCommit: 'd704122c779d4d681d0fa2be517707b7f7df3902',
-        deploymentBlock: 306119399,
+        sourceArtifact: 'arbitrum-sepolia-perps-v1.2.3.json',
+        tag: 'v1.2.3',
+        manifestSha256: 'babbde1a4f21c39879ece66e314187f61d22eeff5cc213c0c07461d92629fe02',
+        sourceCommit: 'ffe45937b7f38133133ad292c5435828bf99357d',
+        deploymentBlock: 307397196,
       },
     })
     for (const contract of Object.values(pinnedRelease.contracts)) {
@@ -54,7 +54,7 @@ describe('pinned bounded-V2 Sepolia release', () => {
   it('keeps the frontend registry and public manifest on the same release', () => {
     expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(pinnedRelease.release.deploymentBlock)
     expect(publicManifest).toMatchObject({
-      version: 'perps-aa-arbitrum-sepolia-20260906-v2',
+      version: 'perps-aa-arbitrum-sepolia-20260910-v2',
       chainId: pinnedRelease.network.chainId,
       orderRouter: pinnedRelease.contracts.orderRouter.address,
       orderLifecycleBook: pinnedRelease.contracts.orderLifecycleBook.address,

@@ -15,7 +15,7 @@ import {
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { usePerpsIdentity } from '../perps-aa'
-import { findLiquidationThreshold, type LiquidationThreshold } from '../utils/perpsRisk'
+import { findLiquidationThreshold, projectCarry, type LiquidationThreshold } from '../utils/perpsRisk'
 import { useInvalidatePerpsSnapshot, usePerpsSnapshotInvalidated } from './usePerpsSnapshotInvalidated'
 import { calculatePendingCarryUsdc } from '../utils/perpsCarry'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
@@ -535,9 +535,12 @@ export function usePerpsAccount(markPrice?: bigint) {
       traderClaimBalanceUsdc !== undefined && positionEquityUsdc !== undefined &&
       pendingCarryUsdc !== undefined && freeSettlementUsdc !== undefined &&
       vpiAccrued !== undefined && vpiReserveUsdc !== undefined
-    const liquidationThreshold = findLiquidationThreshold(position?.exists && riskReady ? {
+    const carryProjection = position && pendingCarryUsdc !== undefined && freeSettlementUsdc !== undefined
+      ? projectCarry(position.marginUsdc, freeSettlementUsdc, pendingCarryUsdc)
+      : undefined
+    const liquidationThreshold = findLiquidationThreshold(position?.exists && riskReady && carryProjection ? {
       capPrice, entryCostUsdcAtoms, maintenanceMarginBps, side: position.side,
-      size: position.size, positionMarginUsdc: position.marginUsdc, traderClaimBalanceUsdc,
+      size: position.size, positionMarginUsdc: carryProjection.positionMarginUsdc, traderClaimBalanceUsdc,
     } : undefined)
     const liquidationPrice = liquidationThreshold.status === 'boundary' ? liquidationThreshold.price : undefined
     const positionWithLiquidationPrice = position === undefined ? undefined : {
@@ -547,7 +550,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       positionEquityUsdc: riskReady ? positionEquityUsdc : undefined,
       pendingCarryUsdc: snapshotCurrent ? pendingCarryUsdc : undefined,
       vpiAccrued,
-      uncoveredCarryUsdc: riskReady ? pendingCarryUsdc > freeSettlementUsdc ? pendingCarryUsdc - freeSettlementUsdc : 0n : undefined,
+      uncoveredCarryUsdc: riskReady ? carryProjection?.uncoveredCarryUsdc : undefined,
       vpiReserveUnderfunded: riskReady ? vpiAccrued < 0n && vpiReserveUsdc < -vpiAccrued : undefined,
     }
     const pendingOrders = basicPendingOrders.map((order, index) => {

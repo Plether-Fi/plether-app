@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { calculatePriceRisk, findLiquidationThreshold, formatLiquidationPrice, freeSettlementAfterCarry, type PerpsPriceRiskInputs } from '../perpsRisk'
+import { calculatePriceRisk, findLiquidationThreshold, formatLiquidationPrice, projectCarry, type PerpsPriceRiskInputs } from '../perpsRisk'
 import fixtures from './fixtures/perpsRisk.v1.2.2.json'
 
-describe('canonical v1.2.2 price risk', () => {
+describe('canonical price risk (unchanged Solidity vectors from v1.2.2)', () => {
   for (const fixture of fixtures.cases) {
     it(`matches Solidity: ${fixture.name}`, () => {
       const input = Object.fromEntries(Object.entries(fixture.input).map(([key, value]) => [key, key === 'side' ? value : BigInt(value)])) as unknown as PerpsPriceRiskInputs
@@ -27,9 +27,15 @@ describe('canonical v1.2.2 price risk', () => {
     expect(formatLiquidationPrice(102_397_603n, 200_000_000n, 8)).toBe('0.97602397')
     expect(formatLiquidationPrice(97_597_597n, 200_000_000n, 8)).toBe('1.02402403')
   })
-  it('reserves carry before offering free funds for margin additions', () => {
-    expect(freeSettlementAfterCarry(750_000_000n, 20_000_000n)).toBe(730_000_000n)
-    expect(freeSettlementAfterCarry(1n, 2n)).toBe(0n)
-    expect(freeSettlementAfterCarry(2n, undefined)).toBeUndefined()
+  it('pays carry from position margin before touching free settlement', () => {
+    expect(projectCarry(250_000_000n, 750_000_000n, 20_000_000n)).toEqual({
+      positionMarginUsdc: 230_000_000n, freeSettlementUsdc: 750_000_000n, uncoveredCarryUsdc: 0n,
+    })
+    expect(projectCarry(250n, 750n, 300n)).toEqual({
+      positionMarginUsdc: 0n, freeSettlementUsdc: 700n, uncoveredCarryUsdc: 0n,
+    })
+    expect(projectCarry(250n, 750n, 1007n)).toEqual({
+      positionMarginUsdc: 0n, freeSettlementUsdc: 0n, uncoveredCarryUsdc: 7n,
+    })
   })
 })

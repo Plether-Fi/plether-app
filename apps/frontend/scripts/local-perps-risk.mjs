@@ -18,11 +18,11 @@ assert.equal(await client.getChainId(), 421614)
 const release = JSON.parse(fs.readFileSync('../../config/perps/arbitrum-sepolia-v2.json', 'utf8'))
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 assert.ok(bundle, 'LOCAL_PERPS_ABI_BUNDLE is required')
-assert.equal(createHash('sha256').update(fs.readFileSync(bundle)).digest('hex'), '685a309a2a0296a0ecef99a6efc77ba85d86de7132f3ee992c3cac46efa50b7a')
+assert.equal(createHash('sha256').update(fs.readFileSync(bundle)).digest('hex'), release.release.bundleSha256)
 const contracts = Object.fromEntries(Object.entries({ cfdEngine: 'CfdEngine', cfdEngineLens: 'CfdEngineLens',
   cfdEngineAccountLens: 'CfdEngineAccountLens', marginClearinghouse: 'MarginClearinghouse',
   mockUsdc: 'MockUSDC', housePool: 'ArbitrumSepoliaReleaseHousePool', orderRouter: 'ArbitrumSepoliaReleaseRouter',
-}).map(([key, name]) => [key, { address: release.contracts[key].address, abi: JSON.parse(execFileSync('unzip', ['-p', bundle, `abi/${name}.json`], { encoding: 'utf8' })) }]))
+}).map(([key, name]) => [key, { address: release.contracts[key].address, abi: JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' })) }]))
 for (const [key, contract] of Object.entries(contracts)) assert.equal(keccak256(await client.getCode(contract)), release.contracts[key].runtimeCodeHash, key)
 const trader = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const keeper = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
@@ -47,7 +47,7 @@ async function snapshot() {
     read('cfdEngineAccountLens', 'getAccountLedgerSnapshot', [trader], blockNumber), read('cfdEngine', 'riskParams', [], blockNumber),
     read('cfdEngine', 'isFadWindow', [], blockNumber), read('cfdEngine', 'CAP_PRICE', [], blockNumber), read('cfdEngine', 'lastMarkPrice', [], blockNumber),
   ])
-  const input = { size: position[0], side: Number(position[4]), positionMarginUsdc: position[1], entryCostUsdcAtoms,
+  const input = { size: position[0], side: Number(position[4]), positionMarginUsdc: ledger.netEquityUsdc - ledger.unrealizedPnlUsdc - ledger.traderClaimBalanceUsdc, entryCostUsdcAtoms,
     traderClaimBalanceUsdc: ledger.traderClaimBalanceUsdc, capPrice, maintenanceMarginBps: params[fad ? 4 : 2] }
   const threshold = findLiquidationThreshold(input)
   assert.equal(calculatePriceRisk(input, mark).equityUsdc, ledger.netEquityUsdc, 'signed position equity')

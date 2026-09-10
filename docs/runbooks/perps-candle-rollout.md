@@ -1074,12 +1074,12 @@ display a labelled **0 USDC placeholder**, not a verified daily total. Unknown
 historical candle values remain null. Backend verification and repair
 requirements are unchanged.
 
-For the router deployed at block `306119399`, recovery starts at the first
+For the router deployed at block `307397196`, recovery starts at the first
 whole minute after the block timestamp. Never broaden this range to an earlier
 router or fill unknown historical volume with zero:
 
 ```bash
-VOLUME_FROM_UNIX=1788719520
+VOLUME_FROM_UNIX=1789038420
 
 # Read VOLUME_TO_UNIX from the greatest whole-minute timestamp at or below the
 # latest perps_indexer_progress.indexed_through_timestamp whose

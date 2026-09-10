@@ -107,12 +107,12 @@ function requestIdResponse(
       account: CONTROLLER,
       requestIds,
       nextCursor,
-      confirmedThroughBlock: 306_300_000,
+      confirmedThroughBlock: 307_500_000,
       stale,
     },
     meta: {
       cached: false,
-      blockNumber: 306_300_000,
+      blockNumber: 307_500_000,
       chainId: 421_614,
     },
   })

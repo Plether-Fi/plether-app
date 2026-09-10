@@ -34,16 +34,16 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0xc3CE8590B7EcDE7454f9D5b51a797bbDe96fe56B',
+  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
-  marginClearinghouse: '0xA863F985EedA8BF5BE2320693BB93d109EBB2dBd',
-  cfdEngine: '0x9611E643aC4691E8fDeD8a0c2C22c56438B6f352',
-  orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
-  orderLifecycleBook: '0x616aD381Df40047e9b060a1E85085B3Ed2CC6D3C',
-  policyEvaluator: '0x1ed622ed2Cbd64bd36115dB9D4f4c0006b5894fB',
-  positionProtectionBook: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+  marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
+  cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
+  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
+  orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
+  policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
+  positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -118,7 +118,7 @@ const currentLongPosition = {
 const executionProtectionsFixture = {
   account: STORY_TRADING_ACCOUNT,
   manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
-  orderRouter: '0xbd2f286efca5F761E21452673ab9b8C14e17aad7',
+  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
   orderLifecycleBook: '0x1111111111111111111111111111111111111111',
   request: {
     clientOrderId: `0x${'12'.repeat(32)}`,
@@ -472,7 +472,7 @@ export const ProtectedOpenReview: Story = {
   parameters: { controls: { disable: true } },
   render: () => <TicketFrame {...OpenLongPreview.args} protectionCapPrice={200_000_000n}
     executionProtectionsFixture={{ ...executionProtectionsFixture, positionProtection: {
-      book: '0x35f495fFDbB4d6ae395691D4632629f67603C926',
+      book: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
       params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n },
       triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
     } }} />,

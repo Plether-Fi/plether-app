@@ -3209,7 +3209,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByTitle('Exact liquidation threshold: 0.97602397')).toHaveTextContent('0.9760')
     fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
     fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
-    expect(screen.getByRole('textbox')).toHaveValue('730')
+    expect(screen.getByRole('textbox')).toHaveValue('750')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     rerender(<PerpsAccountPanel isConnected position={{ ...position, riskStatus: 'unavailable', liquidationPrice: undefined, liquidationThreshold: { status: 'unavailable' } }} onClosePosition={close} />)
     expect(screen.queryByText('Not in range')).not.toBeInTheDocument()
