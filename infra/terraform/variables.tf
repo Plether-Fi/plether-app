@@ -1123,6 +1123,28 @@ variable "liquidation_worker_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "liquidation_worker_future_publish_max_retries" {
+  type        = string
+  default     = "2"
+  description = "Maximum exact-block retries when a merged Pyth publish time is ahead of the selected Arbitrum block timestamp."
+
+  validation {
+    condition     = can(regex("^[0-5]$", var.liquidation_worker_future_publish_max_retries))
+    error_message = "liquidation_worker_future_publish_max_retries must be a whole number from 0 through 5."
+  }
+}
+
+variable "liquidation_worker_future_publish_retry_max_seconds" {
+  type        = string
+  default     = "10"
+  description = "Maximum delay before each future-publish exact-block retry. Must be between 1 and 30 seconds."
+
+  validation {
+    condition     = can(regex("^([1-9]|[12][0-9]|30)$", var.liquidation_worker_future_publish_retry_max_seconds))
+    error_message = "liquidation_worker_future_publish_retry_max_seconds must be a whole number from 1 through 30."
+  }
+}
+
 variable "liquidation_worker_desired_count" {
   type        = number
   default     = 1

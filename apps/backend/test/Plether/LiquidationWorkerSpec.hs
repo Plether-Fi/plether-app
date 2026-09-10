@@ -3,9 +3,10 @@
 module Plether.LiquidationWorkerSpec (spec) where
 
 import Control.Exception (bracket)
+import Control.Monad (when)
 import Data.Aeson (Value, object, toJSON, (.=))
 import qualified Data.ByteString as BS
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Plether.Config
   ( Config (..)
@@ -42,6 +43,8 @@ import Plether.LiquidationWorker
   ( FreshLiquidationRiskInputs (..)
   , LiquidationBatchProgress (..)
   , LiquidationBasketComponent (..)
+  , LiquidationFuturePublishTime (..)
+  , LiquidationRiskInputError (..)
   , LiquidationRiskGlobals (..)
   , PythStoredPrice (..)
   , LiquidationPayloadCircuitDecision (..)
@@ -64,18 +67,24 @@ import Plether.LiquidationWorker
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
   , liquidationRiskCalls
+  , liquidationFuturePublishRetryDelaySeconds
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
   , liquidationTransactionGasLimit
+  , loadFreshLiquidationExecutionPayload
   , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
   , sameNonceReplacementFees
   , selectLiquidationSimulationCandidates
   , pythStoredPriceCalls
+  , processLiquidationBatches
+  , retryLiquidationRiskInputs
   , transactionMaximumCost
+  , validateLiquidationExecutionPayload
   , validateLiquidationBatchReceipt
   , validateMergedLiquidationBasket
+  , validateMergedLiquidationBasketDetailed
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
@@ -93,6 +102,21 @@ spec = do
       withUnsetEnv "LIQUIDATION_WORKER_POLL_SECONDS" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcPollSeconds workerCfg `shouldBe` 600
+
+    it "uses bounded future-publish retries by default" $
+      withUnsetEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" $
+        withUnsetEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS" $ do
+          workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+          lwcFuturePublishMaxRetries workerCfg `shouldBe` 2
+          lwcFuturePublishRetryMaxSeconds workerCfg `shouldBe` 10
+          lwcPythLatestMaxAgeSeconds workerCfg `shouldBe` cfgPythLatestMaxAgeSeconds testConfig
+
+    it "clamps future-publish retry configuration" $
+      withEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" "99" $
+        withEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS" "0" $ do
+          workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+          lwcFuturePublishMaxRetries workerCfg `shouldBe` 5
+          lwcFuturePublishRetryMaxSeconds workerCfg `shouldBe` 1
 
     it "inherits the account lens and defaults to bounded scan, read, and execution batches" $ do
       withUnsetEnv "PERPS_ACCOUNT_LENS" $
@@ -366,6 +390,215 @@ spec = do
           validateMergedLiquidationBasket exactRiskGlobals wideConfidence
             `shouldSatisfy` isLeft
 
+    it "reports the exact future skew and component for retry decisions" $ do
+      case decodeCachedLiquidationComponents payload basketSnapshot of
+        Left err -> expectationFailure $ "expected valid cached components: " <> show err
+        Right components ->
+          validateMergedLiquidationBasketDetailed
+            exactRiskGlobals {lrgBlockTimestamp = 101}
+            components
+            `shouldBe`
+              Left
+                ( LiquidationRiskInputFuturePublishTime
+                    LiquidationFuturePublishTime
+                      { lfptBlockTimestamp = 101
+                      , lfptMinimumPublishTime = 101
+                      , lfptMaximumPublishTime = 102
+                      , lfptFutureSkewSeconds = 1
+                      , lfptFeedId = feedAText
+                      }
+                )
+
+  describe "future-publish exact-block retry" $ do
+    it "waits for the measured skew and succeeds at a newer exact block" $ do
+      attemptedBlocks <- newIORef []
+      availableBlocks <- newIORef [101, 102]
+      retryEvents <- newIORef []
+      delays <- newIORef []
+      let append ref value = modifyIORef' ref (<> [value])
+          futureAt blockNumber =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = blockNumber
+                , lfptMinimumPublishTime = 100
+                , lfptMaximumPublishTime = 102
+                , lfptFutureSkewSeconds = 102 - blockNumber
+                , lfptFeedId = "feed-a"
+                }
+          loadAtBlock blockNumber = do
+            append attemptedBlocks blockNumber
+            pure $
+              if blockNumber < 102
+                then Left $ futureAt blockNumber
+                else Right ("ready" :: Text)
+          getNextBlock = do
+            blocks <- readIORef availableBlocks
+            case blocks of
+              [] -> pure $ Left "no newer block"
+              nextBlock : remaining -> do
+                writeIORef availableBlocks remaining
+                pure $ Right nextBlock
+          onRetry blockNumber retryNumber delaySeconds _ =
+            append retryEvents (blockNumber, retryNumber, delaySeconds)
+          sleepSeconds = append delays
+
+      (finalBlock, retryCount, result) <-
+        retryLiquidationRiskInputs
+          2
+          10
+          onRetry
+          sleepSeconds
+          getNextBlock
+          loadAtBlock
+          100
+
+      finalBlock `shouldBe` 102
+      retryCount `shouldBe` 2
+      result `shouldBe` Right "ready"
+      readIORef attemptedBlocks `shouldReturn` [100, 101, 102]
+      readIORef retryEvents `shouldReturn` [(100, 1, 3), (101, 2, 2)]
+      readIORef delays `shouldReturn` [3, 2]
+
+    it "caps retry delay and does not retry unrelated failures" $ do
+      let futureError =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = 100
+                , lfptMinimumPublishTime = 100
+                , lfptMaximumPublishTime = 120
+                , lfptFutureSkewSeconds = 20
+                , lfptFeedId = "feed-a"
+                }
+          unrelatedError = LiquidationRiskInputUnavailable "RPC unavailable"
+      liquidationFuturePublishRetryDelaySeconds 5 futureError `shouldBe` Just 5
+      liquidationFuturePublishRetryDelaySeconds 5 unrelatedError `shouldBe` Nothing
+
+      (finalBlock, retryCount, result) <-
+        retryLiquidationRiskInputs
+          2
+          5
+          (\_ _ _ _ -> expectationFailure "unexpected retry")
+          (\_ -> expectationFailure "unexpected sleep")
+          (pure $ Left "unexpected block fetch")
+          (\_ -> pure (Left unrelatedError :: Either LiquidationRiskInputError Text))
+          100
+      finalBlock `shouldBe` 100
+      retryCount `shouldBe` 0
+      result `shouldBe` Left unrelatedError
+
+    it "refreshes the executable payload after retry and snapshot work" $ do
+      clock <- newIORef 100
+      payloadFetchTimes <- newIORef []
+      let advanceClock :: Int -> IO ()
+          advanceClock seconds = modifyIORef' clock (+ fromIntegral seconds)
+          futureError blockNumber =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = blockNumber
+                , lfptMinimumPublishTime = 101
+                , lfptMaximumPublishTime = 102
+                , lfptFutureSkewSeconds = 102 - blockNumber
+                , lfptFeedId = "feed-a"
+                }
+          loadRiskAtBlock blockNumber =
+            pure $
+              if blockNumber < 102
+                then Left $ futureError blockNumber
+                else Right ()
+          getNextBlock = Right <$> readIORef clock
+          freshPayload =
+            payload
+              { puprMinPublishTime = 112
+              , puprMaxPublishTime = 112
+              , puprPublishTimes = toJSON ([112, 112] :: [Integer])
+              , puprUpdateData = toJSON (["0xaa"] :: [String])
+              , puprFetchedAt = 112
+              }
+          fetchLatestPayload = do
+            fetchedAt <- readIORef clock
+            modifyIORef' payloadFetchTimes (<> [fetchedAt])
+            pure $ Just freshPayload
+
+      (snapshotBlock, retryCount, riskResult) <-
+        retryLiquidationRiskInputs
+          2
+          10
+          (\_ _ _ _ -> pure ())
+          advanceClock
+          getNextBlock
+          loadRiskAtBlock
+          100
+      snapshotBlock `shouldBe` 103
+      retryCount `shouldBe` 1
+      riskResult `shouldBe` Right ()
+
+      -- Model the exact-block candidate snapshot batch after recovery.
+      advanceClock 9
+      validateLiquidationExecutionPayload 112 10 payload
+        `shouldBe` Left "Executable Pyth payload was outside the latest freshness window"
+      executionPayload <-
+        loadFreshLiquidationExecutionPayload
+          10
+          (readIORef clock)
+          fetchLatestPayload
+
+      readIORef payloadFetchTimes `shouldReturn` [112]
+      executionPayload `shouldBe` Right [BS.pack [0xaa]]
+
+    it "refreshes and requotes every batch after receipt time advances" $ do
+      clock <- newIORef (100 :: Integer)
+      availablePayloads <-
+        newIORef
+          [ executionPayloadAt 100 "0xaa"
+          , executionPayloadAt 112 "0xbb"
+          ]
+      payloadFetchTimes <- newIORef ([] :: [Integer])
+      quotedPayloads <- newIORef ([] :: [[BS.ByteString]])
+      executedBatches <- newIORef ([] :: [([Int], [BS.ByteString], Integer)])
+      let advanceClock seconds = modifyIORef' clock (+ seconds)
+          fetchLatestPayload = do
+            fetchedAt <- readIORef clock
+            modifyIORef' payloadFetchTimes (<> [fetchedAt])
+            payloads <- readIORef availablePayloads
+            case payloads of
+              [] -> pure Nothing
+              nextPayload : remaining -> do
+                writeIORef availablePayloads remaining
+                pure $ Just nextPayload
+          prepareBatch _ = do
+            executionPayload <-
+              loadFreshLiquidationExecutionPayload
+                10
+                (readIORef clock)
+                fetchLatestPayload
+            case executionPayload of
+              Left err -> expectationFailure (show err) >> pure Nothing
+              Right executionUpdateData -> do
+                modifyIORef' quotedPayloads (<> [executionUpdateData])
+                let updateFee =
+                      if executionUpdateData == [BS.pack [0xaa]]
+                        then 1
+                        else 2
+                pure $ Just (executionUpdateData, updateFee)
+          executeBatch batch (executionUpdateData, updateFee) = do
+            modifyIORef' executedBatches (<> [(batch, executionUpdateData, updateFee)])
+            when (batch == [1]) $ advanceClock 12
+            pure True
+
+      processLiquidationBatches
+        [[1], [2]]
+        prepareBatch
+        executeBatch
+
+      readIORef payloadFetchTimes `shouldReturn` [100, 112]
+      readIORef quotedPayloads
+        `shouldReturn` [[BS.pack [0xaa]], [BS.pack [0xbb]]]
+      readIORef executedBatches
+        `shouldReturn`
+          [ ([1], [BS.pack [0xaa]], 1)
+          , ([2], [BS.pack [0xbb]], 2)
+          ]
+
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
       decodeCachedPythPayload payload
@@ -374,6 +607,22 @@ spec = do
     it "rejects invalid update hex" $ do
       decodeCachedPythPayload payload {puprUpdateData = toJSON (["0xzz"] :: [String])}
         `shouldSatisfy` isLeft
+
+    it "validates execution source, metadata, clock, and the exact freshness boundary" $ do
+      validateLiquidationExecutionPayload 111 10 payload
+        `shouldBe` Right [BS.pack [0x01, 0x02], BS.pack [0xff]]
+      validateLiquidationExecutionPayload 101 10 payload
+        `shouldBe` Left "Executable Pyth payload contained a future publish time"
+      validateLiquidationExecutionPayload
+        111
+        10
+        payload {puprSource = "backend_hermes_historical_v2"}
+        `shouldBe` Left "Executable Pyth payload did not come from the admitted latest cache"
+      validateLiquidationExecutionPayload
+        111
+        10
+        payload {puprMaxPublishTime = 103}
+        `shouldBe` Left "Executable Pyth payload publish-time metadata did not match its data"
 
   describe "isLiquidationReceiptFor" $ do
     it "accepts a successful matching PositionLiquidated event" $ do
@@ -610,6 +859,16 @@ payload =
     , puprUpdateData = toJSON (["0x0102", "0xff"] :: [String])
     , puprFetchedAt = 103
     , puprSource = "backend_hermes_latest_v2"
+    }
+
+executionPayloadAt :: Integer -> Text -> PythUpdatePayloadRow
+executionPayloadAt publishTime updateHex =
+  payload
+    { puprMinPublishTime = publishTime
+    , puprMaxPublishTime = publishTime
+    , puprPublishTimes = toJSON ([publishTime, publishTime] :: [Integer])
+    , puprUpdateData = toJSON [updateHex]
+    , puprFetchedAt = publishTime
     }
 
 basketSnapshot :: BasketSnapshotRow

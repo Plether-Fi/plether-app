@@ -582,6 +582,8 @@ Local URLs:
 | `LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS` | No | `120` | Age at which an unconfirmed transaction is fee-bumped at the same nonce |
 | `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
+| `LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES` | No | `2` | Newer exact blocks tried when a merged Pyth publish time is ahead of the selected block timestamp (`0`–`5`) |
+| `LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS` | No | `10` | Maximum delay before each future-publish exact-block retry (`1`–`30` seconds) |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
