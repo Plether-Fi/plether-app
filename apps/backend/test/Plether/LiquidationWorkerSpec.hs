@@ -70,6 +70,7 @@ import Plether.LiquidationWorker
   , liquidationSignerCircuitDecision
   , liquidationSnapshotCalls
   , liquidationTransactionGasLimit
+  , loadFreshLiquidationExecutionPayload
   , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
@@ -78,6 +79,7 @@ import Plether.LiquidationWorker
   , pythStoredPriceCalls
   , retryLiquidationRiskInputs
   , transactionMaximumCost
+  , validateLiquidationExecutionPayload
   , validateLiquidationBatchReceipt
   , validateMergedLiquidationBasket
   , validateMergedLiquidationBasketDetailed
@@ -105,6 +107,7 @@ spec = do
           workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
           lwcFuturePublishMaxRetries workerCfg `shouldBe` 2
           lwcFuturePublishRetryMaxSeconds workerCfg `shouldBe` 10
+          lwcPythLatestMaxAgeSeconds workerCfg `shouldBe` cfgPythLatestMaxAgeSeconds testConfig
 
     it "clamps future-publish retry configuration" $
       withEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" "99" $
@@ -481,6 +484,65 @@ spec = do
       retryCount `shouldBe` 0
       result `shouldBe` Left unrelatedError
 
+    it "refreshes the executable payload after retry and snapshot work" $ do
+      clock <- newIORef 100
+      payloadFetchTimes <- newIORef []
+      let advanceClock :: Int -> IO ()
+          advanceClock seconds = modifyIORef' clock (+ fromIntegral seconds)
+          futureError blockNumber =
+            LiquidationRiskInputFuturePublishTime
+              LiquidationFuturePublishTime
+                { lfptBlockTimestamp = blockNumber
+                , lfptMinimumPublishTime = 101
+                , lfptMaximumPublishTime = 102
+                , lfptFutureSkewSeconds = 102 - blockNumber
+                , lfptFeedId = "feed-a"
+                }
+          loadRiskAtBlock blockNumber =
+            pure $
+              if blockNumber < 102
+                then Left $ futureError blockNumber
+                else Right ()
+          getNextBlock = Right <$> readIORef clock
+          freshPayload =
+            payload
+              { puprMinPublishTime = 112
+              , puprMaxPublishTime = 112
+              , puprPublishTimes = toJSON ([112, 112] :: [Integer])
+              , puprUpdateData = toJSON (["0xaa"] :: [String])
+              , puprFetchedAt = 112
+              }
+          fetchLatestPayload = do
+            fetchedAt <- readIORef clock
+            modifyIORef' payloadFetchTimes (<> [fetchedAt])
+            pure $ Just freshPayload
+
+      (snapshotBlock, retryCount, riskResult) <-
+        retryLiquidationRiskInputs
+          2
+          10
+          (\_ _ _ _ -> pure ())
+          advanceClock
+          getNextBlock
+          loadRiskAtBlock
+          100
+      snapshotBlock `shouldBe` 103
+      retryCount `shouldBe` 1
+      riskResult `shouldBe` Right ()
+
+      -- Model the exact-block candidate snapshot batch after recovery.
+      advanceClock 9
+      validateLiquidationExecutionPayload 112 10 payload
+        `shouldBe` Left "Executable Pyth payload was outside the latest freshness window"
+      executionPayload <-
+        loadFreshLiquidationExecutionPayload
+          10
+          (readIORef clock)
+          fetchLatestPayload
+
+      readIORef payloadFetchTimes `shouldReturn` [112]
+      executionPayload `shouldBe` Right [BS.pack [0xaa]]
+
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
       decodeCachedPythPayload payload
@@ -489,6 +551,22 @@ spec = do
     it "rejects invalid update hex" $ do
       decodeCachedPythPayload payload {puprUpdateData = toJSON (["0xzz"] :: [String])}
         `shouldSatisfy` isLeft
+
+    it "validates execution source, metadata, clock, and the exact freshness boundary" $ do
+      validateLiquidationExecutionPayload 111 10 payload
+        `shouldBe` Right [BS.pack [0x01, 0x02], BS.pack [0xff]]
+      validateLiquidationExecutionPayload 101 10 payload
+        `shouldBe` Left "Executable Pyth payload contained a future publish time"
+      validateLiquidationExecutionPayload
+        111
+        10
+        payload {puprSource = "backend_hermes_historical_v2"}
+        `shouldBe` Left "Executable Pyth payload did not come from the admitted latest cache"
+      validateLiquidationExecutionPayload
+        111
+        10
+        payload {puprMaxPublishTime = 103}
+        `shouldBe` Left "Executable Pyth payload publish-time metadata did not match its data"
 
   describe "isLiquidationReceiptFor" $ do
     it "accepts a successful matching PositionLiquidated event" $ do

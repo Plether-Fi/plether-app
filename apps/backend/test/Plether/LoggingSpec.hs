@@ -140,4 +140,5 @@ invalidSignerConfig =
     , lwcFeeBufferBps = 0
     , lwcFuturePublishMaxRetries = 2
     , lwcFuturePublishRetryMaxSeconds = 10
+    , lwcPythLatestMaxAgeSeconds = 10
     }

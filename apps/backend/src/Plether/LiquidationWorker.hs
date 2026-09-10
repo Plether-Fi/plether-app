@@ -4,6 +4,8 @@ module Plether.LiquidationWorker
   , loadLiquidationWorkerConfig
   , runLiquidationWorker
   , decodeCachedPythPayload
+  , validateLiquidationExecutionPayload
+  , loadFreshLiquidationExecutionPayload
   , LiquidationPayloadCircuitDecision (..)
   , liquidationPayloadCircuitDecision
   , LiquidationSignerCircuitDecision (..)
@@ -66,6 +68,7 @@ import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
@@ -189,6 +192,7 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
   , lwcFeeBufferBps :: Integer
   , lwcFuturePublishMaxRetries :: Int
   , lwcFuturePublishRetryMaxSeconds :: Int
+  , lwcPythLatestMaxAgeSeconds :: Integer
   }
   deriving stock (Show)
 
@@ -228,6 +232,7 @@ loadLiquidationWorkerConfig cfg privateKey = do
       , lwcFeeBufferBps = max 0 feeBufferBps
       , lwcFuturePublishMaxRetries = max 0 $ min 5 futurePublishMaxRetries
       , lwcFuturePublishRetryMaxSeconds = max 1 $ min 30 futurePublishRetryMaxSeconds
+      , lwcPythLatestMaxAgeSeconds = cfgPythLatestMaxAgeSeconds cfg
       }
 
 readEnv :: (Read a) => String -> a -> IO a
@@ -1299,7 +1304,7 @@ processCandidates cfg conn client workerAddress dryRun = do
                 "liquidation_pyth_payload_invalid"
                 "Latest cached Pyth payload could not be decoded"
                 (workerLogFields cfg <> [field "error" err])
-            Right (_, updateData) -> do
+            Right _ -> do
               cachedComponentsResult <-
                 loadCachedLiquidationComponents conn payload
               (snapshotBlock, retryCount, riskResult) <-
@@ -1342,7 +1347,6 @@ processCandidates cfg conn client workerAddress dryRun = do
                 snapshots
                 flatCandidates
                 riskResult
-                updateData
       where
         fetchRetryBlock = do
           blockResult <- ethBlockNumber client
@@ -1385,8 +1389,7 @@ processCandidates cfg conn client workerAddress dryRun = do
       retryCount
       snapshots
       flatCandidates
-      riskResult
-      updateData = do
+      riskResult = do
         let riskInputs = either (const Nothing) Just riskResult
             classified =
               [ (candidate, snapshotResult, liquidationRiskDecision riskInputs snapshotResult)
@@ -1469,9 +1472,7 @@ processCandidates cfg conn client workerAddress dryRun = do
           )
 
         unless (null simulationCandidates) $
-          processClassifiedPayload
-            simulationCandidates
-            updateData
+          processClassifiedPayload simulationCandidates
 
     recordUnclassifiedOpenCandidates snapshots reason =
       forM_ snapshots $ \(candidate, snapshotResult) ->
@@ -1517,50 +1518,74 @@ processCandidates cfg conn client workerAddress dryRun = do
               (lwcCfdEngine cfg)
               (plcrAccount candidate)
 
-    processClassifiedPayload candidates updateData = do
-      let payloadKey =
-            liquidationPayloadFingerprint
-              (lwcPletherOracle cfg)
-              (lwcOrderRouter cfg)
-              updateData
+    processClassifiedPayload candidates = do
       rejectedPayload <-
         getPerpsLiquidationRejectedPayload
           conn
           (lwcChainId cfg)
           (lwcCfdEngine cfg)
-      case
-          liquidationPayloadCircuitDecision
-            (plrprPayloadKey <$> rejectedPayload)
-            payloadKey
-        of
-        SuppressRejectedLiquidationPayload ->
-          case rejectedPayload of
-            Just rejected ->
-              logWarnEvery
-                60
-                "liquidation_pyth_payload_suppressed"
-                "Liquidation scan is waiting for a new Pyth payload after a deterministic oracle rejection"
-                ( workerLogFields cfg
-                    <> [ field "candidate_count" $ length candidates
-                       , field "payload_key" payloadKey
-                       , field "revert_selector" $ plrprSelector rejected
-                       , field "rejected_at" $ plrprRejectedAt rejected
-                       , field "error" $ plrprError rejected
-                       ]
-                )
-            Nothing -> processPayload candidates payloadKey updateData
-        ClearRejectedLiquidationPayload -> do
-          clearPerpsLiquidationRejectedPayload
-            conn
-            (lwcChainId cfg)
-            (lwcCfdEngine cfg)
-          logInfo
-            "liquidation_pyth_payload_changed"
-            "Liquidation scan resumed with a new Pyth payload"
-            (workerLogFields cfg <> [field "payload_key" payloadKey])
-          processPayload candidates payloadKey updateData
-        ProcessLiquidationPayload ->
-          processPayload candidates payloadKey updateData
+      executionPayload <-
+        loadFreshLiquidationExecutionPayload
+          (lwcPythLatestMaxAgeSeconds cfg)
+          (floor <$> getPOSIXTime)
+          (getLatestPythUpdatePayload conn)
+      case executionPayload of
+        Left err -> do
+          forM_ candidates $ \candidate ->
+            recordCandidateError
+              cfg
+              conn
+              candidate
+              "execution_payload"
+              err
+          logWarnEvery
+            60
+            "liquidation_execution_pyth_payload_unavailable"
+            "Liquidation worker could not load a fresh executable Pyth payload"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "error" err
+                   ]
+            )
+        Right updateData -> do
+          let payloadKey =
+                liquidationPayloadFingerprint
+                  (lwcPletherOracle cfg)
+                  (lwcOrderRouter cfg)
+                  updateData
+          case
+              liquidationPayloadCircuitDecision
+                (plrprPayloadKey <$> rejectedPayload)
+                payloadKey
+            of
+            SuppressRejectedLiquidationPayload ->
+              case rejectedPayload of
+                Just rejected ->
+                  logWarnEvery
+                    60
+                    "liquidation_pyth_payload_suppressed"
+                    "Liquidation scan is waiting for a new Pyth payload after a deterministic oracle rejection"
+                    ( workerLogFields cfg
+                        <> [ field "candidate_count" $ length candidates
+                           , field "payload_key" payloadKey
+                           , field "revert_selector" $ plrprSelector rejected
+                           , field "rejected_at" $ plrprRejectedAt rejected
+                           , field "error" $ plrprError rejected
+                           ]
+                    )
+                Nothing -> processPayload candidates payloadKey updateData
+            ClearRejectedLiquidationPayload -> do
+              clearPerpsLiquidationRejectedPayload
+                conn
+                (lwcChainId cfg)
+                (lwcCfdEngine cfg)
+              logInfo
+                "liquidation_pyth_payload_changed"
+                "Liquidation scan resumed with a new Pyth payload"
+                (workerLogFields cfg <> [field "payload_key" payloadKey])
+              processPayload candidates payloadKey updateData
+            ProcessLiquidationPayload ->
+              processPayload candidates payloadKey updateData
 
     processPayload candidates payloadKey updateData = do
       feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
@@ -2456,6 +2481,51 @@ decodeCachedPythPayload PythUpdatePayloadRow {puprPublishTimes, puprUpdateData} 
   updateHex <- parseValue "update_data" puprUpdateData
   updateData <- traverse decodeHexUpdate updateHex
   pure (publishTimes, updateData)
+
+validateLiquidationExecutionPayload
+  :: Integer
+  -> Integer
+  -> PythUpdatePayloadRow
+  -> Either Text [ByteString]
+validateLiquidationExecutionPayload currentTime maximumAge payload = do
+  (publishTimes, updateData) <- decodeCachedPythPayload payload
+  whenEither
+    (puprSource payload /= "backend_hermes_latest_v2")
+    "Executable Pyth payload did not come from the admitted latest cache"
+  whenEither
+    (null publishTimes)
+    "Executable Pyth payload did not contain publish times"
+  whenEither
+    (null updateData)
+    "Executable Pyth payload did not contain update data"
+  let minimumPublishTime = minimum publishTimes
+      maximumPublishTime = maximum publishTimes
+      acceptedAge = max 1 maximumAge
+  whenEither
+    ( minimumPublishTime /= puprMinPublishTime payload
+        || maximumPublishTime /= puprMaxPublishTime payload
+    )
+    "Executable Pyth payload publish-time metadata did not match its data"
+  whenEither
+    (maximumPublishTime > currentTime)
+    "Executable Pyth payload contained a future publish time"
+  whenEither
+    (currentTime - minimumPublishTime > acceptedAge)
+    "Executable Pyth payload was outside the latest freshness window"
+  pure updateData
+
+loadFreshLiquidationExecutionPayload
+  :: Integer
+  -> IO Integer
+  -> IO (Maybe PythUpdatePayloadRow)
+  -> IO (Either Text [ByteString])
+loadFreshLiquidationExecutionPayload maximumAge getCurrentTime getLatestPayload = do
+  latestPayload <- getLatestPayload
+  case latestPayload of
+    Nothing -> pure $ Left "No cached latest Pyth payload was available for execution"
+    Just payload -> do
+      currentTime <- getCurrentTime
+      pure $ validateLiquidationExecutionPayload currentTime maximumAge payload
 
 parseValue :: (FromJSON a) => Text -> Value -> Either Text a
 parseValue label value =
