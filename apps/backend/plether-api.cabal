@@ -21,6 +21,9 @@ library
         Plether.AA.Pimlico
         Plether.AA.ClientKey
         Plether.AA.Gateway
+        Plether.AA.Timing
+        Plether.AA.Preparation
+        Plether.AA.EvidenceCache
         Plether.AA.Kms
         Plether.AA.Paymaster
         Plether.AA.Reconciler
@@ -71,6 +74,7 @@ library
         Plether.Database.VaultPerformance
         Plether.Database.VaultActivity
         Plether.Database.AaSponsorship
+        Plether.Database.AaPreparation
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
@@ -339,6 +343,7 @@ test-suite plether-api-test
         Plether.AA.PimlicoSpec
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
+        Plether.AA.PreparationSpec
         Plether.AA.ReconcilerSpec
         Plether.CacheSpec
         Plether.ConfigSpec
@@ -399,6 +404,7 @@ test-suite plether-api-test
         plether-api,
         hspec >= 2.11,
         hspec-discover >= 2.11,
+        async >= 2.2,
         QuickCheck >= 2.14,
         aeson >= 2.1,
         bytestring >= 0.11,

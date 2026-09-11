@@ -35,7 +35,15 @@ export function frankfurtLocalProfile(env: Environment, outputs: FrankfurtOutput
   if (apiOnly && env.AA_FRANKFURT_SPONSORSHIP_ENABLED === 'true') {
     throw new Error('API-only mode cannot enable sponsorship')
   }
+  if (!['', 'false', 'true'].includes(env.AA_FRANKFURT_PREPARATION_ENABLED ?? '')) {
+    throw new Error('AA_FRANKFURT_PREPARATION_ENABLED must be true or false')
+  }
+  if (env.AA_FRANKFURT_PREPARATION_ENABLED === 'true'
+    && (apiOnly || env.AA_FRANKFURT_SPONSORSHIP_ENABLED !== 'true')) {
+    throw new Error('Preparation requires the enabled native sponsorship profile')
+  }
   const manifest = { ...source }
+  delete manifest.preparationRpcVersion
   delete manifest.pimlicoRpcUrl
   Object.assign(manifest, {
     bundlerRpcUrl: '/api/perps/v1/aa/rpc', paymasterRpcUrl: '/api/perps/v1/aa/rpc',
@@ -43,6 +51,7 @@ export function frankfurtLocalProfile(env: Environment, outputs: FrankfurtOutput
     paymasterVersion: apiOnly ? null : 'plether-verifying-v1', testnetFaucet: null,
     sponsorshipEnabled: env.AA_FRANKFURT_SPONSORSHIP_ENABLED === 'true',
   })
+  if (env.AA_FRANKFURT_PREPARATION_ENABLED === 'true') manifest.preparationRpcVersion = 1
   if (apiOnly) {
     // Preserve the supported legacy manifest shape with issuance disabled.
     // This is a local, blocked route: no Pimlico credentials or fallback exist.

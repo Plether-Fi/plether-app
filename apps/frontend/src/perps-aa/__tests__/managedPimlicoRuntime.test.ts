@@ -281,6 +281,35 @@ describe('createManagedPimlicoRuntime', () => {
     })
   })
 
+  it('uses one preparation RPC and never falls back or signs after an ambiguous failure', async () => {
+    const sign = vi.fn()
+    mocks.toSimpleSmartAccount.mockResolvedValue({ address: ACCOUNT, signUserOperation: sign,
+      encodeCalls: vi.fn(async () => '0x1234'), getFactoryArgs: vi.fn(async () => ({})) })
+    const requests: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      requests.push(body)
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id,
+        error: { code: -32001, message: 'Retry the same preparation ID' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: { ...v2Manifest, preparationRpcVersion: 1, paymasterRpcUrl: 'http://localhost:5173/api/perps/v1/aa/rpc' },
+      ownerAddress: OWNER,
+      walletClient: { chain: { id: 421614 }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: 421614 } } as never,
+    })
+    const input = { calls: [{ to: ACCOUNT, value: 0n, data: '0x1234' as Hex }], action: 'place-order' as const, preparationId: 'same-durable-attempt' }
+    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow()
+    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow()
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toMatchObject({ method: 'plether_prepareUserOperation' })
+    expect(requests[0].params).toEqual(requests[1].params)
+    expect(mocks.createSmartAccountClient.mock.results[0].value.prepareUserOperation).not.toHaveBeenCalled()
+    expect(mocks.createPaymasterClient.mock.results[0].value.getPaymasterData).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+  })
+
   it('strips signatures and prior paymaster data from v2 ERC-7677 calls', async () => {
     const paymasterClient = {
       getPaymasterStubData: vi.fn(async () => ({})),

@@ -46,6 +46,7 @@ export interface ManagedSmartAccount {
   prepareUserOperation(input: {
     calls: readonly SmartAccountCall[]
     action: PerpsActionKind
+    preparationId?: string
   }): Promise<ManagedUserOperation>
   signUserOperation(
     operation: ManagedUserOperation

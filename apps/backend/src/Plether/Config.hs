@@ -268,6 +268,7 @@ data NativeAaConfig = NativeAaConfig
   , naaKmsKeyId :: Text
   , naaAccountCodeHash :: Text
   , naaSponsorshipEnabled :: Bool
+  , naaPreparationEnabled :: Bool
   , naaSubmissionEnabled :: Bool
   , naaIpRateLimitPerMinute :: Int
   , naaFinalRateLimitPerMinute :: Int
@@ -660,6 +661,7 @@ loadConfig = do
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
       aaSponsoredGasAlertWeiStr <- fromMaybe "0" <$> lookupEnv "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR"
       nativeAaEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SPONSORSHIP_ENABLED"
+      nativeAaPreparationEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_PREPARATION_ENABLED"
       nativeAaSafeLagStr <- fromMaybe "600" <$> lookupEnv "AA_RECONCILER_MAX_SAFE_LAG_SECONDS"
       nativeAaSubmissionEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SUBMISSION_ENABLED"
       nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
@@ -830,6 +832,8 @@ loadConfig = do
                 (Left "AA_NATIVE_SUBMISSION_ENABLED must be a boolean")
                 Right
                 (parseBoolStrict nativeAaSubmissionEnabledStr)
+            preparationEnabled <- maybe (Left "AA_NATIVE_PREPARATION_ENABLED must be a boolean") Right
+              (parseBoolStrict nativeAaPreparationEnabledStr)
             globalRolloutEnabled <-
               maybe
                 (Left "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED must be a boolean")
@@ -949,6 +953,7 @@ loadConfig = do
                           , naaKmsKeyId = T.strip $ T.pack kmsKeyId
                           , naaAccountCodeHash = T.toLower $ T.strip $ T.pack accountCodeHash
                           , naaSponsorshipEnabled = enabled
+                          , naaPreparationEnabled = preparationEnabled
                           , naaSubmissionEnabled = submissionEnabled
                           , naaIpRateLimitPerMinute = max 1 aaIpRateLimit
                           , naaFinalRateLimitPerMinute = fromInteger finalRateLimit

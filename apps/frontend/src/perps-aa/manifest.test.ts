@@ -120,6 +120,15 @@ describe('parsePerpsAaManifest', () => {
     expect('pimlicoRpcUrl' in manifest).toBe(false)
   })
 
+  it('only opts into explicitly supported native preparation versions', () => {
+    expect(parsePerpsAaManifest({ ...validManifestV2(), preparationRpcVersion: 1 })).toMatchObject({ preparationRpcVersion: 1 })
+    expect(parsePerpsAaManifest(validManifestV2())).not.toHaveProperty('preparationRpcVersion')
+    for (const preparationRpcVersion of [0, 2, '1', null, true]) {
+      expect(() => parsePerpsAaManifest({ ...validManifestV2(), preparationRpcVersion })).toThrow()
+    }
+    expect(() => parsePerpsAaManifest({ ...validManifest(), preparationRpcVersion: 1 })).toThrow()
+  })
+
   it('rejects missing and unknown fields instead of applying defaults', () => {
     const manifest = validManifest()
     delete manifest.pimlicoRpcUrl

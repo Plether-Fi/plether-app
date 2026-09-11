@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Plether.AA.PaymasterSpec (spec) where
+module Plether.AA.PaymasterSpec (spec, fixtureConfig) where
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
@@ -160,6 +160,7 @@ fixtureConfig =
     , naaKmsKeyId = "alias/test"
     , naaAccountCodeHash = hex $ keccak256 $ decode "60006000f3"
     , naaSponsorshipEnabled = True
+    , naaPreparationEnabled = False
     , naaSubmissionEnabled = True
     , naaIpRateLimitPerMinute = 120
     , naaFinalRateLimitPerMinute = 6

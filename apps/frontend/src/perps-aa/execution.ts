@@ -398,6 +398,7 @@ export async function executeSponsoredPerpsAction(
       operation = await input.runtime.smartAccount.prepareUserOperation({
         calls: input.action.calls,
         action: input.action.kind,
+        preparationId: activeTracker.id,
       })
     } catch (error) {
       throw asSponsorRequestError(error)

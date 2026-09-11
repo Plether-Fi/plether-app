@@ -49,6 +49,15 @@ test('API-only profile needs no signer or paymaster and cannot issue sponsorship
   assert.throws(() => frankfurtLocalProfile({ AA_FRANKFURT_MODE: 'unknown' }, outputs, source))
 })
 
+test('preparation capability requires explicit native sponsorship opt-in', () => {
+  assert.equal(frankfurtLocalProfile(env, outputs, source).manifest.preparationRpcVersion, undefined)
+  assert.throws(() => frankfurtLocalProfile({ ...env, AA_FRANKFURT_PREPARATION_ENABLED: 'true' }, outputs, source))
+  assert.throws(() => frankfurtLocalProfile({ ...env, AA_FRANKFURT_PREPARATION_ENABLED: 'yes' }, outputs, source))
+  const enabled = { ...env, AA_FRANKFURT_SPONSORSHIP_ENABLED: 'true', AA_FRANKFURT_PREPARATION_ENABLED: 'true' }
+  assert.equal(frankfurtLocalProfile(enabled, outputs, source).manifest.preparationRpcVersion, 1)
+  assert.throws(() => frankfurtLocalProfile({ ...enabled, AA_FRANKFURT_MODE: 'api-readonly' }, outputs, source))
+})
+
 test('rejects incorrect account, region, network, target and insecure/live endpoints', () => {
   for (const [key, value] of Object.entries({ id: 'sepolia', region: 'ap-southeast-1', account_id: '111111111111', chain_id: '1' })) {
     const bad = structuredClone(outputs)

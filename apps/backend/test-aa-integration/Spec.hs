@@ -5,6 +5,7 @@ import Control.Exception (bracket, finally)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
 import Data.Int (Int64)
+import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -19,6 +20,7 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
+import Plether.Database.AaPreparation
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -256,6 +258,26 @@ aaIntegrationSpec databaseUrl =
           consumeAaRateLimit firstConnection "final-issuance" clientKey accountKey 2
             `shouldReturn` False
 
+    it "fences preparation leases across instances and persists immutable work" $
+      withFixture databaseUrl $ \first -> withPeerConnection databaseUrl $ \second -> do
+        let client = clientKeyOf 'a'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'
+            operation = object ["nonce" .= ("0x1" :: Text)]
+        claimPreparation first False client sender identifier intent "worker-a" `shouldReturn` PreparationDisabled
+        claimPreparation first True client sender identifier intent "worker-a" `shouldReturn` PreparationClaimed Nothing
+        claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationBusy
+        claimPreparation second True client sender identifier (hashOf 'd') "worker-b" `shouldReturn` PreparationConflict
+        savePreparedOperation second client sender identifier "worker-b" operation `shouldReturn` False
+        savePreparedOperation first client sender identifier "worker-a" operation `shouldReturn` True
+        void $ execute_ first "UPDATE aa_preparations SET lease_until=clock_timestamp()-interval '1 second'"
+        claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationClaimed (Just operation)
+        releasePreparation first client sender identifier "worker-a"
+        claimPreparation first True client sender identifier intent "worker-c" `shouldReturn` PreparationBusy
+        savePreparedOperation second client sender identifier "worker-b" (object []) `shouldReturn` False
+        releasePreparation second client sender identifier "worker-b"
+        claimPreparation first False client sender identifier intent "worker-c" `shouldReturn` PreparationClaimed (Just operation)
+        void $ execute_ first "UPDATE aa_preparations SET expires_at=clock_timestamp()-interval '1 second'"
+        claimPreparation second True client sender identifier intent "worker-d" `shouldReturn` PreparationExpired
+
 withFixture :: Text -> (Connection -> IO a) -> IO a
 withFixture databaseUrl action =
   bracket
@@ -282,6 +304,8 @@ resetSchema conn = do
   void $ execute_ conn "CREATE SCHEMA aa_integration_spec"
   void $ execute_ conn "SET search_path TO aa_integration_spec, public"
   ensureAaSponsorshipSchema conn
+  migration <- fromString <$> readFile "config/migrations/aa-preparation-v1.sql"
+  void $ execute_ conn migration
 
 cleanupSchema :: Connection -> IO ()
 cleanupSchema conn = do
@@ -378,6 +402,7 @@ testConfig =
     , naaKmsKeyId = "alias/integration-test"
     , naaAccountCodeHash = hashOf '6'
     , naaSponsorshipEnabled = True
+    , naaPreparationEnabled = False
     , naaSubmissionEnabled = True
     , naaIpRateLimitPerMinute = 120
     , naaFinalRateLimitPerMinute = 6

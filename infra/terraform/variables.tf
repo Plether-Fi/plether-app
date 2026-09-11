@@ -561,6 +561,12 @@ variable "configure_native_aa_backend" {
   description = "Inject the complete native-AA recovery/submission configuration into the API. Keep false during Alto and paymaster bootstrap."
 }
 
+variable "enable_native_aa_preparation" {
+  description = "Enable versioned native preparation only after its additive migration and canary approval."
+  type        = bool
+  default     = false
+}
+
 variable "enable_native_aa_sponsorship" {
   type        = bool
   default     = false

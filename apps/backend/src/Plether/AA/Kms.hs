@@ -6,9 +6,12 @@ module Plether.AA.Kms
   , normalizeLowS
   , assembleRecoverableSignature
   , canonicalRequest
+  , credentialsFreshUntil
+  , parseCredentials
   ) where
 
 import Control.Exception (try)
+import Control.Concurrent.MVar
 import Crypto.Hash (Digest, SHA256, hash)
 import Crypto.MAC.HMAC (HMAC, hmac)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
@@ -24,7 +27,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
+import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM, addUTCTime)
 import Data.Word (Word8)
 import Network.HTTP.Client
   ( BodyReader
@@ -55,6 +58,7 @@ data AwsCredentials = AwsCredentials
   { acAccessKeyId :: ByteString
   , acSecretAccessKey :: ByteString
   , acSessionToken :: ByteString
+  , acExpiration :: UTCTime
   }
 
 newKmsPaymasterSigner
@@ -63,7 +67,8 @@ newKmsPaymasterSigner
   -> Text
   -> IO (Either Text PaymasterSigner)
 newKmsPaymasterSigner manager keyId configuredAddress = do
-  publicKeyResult <- callKms manager "TrentService.GetPublicKey" $
+  credentials <- newMVar Nothing
+  publicKeyResult <- callKms credentials manager "TrentService.GetPublicKey" $
     object ["KeyId" .= keyId]
   case publicKeyResult >>= responseBase64 "PublicKey" >>= parseKmsPublicKey of
     Left err -> pure $ Left err
@@ -78,14 +83,14 @@ newKmsPaymasterSigner manager keyId configuredAddress = do
                 Right $
                   PaymasterSigner
                     { psAddress = T.toLower derivedAddress
-                    , psSignDigest = signWithKms manager keyId derivedAddress
+                    , psSignDigest = signWithKms credentials manager keyId derivedAddress
                     }
 
-signWithKms :: Manager -> Text -> Text -> ByteString -> IO (Either Text ByteString)
-signWithKms manager keyId expectedAddress digest
+signWithKms :: MVar (Maybe AwsCredentials) -> Manager -> Text -> Text -> ByteString -> IO (Either Text ByteString)
+signWithKms credentials manager keyId expectedAddress digest
   | BS.length digest /= 32 = pure $ Left "KMS signing digest must be exactly 32 bytes"
   | otherwise = do
-      response <- callKms manager "TrentService.Sign" $
+      response <- callKms credentials manager "TrentService.Sign" $
         object
           [ "KeyId" .= keyId
           , "Message" .= TE.decodeUtf8 (B64.encode digest)
@@ -146,8 +151,8 @@ normalizeLowS value
   | value > curveOrder `div` 2 = curveOrder - value
   | otherwise = value
 
-callKms :: Manager -> Text -> Value -> IO (Either Text Value)
-callKms manager target payload = do
+callKms :: MVar (Maybe AwsCredentials) -> Manager -> Text -> Value -> IO (Either Text Value)
+callKms credentialCache manager target payload = do
   region <- fmap (fmap T.pack) $ lookupEnv "AWS_REGION"
   fallbackRegion <- fmap (fmap T.pack) $ lookupEnv "AWS_DEFAULT_REGION"
   case region <|> fallbackRegion of
@@ -155,7 +160,7 @@ callKms manager target payload = do
     Just selectedRegion
       | not (validRegion selectedRegion) -> pure $ Left "AWS_REGION contains unsupported characters"
       | otherwise -> do
-          credentials <- loadEcsCredentials manager
+          credentials <- cachedEcsCredentials credentialCache manager
           case credentials of
             Left err -> pure $ Left err
             Right creds -> do
@@ -193,6 +198,22 @@ callKms manager target payload = do
                       case eitherDecode $ LBS.fromStrict body of
                         Left _ -> Left "AWS KMS returned invalid JSON"
                         Right value -> Right value
+
+-- One refresh at a time; never return credentials within the expiry margin.
+credentialsFreshUntil :: UTCTime -> UTCTime -> Bool
+credentialsFreshUntil now expires = expires > addUTCTime 300 now
+
+cachedEcsCredentials :: MVar (Maybe AwsCredentials) -> Manager -> IO (Either Text AwsCredentials)
+cachedEcsCredentials cache manager = modifyMVar cache $ \current -> do
+  now <- getCurrentTime
+  case current of
+    Just credentials | credentialsFreshUntil now (acExpiration credentials) -> pure (current, Right credentials)
+    _ -> do
+      loaded <- loadEcsCredentials manager
+      checkedAt <- getCurrentTime
+      case loaded of
+        Right credentials | credentialsFreshUntil checkedAt (acExpiration credentials) -> pure (Just credentials, Right credentials)
+        _ -> pure (Nothing, Left "Fresh ECS signing credentials are unavailable")
 
 loadEcsCredentials :: Manager -> IO (Either Text AwsCredentials)
 loadEcsCredentials manager = do
@@ -233,6 +254,9 @@ parseCredentials body = do
       access <- requiredText objectValue "AccessKeyId"
       secret <- requiredText objectValue "SecretAccessKey"
       token <- requiredText objectValue "Token"
+      expirationText <- requiredText objectValue "Expiration"
+      expiration <- maybe (Left "ECS credential expiration is invalid") Right $
+        parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" (T.unpack expirationText)
       if any T.null [access, secret, token]
         then Left "ECS task credential response contains an empty credential"
         else
@@ -241,6 +265,7 @@ parseCredentials body = do
               (TE.encodeUtf8 access)
               (TE.encodeUtf8 secret)
               (TE.encodeUtf8 token)
+              expiration
     _ -> Left "ECS task credential response must be an object"
 
 authorizationHeader

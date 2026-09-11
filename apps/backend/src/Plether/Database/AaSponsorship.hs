@@ -79,6 +79,11 @@ data SponsorshipDraft = SponsorshipDraft
   }
   deriving stock (Eq, Show)
 
+data BudgetTotals = BudgetTotals Integer Integer Integer Integer Integer Integer
+instance FromRow BudgetTotals where
+  fromRow = BudgetTotals <$> numericIntegerField <*> numericIntegerField <*> numericIntegerField
+    <*> numericIntegerField <*> numericIntegerField <*> numericIntegerField
+
 data SponsorshipAuthorization = SponsorshipAuthorization
   { saRequestKey :: Text
   , saDigest :: Text
@@ -868,31 +873,24 @@ reserveSponsorship conn cfg draft = withTransaction conn $ do
               then pure $ Right authorization
               else pure $ Left "SPONSORSHIP_RETRY_EXPIRED"
       Nothing -> do
-        accountOutstanding <- queryAmount conn
-          "SELECT COALESCE(SUM(max_cost_wei), 0)::TEXT FROM aa_sponsorship_authorizations \
-          \WHERE sender = ? AND state IN ('reserved','signed','submitted')"
-          (Only $ T.toLower $ sdSender draft)
-        clientOutstanding <- queryAmount conn
-          "SELECT COALESCE(SUM(max_cost_wei), 0)::TEXT FROM aa_sponsorship_authorizations \
-          \WHERE client_key = ? AND state IN ('reserved','signed','submitted')"
-          (Only $ T.toLower $ sdClientKey draft)
-        globalOutstanding <- queryAmount conn
-          "SELECT COALESCE(SUM(max_cost_wei), 0)::TEXT FROM aa_sponsorship_authorizations \
-          \WHERE state IN ('reserved','signed','submitted')"
-          ()
-        accountHourly <- queryAmount conn
-          "SELECT COALESCE(SUM(e.actual_gas_cost_wei), 0)::TEXT \
-          \FROM aa_user_operation_events e JOIN aa_sponsorship_authorizations a ON a.digest=e.digest \
-          \WHERE a.sender = ? AND e.finalized_at >= clock_timestamp() - INTERVAL '1 hour'"
-          (Only $ T.toLower $ sdSender draft)
-        globalHourly <- queryAmount conn
-          "SELECT COALESCE(SUM(actual_gas_cost_wei), 0)::TEXT FROM aa_user_operation_events \
-          \WHERE finalized_at >= clock_timestamp() - INTERVAL '1 hour'"
-          ()
-        globalDaily <- queryAmount conn
-          "SELECT COALESCE(SUM(actual_gas_cost_wei), 0)::TEXT FROM aa_user_operation_events \
-          \WHERE finalized_at >= clock_timestamp() - INTERVAL '24 hours'"
-          ()
+        -- One snapshot/round trip for all six totals, still under the same
+        -- exclusive budget lock as the subsequent reservation.
+        totals <- query conn
+          "SELECT outstanding.account_total,outstanding.client_total,outstanding.global_total,history.account_hour,history.global_hour,history.global_day \
+          \FROM (SELECT COALESCE(SUM(max_cost_wei) FILTER (WHERE sender=?),0)::TEXT AS account_total, \
+          \COALESCE(SUM(max_cost_wei) FILTER (WHERE client_key=?),0)::TEXT AS client_total, \
+          \COALESCE(SUM(max_cost_wei),0)::TEXT AS global_total FROM aa_sponsorship_authorizations \
+          \WHERE state IN ('reserved','signed','submitted')) outstanding CROSS JOIN \
+          \(SELECT COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE a.sender=? AND e.finalized_at>=clock_timestamp()-interval '1 hour'),0)::TEXT AS account_hour, \
+          \COALESCE(SUM(e.actual_gas_cost_wei) FILTER (WHERE e.finalized_at>=clock_timestamp()-interval '1 hour'),0)::TEXT AS global_hour, \
+          \COALESCE(SUM(e.actual_gas_cost_wei),0)::TEXT AS global_day FROM aa_user_operation_events e \
+          \LEFT JOIN aa_sponsorship_authorizations a ON a.digest=e.digest \
+          \WHERE e.finalized_at>=clock_timestamp()-interval '24 hours') history"
+          (T.toLower $ sdSender draft, T.toLower $ sdClientKey draft, T.toLower $ sdSender draft)
+        BudgetTotals accountOutstanding clientOutstanding globalOutstanding accountHourly globalHourly globalDaily <-
+          case totals of
+            [value] -> pure value
+            _ -> fail "budget totals must return exactly one row"
         let cost = sdMaxCostWei draft
             denied
               | cost > naaMaxCostWei cfg = Just "PER_OPERATION_BUDGET_EXCEEDED"

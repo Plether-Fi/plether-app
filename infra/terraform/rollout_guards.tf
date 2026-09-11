@@ -290,6 +290,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     provision_self_hosted_aa                    = var.provision_self_hosted_aa
     configure_native_aa_backend                 = var.configure_native_aa_backend
     enable_native_aa_sponsorship                = var.enable_native_aa_sponsorship
+    enable_native_aa_preparation                = var.enable_native_aa_preparation
     enable_native_aa_submission                 = var.enable_native_aa_submission
     aa_native_canary_owners                     = var.aa_native_canary_owners
     aa_native_global_rollout                    = var.aa_native_global_rollout_enabled
@@ -357,7 +358,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.enable_native_aa_sponsorship || var.configure_native_aa_backend
+      condition     = (!var.enable_native_aa_sponsorship && !var.enable_native_aa_preparation) || var.configure_native_aa_backend
       error_message = "Native sponsorship issuance cannot be enabled until configure_native_aa_backend=true."
     }
 

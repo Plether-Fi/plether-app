@@ -85,7 +85,7 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs
 
       - name: Check Frankfurt localhost AA proxy
         working-directory: .

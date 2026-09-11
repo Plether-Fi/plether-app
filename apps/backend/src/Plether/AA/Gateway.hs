@@ -11,11 +11,17 @@ module Plether.AA.Gateway
   , nativeStartupFailure
   , SecurityBlockHeader (..)
   , validateSecurityHeaderTime
+  , advanceEvidenceSnapshots
   ) where
 
 import Control.Exception (SomeException, try)
+import Control.Concurrent.Async (Concurrently (..), concurrently)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar
+import Control.Monad (forever, void)
 import Control.Monad (unless, when)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Data.Aeson
   ( Value (..)
   , eitherDecode
@@ -31,6 +37,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
+import Data.List (sortOn)
+import Data.Ord (Down (..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL
@@ -52,6 +60,10 @@ import Network.HTTP.Client
 import Network.HTTP.Types.Header (hRetryAfter)
 import Network.HTTP.Types.Status (status200, status400, status403, status413, statusCode)
 import qualified Plether.AA.Paymaster as Paymaster
+import qualified Plether.AA.Preparation as Preparation
+import qualified Plether.Database.AaPreparation as PreparationDb
+import Plether.AA.Timing (Timing, newTiming, timingIdentifier, timed, timingCount, timingHeaders)
+import qualified Plether.AA.EvidenceCache as Cache
 import Plether.AA.ClientKey
   ( pseudonymousAccountKey
   , pseudonymousClientKey
@@ -79,6 +91,8 @@ import Plether.Database.AaSponsorship
 import Plether.Ethereum.Abi
   ( decodeAddress
   , decodeUint256
+  , encodeAddress
+  , encodeUint256
   , encodeCall
   , keccak256
   )
@@ -88,6 +102,7 @@ import Plether.Ethereum.Client
   , ethCallAtBlock
   , newClient
   , rpcCall
+  , withRpcObserver
   )
 import Plether.Logging (field, logError, logErrorEvery, logInfo, logWarn)
 import Web.Scotty
@@ -104,6 +119,10 @@ data NativeGatewayState = NativeGatewayState
   { ngsSigner :: Maybe PaymasterSigner
   , ngsIssuanceError :: Maybe Text
   , ngsSecurityClient :: Maybe EthClient
+  , ngsProfileEvidence :: Cache.EvidenceCache Text ()
+  , ngsAccountEvidence :: Cache.EvidenceCache Legacy.ProxyFailure Text
+  , ngsSnapshots :: MVar [(Integer, Text)]
+  , ngsTiming :: Maybe Timing
   }
 
 data SecurityBlockHeader = SecurityBlockHeader
@@ -119,6 +138,9 @@ data NativeSecurityContext = NativeSecurityContext
   , nscSecondaryClient :: EthClient
   , nscHeader :: SecurityBlockHeader
   , nscMaxSafeLagSeconds :: Integer
+  , nscRpcMode :: AaRpcMode
+  , nscAccountEvidence :: Cache.EvidenceCache Legacy.ProxyFailure Text
+  , nscTiming :: Maybe Timing
   }
 
 nativeGatewayIssuanceError :: NativeGatewayState -> Maybe Text
@@ -129,9 +151,19 @@ newNativeGatewayState
   -> Config
   -> EthClient
   -> IO NativeGatewayState
-newNativeGatewayState manager cfg client =
+newNativeGatewayState manager cfg client = do
+  profiles <- Cache.newEvidenceCache 2
+  accounts <- Cache.newEvidenceCache 1024
+  snapshots <- newMVar []
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing
+      warm state nativeCfg = do
+        when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
+          void $ forkIO $ forever $ do
+            _ <- nativeSecurityContext nativeCfg state client
+            threadDelay 1_000_000
+        pure state
   case cfgNativeAaConfig cfg of
-    Nothing -> pure $ NativeGatewayState Nothing Nothing Nothing
+    Nothing -> pure $ make Nothing Nothing Nothing
     Just nativeCfg -> do
       logInfo "aa_rpc_mode_configured" "Native AA verification RPC mode configured"
         [field "rpc_mode" $ aaRpcModeText $ naaRpcMode nativeCfg]
@@ -142,19 +174,19 @@ newNativeGatewayState manager cfg client =
       securityClient <- newClient $ naaSecurityRpcUrl nativeCfg
       profile <- attestNativePaymasterProfile nativeCfg client securityClient
       case profile of
-        Left err -> pure $ NativeGatewayState Nothing (Just err) (Just securityClient)
+        Left err -> pure $ make Nothing (Just err) (Just securityClient)
         Right ()
           | not (naaSponsorshipEnabled nativeCfg) ->
-              pure $ NativeGatewayState Nothing Nothing $ Just securityClient
+              pure $ make Nothing Nothing $ Just securityClient
           | otherwise -> do
               signer <-
                 newKmsPaymasterSigner
                   manager
                   (naaKmsKeyId nativeCfg)
                   (naaSignerAddress nativeCfg)
-              pure $ case signer of
-                Left err -> NativeGatewayState Nothing (Just err) $ Just securityClient
-                Right resolved -> NativeGatewayState (Just resolved) Nothing $ Just securityClient
+              warm (case signer of
+                Left err -> make Nothing (Just err) $ Just securityClient
+                Right resolved -> make (Just resolved) Nothing $ Just securityClient) nativeCfg
 
 handleNativeAaRpc
   :: NativeGatewayState
@@ -163,7 +195,15 @@ handleNativeAaRpc
   -> EthClient
   -> Manager
   -> ActionM ()
-handleNativeAaRpc gatewayState cfg mPool perpsClient manager =
+handleNativeAaRpc gatewayState cfg mPool perpsClient manager = do
+  timing <- liftIO newTiming
+  let observe = withRpcObserver $ timingCount timing "rpc_calls"
+      scoped = gatewayState {ngsTiming = Just timing, ngsSecurityClient = observe <$> ngsSecurityClient gatewayState}
+  timed timing "http_total" $ handleNativeAaRpcTimed scoped cfg mPool (observe perpsClient) manager
+  emitTiming timing
+
+handleNativeAaRpcTimed :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> Manager -> ActionM ()
+handleNativeAaRpcTimed gatewayState cfg mPool perpsClient manager =
   case (cfgNativeAaConfig cfg, mPool) of
     (Nothing, _) ->
       Legacy.respondFailure Null $
@@ -194,7 +234,7 @@ handleNativeAaRpc gatewayState cfg mPool perpsClient manager =
                   emptyAccountKey =
                     pseudonymousAccountKey (naaProxyOriginToken nativeCfg) "prebody"
               preBodyRate <-
-                liftDb $
+                timeGateway gatewayState "auth_prebody_rate" $ liftDb $
                   withDb pool $ \conn ->
                     consumeAaRateLimit
                       conn
@@ -236,13 +276,15 @@ handleNativeAaRpc gatewayState cfg mPool perpsClient manager =
                         -- operation can occur.
                         Legacy.GetPaymasterData ->
                           ("final-issuance", naaFinalRateLimitPerMinute nativeCfg)
+                        Legacy.PrepareUserOperation ->
+                          ("final-issuance", naaFinalRateLimitPerMinute nativeCfg)
                         Legacy.GetPaymasterStubData ->
                           ("ip", naaIpRateLimitPerMinute nativeCfg)
                         _ -> ("ip", naaIpRateLimitPerMinute nativeCfg * 4)
                     emptyAccountKey =
                       pseudonymousAccountKey (naaProxyOriginToken nativeCfg) "no-account"
                 ipRate <-
-                  liftDb $
+                  timeGateway gatewayState "ip_rate" $ liftDb $
                     withDb pool $ \conn ->
                       consumeAaRateLimit conn rateScope clientKey emptyAccountKey ipLimit
                 case ipRate of
@@ -260,6 +302,185 @@ handleNativeAaRpc gatewayState cfg mPool perpsClient manager =
                       clientKey
                       request
 
+-- The standard ERC-7677 methods remain available. Only this authenticated,
+-- explicitly enabled path can accept a preparation intent.
+prepareNativeOperation
+  :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
+  -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey request = do
+  timing <- maybe (liftIO newTiming) pure $ ngsTiming gatewayState
+  let identifier = timingIdentifier timing
+  setHeader "X-Plether-Request-Id" $ TL.fromStrict identifier
+  if not (naaSponsorshipEnabled nativeCfg)
+    then Legacy.respondFailure requestId $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
+    else case Preparation.parsePreparationIntent $ Legacy.rrParams request of
+      Left failure -> Legacy.respondFailure requestId failure
+      Right intent -> do
+        result <- timed timing "prepare" $ runExceptT $ do
+          accountRate <- timed timing "account_rate" $ db $ consumeAaRateLimitFor intent
+          unless accountRate $ throwE Legacy.rateLimited
+          contextResult <- ioStage timing "security" $ nativeSecurityContext nativeCfg gatewayState client
+          context <- maybe (throwE securityAttestationUnavailable) pure contextResult
+          policyRequest <- checked $ Preparation.internalRequest "eth_estimateUserOperationGas"
+            [Object $ Preparation.unsignedSkeleton intent, String nativeEntryPoint]
+          policy <- checked (Legacy.validateMethodParams policyRequest) >>= maybe
+            (throwE $ Legacy.invalidParams "Missing preparation account") pure
+          owner <- ioStage timing "identity" $ verifyAccountIdentityDual context policy
+          checked $ Legacy.validateActionSequence cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
+          unless (ownerAllowedForNativeCanary nativeCfg owner) $
+            throwE $ Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
+          _ <- ioStage timing "runtime" $ verifyNativeAccountRuntimeDual nativeCfg context policy
+          claim <- db $ \conn -> PreparationDb.claimPreparation conn (naaPreparationEnabled nativeCfg) clientKey
+            (Preparation.piSender intent) (Preparation.piIdentifier intent)
+            (encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> preparationProfileFingerprint nativeCfg) identifier
+          stored <- case claim of
+            PreparationDb.PreparationConflict -> throwE $ Legacy.invalidParams "Preparation ID is bound to another intent"
+            PreparationDb.PreparationExpired -> throwE $ Legacy.policyDenied "Preparation expired; review a new intent"
+            PreparationDb.PreparationDisabled -> throwE $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
+            PreparationDb.PreparationBusy -> throwE $ Legacy.unavailable "PREPARATION_BUSY" "Retry the same preparation ID"
+            PreparationDb.PreparationClaimed operation -> pure operation
+          operationObject <- case stored of
+            Just (Object operation) -> pure operation
+            Just _ -> throwE databaseUnavailable
+            Nothing -> do
+              unless (naaPreparationEnabled nativeCfg) $ throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
+              built <- ioStage timing "fees_nonce_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
+              saved <- db $ \conn -> PreparationDb.savePreparedOperation conn clientKey
+                (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (Object built)
+              unless saved $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
+              pure built
+          unless (Preparation.matchesIntent intent operationObject) $ throwE databaseUnavailable
+          operation <- checked $ firstInvalidParams $ Paymaster.parsePackedUserOperation operationObject
+          -- Validate the exact estimated payload again, not just the skeleton.
+          finalPolicyRequest <- checked $ Preparation.internalRequest "eth_estimateUserOperationGas"
+            [Object $ KM.insert "signature" (String Legacy.dummySignature) operationObject, String nativeEntryPoint]
+          _ <- checked $ Legacy.validateMethodParams finalPolicyRequest
+          pure (context, owner, operation)
+        case result of
+          Left failure -> do
+            _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+              (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
+            emitTiming timing
+            Legacy.respondFailure requestId failure
+          Right (context, owner, operation) ->
+            deliverPreparation gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
+              let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
+              linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparation conn clientKey
+                (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
+                (encodeHex $ Paymaster.sponsorshipDigest operation envelope)
+              _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+                (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
+              emitTiming timing
+              case linked of
+                Right True -> respondSuccess requestId $ object
+                  [ "version" .= (1 :: Int)
+                  , "entryPoint" .= nativeEntryPoint
+                  , "operation" .= Object (KM.delete "signature" $ Paymaster.puoObject finalOperation)
+                  , "userOperationHash" .= encodeHex (Paymaster.userOperationHash finalOperation)
+                  ]
+                _ -> Legacy.respondFailure requestId $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
+        -- Errors after reservation also release the work lease, not the budget.
+        -- Lost/aborted requests leave an expiring lease for another instance.
+        _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+          (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
+        pure ()
+ where
+  requestId = Legacy.rrId request
+  checked = ExceptT . pure
+  db action = ExceptT $ fmap (either (const $ Left databaseUnavailable) Right) $ liftDb $ withDb pool action
+  ioStage timing stage action = ExceptT $ liftIO $ timed timing stage action
+  consumeAaRateLimitFor intent conn = consumeAaRateLimit conn "account" nativeAccountRateClientKey
+    (pseudonymousAccountKey (naaProxyOriginToken nativeCfg) $ Preparation.piSender intent)
+    (naaAccountRateLimitPerMinute nativeCfg)
+
+emitTiming :: Timing -> ActionM ()
+emitTiming timing = do
+  (identifier, stages) <- liftIO $ timingHeaders timing
+  setHeader "X-Plether-Request-Id" $ TL.fromStrict identifier
+  setHeader "Server-Timing" $ TL.fromStrict stages
+
+-- Rollback disables new reservations but permits delivery of an already signed
+-- authorization, subject to the same pause, expiry and canonical-state checks.
+deliverPreparation :: NativeGatewayState -> NativeAaConfig -> DbPool -> NativeSecurityContext
+  -> Text -> Text -> Legacy.RpcRequest -> Paymaster.PackedUserOperation
+  -> (Paymaster.SponsorshipEnvelope -> ActionM ()) -> ActionM ()
+deliverPreparation state cfg pool context clientKey owner request operation deliver
+  | naaPreparationEnabled cfg = issueSponsorship state cfg pool (Just context) clientKey owner request operation deliver
+  | otherwise = do
+      now <- liftEpochSeconds
+      existing <- liftDb $ withDb pool $ \conn -> getSponsorshipByRequestKey conn (sponsorshipRequestKey cfg clientKey owner operation)
+      case (ngsSigner state, existing) of
+        (Just signer, Right (Just authorization))
+          | authorizationIsUsable now authorization, Just _ <- saSignature authorization ->
+              finishSponsorship signer cfg pool context (Legacy.rrId request) operation authorization deliver
+        _ -> Legacy.respondFailure (Legacy.rrId request) $ Legacy.unavailable "PREPARATION_DISABLED" "No signed preparation is available"
+
+preparationProfileFingerprint :: NativeAaConfig -> Text
+preparationProfileFingerprint cfg = T.intercalate ":"
+  [naaPaymasterAddress cfg, naaPaymasterCodeHash cfg, naaPolicyId cfg,
+   naaSignerAddress cfg, naaAccountCodeHash cfg, aaRpcModeText $ naaRpcMode cfg,
+   T.pack $ show (naaVerificationGasLimit cfg, naaPostOpGasLimit cfg, naaMaxCostWei cfg, naaValiditySeconds cfg)]
+
+timeContext :: MonadIO m => NativeSecurityContext -> Text -> m a -> m a
+timeContext context stage action = maybe action (\timing -> timed timing stage action) $ nscTiming context
+
+timeGateway :: MonadIO m => NativeGatewayState -> Text -> m a -> m a
+timeGateway state stage action = maybe action (\timing -> timed timing stage action) $ ngsTiming state
+
+buildPreparedOperation
+  :: Timing -> NativeAaConfig -> EthClient -> Manager -> Preparation.PreparationIntent
+  -> IO (Either Legacy.ProxyFailure (KM.KeyMap Value))
+buildPreparedOperation timing cfg client manager intent = runExceptT $ do
+  (feesResult, nonceResult) <- liftIO $ concurrently
+    (altoTimed "fees" "pimlico_getUserOperationGasPrice" [])
+    (timed timing "nonce" $ rpcCall client "eth_call" $ toJSON
+      [ object ["to" .= nativeEntryPoint, "data" .= encodeHex (encodeCall "getNonce(address,uint192)" [encodeAddress $ Preparation.piSender intent, encodeUint256 0])]
+      , String "latest"])
+  fees <- ExceptT $ pure feesResult
+  (maxFee, priority) <- case fees of
+    Object tiers | Just (Object fast) <- KM.lookup "fast" tiers ->
+      (,) <$> quantity fast "maxFeePerGas" <*> quantity fast "maxPriorityFeePerGas"
+    _ -> throwE $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned invalid fees"
+  nonce <- case nonceResult of
+    Right (String word) | Just bytes <- decodeFixedHex 32 word -> pure $ decodeUint256 bytes
+    _ -> throwE securityAttestationUnavailable
+  unless (nonce < 2^(64 :: Int)) $ throwE $ Legacy.invalidParams "Unsupported nonce lane"
+  let skeleton = foldr (uncurry KM.insert) (Preparation.unsignedSkeleton intent)
+        [("nonce",String $ Paymaster.canonicalQuantity nonce), ("maxFeePerGas",String $ Paymaster.canonicalQuantity maxFee), ("maxPriorityFeePerGas",String $ Paymaster.canonicalQuantity priority)]
+  packed <- ExceptT $ pure $ firstInvalidParams $ Paymaster.parsePackedUserOperation skeleton
+  now <- liftIO $ floor <$> getPOSIXTime
+  let stub = Paymaster.makeSponsorshipEnvelope cfg (max 0 $ now-30) (now+naaValiditySeconds cfg) (naaMaxCostWei cfg) Paymaster.dummyPaymasterSignature
+      estimateObject = foldr KM.delete (Paymaster.puoObject $ Paymaster.applyPaymasterEnvelope packed stub)
+        ["callGasLimit", "verificationGasLimit", "preVerificationGas"]
+  estimates <- ExceptT $ altoTimed "estimation" "eth_estimateUserOperationGas" [Object estimateObject, String nativeEntryPoint]
+  gas <- case estimates of
+    Object values -> traverse (\name -> (name,) . String . Paymaster.canonicalQuantity <$> quantity values name)
+      ["callGasLimit","verificationGasLimit","preVerificationGas"]
+    _ -> throwE $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned invalid gas estimates"
+  let finalObject = KM.delete "signature" $ foldr (uncurry KM.insert) skeleton $
+        gas ++ [("paymasterVerificationGasLimit",String $ Paymaster.canonicalQuantity $ naaVerificationGasLimit cfg),
+                ("paymasterPostOpGasLimit",String $ Paymaster.canonicalQuantity $ naaPostOpGasLimit cfg)]
+  final <- ExceptT $ pure $ firstInvalidParams $ Paymaster.parsePackedUserOperation finalObject
+  ExceptT $ pure $ firstInvalidParams $ validateHardEconomicCaps final
+  pure finalObject
+ where
+  altoTimed stage method params = timed timing stage $ do
+    timingCount timing "alto_calls"
+    altoResult manager cfg method params
+  quantity fields key = case KM.lookup key fields of
+    Just (String value) | Just number <- parseRpcQuantity value, number >= 0, number < 2^(128 :: Int) -> pure number
+    _ -> throwE $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned an invalid quantity"
+
+altoResult :: Manager -> NativeAaConfig -> Text -> [Value] -> IO (Either Legacy.ProxyFailure Value)
+altoResult manager cfg method params = case Preparation.internalRequest method params of
+  Left failure -> pure $ Left failure
+  Right request -> do
+    response <- forwardAlto manager (naaAltoRpcUrl cfg) request
+    pure $ case response of
+      Right (Object fields, _) | Just result <- KM.lookup "result" fields -> Right result
+      Left failure -> Left failure
+      _ -> Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto preparation failed"
+
 dispatchNative
   :: NativeGatewayState
   -> Config
@@ -271,7 +492,10 @@ dispatchNative
   -> Text
   -> Legacy.RpcRequest
   -> ActionM ()
-dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp clientKey request =
+dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp clientKey request
+  | Legacy.rrMethod request == Legacy.PrepareUserOperation =
+      prepareNativeOperation gatewayState cfg nativeCfg pool perpsClient manager clientKey request
+  | otherwise =
   case validateNativeParams request of
     Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
     Right (mPolicyOperation, mPackedOperation) -> do
@@ -301,12 +525,12 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
               Right True -> do
                 securityContext <-
                   if requiresDualSecurity request
-                    then liftIO $ nativeSecurityContext nativeCfg gatewayState perpsClient
+                    then timeGateway gatewayState "security" $ liftIO $ nativeSecurityContext nativeCfg gatewayState perpsClient
                     else pure $ Right Nothing
                 case securityContext of
                   Left _ -> respondSecurityAttestationFailure (Legacy.rrId request) "initial security context"
                   Right mSecurityContext -> do
-                    identity <- liftIO $
+                    identity <- timeGateway gatewayState "identity" $ liftIO $
                       maybe
                         (Legacy.verifyAccountIdentity perpsClient policyOperation)
                         (\context -> verifyAccountIdentityDual context policyOperation)
@@ -329,7 +553,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                 Legacy.respondFailure (Legacy.rrId request) $
                                   Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
                             | otherwise -> do
-                                runtimeTrusted <- liftIO $
+                                runtimeTrusted <- timeGateway gatewayState "runtime" $ liftIO $
                                   maybe
                                     (verifyNativeAccountRuntime nativeCfg perpsClient policyOperation)
                                     (\context -> verifyNativeAccountRuntimeDual nativeCfg context policyOperation)
@@ -393,6 +617,7 @@ handleOperation gatewayState nativeCfg pool manager securityContext clientKey ow
                       respondSuccess requestId $ paymasterResponse False envelope
     Legacy.GetPaymasterData ->
       issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation
+        (respondSuccess requestId . paymasterResponse True)
     Legacy.SendUserOperation ->
       submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
     _ -> relayToAlto nativeCfg manager request Nothing
@@ -408,8 +633,9 @@ issueSponsorship
   -> Text
   -> Legacy.RpcRequest
   -> Paymaster.PackedUserOperation
+  -> (Paymaster.SponsorshipEnvelope -> ActionM ())
   -> ActionM ()
-issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation
+issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation deliver
   | not (naaSponsorshipEnabled nativeCfg) =
       Legacy.respondFailure requestId paymasterPaused
   | Just _ <- ngsIssuanceError gatewayState =
@@ -451,7 +677,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
                     Right (Just authorization) -> do
                       now <- liftEpochSeconds
                       if authorizationIsUsable now authorization
-                        then finishSponsorship signer nativeCfg pool context requestId operation authorization
+                        then finishSponsorship signer nativeCfg pool context requestId operation authorization deliver
                         else
                           Legacy.respondFailure requestId $
                             Legacy.policyDenied "This exact sponsorship request has already expired or completed"
@@ -492,7 +718,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
             case snapshotReady of
               Left reason -> respondSecurityAttestationFailure requestId reason
               Right () -> do
-                reserved <- liftDb $ withDb pool $ \conn -> reserveSponsorship conn nativeCfg draft
+                reserved <- timeContext context "reservation_and_lock" $ liftDb $ withDb pool $ \conn -> reserveSponsorship conn nativeCfg draft
                 case reserved of
                   Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "reservation"
                   Right (Left "PAYMASTER_PAUSED") -> Legacy.respondFailure requestId paymasterPaused
@@ -513,7 +739,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
                     Legacy.respondFailure requestId $
                       Legacy.ProxyFailure status200 (-32005) "Sponsorship budget exceeded" reason True
                   Right (Right authorization) ->
-                    finishSponsorship signer nativeCfg pool context requestId operation authorization
+                    finishSponsorship signer nativeCfg pool context requestId operation authorization deliver
 
 finishSponsorship
   :: PaymasterSigner
@@ -523,9 +749,10 @@ finishSponsorship
   -> Value
   -> Paymaster.PackedUserOperation
   -> SponsorshipAuthorization
+  -> (Paymaster.SponsorshipEnvelope -> ActionM ())
   -> ActionM ()
-finishSponsorship signer nativeCfg pool securityContext requestId operation authorization = do
-  snapshotStillCanonical <- liftIO $ revalidateSecurityContext securityContext
+finishSponsorship signer nativeCfg pool securityContext requestId operation authorization deliver = do
+  snapshotStillCanonical <- timeContext securityContext "canonical_before_delivery" $ liftIO $ revalidateSecurityContext securityContext
   case snapshotStillCanonical of
     Left reason -> respondSecurityAttestationFailure requestId reason
     Right () -> do
@@ -556,9 +783,9 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                         Paymaster.applyPaymasterEnvelope operation finalEnvelope
                 if saExpectedUserOperationHash authorization /= Just expectedHash
                   then Legacy.respondFailure requestId databaseUnavailable
-                  else respondSuccess requestId $ paymasterResponse True finalEnvelope
+                  else deliver finalEnvelope
           Nothing -> do
-            signatureResult <- liftIO $ psSignDigest signer $ Paymaster.sponsorshipDigest operation unsignedEnvelope
+            signatureResult <- timeContext securityContext "kms_sign" $ liftIO $ psSignDigest signer $ Paymaster.sponsorshipDigest operation unsignedEnvelope
             case signatureResult of
               Left _ -> do
                 liftIO $
@@ -578,7 +805,7 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                         expectedHash = encodeHex $ Paymaster.userOperationHash signedOperation
                         signatureText = encodeHex signature
                     stored <-
-                      liftDb $
+                      timeContext securityContext "signature_store_and_lock" $ liftDb $
                         withDb pool $ \conn ->
                           storeSponsorshipSignature
                             conn
@@ -597,7 +824,7 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                         case canonical of
                           Right (Just saved)
                             | Just _ <- saSignature saved ->
-                                finishSponsorship signer nativeCfg pool securityContext requestId operation saved
+                                finishSponsorship signer nativeCfg pool securityContext requestId operation saved deliver
                           _ -> respondNativeDbFailure requestId Legacy.GetPaymasterData "signature-readback"
 
 submitSponsoredOperation
@@ -692,6 +919,13 @@ requiresDualSecurity request =
            , Legacy.SendUserOperation
            ]
 
+-- Never infer a provider mode from matching URLs; Config validates the mode.
+providerPair :: AaRpcMode -> IO a -> IO a -> IO (a, a)
+providerPair SingleProviderSepolia primary _ = do
+  value <- primary
+  pure (value, value)
+providerPair DualIndependent primary secondary = concurrently primary secondary
+
 nativeSecurityContext
   :: NativeAaConfig
   -> NativeGatewayState
@@ -701,36 +935,68 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
   case ngsSecurityClient gatewayState of
     Nothing -> pure $ Left securityAttestationUnavailable
     Just secondaryClient -> do
-      primaryChain <- attestRpcChain primaryClient
-      secondaryChain <- attestRpcChain secondaryClient
+      (primaryChain, secondaryChain) <- providerPair (naaRpcMode nativeCfg) (attestRpcChain primaryClient) (attestRpcChain secondaryClient)
       case (primaryChain, secondaryChain) of
         (Right (), Right ()) -> do
-          snapshot <- readAgreedSecurityBlock (naaMaxSafeLagSeconds nativeCfg) primaryClient secondaryClient
+          snapshot <- readAgreedSecurityBlock (naaRpcMode nativeCfg) (naaMaxSafeLagSeconds nativeCfg) primaryClient secondaryClient
           case snapshot of
             Left _ -> pure $ Left securityAttestationUnavailable
             Right header -> do
               let blockNumber = sbhNumber header
-              primaryProfile <- attestProfileAt nativeCfg primaryClient blockNumber
-              secondaryProfile <- attestProfileAt nativeCfg secondaryClient blockNumber
+              (trustedSnapshot, snapshots) <- modifyMVar (ngsSnapshots gatewayState) $ \previous -> do
+                let (trusted, distinct) = advanceEvidenceSnapshots previous (blockNumber, sbhHash header)
+                pure (distinct, (trusted, map snd distinct))
+              Cache.retainSnapshots (ngsProfileEvidence gatewayState) snapshots
+              Cache.retainSnapshots (ngsAccountEvidence gatewayState) snapshots
+              let profile = do
+                    (first, second) <- providerPair (naaRpcMode nativeCfg)
+                      (attestProfileAt nativeCfg primaryClient blockNumber)
+                      (attestProfileAt nativeCfg secondaryClient blockNumber)
+                    pure $ first >> second
+              profileResult <- if naaPreparationEnabled nativeCfg
+                then Cache.evidenceObserved (ngsProfileEvidence gatewayState)
+                  (\event -> maybe (pure ()) (\timing -> timingCount timing $ "profile_cache_" <> event) $ ngsTiming gatewayState)
+                  (sbhHash header) "profile" profile
+                else profile
+              (primaryPause, secondaryPause) <- providerPair (naaRpcMode nativeCfg)
+                (readBoolAt primaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
+                (readBoolAt secondaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
               finalHeader <-
-                readAgreedSecurityHeaderAt primaryClient secondaryClient blockNumber
-              case (primaryProfile, secondaryProfile, finalHeader) of
-                (Right (), Right (), Right checkedHeader)
+                readAgreedSecurityHeaderAt (naaRpcMode nativeCfg) primaryClient secondaryClient blockNumber
+              case (trustedSnapshot, profileResult, primaryPause, secondaryPause, finalHeader) of
+                (True, Right (), Right False, Right False, Right checkedHeader)
                   | checkedHeader == header ->
-                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header (naaMaxSafeLagSeconds nativeCfg)
-                _ -> pure $ Left securityAttestationUnavailable
+                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header (naaMaxSafeLagSeconds nativeCfg) (naaRpcMode nativeCfg) (ngsAccountEvidence gatewayState) (ngsTiming gatewayState)
+                _ -> do
+                  Cache.clearEvidence $ ngsProfileEvidence gatewayState
+                  Cache.clearEvidence $ ngsAccountEvidence gatewayState
+                  pure $ Left securityAttestationUnavailable
         _ -> pure $ Left securityAttestationUnavailable
+
+-- Retain the two highest snapshots; reject a same-height replacement once.
+advanceEvidenceSnapshots :: [(Integer, Text)] -> (Integer, Text) -> (Bool, [(Integer, Text)])
+advanceEvidenceSnapshots previous current@(number, blockHash) =
+  let trusted = all (\(oldNumber, oldHash) -> oldNumber <= number && (oldNumber /= number || oldHash == blockHash)) previous
+      snapshots = take 2 $ sortOn (Down . fst) $ current : filter ((/= number) . fst) previous
+  in (trusted, snapshots)
 
 verifyAccountIdentityDual
   :: NativeSecurityContext
   -> Legacy.ParsedUserOperation
   -> IO (Either Legacy.ProxyFailure Text)
 verifyAccountIdentityDual context operation = do
+  let key = Legacy.puoSender operation <> ":" <> maybe "deployed" id (Legacy.puoFactoryOwner operation)
+  timeContext context "identity_evidence" $ Cache.evidenceObserved (nscAccountEvidence context)
+    (\event -> maybe (pure ()) (\timing -> timingCount timing $ "account_cache_" <> event) $ nscTiming context)
+    (sbhHash $ nscHeader context) ("identity:" <> key) $
+      verifyAccountIdentityUncached context operation
+
+verifyAccountIdentityUncached :: NativeSecurityContext -> Legacy.ParsedUserOperation -> IO (Either Legacy.ProxyFailure Text)
+verifyAccountIdentityUncached context operation = do
   let blockNumber = sbhNumber $ nscHeader context
-  primary <-
-    Legacy.verifyAccountIdentityAtBlock (nscPrimaryClient context) blockNumber operation
-  secondary <-
-    Legacy.verifyAccountIdentityAtBlock (nscSecondaryClient context) blockNumber operation
+  (primary, secondary) <- providerPair (nscRpcMode context)
+    (Legacy.verifyAccountIdentityAtBlock (nscPrimaryClient context) blockNumber operation)
+    (Legacy.verifyAccountIdentityAtBlock (nscSecondaryClient context) blockNumber operation)
   pure $ case (primary, secondary) of
     (Right firstOwner, Right secondOwner)
       | T.toLower firstOwner == T.toLower secondOwner -> Right $ T.toLower firstOwner
@@ -744,10 +1010,10 @@ verifyAccountIdentityDual context operation = do
 revalidateSecurityContext :: NativeSecurityContext -> IO (Either Text ())
 revalidateSecurityContext context = do
   let blockNumber = sbhNumber $ nscHeader context
-  primarySafe <- readSecurityHeader (nscPrimaryClient context) "safe"
-  secondarySafe <- readSecurityHeader (nscSecondaryClient context) "safe"
+  (primarySafe, secondarySafe) <- providerPair (nscRpcMode context) (readSecurityHeader (nscPrimaryClient context) "safe") (readSecurityHeader (nscSecondaryClient context) "safe")
   current <-
     readAgreedSecurityHeaderAt
+      (nscRpcMode context)
       (nscPrimaryClient context)
       (nscSecondaryClient context)
       blockNumber
@@ -1048,8 +1314,9 @@ verifyNativeAccountRuntimeDual cfg context operation =
     Nothing -> do
       let blockNumber = sbhNumber $ nscHeader context
           sender = Legacy.puoSender operation
-      primary <- readRuntimeCodeAt (nscPrimaryClient context) blockNumber sender
-      secondary <- readRuntimeCodeAt (nscSecondaryClient context) blockNumber sender
+      (primary, secondary) <- providerPair (nscRpcMode context)
+        (readRuntimeCodeAt (nscPrimaryClient context) blockNumber sender)
+        (readRuntimeCodeAt (nscSecondaryClient context) blockNumber sender)
       pure $ case (primary, secondary) of
         (Right firstCode, Right secondCode)
           | firstCode /= secondCode -> Left securityAttestationUnavailable
@@ -1075,20 +1342,18 @@ attestNativePaymasterProfile
   -> EthClient
   -> IO (Either Text ())
 attestNativePaymasterProfile cfg primaryClient secondaryClient = do
-  primaryChain <- attestRpcChain primaryClient
-  secondaryChain <- attestRpcChain secondaryClient
+  (primaryChain, secondaryChain) <- providerPair (naaRpcMode cfg) (attestRpcChain primaryClient) (attestRpcChain secondaryClient)
   case (primaryChain, secondaryChain) of
     (Left err, _) -> pure $ Left $ "primary profile RPC: " <> err
     (_, Left err) -> pure $ Left $ "secondary profile RPC: " <> err
     (Right (), Right ()) -> do
-      snapshot <- readAgreedSecurityBlock (naaMaxSafeLagSeconds cfg) primaryClient secondaryClient
+      snapshot <- readAgreedSecurityBlock (naaRpcMode cfg) (naaMaxSafeLagSeconds cfg) primaryClient secondaryClient
       case snapshot of
         Left err -> pure $ Left err
         Right header -> do
-          primaryProfile <- attestProfileAt cfg primaryClient $ sbhNumber header
-          secondaryProfile <- attestProfileAt cfg secondaryClient $ sbhNumber header
+          (primaryProfile, secondaryProfile) <- providerPair (naaRpcMode cfg) (attestProfileAt cfg primaryClient $ sbhNumber header) (attestProfileAt cfg secondaryClient $ sbhNumber header)
           verifiedHeader <-
-            readAgreedSecurityHeaderAt primaryClient secondaryClient $ sbhNumber header
+            readAgreedSecurityHeaderAt (naaRpcMode cfg) primaryClient secondaryClient $ sbhNumber header
           pure $ do
             primaryProfile
             secondaryProfile
@@ -1099,23 +1364,23 @@ attestNativePaymasterProfile cfg primaryClient secondaryClient = do
 attestProfileAt :: NativeAaConfig -> EthClient -> Integer -> IO (Either Text ())
 attestProfileAt cfg client blockNumber = do
   let paymaster = naaPaymasterAddress cfg
-  configuredEntryPoint <- readAddressAt client blockNumber paymaster "entryPoint()" []
-  configuredPaused <- readBoolAt client blockNumber paymaster "paused()" []
-  policy <- readBytes32At client blockNumber paymaster "policyId()" []
-  accountHash <- readBytes32At client blockNumber paymaster "approvedAccountCodeHash()" []
-  factory <- readAddressAt client blockNumber paymaster "accountFactory()" []
-  factoryHash <- readBytes32At client blockNumber paymaster "accountFactoryCodeHash()" []
-  implementation <- readAddressAt client blockNumber paymaster "accountImplementation()" []
-  implementationHash <- readBytes32At client blockNumber paymaster "accountImplementationCodeHash()" []
-  configuredSigner <- readAddressAt client blockNumber paymaster "sponsorSigner()" []
-  maxCost <- readUintAt client blockNumber paymaster "maxSponsoredCost()" []
-  maxValidity <- readUintAt client blockNumber paymaster "MAX_VALIDITY_WINDOW()" []
-  factoryImplementation <-
-    readAddressAt client blockNumber canonicalFactory "accountImplementation()" []
-  liveEntryPointHash <- readCodeHashAt client blockNumber nativeEntryPoint
-  livePaymasterHash <- readCodeHashAt client blockNumber paymaster
-  liveFactoryHash <- readCodeHashAt client blockNumber canonicalFactory
-  liveImplementationHash <- readCodeHashAt client blockNumber canonicalImplementation
+  (configuredEntryPoint, configuredPaused, policy, accountHash, factory, factoryHash, implementation, implementationHash, configuredSigner, maxCost, maxValidity, factoryImplementation, liveEntryPointHash, livePaymasterHash, liveFactoryHash, liveImplementationHash) <- runConcurrently $
+    (,,,,,,,,,,,,,,,) <$> Concurrently (readAddressAt client blockNumber paymaster "entryPoint()" [])
+    <*> Concurrently (readBoolAt client blockNumber paymaster "paused()" [])
+    <*> Concurrently (readBytes32At client blockNumber paymaster "policyId()" [])
+    <*> Concurrently (readBytes32At client blockNumber paymaster "approvedAccountCodeHash()" [])
+    <*> Concurrently (readAddressAt client blockNumber paymaster "accountFactory()" [])
+    <*> Concurrently (readBytes32At client blockNumber paymaster "accountFactoryCodeHash()" [])
+    <*> Concurrently (readAddressAt client blockNumber paymaster "accountImplementation()" [])
+    <*> Concurrently (readBytes32At client blockNumber paymaster "accountImplementationCodeHash()" [])
+    <*> Concurrently (readAddressAt client blockNumber paymaster "sponsorSigner()" [])
+    <*> Concurrently (readUintAt client blockNumber paymaster "maxSponsoredCost()" [])
+    <*> Concurrently (readUintAt client blockNumber paymaster "MAX_VALIDITY_WINDOW()" [])
+    <*> Concurrently (readAddressAt client blockNumber canonicalFactory "accountImplementation()" [])
+    <*> Concurrently (readCodeHashAt client blockNumber nativeEntryPoint)
+    <*> Concurrently (readCodeHashAt client blockNumber paymaster)
+    <*> Concurrently (readCodeHashAt client blockNumber canonicalFactory)
+    <*> Concurrently (readCodeHashAt client blockNumber canonicalImplementation)
   pure $ do
     requireEqual "EntryPoint runtime code hash" reviewedEntryPointCodeHash =<< liveEntryPointHash
     requireEqual "paymaster runtime code hash" (naaPaymasterCodeHash cfg) =<< livePaymasterHash
@@ -1149,19 +1414,19 @@ attestRpcChain client = do
     Left _ -> Left "could not attest PERPS_RPC_URL chain id"
 
 readAgreedSecurityBlock
-  :: Integer
+  :: AaRpcMode
+  -> Integer
   -> EthClient
   -> EthClient
   -> IO (Either Text SecurityBlockHeader)
-readAgreedSecurityBlock maxSafeLag primaryClient secondaryClient = do
-  primarySafe <- readSecurityHeader primaryClient "safe"
-  secondarySafe <- readSecurityHeader secondaryClient "safe"
+readAgreedSecurityBlock mode maxSafeLag primaryClient secondaryClient = do
+  (primarySafe, secondarySafe) <- providerPair mode (readSecurityHeader primaryClient "safe") (readSecurityHeader secondaryClient "safe")
   case (primarySafe, secondarySafe) of
     (Left err, _) -> pure $ Left $ "primary security RPC: " <> err
     (_, Left err) -> pure $ Left $ "secondary security RPC: " <> err
     (Right firstSafe, Right secondSafe) -> do
       let agreedNumber = min (sbhNumber firstSafe) (sbhNumber secondSafe)
-      agreed <- readAgreedSecurityHeaderAt primaryClient secondaryClient agreedNumber
+      agreed <- readAgreedSecurityHeaderAt mode primaryClient secondaryClient agreedNumber
       now <- floor <$> getPOSIXTime
       pure $ do
         header <- agreed
@@ -1180,14 +1445,14 @@ validateSecurityHeaderTime maxSafeLag now header = do
     Left "the dual-provider security snapshot timestamp is in the future"
 
 readAgreedSecurityHeaderAt
-  :: EthClient
+  :: AaRpcMode
+  -> EthClient
   -> EthClient
   -> Integer
   -> IO (Either Text SecurityBlockHeader)
-readAgreedSecurityHeaderAt primaryClient secondaryClient blockNumber = do
+readAgreedSecurityHeaderAt mode primaryClient secondaryClient blockNumber = do
   let blockTag = Paymaster.canonicalQuantity blockNumber
-  primary <- readSecurityHeader primaryClient blockTag
-  secondary <- readSecurityHeader secondaryClient blockTag
+  (primary, secondary) <- providerPair mode (readSecurityHeader primaryClient blockTag) (readSecurityHeader secondaryClient blockTag)
   pure $ case (primary, secondary) of
     (Left err, _) -> Left $ "primary security RPC: " <> err
     (_, Left err) -> Left $ "secondary security RPC: " <> err
