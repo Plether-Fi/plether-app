@@ -45,6 +45,13 @@ describe('native preparation response binding', () => {
     expect(() => validateNativePreparation({ ...fixture(), userOperationHash: '0x00' }, expected, manifest)).toThrow()
     expect(() => validateNativePreparation({ ...fixture(), entryPoint: expected.sender }, expected, manifest)).toThrow()
   })
+  it.each(['paymasterVerificationGasLimit', 'paymasterPostOpGasLimit', 'paymasterData'])(
+    'rejects missing %s before calculating sponsorship liability', key => {
+      const response = fixture()
+      delete response.operation[key]
+      expect(() => validateNativePreparation(response, expected, manifest)).toThrow()
+    },
+  )
   it('uses a stable opaque ID for the same journaled attempt', () => {
     expect(preparationIdentifier('attempt-a')).toBe(preparationIdentifier('attempt-a'))
     expect(preparationIdentifier('attempt-a')).not.toBe(preparationIdentifier('attempt-b'))

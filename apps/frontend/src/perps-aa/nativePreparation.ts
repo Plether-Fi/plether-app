@@ -48,6 +48,10 @@ export function validateNativePreparation(
     parsed[key] = raw[key]
   }
   const op = parsed as unknown as ManagedUserOperation
+  const { paymasterVerificationGasLimit, paymasterPostOpGasLimit, paymasterData } = op
+  if (paymasterVerificationGasLimit === undefined || paymasterPostOpGasLimit === undefined || paymasterData === undefined) {
+    throw new Error('Prepared sponsorship fields are required')
+  }
   if (getAddress(op.sender) !== getAddress(expected.sender) || op.callData.toLowerCase() !== expected.callData.toLowerCase()
     || op.factory?.toLowerCase() !== expected.factory?.toLowerCase()
     || op.factoryData?.toLowerCase() !== expected.factoryData?.toLowerCase()
@@ -65,8 +69,8 @@ export function validateNativePreparation(
     throw new Error('Prepared sponsorship is invalid or expiring')
   }
   const liability = (op.callGasLimit + op.verificationGasLimit + op.preVerificationGas
-    + op.paymasterVerificationGasLimit! + op.paymasterPostOpGasLimit!) * op.maxFeePerGas
-  const signedCeiling = hexToBigInt(slice(op.paymasterData!, 12, 28))
+    + paymasterVerificationGasLimit + paymasterPostOpGasLimit) * op.maxFeePerGas
+  const signedCeiling = hexToBigInt(slice(paymasterData, 12, 28))
   if (liability > signedCeiling || signedCeiling > 10_000_000_000_000_000n) {
     throw new Error('Prepared sponsorship exceeds the reviewed economic ceiling')
   }
