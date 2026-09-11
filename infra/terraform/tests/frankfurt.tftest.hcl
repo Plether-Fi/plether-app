@@ -418,7 +418,7 @@ run "frankfurt_trading_canary" {
   }
   assert {
     condition = (
-      local.aa_keeper_runtime_image == local.aa_api_runtime_image
+      endswith(local.aa_keeper_runtime_image, "@sha256:9a825fddd0e8b942cc68b83349ca25a21b5b37dde8c586ec2d1ae11258859a79")
       && endswith(local.aa_api_runtime_image, "@sha256:631c89b2b6e9b34800ffa05e0013bfba211402cfddeae60c2fb37452ae110500")
       && endswith(local.aa_observability_log_router_image, "@sha256:de9936038b75c0a1492478fa4355fe2ee50cd827306054a68d9fe8283b01f66e")
       && local.aa_keeper_runtime_image != local.api_image

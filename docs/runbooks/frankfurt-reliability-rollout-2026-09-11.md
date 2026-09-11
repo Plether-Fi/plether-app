@@ -100,3 +100,69 @@ tables/columns, signed preparations or recovery journals. Keep readiness blockin
 disabled. The private operator workspace containing image/promotion records is
 `/private/tmp/plether-reliability-deploy-5G30tB`; it contains no exported runtime
 credentials, but is local operational state and should not be published wholesale.
+
+## Approved idle-funding follow-up
+
+Source `f94d781d06ed51be4567f6e9802ca7dd85c89a3c` was committed and pushed
+with the preview-status removal, tunnel fixes and initial rollout records.
+GitHub Backend, Tests, Frankfurt mocked-plan and AA observability checks passed.
+The backend suite contains 1,088 examples, including sixteen idle-funding tests.
+The updated keeper pin also passed all thirty-one mocked Frankfurt plans.
+
+Only the `plether-keeper` image changed in shared-worker revision `:7` → `:8`:
+
+- Image: `932542905614.dkr.ecr.eu-central-1.amazonaws.com/plether-api-sepolia-aa-temp@sha256:9a825fddd0e8b942cc68b83349ca25a21b5b37dde8c586ec2d1ae11258859a79`.
+- Image configuration: `sha256:8a5bae64e00c082e839d5ae7133a6f9f4ed40a3177a3c915971d0718aefb6967`.
+- Task: `cf51fe80c32f47fab07c3864473fe8c4`.
+- ECS rollout: `COMPLETED`, desired/running 1/1, pending zero; all six containers running.
+
+The shared task restarted under its existing stop-before-start policy. All
+other application images, the log router, environment, secrets, roles, network
+configuration and desired count were compared with revision `:7` and preserved.
+The API remains `:12`; Alto and the reconciler remain `:4`. Readiness enforcement
+remains false. No Core/Singapore deployment, funding or allowance change occurred.
+
+Fifteen readiness samples at ten-second intervals over 141 seconds were fresh
+and reported keeper `ready / READY`. This includes more than two idle minutes
+without any transaction quote. The localhost activity panel showed “Trading
+status — ready”; the trade preview no longer displayed the status panel.
+
+### Sponsored trade smoke test
+
+The canary owner used the localhost Firefox app on Arbitrum Sepolia. A
+1,100-plDXY reduce-only order was reviewed against the existing 25,000-plDXY
+Short position; no opening trade or margin transfer was requested.
+
+The first unsigned attempt was cancelled after the wallet-approval guard flagged
+the commit screen's “Long” label. A read-only database diagnostic decoded the
+exact saved calldata matching the wallet's client order ID and verified
+`side=Short`, `isClose=true`, quantity 1,100 and the v1.2.3 router. Task
+`385938c3de9047ef84ef400922105065` exited zero and logged
+`aa_smoke_intent_verified`, without exporting raw operations or credentials.
+The label is a UI defect, not an opening Long payload; it remains follow-up work.
+
+The second preparation was denied because reconciliation was briefly stale
+while catching up to an advanced safe head. Logs show safe-cursor progress and
+a recovered heartbeat about three seconds after the denial. No signing,
+submission, restart or safety-rule change occurred for that attempt.
+
+A fresh third attempt was signed and executed successfully:
+
+- Order: **11**, close/reduction, **FAD** execution mode.
+- Quantity: **1,100 plDXY**; remaining Short position: **23,900 plDXY**.
+- Commit: `0x94c6019f85029b1dcd12b87047b4c71263ad3f6afb8302db36ac8b0d39f39d12` (block 307885678).
+- Keeper execution: `0x0ae612f83d19b31e6d957d371972149bd9bfab16fd1ba0b2dbb9c7c64ed8be3f` (block 307885702).
+- UserOperation: `0xe097db581811335f6c6501b82095d5dad0d66c3093528b988d835566b6cd72f8`.
+- Commit-to-execution: **6 seconds**, from canonical block timestamps.
+- Both receipts succeeded and their block hashes matched canonical reads.
+  The EntryPoint event reported successful execution with the configured Plether
+  paymaster and expected smart-account nonce 118. The lifecycle event and indexed
+  receipt both reported Executed. The browser showed the final reduction result.
+- Actual sponsored gas cost: `416949139912672` wei. Owner network gas was sponsored.
+- At receipt verification, the safe head was block 307883247, behind this order.
+  Safe confirmation/budget settlement therefore remained pending; no early
+  liability release or confirmation-rule relaxation was performed.
+
+For this follow-up, rollback restores worker revision `:7` only and its prior
+keeper image; the API and additive database records remain unchanged. Private
+operator evidence is in `/private/tmp/plether-idle-keeper-deploy-lH6ar7`.

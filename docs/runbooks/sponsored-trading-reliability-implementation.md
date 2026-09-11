@@ -30,7 +30,8 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
   below one conservative reserve is unknown, not a proven insufficient-funding
   blocker. A verified empty account is blocked. No transaction is signed or sent,
   and no RPC is added to the browser's preparation critical path. This follow-up
-  is local only until a separately approved keeper deployment.
+  was separately approved and deployed to Frankfurt worker revision `:8`; see
+  the 2026-09-11 rollout record for the idle and sponsored-reduction smoke tests.
 - Twenty seconds of reviewed order/sponsorship headroom before signing and ten
   seconds before first submission. A late signature is durably journaled, not
   submitted or silently renewed; recovery retains the lane until safe resolution.
@@ -105,6 +106,10 @@ This is **not** the entire approved plan:
   Existing CloudWatch rate-limited operational summaries are preserved.
 - Finish final trade progress/correlation in activity, clock-skew qualification,
   and comprehensive fault-injection tests for every lifecycle stage.
+- Correct the commit-pending direction label for reductions: it currently shows
+  the selected button direction instead of the reviewed position side. The
+  2026-09-11 smoke test verified the exact saved calldata was a Short close, not
+  an opening Long order, and the actual onchain result reduced the Short position.
 - Provision and validate Frankfurt-filtered PostHog dashboards in project 208816
   after the new schema has actually been ingested. Logs and product events are
   separate datasets; do not treat a UserOperation confirmation as trade execution.
@@ -131,7 +136,16 @@ This is **not** the entire approved plan:
   records and network disabled. The test asserts exactly one CloudWatch copy and
   one sanitized PostHog copy, including preservation of alarm fields.
 
-## Deployment-dependent acceptance — not executed
+## Deployment-dependent acceptance — partial, not release-qualified
+
+Frankfurt migrations and the observation-only deployment are complete. The
+idle-funding follow-up passed fifteen fresh readiness observations over 141
+seconds and a sponsored 1,100-plDXY Short reduction (order 11, FAD execution).
+One unsigned attempt was cancelled for an approval-guard investigation, and one
+retry was denied during safe-cursor catch-up; neither was submitted. A fresh
+attempt succeeded after reconciliation recovered. Canonical successful receipts
+were checked; the RPC safe head had not reached the new order at that readback.
+These targeted checks do not substitute for the full gates below.
 
 After the remaining engineering work and separate release approval:
 
