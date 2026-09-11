@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { perpsApi, testnetFaucetErrorMessage } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
 import { openAppKit } from '../config/wagmi'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
+import { useTestnetFunding, type TestnetFundingPhase } from '../hooks/useTestnetFunding'
 import { Button, Input, Modal } from './ui'
 
 interface TestnetWelcomeModalViewProps {
@@ -20,6 +19,7 @@ interface TestnetWelcomeModalViewProps {
   recipientError?: string
   claim?: TestnetFaucetClaim | null
   isSubmitting?: boolean
+  fundingPhase?: TestnetFundingPhase
   isTradingAccountRecipient?: boolean
   onClose: () => void
   onConnectWallet: () => void
@@ -37,6 +37,7 @@ export function TestnetWelcomeModalView({
   recipientError,
   claim,
   isSubmitting = false,
+  fundingPhase = 'idle',
   isTradingAccountRecipient = false,
   onClose,
   onConnectWallet,
@@ -47,7 +48,9 @@ export function TestnetWelcomeModalView({
   const activeClaim = isWalletConnected ? claim : null
   const isPendingClaim = activeClaim?.status === 'submitted'
   const isCompletedClaim = !!activeClaim && !isPendingClaim
-  const handleSecondaryAction = isCompletedClaim && onDeposit ? onDeposit : onClose
+  const isAutomaticFunding = isTradingAccountRecipient && isSubmitting
+  const isDeposited = fundingPhase === 'deposited'
+  const handleSecondaryAction = isCompletedClaim && !isSubmitting && onDeposit ? onDeposit : onClose
   const isRecipientReady =
     isWalletConnected &&
     (!isTradingAccountRecipient || walletAddress.trim().length > 0) &&
@@ -74,12 +77,15 @@ export function TestnetWelcomeModalView({
             isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
             disabled={
               isWalletConnected &&
-              (!isRecipientReady || (!!activeClaim && !isPendingClaim))
+              (!isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError))
             }
             className="w-full"
           >
             {isRecipientReady ? (
-              isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
+              fundingPhase === 'waiting' ? 'Waiting for mock USDC'
+                : fundingPhase === 'depositing' ? 'Depositing mock USDC'
+                : isDeposited ? 'Mock USDC deposited'
+                : isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
             ) : (
@@ -97,7 +103,7 @@ export function TestnetWelcomeModalView({
             onClick={handleSecondaryAction}
             className="w-full"
           >
-            {isCompletedClaim ? 'Deposit' : activeClaim ? 'Close' : 'Maybe later'}
+            {isDeposited ? 'Start trading' : isCompletedClaim && !isSubmitting ? 'Deposit' : activeClaim || isSubmitting ? 'Close' : 'Maybe later'}
           </Button>
         </div>
       }
@@ -113,7 +119,7 @@ export function TestnetWelcomeModalView({
             : recipientError
               ? 'Your wallet is connected, but Plether could not prepare the Trading Account address that should receive the test funds.'
             : isRecipientReady
-              ? `Your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address is shown below. We will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.`
+              ? `Your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address is shown below. We will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.${isTradingAccountRecipient ? ' Once the tokens arrive, we will automatically start the sponsored deposit into your Margin Account. Confirm in your wallet if prompted.' : ''}`
               : 'Your wallet is connected. Plether is preparing the Trading Account address that will receive the test funds.'}
         </p>
         <p>
@@ -163,7 +169,9 @@ export function TestnetWelcomeModalView({
             }`}
           >
             <p className="font-medium">
-              {isPendingClaim
+              {isDeposited
+                ? 'Mock USDC deposited into your Margin Account. You are ready to trade.'
+                : isPendingClaim
                 ? 'Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.'
                 : activeClaim.status === 'already_funded'
                 ? `Mock USDC is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
@@ -172,7 +180,13 @@ export function TestnetWelcomeModalView({
                   : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
-              {isPendingClaim
+              {isDeposited
+                ? 'Your sponsored deposit is confirmed.'
+                : isAutomaticFunding
+                ? fundingPhase === 'depositing'
+                  ? 'Depositing mock USDC into your Margin Account. Confirm in your wallet if prompted.'
+                  : 'Waiting for mock USDC to arrive. Your sponsored deposit will start automatically.'
+                : isPendingClaim
                 ? 'Use “Check confirmation” below to refresh this transaction safely. Funds are not available until confirmation completes.'
                 : isTradingAccountRecipient
                 ? 'Next, use the sponsored deposit flow to move those funds into the Trading Account’s Margin Account before placing orders.'
@@ -225,13 +239,14 @@ export function TestnetWelcomeModal() {
   const requestMarginAction = usePerpsUiStore((s) => s.requestMarginAction)
   const [walletAddress, setWalletAddress] = useState(faucetRecipient ?? '')
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [claim, setClaim] = useState<TestnetFaucetClaim | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const previousConnectedAddressRef = useRef<string | undefined>(faucetRecipient)
   const displayedWalletAddress = perpsIdentity.isAaManifestConfigured
     ? faucetRecipient ?? ''
     : walletAddress
+  const { claim, phase, error: submitError, requestFunds: fundAccount } = useTestnetFunding(
+    displayedWalletAddress, isConnected
+  )
+  const isSubmitting = phase === 'claiming' || phase === 'waiting' || phase === 'depositing'
   const displayedClaim =
     claim?.address.toLowerCase() === displayedWalletAddress.toLowerCase() ? claim : null
   const recipientError =
@@ -260,24 +275,12 @@ export function TestnetWelcomeModal() {
 
   async function requestFunds() {
     const trimmedAddress = displayedWalletAddress.trim()
-    setSubmitError(null)
-
     if (!isAddress(trimmedAddress)) {
       setFieldError('Enter a valid wallet address.')
       return
     }
-
     setFieldError(null)
-    setIsSubmitting(true)
-    const result = await perpsApi.claimTestnetFaucet(trimmedAddress)
-    setIsSubmitting(false)
-
-    if (Result.isError(result)) {
-      setSubmitError(testnetFaucetErrorMessage(result.error))
-      return
-    }
-
-    setClaim(result.value.data)
+    await fundAccount(trimmedAddress)
   }
 
   return (
@@ -287,8 +290,6 @@ export function TestnetWelcomeModal() {
       onClose={dismiss}
       onConnectWallet={() => {
         setFieldError(null)
-        setSubmitError(null)
-        setClaim(null)
         void openAppKit()
       }}
       walletAddress={displayedWalletAddress}
@@ -297,18 +298,17 @@ export function TestnetWelcomeModal() {
       recipientError={recipientError}
       claim={displayedClaim}
       isSubmitting={isSubmitting}
+      fundingPhase={phase}
       isTradingAccountRecipient={perpsIdentity.isAaManifestConfigured}
       onWalletAddressChange={(nextAddress) => {
         if (perpsIdentity.isAaManifestConfigured) return
         setWalletAddress(nextAddress)
         setFieldError(null)
-        setSubmitError(null)
-        setClaim(null)
       }}
       onRequestFunds={() => { void requestFunds() }}
       onDeposit={() => {
         dismiss()
-        requestMarginAction('deposit')
+        if (phase !== 'deposited') requestMarginAction('deposit')
         void navigate('/')
       }}
     />
