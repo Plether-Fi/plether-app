@@ -72,4 +72,6 @@ matchesIntent intent operation = all (\key -> KM.lookup key operation == KM.look
 
 internalRequest :: Text -> [Value] -> Either Legacy.ProxyFailure Legacy.RpcRequest
 internalRequest method params = Legacy.parseRpcRequest $ object
-  ["jsonrpc" .= ("2.0" :: Text), "id" .= ("preparation" :: Text), "method" .= method, "params" .= params]
+  -- Alto 1.2.7 accepts numeric request IDs; string IDs fail its request schema.
+  -- Each internal request has its own HTTP response and retains strict ID checks.
+  ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "method" .= method, "params" .= params]

@@ -310,7 +310,6 @@ prepareNativeOperation
 prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey request = do
   timing <- maybe (liftIO newTiming) pure $ ngsTiming gatewayState
   let identifier = timingIdentifier timing
-  setHeader "X-Plether-Request-Id" $ TL.fromStrict identifier
   if not (naaSponsorshipEnabled nativeCfg)
     then Legacy.respondFailure requestId $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
     else case Preparation.parsePreparationIntent $ Legacy.rrParams request of
@@ -360,7 +359,6 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           Left failure -> do
             _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
-            emitTiming timing
             Legacy.respondFailure requestId failure
           Right (context, owner, operation) ->
             deliverPreparation gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
@@ -370,7 +368,6 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
                 (encodeHex $ Paymaster.sponsorshipDigest operation envelope)
               _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
-              emitTiming timing
               case linked of
                 Right True -> respondSuccess requestId $ object
                   [ "version" .= (1 :: Int)

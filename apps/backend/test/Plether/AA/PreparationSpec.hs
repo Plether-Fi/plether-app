@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.AA.Preparation
+import qualified Plether.AA.Pimlico as Legacy
 import Plether.AA.EvidenceCache
 import Plether.AA.Gateway (advanceEvidenceSnapshots, attestNativePaymasterProfile)
 import Plether.AA.PaymasterSpec (fixtureConfig)
@@ -27,6 +28,12 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "native preparation intent" $ do
+    it "uses numeric IDs compatible with the pinned Alto request schema" $
+      case internalRequest "pimlico_getUserOperationGasPrice" [] of
+        Left err -> expectationFailure $ show err
+        Right request -> do
+          Legacy.rrId request `shouldBe` Number 1
+          KM.lookup "id" (Legacy.rrObject request) `shouldBe` Just (Number 1)
     it "accepts a versioned unsigned deployed-account intent" $
       parsePreparationIntent [Object fields] `shouldSatisfy` isRight
     it "rejects signatures, caller fees, paymasters, unsupported chains and versions" $ do
