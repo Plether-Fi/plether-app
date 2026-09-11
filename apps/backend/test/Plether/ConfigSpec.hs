@@ -9,6 +9,7 @@ import Plether.Config
   , NativeAaSafetyInput (..)
   , AaRpcMode (..)
   , resolveAaSecurityRpc
+  , validateAaSafeLag
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , parseLpSettlementLimits
@@ -570,6 +571,18 @@ spec = do
       normalizeExternalSecurityRpcUrl "https://user@rpc.example.com" `shouldBe` Nothing
       normalizeExternalSecurityRpcUrl "https://rpc.example.com:8443" `shouldBe` Nothing
       normalizeExternalSecurityRpcUrl "https://rpc.example.com/?token=x" `shouldBe` Nothing
+
+  describe "AA safe-head lag allowance" $ do
+    let owners = ["0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"]
+    it "keeps the default usable without a canary exception" $ do
+      validateAaSafeLag 42161 True [] 600 `shouldBe` Right ()
+    it "allows at most 30 minutes for a Sepolia cohort" $ do
+      validateAaSafeLag 421614 False owners 1800 `shouldBe` Right ()
+      mapM_ (\lag -> validateAaSafeLag 421614 False owners lag `shouldSatisfy` isLeft) [59, 1801, 3600]
+    it "rejects relaxed mainnet, global and empty-cohort limits" $ do
+      validateAaSafeLag 42161 False owners 1800 `shouldSatisfy` isLeft
+      validateAaSafeLag 421614 True owners 1800 `shouldSatisfy` isLeft
+      validateAaSafeLag 421614 False [] 1800 `shouldSatisfy` isLeft
 
   describe "AA RPC verification modes" $ do
     let primary = "https://primary.example/rpc"

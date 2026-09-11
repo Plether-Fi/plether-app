@@ -370,6 +370,7 @@ testConfig =
     , naaAltoRpcUrl = "http://alto.invalid"
     , naaSecurityRpcUrl = "https://secondary-rpc.invalid"
     , naaRpcMode = DualIndependent
+    , naaMaxSafeLagSeconds = 600
     , naaPaymasterAddress = paymasterAddress
     , naaPaymasterCodeHash = hashOf '4'
     , naaPolicyId = hashOf '5'

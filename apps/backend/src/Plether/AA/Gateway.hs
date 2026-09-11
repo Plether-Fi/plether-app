@@ -9,6 +9,8 @@ module Plether.AA.Gateway
   , nativeAccountRateClientKey
   , nativeMaxFeeAllowance
   , nativeStartupFailure
+  , SecurityBlockHeader (..)
+  , validateSecurityHeaderTime
   ) where
 
 import Control.Exception (SomeException, try)
@@ -116,6 +118,7 @@ data NativeSecurityContext = NativeSecurityContext
   { nscPrimaryClient :: EthClient
   , nscSecondaryClient :: EthClient
   , nscHeader :: SecurityBlockHeader
+  , nscMaxSafeLagSeconds :: Integer
   }
 
 nativeGatewayIssuanceError :: NativeGatewayState -> Maybe Text
@@ -702,7 +705,7 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
       secondaryChain <- attestRpcChain secondaryClient
       case (primaryChain, secondaryChain) of
         (Right (), Right ()) -> do
-          snapshot <- readAgreedSecurityBlock primaryClient secondaryClient
+          snapshot <- readAgreedSecurityBlock (naaMaxSafeLagSeconds nativeCfg) primaryClient secondaryClient
           case snapshot of
             Left _ -> pure $ Left securityAttestationUnavailable
             Right header -> do
@@ -714,7 +717,7 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
               case (primaryProfile, secondaryProfile, finalHeader) of
                 (Right (), Right (), Right checkedHeader)
                   | checkedHeader == header ->
-                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header
+                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header (naaMaxSafeLagSeconds nativeCfg)
                 _ -> pure $ Left securityAttestationUnavailable
         _ -> pure $ Left securityAttestationUnavailable
 
@@ -762,7 +765,7 @@ revalidateSecurityContext context = do
     header <- current
     unless (header == captured) $
       Left "the agreed security block changed during request authorization"
-    validateSecurityHeaderTime now header
+    validateSecurityHeaderTime (nscMaxSafeLagSeconds context) now header
 
 respondSecurityAttestationFailure :: Value -> Text -> ActionM ()
 respondSecurityAttestationFailure requestId _reason = do
@@ -1078,7 +1081,7 @@ attestNativePaymasterProfile cfg primaryClient secondaryClient = do
     (Left err, _) -> pure $ Left $ "primary profile RPC: " <> err
     (_, Left err) -> pure $ Left $ "secondary profile RPC: " <> err
     (Right (), Right ()) -> do
-      snapshot <- readAgreedSecurityBlock primaryClient secondaryClient
+      snapshot <- readAgreedSecurityBlock (naaMaxSafeLagSeconds cfg) primaryClient secondaryClient
       case snapshot of
         Left err -> pure $ Left err
         Right header -> do
@@ -1146,10 +1149,11 @@ attestRpcChain client = do
     Left _ -> Left "could not attest PERPS_RPC_URL chain id"
 
 readAgreedSecurityBlock
-  :: EthClient
+  :: Integer
+  -> EthClient
   -> EthClient
   -> IO (Either Text SecurityBlockHeader)
-readAgreedSecurityBlock primaryClient secondaryClient = do
+readAgreedSecurityBlock maxSafeLag primaryClient secondaryClient = do
   primarySafe <- readSecurityHeader primaryClient "safe"
   secondarySafe <- readSecurityHeader secondaryClient "safe"
   case (primarySafe, secondarySafe) of
@@ -1165,12 +1169,12 @@ readAgreedSecurityBlock primaryClient secondaryClient = do
           Left "primary safe header disagrees with its explicit numeric header"
         when (sbhNumber secondSafe == agreedNumber && secondSafe /= header) $
           Left "secondary safe header disagrees with its explicit numeric header"
-        validateSecurityHeaderTime now header
+        validateSecurityHeaderTime maxSafeLag now header
         Right header
 
-validateSecurityHeaderTime :: Integer -> SecurityBlockHeader -> Either Text ()
-validateSecurityHeaderTime now header = do
-  when (sbhTimestamp header < now - gatewayMaxSafeLagSeconds) $
+validateSecurityHeaderTime :: Integer -> Integer -> SecurityBlockHeader -> Either Text ()
+validateSecurityHeaderTime maxSafeLag now header = do
+  when (sbhTimestamp header < now - maxSafeLag) $
     Left "the dual-provider security snapshot is stale"
   when (sbhTimestamp header > now + gatewayMaxFutureSkewSeconds) $
     Left "the dual-provider security snapshot timestamp is in the future"
@@ -1357,9 +1361,6 @@ reviewedAccountCodeHash =
 
 maxAltoResponseBytes :: Int
 maxAltoResponseBytes = 1024 * 1024
-
-gatewayMaxSafeLagSeconds :: Integer
-gatewayMaxSafeLagSeconds = 600
 
 gatewayMaxFutureSkewSeconds :: Integer
 gatewayMaxFutureSkewSeconds = 60

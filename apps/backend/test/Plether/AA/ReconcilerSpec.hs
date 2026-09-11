@@ -21,11 +21,22 @@ import Plether.AA.Reconciler
   , validateDeploymentAnchor
   )
 import Plether.Ethereum.Abi (encodeUint256, keccak256)
+import Plether.AA.Gateway (SecurityBlockHeader (..), validateSecurityHeaderTime)
 import Test.Hspec
 
 spec :: Spec
 spec =
   describe "safe UserOperationEvent validation" $ do
+    it "applies matching 10/30 minute gateway and reconciler boundaries" $ do
+      let check limit age = do
+            let timestamp = 10000 - age
+                expected = age <= limit && age >= (-60)
+            (validateSafeHeadFreshness limit 10000 (BlockHeader 101 blockHash timestamp) == Right ())
+              `shouldBe` expected
+            (validateSecurityHeaderTime limit 10000 (SecurityBlockHeader 101 blockHash timestamp 1) == Right ())
+              `shouldBe` expected
+      mapM_ (\limit -> mapM_ (check limit) [-61, -60, 0, 600, 601, 1800, 1801]) [600, 1800]
+
     it "accepts the exact EntryPoint/paymaster/range shape" $ do
       event <- expectRight $ parseUserOperationEvent paymaster 90 110 validEvent
       uoeHash event `shouldBe` operationHash

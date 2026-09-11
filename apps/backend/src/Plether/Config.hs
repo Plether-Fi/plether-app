@@ -7,6 +7,8 @@ module Plether.Config
   , AaRpcMode (..)
   , aaRpcModeText
   , resolveAaSecurityRpc
+  , validateAaSafeLag
+  , parseCanonicalAddressList
   , NativeAaSafetyInput (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
@@ -283,6 +285,7 @@ data NativeAaConfig = NativeAaConfig
   , naaGlobalDailyWei :: Integer
   , naaCanaryOwners :: [Text]
   , naaGlobalRolloutEnabled :: Bool
+  , naaMaxSafeLagSeconds :: Integer
   }
 
 -- | Security-sensitive values whose relationships must be validated as one
@@ -657,6 +660,7 @@ loadConfig = do
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
       aaSponsoredGasAlertWeiStr <- fromMaybe "0" <$> lookupEnv "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR"
       nativeAaEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SPONSORSHIP_ENABLED"
+      nativeAaSafeLagStr <- fromMaybe "600" <$> lookupEnv "AA_RECONCILER_MAX_SAFE_LAG_SECONDS"
       nativeAaSubmissionEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_SUBMISSION_ENABLED"
       nativeAaFinalRateLimitStr <- fromMaybe "6" <$> lookupEnv "AA_PAYMASTER_FINAL_RATE_LIMIT_PER_MINUTE"
       mAltoRpcUrl <- firstEnv ["AA_ALTO_RPC_URL"]
@@ -876,6 +880,8 @@ loadConfig = do
                     globalHourlyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_HOURLY_WEI" paymasterGlobalHourlyWeiStr
                     globalDailyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_DAILY_WEI" paymasterGlobalDailyWeiStr
                     canaryOwners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" nativeCanaryOwnersStr
+                    maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 1800 nativeAaSafeLagStr
+                    validateAaSafeLag perpsChainId globalRolloutEnabled canaryOwners maxSafeLag
                     unlessEither
                       (perpsChainId == 421614)
                       "Native AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
@@ -960,6 +966,7 @@ loadConfig = do
                           , naaGlobalDailyWei = globalDailyWei
                           , naaCanaryOwners = canaryOwners
                           , naaGlobalRolloutEnabled = globalRolloutEnabled
+                          , naaMaxSafeLagSeconds = maxSafeLag
                           }
                 _ ->
                   Left
@@ -1444,6 +1451,15 @@ data AaRpcMode = DualIndependent | SingleProviderSepolia
 aaRpcModeText :: AaRpcMode -> Text
 aaRpcModeText DualIndependent = "dual-independent"
 aaRpcModeText SingleProviderSepolia = "single-provider-sepolia"
+
+-- Defaults remain 600 seconds. Longer windows are testnet cohort exceptions,
+-- never a mainnet or unrestricted-rollout fallback.
+validateAaSafeLag :: Integer -> Bool -> [Text] -> Integer -> Either String ()
+validateAaSafeLag chain global owners lag = do
+  unlessEither (lag >= 60 && lag <= 1800)
+    "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and 1800"
+  unlessEither (lag <= 600 || (chain == 421614 && not global && not (null owners)))
+    "Safe-head lag above 600 seconds requires an allowlisted Arbitrum Sepolia canary"
 
 -- Shared by API and reconciler startup, before any signing or ledger mutation.
 -- The legacy SECONDARY env slot explicitly reuses primary only in single mode.

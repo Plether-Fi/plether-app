@@ -152,6 +152,7 @@ fixtureConfig =
     , naaAltoRpcUrl = "http://alto:4337"
     , naaSecurityRpcUrl = "https://secondary-rpc.example.invalid"
     , naaRpcMode = DualIndependent
+    , naaMaxSafeLagSeconds = 600
     , naaPaymasterAddress = "0x1111111111111111111111111111111111111111"
     , naaPaymasterCodeHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     , naaPolicyId = "0x998b46b747647acb0e13177c7c5e2531452f3ac9c8b0cce56f2b0fdbfdf37781"
