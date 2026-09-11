@@ -428,7 +428,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.frankfurt_preparation ? [{ name = "PYTH_INGESTION_ENABLED", value = "false" }] : [], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
-  }, local.otel_log_router_container])
+  }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {
     precondition {
@@ -1022,7 +1022,7 @@ resource "aws_ecs_task_definition" "workers" {
   container_definitions = jsonencode([
     {
       name             = "plether-keeper"
-      image            = local.api_image
+      image            = local.aa_keeper_runtime_image
       essential        = true
       command          = ["plether-keeper"]
       logConfiguration = local.posthog_log_configuration
@@ -1204,7 +1204,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
       ], local.insights_competition_environment)
     },
-    local.otel_log_router_container,
+    merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image }),
   ])
 
   lifecycle {

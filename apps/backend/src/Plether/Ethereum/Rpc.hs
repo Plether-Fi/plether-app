@@ -11,6 +11,7 @@ module Plether.Ethereum.Rpc
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
   , ethGetBalance
+  , ethGetBalanceAtBlock
   , ethChainId
   , ethGetCode
   , ethGasPrice
@@ -147,6 +148,13 @@ ethGetBalance :: EthClient -> Text -> IO (Either RpcError Integer)
 ethGetBalance client address = do
   result <- rpcCall client "eth_getBalance" (toJsonArray [String address, String "latest"])
   pure $ hexIntegerResult result "eth_getBalance"
+
+ethGetBalanceAtBlock :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+ethGetBalanceAtBlock client address blockNumber
+  | blockNumber < 0 = pure $ Left $ RpcJsonError "Balance block number cannot be negative"
+  | otherwise = do
+      result <- rpcCall client "eth_getBalance" (toJsonArray [String address, String $ "0x" <> intToHex blockNumber])
+      pure $ hexIntegerResult result "eth_getBalance"
 
 ethChainId :: EthClient -> IO (Either RpcError Integer)
 ethChainId client = do

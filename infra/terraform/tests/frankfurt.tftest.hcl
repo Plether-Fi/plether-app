@@ -416,6 +416,17 @@ run "frankfurt_trading_canary" {
     && length(aws_security_group.frankfurt_worker_client[0].egress) == 0)
     error_message = "Trading workers may reach the private API through their identity group, never public ingress."
   }
+  assert {
+    condition = (
+      local.aa_keeper_runtime_image == local.aa_api_runtime_image
+      && endswith(local.aa_api_runtime_image, "@sha256:631c89b2b6e9b34800ffa05e0013bfba211402cfddeae60c2fb37452ae110500")
+      && endswith(local.aa_observability_log_router_image, "@sha256:de9936038b75c0a1492478fa4355fe2ee50cd827306054a68d9fe8283b01f66e")
+      && local.aa_keeper_runtime_image != local.api_image
+      && local.aa_observability_log_router_image != local.log_router_image
+      && !var.enable_aa_readiness_enforcement
+    )
+    error_message = "Reliability image pins must remain separate from legacy worker images, with readiness observation-only."
+  }
 }
 
 run "reject_faucet_in_aa_only_canary" {

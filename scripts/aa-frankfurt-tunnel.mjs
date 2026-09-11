@@ -17,6 +17,8 @@ async function main() {
   const node = awsJson('ssm', 'describe-instance-information', ['--filters', `Key=InstanceIds,Values=${tunnel.instance_id}`]).InstanceInformationList?.[0]
   const lb = awsJson('elbv2', 'describe-load-balancers', ['--names', 'plether-sepolia-aa-temp']).LoadBalancers?.[0]
   const groups = awsJson('ec2', 'describe-security-groups', ['--group-ids', tunnel.security_group_id, ...(lb?.SecurityGroups ?? [])]).SecurityGroups ?? []
+  const workers = awsJson('ec2', 'describe-security-groups', ['--filters', `Name=vpc-id,Values=${tunnel.vpc_id}`, 'Name=group-name,Values=plether-sepolia-aa-temp-worker-api-client']).SecurityGroups ?? []
+  groups.push(...workers)
   const document = JSON.parse(awsJson('ssm', 'get-document', ['--name', tunnel.document_name, '--document-format', 'JSON']).Content)
   verifyTunnelMetadata(tunnel, instance, node, lb, groups, document)
   // Refuse occupied ports instead of silently targeting another local service.

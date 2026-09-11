@@ -14,10 +14,23 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
   Alto EntryPoint availability, keeper heartbeat/funding evidence and the release
   lens's trading-active signal. Inactive open execution never automatically
   blocks closes: exit-policy availability is reported as unknown.
-- One shared visible-UI readiness poll, Trading status in native-AA trade review
-  and account activity, and an explicit refresh action. Preparation starts the
+- One shared visible-UI readiness poll, Trading status in account activity
+  (removed from trade preview at the operator's request), and an explicit refresh action. Preparation starts the
   read concurrently. Only a fresh blocked result with enforcement enabled stops
   signing; unknown, expired, failed and slow observations do not.
+- Idle keeper funding no longer requires a recent transaction quote. Every ten
+  seconds the background observer reads a canonical, fixed-block balance/nonce,
+  pending nonce, current gas fees and the oracle update fee for the cached payload
+  shape. Independent reads run concurrently, outside database connections. Its
+  conservative reserve uses the existing 30M gas cap, configured fee buffer and
+  maximum batch size; any fresh actual quote can only raise that reserve. The
+  cached payload is not evidence of executable prices. Oracle readiness remains
+  separate. Missing/malformed evidence, a changed block, a stale/future header or
+  unresolved pending liabilities produce unknown. Below ten reserves warns;
+  below one conservative reserve is unknown, not a proven insufficient-funding
+  blocker. A verified empty account is blocked. No transaction is signed or sent,
+  and no RPC is added to the browser's preparation critical path. This follow-up
+  is local only until a separately approved keeper deployment.
 - Twenty seconds of reviewed order/sponsorship headroom before signing and ten
   seconds before first submission. A late signature is durably journaled, not
   submitted or silently renewed; recovery retains the lane until safe resolution.
@@ -74,8 +87,9 @@ This is **not** the entire approved plan:
 
 - Extend funding evidence beyond the keeper to every Alto executor, oracle,
   liquidation, protection and LP-settlement worker; account for each worker's
-  outstanding transaction liabilities. The current keeper observer reuses a
-  short-lived actual transaction quote and reports unknown when no quote exists.
+  outstanding transaction liabilities. The keeper now estimates its idle reserve
+  independently; pending nonce gaps remain unknown until reconciled rather than
+  claiming their unknown liabilities are zero.
 - Complete action-specific live/FAD/frozen price-payload readiness. The current
   lens signal is deliberately insufficient to certify special-mode exits.
 - Finish verified final trade outcomes, stage durations and seven-day
@@ -100,9 +114,12 @@ This is **not** the entire approved plan:
 - Frontend: full unit suite passed (1,340 tests), including distinct readiness
   failures, sixty-second summaries, recovery/unknown evidence and label redaction.
   TypeScript and ESLint passed.
-- Backend: API executable builds; 1,072 unit examples pass with local mock RPC
+- Backend: keeper executable builds; 1,088 unit examples pass with local mock RPC
   ports enabled. The native-AA PostgreSQL suite passes against isolated PostgreSQL
   16, including migration, durable correlation, lease retries and rollback reads.
+- Idle-funding follow-up: sixteen tests cover first-trade independence, reserve
+  boundaries, fee spikes, concurrent fixed-block reads, malformed responses,
+  reorgs, freshness, pending liabilities and funding recovery.
 - Follow-up correlation tests: twelve receipt/identity/malformed-bundle unit cases
   and twelve native-AA PostgreSQL integration examples pass, including competing
   instances, recovered leases, stale-worker fencing and unchanged ledger entries.

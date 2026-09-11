@@ -68,3 +68,22 @@ test('local output parser rejects superseded public plans and arbitrary destinat
     assert.throws(() => parseFrankfurtTarget(changed))
   }
 })
+
+test('activated trading tunnel accepts only its reviewed private worker client', () => {
+  const args = fixture()
+  args[4].push({ GroupId: 'sg-worker', GroupName: 'plether-sepolia-aa-temp-worker-api-client',
+    VpcId: args[0].vpc_id, IpPermissions: [], Tags: [{ Key: 'Deployment', Value: 'sepolia-aa-temp' }] })
+  args[4][1].IpPermissions[0].UserIdGroupPairs.push({ GroupId: 'sg-worker' })
+  verifyTunnelMetadata(...args)
+  for (const mutate of [
+    a => { a[4][2].VpcId = 'vpc-other' },
+    a => { a[4][2].Tags = [] },
+    a => { a[4][2].IpPermissions.push({ FromPort: 22 }) },
+    a => { a[4][2].GroupName = 'arbitrary-worker' },
+    a => { a[4][1].IpPermissions[0].UserIdGroupPairs.push({ GroupId: 'sg-other' }) },
+  ]) {
+    const changed = structuredClone(args)
+    mutate(changed)
+    assert.throws(() => verifyTunnelMetadata(...changed), /Tunnel preflight/)
+  }
+})

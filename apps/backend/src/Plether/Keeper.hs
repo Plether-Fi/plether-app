@@ -54,10 +54,13 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, execute)
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
+import Plether.Keeper.Funding
+  ( readFundingEvidence, keeperFeeCaps, keeperReserveCost, classifyKeeperReserve )
 import System.Timeout (timeout)
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
@@ -321,8 +324,8 @@ runOrderKeeperSession cfg pool client mode dryRun =
                         Just (at, cost) | diffUTCTime now at <= 15 -> Just cost
                         _ -> Nothing
                   when (not dryRun && diffUTCTime now lastHeartbeat <= 15) $
-                    void $ timeout 2_000_000 $ withDb pool $ \observationConn ->
-                      observeKeeperFunding cfg observationConn client freshQuote
+                    void $ timeout 2_000_000 $
+                      observeKeeperFunding cfg pool client freshQuote
                   threadDelay 10_000_000
             case mode of
               KeeperOnce -> void iteration
@@ -344,8 +347,8 @@ runKeeperIteration cfg conn client dryRun observeCost = do
 
 -- Diagnostic writes never alter trade admission or the keeper's existing
 -- transaction path. Missing additive schema degrades monitoring, not execution.
-observeKeeperFunding :: Config -> Connection -> EthClient -> Maybe Integer -> IO ()
-observeKeeperFunding cfg conn client required = do
+observeKeeperFunding :: Config -> DbPool -> EthClient -> Maybe Integer -> IO ()
+observeKeeperFunding cfg pool client recentCost = do
   result <- trySynchronous $ case cfgKeeperPrivateKey cfg of
     Nothing -> pure ()
     Just key -> do
@@ -353,23 +356,32 @@ observeKeeperFunding cfg conn client required = do
       case signer of
         Left _ -> pure ()
         Right address -> do
-          balanceResult <- ethGetBalance client address
-          case balanceResult of
-            Left _ -> pure ()
-            Right balance -> do
-              let knownUnaffordable = balance == 0 || maybe False (balance <) required
-                  state = if knownUnaffordable then "blocked" else if isJust required then "ready" else "unknown" :: Text
-                  reason = if knownUnaffordable then "KEEPER_INSUFFICIENT_FUNDS"
-                    else case required of
-                      Nothing -> "FUNDING_UNVERIFIED"
-                      Just cost | balance < cost * 10 -> "FUNDING_LOW"
-                      _ -> "READY" :: Text
+          -- A representative payload supplies the update-fee shape even before
+          -- the first trade. This does NOT certify its prices for execution.
+          payload <- withDb pool getLatestPythUpdatePayload
+          evidence <- case payload >>= either (const Nothing) (Just . snd) . decodePayload of
+            Nothing -> pure $ Left $ RpcJsonError "Funding payload unavailable"
+            Just updateData -> readFundingEvidence client address (cfgPerpsPletherOracle cfg) updateData
+          now <- floor <$> getPOSIXTime
+          let required = case evidence of
+                Left _ -> Nothing
+                Right sample -> fmap (max $ fromMaybe 0 recentCost) $
+                  keeperReserveCost v2OrderGasLimitCap (cfgKeeperMaxBatchSize cfg) (cfgKeeperFeeBufferBps cfg) sample
+              (state, reason) = case evidence of
+                Left _ -> ("unknown", "FUNDING_UNVERIFIED")
+                Right sample -> classifyKeeperReserve now sample required
+          -- Never hold a database connection across RPC calls. Failed reads
+          -- overwrite old readiness with unknown instead of reusing permission.
+          withDb pool $ \conn ->
               void $ execute conn
                 "INSERT INTO aa_worker_readiness(chain_id,deployment,component,state,reason,signer_address,required_cost_wei) VALUES (?,?,'keeper',?,?,?,?::numeric) ON CONFLICT(chain_id,deployment,component) DO UPDATE SET state=EXCLUDED.state,reason=EXCLUDED.reason,signer_address=EXCLUDED.signer_address,required_cost_wei=EXCLUDED.required_cost_wei,observed_at=clock_timestamp()"
                 (cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg, state, reason, T.toLower address, fmap (T.pack . show) required)
-              when (maybe False (balance <) $ (*10) <$> required) $ logWarnEvery 60
-                "keeper_funding_low" "Keeper has fewer than ten buffered execution costs available"
-                [field "component" ("keeper" :: Text), field "reason_code" ("FUNDING_LOW" :: Text)]
+          when (reason == "FUNDING_LOW") $ logWarnEvery 60
+            "keeper_funding_low" "Keeper is below the conservative ten-execution reserve"
+            [field "component" ("keeper" :: Text), field "reason_code" ("FUNDING_LOW" :: Text)]
+          when (reason == "FUNDING_UNVERIFIED") $ logWarnEvery 60
+            "keeper_readiness_unavailable" "Keeper funding evidence could not be verified"
+            [field "component" ("keeper" :: Text), field "reason_code" ("FUNDING_UNVERIFIED" :: Text)]
   case result of
     Left (_ :: SomeException) -> logWarnEvery 60 "keeper_readiness_unavailable" "Keeper readiness observation unavailable" []
     Right _ -> pure ()
@@ -2654,13 +2666,11 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
           case (nonceResult, gasResult, gasPriceResult) of
             (Right nonce, Right estimatedGas, Right gasPrice) -> do
               let priorityBase = fromRight gasPrice priorityResult
-                  maxFeeBase = max gasPrice priorityBase
                   gasLimit =
                     case gasLimitOverride of
                       Nothing -> max 21_000 $ applyBuffer estimatedGas (cfgKeeperGasBufferBps cfg)
                       Just explicitGasLimit -> explicitGasLimit
-                  maxPriorityFee = applyBuffer priorityBase (cfgKeeperFeeBufferBps cfg)
-                  maxFee = max maxPriorityFee $ applyBuffer maxFeeBase (cfgKeeperFeeBufferBps cfg)
+                  (maxFee, maxPriorityFee) = keeperFeeCaps (cfgKeeperFeeBufferBps cfg) gasPrice priorityBase
                   tx =
                     Tx1559
                       { txChainId = cfgPerpsChainId cfg

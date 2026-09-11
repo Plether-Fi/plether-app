@@ -1,8 +1,6 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
-import { TradingStatus } from './TradingStatus'
-import { isPerpsAaManifestV2 } from '../perps-aa/manifest'
 import { zeroAddress } from 'viem'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
@@ -4766,7 +4764,6 @@ export function PerpsTradeTicket({
         <div className="space-y-5">
           {lifecycleState === 'preview' ? (
             <>
-              {enableLiveTrading && identity.manifest && isPerpsAaManifestV2(identity.manifest) && <TradingStatus action={isReduceOnly ? 'close' : 'open'} />}
               <p className="px-1 py-2 text-xl font-semibold leading-7 text-content-primary">
                 {orderSummary}
               </p>

@@ -23,6 +23,7 @@ library
         Plether.AA.Gateway
         Plether.AA.Timing
         Plether.AA.Readiness
+        Plether.Keeper.Funding
         Plether.AA.Diagnostics
         Plether.AA.OrderDiagnostics
         Plether.AA.Preparation
@@ -348,6 +349,7 @@ test-suite plether-api-test
         Plether.AA.KmsSpec
         Plether.AA.PreparationSpec
         Plether.AA.ReadinessSpec
+        Plether.Keeper.FundingSpec
         Plether.AA.OrderDiagnosticsSpec
         Plether.AA.ReconcilerSpec
         Plether.CacheSpec
