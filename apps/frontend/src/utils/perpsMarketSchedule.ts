@@ -1,12 +1,14 @@
 export type PerpsMarketPhase = 'open' | 'close-only' | 'closed' | 'degraded' | 'paused'
 
 const FRIDAY = 5
-const SUNDAY = 0
-// Keep these UTC boundaries aligned with plether-core's MarketCalendarLib.
-const FRIDAY_FAD_START = { hour: 21, minute: 30 } as const
-const SUNDAY_FAD_END = { hour: 21, minute: 15 } as const
+const DAY_MS = 86_400_000
+// Match MarketCalendarLib: Friday 16:30 and Sunday 17:15 New York time,
+// using the post-2007 US DST rules independently at each boundary.
+const FAD_LEAD_MS = 30 * 60_000
+const FAD_LAG_MS = 15 * 60_000
 
 export function formatPerpsMarketDuration(ms: number): string {
+  if (ms > 0 && ms < 60_000) return '<1m'
   const totalMinutes = Math.max(0, Math.floor(ms / 60_000))
   const days = Math.floor(totalMinutes / (24 * 60))
   const hours = Math.floor((totalMinutes % (24 * 60)) / 60)
@@ -20,75 +22,41 @@ export function formatPerpsMarketDuration(ms: number): string {
   return parts.join(' ')
 }
 
-function utcBoundary(date: Date, targetDay: number, hour: number, minute: number): Date {
-  const boundary = new Date(Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-    hour,
-    minute,
-    0,
-    0
-  ))
-  const daysUntilTarget = (targetDay - date.getUTCDay() + 7) % 7
-  boundary.setUTCDate(boundary.getUTCDate() + daysUntilTarget)
-
-  if (boundary.getTime() <= date.getTime()) {
-    boundary.setUTCDate(boundary.getUTCDate() + 7)
-  }
-
-  return boundary
-}
-
-function previousUtcBoundary(date: Date, targetDay: number, hour: number, minute: number): Date {
-  const boundary = utcBoundary(date, targetDay, hour, minute)
-  boundary.setUTCDate(boundary.getUTCDate() - 7)
-  return boundary
+function newYorkMarketBoundary(utcDay: number): number {
+  const year = new Date(utcDay).getUTCFullYear()
+  const secondSundayInMarch = 8 + (7 - new Date(Date.UTC(year, 2, 1)).getUTCDay()) % 7
+  const firstSundayInNovember = 1 + (7 - new Date(Date.UTC(year, 10, 1)).getUTCDay()) % 7
+  const dstStart = Date.UTC(year, 2, secondSundayInMarch, 7)
+  const dstEnd = Date.UTC(year, 10, firstSundayInNovember, 6)
+  const daylightBoundary = utcDay + 21 * 60 * 60_000
+  const isDaylightTime = daylightBoundary >= dstStart && daylightBoundary < dstEnd
+  return utcDay + (isDaylightTime ? 21 : 22) * 60 * 60_000
 }
 
 export function getPerpsMarketSchedule(now: Date, currentPhase: PerpsMarketPhase) {
-  if (currentPhase === 'open') {
-    const endsAt = utcBoundary(now, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute)
-    return {
-      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
-      nextPhase: 'close-only' as const,
-      nextDuration: formatPerpsMarketDuration(
-        utcBoundary(endsAt, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute).getTime()
-          - endsAt.getTime()
-      ),
-    }
+  const timestamp = now.getTime()
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  let friday = today - ((now.getUTCDay() - FRIDAY + 7) % 7) * DAY_MS
+  if (timestamp < newYorkMarketBoundary(friday) - FAD_LEAD_MS) friday -= 7 * DAY_MS
+
+  const reopensAt = newYorkMarketBoundary(friday + 2 * DAY_MS) + FAD_LAG_MS
+  const closesAt = newYorkMarketBoundary(friday + 7 * DAY_MS) - FAD_LEAD_MS
+  const scheduledPhase = timestamp < reopensAt ? 'close-only' : 'open'
+  const nextPhase = scheduledPhase === 'open' ? 'close-only' as const : 'open' as const
+
+  // Onchain state is authoritative. Overrides, recovery, and delayed polling
+  // have no predictable weekly countdown; never roll a stale phase forward a week.
+  if (currentPhase !== scheduledPhase || !Number.isFinite(timestamp)) {
+    return { currentDuration: undefined, nextPhase, nextDuration: undefined }
   }
 
-  if (currentPhase === 'close-only') {
-    const endsAt = utcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute)
-    return {
-      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
-      nextPhase: 'open' as const,
-      nextDuration: formatPerpsMarketDuration(
-        utcBoundary(endsAt, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
-          - endsAt.getTime()
-      ),
-    }
-  }
-
-  if (currentPhase === 'closed') {
-    const endsAt = utcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute)
-    return {
-      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
-      nextPhase: 'open' as const,
-      nextDuration: formatPerpsMarketDuration(
-        utcBoundary(endsAt, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
-          - endsAt.getTime()
-      ),
-    }
-  }
-
+  const endsAt = scheduledPhase === 'close-only' ? reopensAt : closesAt
+  const nextEndsAt = scheduledPhase === 'close-only'
+    ? closesAt
+    : newYorkMarketBoundary(friday + 9 * DAY_MS) + FAD_LAG_MS
   return {
-    currentDuration: undefined,
-    nextPhase: 'open' as const,
-    nextDuration: formatPerpsMarketDuration(
-      utcBoundary(now, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
-        - previousUtcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute).getTime()
-    ),
+    currentDuration: formatPerpsMarketDuration(endsAt - timestamp),
+    nextPhase,
+    nextDuration: formatPerpsMarketDuration(nextEndsAt - endsAt),
   }
 }
