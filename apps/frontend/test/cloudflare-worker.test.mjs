@@ -36,6 +36,28 @@ function workerEnv() {
   };
 }
 
+describe('Trading readiness and diagnostics proxy authentication', () => {
+  for (const path of ['readiness', 'aa/diagnostics?attemptId=12345678-1234-4123-8123-123456789abc']) {
+    it(`authenticates and never edge-caches ${path}`, async () => {
+      const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store' } }), 1);
+      const response = await worker.fetch(new Request(`https://app.plether.com/api/perps/v1/${path}`, {
+        headers: { 'X-Plether-AA-Proxy-Token': 'untrusted-browser-token', 'CF-Connecting-IP': '192.0.2.1' },
+      }), { ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'trusted-test-token' });
+      assert.equal(response.status, 200);
+      const options = fetchMock.mock.calls[0].arguments[1];
+      assert.equal(options.headers.get('X-Plether-AA-Proxy-Token'), 'trusted-test-token');
+      assert.equal(options.cf, undefined);
+      assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    });
+    it(`rejects ${path} without a proxy secret`, async () => {
+      const fetchMock = mockOriginFetch(new Response('{}'), 1);
+      const response = await worker.fetch(new Request(`https://app.plether.com/api/perps/v1/${path}`), workerEnv());
+      assert.equal(response.status, 502);
+      assert.equal(fetchMock.mock.callCount(), 0);
+    });
+  }
+});
+
 describe('Cloudflare API proxy history caching and Server-Timing', () => {
   it('caches anonymous public history briefly and preserves an origin response', async () => {
     const originResponse = new Response('history payload', {

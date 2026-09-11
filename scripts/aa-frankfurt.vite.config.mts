@@ -24,6 +24,7 @@ export default defineConfig(async context => {
       'import.meta.env.VITE_API_URL': 'undefined',
       'import.meta.env.VITE_PERPS_AA_MANIFEST_URL': JSON.stringify(localManifestPath),
       'import.meta.env.VITE_DEFAULT_CHAIN_ID': JSON.stringify('421614'),
+      'import.meta.env.VITE_AA_DIAGNOSTIC_DEPLOYMENT': JSON.stringify('sepolia-aa-temp'),
     },
     plugins: [{
       name: 'frankfurt-local-only',

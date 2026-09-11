@@ -246,6 +246,7 @@ locals {
     { name = "AWS_REGION", value = var.aws_region },
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
     { name = "AA_NATIVE_PREPARATION_ENABLED", value = tostring(var.enable_native_aa_preparation) },
+    { name = "AA_READINESS_ENFORCEMENT_ENABLED", value = tostring(var.enable_aa_readiness_enforcement) },
     { name = "AA_NATIVE_SUBMISSION_ENABLED", value = tostring(var.enable_native_aa_submission) },
     { name = "AA_NATIVE_CANARY_OWNERS", value = var.aa_native_canary_owners },
     { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = tostring(var.aa_native_global_rollout_enabled) },

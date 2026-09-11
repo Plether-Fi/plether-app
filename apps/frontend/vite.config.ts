@@ -13,6 +13,10 @@ import { parseGlobalHeaders } from './src/config/devServerHeaders';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 const AA_PROXY_PATHS = new Set([
+  '/api/perps/v1/readiness',
+  '/api/readiness',
+  '/api/perps/v1/aa/diagnostics',
+  '/api/aa/diagnostics',
   '/api/perps/v1/aa/pimlico',
   '/api/aa/pimlico',
   '/api/perps/v1/aa/rpc',

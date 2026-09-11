@@ -174,6 +174,14 @@ export function trackPerpsSponsoredOperation(
     sponsorship_status: status,
     ...properties,
   }))
+  if (['failed', 'execution-reverted', 'dropped', 'replaced', 'expired', 'receipt-timeout', 'preflight_failed'].includes(status)) {
+    const expected = properties?.error_category === 'user_rejected' || status === 'expired'
+      || status === 'preflight_failed' || status === 'replaced'
+      || ['DEADLINE_TOO_CLOSE', 'POLICY_DENIED', 'SPONSOR_BUDGET_EXCEEDED', 'PAYMASTER_PAUSED', 'RATE_LIMITED'].includes(String(properties?.reason_code))
+    captureFrontendLog(expected ? 'warn' : 'error', 'Sponsored operation did not complete', {
+      ...compactProperties(properties), component: 'sponsored_operation', stage: status, outcome: status === 'receipt-timeout' ? 'unknown' : expected ? 'rejected' : 'failure',
+    })
+  }
 }
 
 export function perpsConnectedState(isConnected: boolean): PerpsConnectedState {

@@ -20,6 +20,10 @@ const MAX_LOG_BODY_LENGTH = 256
 const MAX_LOG_ATTRIBUTE_STRING_LENGTH = 128
 
 const ALLOWED_PROPERTY_KEYS = new Set([
+  'attempt_id',
+  'stage',
+  'outcome',
+  'deployment_name',
   'account_mode',
   'action_kind',
   'button_id',
@@ -138,6 +142,7 @@ export function sanitizeFrontendLogAttributes(
 
   const sanitized: LogAttributes = {}
   for (const [key, value] of Object.entries(attributes)) {
+    if (key === 'attempt_id' && (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) continue
     if (!ALLOWED_LOG_ATTRIBUTE_KEYS.has(key) || value === undefined || value === null) continue
 
     if (typeof value === 'string') {
@@ -168,6 +173,7 @@ export function sanitizeAnalyticsProperties(properties?: AnalyticsProperties): P
 
   const sanitized: Properties = {}
   for (const [key, value] of Object.entries(properties)) {
+    if (key === 'attempt_id' && (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) continue
     if (shouldDropProperty(key) || value === undefined || value === null) continue
 
     if (typeof value === 'string') {
@@ -292,12 +298,16 @@ export function isAnalyticsEnabled(): boolean {
 }
 
 export function captureAnalyticsEvent(eventName: string, properties?: AnalyticsProperties): void {
-  const sanitizedProperties = sanitizeAnalyticsProperties(properties)
+  const sanitizedProperties = sanitizeAnalyticsProperties({
+    ...properties,
+    ...(envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT') === 'sepolia-aa-temp'
+      ? { deployment_name: 'sepolia-aa-temp' } : {}),
+  })
   if (!posthogClient) {
     enqueueCapture({ kind: 'event', eventName, properties: sanitizedProperties })
     return
   }
-  posthogClient.capture(eventName, sanitizedProperties)
+  try { posthogClient.capture(eventName, sanitizedProperties) } catch { /* Telemetry must not interrupt signing or recovery. */ }
 }
 
 export function captureFrontendLog(
@@ -308,14 +318,17 @@ export function captureFrontendLog(
   const record = sanitizeFrontendLogRecord({
     body,
     level,
-    attributes: sanitizeFrontendLogAttributes(attributes),
+    attributes: sanitizeFrontendLogAttributes({ ...attributes,
+      ...(envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT') === 'sepolia-aa-temp'
+        ? { deployment_name: 'sepolia-aa-temp' } : {}),
+    }),
   })
   if (!record) return
   if (!posthogClient) {
     enqueueCapture({ kind: 'log', record })
     return
   }
-  posthogClient.captureLog(record)
+  try { posthogClient.captureLog(record) } catch { /* Telemetry must not interrupt signing or recovery. */ }
 }
 
 export function resetAnalyticsForTests(): void {

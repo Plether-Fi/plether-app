@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { TradingStatus } from './TradingStatus'
+import { OperationDiagnostic } from './OperationDiagnostic'
+import { isPerpsAaManifestV2 } from '../perps-aa/manifest'
 import {
   canCancelSponsoredOperationLocally,
   canForceUnlockLegacySponsoredOperation,
@@ -487,6 +490,8 @@ function OperationHistoryItem({
             </span>
           ) : null}
         </div>
+        {manifest && isPerpsAaManifestV2(manifest) && <OperationDiagnostic attemptId={operation.id} />}
+        {operation.action === 'place-order' && operation.status === 'confirmed' && <p className="mt-2 text-xs text-content-secondary">Order commit confirmed. Trade execution is a separate outcome; check the order activity.</p>}
         {includedAt !== undefined || safelyConfirmedAt !== undefined ? (
           <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary">
             {includedAt !== undefined ? (
@@ -985,6 +990,7 @@ export function SponsoredOperationHistoryButton() {
         analyticsId="sponsored_operation_history"
       >
         <div className="space-y-5">
+          {identity.manifest && isPerpsAaManifestV2(identity.manifest) && <TradingStatus />}
           {statusSummary ? (
             <div className={`border p-4 ${statusSummary.tone}`} aria-live="polite">
               <div className="font-semibold text-content-primary">

@@ -278,6 +278,24 @@ aaIntegrationSpec databaseUrl =
         void $ execute_ first "UPDATE aa_preparations SET expires_at=clock_timestamp()-interval '1 second'"
         claimPreparation second True client sender identifier intent "worker-d" `shouldReturn` PreparationExpired
 
+    it "persists nullable correlation with the lease-bound authorization and preserves it across retries" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- reserveSponsorship conn testConfig (draft '1' '2' '3' 0 100 now) >>= expectAuthorization
+        let client = clientKeyOf '3'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'
+            attempt = "12345678-1234-4123-8123-123456789abc"
+        claimPreparation conn True client sender identifier intent "lease" `shouldReturn` PreparationClaimed Nothing
+        linkPreparationDiagnostic conn client sender identifier "wrong-lease" (saDigest authorization) (Just attempt) chainId "deployment" `shouldReturn` False
+        linkPreparationDiagnostic conn client sender identifier "lease" (saDigest authorization) (Just attempt) chainId "deployment" `shouldReturn` True
+        releasePreparation conn client sender identifier "lease"
+        claimPreparation conn False client sender identifier intent "retry" `shouldReturn` PreparationClaimed Nothing
+        linkPreparationDiagnostic conn client sender identifier "retry" (saDigest authorization) (Just "12345678-1234-4123-8123-aaaaaaaaaaaa") chainId "changed" `shouldReturn` True
+        rows <- query_ conn "SELECT diagnostic_attempt_id::text,diagnostic_deployment FROM aa_preparations" :: IO [(Text,Text)]
+        rows `shouldBe` [(attempt,"deployment")]
+        -- Rollback code still reads/releases the same immutable preparation.
+        linkPreparation conn client sender identifier "retry" (saDigest authorization) `shouldReturn` True
+
 withFixture :: Text -> (Connection -> IO a) -> IO a
 withFixture databaseUrl action =
   bracket
@@ -306,6 +324,8 @@ resetSchema conn = do
   ensureAaSponsorshipSchema conn
   migration <- fromString <$> readFile "config/migrations/aa-preparation-v1.sql"
   void $ execute_ conn migration
+  observability <- fromString <$> readFile "config/migrations/aa-observability-v1.sql"
+  void $ execute_ conn observability
 
 cleanupSchema :: Connection -> IO ()
 cleanupSchema conn = do

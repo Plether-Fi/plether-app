@@ -31,7 +31,7 @@ export function sponsoredOperationStatusLabel(
     case 'requesting-sponsorship':
       return 'Preparing sponsored transaction'
     case 'awaiting-signature':
-      return 'Confirm in wallet'
+      return 'Awaiting signature'
     case 'journaling':
       return 'Saving recovery record'
     case 'submitting':
@@ -51,7 +51,7 @@ export function sponsoredOperationStatusLabel(
     case 'outcome-unknown':
       return 'Outcome unknown'
     case 'receipt-timeout':
-      return 'Inclusion timeout'
+      return 'Status unknown — checking'
     case 'cancelled':
       return 'Cancelled locally'
     case 'failed':

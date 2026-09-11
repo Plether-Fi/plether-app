@@ -1,5 +1,5 @@
 module Plether.Database.AaPreparation
-  ( PreparationClaim (..), claimPreparation, savePreparedOperation, releasePreparation, linkPreparation ) where
+  ( PreparationClaim (..), claimPreparation, savePreparedOperation, releasePreparation, linkPreparation, linkPreparationDiagnostic ) where
 
 import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Lazy as LBS
@@ -56,3 +56,13 @@ releasePreparation conn client sender identifier lease = do
     "UPDATE aa_preparations SET lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE client_key=? AND sender=? AND preparation_id=? AND lease_token=?"
     (client,sender,identifier,lease)
   pure ()
+
+-- Nullable correlation travels in the existing durable linkage write. It does
+-- not participate in intent, digest, lease ownership or authorization identity.
+-- Retain the first reference on retries, including retries from another process.
+linkPreparationDiagnostic :: Connection -> Text -> Text -> Text -> Text -> Text -> Maybe Text -> Integer -> Text -> IO Bool
+linkPreparationDiagnostic conn client sender identifier lease digest attempt chain deployment = do
+  affected <- execute conn
+    "UPDATE aa_preparations SET authorization_digest=?,diagnostic_attempt_id=COALESCE(diagnostic_attempt_id,?::uuid),diagnostic_chain_id=COALESCE(diagnostic_chain_id,?),diagnostic_deployment=COALESCE(diagnostic_deployment,?) WHERE client_key=? AND sender=? AND preparation_id=? AND lease_token=? AND lease_until>clock_timestamp() AND (authorization_digest IS NULL OR authorization_digest=?)"
+    (digest,attempt,chain,deployment,client,sender,identifier,lease,digest)
+  pure $ affected == 1

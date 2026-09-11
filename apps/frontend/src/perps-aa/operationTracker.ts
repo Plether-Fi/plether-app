@@ -141,6 +141,8 @@ export function trackSponsoredOperationPreflightFailure(
 ): StablePreflightReason {
   const reason = sponsoredPreflightFailureReason(error)
   trackPerpsSponsoredOperation('preflight_failed', analyticsProperties(metadata, {
+    attempt_id: operationId(),
+    stage: 'preflight',
     sponsorship_accepted: false,
     retry_count: 0,
     reason_code: reason,
@@ -153,6 +155,8 @@ export function beginSponsoredOperationTracking(
   metadata: SponsoredOperationMetadata
 ): SponsoredOperationTracker {
   const id = metadata.id ?? operationId()
+  const startedAt = performance.now()
+  let previousStatus: string | undefined
   const store = useSponsoredOperationStore.getState()
   store.beginOperation({
     id,
@@ -170,6 +174,9 @@ export function beginSponsoredOperationTracking(
   })
 
   trackPerpsSponsoredOperation('building', analyticsProperties(metadata, {
+    attempt_id: id,
+    stage: 'building',
+    duration_ms: 0,
     sponsorship_accepted: false,
     retry_count: 0,
   }))
@@ -179,10 +186,15 @@ export function beginSponsoredOperationTracking(
     signal: createSponsoredOperationSignal(id),
 
     onStatus: (status) => {
+      if (previousStatus === status) return
+      previousStatus = status
       useSponsoredOperationStore.getState().transition(id, status)
       const operation = useSponsoredOperationStore.getState().operations
         .find((item) => item.id === id)
       trackPerpsSponsoredOperation(status, analyticsProperties(metadata, {
+        attempt_id: id,
+        stage: status,
+        duration_ms: Math.round(performance.now() - startedAt),
         sponsorship_accepted: operation?.sponsorshipAccepted ?? false,
         retry_count: operation?.retryCount ?? 0,
         ...(status === 'confirmed' ? { terminal_outcome: 'confirmed' } : {}),
@@ -236,7 +248,7 @@ export function beginSponsoredOperationTracking(
           : hasPersistedHash
             ? 'receipt-timeout'
             : 'failed'
-      const reason = sponsorError?.reason ??
+      const reason = sponsorError?.reason ?? bundlerError?.reason ??
         terminalStatus ??
         (hasPersistedHash
           ? 'BUNDLER_UNAVAILABLE'
@@ -267,6 +279,8 @@ export function beginSponsoredOperationTracking(
       trackPerpsSponsoredOperation(
         operationStatus,
         analyticsProperties(metadata, {
+          attempt_id: id,
+          duration_ms: Math.round(performance.now() - startedAt),
           reason_code: reason,
           retry_count:
             useSponsoredOperationStore.getState().operations

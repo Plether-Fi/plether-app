@@ -33,7 +33,11 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc)
+import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness)
+import qualified Plether.AA.Pimlico as AaProxy
+import qualified Plether.AA.Diagnostics as AaDiagnostics
+import Plether.AA.ClientKey (pseudonymousClientKey)
+import Plether.Config (NativeAaConfig(..))
 import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
@@ -169,6 +173,25 @@ instance FromJSON TestnetFaucetRequest where
 
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
 app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
+  get "/api/readiness" $ do
+    supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
+    setHeader "Cache-Control" "no-store"
+    case cfgNativeAaConfig cfg of
+      Just native | maybe False (AaProxy.constantTimeTextEq $ naaProxyOriginToken native) supplied ->
+        liftIO (gatewayReadiness nativeGatewayState cfg mPool perpsClient) >>= json
+      _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
+  get "/api/aa/diagnostics" $ do
+    supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
+    clientIp <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+    attempt <- queryParamMaybe "attemptId"
+    setHeader "Cache-Control" "no-store"
+    case (cfgNativeAaConfig cfg, mPool, clientIp >>= AaProxy.validateClientIp, attempt) of
+      (Just native, Just pool, Just ip, Just identifier)
+        | maybe False (AaProxy.constantTimeTextEq $ naaProxyOriginToken native) supplied
+        , AaDiagnostics.validAttemptId identifier -> do
+            result <- liftIO $ AaDiagnostics.readDiagnostic pool (pseudonymousClientKey (naaProxyOriginToken native) ip) identifier
+            json result
+      _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
   case mPool of

@@ -150,4 +150,21 @@ describe('analytics client', () => {
     captureFrontendLog('error', 'frontend failed', { component: 'react_root' })
     expect(posthogMock.captureLog).not.toHaveBeenCalled()
   })
+
+  it('keeps exporter exceptions out of the transaction lifecycle', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+    await initAnalytics()
+    posthogMock.capture.mockImplementationOnce(() => { throw new Error('export unavailable') })
+    posthogMock.captureLog.mockImplementationOnce(() => { throw new Error('export unavailable') })
+    expect(() => captureAnalyticsEvent('perps sponsored operation', { stage: 'submitting' })).not.toThrow()
+    expect(() => captureFrontendLog('error', 'Sponsored operation failed', { stage: 'submitting' })).not.toThrow()
+  })
+
+  it('adds the Frankfurt diagnostic filter only to the explicitly selected local profile', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+    vi.stubEnv('VITE_AA_DIAGNOSTIC_DEPLOYMENT', 'sepolia-aa-temp')
+    await initAnalytics()
+    captureAnalyticsEvent('perps sponsored operation', { stage: 'submitting' })
+    expect(posthogMock.capture).toHaveBeenCalledWith('perps sponsored operation', { stage: 'submitting', deployment_name: 'sepolia-aa-temp' })
+  })
 })

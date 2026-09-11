@@ -22,6 +22,8 @@ library
         Plether.AA.ClientKey
         Plether.AA.Gateway
         Plether.AA.Timing
+        Plether.AA.Readiness
+        Plether.AA.Diagnostics
         Plether.AA.Preparation
         Plether.AA.EvidenceCache
         Plether.AA.Kms
@@ -344,6 +346,7 @@ test-suite plether-api-test
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
         Plether.AA.PreparationSpec
+        Plether.AA.ReadinessSpec
         Plether.AA.ReconcilerSpec
         Plether.CacheSpec
         Plether.ConfigSpec

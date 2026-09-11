@@ -19,6 +19,7 @@ module Plether.Database.AaSponsorship
   , pruneAaRateWindows
   , pruneExpiredRecoveryOperations
   , getAaIssuancePause
+  , aaReconcilerIsFresh
   , pauseAaIssuance
   , resumeAaIssuance
   , getAaReconcilerCursor

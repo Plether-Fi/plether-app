@@ -1,0 +1,22 @@
+name: AA observability contracts (no deployment)
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/otel-log-router/**'
+      - '.github/workflows/aa-observability-tests.yml'
+permissions:
+  contents: read
+jobs:
+  redaction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - run: lua5.4 posthog-projection.test.lua
+        working-directory: apps/backend/otel-log-router
+      - run: docker build -f apps/backend/otel-log-router/Dockerfile -t plether-aa-log-router-test .
+      - run: node --test routing.test.mjs
+        working-directory: apps/backend/otel-log-router
+        env:
+          AA_LOG_ROUTER_TEST_IMAGE: plether-aa-log-router-test

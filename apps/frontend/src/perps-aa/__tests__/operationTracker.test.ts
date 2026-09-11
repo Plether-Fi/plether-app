@@ -160,6 +160,8 @@ describe('sponsored operation tracker', () => {
     expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenCalledWith(
       'preflight_failed',
       {
+        attempt_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+        stage: 'preflight',
         manifest_version: 'v1',
         account_mode: 'simple',
         action_kind: 'deposit',

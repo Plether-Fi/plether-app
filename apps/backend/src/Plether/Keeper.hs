@@ -30,7 +30,7 @@ module Plether.Keeper
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (concurrently_)
+import Control.Concurrent.Async (concurrently_, withAsync)
 import Control.Exception
   ( SomeAsyncException
   , SomeException
@@ -39,23 +39,26 @@ import Control.Exception
   , throwIO
   , try
   )
-import Control.Monad (foldM, forM_, unless, void, when)
+import Control.Monad (foldM, forM_, forever, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Plether.Ethereum.Abi (keccak256)
 import Data.Bits ((.|.))
 import Data.List (nub, sortOn)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, execute, query, Only(..))
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
+import System.Timeout (timeout)
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
   , LpSettlementBroadcastInput (..)
@@ -302,23 +305,74 @@ runOrderKeeperSession cfg pool client mode dryRun =
               "keeper_lock_acquired"
               "Order keeper acquired its advisory lock"
               []
+            heartbeat <- getCurrentTime >>= newIORef
+            quote <- newIORef Nothing
+            let observeCost cost = do
+                  now <- getCurrentTime
+                  writeIORef quote $ Just (now, cost)
+                iteration = do
+                  getCurrentTime >>= writeIORef heartbeat
+                  runKeeperIteration cfg conn client dryRun observeCost
+                observeLoop = forever $ do
+                  now <- getCurrentTime
+                  lastHeartbeat <- readIORef heartbeat
+                  latestQuote <- readIORef quote
+                  let freshQuote = case latestQuote of
+                        Just (at, cost) | diffUTCTime now at <= 15 -> Just cost
+                        _ -> Nothing
+                  when (not dryRun && diffUTCTime now lastHeartbeat <= 15) $
+                    void $ timeout 2_000_000 $ withDb pool $ \observationConn ->
+                      observeKeeperFunding cfg observationConn client freshQuote
+                  threadDelay 10_000_000
             case mode of
-              KeeperOnce -> void $ runKeeperIteration cfg conn client dryRun
-              KeeperLoop -> loop conn
+              KeeperOnce -> void iteration
+              KeeperLoop -> withAsync observeLoop $ \_ -> loop iteration
   where
-    loop conn = do
-      activity <- runKeeperIteration cfg conn client dryRun
+    loop iteration = do
+      activity <- iteration
       threadDelay $
         keeperPollDelayMicros
           (cfgKeeperPollSeconds cfg)
           (cfgKeeperIdlePollSeconds cfg)
           activity
-      loop conn
+      loop iteration
 
-runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> IO KeeperIterationActivity
-runKeeperIteration cfg conn client dryRun = do
+runKeeperIteration :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> IO KeeperIterationActivity
+runKeeperIteration cfg conn client dryRun observeCost = do
   indexNewLogs cfg conn client
-  processQueueHead cfg conn client dryRun
+  processQueueHead cfg conn client dryRun observeCost
+
+-- Diagnostic writes never alter trade admission or the keeper's existing
+-- transaction path. Missing additive schema degrades monitoring, not execution.
+observeKeeperFunding :: Config -> Connection -> EthClient -> Maybe Integer -> IO ()
+observeKeeperFunding cfg conn client required = do
+  result <- trySynchronous $ case cfgKeeperPrivateKey cfg of
+    Nothing -> pure ()
+    Just key -> do
+      signer <- deriveAddress key
+      case signer of
+        Left _ -> pure ()
+        Right address -> do
+          balanceResult <- ethGetBalance client address
+          case balanceResult of
+            Left _ -> pure ()
+            Right balance -> do
+              let knownUnaffordable = balance == 0 || maybe False (balance <) required
+                  state = if knownUnaffordable then "blocked" else if isJust required then "ready" else "unknown" :: Text
+                  reason = if knownUnaffordable then "KEEPER_INSUFFICIENT_FUNDS"
+                    else case required of
+                      Nothing -> "FUNDING_UNVERIFIED"
+                      Just cost | balance < cost * 10 -> "FUNDING_LOW"
+                      _ -> "READY" :: Text
+              void $ execute conn
+                "INSERT INTO aa_worker_readiness(chain_id,deployment,component,state,reason,signer_address,required_cost_wei) VALUES (?,?,'keeper',?,?,?,?::numeric) ON CONFLICT(chain_id,deployment,component) DO UPDATE SET state=EXCLUDED.state,reason=EXCLUDED.reason,signer_address=EXCLUDED.signer_address,required_cost_wei=EXCLUDED.required_cost_wei,observed_at=clock_timestamp()"
+                (cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg, state, reason, T.toLower address, fmap (T.pack . show) required)
+              when (maybe False (balance <) $ (*10) <$> required) $ logWarnEvery 60
+                "keeper_funding_low" "Keeper has fewer than ten buffered execution costs available"
+                [field "component" ("keeper" :: Text), field "reason_code" ("FUNDING_LOW" :: Text)]
+  case result of
+    Left (_ :: SomeException) -> logWarnEvery 60 "keeper_readiness_unavailable" "Keeper readiness observation unavailable" []
+    Right _ -> pure ()
 
 runLpSettlementWorker
   :: SettlementMonitor.SettlementCodeHashes
@@ -1962,6 +2016,7 @@ applyOrderEvent cfg conn client = \case
   Perps.OrderFailed {..} ->
     markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
   Perps.IntentRegistered {..} -> do
+    linkOrderDiagnostic cfg conn client poeOrderId poeAccount poeTxHash
     metadataResult <- readCommitMetadata cfg client poeOrderId poeBlockNumber
     case metadataResult of
       Nothing -> pure ()
@@ -2015,8 +2070,8 @@ readCommitMetadata cfg client orderId fallbackBlock = do
           pure Nothing
         Right commitTime -> pure $ Just (fallbackBlock, commitTime)
 
-processQueueHead :: Config -> Connection -> EthClient -> Bool -> IO KeeperIterationActivity
-processQueueHead cfg conn client dryRun = do
+processQueueHead :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> IO KeeperIterationActivity
+processQueueHead cfg conn client dryRun observeCost = do
   pending <- getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) (cfgKeeperMaxBatchSize cfg)
   case pending of
     [] -> pure KeeperIdle
@@ -2026,7 +2081,7 @@ processQueueHead cfg conn client dryRun = do
       latestBlockResult <- ethBlockNumber client
       case (settlementWindowResult, chainNowResult, latestBlockResult) of
         (Right settlementWindow, Right chainNow, Right latestBlock) ->
-          decideExecution cfg conn client dryRun pending headOrder settlementWindow chainNow latestBlock
+          decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock
         _ -> do
           let errors =
                 [ either (Just . rpcErrorText) (const Nothing) settlementWindowResult
@@ -2047,13 +2102,14 @@ decideExecution
   -> Connection
   -> EthClient
   -> Bool
+  -> (Integer -> IO ())
   -> [PerpsKeeperOrderRow]
   -> PerpsKeeperOrderRow
   -> Integer
   -> Integer
   -> Integer
   -> IO ()
-decideExecution cfg conn client dryRun pending headOrder settlementWindow chainNow latestBlock = do
+decideExecution cfg conn client dryRun observeCost pending headOrder settlementWindow chainNow latestBlock = do
   freshHeadResult <- refreshPendingOrder cfg client headOrder
   case freshHeadResult of
     Left err -> do
@@ -2078,7 +2134,7 @@ decideExecution cfg conn client dryRun pending headOrder settlementWindow chainN
             , field "chain_head_block" latestBlock
             ]
       | isOrderPastValidUntil chainNow fpoValidUntil ->
-          submitIntent cfg conn client dryRun $ CleanupExpired freshHead
+          submitIntent cfg conn client dryRun observeCost $ CleanupExpired freshHead
       | chainNow < pkorCommitTime freshHead + 1 ->
           logInfoEvery
             300
@@ -2104,7 +2160,7 @@ decideExecution cfg conn client dryRun pending headOrder settlementWindow chainN
             , field "error" err
             ]
         Right (Just (payload, publishTimes, updateData)) ->
-          submitIntent cfg conn client dryRun $
+          submitIntent cfg conn client dryRun observeCost $
             ExecuteReady [freshHead] payload publishTimes updateData
         Right Nothing ->
           executeHistoricalReadyHead remainingPending freshHead freshHeadIsClose validUntil
@@ -2181,7 +2237,7 @@ decideExecution cfg conn client dryRun pending headOrder settlementWindow chainN
                         "Cached Pyth payload is not the first post-commit payload for the queue head"
                         [field "order_id" $ pkorOrderId freshHead]
                     orders ->
-                      submitIntent cfg conn client dryRun $
+                      submitIntent cfg conn client dryRun observeCost $
                         ExecuteReady orders payload publishTimes updateData
 
     tryFrozenClosePayload freshHead freshHeadIsClose
@@ -2377,8 +2433,8 @@ refreshContiguousOrders cfg client (order : orders) = do
       (freshOrder :) <$> refreshContiguousOrders cfg client orders
     Right (RefreshedTerminalOrder _) -> pure []
 
-submitIntent :: Config -> Connection -> EthClient -> Bool -> ExecutionIntent -> IO ()
-submitIntent cfg conn client dryRun intent = do
+submitIntent :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> ExecutionIntent -> IO ()
+submitIntent cfg conn client dryRun observeCost intent = do
   let targetOrders = intentOrders intent
       targetIds = map pkorOrderId targetOrders
       (callKind, callData) =
@@ -2430,7 +2486,7 @@ submitIntent cfg conn client dryRun intent = do
                 ]
             else do
               forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
-              sent <- submitKeeperTransaction cfg client value callData gasLimit
+              sent <- submitKeeperTransaction cfg client value callData gasLimit observeCost
               case sent of
                 Left err -> recordAllErrors cfg conn targetIds err
                 Right receipt -> applyReceipt cfg conn targetIds receipt
@@ -2444,8 +2500,8 @@ intentValue cfg client (ExecuteReady orders _ _ updateData) = do
       Left err -> Left $ rpcErrorText err
       Right updateFee -> Right $ updateFee * fromIntegral (length orders)
 
-submitKeeperTransaction :: Config -> EthClient -> Integer -> ByteString -> Integer -> IO (Either Text TxReceipt)
-submitKeeperTransaction cfg client value callData gasLimit = do
+submitKeeperTransaction :: Config -> EthClient -> Integer -> ByteString -> Integer -> (Integer -> IO ()) -> IO (Either Text TxReceipt)
+submitKeeperTransaction cfg client value callData gasLimit observeCost = do
   result <-
     submitKeeperTransactionTo
       cfg
@@ -2454,6 +2510,7 @@ submitKeeperTransaction cfg client value callData gasLimit = do
       value
       callData
       (Just gasLimit)
+      observeCost
       (const $ pure ())
   pure $ either (Left . snd) Right result
 
@@ -2578,9 +2635,10 @@ submitKeeperTransactionTo
   -> Integer
   -> ByteString
   -> Maybe Integer
+  -> (Integer -> IO ())
   -> (Text -> IO ())
   -> IO (Either (Bool, Text) TxReceipt)
-submitKeeperTransactionTo cfg client target value callData gasLimitOverride onBroadcast =
+submitKeeperTransactionTo cfg client target value callData gasLimitOverride observeCost onBroadcast =
   case cfgKeeperPrivateKey cfg of
     Nothing -> pure $ Left (False, "KEEPER_PRIVATE_KEY is not configured")
     Just privateKey ->
@@ -2615,6 +2673,7 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride onBr
                       , txValue = value
                       , txData = callData
                       }
+              observeCost $ value + gasLimit * maxFee
               signResult <- signTransaction privateKey tx
               case signResult of
                 Left err -> pure $ Left (False, err)
@@ -2737,14 +2796,58 @@ applyReceipt cfg conn targetIds receipt = do
               ]
             pure $ poeOrderId : seen
 
+-- Link only a matching EntryPoint event after this exact release's registered
+-- intent. A bundle may contain several accounts/operations: never use its first
+-- UserOperationEvent indiscriminately. This is diagnostic, not settlement proof.
+linkOrderDiagnostic :: Config -> Connection -> EthClient -> Integer -> Text -> Text -> IO ()
+linkOrderDiagnostic cfg conn client orderId account txHash = do
+  result <- trySynchronous $ do
+    receiptResult <- ethGetTransactionReceipt client txHash
+    case receiptResult of
+      Right (Just receipt) | receiptSucceeded receipt -> do
+        let registrations = [rpcLogIndex entry | entry <- receiptLogs receipt
+              , Just (T.toLower $ rpcLogAddress entry) == (T.toLower <$> cfgPerpsOrderLifecycleBook cfg)
+              , Just Perps.IntentRegistered {poeOrderId = actualId} <- [Perps.decodePerpsOrderEvent entry]
+              , actualId == orderId]
+            userEvents index = [entry | entry <- sortOn rpcLogIndex $ receiptLogs receipt
+              , rpcLogIndex entry > index
+              , T.toLower (rpcLogAddress entry) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
+              , take 1 (rpcLogTopics entry) == [keccak256 "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"]]
+        case registrations of
+          [index] -> case userEvents index of
+            entry : _ -> case rpcLogTopics entry of
+              [_topic, operationHash, sender, _paymaster]
+                | T.toLower account == "0x" <> TE.decodeUtf8 (B16.encode $ BS.drop 12 sender) -> do
+                    rows <- query conn
+                      "UPDATE aa_attempt_diagnostics SET order_id=?,stage='committed',updated_at=clock_timestamp() WHERE chain_id=? AND deployment=? AND operation_hash=? AND sender=? AND order_id IS NULL RETURNING attempt_id::text"
+                      (orderId, cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg,
+                        "0x" <> TE.decodeUtf8 (B16.encode operationHash), T.toLower account) :: IO [Only Text]
+                    forM_ rows $ \(Only attempt) -> logInfo "aa_order_committed" "Sponsored order committed"
+                      [field "attempt_id" attempt, field "stage" ("committed" :: Text)]
+              _ -> pure ()
+            _ -> pure ()
+          _ -> pure ()
+      _ -> pure ()
+  case result of
+    Left (_ :: SomeException) -> logWarnEvery 60 "aa_diagnostic_link_unavailable" "Order diagnostic correlation unavailable" []
+    Right _ -> pure ()
+
 recordAllErrors :: Config -> Connection -> [Integer] -> Text -> IO ()
 recordAllErrors cfg conn orderIds err = do
   let retryable = isSameBlockMevGuardError err
+      reason = if "insufficient funds" `T.isInfixOf` T.toLower err then "KEEPER_INSUFFICIENT_FUNDS"
+        else if "timeout" `T.isInfixOf` T.toLower err then "KEEPER_RPC_TIMEOUT" else "KEEPER_EXECUTION_FAILED" :: Text
   forM_ orderIds $ \orderId ->
     if retryable
       then recordPerpsKeeperOrderImmediateRetryError conn (cfgPerpsOrderRouter cfg) orderId err
       else recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId err
   let failureLogger = if retryable then logWarnEvery else logErrorEvery
+  _ <- trySynchronous $ forM_ orderIds $ \orderId -> do
+    rows <- query conn
+      "UPDATE aa_attempt_diagnostics SET reason=?,stage='execution_attempt_failed',updated_at=clock_timestamp() WHERE chain_id=? AND deployment=? AND order_id=? AND reason IS DISTINCT FROM ? RETURNING attempt_id::text"
+      (reason, cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg, orderId, reason) :: IO [Only Text]
+    forM_ rows $ \(Only attempt) -> logError "aa_order_execution_attempt_failed" "Sponsored order execution attempt failed"
+      [field "attempt_id" attempt, field "stage" ("execution" :: Text), field "reason_code" reason]
   failureLogger
     60
     "keeper_transaction_failed"
@@ -2752,6 +2855,7 @@ recordAllErrors cfg conn orderIds err = do
     [ field "order_ids" orderIds
     , field "order_count" $ length orderIds
     , field "retryable" retryable
+    , field "reason_code" reason
     , field "error" err
     ]
 

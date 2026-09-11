@@ -15,3 +15,19 @@ The ECS-generated `opentelemetry` output sends OTLP/HTTP protobuf batches to
 PostHog. The custom CloudWatch output preserves the existing operational copy.
 Authentication is injected through an ECS log-driver `secretOptions` entry and
 must never be written into this image or configuration file.
+
+## Sponsored-trading privacy boundary
+
+`rewrite_tag` copies each ECS record to `cloudwatch.*` before applying
+`posthog-projection.lua` to the FireLens/PostHog tag. CloudWatch retains the
+operational fields used by existing alarms. PostHog receives only the explicit
+projection: stable categories, bounded counters/durations, an optional random
+attempt UUID and selected service/deployment resource attributes. The body is
+the developer-owned event name, never the original message. Alto/Pino raw
+messages, signatures, calldata, addresses, amounts, hashes and exceptions are
+not exported. Unknown log formats retain severity but no original body.
+
+Projection exceptions emit a minimal fixed diagnostic, rather than allowing
+Fluent Bit's protected Lua fallback to forward the original record. Run
+`lua posthog-projection.test.lua` here. A real FireLens routing/exporter-outage
+qualification remains required before deploying this image.

@@ -101,6 +101,12 @@ run "reject_singapore" {
   expect_failures = [terraform_data.deployment_target_guard, terraform_data.self_hosted_aa_guard]
 }
 
+run "reject_readiness_enforcement_before_canary_verification" {
+  command = plan
+  variables { enable_aa_readiness_enforcement = true }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
+
 run "reject_custom_hostname" {
   command = plan
   variables { api_hostname = "aa-temp-api.sepolia.plether.com" }

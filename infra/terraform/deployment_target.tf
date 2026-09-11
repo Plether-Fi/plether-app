@@ -19,17 +19,25 @@ variable "frankfurt_activation_stage" {
 }
 
 locals {
-  deployment_name            = var.deployment_id == "" ? var.environment : var.deployment_id
-  frankfurt_preparation      = var.deployment_id == "sepolia-aa-temp"
-  frankfurt_aa_qualification = contains(["aa-qualification", "aa-canary", "trading-prepared", "trading-canary"], var.frankfurt_activation_stage)
-  frankfurt_aa_canary = contains(["aa-canary", "trading-prepared", "trading-canary"], var.frankfurt_activation_stage)
+  deployment_name              = var.deployment_id == "" ? var.environment : var.deployment_id
+  frankfurt_preparation        = var.deployment_id == "sepolia-aa-temp"
+  frankfurt_aa_qualification   = contains(["aa-qualification", "aa-canary", "trading-prepared", "trading-canary"], var.frankfurt_activation_stage)
+  frankfurt_aa_canary          = contains(["aa-canary", "trading-prepared", "trading-canary"], var.frankfurt_activation_stage)
   frankfurt_trading_configured = contains(["trading-prepared", "trading-canary"], var.frankfurt_activation_stage)
-  frankfurt_trading_canary = var.frankfurt_activation_stage == "trading-canary"
-  temporary_core             = jsondecode(file("${path.module}/../../config/perps/arbitrum-sepolia-v2.json"))
+  frankfurt_trading_canary     = var.frankfurt_activation_stage == "trading-canary"
+  temporary_core               = jsondecode(file("${path.module}/../../config/perps/arbitrum-sepolia-v2.json"))
 }
 
 resource "terraform_data" "deployment_target_guard" {
   lifecycle {
+    precondition {
+      condition = !var.enable_aa_readiness_enforcement || (
+        local.frankfurt_trading_canary && local.frankfurt_preparation
+        && var.aws_region == "eu-central-1" && var.environment == "sepolia"
+        && !var.aa_native_global_rollout_enabled
+      )
+      error_message = "Readiness blocking is restricted to the Frankfurt trading canary after verification; other deployments remain observation-only."
+    }
     precondition {
       condition = tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 600 || (
         local.frankfurt_preparation && var.environment == "sepolia"

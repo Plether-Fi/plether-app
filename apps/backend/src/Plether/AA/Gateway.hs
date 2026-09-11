@@ -2,6 +2,8 @@ module Plether.AA.Gateway
   ( NativeGatewayState
   , newNativeGatewayState
   , nativeGatewayIssuanceError
+  , gatewayReadiness
+  , initializeGatewayObservability
   , handleNativeAaRpc
   , attestNativePaymasterProfile
   , ownerAllowedForNativeCanary
@@ -61,6 +63,8 @@ import Network.HTTP.Types.Header (hRetryAfter)
 import Network.HTTP.Types.Status (status200, status400, status403, status413, statusCode)
 import qualified Plether.AA.Paymaster as Paymaster
 import qualified Plether.AA.Preparation as Preparation
+import Plether.AA.Readiness (newReadiness)
+import qualified Plether.AA.Diagnostics as Diagnostics
 import qualified Plether.Database.AaPreparation as PreparationDb
 import Plether.AA.Timing (Timing, newTiming, timingIdentifier, timed, timingCount, timingHeaders)
 import qualified Plether.AA.EvidenceCache as Cache
@@ -123,6 +127,9 @@ data NativeGatewayState = NativeGatewayState
   , ngsAccountEvidence :: Cache.EvidenceCache Legacy.ProxyFailure Text
   , ngsSnapshots :: MVar [(Integer, Text)]
   , ngsTiming :: Maybe Timing
+  , ngsReadiness :: MVar (Maybe (IO Value))
+  , ngsDiagnostics :: MVar (Maybe Diagnostics.DiagnosticSink)
+  , ngsAttemptId :: Maybe Text
   }
 
 data SecurityBlockHeader = SecurityBlockHeader
@@ -155,7 +162,9 @@ newNativeGatewayState manager cfg client = do
   profiles <- Cache.newEvidenceCache 2
   accounts <- Cache.newEvidenceCache 1024
   snapshots <- newMVar []
-  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing
+  readiness <- newMVar Nothing
+  diagnostics <- newMVar Nothing
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing
       warm state nativeCfg = do
         when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
           void $ forkIO $ forever $ do
@@ -188,6 +197,24 @@ newNativeGatewayState manager cfg client = do
                 Left err -> make Nothing (Just err) $ Just securityClient
                 Right resolved -> make (Just resolved) Nothing $ Just securityClient) nativeCfg
 
+gatewayReadiness :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> IO Value
+gatewayReadiness state cfg pool client = do
+  readSnapshot <- modifyMVar (ngsReadiness state) $ \current -> case current of
+    Just reader -> pure (current, reader)
+    Nothing -> do
+      reader <- newReadiness cfg pool client (nativeGatewayIssuanceError state == Nothing)
+      pure (Just reader, reader)
+  readSnapshot
+
+initializeGatewayObservability :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> IO ()
+initializeGatewayObservability state cfg pool client = case (cfgNativeAaConfig cfg, pool) of
+  (Just _, Just database) -> do
+    void $ gatewayReadiness state cfg pool client
+    modifyMVar_ (ngsDiagnostics state) $ \current -> case current of
+      Just _ -> pure current
+      Nothing -> Just <$> Diagnostics.startDiagnostics database
+  _ -> pure ()
+
 handleNativeAaRpc
   :: NativeGatewayState
   -> Config
@@ -197,8 +224,10 @@ handleNativeAaRpc
   -> ActionM ()
 handleNativeAaRpc gatewayState cfg mPool perpsClient manager = do
   timing <- liftIO newTiming
+  suppliedAttempt <- fmap TL.toStrict <$> header "X-Plether-Attempt-Id"
+  let attempt = suppliedAttempt >>= \value -> if Diagnostics.validAttemptId value then Just (T.toLower value) else Nothing
   let observe = withRpcObserver $ timingCount timing "rpc_calls"
-      scoped = gatewayState {ngsTiming = Just timing, ngsSecurityClient = observe <$> ngsSecurityClient gatewayState}
+      scoped = gatewayState {ngsTiming = Just timing, ngsSecurityClient = observe <$> ngsSecurityClient gatewayState, ngsAttemptId = attempt}
   timed timing "http_total" $ handleNativeAaRpcTimed scoped cfg mPool (observe perpsClient) manager
   emitTiming timing
 
@@ -363,18 +392,31 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           Right (context, owner, operation) ->
             deliverPreparation gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
               let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
-              linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparation conn clientKey
+              linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
                 (encodeHex $ Paymaster.sponsorshipDigest operation envelope)
+                (ngsAttemptId gatewayState) (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
               _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
               case linked of
-                Right True -> respondSuccess requestId $ object
-                  [ "version" .= (1 :: Int)
-                  , "entryPoint" .= nativeEntryPoint
-                  , "operation" .= Object (KM.delete "signature" $ Paymaster.puoObject finalOperation)
-                  , "userOperationHash" .= encodeHex (Paymaster.userOperationHash finalOperation)
-                  ]
+                Right True -> do
+                  case ngsAttemptId gatewayState of
+                    Nothing -> pure ()
+                    Just attempt -> liftIO $ do
+                      sink <- modifyMVar (ngsDiagnostics gatewayState) $ \current -> case current of
+                        Just queue -> pure (current, queue)
+                        Nothing -> do
+                          queue <- Diagnostics.startDiagnostics pool
+                          pure (Just queue, queue)
+                      Diagnostics.enqueueDiagnostic sink $ Diagnostics.Diagnostic attempt clientKey
+                        (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
+                        (Preparation.piIdentifier intent) (encodeHex $ Paymaster.userOperationHash finalOperation) (T.toLower $ Preparation.piSender intent)
+                  respondSuccess requestId $ object
+                    [ "version" .= (1 :: Int)
+                    , "entryPoint" .= nativeEntryPoint
+                    , "operation" .= Object (KM.delete "signature" $ Paymaster.puoObject finalOperation)
+                    , "userOperationHash" .= encodeHex (Paymaster.userOperationHash finalOperation)
+                    ]
                 _ -> Legacy.respondFailure requestId $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
         -- Errors after reservation also release the work lease, not the budget.
         -- Lost/aborted requests leave an expiring lease for another instance.
