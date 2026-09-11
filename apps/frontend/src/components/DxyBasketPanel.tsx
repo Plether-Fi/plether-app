@@ -9,6 +9,7 @@ import { liquidationDisplayPrice } from '../utils/perpsRisk'
 import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
 
 export interface DxyBasketPanelProps {
+  entryPriceRaw?: bigint
   liquidationPriceRaw?: bigint
   capPrice?: bigint
   takeProfitPriceRaw?: bigint
@@ -18,6 +19,7 @@ export interface DxyBasketPanelProps {
 }
 
 export function DxyBasketPanel({
+  entryPriceRaw,
   liquidationPriceRaw,
   capPrice = 200_000_000n,
   takeProfitPriceRaw,
@@ -37,6 +39,7 @@ export function DxyBasketPanel({
   return (
     <TradingViewAdvancedChart
       interval={chartInterval}
+      entryPrice={entryPriceRaw ? Number(oraclePriceToDisplayDxyPrice(entryPriceRaw)) / 1e8 : undefined}
       liquidationPrice={liquidationPrice}
       takeProfitPrice={takeProfitPriceRaw ? Number(oraclePriceToDisplayDxyPrice(takeProfitPriceRaw)) / 1e8 : undefined}
       stopLossPrice={stopLossPriceRaw ? Number(oraclePriceToDisplayDxyPrice(stopLossPriceRaw)) / 1e8 : undefined}
