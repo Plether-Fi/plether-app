@@ -77,7 +77,7 @@ interface PrepareOrderInput {
   isClose: boolean
   selectedMaxLeverageBps: number
   positionProtection?: PositionProtectionParams
-  maxSize?: { minimumSizeDelta: bigint }
+  maxSize?: boolean
   signal?: AbortSignal
 }
 

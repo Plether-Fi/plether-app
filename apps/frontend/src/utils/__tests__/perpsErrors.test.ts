@@ -254,3 +254,13 @@ describe('getPerpsErrorMessage', () => {
     expect(getPerpsCloseInvalidReasonMessage(reason)).toContain(expected)
   })
 })
+
+it('decodes maximum quote search exhaustion without reporting zero capacity', () => {
+  const data = encodeErrorResult({
+    abi: parseAbi(['error CfdEngineLens__QuoteSearchLimitExceeded()']),
+    errorName: 'CfdEngineLens__QuoteSearchLimitExceeded',
+  })
+  expect(getPerpsErrorMessage({ cause: { data } }, 'commit')).toBe(
+    'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
+  )
+})

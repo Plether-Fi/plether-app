@@ -291,13 +291,14 @@ describe('Max opening review', () => {
     account, direction: 'short' as const, side: 1,
     sizeDelta: 329n * quantum, marginDelta: 996_969_697n,
     slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 330_000,
-    maxSize: { minimumSizeDelta: quantum },
+    maxSize: true,
   }
 
-  function maxClient({ rebate = false, available = 1_000_000_000n, failure }: {
-    rebate?: boolean
-    available?: bigint
-    failure?: unknown
+  function maxClient({ size = 7_900n * quantum, available = 1_000_000_000n, failure,
+    leverage = 330_000n, quoteValid = true, assessmentFailure,
+  }: {
+    size?: bigint; available?: bigint; failure?: unknown; leverage?: bigint;
+    quoteValid?: boolean; assessmentFailure?: unknown;
   } = {}) {
     const values: Record<string, unknown> = {
       maxOrderAge: 60n, currentExecutionConfigHash: configHash,
@@ -310,36 +311,19 @@ describe('Max opening review', () => {
       positionProtectionTriggerBountyUsdc: 200_000n, getPosition: { exists: false },
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
-      if (functionName !== 'assessOrder') {
-        if (functionName in values) return values[functionName]
-        throw new Error(`Unexpected read ${functionName}`)
+      if (functionName === 'quoteMaxOpen') {
+        if (failure) throw failure
+        return { maxSizeDelta: size, preview: { valid: quoteValid, invalidReason: quoteValid ? 0 : 9 }, limitingReason: 9 }
       }
-      if (failure) throw failure
-      const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }
-      const price = args?.[3] as bigint
-      const notional = sizeDelta * price / 10n ** 20n
-      const fee = notional / 1_000n
-      const vpi = rebate ? -notional / 100n : 0n
-      const cost = fee + vpi
-      const locked = marginDelta - (cost > 0n ? cost : 0n)
-      const freeAfterCosts = available - marginDelta + (cost < 0n ? -cost : 0n)
-      const reserveFromPledge = -vpi > freeAfterCosts ? -vpi - freeAfterCosts : 0n
-      // Match the protocol's separation of rebate reserve and liquidation
-      // reserve from price collateral. More supplied margin can merely move
-      // rebate reserve out of free cash without increasing position equity.
-      const equity = locked - reserveFromPledge - 20_000_000n
-      if (equity <= 0n) throw { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 9, false] }
-      return {
-        ...assessment(price, marginDelta),
-        executionNotionalUsdc: notional,
-        postPositionSize: sizeDelta,
-        postPositionEquityUsdc: equity,
-        postPositionMarginUsdc: equity,
-        postLeverageBps: (notional * 10_000n + equity - 1n) / equity,
-        executionFeeUsdc: fee,
-        vpiUsdc: vpi,
-        actionChargeCollectedUsdc: cost > 0n ? cost : 0n,
-      } satisfies PerpsExecutionAssessment
+      if (functionName === 'assessOrder') {
+        if (assessmentFailure) throw assessmentFailure
+        const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }
+        return { ...assessment(args?.[3] as bigint, marginDelta),
+          postPositionSize: sizeDelta, postLeverageBps: leverage, postPositionEquityUsdc: 999_000_000n,
+        } satisfies PerpsExecutionAssessment
+      }
+      if (functionName in values) return values[functionName]
+      throw new Error(`Unexpected read ${functionName}`)
     })
     const simulateContract = vi.fn(async () => ({ request: {} }))
     const client = { getBlock: vi.fn(async () => block), readContract, simulateContract } as unknown as PublicClient
@@ -352,71 +336,91 @@ describe('Max opening review', () => {
     })
   })
 
-  it.each([false, true])('fits Max after fees and reserves (VPI rebate: %s), then simulates exactly that size', async (rebate) => {
-    vi.mocked(verifyPerpsV2DeploymentBindings).mockClear()
-    const { client, readContract, simulateContract } = maxClient({ rebate })
+  it('uses the exact lens maximum beyond the earlier ticket size, without probing smaller candidates', async () => {
+    const { client, readContract, simulateContract } = maxClient()
     const prepared = await preparePerpsOrderV2(client, manifest, input)
-    expect(prepared.request.sizeDelta).toBe(312n * quantum)
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBeLessThanOrEqual(1_000_000_000n)
-    expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(330_000n)
-    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      args: [prepared.request], blockNumber: block.number,
-    }))
-    // One more lot cannot pass the same funding/leverage review.
-    const next = await reviewPerpsOrderV2(client, manifest, {
-      ...input, maxSize: undefined, sizeDelta: prepared.request.sizeDelta + quantum,
-      marginDelta: 948_484_849n,
-    }).catch((error: unknown) => error)
-    if (next instanceof PerpsOrderReviewError) {
-      expect(next.reason).toBe('leverage')
-    } else {
-      expect((next as Awaited<ReturnType<typeof reviewPerpsOrderV2>>).reviewSummary.requiredFundingUsdc)
-        .toBeGreaterThan(1_000_000_000n)
-    }
-    expect(verifyPerpsV2DeploymentBindings).toHaveBeenCalledTimes(2)
+    expect(prepared.request.sizeDelta).toBe(7_900n * quantum)
+    expect(prepared.request.marginDelta).toBe(999_800_000n)
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
+    const quotes = readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')
+    expect(quotes).toHaveLength(1)
+    expect(quotes[0][0]).toMatchObject({
+      args: [account, 1, 999_800_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
+    })
+    const assessments = readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')
+    expect(assessments).toHaveLength(6)
+    for (const [request] of assessments) expect(request.args?.[1]).toMatchObject({ sizeDelta: prepared.request.sizeDelta, marginDelta: prepared.request.marginDelta })
     for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
+    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request], blockNumber: block.number }))
   })
 
-  it('preserves a smaller capacity cap and includes attached protection rewards in affordability', async () => {
-    const { client } = maxClient()
-    const capacityLimited = await preparePerpsOrderV2(client, manifest, { ...input, sizeDelta: 200n * quantum })
-    expect(capacityLimited.request.sizeDelta).toBe(200n * quantum)
-    const protectedOrder = await preparePerpsOrderV2(client, manifest, {
+  it('refreshes a smaller lens maximum and reserves both attached protection rewards', async () => {
+    const { client, readContract } = maxClient({ size: 200n * quantum })
+    const prepared = await preparePerpsOrderV2(client, manifest, {
       ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
     })
-    expect(protectedOrder.reviewSummary?.requiredFundingUsdc).toBeLessThanOrEqual(1_000_000_000n)
-    expect(protectedOrder.positionProtection?.triggerBountyUsdc).toBe(200_000n)
+    expect(prepared.request.sizeDelta).toBe(200n * quantum)
+    expect(prepared.request.marginDelta).toBe(999_400_000n)
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_400_000n, 100_000_000n, block.timestamp] }))
   })
 
-  it('does not submit when even the minimum cannot be funded', async () => {
-    const { client, simulateContract } = maxClient({ available: 1_000_000n })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('cannot fund the minimum')
+  it('does not quote when the account cannot cover the router reward reserve', async () => {
+    const { client, readContract, simulateContract } = maxClient({ available: 200_000n })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('after execution rewards')
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'quoteMaxOpen')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
-  it.each([
-    new Error('RPC connection lost'),
-    { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 2, false] },
-    { errorName: 'CfdEngine__TypedOrderFailure', args: [0, 5, true] },
-  ])('surfaces RPC and unrelated protocol failures without searching further', async (failure) => {
+  it.each([{ size: 0n, quoteValid: false }, { size: quantum, quoteValid: false }])('rejects zero capacity or an invalid quote: %s', async (options) => {
+    const { client, readContract, simulateContract } = maxClient(options)
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow()
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it.each([new Error('RPC connection lost'), { errorName: 'CfdEngineLens__QuoteSearchLimitExceeded' }])('propagates quote failures without falling back to client sizing', async (failure) => {
     const { client, readContract, simulateContract } = maxClient({ failure })
     await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toBe(failure)
-    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')).toHaveLength(3)
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
-  it('stops probing when the review is cancelled', async () => {
+  it('retains the selected leverage limit and fixed quote budget without resizing', async () => {
+    const { client, readContract, simulateContract } = maxClient({ leverage: 330_001n })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toMatchObject({ reason: 'leverage' })
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('retains router rejection without retrying another size', async () => {
+    const failure = new Error('Router rejected the quoted size')
+    const { client, readContract, simulateContract } = maxClient({ assessmentFailure: failure })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toBe(failure)
+    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('does not use the maximum lens for a close or manually entered size', async () => {
+    const { client, readContract } = maxClient({ leverage: 50_000n })
+    await preparePerpsOrderV2(client, manifest, { ...input, maxSize: undefined })
+    await preparePerpsOrderV2(client, manifest, { ...input, isClose: true, marginDelta: 0n })
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'quoteMaxOpen')).toBe(false)
+  })
+
+  it('discards a quote delivered after cancellation', async () => {
     const controller = new AbortController()
     const { client, readContract, simulateContract } = maxClient()
     const read = readContract.getMockImplementation()!
     readContract.mockImplementation(async (request) => {
       const result = await read(request)
-      if (request.functionName === 'assessOrder') controller.abort()
+      if (request.functionName === 'quoteMaxOpen') controller.abort()
       return result
     })
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, signal: controller.signal }))
-      .rejects.toMatchObject({ name: 'AbortError' })
-    expect(readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')).toHaveLength(3)
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 })
