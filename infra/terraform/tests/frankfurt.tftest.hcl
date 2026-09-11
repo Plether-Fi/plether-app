@@ -77,6 +77,24 @@ run "frankfurt_dormant" {
   }
 }
 
+run "frankfurt_alarm_recovery_routing" {
+  command = plan
+  variables {
+    operations_alarm_sns_topic_arn = "arn:aws:sns:eu-central-1:932542905614:plether-sepolia-aa-temp-operations"
+  }
+  assert {
+    condition = (length(aws_cloudwatch_metric_alarm.rpc_request_rate_warning.alarm_actions) == 0
+      && length(aws_cloudwatch_metric_alarm.rpc_request_rate_warning.ok_actions) == 0
+      && aws_cloudwatch_metric_alarm.rpc_request_rate_warning.threshold == 15000
+      && aws_cloudwatch_metric_alarm.rpc_request_rate_critical.threshold == 25000
+      && one(aws_cloudwatch_metric_alarm.rpc_request_rate_critical.alarm_actions) == var.operations_alarm_sns_topic_arn
+      && one(aws_cloudwatch_metric_alarm.rpc_request_rate_critical.ok_actions) == var.operations_alarm_sns_topic_arn
+      && one(aws_cloudwatch_metric_alarm.rds_freeable_memory_low.alarm_actions) == var.operations_alarm_sns_topic_arn
+    && one(aws_cloudwatch_metric_alarm.rds_freeable_memory_low.ok_actions) == var.operations_alarm_sns_topic_arn)
+    error_message = "Only duplicate RPC warning email may be suppressed; critical/memory alerts and thresholds must be preserved, with recovery notices."
+  }
+}
+
 run "reject_singapore" {
   command = plan
   variables { aws_region = "ap-southeast-1" }
@@ -209,6 +227,7 @@ run "legacy_identity_unchanged" {
     error_message = "Legacy backend access must not change or acquire a relay."
   }
   variables {
+    operations_alarm_sns_topic_arn                     = "arn:aws:sns:ap-southeast-1:932542905614:plether-sepolia-operations"
     deployment_id                                      = ""
     alb_certificate_arn                                = ""
     api_hostname                                       = ""
@@ -229,8 +248,14 @@ run "legacy_identity_unchanged" {
     error_message = "Legacy resource identities must remain unchanged."
   }
   assert {
-    condition = length(local.alto_zero_post_op_environment) == 0
+    condition     = length(local.alto_zero_post_op_environment) == 0
     error_message = "Frankfurt zero-postOp overrides must not affect legacy Alto."
+  }
+  assert {
+    condition = (one(aws_cloudwatch_metric_alarm.rpc_request_rate_warning.alarm_actions) == var.operations_alarm_sns_topic_arn
+      && length(aws_cloudwatch_metric_alarm.rpc_request_rate_critical.ok_actions) == 0
+    && length(aws_cloudwatch_metric_alarm.rds_freeable_memory_low.ok_actions) == 0)
+    error_message = "Legacy warning and recovery notification routing must remain unchanged."
   }
 }
 
@@ -241,7 +266,7 @@ run "frankfurt_aa_qualification" {
     api_desired_count                      = 1
     alto_desired_count                     = 1
     aa_reconciler_desired_count            = 1
-    aa_reconciler_max_safe_lag_seconds      = "1800"
+    aa_reconciler_max_safe_lag_seconds     = "1800"
     configure_native_aa_backend            = true
     aa_proxy_origin_token                  = "0000000000000000000000000000000000000000000000000000000000000001"
     aa_paymaster_address                   = "0x9761091045616A388f5fE1433721B272c78fe31b"
@@ -299,28 +324,28 @@ run "reject_excessive_safe_lag" {
 run "frankfurt_one_wallet_canary" {
   command = plan
   variables {
-    frankfurt_activation_stage = "aa-canary"
-    api_desired_count = 1
-    alto_desired_count = 1
-    aa_reconciler_desired_count = 1
-    configure_native_aa_backend = true
-    enable_native_aa_sponsorship = true
-    enable_native_aa_submission = true
-    operations_alarm_sns_topic_arn = "arn:aws:sns:eu-central-1:932542905614:plether-sepolia-aa-temp-operations"
-    aa_proxy_origin_token = "0000000000000000000000000000000000000000000000000000000000000001"
-    aa_paymaster_address = "0x9761091045616A388f5fE1433721B272c78fe31b"
-    aa_paymaster_signer_address = "0x015736E1F47E37938236e481F7a3B7c57F922b80"
-    aa_paymaster_code_hash = "0xb8ae276b01850fdbb8d9d7fd32ec7b9b1c7ab7af20f5d62179a76f6b4912c528"
-    aa_reconciler_start_block = "307684600"
-    aa_reconciler_start_block_hash = "0x64210ad75de20ddd2ccf494e7c4d042447f4ea48119419945637f17c271904fe"
+    frankfurt_activation_stage             = "aa-canary"
+    api_desired_count                      = 1
+    alto_desired_count                     = 1
+    aa_reconciler_desired_count            = 1
+    configure_native_aa_backend            = true
+    enable_native_aa_sponsorship           = true
+    enable_native_aa_submission            = true
+    operations_alarm_sns_topic_arn         = "arn:aws:sns:eu-central-1:932542905614:plether-sepolia-aa-temp-operations"
+    aa_proxy_origin_token                  = "0000000000000000000000000000000000000000000000000000000000000001"
+    aa_paymaster_address                   = "0x9761091045616A388f5fE1433721B272c78fe31b"
+    aa_paymaster_signer_address            = "0x015736E1F47E37938236e481F7a3B7c57F922b80"
+    aa_paymaster_code_hash                 = "0xb8ae276b01850fdbb8d9d7fd32ec7b9b1c7ab7af20f5d62179a76f6b4912c528"
+    aa_reconciler_start_block              = "307684600"
+    aa_reconciler_start_block_hash         = "0x64210ad75de20ddd2ccf494e7c4d042447f4ea48119419945637f17c271904fe"
     alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
-    alto_pimlico_simulation_contract = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
+    alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
   }
   assert {
     condition = (length(aws_iam_role_policy.api_paymaster_kms_signer) == 1
       && var.aa_native_canary_owners == "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B"
       && !var.aa_native_global_rollout_enabled
-      && aws_ecs_service.workers[0].desired_count == 0)
+    && aws_ecs_service.workers[0].desired_count == 0)
     error_message = "Canary must retain exactly the approved wallet and keep unrelated workers and global rollout off."
   }
   assert {
@@ -340,38 +365,38 @@ run "reject_canary_without_activation_flags" {
 run "frankfurt_trading_canary" {
   command = plan
   variables {
-    frankfurt_activation_stage = "trading-canary"
-    api_desired_count = 1
-    alto_desired_count = 1
-    aa_reconciler_desired_count = 1
-    workers_desired_count = 1
-    liquidation_worker_desired_count = 1
-    protection_worker_desired_count = 1
-    protection_worker_execution_enabled = true
-    aa_protection_commits_enabled = true
-    configure_native_aa_backend = true
-    enable_native_aa_sponsorship = true
-    enable_native_aa_submission = true
-    faucet_private_key = "0x4444444444444444444444444444444444444444444444444444444444444444"
-    faucet_proxy_origin_token = "synthetic-frankfurt-faucet-test-token-only"
-    protection_worker_private_key = "0x5555555555555555555555555555555555555555555555555555555555555555"
-    lp_settlement_private_key = "0x6666666666666666666666666666666666666666666666666666666666666666"
-    operations_alarm_sns_topic_arn = "arn:aws:sns:eu-central-1:932542905614:plether-sepolia-aa-temp-operations"
-    aa_proxy_origin_token = "0000000000000000000000000000000000000000000000000000000000000001"
-    aa_paymaster_address = "0x9761091045616A388f5fE1433721B272c78fe31b"
-    aa_paymaster_signer_address = "0x015736E1F47E37938236e481f7a3b7c57f922b80"
-    aa_paymaster_code_hash = "0xb8ae276b01850fdbb8d9d7fd32ec7b9b1c7ab7af20f5d62179a76f6b4912c528"
-    aa_reconciler_start_block = "307684600"
-    aa_reconciler_start_block_hash = "0x64210ad75de20ddd2ccf494e7c4d042447f4ea48119419945637f17c271904fe"
+    frankfurt_activation_stage             = "trading-canary"
+    api_desired_count                      = 1
+    alto_desired_count                     = 1
+    aa_reconciler_desired_count            = 1
+    workers_desired_count                  = 1
+    liquidation_worker_desired_count       = 1
+    protection_worker_desired_count        = 1
+    protection_worker_execution_enabled    = true
+    aa_protection_commits_enabled          = true
+    configure_native_aa_backend            = true
+    enable_native_aa_sponsorship           = true
+    enable_native_aa_submission            = true
+    faucet_private_key                     = "0x4444444444444444444444444444444444444444444444444444444444444444"
+    faucet_proxy_origin_token              = "synthetic-frankfurt-faucet-test-token-only"
+    protection_worker_private_key          = "0x5555555555555555555555555555555555555555555555555555555555555555"
+    lp_settlement_private_key              = "0x6666666666666666666666666666666666666666666666666666666666666666"
+    operations_alarm_sns_topic_arn         = "arn:aws:sns:eu-central-1:932542905614:plether-sepolia-aa-temp-operations"
+    aa_proxy_origin_token                  = "0000000000000000000000000000000000000000000000000000000000000001"
+    aa_paymaster_address                   = "0x9761091045616A388f5fE1433721B272c78fe31b"
+    aa_paymaster_signer_address            = "0x015736E1F47E37938236e481f7a3b7c57f922b80"
+    aa_paymaster_code_hash                 = "0xb8ae276b01850fdbb8d9d7fd32ec7b9b1c7ab7af20f5d62179a76f6b4912c528"
+    aa_reconciler_start_block              = "307684600"
+    aa_reconciler_start_block_hash         = "0x64210ad75de20ddd2ccf494e7c4d042447f4ea48119419945637f17c271904fe"
     alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
-    alto_pimlico_simulation_contract = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
+    alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
   }
   assert {
     condition = (aws_ecs_service.workers[0].desired_count == 1
       && aws_ecs_service.protection_worker[0].desired_count == 1
       && length(aws_ssm_parameter.faucet_private_key) == 1
       && !var.aa_native_global_rollout_enabled && !var.enable_insights_registration
-      && var.lp_settlement_mode == "off")
+    && var.lp_settlement_mode == "off")
     error_message = "Trading activation must preserve wallet-only AA and defer LP execution until preflight."
   }
   assert {
@@ -382,7 +407,7 @@ run "frankfurt_trading_canary" {
       && contains(one(aws_security_group.alb.ingress).security_groups, aws_security_group.frankfurt_worker_client[0].id)
       && contains(aws_ecs_service.workers[0].network_configuration[0].security_groups, aws_security_group.frankfurt_worker_client[0].id)
       && length(aws_security_group.frankfurt_worker_client[0].ingress) == 0
-      && length(aws_security_group.frankfurt_worker_client[0].egress) == 0)
+    && length(aws_security_group.frankfurt_worker_client[0].egress) == 0)
     error_message = "Trading workers may reach the private API through their identity group, never public ingress."
   }
 }
@@ -390,7 +415,7 @@ run "frankfurt_trading_canary" {
 run "reject_faucet_in_aa_only_canary" {
   command = plan
   variables {
-    faucet_private_key = "0x4444444444444444444444444444444444444444444444444444444444444444"
+    faucet_private_key        = "0x4444444444444444444444444444444444444444444444444444444444444444"
     faucet_proxy_origin_token = "synthetic-frankfurt-faucet-test-token-only"
   }
   expect_failures = [terraform_data.deployment_target_guard]
@@ -399,7 +424,7 @@ run "reject_faucet_in_aa_only_canary" {
 run "reject_non_sepolia_safe_lag" {
   command = plan
   variables {
-    perps_chain_id = "42161"
+    perps_chain_id                     = "42161"
     aa_reconciler_max_safe_lag_seconds = "1800"
   }
   expect_failures = [terraform_data.deployment_target_guard, terraform_data.self_hosted_aa_guard]

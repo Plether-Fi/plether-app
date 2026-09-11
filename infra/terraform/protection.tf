@@ -129,6 +129,7 @@ resource "aws_cloudwatch_metric_alarm" "protection_failure" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "protection_heartbeat" {
@@ -165,6 +166,7 @@ resource "aws_cloudwatch_metric_alarm" "protection_degraded" {
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "protection_heartbeat" {
@@ -179,4 +181,5 @@ resource "aws_cloudwatch_metric_alarm" "protection_heartbeat" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }

@@ -30,6 +30,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_sponsored_gas_alert" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
@@ -48,6 +49,7 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -106,7 +108,8 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
   statistic           = "Sum"
   threshold           = 15000
   treat_missing_data  = "notBreaching"
-  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  alarm_actions       = local.frankfurt_preparation ? [] : compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = []
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
@@ -121,6 +124,7 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
   threshold           = 25000
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
@@ -131,6 +135,7 @@ resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   metric_query {
     id          = "failure_rate"
@@ -193,6 +198,7 @@ resource "aws_cloudwatch_metric_alarm" "liquidation_risk_inputs_unavailable" {
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
@@ -228,6 +234,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_ready_backlog" {
@@ -263,6 +270,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_ready_backlog" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -314,6 +322,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
@@ -345,6 +354,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_heartbeat" {
@@ -376,6 +386,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbea
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag" {
@@ -407,6 +418,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
   threshold           = 120
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_backfill" {
@@ -438,6 +450,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
@@ -469,6 +482,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
   threshold           = 120
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
@@ -500,6 +514,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -539,6 +554,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_failure" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
@@ -555,6 +571,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   threshold           = 80
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -575,6 +592,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
   threshold           = 20
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -595,6 +613,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
   threshold           = var.rds_free_storage_alarm_bytes
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -615,6 +634,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_freeable_memory_low" {
   threshold           = var.rds_freeable_memory_alarm_bytes
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -635,6 +655,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   threshold           = var.rds_database_connections_alarm_threshold
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -657,6 +678,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_io_latency_high" {
   threshold           = 0.02
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -700,6 +722,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_latency_high" {
   unit                = "Milliseconds"
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
@@ -716,6 +739,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   threshold           = 5
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.api.arn_suffix
@@ -737,6 +761,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.api.arn_suffix
@@ -836,6 +861,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_resource_pressure" {
   threshold           = 80
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -862,6 +888,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -883,6 +910,7 @@ resource "aws_cloudwatch_metric_alarm" "api_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -906,6 +934,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -929,6 +958,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -952,6 +982,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_unhealthy_target" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.alto[0].arn_suffix
@@ -975,6 +1006,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_target_5xx" {
   threshold           = 5
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.alto[0].arn_suffix
@@ -1010,6 +1042,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_fatal" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -1074,6 +1107,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_native_api_fault" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_wallet_fault" {
@@ -1106,6 +1140,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_wallet_fault" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_initialization_error" {
@@ -1155,6 +1190,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_gas_price_initialization_error" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_executor_insufficient_funds" {
@@ -1185,6 +1221,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_executor_insufficient_funds" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_fatal" {
@@ -1217,6 +1254,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_fatal" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_heartbeat" {
@@ -1248,6 +1286,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_low_deposit" {
@@ -1278,6 +1317,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_low_deposit" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_unstaked" {
@@ -1308,6 +1348,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_unstaked" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_rpc_unavailable" {
@@ -1338,6 +1379,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_rpc_unavailable" {
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_heartbeat" {
@@ -1378,6 +1420,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_lag" {
@@ -1418,6 +1461,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_lag" {
   threshold           = 300
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_incomplete" {
@@ -1452,6 +1496,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_incomplete" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_uninitialized" {
@@ -1486,6 +1531,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_uninitialized" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_backfill_failed" {
@@ -1516,6 +1562,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_backfill_failure" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_coverage_lag" {
@@ -1546,6 +1593,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_coverage_lag" {
   threshold           = 300
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_coverage_unhealthy" {
@@ -1576,4 +1624,5 @@ resource "aws_cloudwatch_metric_alarm" "candle_coverage_unhealthy" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
