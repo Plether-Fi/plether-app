@@ -10,6 +10,9 @@ import Data.Aeson (Value, object, (.=))
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (execute, query, query_, Only(..))
 import Plether.Database (DbPool, withDb)
+import Plether.Config (Config)
+import Plether.Ethereum.Client (EthClient)
+import Plether.AA.OrderDiagnostics (recoverOrderDiagnostics)
 import Plether.Database.AaSponsorship (consumeAaRateLimit)
 import Plether.Logging (field, logWarnEvery, logInfo)
 import System.Timeout (timeout)
@@ -28,9 +31,18 @@ validAttemptId value = case T.splitOn "-" value of
     && T.toLower (T.take 1 d) `elem` ["8","9","a","b"]
   _ -> False
 
-startDiagnostics :: DbPool -> IO DiagnosticSink
-startDiagnostics pool = do
+startDiagnostics :: Config -> DbPool -> EthClient -> IO DiagnosticSink
+startDiagnostics cfg pool client = do
   queue <- newTBQueueIO 256
+  void $ forkIO $ forever $ do
+    result <- try $ timeout 20_000_000 $ recoverOrderDiagnostics cfg pool client
+    case result of
+      Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> dropped
+      Right Nothing -> dropped
+      Right (Just ()) -> pure ()
+    threadDelay 10_000_000
   -- Recover durable references even if the API crashed before enqueueing, or
   -- the browser closed. Missing migration only disables this advisory exporter.
   void $ forkIO $ forever $ do

@@ -20,6 +20,7 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
+import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
 import Plether.Database.AaPreparation
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
@@ -296,6 +297,61 @@ aaIntegrationSpec databaseUrl =
         -- Rollback code still reads/releases the same immutable preparation.
         linkPreparation conn client sender identifier "retry" (saDigest authorization) `shouldReturn` True
 
+    it "recovers late order diagnostics with a multi-instance fenced lease and no ledger changes" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        let operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash authorization
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+            router = addressOf 'f'
+        settleSponsorship conn (saDigest authorization) operationHash (hashOf 'b') 101 (hashOf 'c') True 400 (object [])
+          `shouldReturn` Right ()
+        -- Receipt/indexing may precede asynchronous diagnostic materialization.
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute conn
+          "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,'prepared')"
+          (attempt,clientKeyOf '5',chainId,router,operationHash,addressOf '1')
+        claimOrderDiagnostics conn (chainId+1) router `shouldReturn` []
+        withPeerConnection databaseUrl $ \peer -> do
+          (first,second) <- concurrently (claimOrderDiagnostics conn chainId router) (claimOrderDiagnostics peer chainId router)
+          length (first++second) `shouldBe` 1
+          let (_,_,_,_,_,_,oldLease) = head $ first++second
+          void $ execute_ conn "UPDATE aa_attempt_diagnostics SET correlation_checked_at=clock_timestamp()-interval '31 seconds'"
+          recovered <- claimOrderDiagnostics peer chainId router
+          length recovered `shouldBe` 1
+          let (_,_,_,_,_,_,newLease) = head recovered
+          completeOrderDiagnostic conn attempt oldLease (Just 8) `shouldReturn` False
+          completeOrderDiagnostic peer attempt newLease (Just 8) `shouldReturn` True
+          completeOrderDiagnostic conn attempt newLease (Just 9) `shouldReturn` False
+          claimOrderDiagnostics conn chainId router `shouldReturn` []
+        rows <- query_ conn "SELECT order_id,stage FROM aa_attempt_diagnostics" :: IO [(Integer,Text)]
+        rows `shouldBe` [(8,"committed")]
+        ledger <- query_ conn "SELECT entry_type,amount_wei::text FROM aa_sponsorship_ledger ORDER BY entry_type" :: IO [(Text,Text)]
+        ledger `shouldBe` [("actual_charge","400"),("release","600"),("reserve","1000")]
+
+    it "does not claim unfinalized, failed, terminal or wrong-client evidence" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        let operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash authorization
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+            router = addressOf 'f'
+        void $ execute conn
+          "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,'prepared')"
+          (attempt,clientKeyOf '5',chainId,router,operationHash,addressOf '1')
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        settleSponsorship conn (saDigest authorization) operationHash (hashOf 'b') 101 (hashOf 'c') True 400 (object [])
+          `shouldReturn` Right ()
+        void $ execute_ conn "UPDATE aa_user_operation_events SET success=false"
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute_ conn "UPDATE aa_user_operation_events SET success=true"
+        void $ execute_ conn "UPDATE aa_attempt_diagnostics SET terminal_at=clock_timestamp()"
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute conn "UPDATE aa_attempt_diagnostics SET terminal_at=NULL,client_key=?" (Only $ clientKeyOf '6')
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+
 withFixture :: Text -> (Connection -> IO a) -> IO a
 withFixture databaseUrl action =
   bracket
@@ -326,6 +382,8 @@ resetSchema conn = do
   void $ execute_ conn migration
   observability <- fromString <$> readFile "config/migrations/aa-observability-v1.sql"
   void $ execute_ conn observability
+  correlation <- fromString <$> readFile "config/migrations/aa-observability-v2.sql"
+  void $ execute_ conn correlation
 
 cleanupSchema :: Connection -> IO ()
 cleanupSchema conn = do

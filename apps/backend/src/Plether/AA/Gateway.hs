@@ -212,7 +212,7 @@ initializeGatewayObservability state cfg pool client = case (cfgNativeAaConfig c
     void $ gatewayReadiness state cfg pool client
     modifyMVar_ (ngsDiagnostics state) $ \current -> case current of
       Just _ -> pure current
-      Nothing -> Just <$> Diagnostics.startDiagnostics database
+      Nothing -> Just <$> Diagnostics.startDiagnostics cfg database client
   _ -> pure ()
 
 handleNativeAaRpc
@@ -406,7 +406,7 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
                       sink <- modifyMVar (ngsDiagnostics gatewayState) $ \current -> case current of
                         Just queue -> pure (current, queue)
                         Nothing -> do
-                          queue <- Diagnostics.startDiagnostics pool
+                          queue <- Diagnostics.startDiagnostics cfg pool client
                           pure (Just queue, queue)
                       Diagnostics.enqueueDiagnostic sink $ Diagnostics.Diagnostic attempt clientKey
                         (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)

@@ -46,7 +46,6 @@ import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Plether.Ethereum.Abi (keccak256)
 import Data.Bits ((.|.))
 import Data.List (nub, sortOn)
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -55,9 +54,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
-import Database.PostgreSQL.Simple (Connection, execute, query, Only(..))
+import Database.PostgreSQL.Simple (Connection, execute)
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
+import Plether.AA.OrderDiagnostics (executionFailureReason)
 import System.Timeout (timeout)
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
@@ -2016,7 +2016,6 @@ applyOrderEvent cfg conn client = \case
   Perps.OrderFailed {..} ->
     markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
   Perps.IntentRegistered {..} -> do
-    linkOrderDiagnostic cfg conn client poeOrderId poeAccount poeTxHash
     metadataResult <- readCommitMetadata cfg client poeOrderId poeBlockNumber
     case metadataResult of
       Nothing -> pure ()
@@ -2796,58 +2795,15 @@ applyReceipt cfg conn targetIds receipt = do
               ]
             pure $ poeOrderId : seen
 
--- Link only a matching EntryPoint event after this exact release's registered
--- intent. A bundle may contain several accounts/operations: never use its first
--- UserOperationEvent indiscriminately. This is diagnostic, not settlement proof.
-linkOrderDiagnostic :: Config -> Connection -> EthClient -> Integer -> Text -> Text -> IO ()
-linkOrderDiagnostic cfg conn client orderId account txHash = do
-  result <- trySynchronous $ do
-    receiptResult <- ethGetTransactionReceipt client txHash
-    case receiptResult of
-      Right (Just receipt) | receiptSucceeded receipt -> do
-        let registrations = [rpcLogIndex entry | entry <- receiptLogs receipt
-              , Just (T.toLower $ rpcLogAddress entry) == (T.toLower <$> cfgPerpsOrderLifecycleBook cfg)
-              , Just Perps.IntentRegistered {poeOrderId = actualId} <- [Perps.decodePerpsOrderEvent entry]
-              , actualId == orderId]
-            userEvents index = [entry | entry <- sortOn rpcLogIndex $ receiptLogs receipt
-              , rpcLogIndex entry > index
-              , T.toLower (rpcLogAddress entry) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
-              , take 1 (rpcLogTopics entry) == [keccak256 "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"]]
-        case registrations of
-          [index] -> case userEvents index of
-            entry : _ -> case rpcLogTopics entry of
-              [_topic, operationHash, sender, _paymaster]
-                | T.toLower account == "0x" <> TE.decodeUtf8 (B16.encode $ BS.drop 12 sender) -> do
-                    rows <- query conn
-                      "UPDATE aa_attempt_diagnostics SET order_id=?,stage='committed',updated_at=clock_timestamp() WHERE chain_id=? AND deployment=? AND operation_hash=? AND sender=? AND order_id IS NULL RETURNING attempt_id::text"
-                      (orderId, cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg,
-                        "0x" <> TE.decodeUtf8 (B16.encode operationHash), T.toLower account) :: IO [Only Text]
-                    forM_ rows $ \(Only attempt) -> logInfo "aa_order_committed" "Sponsored order committed"
-                      [field "attempt_id" attempt, field "stage" ("committed" :: Text)]
-              _ -> pure ()
-            _ -> pure ()
-          _ -> pure ()
-      _ -> pure ()
-  case result of
-    Left (_ :: SomeException) -> logWarnEvery 60 "aa_diagnostic_link_unavailable" "Order diagnostic correlation unavailable" []
-    Right _ -> pure ()
-
 recordAllErrors :: Config -> Connection -> [Integer] -> Text -> IO ()
 recordAllErrors cfg conn orderIds err = do
   let retryable = isSameBlockMevGuardError err
-      reason = if "insufficient funds" `T.isInfixOf` T.toLower err then "KEEPER_INSUFFICIENT_FUNDS"
-        else if "timeout" `T.isInfixOf` T.toLower err then "KEEPER_RPC_TIMEOUT" else "KEEPER_EXECUTION_FAILED" :: Text
+      reason = executionFailureReason err
   forM_ orderIds $ \orderId ->
     if retryable
       then recordPerpsKeeperOrderImmediateRetryError conn (cfgPerpsOrderRouter cfg) orderId err
       else recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId err
   let failureLogger = if retryable then logWarnEvery else logErrorEvery
-  _ <- trySynchronous $ forM_ orderIds $ \orderId -> do
-    rows <- query conn
-      "UPDATE aa_attempt_diagnostics SET reason=?,stage='execution_attempt_failed',updated_at=clock_timestamp() WHERE chain_id=? AND deployment=? AND order_id=? AND reason IS DISTINCT FROM ? RETURNING attempt_id::text"
-      (reason, cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg, orderId, reason) :: IO [Only Text]
-    forM_ rows $ \(Only attempt) -> logError "aa_order_execution_attempt_failed" "Sponsored order execution attempt failed"
-      [field "attempt_id" attempt, field "stage" ("execution" :: Text), field "reason_code" reason]
   failureLogger
     60
     "keeper_transaction_failed"

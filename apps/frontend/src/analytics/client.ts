@@ -24,6 +24,8 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'stage',
   'outcome',
   'deployment_name',
+  'component',
+  'occurrence_count',
   'account_mode',
   'action_kind',
   'button_id',

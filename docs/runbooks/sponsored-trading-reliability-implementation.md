@@ -28,10 +28,15 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
   request metadata and durable preparation linkage. A bounded background queue
   and a restart-recovery scan materialize client-bound historical diagnostics.
   Safely reconciled UserOperation outcomes can be recorded after browser closure.
-- Keeper execution-attempt correlation checks the exact release registration
-  and following matching EntryPoint event, rather than assuming the first event
-  in a bundle belongs to the order. Historical reasons are never inferred from
-  current readiness. The UI reports when a verified cause is unavailable.
+- Restart-safe background execution-attempt correlation uses finalized AA
+  evidence and checks the exact release registration within its EntryPoint
+  operation's log interval. It verifies the receipt and canonical block hash;
+  ambiguous bundles remain unlinked. Short database leases fence multiple API
+  instances and recover abandoned work without holding a connection across RPC.
+  The keeper indexing/execution path no longer performs this extra receipt RPC.
+  Durable keeper errors can be recovered after diagnostic materialization, with
+  their original observation timestamps. Historical reasons are never inferred
+  from current readiness. The UI reports when a verified cause is unavailable.
 - A separate PostHog log projection allowlists categories, counters, random
   references and service resources; raw CloudWatch operational fields remain on
   their original copy. Malformed projection input fails closed. Console capture,
@@ -40,12 +45,18 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
 - Local Frankfurt analytics receive `deployment_name=sepolia-aa-temp`.
   Existing production dashboards were not modified. PostHog project 208816 has
   no existing Frankfurt dashboard; new dashboard/data qualification is pending.
+- Readiness telemetry emits each distinct component/reason immediately, deduplicates
+  evidence shared across actions and summarizes repeated observations every sixty
+  seconds while polling is active. Recovery flushes unreported counts. Unknown or
+  missing evidence never declares a dependency recovered. Exported labels use
+  exact allowlists; arbitrary provider strings cannot become PostHog properties.
 
 ## Migration and switch
 
-Apply `apps/backend/config/migrations/aa-observability-v1.sql` **before** a new
-API/keeper image. It adds nullable diagnostic columns to `aa_preparations` and
-separate observation/diagnostic tables; it does not replace authorization tables.
+Apply `apps/backend/config/migrations/aa-observability-v1.sql`, followed by
+`aa-observability-v2.sql`, **before** a new API/keeper image. They add nullable
+diagnostic columns and separate observation/diagnostic tables, including
+restart-safe correlation lease metadata; they do not replace authorization tables.
 The runtime roles need the documented table privileges. No startup DDL is added.
 
 `enable_aa_readiness_enforcement` defaults to false and maps to
@@ -67,13 +78,16 @@ This is **not** the entire approved plan:
   short-lived actual transaction quote and reports unknown when no quote exists.
 - Complete action-specific live/FAD/frozen price-payload readiness. The current
   lens signal is deliberately insufficient to certify special-mode exits.
-- Finish durable, race-recoverable order-to-attempt correlation, verified final
-  trade outcomes, stage durations and seven-day terminal-record pruning. Current
+- Finish verified final trade outcomes, stage durations and seven-day
+  terminal-record pruning. Current
   diagnostics retain unresolved records; automatic retention cleanup is not
-  implemented. An asynchronous materialization/indexing race can leave a cause
-  unavailable rather than attach a guessed cause.
+  implemented. Late materialization no longer loses the order-to-operation link.
+  The keeper's durable latest error is recoverable; a complete per-stage failure
+  history is still needed when several different errors precede materialization
+  or a successful retry clears that latest error.
 - Complete per-attempt, per-stage failure deduplication and sixty-second recurring
-  outage summaries, exporter drop accounting, and all worker failure projections.
+  outage summaries beyond frontend readiness, exporter drop accounting, and all
+  worker failure projections.
   Existing CloudWatch rate-limited operational summaries are preserved.
 - Finish final trade progress/correlation in activity, clock-skew qualification,
   and comprehensive fault-injection tests for every lifecycle stage.
@@ -83,12 +97,15 @@ This is **not** the entire approved plan:
 
 ## Verification performed
 
-- Frontend: full unit suite passed (1,332 tests at that run); subsequent focused
-  AA/analytics suite passed (242 tests, including two additional exporter tests).
-  TypeScript and ESLint passed before the last test-only additions.
-- Backend: API executable builds; 1,060 unit examples pass with local mock RPC
+- Frontend: full unit suite passed (1,340 tests), including distinct readiness
+  failures, sixty-second summaries, recovery/unknown evidence and label redaction.
+  TypeScript and ESLint passed.
+- Backend: API executable builds; 1,072 unit examples pass with local mock RPC
   ports enabled. The native-AA PostgreSQL suite passes against isolated PostgreSQL
   16, including migration, durable correlation, lease retries and rollback reads.
+- Follow-up correlation tests: twelve receipt/identity/malformed-bundle unit cases
+  and twelve native-AA PostgreSQL integration examples pass, including competing
+  instances, recovered leases, stale-worker fencing and unchanged ledger entries.
 - Proxy: readiness/diagnostic authentication and no-cache tests pass alongside
   existing proxy tests; redirect and deployment-validator tests pass.
 - Terraform validation and all thirty-one mocked Frankfurt plans pass, including

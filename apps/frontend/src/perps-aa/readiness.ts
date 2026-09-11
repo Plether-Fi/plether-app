@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { captureAnalyticsEvent, captureFrontendLog } from '../analytics/client'
+import { reportReadiness } from '../analytics/readiness'
 
 export type ReadinessStatus = 'ready' | 'blocked' | 'unknown'
 export type ReadinessAction = 'deposit' | 'open' | 'close' | 'protection'
@@ -49,7 +49,6 @@ let snapshot: ReadinessSnapshot | undefined
 let inflight: Promise<void> | undefined
 let lastStarted = 0
 let revision = 0
-let lastFailure: string | undefined
 const listeners = new Set<() => void>()
 let timer: ReturnType<typeof setInterval> | undefined
 function publish() { revision++; listeners.forEach(fn => { fn() }) }
@@ -63,16 +62,11 @@ export function refreshReadiness(force = false): Promise<void> {
       const response = await fetch('/api/perps/v1/readiness', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4_000) })
       if (!response.ok) throw new Error('Readiness unavailable')
       snapshot = parseReadiness(await response.json())
-      const failure = actions.flatMap(action => snapshot?.actions[action] ?? []).filter(c => c.status !== 'ready').map(c => c.reason).sort().join(',')
-      if (failure !== lastFailure) {
-        captureAnalyticsEvent('perps readiness changed', { reason_code: failure ? 'READINESS_DEGRADED' : 'READY', outcome: failure ? 'unknown' : 'ready' })
-        lastFailure = failure
-      }
+      reportReadiness(actions.flatMap(action => readinessChecks(snapshot, action)))
     } catch {
       // A stale response must not remain a hard blocker. Authorization is independent.
       snapshot = undefined
-      if (lastFailure !== 'READINESS_UNAVAILABLE') captureFrontendLog('warn', 'Trading readiness unavailable', { component: 'readiness', reason_code: 'READINESS_UNAVAILABLE' })
-      lastFailure = 'READINESS_UNAVAILABLE'
+      reportReadiness([{ component: 'readiness', status: 'unknown', reason: 'READINESS_UNAVAILABLE' }])
     } finally { inflight = undefined; publish() }
   })()
   return inflight
