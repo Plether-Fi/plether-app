@@ -1,6 +1,6 @@
 resource "aws_lb" "api" {
-  name               = "plether-${var.environment}"
-  internal           = false
+  name               = "plether-${local.deployment_name}"
+  internal           = local.frankfurt_preparation
   load_balancer_type = "application"
   idle_timeout       = 75
   security_groups    = [aws_security_group.alb.id]
@@ -8,7 +8,7 @@ resource "aws_lb" "api" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = "plether-${var.environment}"
+  name        = "plether-${local.deployment_name}"
   port        = 3001
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id

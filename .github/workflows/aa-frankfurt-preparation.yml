@@ -1,0 +1,72 @@
+name: Frankfurt AA preparation (no deployment)
+
+on:
+  pull_request:
+    paths:
+      - 'infra/terraform/**'
+      - 'scripts/aa-frankfurt*'
+      - 'scripts/frankfurt-backend.Dockerfile'
+      - 'scripts/aa-rpc-mode.test.mjs'
+      - 'scripts/plan-frankfurt-aa.mjs'
+      - 'scripts/review-frankfurt-aa-plan.mjs'
+      - 'scripts/review-frankfurt-api-plan.mjs'
+      - 'scripts/review-frankfurt-prepared-plan.mjs'
+      - 'scripts/review-frankfurt-safe-lag-plan.mjs'
+      - 'scripts/frankfurt-paymaster-deploy.mjs'
+      - 'scripts/bootstrap-frankfurt-spot-schema.mjs'
+      - 'scripts/frankfurt-aa-*'
+      - 'scripts/prepare-frankfurt-aa-secrets.mjs'
+      - 'config/perps/**'
+      - '.github/workflows/aa-frankfurt-preparation.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'infra/terraform/**'
+      - 'scripts/aa-frankfurt*'
+      - 'scripts/frankfurt-backend.Dockerfile'
+      - 'scripts/plan-frankfurt-aa.mjs'
+      - 'scripts/review-frankfurt-aa-plan.mjs'
+      - 'scripts/review-frankfurt-api-plan.mjs'
+      - 'scripts/review-frankfurt-prepared-plan.mjs'
+      - 'scripts/review-frankfurt-safe-lag-plan.mjs'
+      - 'scripts/frankfurt-paymaster-deploy.mjs'
+      - 'scripts/bootstrap-frankfurt-spot-schema.mjs'
+      - 'scripts/frankfurt-aa-*'
+      - 'scripts/prepare-frankfurt-aa-secrets.mjs'
+      - 'config/perps/**'
+      - '.github/workflows/aa-frankfurt-preparation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mocked-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 25.2.1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.1
+          terraform_wrapper: false
+      - name: Test local profile and legacy AA guards
+        env:
+          AA_TERRAFORM_TEST_REQUIRED: '1'
+        run: node --test scripts/aa-frankfurt.test.mjs scripts/aa-frankfurt-tunnel.test.mjs scripts/aa-frankfurt-images.test.mjs scripts/aa-frankfurt-api-plan.test.mjs scripts/aa-rpc-mode.test.mjs scripts/frankfurt-aa-secrets.test.mjs
+      - name: Initialize provider schema without state
+        run: terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
+      - name: Check operator helper syntax without executing deployment code
+        run: |
+          node --check scripts/frankfurt-paymaster-deploy.mjs
+          node --check scripts/review-frankfurt-prepared-plan.mjs
+          node --check scripts/review-frankfurt-safe-lag-plan.mjs
+      - name: Validate and exercise mocked AWS plans
+        run: |
+          terraform -chdir=infra/terraform validate -no-color
+          terraform -chdir=infra/terraform test -filter=tests/frankfurt.tftest.hcl -var-file=frankfurt-aa-preparation.tfvars -no-color
+      # No AWS credentials, OIDC permission, environment, plan upload, or apply.

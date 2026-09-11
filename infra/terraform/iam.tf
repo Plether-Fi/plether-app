@@ -1,7 +1,9 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  github_actions_oidc_subjects = concat(
+  github_actions_oidc_subjects = local.frankfurt_preparation ? [
+    "repo:Plether-Fi/plether-app:environment:sepolia-aa-temp"
+    ] : concat(
     [
       "repo:Plether-Fi/plether-app:ref:refs/heads/master",
       "repo:Plether-Fi/plether-app:environment:candle-admin-sepolia",
@@ -15,11 +17,11 @@ locals {
 
   github_deploy_ecr_repository_arns = concat(
     [
-      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.environment == "mainnet" ? "plether-api" : "plether-api-${var.environment}"}",
-      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.environment == "mainnet" ? "plether-otel-log-router" : "plether-otel-log-router-${var.environment}"}",
+      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.environment == "mainnet" ? "plether-api" : "plether-api-${local.deployment_name}"}",
+      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.environment == "mainnet" ? "plether-otel-log-router" : "plether-otel-log-router-${local.deployment_name}"}",
     ],
     local.self_hosted_aa_resource_count == 1 ? [
-      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-sepolia",
+      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-${local.deployment_name}",
     ] : []
   )
 
@@ -41,38 +43,44 @@ locals {
         "plether-aa-reconciler",
         "plether-alto",
       ] : []
-    ) : "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/plether-${var.environment}/${service}"
+    ) : "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/plether-${local.deployment_name}/${service}"
   ]
 
   github_deploy_ecs_role_arns = concat(
     [
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-ecs-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-ecs-task",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-api-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-api-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-ecs-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-ecs-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-api-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-api-task",
     ],
     local.self_hosted_aa_resource_count == 1 ? [
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-kms-attest-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-kms-attest-task",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-resume-issuance-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-resume-issuance-task",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-reconciler-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-reconciler-task",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-alto-execution",
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-alto-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-kms-attest-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-kms-attest-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-resume-issuance-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-resume-issuance-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-reconciler-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-reconciler-task",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-alto-execution",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-alto-task",
     ] : []
   )
 
   github_deploy_aa_admin_role_arns = local.self_hosted_aa_resource_count == 1 ? [
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-kms-attest-execution",
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-kms-attest-task",
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-resume-issuance-execution",
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${var.environment}-aa-admin-resume-issuance-task",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-kms-attest-execution",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-kms-attest-task",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-resume-issuance-execution",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/plether-${local.deployment_name}-aa-admin-resume-issuance-task",
   ] : []
 }
 
+moved {
+  from = aws_iam_openid_connect_provider.github_actions
+  to   = aws_iam_openid_connect_provider.github_actions[0]
+}
+
 resource "aws_iam_openid_connect_provider" "github_actions" {
-  url = "https://token.actions.githubusercontent.com"
+  count = local.frankfurt_preparation ? 0 : 1
+  url   = "https://token.actions.githubusercontent.com"
 
   client_id_list = ["sts.amazonaws.com"]
 
@@ -83,8 +91,8 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
 }
 
 resource "aws_iam_role" "github_deploy" {
-  name                 = "plether-${var.environment}-github-deploy"
-  description          = "Short-lived GitHub Actions deployment access for Plether ${var.environment}."
+  name                 = "plether-${local.deployment_name}-github-deploy"
+  description          = "Short-lived GitHub Actions deployment access for Plether ${local.deployment_name}."
   max_session_duration = 3600
 
   assume_role_policy = jsonencode({
@@ -92,7 +100,7 @@ resource "aws_iam_role" "github_deploy" {
     Statement = [{
       Effect = "Allow"
       Principal = {
-        Federated = aws_iam_openid_connect_provider.github_actions.arn
+        Federated = local.frankfurt_preparation ? "arn:aws:iam::${var.expected_aws_account_id}:oidc-provider/token.actions.githubusercontent.com" : aws_iam_openid_connect_provider.github_actions[0].arn
       }
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
@@ -106,7 +114,7 @@ resource "aws_iam_role" "github_deploy" {
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
-  name = "plether-${var.environment}-deploy"
+  name = "plether-${local.deployment_name}-deploy"
   role = aws_iam_role.github_deploy.id
 
   policy = jsonencode({
@@ -158,7 +166,7 @@ resource "aws_iam_role_policy" "github_deploy" {
         Sid      = "EcsTagTaskDefinitions"
         Effect   = "Allow"
         Action   = "ecs:TagResource"
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${var.environment}*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${local.deployment_name}*"
       },
       {
         # ECS does not support resource-level authorization for
@@ -179,10 +187,10 @@ resource "aws_iam_role_policy" "github_deploy" {
         Sid      = "EcsRunTask"
         Effect   = "Allow"
         Action   = "ecs:RunTask"
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${var.environment}*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${local.deployment_name}*"
         Condition = {
           ArnEquals = {
-            "ecs:cluster" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/plether-${var.environment}"
+            "ecs:cluster" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/plether-${local.deployment_name}"
           }
         }
       },
@@ -190,7 +198,7 @@ resource "aws_iam_role_policy" "github_deploy" {
         Sid      = "EcsStopTask"
         Effect   = "Allow"
         Action   = "ecs:StopTask"
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/plether-${var.environment}/*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/plether-${local.deployment_name}/*"
       },
       {
         Sid      = "PassEcsRoles"
@@ -210,13 +218,13 @@ resource "aws_iam_role_policy" "github_deploy" {
           "ssm:GetParameter",
           "ssm:GetParameters",
         ]
-        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*"
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/*"
       },
       {
         Sid      = "DeleteConsumedInsightsRequests"
         Effect   = "Allow"
         Action   = "ssm:DeleteParameter"
-        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/insights-admin/requests/*"
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/insights-admin/requests/*"
       },
       {
         Sid    = "ReadRuntimeTopology"
@@ -236,7 +244,7 @@ resource "aws_iam_role_policy" "github_deploy" {
 resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-deploy-self-hosted-aa"
+  name = "plether-${local.deployment_name}-deploy-self-hosted-aa"
   role = aws_iam_role.github_deploy.id
 
   policy = jsonencode({
@@ -285,13 +293,13 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
           "ecr:DescribeImageScanFindings",
           "ecr:StartImageScan",
         ]
-        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-sepolia"
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/plether-alto-${local.deployment_name}"
       },
       {
         Sid      = "TagAaTasksOnCreate"
         Effect   = "Allow"
         Action   = "ecs:TagResource"
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/plether-${var.environment}/*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/plether-${local.deployment_name}/*"
         Condition = {
           StringEquals = {
             "ecs:CreateAction" = "RunTask"
@@ -320,7 +328,7 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
 }
 
 resource "aws_iam_role" "ecs_execution" {
-  name = "plether-${var.environment}-ecs-execution"
+  name = "plether-${local.deployment_name}-ecs-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -350,7 +358,7 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
         "ssm:GetParameter"
       ]
       Resource = compact([
-        "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*",
+        "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/*",
         local.external_pyth_api_key_parameter_arn,
       ])
     }]
@@ -358,7 +366,7 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
 }
 
 resource "aws_iam_role" "ecs_task" {
-  name = "plether-${var.environment}-ecs-task"
+  name = "plether-${local.deployment_name}-ecs-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -389,7 +397,7 @@ resource "aws_iam_role_policy" "ecs_task_firelens_cloudwatch" {
 }
 
 resource "aws_iam_role" "api_execution" {
-  name = "plether-${var.environment}-api-execution"
+  name = "plether-${local.deployment_name}-api-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -459,7 +467,7 @@ resource "aws_iam_role_policy" "api_execution_aa_reconciler_secondary_rpc_kms" {
 }
 
 resource "aws_iam_role" "api_task" {
-  name = "plether-${var.environment}-api-task"
+  name = "plether-${local.deployment_name}-api-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -531,7 +539,7 @@ resource "aws_iam_role_policy" "api_paymaster_kms_signer" {
 resource "aws_iam_role" "alto_execution" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-alto-execution"
+  name = "plether-${local.deployment_name}-alto-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -587,7 +595,7 @@ resource "aws_iam_role_policy" "alto_execution_secrets" {
 resource "aws_iam_role" "alto_task" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-alto-task"
+  name = "plether-${local.deployment_name}-alto-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

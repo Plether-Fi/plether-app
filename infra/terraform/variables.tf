@@ -794,7 +794,7 @@ variable "aa_reconciler_batch_blocks" {
 variable "aa_reconciler_max_safe_lag_seconds" {
   type        = string
   default     = "600"
-  description = "Maximum age of the independently agreed safe-chain head before the reconciler fails closed and pauses native issuance."
+  description = "Shared gateway/reconciler maximum age of the agreed safe-chain head. Defaults to 600; only the approved Frankfurt Sepolia canary may use up to 1800."
 
   validation {
     condition = try(

@@ -7,7 +7,7 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = { Name = "plether-${var.environment}" }
+  tags = { Name = "plether-${local.deployment_name}" }
 }
 
 resource "aws_subnet" "public" {
@@ -17,12 +17,12 @@ resource "aws_subnet" "public" {
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
-  tags = { Name = "plether-${var.environment}-public-${count.index + 1}" }
+  tags = { Name = "plether-${local.deployment_name}-public-${count.index + 1}" }
 }
 
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
-  tags   = { Name = "plether-${var.environment}" }
+  tags   = { Name = "plether-${local.deployment_name}" }
 }
 
 resource "aws_route_table" "public" {
@@ -33,7 +33,7 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main.id
   }
 
-  tags = { Name = "plether-${var.environment}-public" }
+  tags = { Name = "plether-${local.deployment_name}-public" }
 }
 
 resource "aws_route_table_association" "public" {

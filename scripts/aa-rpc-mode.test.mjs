@@ -110,7 +110,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
   try {
     const declarations = Object.entries(defaults).map(([key, value]) =>
       `variable "${key}" {\n type = ${typeof value === 'boolean' ? 'bool' : 'string'}\n default = ${JSON.stringify(value)}\n}`).join('\n')
-    writeFileSync(join(directory, 'main.tf'), `${declarations}\nresource "terraform_data" "mode" {\n lifecycle {\n${guards.join('\n')}\n }\n}\n`)
+    writeFileSync(join(directory, 'main.tf'), `${declarations}\nlocals { deployment_name = var.environment }\nresource "terraform_data" "mode" {\n lifecycle {\n${guards.join('\n')}\n }\n}\n`)
     const init = run(['init', '-backend=false', '-input=false', '-no-color'])
     assert.equal(init.status, 0, init.stderr)
     const single = { aa_rpc_mode: 'single-provider-sepolia',

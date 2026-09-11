@@ -1,9 +1,9 @@
 resource "aws_ecs_cluster" "main" {
-  name = "plether-${var.environment}"
+  name = "plether-${local.deployment_name}"
 }
 
 resource "aws_cloudwatch_log_group" "ecs" {
-  name              = "/ecs/plether-${var.environment}"
+  name              = "/ecs/plether-${local.deployment_name}"
   retention_in_days = 14
 }
 
@@ -40,7 +40,7 @@ locals {
   ]
 
   effective_pyth_api_key_ssm_parameter_name = var.pyth_api_key_ssm_parameter_name != null ? trimspace(var.pyth_api_key_ssm_parameter_name) : (
-    var.environment == "sepolia" ? "/plether/sepolia/pyth-api-key" : ""
+    var.environment == "sepolia" ? "/plether/${local.deployment_name}/pyth-api-key" : ""
   )
 
   external_pyth_api_key_parameter_arn = local.effective_pyth_api_key_ssm_parameter_name != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.effective_pyth_api_key_ssm_parameter_name}" : null
@@ -256,6 +256,7 @@ locals {
     { name = "AA_PAYMASTER_ACCOUNT_CODE_HASH", value = var.aa_paymaster_account_code_hash },
     { name = "AA_PAYMASTER_CODE_HASH", value = var.aa_paymaster_code_hash },
     { name = "AA_PAYMASTER_VALIDITY_SECONDS", value = var.aa_paymaster_validity_seconds },
+    { name = "AA_RECONCILER_MAX_SAFE_LAG_SECONDS", value = var.aa_reconciler_max_safe_lag_seconds },
     { name = "AA_PAYMASTER_VERIFICATION_GAS_LIMIT", value = var.aa_paymaster_verification_gas_limit },
     { name = "AA_PAYMASTER_POST_OP_GAS_LIMIT", value = var.aa_paymaster_post_op_gas_limit },
     { name = "AA_PAYMASTER_MAX_COST_WEI", value = var.aa_paymaster_max_cost_wei },
@@ -298,7 +299,7 @@ locals {
 
   otel_log_router_container = {
     name              = "otel-log-router"
-    image             = "${aws_ecr_repository.otel_log_router.repository_url}:latest"
+    image             = local.log_router_image
     essential         = true
     mountPoints       = []
     portMappings      = []
@@ -337,7 +338,7 @@ locals {
 }
 
 resource "aws_ecs_task_definition" "api" {
-  family                   = "plether-${var.environment}"
+  family                   = "plether-${local.deployment_name}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.api_container_cpu
@@ -364,7 +365,7 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([{
     name      = "plether-api"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    image     = local.aa_runtime_image
     essential = true
 
     portMappings = [{
@@ -424,7 +425,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
+    ], local.frankfurt_preparation ? [{ name = "PYTH_INGESTION_ENABLED", value = "false" }] : [], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -446,10 +447,12 @@ resource "aws_ecs_task_definition" "api" {
       condition = !local.aa_gateway_enabled || (
         can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
         && !contains(local.aa_proxy_origin_token_rejected_values, var.aa_proxy_origin_token)
-        && trimspace(var.alb_certificate_arn) != ""
-        && trimspace(var.api_hostname) != ""
+        && (local.frankfurt_preparation || (
+          trimspace(var.alb_certificate_arn) != ""
+          && trimspace(var.api_hostname) != ""
+        ))
       )
-      error_message = "Provisioning either AA gateway requires a generated 64-character lowercase hexadecimal origin credential that is not a known placeholder, an HTTPS ALB certificate, and the certificate-backed API hostname."
+      error_message = "AA gateways require a generated origin credential and either the isolated Frankfurt private tunnel or a certificate-backed HTTPS endpoint."
     }
 
     precondition {
@@ -577,7 +580,7 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_ecs_task_definition" "keeper" {
-  family                   = "plether-${var.environment}-keeper"
+  family                   = "plether-${local.deployment_name}-keeper"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -596,7 +599,7 @@ resource "aws_ecs_task_definition" "keeper" {
 
   container_definitions = jsonencode([{
     name      = "plether-keeper"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    image     = local.api_image
     essential = true
     command   = ["plether-keeper"]
 
@@ -647,7 +650,7 @@ resource "aws_ecs_service" "keeper" {
 }
 
 resource "aws_ecs_task_definition" "liquidation_worker" {
-  family                   = "plether-${var.environment}-liquidation-worker"
+  family                   = "plether-${local.deployment_name}-liquidation-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -664,7 +667,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
 
   container_definitions = jsonencode([{
     name      = "plether-liquidation-worker"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    image     = local.api_image
     essential = true
     command   = ["plether-liquidation-worker"]
 
@@ -735,7 +738,7 @@ resource "aws_ecs_service" "liquidation_worker" {
 }
 
 resource "aws_ecs_task_definition" "basket_worker" {
-  family                   = "plether-${var.environment}-basket-worker"
+  family                   = "plether-${local.deployment_name}-basket-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -754,7 +757,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
 
   container_definitions = jsonencode([{
     name      = "plether-basket-worker"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    image     = local.api_image
     essential = true
     command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
 
@@ -819,7 +822,7 @@ resource "aws_ecs_service" "basket_worker" {
 }
 
 resource "aws_ecs_task_definition" "perps_indexer" {
-  family                   = "plether-${var.environment}-perps-indexer"
+  family                   = "plether-${local.deployment_name}-perps-indexer"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -838,7 +841,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
 
   container_definitions = jsonencode([{
     name      = "plether-perps-indexer"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    image     = local.api_image
     essential = true
     command   = ["plether-perps-indexer", "--loop"]
 
@@ -910,7 +913,7 @@ resource "aws_ecs_service" "perps_indexer" {
 }
 
 resource "aws_ecs_task_definition" "insights_worker" {
-  family                   = "plether-${var.environment}-insights-worker"
+  family                   = "plether-${local.deployment_name}-insights-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -928,7 +931,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
   container_definitions = jsonencode([
     {
       name             = "plether-insights-worker"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
@@ -994,7 +997,7 @@ resource "aws_ecs_service" "insights_worker" {
 resource "aws_ecs_task_definition" "workers" {
   count = var.consolidate_workers ? 1 : 0
 
-  family                   = "plether-${var.environment}-workers"
+  family                   = "plether-${local.deployment_name}-workers"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.workers_container_cpu
@@ -1017,7 +1020,7 @@ resource "aws_ecs_task_definition" "workers" {
   container_definitions = jsonencode([
     {
       name             = "plether-keeper"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["plether-keeper"]
       logConfiguration = local.posthog_log_configuration
@@ -1046,7 +1049,7 @@ resource "aws_ecs_task_definition" "workers" {
     },
     {
       name             = "plether-basket-worker"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
       logConfiguration = local.posthog_log_configuration
@@ -1080,7 +1083,7 @@ resource "aws_ecs_task_definition" "workers" {
     },
     {
       name             = "plether-oracle-worker"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["node", "/app/oracle/scripts/perps-oracle-worker.mjs", "--loop"]
       logConfiguration = local.posthog_log_configuration
@@ -1112,7 +1115,7 @@ resource "aws_ecs_task_definition" "workers" {
     },
     {
       name             = "plether-perps-indexer"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["plether-perps-indexer", "--loop"]
       logConfiguration = local.posthog_log_configuration
@@ -1160,7 +1163,7 @@ resource "aws_ecs_task_definition" "workers" {
     },
     {
       name             = "plether-insights-worker"
-      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      image            = local.api_image
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
@@ -1225,7 +1228,7 @@ resource "aws_ecs_service" "workers" {
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.ecs.id]
+    security_groups  = concat([aws_security_group.ecs.id], aws_security_group.frankfurt_worker_client[*].id)
     assign_public_ip = true
   }
 

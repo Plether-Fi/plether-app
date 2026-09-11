@@ -1,5 +1,5 @@
 resource "aws_ssm_parameter" "rpc_url" {
-  name  = "/plether/${var.environment}/rpc-url"
+  name  = "/plether/${local.deployment_name}/rpc-url"
   type  = "SecureString"
   value = var.rpc_url
 }
@@ -7,7 +7,7 @@ resource "aws_ssm_parameter" "rpc_url" {
 resource "aws_ssm_parameter" "pyth_api_key" {
   count = var.enable_pyth_api_key && local.effective_pyth_api_key_ssm_parameter_name == "" ? 1 : 0
 
-  name  = "/plether/${var.environment}/pyth-api-key"
+  name  = "/plether/${local.deployment_name}/pyth-api-key"
   type  = "SecureString"
   value = var.pyth_api_key
 
@@ -22,7 +22,7 @@ resource "aws_ssm_parameter" "pyth_api_key" {
 }
 
 resource "aws_ssm_parameter" "perps_rpc_url" {
-  name  = "/plether/${var.environment}/perps-rpc-url"
+  name  = "/plether/${local.deployment_name}/perps-rpc-url"
   type  = "SecureString"
   value = var.perps_rpc_url
 }
@@ -32,7 +32,7 @@ resource "aws_ssm_parameter" "vault_history_rpc_url" {
   # keeping a second provider URL in Terraform's active configuration surface.
   count = var.environment == "sepolia" ? 1 : 0
 
-  name  = "/plether/${var.environment}/vault-history-rpc-url"
+  name  = "/plether/${local.deployment_name}/vault-history-rpc-url"
   type  = "SecureString"
   value = var.perps_rpc_url
 
@@ -42,7 +42,7 @@ resource "aws_ssm_parameter" "vault_history_rpc_url" {
 }
 
 resource "aws_ssm_parameter" "keeper_private_key" {
-  name  = "/plether/${var.environment}/keeper-private-key"
+  name  = "/plether/${local.deployment_name}/keeper-private-key"
   type  = "SecureString"
   value = var.keeper_private_key
 }
@@ -61,7 +61,7 @@ locals {
 resource "aws_ssm_parameter" "lp_settlement_private_key" {
   count = nonsensitive(var.lp_settlement_private_key != "") ? 1 : 0
 
-  name  = "/plether/${var.environment}/lp-settlement-private-key"
+  name  = "/plether/${local.deployment_name}/lp-settlement-private-key"
   type  = "SecureString"
   value = var.lp_settlement_private_key
 
@@ -78,7 +78,7 @@ resource "aws_ssm_parameter" "lp_settlement_private_key" {
 }
 
 resource "aws_ssm_parameter" "oracle_updater_private_key" {
-  name  = "/plether/${var.environment}/oracle-updater-private-key"
+  name  = "/plether/${local.deployment_name}/oracle-updater-private-key"
   type  = "SecureString"
   value = var.oracle_updater_private_key
 
@@ -116,7 +116,7 @@ resource "aws_ssm_parameter" "oracle_updater_private_key" {
 }
 
 resource "aws_ssm_parameter" "liquidation_keeper_private_key" {
-  name  = "/plether/${var.environment}/liquidation-keeper-private-key"
+  name  = "/plether/${local.deployment_name}/liquidation-keeper-private-key"
   type  = "SecureString"
   value = var.liquidation_keeper_private_key
 }
@@ -124,7 +124,7 @@ resource "aws_ssm_parameter" "liquidation_keeper_private_key" {
 resource "aws_ssm_parameter" "faucet_private_key" {
   count = var.faucet_private_key != "" ? 1 : 0
 
-  name  = "/plether/${var.environment}/faucet-private-key"
+  name  = "/plether/${local.deployment_name}/faucet-private-key"
   type  = "SecureString"
   value = var.faucet_private_key
 }
@@ -132,7 +132,7 @@ resource "aws_ssm_parameter" "faucet_private_key" {
 resource "aws_ssm_parameter" "faucet_proxy_origin_token" {
   count = var.faucet_private_key != "" ? 1 : 0
 
-  name  = "/plether/${var.environment}/faucet-proxy-origin-token"
+  name  = "/plether/${local.deployment_name}/faucet-proxy-origin-token"
   type  = "SecureString"
   value = var.faucet_proxy_origin_token
 }
@@ -140,7 +140,7 @@ resource "aws_ssm_parameter" "faucet_proxy_origin_token" {
 resource "aws_ssm_parameter" "pimlico_api_key" {
   count = var.provision_aa_proxy ? 1 : 0
 
-  name  = "/plether/${var.environment}/pimlico-api-key"
+  name  = "/plether/${local.deployment_name}/pimlico-api-key"
   type  = "SecureString"
   value = var.pimlico_api_key
 }
@@ -148,7 +148,7 @@ resource "aws_ssm_parameter" "pimlico_api_key" {
 resource "aws_ssm_parameter" "pimlico_sponsorship_policy_id" {
   count = var.provision_aa_proxy ? 1 : 0
 
-  name  = "/plether/${var.environment}/pimlico-sponsorship-policy-id"
+  name  = "/plether/${local.deployment_name}/pimlico-sponsorship-policy-id"
   type  = "SecureString"
   value = var.pimlico_sponsorship_policy_id
 }
@@ -156,7 +156,7 @@ resource "aws_ssm_parameter" "pimlico_sponsorship_policy_id" {
 resource "aws_ssm_parameter" "aa_proxy_origin_token" {
   count = local.aa_gateway_enabled ? 1 : 0
 
-  name  = "/plether/${var.environment}/aa-proxy-origin-token"
+  name  = "/plether/${local.deployment_name}/aa-proxy-origin-token"
   type  = "SecureString"
   value = var.aa_proxy_origin_token
 }
@@ -164,7 +164,7 @@ resource "aws_ssm_parameter" "aa_proxy_origin_token" {
 resource "aws_ssm_parameter" "insights_registration_origin_token" {
   count = var.provision_insights_registration ? 1 : 0
 
-  name  = "/plether/${var.environment}/insights-registration-origin-token"
+  name  = "/plether/${local.deployment_name}/insights-registration-origin-token"
   type  = "SecureString"
   value = var.insights_registration_origin_token
 }
@@ -174,7 +174,7 @@ resource "aws_ssm_parameter" "insights_registration_origin_token_next" {
   # cardinality; the token value remains sensitive in state and plan output.
   count = var.provision_insights_registration && nonsensitive(var.insights_registration_origin_token_next != "") ? 1 : 0
 
-  name  = "/plether/${var.environment}/insights-registration-origin-token-next"
+  name  = "/plether/${local.deployment_name}/insights-registration-origin-token-next"
   type  = "SecureString"
   value = var.insights_registration_origin_token_next
 }
@@ -182,7 +182,7 @@ resource "aws_ssm_parameter" "insights_registration_origin_token_next" {
 resource "aws_ssm_parameter" "turnstile_secret_key" {
   count = var.provision_insights_registration ? 1 : 0
 
-  name  = "/plether/${var.environment}/turnstile-secret-key"
+  name  = "/plether/${local.deployment_name}/turnstile-secret-key"
   type  = "SecureString"
   value = var.turnstile_secret_key
 }
@@ -190,7 +190,7 @@ resource "aws_ssm_parameter" "turnstile_secret_key" {
 resource "aws_ssm_parameter" "x_oauth_client_secret" {
   count = var.provision_insights_registration ? 1 : 0
 
-  name  = "/plether/${var.environment}/x-oauth-client-secret"
+  name  = "/plether/${local.deployment_name}/x-oauth-client-secret"
   type  = "SecureString"
   value = var.x_oauth_client_secret
 }
@@ -198,7 +198,7 @@ resource "aws_ssm_parameter" "x_oauth_client_secret" {
 resource "aws_ssm_parameter" "insights_registration_email_keys" {
   count = var.provision_insights_registration ? 1 : 0
 
-  name  = "/plether/${var.environment}/insights-registration-email-keys"
+  name  = "/plether/${local.deployment_name}/insights-registration-email-keys"
   type  = "SecureString"
   value = jsonencode(var.insights_registration_email_keys)
 
@@ -210,7 +210,7 @@ resource "aws_ssm_parameter" "insights_registration_email_keys" {
 resource "aws_ssm_parameter" "insights_registration_email_hmac_key" {
   count = var.provision_insights_registration ? 1 : 0
 
-  name  = "/plether/${var.environment}/insights-registration-email-hmac-key"
+  name  = "/plether/${local.deployment_name}/insights-registration-email-hmac-key"
   type  = "SecureString"
   value = var.insights_registration_email_hmac_key_base64
 
@@ -220,13 +220,13 @@ resource "aws_ssm_parameter" "insights_registration_email_hmac_key" {
 }
 
 resource "aws_ssm_parameter" "database_url" {
-  name  = "/plether/${var.environment}/database-url"
+  name  = "/plether/${local.deployment_name}/database-url"
   type  = "SecureString"
   value = "postgresql://${urlencode(var.db_username)}:${urlencode(var.db_password)}@${aws_db_instance.postgres.endpoint}/plether?sslmode=verify-full&sslrootcert=${urlencode(var.db_ssl_root_cert_path)}"
 }
 
 resource "aws_ssm_parameter" "posthog_otlp_authorization_header" {
-  name  = "/plether/${var.environment}/posthog-otlp-authorization-header"
+  name  = "/plether/${local.deployment_name}/posthog-otlp-authorization-header"
   type  = "SecureString"
   value = "Authorization Bearer ${var.posthog_project_token}"
 }

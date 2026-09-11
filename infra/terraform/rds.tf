@@ -1,10 +1,10 @@
 resource "aws_db_subnet_group" "main" {
-  name       = "plether-${var.environment}"
+  name       = "plether-${local.deployment_name}"
   subnet_ids = aws_subnet.public[*].id
 }
 
 resource "aws_db_instance" "postgres" {
-  identifier     = "plether-${var.environment}"
+  identifier     = "plether-${local.deployment_name}"
   engine         = var.db_snapshot_identifier == null ? "postgres" : null
   engine_version = var.db_snapshot_identifier == null ? "16" : null
   instance_class = var.db_instance_class

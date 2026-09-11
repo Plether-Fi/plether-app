@@ -3,8 +3,9 @@
 Status: partial preparation only. No Terraform apply, service deployment,
 contract transaction, funding, or native sponsorship activation was performed.
 
-The user subsequently requested a temporary full-stack deployment in a different
-AWS region, leaving Singapore untouched. This Singapore preparation overlay is
+The user subsequently selected a temporary backend deployment in Frankfurt
+(`eu-central-1`), a localhost frontend, and reuse of existing Core v1.2.3, with
+no frontend/Core deployment and Singapore untouched. This Singapore preparation overlay is
 not the target for that deployment. See [temporary-stack isolation requirements](temporary-aa-test-stack.md)
 before planning any infrastructure changes.
 

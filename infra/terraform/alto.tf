@@ -1,4 +1,10 @@
 locals {
+  alto_zero_post_op_environment = local.frankfurt_preparation ? [
+    # This dedicated canary paymaster has no postOp hook and requires zero.
+    # Alto otherwise simulates with 2M gas and rounds a zero estimate to 1.
+    { name = "ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT", value = "0" },
+    { name = "ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER", value = "0" },
+  ] : []
   self_hosted_aa_resource_count = var.provision_self_hosted_aa && var.environment == "sepolia" ? 1 : 0
   native_aa_backend_configured  = local.self_hosted_aa_resource_count == 1 && var.configure_native_aa_backend
   native_aa_sponsorship_enabled = local.native_aa_backend_configured && var.enable_native_aa_sponsorship
@@ -39,7 +45,7 @@ locals {
 resource "aws_security_group" "api_alto_client" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-api-alto-client-"
+  name_prefix = "plether-${local.deployment_name}-api-alto-client-"
   description = "Marks the Plether API as the only permitted Alto RPC client."
   vpc_id      = aws_vpc.main.id
 
@@ -49,7 +55,7 @@ resource "aws_security_group" "api_alto_client" {
 resource "aws_security_group" "alto_alb" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-alto-alb-"
+  name_prefix = "plether-${local.deployment_name}-alto-alb-"
   description = "Internal load balancer for the self-hosted Alto bundler."
   vpc_id      = aws_vpc.main.id
 
@@ -70,7 +76,7 @@ resource "aws_vpc_security_group_ingress_rule" "alto_alb_from_api" {
 resource "aws_security_group" "alto_task" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-alto-task-"
+  name_prefix = "plether-${local.deployment_name}-alto-task-"
   description = "Self-hosted Alto task; ingress is restricted to its internal load balancer."
   vpc_id      = aws_vpc.main.id
 
@@ -113,7 +119,7 @@ resource "aws_vpc_security_group_egress_rule" "alto_alb_to_task" {
 resource "aws_lb" "alto" {
   count = local.self_hosted_aa_resource_count
 
-  name               = "plether-${var.environment}-alto"
+  name               = "plether-${local.deployment_name}-alto"
   internal           = true
   load_balancer_type = "application"
   idle_timeout       = 65
@@ -124,7 +130,7 @@ resource "aws_lb" "alto" {
 resource "aws_lb_target_group" "alto" {
   count = local.self_hosted_aa_resource_count
 
-  name                 = "plether-${var.environment}-alto"
+  name                 = "plether-${local.deployment_name}-alto"
   port                 = 3000
   protocol             = "HTTP"
   vpc_id               = aws_vpc.main.id
@@ -157,7 +163,7 @@ resource "aws_lb_listener" "alto" {
 resource "aws_ecs_task_definition" "alto" {
   count = local.self_hosted_aa_resource_count
 
-  family                   = "plether-${var.environment}-alto"
+  family                   = "plether-${local.deployment_name}-alto"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.alto_container_cpu
@@ -178,7 +184,7 @@ resource "aws_ecs_task_definition" "alto" {
   container_definitions = jsonencode([
     {
       name                   = "plether-alto"
-      image                  = "${aws_ecr_repository.alto[0].repository_url}:${local.alto_ecr_image_tag}"
+      image                  = local.alto_image
       essential              = true
       readonlyRootFilesystem = true
       user                   = "1000:1000"
@@ -189,6 +195,7 @@ resource "aws_ecs_task_definition" "alto" {
       linuxParameters = {
         initProcessEnabled = true
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
@@ -249,7 +256,7 @@ resource "aws_ecs_task_definition" "alto" {
         },
       ], local.alto_optional_secrets)
 
-      environment = [
+      environment = concat([
         { name = "ALTO_ENTRYPOINTS", value = var.alto_entrypoint_address },
         { name = "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS", value = "0x4e59b44847b379578588920ca78fbf26c0b4956c" },
         { name = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8", value = var.alto_entrypoint_simulation_contract_v8 },
@@ -290,11 +297,11 @@ resource "aws_ecs_task_definition" "alto" {
         { name = "ALTO_EXECUTOR_REFILL_INTERVAL", value = "1200" },
         { name = "ALTO_MAX_GAS_PER_USER_OP", value = var.alto_max_gas_per_user_operation },
         { name = "ALTO_MAX_GAS_PER_BUNDLE", value = var.alto_max_gas_per_bundle },
-      ]
+      ], local.alto_zero_post_op_environment)
     },
     {
       name                   = "alto-tmp-init"
-      image                  = "${aws_ecr_repository.alto[0].repository_url}:${local.alto_ecr_image_tag}"
+      image                  = local.alto_image
       essential              = false
       readonlyRootFilesystem = true
       user                   = "0:0"
@@ -304,6 +311,7 @@ resource "aws_ecs_task_definition" "alto" {
       linuxParameters = {
         initProcessEnabled = true
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
@@ -316,6 +324,7 @@ resource "aws_ecs_task_definition" "alto" {
       portMappings   = []
       systemControls = []
       volumesFrom    = []
+      environment    = []
     },
     local.alto_log_router_container,
   ])

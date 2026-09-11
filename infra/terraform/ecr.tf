@@ -1,5 +1,5 @@
 resource "aws_ecr_repository" "api" {
-  name                 = var.environment == "mainnet" ? "plether-api" : "plether-api-${var.environment}"
+  name                 = var.environment == "mainnet" ? "plether-api" : "plether-api-${local.deployment_name}"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -26,7 +26,7 @@ resource "aws_ecr_lifecycle_policy" "api" {
 }
 
 resource "aws_ecr_repository" "otel_log_router" {
-  name                 = var.environment == "mainnet" ? "plether-otel-log-router" : "plether-otel-log-router-${var.environment}"
+  name                 = var.environment == "mainnet" ? "plether-otel-log-router" : "plether-otel-log-router-${local.deployment_name}"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -55,7 +55,7 @@ resource "aws_ecr_lifecycle_policy" "otel_log_router" {
 resource "aws_ecr_repository" "alto" {
   count = local.self_hosted_aa_resource_count
 
-  name                 = "plether-alto-sepolia"
+  name                 = "plether-alto-${local.deployment_name}"
   image_tag_mutability = "IMMUTABLE"
   force_delete         = false
 

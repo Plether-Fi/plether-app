@@ -13,7 +13,7 @@ resource "terraform_data" "rpc_configuration_guard" {
         for parameter_name in [
           var.rpc_auth_token_ssm_parameter_name,
           var.perps_rpc_auth_token_ssm_parameter_name,
-        ] : trimspace(parameter_name) == "" || startswith(trimspace(parameter_name), "/plether/${var.environment}/")
+        ] : trimspace(parameter_name) == "" || startswith(trimspace(parameter_name), "/plether/${local.deployment_name}/")
       ])
       error_message = "RPC bearer-token parameters must belong to the current /plether/<environment>/ SSM namespace."
     }
@@ -53,7 +53,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+        || lower(var.perps_order_lifecycle_book) == (local.frankfurt_preparation ? local.temporary_core.contracts.orderLifecycleBook.address : "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e")
       )
       error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
     }
@@ -298,7 +298,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     aa_reconciler_start_block                   = var.aa_reconciler_start_block
     aa_reconciler_start_block_hash              = var.aa_reconciler_start_block_hash
     aa_reconciler_secondary_rpc_url_kms_key_arn = var.aa_reconciler_secondary_rpc_url_kms_key_arn
-    aa_rpc_mode                               = var.aa_rpc_mode
+    aa_rpc_mode                                 = var.aa_rpc_mode
     alto_upstream_image                         = var.alto_upstream_image
     alto_entrypoint_address                     = var.alto_entrypoint_address
     aa_paymaster_address                        = var.aa_paymaster_address
@@ -310,8 +310,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
   lifecycle {
     precondition {
-      condition     = !var.provision_self_hosted_aa || var.aws_region == "ap-southeast-1"
-      error_message = "The reviewed self-hosted AA stack is pinned to aws_region=ap-southeast-1."
+      condition     = !var.provision_self_hosted_aa || (local.frankfurt_preparation ? var.aws_region == "eu-central-1" : var.aws_region == "ap-southeast-1")
+      error_message = "Self-hosted AA requires Singapore legacy or the isolated Frankfurt preparation target."
     }
 
     precondition {
@@ -410,22 +410,22 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition = !var.provision_self_hosted_aa || (
-        startswith(trimspace(var.alto_rpc_url_ssm_parameter_name), "/plether/sepolia/")
-        && startswith(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "/plether/sepolia/")
-        && startswith(trimspace(var.alto_utility_private_key_ssm_parameter_name), "/plether/sepolia/")
+        startswith(trimspace(var.alto_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && startswith(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && startswith(trimspace(var.alto_utility_private_key_ssm_parameter_name), "/plether/${local.deployment_name}/")
         && (
           trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name) == ""
-          || startswith(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "/plether/sepolia/")
+          || startswith(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
         )
       )
-      error_message = "All external Alto SecureStrings must be scoped under /plether/sepolia/."
+      error_message = "All external Alto SecureStrings must be scoped under /plether/${local.deployment_name}/."
     }
 
     precondition {
       condition = var.aa_rpc_mode != "single-provider-sepolia" || (
         var.environment == "sepolia" && var.perps_chain_id == "421614"
         && !var.aa_native_global_rollout_enabled && var.aa_native_canary_owners != ""
-        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/sepolia/perps-rpc-url"
+        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/perps-rpc-url"
         && var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
       )
       error_message = "Single-provider mode requires Arbitrum Sepolia, a nonempty canary allowlist, no global rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
@@ -433,8 +433,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition = !var.provision_self_hosted_aa || var.aa_rpc_mode == "single-provider-sepolia" || (
-        startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/sepolia/")
-        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/sepolia/perps-rpc-url"
+        startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/${local.deployment_name}/perps-rpc-url"
         && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != trimspace(var.alto_rpc_url_ssm_parameter_name)
       )
       error_message = "Dual-independent mode requires a secondary RPC parameter distinct from both primary Perps RPC and Alto RPC, operated by an independent provider."

@@ -87,6 +87,12 @@ jobs:
         working-directory: .
         run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs
 
+      - name: Check Frankfurt localhost AA proxy
+        working-directory: .
+        run: |
+          node --experimental-strip-types --test scripts/aa-frankfurt-vite.test.mjs
+          node apps/frontend/node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2023 --module ESNext --moduleResolution bundler --allowImportingTsExtensions --types node --typeRoots apps/frontend/node_modules/@types scripts/aa-frankfurt.vite.config.mts
+
       - name: Install Insights story dependencies
         working-directory: apps/insights
         run: npm ci
