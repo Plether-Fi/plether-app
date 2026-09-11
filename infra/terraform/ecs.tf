@@ -366,7 +366,7 @@ resource "aws_ecs_task_definition" "api" {
 
   container_definitions = jsonencode([{
     name      = "plether-api"
-    image     = local.aa_runtime_image
+    image     = local.aa_api_runtime_image
     essential = true
 
     portMappings = [{

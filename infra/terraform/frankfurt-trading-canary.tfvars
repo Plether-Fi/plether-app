@@ -1,5 +1,6 @@
 # Explicit extension of the approved single-wallet AA canary, not a Core deploy.
 frankfurt_activation_stage = "trading-canary"
+enable_native_aa_preparation = true
 workers_desired_count = 1
 liquidation_worker_desired_count = 1
 protection_worker_desired_count = 1
