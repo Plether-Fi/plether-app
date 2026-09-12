@@ -86,13 +86,13 @@ or unresolved diagnostic mappings to reset a test.
 
 This is **not** the entire approved plan:
 
-- Extend funding evidence beyond the keeper to every Alto executor, oracle,
-  liquidation, protection and LP-settlement worker; account for each worker's
-  outstanding transaction liabilities. The keeper now estimates its idle reserve
-  independently; pending nonce gaps remain unknown until reconciled rather than
-  claiming their unknown liabilities are zero.
-- Complete action-specific live/FAD/frozen price-payload readiness. The current
-  lens signal is deliberately insufficient to certify special-mode exits.
+- Activate and qualify the locally implemented all-worker funding observer and
+  action-specific live/FAD/frozen oracle readiness. See
+  [implementation and activation details](aa-worker-funding-and-oracle-readiness.md).
+  The observer accounts for existing journals and visible pending transaction
+  families without claiming provider-hidden liabilities are zero. Public signer
+  inventory/reserve review, the additive migration, new images and Frankfurt
+  runtime verification remain deployment work; no live activation occurred.
 - Finish verified final trade outcomes, stage durations and seven-day
   terminal-record pruning. Current
   diagnostics retain unresolved records; automatic retention cleanup is not

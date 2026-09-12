@@ -4,9 +4,10 @@ import { captureAnalyticsEvent, captureFrontendLog, type AnalyticsProperties } f
 // syntax validation alone is not a privacy boundary for external telemetry.
 const components = new Set(['keeper', 'funding', 'oracle', 'readiness', 'sponsorship', 'reconciliation', 'bundler', 'paymaster', 'liquidation', 'protection', 'lp_settlement', 'alto'])
 const reasons = new Set([
-  'READY', 'FUNDING_LOW', 'FUNDING_UNVERIFIED', 'KEEPER_INSUFFICIENT_FUNDS',
+  'READY', 'FUNDING_LOW', 'FUNDING_UNVERIFIED', 'KEEPER_INSUFFICIENT_FUNDS', 'WORKER_INSUFFICIENT_FUNDS',
   'READINESS_UNAVAILABLE', 'WORKER_HEARTBEAT_STALE', 'ORACLE_UNAVAILABLE',
   'OPEN_EXECUTION_UNAVAILABLE', 'EXIT_MODE_REQUIRES_VALIDATION', 'BUNDLER_UNAVAILABLE',
+  'PROTECTION_TRIGGER_UNAVAILABLE',
   'SPONSORSHIP_DISABLED', 'PAYMASTER_PAUSED', 'RECONCILIATION_STALE',
 ])
 interface Observation { component: string; status: string; reason: string }

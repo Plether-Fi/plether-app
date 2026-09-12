@@ -5,13 +5,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-test('real Fluent Bit preserves CloudWatch alarm fields and redacts the separate PostHog copy', { skip: !process.env.AA_LOG_ROUTER_TEST_IMAGE }, () => {
+for (const [container,event,reason] of [
+  ['plether-keeper','keeper_transaction_failed','KEEPER_INSUFFICIENT_FUNDS'],
+  ['plether-funding-monitor','worker_funding_observation','WORKER_INSUFFICIENT_FUNDS'],
+]) test(`real Fluent Bit preserves CloudWatch and redacts PostHog for ${container}`, { skip: !process.env.AA_LOG_ROUTER_TEST_IMAGE }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'plether-log-routing-'))
   try {
-    const input = { container_name: 'plether-keeper', log: JSON.stringify({
-      event: 'keeper_transaction_failed', message: 'private provider payload', level: 'ERROR',
+    const input = { container_name: container, log: JSON.stringify({
+      event, message: 'private provider payload', level: 'ERROR',
       error: 'private exception', order_ids: [8], signer_balance_wei: '1234',
-      attempt_id: '12345678-1234-4123-8123-123456789abc', reason_code: 'KEEPER_INSUFFICIENT_FUNDS',
+      attempt_id: '12345678-1234-4123-8123-123456789abc', reason_code: reason,
     }) }
     const filters = readFileSync(new URL('otel-enrichment.conf', import.meta.url), 'utf8').split('[OUTPUT]')[0]
       .replace('/fluent-bit/etc/posthog-projection.lua', '/fixtures/posthog-projection.lua')
@@ -21,7 +24,7 @@ test('real Fluent Bit preserves CloudWatch alarm fields and redacts the separate
     Parsers_File /fixtures/plether-parsers.conf
 [INPUT]
     Name dummy
-    Tag plether-keeper-firelens-fixture
+    Tag ${container}-firelens-fixture
     Samples 1
     Dummy ${JSON.stringify(input)}
 ${filters}
@@ -56,10 +59,10 @@ ${filters}
     assert.equal(cloudwatch.error, 'private exception')
     assert.deepEqual(cloudwatch.order_ids, [8])
     assert.equal(cloudwatch.signer_balance_wei, '1234')
-    assert.equal(cloudwatch.event, 'keeper_transaction_failed')
-    assert.equal(posthog.message, 'keeper_transaction_failed')
+    assert.equal(cloudwatch.event, event)
+    assert.equal(posthog.message, event)
     assert.equal(posthog.attempt_id, input.log && JSON.parse(input.log).attempt_id)
-    assert.equal(posthog.reason_code, 'KEEPER_INSUFFICIENT_FUNDS')
+    assert.equal(posthog.reason_code, reason)
     for (const key of ['error', 'order_ids', 'signer_balance_wei', 'log', 'container_name']) assert.equal(posthog[key], undefined)
     assert.equal(records.length, 2, 'Cloning must not recurse or duplicate exports')
   } finally { rmSync(directory, { recursive: true, force: true }) }

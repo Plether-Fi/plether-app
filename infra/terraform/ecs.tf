@@ -247,6 +247,8 @@ locals {
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
     { name = "AA_NATIVE_PREPARATION_ENABLED", value = tostring(var.enable_native_aa_preparation) },
     { name = "AA_READINESS_ENFORCEMENT_ENABLED", value = tostring(var.enable_aa_readiness_enforcement) },
+    { name = "AA_FUNDING_COMPONENTS", value = join(",", local.aa_funding_components) },
+    { name = "AA_FUNDING_INVENTORY_ID", value = sha256(jsonencode(var.aa_funding_monitors)) },
     { name = "AA_NATIVE_SUBMISSION_ENABLED", value = tostring(var.enable_native_aa_submission) },
     { name = "AA_NATIVE_CANARY_OWNERS", value = var.aa_native_canary_owners },
     { name = "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED", value = tostring(var.aa_native_global_rollout_enabled) },
@@ -1012,6 +1014,7 @@ resource "aws_ecs_task_definition" "workers" {
   depends_on = [
     terraform_data.perps_candle_rollout_guard,
     terraform_data.lp_settlement_keeper_guard,
+    terraform_data.aa_funding_inventory_guard,
   ]
 
   runtime_platform {
@@ -1019,7 +1022,7 @@ resource "aws_ecs_task_definition" "workers" {
     operating_system_family = "LINUX"
   }
 
-  container_definitions = jsonencode([
+  container_definitions = jsonencode(concat([
     {
       name             = "plether-keeper"
       image            = local.aa_keeper_runtime_image
@@ -1205,7 +1208,7 @@ resource "aws_ecs_task_definition" "workers" {
       ], local.insights_competition_environment)
     },
     merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image }),
-  ])
+  ], local.aa_funding_containers))
 
   lifecycle {
     precondition {

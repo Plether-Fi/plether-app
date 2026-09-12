@@ -1,5 +1,5 @@
 -- Advisory observations only: never consumed by authorization or reconciliation.
-module Plether.AA.Readiness (newReadiness, Check(..), snapshotValue, classifyFunding) where
+module Plether.AA.Readiness (newReadiness, Check(..), snapshotValue, classifyFunding, aggregateFunding, snapshotWithWorkers) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (concurrently)
@@ -19,7 +19,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.AaSponsorship (getAaIssuancePause, aaReconcilerIsFresh)
 import Plether.Ethereum.Client (EthClient, CallParams(..), newClient, rpcCall, ethCall)
 import Plether.Ethereum.Abi (encodeCall, decodeUint256)
-import Plether.Perps.Release (perpsV2PublicLens)
+import Plether.AA.OracleReadiness (oracleReadiness)
 import System.Environment (lookupEnv)
 import System.Timeout (timeout)
 
@@ -41,6 +41,33 @@ snapshotValue observed enforced common opens closes = object
     ["deposit" .= map checkValue common, "open" .= map checkValue (common ++ opens)
     ,"close" .= map checkValue (common ++ closes), "protection" .= map checkValue (common ++ closes)]]
 
+-- Background dependencies are visible but never universal trading blockers.
+-- Oracle updater funding is monitor-only: the keeper pays the execution-price
+-- update itself, including frozen closes. LP/liquidation are not exit gates.
+snapshotWithWorkers :: Integer -> Bool -> [Check] -> Check -> (Check,Check,Check) -> [Check] -> Value
+snapshotWithWorkers observed enforced common keeper (opens,closes,protection) workers = object
+  ["version" .= (1 :: Int), "observedAt" .= observed, "expiresAt" .= (observed+15000)
+  ,"enforcementEnabled" .= enforced, "workers" .= map checkValue workers
+  ,"actions" .= object ["deposit" .= checks []
+    ,"open" .= checks (keeper : opens : funding "keeper")
+    ,"close" .= checks (keeper : closes : funding "keeper")
+    ,"protection" .= checks (map advisory (keeper : protection : funding "keeper" ++ funding "protection"))]]
+ where
+  funding component = filter (\(Check c _ _) -> c == component) workers
+  checks extra = map checkValue $ common ++ funding "alto" ++ extra
+  advisory (Check c "blocked" r) = Check c "unknown" r
+  advisory c = c
+
+aggregateFunding :: Text -> [(Text,Text)] -> Check
+aggregateFunding component rows
+  | null rows || any invalid rows = Check component "unknown" "FUNDING_UNVERIFIED"
+  | all ((=="blocked") . fst) rows = Check component "blocked" "WORKER_INSUFFICIENT_FUNDS"
+  | any ((=="blocked") . fst) rows = Check component "unknown" "FUNDING_LOW"
+  | (state,reason):_ <- filter ((=="unknown") . fst) rows = Check component state reason
+  | any ((=="FUNDING_LOW") . snd) rows = Check component "ready" "FUNDING_LOW"
+  | otherwise = Check component "ready" "READY"
+ where invalid (s,r) = (s,r) `notElem` [("ready","READY"),("ready","FUNDING_LOW"),("unknown","FUNDING_LOW"),("unknown","FUNDING_UNVERIFIED"),("blocked","WORKER_INSUFFICIENT_FUNDS")]
+
 observe :: IO a -> IO (Maybe a)
 observe action = do
   result <- try action
@@ -53,6 +80,9 @@ observe action = do
 newReadiness :: Config -> Maybe DbPool -> EthClient -> Bool -> IO (IO Value)
 newReadiness cfg mPool client startupAvailable = do
   enforced <- (== Just "true") <$> lookupEnv "AA_READINESS_ENFORCEMENT_ENABLED"
+  -- Public categorical configuration only; no signer secrets enter the API.
+  inventory <- maybe [] (filter (`elem` ["alto","keeper","oracle","liquidation","protection","lp_settlement"]) . T.splitOn "," . T.pack) <$> lookupEnv "AA_FUNDING_COMPONENTS"
+  inventoryId <- maybe "" T.pack <$> lookupEnv "AA_FUNDING_INVENTORY_ID"
   initial <- floor . (*1000) <$> getPOSIXTime
   cache <- newMVar $ snapshotValue initial False [Check "readiness" "unknown" "READINESS_UNAVAILABLE"] [] []
   case (cfgNativeAaConfig cfg, mPool) of
@@ -62,13 +92,13 @@ newReadiness cfg mPool client startupAvailable = do
         tick <- getMonotonicTimeNSec
         started <- floor . (*1000) <$> getPOSIXTime
         observed <- timeout 5_000_000 $ observe $ do
-          ((sponsor, worker), (bundler, oracle)) <- concurrently
-            (concurrently (sponsorCheck native pool) (workerCheck pool))
-            (concurrently (bundlerCheck alto) oracleCheck)
-          let closes = case oracle of
-                [Check "oracle" "ready" "READY"] -> oracle
-                _ -> [Check "oracle" "unknown" "EXIT_MODE_REQUIRES_VALIDATION"]
-          pure $ snapshotValue started enforced (bundler : sponsor) (worker : oracle) (worker : closes)
+          (((sponsor, worker), (bundler, oracle)), workers) <- concurrently
+            (concurrently
+            (concurrently (sponsorCheck native pool) (workerCheck ("keeper" `elem` inventory) pool))
+            (concurrently (bundlerCheck alto) (oracleReadiness cfg pool client)))
+            (fundingChecks inventory inventoryId pool)
+          let ((os,orr),(cs,cr),(ps,pr)) = oracle
+          pure $ snapshotWithWorkers started enforced (bundler : sponsor) worker (Check "oracle" os orr, Check "oracle" cs cr, Check "oracle" ps pr) workers
         let result = case observed of
               Just (Just value) -> value
               _ -> snapshotValue started False [Check "readiness" "unknown" "READINESS_UNAVAILABLE"] [] []
@@ -96,12 +126,15 @@ newReadiness cfg mPool client startupAvailable = do
         Just (Nothing, False) -> [Check "reconciliation" "blocked" "RECONCILIATION_STALE"]
         Just (Nothing, True) -> [Check "reconciliation" "ready" "READY"]
         Nothing -> [Check "reconciliation" "unknown" "READINESS_UNAVAILABLE"]
-  workerCheck pool = do
+  workerCheck fundingMonitored pool = do
     result <- observe (withDb pool $ \conn -> query conn
       "SELECT state,reason FROM aa_worker_readiness WHERE chain_id=? AND deployment=? AND component='keeper' AND observed_at > clock_timestamp()-interval '15 seconds'"
       (cfgPerpsChainId cfg, T.toLower $ cfgPerpsOrderRouter cfg) :: IO [(Text,Text)])
     pure $ case result of
-      Just [(state, reason)] | state `elem` ["ready","blocked","unknown"] && reason `elem` ["READY","KEEPER_INSUFFICIENT_FUNDS","FUNDING_UNVERIFIED","FUNDING_LOW"] -> Check "keeper" state reason
+      Just [(state, reason)] | state `elem` ["ready","blocked","unknown"] && reason `elem` ["READY","KEEPER_INSUFFICIENT_FUNDS","FUNDING_UNVERIFIED","FUNDING_LOW"] ->
+        -- The worker row still establishes liveness. The shared observer owns
+        -- funding once configured and understands journal/pending liabilities.
+        if fundingMonitored then Check "keeper" "ready" "READY" else Check "keeper" state reason
       _ -> Check "keeper" "unknown" "WORKER_HEARTBEAT_STALE"
   bundlerCheck alto = do
     result <- rpcCall alto "eth_supportedEntryPoints" (toJSON ([] :: [Text]))
@@ -110,11 +143,11 @@ newReadiness cfg mPool client startupAvailable = do
       _ -> Check "bundler" "unknown" "BUNDLER_UNAVAILABLE"
   lowerValue (String x) = String $ T.toLower x
   lowerValue x = x
-  oracleCheck = do
-    result <- rpcCall client "eth_call" $ toJSON
-      [object ["to" .= perpsV2PublicLens, "data" .= ("0x5fd7f162" :: Text)], String "latest"]
-    pure $ case result of
-      Right (String value) | T.length value == 2 + 8 * 64 ->
-        let active = T.take 64 $ T.drop (2 + 5 * 64) value
-        in [if active == T.replicate 63 "0" <> "1" then Check "oracle" "ready" "READY" else Check "oracle" "blocked" "OPEN_EXECUTION_UNAVAILABLE"]
-      _ -> [Check "oracle" "unknown" "ORACLE_UNAVAILABLE"]
+  fundingChecks [] _ _ = pure []
+  fundingChecks inventory inventoryId pool = do
+    result <- observe (withDb pool $ \conn -> query conn
+      "SELECT component,CASE WHEN observed_at > clock_timestamp()-interval '15 seconds' AND observed_at <= clock_timestamp() THEN state ELSE 'unknown' END,CASE WHEN observed_at > clock_timestamp()-interval '15 seconds' AND observed_at <= clock_timestamp() THEN reason ELSE 'FUNDING_UNVERIFIED' END FROM aa_funding_observations WHERE chain_id=? AND deployment=? AND inventory_id=? LIMIT 17"
+      (cfgPerpsChainId cfg,T.toLower $ cfgPerpsOrderRouter cfg,inventoryId) :: IO [(Text,Text,Text)])
+    pure [aggregateFunding component $ case result of
+      Just rows | length rows <= 16 -> [(s,r) | (c,s,r) <- rows, c == component]
+      _ -> [] | component <- inventory]

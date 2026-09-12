@@ -27,3 +27,11 @@ assert(failure.error==nil and failure.log==nil)
 local _,_,credential = project_posthog('plether-alto-firelens-test',0,{event='AKIAEXAMPLECREDENTIAL',stage='private_alphanumeric_secret',reason_code='MY_PRIVATE_SECRET'})
 assert(credential.message=='unclassified_service_log' and credential.stage==nil and credential.reason_code==nil)
 print('PostHog projection privacy fixtures passed')
+for _,component in ipairs({'alto','keeper','oracle','liquidation','protection','lp_settlement'}) do
+  local operational = {event='worker_funding_observation',component=component,outcome='blocked',reason_code='WORKER_INSUFFICIENT_FUNDS',occurrence_count=2,
+    balance_wei='12345',liability_wei='567',reserve_wei='89',signer_address='0xdead',raw_transaction='0xsecret'}
+  local _,_,exported = project_posthog('plether-funding-monitor-firelens-test',0,operational)
+  assert(exported.event=='worker_funding_observation' and exported.component==component and exported.reason_code=='WORKER_INSUFFICIENT_FUNDS')
+  assert(exported.balance_wei==nil and exported.liability_wei==nil and exported.reserve_wei==nil and exported.signer_address==nil and exported.raw_transaction==nil)
+  assert(operational.balance_wei=='12345' and operational.signer_address=='0xdead')
+end

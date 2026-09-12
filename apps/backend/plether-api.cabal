@@ -23,6 +23,7 @@ library
         Plether.AA.Gateway
         Plether.AA.Timing
         Plether.AA.Readiness
+        Plether.AA.OracleReadiness
         Plether.Keeper.Funding
         Plether.AA.Diagnostics
         Plether.AA.OrderDiagnostics
@@ -349,6 +350,7 @@ test-suite plether-api-test
         Plether.AA.KmsSpec
         Plether.AA.PreparationSpec
         Plether.AA.ReadinessSpec
+        Plether.AA.OracleReadinessSpec
         Plether.Keeper.FundingSpec
         Plether.AA.OrderDiagnosticsSpec
         Plether.AA.ReconcilerSpec

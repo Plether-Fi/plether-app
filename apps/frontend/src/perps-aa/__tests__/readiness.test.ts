@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseReadiness, readinessBlocker, readinessChecks, type ReadinessSnapshot } from '../readiness'
+import { parseReadiness, readinessBlocker, readinessChecks, readinessWorkers, type ReadinessSnapshot } from '../readiness'
 import { requireDeadlineHeadroom } from '../deadline'
 import { sanitizeAnalyticsProperties, sanitizeFrontendLogAttributes } from '../../analytics/client'
 
@@ -22,6 +22,16 @@ describe('trading readiness', () => {
     expect(() => parseReadiness({ ...sample(), expiresAt: 116_000 }, 110_000)).toThrow()
     expect(() => parseReadiness(sample(), 90_000)).toThrow()
     expect(() => parseReadiness({ ...sample(), actions: {} }, 110_000)).toThrow()
+  })
+  it('shows background-worker funding without making it an unrelated action blocker', () => {
+    const v = { ...sample(), workers: [{ component: 'lp_settlement', status: 'blocked', reason: 'WORKER_INSUFFICIENT_FUNDS' }] }
+    const parsed = parseReadiness(v,110_000)
+    expect(parsed.workers?.[0].status).toBe('blocked')
+    expect(readinessWorkers(parsed,115_000)).toEqual([])
+    expect(readinessBlocker(parsed,'deposit',110_000)).toBeUndefined()
+    expect(readinessBlocker(parsed,'close',110_000)).toBeUndefined()
+    expect(() => parseReadiness({...v,workers:[...v.workers,...v.workers]},110_000)).toThrow()
+    expect(() => parseReadiness({...v,workers:[{component:'address',status:'blocked',reason:'SECRET'}]},110_000)).toThrow()
   })
 })
 describe('deadline safety', () => {

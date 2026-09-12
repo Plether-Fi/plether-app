@@ -10,6 +10,8 @@ export interface ReadinessSnapshot {
   expiresAt: number
   enforcementEnabled: boolean
   actions: Record<ReadinessAction, ReadinessCheck[]>
+  /** Background funding observations; never universal action blockers. */
+  workers?: ReadinessCheck[]
 }
 const actions = ['deposit', 'open', 'close', 'protection'] as const
 const statuses = ['ready', 'blocked', 'unknown']
@@ -34,7 +36,21 @@ export function parseReadiness(value: unknown, now = Date.now()): ReadinessSnaps
       return { component: check.component, status: check.status as ReadinessStatus, reason: check.reason }
     })
   }
-  return { version: 1, observedAt: v.observedAt, expiresAt: v.expiresAt, enforcementEnabled: v.enforcementEnabled, actions: parsed }
+  let workers: ReadinessCheck[] | undefined
+  if (v.workers !== undefined) {
+    if (!Array.isArray(v.workers) || v.workers.length > 6) throw new Error('Invalid funding readiness')
+    const allowed = ['alto', 'keeper', 'oracle', 'liquidation', 'protection', 'lp_settlement']
+    workers = v.workers.map((w: unknown) => {
+      if (!w || typeof w !== 'object') throw new Error('Invalid funding readiness')
+      const c = w as Record<string, unknown>
+      if (typeof c.component !== 'string' || !allowed.includes(c.component)
+        || typeof c.status !== 'string' || !statuses.includes(c.status)
+        || typeof c.reason !== 'string' || !['READY','FUNDING_LOW','FUNDING_UNVERIFIED','WORKER_INSUFFICIENT_FUNDS'].includes(c.reason)) throw new Error('Invalid funding readiness')
+      return { component: c.component, status: c.status as ReadinessStatus, reason: c.reason }
+    })
+    if (new Set(workers.map(w => w.component)).size !== workers.length) throw new Error('Duplicate funding readiness')
+  }
+  return { version: 1, observedAt: v.observedAt, expiresAt: v.expiresAt, enforcementEnabled: v.enforcementEnabled, actions: parsed, workers }
 }
 export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = Date.now()): ReadinessCheck[] {
   return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now + 5_000
@@ -43,6 +59,9 @@ export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action:
 }
 export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = Date.now()): ReadinessCheck | undefined {
   return snapshot?.enforcementEnabled ? readinessChecks(snapshot, action, now).find(c => c.status === 'blocked') : undefined
+}
+export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = Date.now()): ReadinessCheck[] {
+  return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now+5_000 ? [] : snapshot.workers ?? []
 }
 
 let snapshot: ReadinessSnapshot | undefined
@@ -62,7 +81,7 @@ export function refreshReadiness(force = false): Promise<void> {
       const response = await fetch('/api/perps/v1/readiness', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4_000) })
       if (!response.ok) throw new Error('Readiness unavailable')
       snapshot = parseReadiness(await response.json())
-      reportReadiness(actions.flatMap(action => readinessChecks(snapshot, action)))
+      reportReadiness([...actions.flatMap(action => readinessChecks(snapshot, action)), ...(snapshot.workers ?? [])])
     } catch {
       // A stale response must not remain a hard blocker. Authorization is independent.
       snapshot = undefined
@@ -96,10 +115,12 @@ const messages: Record<string, string> = {
   RECONCILIATION_STALE: 'Sponsorship accounting is catching up.',
   BUNDLER_UNAVAILABLE: 'Transaction submission could not be verified.',
   KEEPER_INSUFFICIENT_FUNDS: 'The trade execution worker needs funding.',
+  WORKER_INSUFFICIENT_FUNDS: 'This worker has no execution funds available.',
   WORKER_HEARTBEAT_STALE: 'The execution worker has not reported a recent status.',
   ORACLE_UNAVAILABLE: 'Execution price availability could not be verified.',
   OPEN_EXECUTION_UNAVAILABLE: 'The current execution mode does not allow opening positions. Closing is checked separately.',
   EXIT_MODE_REQUIRES_VALIDATION: 'Close execution depends on the current exit policy and price payload; availability is not yet verified.',
+  PROTECTION_TRIGGER_UNAVAILABLE: 'New protection triggers are unavailable while the oracle is frozen. Voluntary closes, cancellation and previously triggered retries follow separate rules.',
   FUNDING_LOW: 'An execution worker has fewer than ten estimated executions in reserve.',
   FUNDING_UNVERIFIED: 'Execution funding could not be verified.',
   KEEPER_RPC_TIMEOUT: 'An execution attempt timed out while communicating with the chain.',

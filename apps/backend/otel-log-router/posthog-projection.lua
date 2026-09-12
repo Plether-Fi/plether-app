@@ -14,6 +14,7 @@ end
 -- or provider credential must not become an event, stage or reason label.
 local events = set([[
 aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed
+worker_funding_observation worker_funding_monitor_failed
 aa_order_execution_attempt_failed aa_diagnostic_export_dropped aa_diagnostic_queue_full
 aa_diagnostic_link_unavailable aa_preparation_timing aa_native_signer_failure
 aa_native_reconciler_stale aa_native_issuance_unavailable aa_native_database_failure
@@ -49,8 +50,10 @@ local values = {
   rpc_role=set('api-core api-perps keeper oracle liquidation protection aa-reconciler'),
   reason_code=set([[
 READY FUNDING_LOW FUNDING_UNVERIFIED KEEPER_INSUFFICIENT_FUNDS KEEPER_RPC_TIMEOUT
+WORKER_INSUFFICIENT_FUNDS
 KEEPER_EXECUTION_FAILED READINESS_UNAVAILABLE WORKER_HEARTBEAT_STALE ORACLE_UNAVAILABLE
 OPEN_EXECUTION_UNAVAILABLE EXIT_MODE_REQUIRES_VALIDATION BUNDLER_UNAVAILABLE
+PROTECTION_TRIGGER_UNAVAILABLE
 SPONSORSHIP_DISABLED PAYMASTER_PAUSED RECONCILIATION_STALE RECONCILER_STALE
 POLICY_DENIED ACCOUNT_NOT_TRUSTED RATE_LIMITED INVALID_REQUEST PROXY_AUTH_FAILED
 SPONSOR_BUDGET_EXCEEDED PER_OPERATION_BUDGET_EXCEEDED OUTSTANDING_BUDGET_EXCEEDED

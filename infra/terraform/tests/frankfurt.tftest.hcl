@@ -267,7 +267,26 @@ run "legacy_identity_unchanged" {
 
 run "frankfurt_aa_qualification" {
   command = plan
+  assert {
+    condition = (
+      length(local.aa_funding_containers) == 1 &&
+      local.aa_funding_containers[0].command == ["node", "/app/protection/funding-main.mjs"] &&
+      !local.aa_funding_containers[0].essential &&
+      alltrue([for s in local.aa_funding_containers[0].secrets : contains(["DATABASE_URL", "PERPS_RPC_URL", "PERPS_RPC_AUTH_TOKEN"], s.name)]) &&
+      one([for env in local.native_aa_environment : env.value if env.name == "AA_FUNDING_INVENTORY_ID"]) == sha256(jsonencode(var.aa_funding_monitors))
+    )
+    error_message = "Funding observer must receive no signer keys and the API must bind evidence to the exact public inventory."
+  }
   variables {
+    aa_funding_monitor_image = "932542905614.dkr.ecr.eu-central-1.amazonaws.com/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    aa_funding_monitors = [
+      { component = "alto", address = "0x1111111111111111111111111111111111111111", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+      { component = "keeper", address = "0x2222222222222222222222222222222222222222", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+      { component = "oracle", address = "0x3333333333333333333333333333333333333333", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+      { component = "liquidation", address = "0x4444444444444444444444444444444444444444", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+      { component = "protection", address = "0x5555555555555555555555555555555555555555", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+      { component = "lp_settlement", address = "0x6666666666666666666666666666666666666666", gasLimit = "30000000", valueWei = "100", feeBufferBps = "2500" },
+    ]
     frankfurt_activation_stage             = "aa-qualification"
     api_desired_count                      = 1
     alto_desired_count                     = 1
@@ -465,4 +484,14 @@ run "frankfurt_aa_prepared" {
     && length(aws_iam_role_policy.api_paymaster_kms_signer) == 0)
     error_message = "Prepared definitions cannot start AA services or enable native API configuration/signing."
   }
+}
+
+run "reject_partial_funding_inventory" {
+  command = plan
+  variables {
+    aa_funding_monitors = [
+      { component = "alto", address = "0x1111111111111111111111111111111111111111", gasLimit = "30000000", valueWei = "0", feeBufferBps = "2500" },
+    ]
+  }
+  expect_failures = [terraform_data.aa_funding_inventory_guard]
 }
