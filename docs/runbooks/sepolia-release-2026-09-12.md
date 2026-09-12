@@ -4,6 +4,71 @@ Target: account `932542905614`, region `ap-southeast-1`, existing
 `plether-sepolia` database and cluster. Application commit:
 `cd417902fa69259d8adc1ef1945ac889615cbb2f` (Core v1.2.3 bindings).
 
+## Latest activation status
+
+PR #259 merged as `f5708225e6da9ce0ba559e538a7036a45df0e697`.
+The owner approved merging further deployment bugfixes after their checks pass;
+this does not replace the exact-run protected deployment approvals below.
+
+- KMS attestation [run 34696997565](https://github.com/Plether-Fi/plether-app/actions/runs/34696997565)
+  passed after explicit approval. The isolated task verified both the public key
+  and fixed-digest signature for Singapore signer
+  `0x714F8C5A4e585c1887eA2CC73b64E1cB75c75779`.
+- The retained recovery import committed successfully, then passed a separate
+  read-only exact-row check. It preserves 33 terminal authorizations, 85 ledger
+  entries, 19 canonical UserOperation events, 17 preparations, 19 retained
+  recovery records, six diagnostic records and the original cursor/health rows.
+  The destination has 28 recovery records, including its nine pre-existing
+  records. Outstanding sponsorship liability is zero; issuance remains paused.
+  The immutable importer hash is
+  `d33042e914460ed21217d6f37782d1a4aecbcce7d0fa00753e6d3f2b2d72afa1`.
+  Import task: `746429c1c6eb4f339937e59c7ad8f265`; successful readback task:
+  `51c59e8b195e47b4b7297b6325995b7a`. Both exited zero. Task-scoped CloudWatch
+  evidence is retained under `/ecs/plether-sepolia`.
+- Canonical verification retained the normal 600-second safe-head ceiling.
+  Earlier failed attempts stopped before writes; the committed import verified
+  all 19 events and cursor hash using safe block `308127943`. The subsequent
+  database readback used read-only transactions without requiring another RPC
+  verification or changing the previously verified importer.
+- The owner-approved paymaster pause confirmed in transaction
+  `0x0b8ed87c3526762828a2aa318a4ca878e235c54b71e2f92717e2313fb3dfb8fb`.
+  Signer rotation confirmed in
+  `0xf79d740cb2d308d33376ddeb65f14910dbcc7ec13c4d154b7eebb2db3b47c078`.
+  Readback verifies the Singapore signer and `paused=true`. The paymaster
+  deposit remains 0.547650471194660308 ETH and the on-chain per-operation cap
+  remains 0.01 ETH. No Core changes or further funding transfers occurred.
+- Alto staging [run 34696999402](https://github.com/Plether-Fi/plether-app/actions/runs/34696999402)
+  initially failed before image publication because simulation addresses were
+  unset. The reviewed Terraform repair changes only the dormant Alto task
+  definition's two bindings to existing contracts:
+  `0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1` and
+  `0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948`. Both have deployed bytecode.
+  No simulation contract was deployed; `ALTO_DEPLOY_SIMULATIONS_CONTRACT`
+  remains false. The owner approved the renewed protected gate. That retry
+  passed configuration/RPC preflight, then failed before image publication:
+  Docker's legacy `manifest inspect` rejected the OCI manifest digest.
+  Independent registry-byte hashing and `buildx imagetools inspect --raw`
+  both reproduce the exact approved digest. The workflow repair uses the raw
+  reader and explicitly hashes both root and selected child manifests; it does
+  not change the pinned image or relax mirror/runtime/scanner checks.
+  Both viem-based probes also require `/app/src`, the pinned image's package
+  workspace, rather than `/app`. The repaired runtime probe verified all three
+  expected on-chain bytecode hashes locally; wallet derivation imports pass
+  with networking disabled. All 75 targeted Node tests pass, including actual-shell cases for correct
+  OCI image/index bytes, mismatches, mutable/malformed references and failed
+  registry reads. Successful corrected staging remains outstanding.
+- A native-configuration plan has been prepared but **not applied**. Alto and
+  reconciler still have desired counts zero; native capability and issuance are
+  not enabled, and the hosted app still uses Pimlico. Unpause requires healthy
+  reconciliation and bundler qualification, not merely successful attestation.
+- Cleanup of the separate temporary audit database and its SSM credential was
+  blocked by the execution safety review; neither was deleted. Both the source
+  recovery snapshot and encrypted Singapore copy remain retained. This cleanup
+  is independent of activation and requires resolving that deletion approval.
+
+The sections below preserve chronological evidence, including earlier states;
+they are not a claim that all activation or performance gates have passed.
+
 ## Completed preparation
 
 - Retained encrypted pre-release snapshot `plether-sepolia-pre-v123-20260912`.

@@ -894,7 +894,27 @@ jobs:
 
           source_root_manifest="$RUNNER_TEMP/alto-source-root-manifest.json"
           source_image_manifest="$RUNNER_TEMP/alto-source-image-manifest.json"
-          docker manifest inspect "$ALTO_UPSTREAM_IMAGE" > "$source_root_manifest"
+          fetch_verified_manifest() {
+            local reference="$1" destination="$2"
+            local expected_digest="${reference##*@}"
+            if [[ ! "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Manifest retrieval requires an explicit SHA-256 digest."
+              return 1
+            fi
+            # The legacy manifest command can reserialize OCI descriptors and
+            # reject their digest. Hash the unmodified registry bytes instead.
+            if ! docker buildx imagetools inspect --raw "$reference" > "$destination"; then
+              echo "::error::Failed to retrieve the pinned registry manifest."
+              return 1
+            fi
+            local actual_digest
+            actual_digest=$(sha256sum "$destination") || return 1
+            if [ "${actual_digest%% *}" != "${expected_digest#sha256:}" ]; then
+              echo "::error::Registry manifest bytes do not match the approved digest."
+              return 1
+            fi
+          }
+          fetch_verified_manifest "$ALTO_UPSTREAM_IMAGE" "$source_root_manifest"
           if jq -e '.manifests | type == "array"' "$source_root_manifest" >/dev/null 2>&1; then
             mapfile -t arm64_digests < <(jq -r \
               '.manifests[]
@@ -907,7 +927,7 @@ jobs:
               exit 1
             fi
             selected_source_image="$ALTO_UPSTREAM_REPOSITORY@${arm64_digests[0]}"
-            docker manifest inspect "$selected_source_image" > "$source_image_manifest"
+            fetch_verified_manifest "$selected_source_image" "$source_image_manifest"
           else
             selected_source_image="$ALTO_UPSTREAM_IMAGE"
             cp "$source_root_manifest" "$source_image_manifest"
@@ -1123,7 +1143,7 @@ jobs:
               --interactive \
               --platform linux/arm64 \
               --read-only \
-              --workdir /app \
+              --workdir /app/src \
               --cap-drop ALL \
               --security-opt no-new-privileges \
               --entrypoint node \
@@ -1219,7 +1239,7 @@ jobs:
               --platform linux/arm64 \
               --network none \
               --read-only \
-              --workdir /app \
+              --workdir /app/src \
               --cap-drop ALL \
               --security-opt no-new-privileges \
               --entrypoint node \
