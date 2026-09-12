@@ -1055,11 +1055,54 @@ jobs:
             --image-id imageDigest="$mirrored_digest" \
             --output json \
             --no-cli-pager)
-          critical_findings=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' \
-            <<< "$scan_findings")
-          if [ "$critical_findings" -ne 0 ]; then
-            echo "::error title=Alto image scan failed::The approved image currently has ${critical_findings} critical ECR scan finding(s)."
-            exit 1
+          scan_policy=$(jq -ce \
+            --arg environment "$TARGET_ENV" \
+            --arg region "$AWS_REGION" \
+            --arg account "$EXPECTED_AWS_ACCOUNT_ID" \
+            --arg repository "$ECR_REPOSITORY" \
+            --arg digest "$mirrored_digest" \
+            --arg upstream "$ALTO_UPSTREAM_DIGEST" \
+            --argjson now "$(date -u +%s)" \
+            '
+            def uint: type == "number" and . >= 0 and floor == .;
+            def package_attribute($key; $value):
+              [.attributes[]? | select(.key == $key)]
+              | length == 1 and .[0].value == $value;
+            if .registryId != $account or .repositoryName != $repository
+              or .imageId.imageDigest != $digest
+              or .imageScanStatus.status != "COMPLETE"
+              or (.nextToken != null and .nextToken != "")
+              or (.imageScanFindings.findings | type) != "array"
+              or (.imageScanFindings.findingSeverityCounts | type) != "object"
+            then error("Incomplete or mismatched Alto scan evidence") else . end
+            | .imageScanFindings as $scan
+            | (if $scan.findingSeverityCounts | has("CRITICAL")
+               then $scan.findingSeverityCounts.CRITICAL else 0 end) as $critical_count
+            | if ($critical_count | uint) and all($scan.findings[];
+                (.name | type == "string" and length > 0)
+                and (.severity | IN("INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL", "UNDEFINED")))
+              then . else error("Malformed Alto scan findings") end
+            | [$scan.findings[] | select(.severity == "CRITICAL")] as $critical
+            | if ($critical | length) == $critical_count then .
+              else error("Alto critical finding count does not match detailed evidence") end
+            # Owner-approved temporary exception: this is risk acceptance, not
+            # a finding suppression or a claim that the runtime is unaffected.
+            | ($environment == "sepolia" and $region == "ap-southeast-1"
+                and $account == "932542905614" and $repository == "plether-alto-sepolia"
+                and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
+                and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
+                and ($now | uint) and $now >= 1789171200 and $now < 1789776000) as $exception_scope
+            | [$critical[] | select($exception_scope
+                and .name == "CVE-2024-5535"
+                and package_attribute("package_name"; "openssl")
+                and package_attribute("package_version"; "3.1.4-r5"))] as $accepted
+            | if ($critical | length) != ($accepted | length) or ($accepted | length) > 1
+              then error("Alto image has an unaccepted critical finding")
+              else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
+            ' <<< "$scan_findings")
+          if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
+            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-09-19 00:00 UTC. The finding remains visible; other critical findings still block deployment."
+            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-09-19 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
