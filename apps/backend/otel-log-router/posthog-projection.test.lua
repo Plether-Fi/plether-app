@@ -1,4 +1,8 @@
 dofile('posthog-projection.lua')
+local _,_,gas = project_posthog('test',0,{event='aa_preparation_gas_headroom',gas_headroom_bps=5000,estimated_call_gas=419155,calldata='secret'})
+assert(gas.event=='aa_preparation_gas_headroom' and gas.gas_headroom_bps==5000 and gas.estimated_call_gas==nil and gas.calldata==nil)
+local _,_,oog = project_posthog('test',0,{event='aa_execution_diagnosed',reason_code='USER_OPERATION_OUT_OF_GAS',trace={input='secret'}})
+assert(oog.reason_code=='USER_OPERATION_OUT_OF_GAS' and oog.trace==nil)
 local raw = {
   event='keeper_transaction_failed', SeverityText='ERROR', error='secret raw payload',
   order_ids={8}, signer_balance_wei=1234, transaction_hash='0xdead',

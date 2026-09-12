@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { parseReadiness, readinessBlocker, readinessChecks, readinessWorkers, type ReadinessSnapshot } from '../readiness'
+import { parseReadiness, readinessBlocker, readinessChecks, readinessWorkers, readinessMessage, type ReadinessSnapshot } from '../readiness'
 import { requireDeadlineHeadroom } from '../deadline'
 import { sanitizeAnalyticsProperties, sanitizeFrontendLogAttributes } from '../../analytics/client'
 
 const sample = (): ReadinessSnapshot => ({ version: 1, observedAt: 100_000, expiresAt: 115_000, enforcementEnabled: true,
   actions: { deposit: [{ component: 'sponsorship', status: 'ready', reason: 'READY' }], open: [{ component: 'keeper', status: 'blocked', reason: 'KEEPER_INSUFFICIENT_FUNDS' }], close: [{ component: 'keeper', status: 'unknown', reason: 'WORKER_HEARTBEAT_STALE' }], protection: [{ component: 'oracle', status: 'unknown', reason: 'ORACLE_UNAVAILABLE' }] } })
 describe('trading readiness', () => {
+  it('explains verified historical gas failure without blaming funding or current readiness', () => {
+    expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('ran out of execution gas')
+    expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('separately completed transfer')
+    expect(readinessMessage('USER_OPERATION_REVERTED')).toContain('could not be verified')
+  })
   it('blocks only fresh confirmed blockers with enforcement on', () => {
     expect(readinessBlocker(sample(), 'open', 110_000)?.reason).toBe('KEEPER_INSUFFICIENT_FUNDS')
     expect(readinessBlocker(sample(), 'close', 110_000)).toBeUndefined()

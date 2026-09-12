@@ -13,13 +13,16 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.AA.Preparation
 import qualified Plether.AA.Pimlico as Legacy
 import Plether.AA.EvidenceCache
-import Plether.AA.Gateway (advanceEvidenceSnapshots, attestNativePaymasterProfile)
+import Plether.AA.Gateway (advanceEvidenceSnapshots, attestNativePaymasterProfile, buildPreparedOperation)
+import Plether.AA.Timing (newTiming)
+import qualified Plether.AA.Paymaster as Paymaster
 import Plether.AA.PaymasterSpec (fixtureConfig)
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Ethereum.Client (newClient)
 import Network.Wai (strictRequestBody, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Types (status200)
+import Network.HTTP.Client (newManager, defaultManagerSettings)
 import System.Timeout (timeout)
 import Numeric (showHex)
 import Plether.Ethereum.Abi (encodeCall, encodeAddress, encodeUint256)
@@ -27,6 +30,69 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "bounded native execution gas headroom" $ do
+    it "covers the historical reverted deposit" $
+      executionGasWithHeadroom 419_155 `shouldBe` Right 628_733
+    it "rounds up and applies a minimum 100,000 gas allowance" $ do
+      executionGasWithHeadroom 1 `shouldBe` Right 100_001
+      executionGasWithHeadroom 100_000 `shouldBe` Right 200_000
+      executionGasWithHeadroom 200_000 `shouldBe` Right 300_000
+      executionGasWithHeadroom 200_001 `shouldBe` Right 300_002
+    it "rejects rather than clips requirements above the hard cap" $ do
+      executionGasWithHeadroom 1_333_333 `shouldBe` Right 2_000_000
+      mapM_ (\gas -> executionGasWithHeadroom gas `shouldSatisfy` isLeft)
+        [-1,0,1_333_334,2_000_000,2^(128::Int)]
+    it "prepares with exactly two Alto calls and one nonce read, preserving other gas fields" $ do
+      calls <- newIORef ([] :: [T.Text])
+      let app request respond = do
+            bytes <- strictRequestBody request
+            case eitherDecode bytes of
+              Right (Object input) | Just (String method) <- KM.lookup "method" input -> do
+                atomicModifyIORef' calls $ \xs -> (method:xs,())
+                let result = case method of
+                      "pimlico_getUserOperationGasPrice" -> object ["fast" .= object
+                        ["maxFeePerGas" .= ("0x3b9aca00" :: T.Text), "maxPriorityFeePerGas" .= ("0x1" :: T.Text)]]
+                      "eth_call" -> String $ "0x" <> T.replicate 64 "0"
+                      "eth_estimateUserOperationGas" -> object
+                        ["callGasLimit" .= ("0x66553" :: T.Text), "verificationGasLimit" .= ("0x7815" :: T.Text), "preVerificationGas" .= ("0xd734" :: T.Text)]
+                      _ -> Null
+                respond $ responseLBS status200 [] $ encode $ object
+                  ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input, "result" .= result]
+              _ -> respond $ responseLBS status200 [] "{}"
+      testWithApplication (pure app) $ \port -> do
+        let url = "http://127.0.0.1:" <> T.pack (show port)
+            cfg = fixtureConfig {naaAltoRpcUrl=url, naaPostOpGasLimit=0}
+        client <- newClient url
+        manager <- newManager defaultManagerSettings
+        timing <- newTiming
+        let intent = PreparationIntent "id" address (hex callData) Nothing Nothing
+        result <- buildPreparedOperation timing cfg client manager intent
+        case result of
+          Left err -> expectationFailure $ show err
+          Right op -> do
+            KM.lookup "callGasLimit" op `shouldBe` Just (String "0x997fd")
+            KM.lookup "verificationGasLimit" op `shouldBe` Just (String "0x7815")
+            KM.lookup "preVerificationGas" op `shouldBe` Just (String "0xd734")
+            KM.lookup "paymasterPostOpGasLimit" op `shouldBe` Just (String "0x0")
+            KM.lookup "signature" op `shouldBe` Nothing
+            case Paymaster.parsePackedUserOperation op of
+              Left err -> expectationFailure $ T.unpack err
+              Right parsed -> do
+                Paymaster.puoCallGasLimit parsed `shouldBe` 628_733
+                let provisional = Paymaster.makeSponsorshipEnvelope cfg 10 100 (naaMaxCostWei cfg) BS.empty
+                    unpadded = parsed {Paymaster.puoCallGasLimit=419_155}
+                    liability = Paymaster.maximumUserOperationCost parsed provisional
+                    envelope = Paymaster.makeSponsorshipEnvelope cfg 10 100 liability Paymaster.dummyPaymasterSignature
+                liability - Paymaster.maximumUserOperationCost unpadded provisional
+                  `shouldBe` (628_733-419_155) * Paymaster.puoMaxFeePerGas parsed
+                Paymaster.seMaxCost envelope `shouldBe` liability
+                Paymaster.sponsorshipDigest parsed envelope `shouldNotBe` Paymaster.sponsorshipDigest unpadded envelope
+                Paymaster.userOperationHash (Paymaster.applyPaymasterEnvelope parsed envelope)
+                  `shouldNotBe` Paymaster.userOperationHash (Paymaster.applyPaymasterEnvelope unpadded envelope)
+        observed <- readIORef calls
+        length observed `shouldBe` 3
+        mapM_ (\method -> length (filter (==method) observed) `shouldBe` 1)
+          ["pimlico_getUserOperationGasPrice","eth_call","eth_estimateUserOperationGas"]
   describe "native preparation intent" $ do
     it "uses numeric IDs compatible with the pinned Alto request schema" $
       case internalRequest "pimlico_getUserOperationGasPrice" [] of

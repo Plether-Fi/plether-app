@@ -14,6 +14,7 @@ end
 -- or provider credential must not become an event, stage or reason label.
 local events = set([[
 aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed
+aa_preparation_gas_headroom aa_execution_diagnosed
 worker_funding_observation worker_funding_monitor_failed
 aa_order_execution_attempt_failed aa_diagnostic_export_dropped aa_diagnostic_queue_full
 aa_diagnostic_link_unavailable aa_preparation_timing aa_native_signer_failure
@@ -61,11 +62,13 @@ ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
 AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
+USER_OPERATION_OUT_OF_GAS
 ]]),
 }
 local numbers = {
   duration_ms=true, retry_count=true, occurrence_count=true, suppressed_count=true,
   http_status=true, request_count=true, failure_count=true,
+  gas_headroom_bps=true, gas_utilization_bps=true,
 }
 local resources = {
   ["service.name"]=true, ["service.version"]=true,

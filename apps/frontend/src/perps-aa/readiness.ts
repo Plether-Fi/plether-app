@@ -125,6 +125,8 @@ const messages: Record<string, string> = {
   FUNDING_UNVERIFIED: 'Execution funding could not be verified.',
   KEEPER_RPC_TIMEOUT: 'An execution attempt timed out while communicating with the chain.',
   KEEPER_EXECUTION_FAILED: 'The execution worker recorded an unsuccessful attempt. A more specific cause is unavailable.',
+  USER_OPERATION_OUT_OF_GAS: 'This operation ran out of execution gas. The action reverted; any separately completed transfer remains in your Trading Account.',
+  USER_OPERATION_REVERTED: 'The operation reverted onchain. A more specific historical cause could not be verified.',
   READINESS_UNAVAILABLE: 'Trading status is unavailable. Existing transaction security checks still apply.',
 }
 export function readinessMessage(reason: string) { return messages[reason] ?? 'A trading dependency could not be verified.' }

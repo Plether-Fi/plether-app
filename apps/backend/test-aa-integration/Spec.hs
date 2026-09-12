@@ -21,6 +21,7 @@ import Database.PostgreSQL.Simple
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
+import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
 import Plether.Database.AaPreparation
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
@@ -262,7 +263,7 @@ aaIntegrationSpec databaseUrl =
     it "fences preparation leases across instances and persists immutable work" $
       withFixture databaseUrl $ \first -> withPeerConnection databaseUrl $ \second -> do
         let client = clientKeyOf 'a'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'
-            operation = object ["nonce" .= ("0x1" :: Text)]
+            operation = object ["nonce" .= ("0x1" :: Text),"callGasLimit" .= ("0x997fd" :: Text)]
         claimPreparation first False client sender identifier intent "worker-a" `shouldReturn` PreparationDisabled
         claimPreparation first True client sender identifier intent "worker-a" `shouldReturn` PreparationClaimed Nothing
         claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationBusy
@@ -273,7 +274,9 @@ aaIntegrationSpec databaseUrl =
         claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationClaimed (Just operation)
         releasePreparation first client sender identifier "worker-a"
         claimPreparation first True client sender identifier intent "worker-c" `shouldReturn` PreparationBusy
-        savePreparedOperation second client sender identifier "worker-b" (object []) `shouldReturn` False
+        -- A restarted worker must not apply the headroom multiplier a second time.
+        savePreparedOperation second client sender identifier "worker-b"
+          (object ["nonce" .= ("0x1" :: Text),"callGasLimit" .= ("0xe63fc" :: Text)]) `shouldReturn` False
         releasePreparation second client sender identifier "worker-b"
         claimPreparation first False client sender identifier intent "worker-c" `shouldReturn` PreparationClaimed (Just operation)
         void $ execute_ first "UPDATE aa_preparations SET expires_at=clock_timestamp()-interval '1 second'"
@@ -338,6 +341,38 @@ aaIntegrationSpec databaseUrl =
           claimOrderDiagnostics conn chainId router `shouldReturn` []
         rows <- query_ conn "SELECT order_id,stage FROM aa_attempt_diagnostics" :: IO [(Integer,Text)]
         rows `shouldBe` [(8,"committed")]
+        ledger <- query_ conn "SELECT entry_type,amount_wei::text FROM aa_sponsorship_ledger ORDER BY entry_type" :: IO [(Text,Text)]
+        ledger `shouldBe` [("actual_charge","400"),("release","600"),("reserve","1000")]
+
+    it "fences failed execution diagnostic claims and deduplicates completion without changing liabilities" $
+      withFixture databaseUrl $ \conn -> withPeerConnection databaseUrl $ \peer -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        let operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash authorization
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+            router = addressOf 'f'; client = clientKeyOf '5'; sender = addressOf '1'; identifier = hashOf 'd'
+        claimPreparation conn True client sender identifier (hashOf 'c') "prep" `shouldReturn` PreparationClaimed Nothing
+        savePreparedOperation conn client sender identifier "prep" (object ["callData" .= ("0x34fcd5be" :: Text)]) `shouldReturn` True
+        linkPreparation conn client sender identifier "prep" (saDigest authorization) `shouldReturn` True
+        void $ execute conn
+          "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,preparation_id,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,?,'user_operation_reverted')"
+          (attempt,client,chainId,router,identifier,operationHash,sender)
+        claimExecutionDiagnostics conn chainId router `shouldReturn` []
+        settleSponsorship conn (saDigest authorization) operationHash (hashOf 'b') 101 (hashOf 'c') False 400 (object [])
+          `shouldReturn` Right ()
+        claimExecutionDiagnostics conn (chainId+1) router `shouldReturn` []
+        (a,b) <- concurrently (claimExecutionDiagnostics conn chainId router) (claimExecutionDiagnostics peer chainId router)
+        length (a++b) `shouldBe` 1
+        let (_,_,_,_,_,_,oldLease) = head $ a++b
+        void $ execute_ conn "UPDATE aa_attempt_diagnostics SET correlation_checked_at=clock_timestamp()-interval '6 minutes'"
+        retried <- claimExecutionDiagnostics peer chainId router
+        length retried `shouldBe` 1
+        let (_,_,_,_,_,_,newLease) = head retried
+        completeExecutionDiagnostic conn attempt oldLease "USER_OPERATION_OUT_OF_GAS" `shouldReturn` False
+        completeExecutionDiagnostic peer attempt newLease "USER_OPERATION_OUT_OF_GAS" `shouldReturn` True
+        completeExecutionDiagnostic conn attempt newLease "USER_OPERATION_OUT_OF_GAS" `shouldReturn` False
+        claimExecutionDiagnostics conn chainId router `shouldReturn` []
         ledger <- query_ conn "SELECT entry_type,amount_wei::text FROM aa_sponsorship_ledger ORDER BY entry_type" :: IO [(Text,Text)]
         ledger `shouldBe` [("actual_charge","400"),("release","600"),("reserve","1000")]
 
