@@ -3085,6 +3085,8 @@ export function PerpsTradeTicket({
   const reviewValidationError = enableLiveTrading
     ? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
     : orderQuantityValidationError
+  const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
+    ? undefined : reviewValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
   )
@@ -4782,12 +4784,6 @@ export function PerpsTradeTicket({
                     <p className="mt-3 text-sm text-content-secondary">
                       Deriving protections from one coherent block…
                     </p>
-                  ) : enableLiveTrading && executionProtectionsError ? (
-                    <div className="mt-3">
-                      <p className="text-sm text-brand-orange">
-                        {executionProtectionsError}
-                      </p>
-                    </div>
                   ) : displayedExecutionProtections ? (
                     <div className="mt-3">
                       <PreviewRows rows={[
@@ -4837,9 +4833,9 @@ export function PerpsTradeTicket({
                 </p>
               ) : null}
 
-              {reviewValidationError ? (
+              {reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
-                  {reviewValidationError}
+                  {reviewBodyValidationError}
                   {!isCorrectChain ? (
                     <>
                       <Button

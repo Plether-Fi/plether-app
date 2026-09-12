@@ -290,7 +290,7 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n} />
     )
-    await screen.findAllByText('This review has expired or is about to expire. Retry review for fresh order terms.')
+    expect(await within(screen.getByRole('dialog')).findByText('This review has expired or is about to expire. Retry review for fresh order terms.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
     fireEvent.click(screen.getAllByRole('button', { name: 'Retry review' })[0])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
