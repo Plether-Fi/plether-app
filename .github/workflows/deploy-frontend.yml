@@ -312,7 +312,13 @@ jobs:
             --write-out '%{http_code}' \
             "$backend_origin/api/health")
           if [ "$health_status" != "200" ] || \
-             ! jq --exit-status '.status == "ok"' "$health_body" >/dev/null; then
+             ! jq --exit-status '
+               # The current API encodes its health object as a JSON string.
+               # Accept that single legacy wrapper or a proper object, while
+               # rejecting malformed, unhealthy and repeatedly encoded bodies.
+               (if type == "string" then fromjson else . end)
+               | type == "object" and .status == "ok"
+             ' "$health_body" >/dev/null; then
             echo "::error title=Sepolia backend not ready::The intended API origin did not pass its exact health check."
             exit 1
           fi
