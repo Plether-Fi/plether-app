@@ -13,6 +13,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Config (Config)
 import Plether.Ethereum.Client (EthClient)
 import Plether.AA.OrderDiagnostics (recoverOrderDiagnostics)
+import Plether.AA.ExecutionDiagnostics (recoverExecutionDiagnostics, gasUtilizationBps)
 import Plether.Database.AaSponsorship (consumeAaRateLimit)
 import Plether.Logging (field, logWarnEvery, logInfo)
 import System.Timeout (timeout)
@@ -35,6 +36,15 @@ startDiagnostics :: Config -> DbPool -> EthClient -> IO DiagnosticSink
 startDiagnostics cfg pool client = do
   queue <- newTBQueueIO 256
   void $ forkIO $ forever $ do
+    result <- try $ timeout 20_000_000 $ recoverExecutionDiagnostics cfg pool client
+    case result of
+      Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> dropped
+      Right Nothing -> dropped
+      Right (Just ()) -> pure ()
+    threadDelay 10_000_000
+  void $ forkIO $ forever $ do
     result <- try $ timeout 20_000_000 $ recoverOrderDiagnostics cfg pool client
     case result of
       Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
@@ -52,9 +62,10 @@ startDiagnostics cfg pool client = do
       forM_ rows $ \(Only attempt) -> logInfo "aa_attempt_prepared" "Recovered prepared operation diagnostic"
         [field "attempt_id" attempt, field "stage" ("prepared" :: Text)]
       outcomes <- query_ conn
-        "UPDATE aa_attempt_diagnostics d SET stage=CASE WHEN a.state='expired' THEN 'authorization_expired' WHEN e.success=false THEN 'user_operation_reverted' ELSE 'user_operation_confirmed' END,reason=CASE WHEN a.state='expired' THEN 'AUTHORIZATION_EXPIRED' WHEN e.success=false THEN 'USER_OPERATION_REVERTED' ELSE d.reason END,terminal_at=CASE WHEN a.state='expired' OR e.success=false THEN COALESCE(d.terminal_at,clock_timestamp()) ELSE d.terminal_at END,updated_at=clock_timestamp() FROM aa_sponsorship_authorizations a LEFT JOIN aa_user_operation_events e ON e.user_operation_hash=a.expected_user_operation_hash WHERE d.operation_hash=a.expected_user_operation_hash AND d.client_key=a.client_key AND d.sender=a.sender AND d.order_id IS NULL AND d.stage='prepared' AND (a.state='expired' OR (a.state='settled' AND e.finalized_at IS NOT NULL)) RETURNING d.attempt_id::text,d.stage,d.reason" :: IO [(Text,Text,Maybe Text)]
-      forM_ outcomes $ \(attempt,stage,reason) -> logInfo "aa_recovery_outcome" "Safely reconciled sponsored operation"
-        [field "attempt_id" attempt, field "stage" stage, field "reason_code" reason]
+        "UPDATE aa_attempt_diagnostics d SET stage=CASE WHEN a.state='expired' THEN 'authorization_expired' WHEN e.success=false THEN 'user_operation_reverted' ELSE 'user_operation_confirmed' END,reason=CASE WHEN a.state='expired' THEN 'AUTHORIZATION_EXPIRED' WHEN e.success=false THEN 'USER_OPERATION_REVERTED' ELSE d.reason END,terminal_at=CASE WHEN a.state='expired' OR e.success=false THEN COALESCE(d.terminal_at,clock_timestamp()) ELSE d.terminal_at END,updated_at=clock_timestamp() FROM aa_sponsorship_authorizations a LEFT JOIN aa_user_operation_events e ON e.user_operation_hash=a.expected_user_operation_hash WHERE d.operation_hash=a.expected_user_operation_hash AND d.client_key=a.client_key AND d.sender=a.sender AND d.order_id IS NULL AND d.stage='prepared' AND (a.state='expired' OR (a.state='settled' AND e.finalized_at IS NOT NULL)) RETURNING d.attempt_id::text,d.stage,d.reason,a.operation,e.event_json" :: IO [(Text,Text,Maybe Text,Value,Maybe Value)]
+      forM_ outcomes $ \(attempt,stage,reason,operation,event) -> logInfo "aa_recovery_outcome" "Safely reconciled sponsored operation"
+        [field "attempt_id" attempt, field "stage" stage, field "reason_code" reason,
+         field "gas_utilization_bps" $ event >>= gasUtilizationBps operation]
     case result of
       Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err

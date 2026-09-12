@@ -171,6 +171,14 @@ run "public_sepolia" {
     condition     = length(local.aa_funding_containers) == 1 && local.aa_funding_containers[0].essential == false && length(local.aa_funding_components) == 6 && !contains([for s in local.aa_funding_containers[0].secrets : s.name], "PRIVATE_KEY")
     error_message = "Public funding observer must be nonessential, complete and without signing authority."
   }
+  assert {
+    condition = (
+      aws_cloudwatch_log_metric_filter.aa_execution_out_of_gas[0].pattern == "{ $.event = \"aa_execution_diagnosed\" && $.reason_code = \"USER_OPERATION_OUT_OF_GAS\" }" &&
+      aws_cloudwatch_metric_alarm.aa_execution_out_of_gas[0].threshold == 1 &&
+      aws_cloudwatch_metric_alarm.aa_execution_out_of_gas[0].treat_missing_data == "notBreaching"
+    )
+    error_message = "Only verified historical execution OOG must trigger the new alarm; missing traces are not OOG evidence."
+  }
 }
 run "reject_public_without_funding" {
   command = plan

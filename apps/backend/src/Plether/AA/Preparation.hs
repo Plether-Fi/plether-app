@@ -1,5 +1,6 @@
 module Plether.AA.Preparation
-  ( PreparationIntent (..), parsePreparationIntent, unsignedSkeleton, intentHash, matchesIntent, internalRequest ) where
+  ( PreparationIntent (..), parsePreparationIntent, unsignedSkeleton, intentHash, matchesIntent, internalRequest
+  , gasPolicyVersion, executionGasWithHeadroom ) where
 
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, encode, (.=))
@@ -18,6 +19,21 @@ data PreparationIntent = PreparationIntent
   { piIdentifier :: Text, piSender :: Text, piCallData :: Text
   , piFactory :: Maybe Text, piFactoryData :: Maybe Text
   } deriving stock (Eq, Show)
+
+-- Applied ONLY to a fresh Alto estimate, before immutable preparation storage.
+-- Changing this identifier requires a new reviewed preparation, never a rewrite
+-- of a persisted/signed operation or its reservation.
+gasPolicyVersion :: Text
+gasPolicyVersion = "execution-headroom-v1-150pct-min100000"
+
+executionGasWithHeadroom :: Integer -> Either Text Integer
+executionGasWithHeadroom estimated = do
+  unless (estimated > 0 && estimated <= 2_000_000) $
+    Left "Invalid execution gas estimate"
+  let padded = max ((estimated * 3 + 1) `div` 2) (estimated + 100_000)
+  unless (padded <= 2_000_000) $
+    Left "Execution gas including headroom exceeds the reviewed sponsorship bounds"
+  pure padded
 
 parsePreparationIntent :: [Value] -> Either Legacy.ProxyFailure PreparationIntent
 parsePreparationIntent [Object fields] = do

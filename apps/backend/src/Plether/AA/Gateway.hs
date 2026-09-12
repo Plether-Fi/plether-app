@@ -15,6 +15,7 @@ module Plether.AA.Gateway
   , SecurityBlockHeader (..)
   , validateSecurityHeaderTime
   , advanceEvidenceSnapshots
+  , buildPreparedOperation
   ) where
 
 import Control.Exception (SomeException, try)
@@ -459,7 +460,8 @@ preparationProfileFingerprint :: NativeAaConfig -> Text
 preparationProfileFingerprint cfg = T.intercalate ":"
   [naaPaymasterAddress cfg, naaPaymasterCodeHash cfg, naaPolicyId cfg,
    naaSignerAddress cfg, naaAccountCodeHash cfg, aaRpcModeText $ naaRpcMode cfg,
-   T.pack $ show (naaVerificationGasLimit cfg, naaPostOpGasLimit cfg, naaMaxCostWei cfg, naaValiditySeconds cfg)]
+   T.pack $ show (naaVerificationGasLimit cfg, naaPostOpGasLimit cfg, naaMaxCostWei cfg, naaValiditySeconds cfg),
+   Preparation.gasPolicyVersion]
 
 timeContext :: MonadIO m => NativeSecurityContext -> Text -> m a -> m a
 timeContext context stage action = maybe action (\timing -> timed timing stage action) $ nscTiming context
@@ -494,8 +496,18 @@ buildPreparedOperation timing cfg client manager intent = runExceptT $ do
         ["callGasLimit", "verificationGasLimit", "preVerificationGas"]
   estimates <- ExceptT $ altoTimed "estimation" "eth_estimateUserOperationGas" [Object estimateObject, String nativeEntryPoint]
   gas <- case estimates of
-    Object values -> traverse (\name -> (name,) . String . Paymaster.canonicalQuantity <$> quantity values name)
-      ["callGasLimit","verificationGasLimit","preVerificationGas"]
+    Object values -> do
+      estimated <- quantity values "callGasLimit"
+      padded <- ExceptT $ pure $ firstInvalidParams $ Preparation.executionGasWithHeadroom estimated
+      rest <- traverse (\name -> (name,) . String . Paymaster.canonicalQuantity <$> quantity values name)
+        ["verificationGasLimit","preVerificationGas"]
+      liftIO $ logInfo "aa_preparation_gas_headroom" "Applied bounded execution gas headroom"
+        [field "request_id" $ timingIdentifier timing,
+         field "estimated_call_gas" estimated, field "prepared_call_gas" padded,
+         field "gas_headroom_bps" $ (padded - estimated) * 10_000 `div` estimated]
+      -- Alto v1.2.7 sizes execution PVG with maximum-value fixed-width gas
+      -- words; retain its Arbitrum data-fee estimate rather than re-estimating.
+      pure $ ("callGasLimit", String $ Paymaster.canonicalQuantity padded) : rest
     _ -> throwE $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned invalid gas estimates"
   let finalObject = KM.delete "signature" $ foldr (uncurry KM.insert) skeleton $
         gas ++ [("paymasterVerificationGasLimit",String $ Paymaster.canonicalQuantity $ naaVerificationGasLimit cfg),

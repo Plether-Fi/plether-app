@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process'
 for (const [container,event,reason] of [
   ['plether-keeper','keeper_transaction_failed','KEEPER_INSUFFICIENT_FUNDS'],
   ['plether-funding-monitor','worker_funding_observation','WORKER_INSUFFICIENT_FUNDS'],
+  ['plether-api','aa_execution_diagnosed','USER_OPERATION_OUT_OF_GAS'],
 ]) test(`real Fluent Bit preserves CloudWatch and redacts PostHog for ${container}`, { skip: !process.env.AA_LOG_ROUTER_TEST_IMAGE }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'plether-log-routing-'))
   try {

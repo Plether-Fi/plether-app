@@ -87,6 +87,15 @@ jobs:
         working-directory: .
         run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs
 
+      - name: Install pinned local EVM for AA execution regressions
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.5.1
+
+      - name: Require real-contract AA execution regressions (offline)
+        working-directory: .
+        run: node --test scripts/aa-execution-regression.test.mjs
+
       - name: Install Insights story dependencies
         working-directory: apps/insights
         run: npm ci

@@ -1,3 +1,31 @@
+resource "aws_cloudwatch_log_metric_filter" "aa_execution_out_of_gas" {
+  count          = local.native_aa_backend_configured ? 1 : 0
+  name           = "plether-${local.deployment_name}-aa-execution-out-of-gas"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+  pattern        = "{ $.event = \"aa_execution_diagnosed\" && $.reason_code = \"USER_OPERATION_OUT_OF_GAS\" }"
+  metric_transformation {
+    name      = "AaExecutionOutOfGas-${local.deployment_name}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "aa_execution_out_of_gas" {
+  count               = local.native_aa_backend_configured ? 1 : 0
+  alarm_name          = "plether-${local.deployment_name}-aa-execution-out-of-gas"
+  alarm_description   = "A safely reconciled sponsored operation has a verified execution out-of-gas trace."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.aa_execution_out_of_gas[0].metric_transformation[0].name
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
 resource "aws_cloudwatch_log_metric_filter" "aa_sponsored_gas_alert" {
   count = local.aa_gateway_enabled ? 1 : 0
 
