@@ -24,6 +24,22 @@ test('Alto checks out the exact reviewed policy before invoking repository files
   assert.match(step, /sparse-checkout: \.github\/scripts/)
 })
 
+test('backend public AA gate loads policy without cleaning generated task files', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-backend.yml', root), 'utf8')
+  const deploy = source.split('\n  deploy:\n')[1]
+  const checkout = deploy.indexOf('- name: Check out reviewed public AA deployment policy')
+  const gate = deploy.indexOf('- name: Require active Alto with reviewed validation policy for public native API')
+  assert.ok(checkout > 0 && gate > checkout)
+  const step = deploy.slice(checkout, gate)
+  assert.match(step, /uses: actions\/checkout@[0-9a-f]{40}/)
+  assert.match(step, /ref: \$\{\{ github.sha \}\}/)
+  assert.match(step, /persist-credentials: false/)
+  assert.match(step, /sparse-checkout: \.github\/scripts/)
+  assert.match(step, /path: deployment-policy/)
+  assert.match(step, /matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'/)
+  assert.match(deploy.slice(gate), /jq -e -f deployment-policy\/\.github\/scripts\/validate-aa-public-alto\.jq public-alto-task.json/)
+})
+
 test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
   const section = source.split('scan_policy=$(jq -ce')[1]
