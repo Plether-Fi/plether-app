@@ -51,7 +51,10 @@ this does not replace the exact-run protected deployment approvals below.
   both reproduce the exact approved digest. The workflow repair uses the raw
   reader and explicitly hashes both root and selected child manifests; it does
   not change the pinned image or relax mirror/runtime/scanner checks.
-  All 74 targeted Node tests pass, including actual-shell cases for correct
+  Both viem-based probes also require `/app/src`, the pinned image's package
+  workspace, rather than `/app`. The repaired runtime probe verified all three
+  expected on-chain bytecode hashes locally; wallet derivation imports pass
+  with networking disabled. All 75 targeted Node tests pass, including actual-shell cases for correct
   OCI image/index bytes, mismatches, mutable/malformed references and failed
   registry reads. Successful corrected staging remains outstanding.
 - A native-configuration plan has been prepared but **not applied**. Alto and

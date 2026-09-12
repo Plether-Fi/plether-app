@@ -1143,7 +1143,7 @@ jobs:
               --interactive \
               --platform linux/arm64 \
               --read-only \
-              --workdir /app \
+              --workdir /app/src \
               --cap-drop ALL \
               --security-opt no-new-privileges \
               --entrypoint node \
@@ -1239,7 +1239,7 @@ jobs:
               --platform linux/arm64 \
               --network none \
               --read-only \
-              --workdir /app \
+              --workdir /app/src \
               --cap-drop ALL \
               --security-opt no-new-privileges \
               --entrypoint node \

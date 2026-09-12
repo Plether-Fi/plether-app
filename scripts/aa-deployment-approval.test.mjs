@@ -9,6 +9,19 @@ import { join } from 'node:path'
 const root = new URL('../', import.meta.url)
 const workflows = ['deploy-backend', 'deploy-alto', 'aa-admin']
 
+test('Alto viem probes resolve dependencies from the packaged source workspace', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const probes = source.split(/runtime_code_hashes=\$\(|wallet_addresses=\$\(/).slice(1, 3)
+  assert.equal(probes.length, 2)
+  for (const probe of probes) {
+    const command = probe.split("--eval '")[0]
+    assert.match(command, /--workdir \/app\/src \\\n/)
+    assert.match(command, /--read-only/)
+    assert.match(command, /--cap-drop ALL/)
+    assert.match(command, /--security-opt no-new-privileges/)
+  }
+})
+
 test('Alto verifies raw registry bytes against the pinned root and child digests', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
   const helper = source.match(/          fetch_verified_manifest\(\) \{[\s\S]*?\n          \}/)?.[0]
