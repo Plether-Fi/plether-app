@@ -7,6 +7,13 @@ const identityMocks = vi.hoisted(() => ({
   usdcSupportsEip3009: false,
 }))
 
+const maxQuoteMocks = vi.hoisted(() => ({
+  value: {} as Record<string, unknown>,
+}))
+vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
+  usePerpsMaxOpenQuote: () => maxQuoteMocks.value,
+}))
+
 const wagmiMocks = vi.hoisted(() => ({
   readContractsData: undefined as readonly unknown[] | undefined,
 }))
@@ -165,6 +172,11 @@ vi.mock('../../hooks', () => ({
 
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
+    maxQuoteMocks.value = {
+      quote: { maxSizeDelta: 400n * 10n ** 18n, preview: { valid: true } },
+      marginDelta: 99_800_000n,
+      isPending: false, isFetching: false,
+    }
     globalThis.localStorage.clear()
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
@@ -278,7 +290,7 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n} />
     )
-    await screen.findAllByText('This review has expired or is about to expire. Retry review for fresh order terms.')
+    expect(await within(screen.getByRole('dialog')).findByText('This review has expired or is about to expire. Retry review for fresh order terms.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
     fireEvent.click(screen.getAllByRole('button', { name: 'Retry review' })[0])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
@@ -1247,7 +1259,11 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox')).toHaveValue('1 500')
   })
 
-  it('fills an opening Max immediately from available funding and market capacity', () => {
+  it('fills an opening Max from the lens quote', () => {
+    mockIsConnected = true
+    maxQuoteMocks.value = { ...maxQuoteMocks.value,
+      quote: { maxSizeDelta: 700n * 10n ** 18n, preview: { valid: true } },
+    }
     render(
       <PerpsTradeTicket
         enableLiveTrading
@@ -1261,13 +1277,28 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Max: 700 plDXY' }))
 
-    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('700')
     expect(screen.queryByText(/calculating executable max/i)).not.toBeInTheDocument()
   })
 
-  it('reviews and commits the adjusted Max quantity even when its instant preview is underfunded', async () => {
+  it.each([
+    ['loading', { quote: undefined, marginDelta: undefined, isPending: true }, 'Max: Loading…'],
+    ['failed', { quote: undefined, error: new Error('RPC unavailable') }, 'Max: Unavailable'],
+    ['zero capacity', { quote: { maxSizeDelta: 0n, preview: { valid: false, invalidReason: 9 }, limitingReason: 9 } }, 'Max: 0 plDXY'],
+  ])('disables Max when its quote is %s without using the old client estimate', (_state, value, label) => {
+    mockIsConnected = true
+    maxQuoteMocks.value = { ...maxQuoteMocks.value, ...value }
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="0"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={100_000_000n} />)
+    expect(screen.getByRole('button', { name: label })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('0')
+    if (_state === 'failed') expect(screen.getByText(/Maximum size quote failed/)).toBeInTheDocument()
+  })
+
+  it('reviews and commits the refreshed lens maximum when the earlier preview is invalid', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: false, invalidReason: 5 } }]
@@ -1288,7 +1319,7 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
     await waitFor(() => expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce())
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({
-      sizeDelta: 400n * 10n ** 18n, maxSize: { minimumSizeDelta: 100n * 10n ** 18n },
+      sizeDelta: 400n * 10n ** 18n, maxSize: true,
     }))
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('button', { name: 'Checking order…' })).toBeDisabled()

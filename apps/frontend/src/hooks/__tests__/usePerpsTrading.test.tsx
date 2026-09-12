@@ -339,7 +339,7 @@ describe('usePerpsTrading', () => {
   it('passes explicit Max intent and cancellation to the review', async () => {
     mocks.identityReady = true
     const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(preparedOrder())
-    const maxSize = { minimumSizeDelta: 100n * 10n ** 18n }
+    const maxSize = true
     const signal = new AbortController().signal
     try {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })

@@ -14,6 +14,7 @@ import {
   type PreparedPerpsOrderV2,
   type PerpsLifecycleOutcomeSnapshot,
 } from '../contracts/perpsOrderV2'
+import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
@@ -42,7 +43,6 @@ import {
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
   getPerpsTargetPrice,
-  notionalUsdcToQuantizedSizeDelta,
   notionalUsdcToSizeDelta,
   oraclePriceToDisplayDxyPrice,
   parsePerpsPositionSize,
@@ -107,7 +107,7 @@ interface PerpsOrderReviewSnapshot {
   preparationKey?: string
   identityKey?: string
   positionProtection?: PositionProtectionParams
-  maxSize?: { minimumSizeDelta: bigint }
+  maxSize?: boolean
   direction: Direction
   notionalUsdc: bigint
   sizeDelta: bigint
@@ -937,26 +937,6 @@ function estimateOpenBountyUsdcRaw(notionalUsdc: bigint): bigint {
 function executionFeeUsdcRaw(notionalUsdc: bigint, executionFeeBps: bigint): bigint {
   if (notionalUsdc <= 0n || executionFeeBps <= 0n) return 0n
   return (notionalUsdc * executionFeeBps) / 10_000n
-}
-
-function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigint {
-  if (availableUsdc <= 0n || leverage <= 0) return 0n
-
-  const leverageRaw = BigInt(leverage)
-  let low = 0n
-  let high = availableUsdc * leverageRaw
-
-  while (low < high) {
-    const midpoint = (low + high + 1n) / 2n
-    const requiredUsdc = (midpoint / leverageRaw) + estimateOpenBountyUsdcRaw(midpoint)
-    if (requiredUsdc <= availableUsdc) {
-      low = midpoint
-    } else {
-      high = midpoint - 1n
-    }
-  }
-
-  return (low / USDC_UNIT) * USDC_UNIT
 }
 
 function leverageBoundaryFromMarginBps(marginBps: bigint | undefined): number | undefined {
@@ -2596,21 +2576,33 @@ export function PerpsTradeTicket({
         ? ` It is expired and awaiting keeper cleanup.`
         : ` It is expired and can be cleaned up.`
       : ` It expires in ${formatDuration(firstPendingCloseSecondsToExpiry)}.`
-  const availableToTradeForMaxRaw = availableToTradeRaw ?? (enableLiveTrading ? 0n : parsePerpsUsdc(availableToTradeDisplayAmount))
   const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
-  const maxNotionalFromFundingRaw = canUseAvailableToTrade
-    ? maxOpenNotionalForMargin(availableToTradeForMaxRaw, activeLeverage)
+  const maxProtectionRewardsUsdc = isProtectionEnabled && !currentPosition?.exists
+    ? protectionConfiguration?.triggerBountyUsdc !== undefined && protectionConfiguration.executionBountyUsdc !== undefined
+      ? protectionConfiguration.triggerBountyUsdc + protectionConfiguration.executionBountyUsdc
+      : undefined
     : 0n
-  const maxOpenNotionalRaw = selectedOpenCapacityUsdc === undefined
-    ? maxNotionalFromFundingRaw
-    : minBigInt(maxNotionalFromFundingRaw, selectedOpenCapacityUsdc)
-  const maxOpenSizeRaw = oraclePriceRaw === undefined || oraclePriceRaw <= 0n
-    ? 0n
-    : notionalUsdcToQuantizedSizeDelta(maxOpenNotionalRaw, oraclePriceRaw, 'down')
+  const maxOpenQuote = usePerpsMaxOpenQuote({
+    enabled: enableLiveTrading && isConnected && chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID &&
+      !isReducingCurrentPosition && !isReduceOnly && !oracleFrozen,
+    account: address,
+    side: directionToPerpsSide(effectiveOrderDirection),
+    availableUsdc: availableToTradeRaw,
+    oraclePrice: oraclePriceRaw,
+    publishTime: oraclePublishTime,
+    protectionRewardsUsdc: maxProtectionRewardsUsdc,
+  })
+  const maxOpenSizeRaw = maxOpenQuote.quote?.preview.valid ? maxOpenQuote.quote.maxSizeDelta : 0n
+  const maxOpenQuoteMessage = maxOpenQuote.error
+    ? 'Maximum size quote failed. Refresh market data or enter a quantity manually.'
+    : maxOpenQuote.quote?.maxSizeDelta === 0n
+      ? getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
+      : undefined
   const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
   const maxOrderQuantityDisplayAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
   const maxOrderQuantityInputAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
-  const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n
+  const canUseMaxOrderQuantity = maxOrderSizeRaw > 0n &&
+    (isReducingCurrentPosition || (!maxOpenQuote.isPending && !maxOpenQuote.isFetching && !maxOpenQuote.error))
   const fallbackCurrentPositionSizeRaw = quantizePerpsPositionSize(
     dxyExposureToSizeDelta(parsePerpsUsdc(currentPositionExposureInputAmount), oraclePriceRaw) ?? 0n,
     'down'
@@ -2653,7 +2645,10 @@ export function PerpsTradeTicket({
   const contractNotionalUsdc = orderSizeDelta > 0n
     ? sizeDeltaToNotionalUsdc(orderSizeDelta, calculationOraclePriceRaw) ?? 0n
     : 0n
-  const marginUsdc = isReducingCurrentPosition ? 0n : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
+  const marginUsdc = isReducingCurrentPosition ? 0n
+    : isReviewOpen && reviewSnapshot ? reviewSnapshot.marginUsdc
+      : isMaxOpenIntent ? maxOpenQuote.marginDelta ?? 0n
+        : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
   const defaultMaxLeverageMarginUsdc = contractNotionalUsdc > 0n
     ? contractNotionalUsdc / BigInt(DEFAULT_MAX_LEVERAGE)
     : 0n
@@ -2840,13 +2835,6 @@ export function PerpsTradeTicket({
   const effectiveMinOpenDxyExposureUsdc = isOpeningFromZero
     ? maxBigInt(minOpenDxyExposureUsdc ?? 0n, minNewPositionDxyExposureUsdc ?? 0n)
     : minOpenDxyExposureUsdc
-  const minimumOpenSizeForMax = oraclePriceRaw === undefined || oraclePriceRaw <= 0n
-    ? 0n
-    : notionalUsdcToQuantizedSizeDelta(
-      isOpeningFromZero ? maxBigInt(minOpenNotionalUsdc ?? 0n, minNewPositionNotionalUsdc ?? 0n) : minOpenNotionalUsdc ?? 0n,
-      oraclePriceRaw,
-      'up'
-    )
   const selectedOpenDxyCapacityUsdc = selectedOpenCapacityUsdc === undefined
     ? undefined
     : quantizedDxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw, 'down') ?? selectedOpenCapacityUsdc
@@ -2922,6 +2910,7 @@ export function PerpsTradeTicket({
     if (
       !isReducingCurrentPosition &&
       !isReduceOnly &&
+      !isMaxOpenIntent &&
       selectedOpenDxyCapacityUsdc !== undefined &&
       effectiveMinOpenDxyExposureUsdc !== undefined &&
       selectedOpenDxyCapacityUsdc < effectiveMinOpenDxyExposureUsdc
@@ -2941,7 +2930,7 @@ export function PerpsTradeTicket({
       const minimumLabel = isOpeningFromZero ? 'Minimum new position' : 'Minimum order size'
       return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC.`
     }
-    if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityUsdc !== undefined && orderDxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
+    if (!isReducingCurrentPosition && !isReduceOnly && !isMaxOpenIntent && selectedOpenDxyCapacityUsdc !== undefined && orderDxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
       return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
@@ -2986,8 +2975,7 @@ export function PerpsTradeTicket({
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
       return 'Waiting for fresh oracle publish time before previewing this order.'
     }
-    // Max's instant estimate can fail the point preview. Its final review must
-    // be allowed to resize using authoritative assessments before confirmation.
+    // Refresh Max at the review block; the earlier quote is advisory.
     if (shouldReadTradePreview && !(isMaxOpenIntent && !isReducingCurrentPosition)) {
       if (tradePreviewFailure) {
         return 'Trade preview failed. Refresh market data and retry before reviewing this order.'
@@ -3024,9 +3012,9 @@ export function PerpsTradeTicket({
     selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
     positionProtection: protectionInput.params,
     maxSize: isMaxOpenIntent && !isReducingCurrentPosition
-      ? { minimumSizeDelta: minimumOpenSizeForMax } : undefined,
+      ? true : undefined,
   }), [effectiveOrderDirection, contractNotionalUsdc, orderSizeDelta, marginUsdc, oraclePriceRaw,
-    slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent, minimumOpenSizeForMax])
+    slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent])
   const preparationAccountContextKey = orderPreparationKey([
     availableToTradeRaw,
     currentPosition && [currentPosition.exists, currentPosition.side, currentPosition.size,
@@ -3097,6 +3085,8 @@ export function PerpsTradeTicket({
   const reviewValidationError = enableLiveTrading
     ? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
     : orderQuantityValidationError
+  const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
+    ? undefined : reviewValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
   )
@@ -4199,10 +4189,15 @@ export function PerpsTradeTicket({
             >
               <span>Max: </span>
               <span className="group-hover:underline group-focus-visible:underline">
-                <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />
+                {!isReducingCurrentPosition && (maxOpenQuote.isPending || maxOpenQuote.error || maxOpenQuote.marginDelta === undefined)
+                  ? maxOpenQuote.isPending ? 'Loading…' : 'Unavailable'
+                  : <TokenAmount amount={maxOrderQuantityDisplayAmount} token="plDXY" />}
               </span>
             </button>
           </div>
+          {!isReducingCurrentPosition && maxOpenQuoteMessage ? (
+            <p role="status" className="mt-1 text-xs text-content-secondary">{maxOpenQuoteMessage}</p>
+          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -4789,12 +4784,6 @@ export function PerpsTradeTicket({
                     <p className="mt-3 text-sm text-content-secondary">
                       Deriving protections from one coherent block…
                     </p>
-                  ) : enableLiveTrading && executionProtectionsError ? (
-                    <div className="mt-3">
-                      <p className="text-sm text-brand-orange">
-                        {executionProtectionsError}
-                      </p>
-                    </div>
                   ) : displayedExecutionProtections ? (
                     <div className="mt-3">
                       <PreviewRows rows={[
@@ -4838,15 +4827,15 @@ export function PerpsTradeTicket({
                 </div>
               </div>
 
-              {reviewSnapshot?.maxSize && preparedOrder && preparedOrder.request.sizeDelta < reviewSnapshot.sizeDelta ? (
+              {reviewSnapshot?.maxSize && preparedOrder && preparedOrder.request.sizeDelta !== reviewSnapshot.sizeDelta ? (
                 <p role="status" className="text-sm text-content-secondary">
-                  Max adjusted from {formatPerpsPositionSize(reviewSnapshot.sizeDelta, 0)} to {formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0)} plDXY to fit your available margin and leverage limit after fees and reserves.
+                  Max adjusted from {formatPerpsPositionSize(reviewSnapshot.sizeDelta, 0)} to {formatPerpsPositionSize(preparedOrder.request.sizeDelta, 0)} plDXY after refreshing the maximum size quote.
                 </p>
               ) : null}
 
-              {reviewValidationError ? (
+              {reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
-                  {reviewValidationError}
+                  {reviewBodyValidationError}
                   {!isCorrectChain ? (
                     <>
                       <Button

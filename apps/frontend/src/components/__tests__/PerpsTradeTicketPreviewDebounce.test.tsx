@@ -10,6 +10,11 @@ const wagmiMocks = vi.hoisted(() => ({
   commitOrder: vi.fn(),
 }))
 
+// Max has an independent quote lifecycle; these assertions cover typed-size previews.
+vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
+  usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
+}))
+
 vi.mock('../../perps-aa', () => {
   const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 

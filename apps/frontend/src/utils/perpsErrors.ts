@@ -82,6 +82,7 @@ const PERPS_ERROR_ABI = parseAbi([
   'error PletherOracle__PublishTimeDivergence(uint8 mode,uint256 minPublishTime,uint256 maxPublishTime,uint256 maxDivergence)',
   'error PletherOracle__ZeroBasketPrice()',
 
+  'error CfdEngineLens__QuoteSearchLimitExceeded()',
   'error CfdEngine__TypedOrderFailure(uint8 failureCategory,uint8 failureCode,bool isClose)',
   'error CfdEngine__NotAccountOwner()',
   'error CfdEngine__MustCloseOpposingPosition()',
@@ -320,6 +321,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       const code = argNumber(args)
       return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
     }
+    case 'CfdEngineLens__QuoteSearchLimitExceeded':
+      return 'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
     case 'CfdEngine__TypedOrderFailure': {
       const code = argNumber(args, 1)
       const isClose = args?.[2] === true
@@ -526,13 +529,6 @@ export function getPerpsOrderFailureMessage(reason: number | undefined): string 
 
 export function getPerpsOpenRevertMessage(code: number | undefined): string {
   return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
-}
-
-/** Only decoded opening planner failures may guide a size search. RPC failures must surface. */
-export function getPerpsOpenFailureCode(error: unknown): number | undefined {
-  const decoded = decodePerpsError(error)
-  if (decoded.name !== 'CfdEngine__TypedOrderFailure' || decoded.args?.[2] !== false) return undefined
-  return argNumber(decoded.args, 1)
 }
 
 export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): string {
