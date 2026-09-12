@@ -588,7 +588,7 @@ variable "enable_native_aa_submission" {
 variable "aa_native_canary_owners" {
   type        = string
   default     = ""
-  description = "Optional comma-separated smart-account owner allowlist for native-AA canary rollout. It must be nonempty whenever issuance is enabled; the reviewed Sepolia profile blocks global rollout."
+  description = "Optional comma-separated smart-account owner allowlist for native-AA canary rollout. Required when issuance is enabled unless public Sepolia rollout is explicitly enabled."
 
   validation {
     condition = var.aa_native_canary_owners == "" || (
@@ -605,7 +605,7 @@ variable "aa_native_canary_owners" {
 variable "aa_native_global_rollout_enabled" {
   type        = bool
   default     = false
-  description = "Future backend capability for global native AA. The reviewed Sepolia Terraform guard currently requires this to remain false and requires explicit canary owners for issuance."
+  description = "Explicit public native sponsorship on Arbitrum Sepolia only. False retains the owner allowlist. Does not enable issuance or authorize a deployment."
 }
 
 variable "alto_desired_count" {
@@ -806,23 +806,23 @@ variable "aa_reconciler_batch_blocks" {
 variable "aa_reconciler_max_safe_lag_seconds" {
   type        = string
   default     = "600"
-  description = "Shared gateway/reconciler maximum age of the agreed safe-chain head. Defaults to 600; only the approved Frankfurt Sepolia canary may use up to 1800."
+  description = "Shared gateway/reconciler maximum age of the agreed safe-chain head. Maximum 600 seconds; no cohort exceptions."
 
   validation {
     condition = try(
       can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
       && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
-      && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 3600,
+      && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 600,
       false
     )
-    error_message = "aa_reconciler_max_safe_lag_seconds must be a canonical decimal integer from 60 through 3600."
+    error_message = "aa_reconciler_max_safe_lag_seconds must be a canonical decimal integer from 60 through 600."
   }
 }
 
 variable "aa_rpc_mode" {
   type        = string
   default     = "dual-independent"
-  description = "RPC verification mode. single-provider-sepolia is an explicit trusted-canary exception, not independent verification or automatic failover."
+  description = "RPC verification mode. single-provider-sepolia is an explicit Sepolia-only policy, not independent verification or automatic failover."
 
   validation {
     condition     = contains(["dual-independent", "single-provider-sepolia"], var.aa_rpc_mode)

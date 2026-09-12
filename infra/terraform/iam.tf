@@ -1,9 +1,7 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  github_actions_oidc_subjects = local.frankfurt_preparation ? [
-    "repo:Plether-Fi/plether-app:environment:sepolia-aa-temp"
-    ] : concat(
+  github_actions_oidc_subjects = concat(
     [
       "repo:Plether-Fi/plether-app:ref:refs/heads/master",
       "repo:Plether-Fi/plether-app:environment:candle-admin-sepolia",
@@ -73,14 +71,8 @@ locals {
   ] : []
 }
 
-moved {
-  from = aws_iam_openid_connect_provider.github_actions
-  to   = aws_iam_openid_connect_provider.github_actions[0]
-}
-
 resource "aws_iam_openid_connect_provider" "github_actions" {
-  count = local.frankfurt_preparation ? 0 : 1
-  url   = "https://token.actions.githubusercontent.com"
+  url = "https://token.actions.githubusercontent.com"
 
   client_id_list = ["sts.amazonaws.com"]
 
@@ -100,7 +92,7 @@ resource "aws_iam_role" "github_deploy" {
     Statement = [{
       Effect = "Allow"
       Principal = {
-        Federated = local.frankfurt_preparation ? "arn:aws:iam::${var.expected_aws_account_id}:oidc-provider/token.actions.githubusercontent.com" : aws_iam_openid_connect_provider.github_actions[0].arn
+        Federated = aws_iam_openid_connect_provider.github_actions.arn
       }
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {

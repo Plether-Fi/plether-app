@@ -46,7 +46,7 @@ local values = {
   action_kind=set('deposit withdraw place-order open close protection'),
   sponsorship_status=set('building requesting-stub estimating requesting-sponsorship awaiting-signature journaling submitting confirming confirmed failed cancelled execution-reverted dropped replaced expired receipt-timeout'),
   terminal_outcome=set('confirmed failed cancelled execution-reverted dropped replaced expired preflight_failed'),
-  deployment_name=set('sepolia-aa-temp sepolia mainnet'),
+  deployment_name=set('sepolia mainnet'),
   rpc_role=set('api-core api-perps keeper oracle liquidation protection aa-reconciler'),
   reason_code=set([[
 READY FUNDING_LOW FUNDING_UNVERIFIED KEEPER_INSUFFICIENT_FUNDS KEEPER_RPC_TIMEOUT

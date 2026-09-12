@@ -73,14 +73,14 @@ spec = do
   describe "SigV4 canonical request" $ do
     it "commits every security-sensitive KMS header and exact body" $ do
       canonicalRequest
-        "kms.eu-central-1.amazonaws.com"
+        "kms.ap-southeast-1.amazonaws.com"
         "20260902T120000Z"
         "session-token"
         "TrentService.Sign"
         "{}"
         `shouldBe`
           "POST\n/\n\ncontent-type:application/x-amz-json-1.1\n\
-          \host:kms.eu-central-1.amazonaws.com\n\
+          \host:kms.ap-southeast-1.amazonaws.com\n\
           \x-amz-date:20260902T120000Z\n\
           \x-amz-security-token:session-token\n\
           \x-amz-target:TrentService.Sign\n\n\

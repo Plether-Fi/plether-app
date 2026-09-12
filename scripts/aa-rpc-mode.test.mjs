@@ -41,7 +41,7 @@ test('deployment mode gate accepts default dual and explicit single-provider con
 test('deployment gate rejects unsafe single-provider modes and malformed cohorts', () => {
   for (const [name, value] of [
     ['AA_RPC_MODE', 'unknown'], ['PERPS_CHAIN_ID', '1'], ['PERPS_CHAIN_ID', '42161'],
-    ['AA_NATIVE_GLOBAL_ROLLOUT_ENABLED', 'true'], ['AA_NATIVE_CANARY_OWNERS', ''],
+    ['AA_NATIVE_GLOBAL_ROLLOUT_ENABLED', 'invalid'], ['AA_NATIVE_CANARY_OWNERS', ''],
     ['AA_NATIVE_CANARY_OWNERS', '0x' + '0'.repeat(40)],
     ['AA_NATIVE_CANARY_OWNERS', `${owner},${owner.toLowerCase()}`],
   ]) {
@@ -119,7 +119,7 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
       [{}, true], [single, true], [{ ...single, provision_self_hosted_aa: false }, true],
       [{ ...single, environment: 'mainnet', provision_self_hosted_aa: false }, false],
       [{ ...single, perps_chain_id: '42161' }, false],
-      [{ ...single, aa_native_global_rollout_enabled: true }, false],
+      [{ ...single, aa_native_global_rollout_enabled: true, aa_native_canary_owners: '' }, true],
       [{ ...single, aa_native_canary_owners: '' }, false],
       [{ ...single, aa_reconciler_secondary_rpc_url_kms_key_arn: 'wrong' }, false],
       [{ aa_rpc_mode: 'single-provider-sepolia' }, false],

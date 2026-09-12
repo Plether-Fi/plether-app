@@ -47,7 +47,7 @@ ${filters}
     const result = spawnSync('docker', ['run', '--rm', '--network=none',
       '--mount', `type=bind,src=${directory},dst=/fixtures,readonly`,
       '--env', 'SERVICE_VERSION=fixture', '--env', 'DEPLOYMENT_ENVIRONMENT=sepolia',
-      '--env', 'AWS_REGION=eu-central-1', '--env', 'ECS_CLUSTER_NAME=fixture',
+      '--env', 'AWS_REGION=ap-southeast-1', '--env', 'ECS_CLUSTER_NAME=fixture',
       '--entrypoint', '/usr/bin/timeout', process.env.AA_LOG_ROUTER_TEST_IMAGE,
       '5s', '/fluent-bit/bin/fluent-bit', '-c', '/fixtures/test.conf'], { encoding: 'utf8', timeout: 20_000 })
     assert.equal(result.status, 124, result.stderr)

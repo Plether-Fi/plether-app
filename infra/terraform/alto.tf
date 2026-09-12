@@ -1,10 +1,11 @@
 locals {
-  alto_zero_post_op_environment = local.frankfurt_preparation ? [
-    # This dedicated canary paymaster has no postOp hook and requires zero.
+  alto_safe_mode = true
+  alto_zero_post_op_environment = [
+    # This reviewed native paymaster has no postOp hook and requires zero.
     # Alto otherwise simulates with 2M gas and rounds a zero estimate to 1.
     { name = "ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT", value = "0" },
     { name = "ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER", value = "0" },
-  ] : []
+  ]
   self_hosted_aa_resource_count = var.provision_self_hosted_aa && var.environment == "sepolia" ? 1 : 0
   native_aa_backend_configured  = local.self_hosted_aa_resource_count == 1 && var.configure_native_aa_backend
   native_aa_sponsorship_enabled = local.native_aa_backend_configured && var.enable_native_aa_sponsorship
@@ -267,7 +268,7 @@ resource "aws_ecs_task_definition" "alto" {
         { name = "ALTO_API_VERSION", value = "v1" },
         { name = "ALTO_DEFAULT_API_VERSION", value = "v1" },
         { name = "ALTO_RPC_METHODS", value = local.alto_allowed_rpc_methods },
-        { name = "ALTO_SAFE_MODE", value = "false" },
+        { name = "ALTO_SAFE_MODE", value = tostring(local.alto_safe_mode) },
         { name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false" },
         { name = "ALTO_ENABLE_DEBUG_ENDPOINTS", value = "false" },
         { name = "ALTO_ENABLE_CORS", value = "false" },

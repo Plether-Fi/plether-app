@@ -302,8 +302,8 @@ export function isAnalyticsEnabled(): boolean {
 export function captureAnalyticsEvent(eventName: string, properties?: AnalyticsProperties): void {
   const sanitizedProperties = sanitizeAnalyticsProperties({
     ...properties,
-    ...(envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT') === 'sepolia-aa-temp'
-      ? { deployment_name: 'sepolia-aa-temp' } : {}),
+    ...((envString('VITE_DEPLOYMENT_ENV') ?? envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT')) === 'sepolia'
+      ? { deployment_name: 'sepolia' } : {}),
   })
   if (!posthogClient) {
     enqueueCapture({ kind: 'event', eventName, properties: sanitizedProperties })
@@ -321,8 +321,8 @@ export function captureFrontendLog(
     body,
     level,
     attributes: sanitizeFrontendLogAttributes({ ...attributes,
-      ...(envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT') === 'sepolia-aa-temp'
-        ? { deployment_name: 'sepolia-aa-temp' } : {}),
+      ...((envString('VITE_DEPLOYMENT_ENV') ?? envString('VITE_AA_DIAGNOSTIC_DEPLOYMENT')) === 'sepolia'
+        ? { deployment_name: 'sepolia' } : {}),
     }),
   })
   if (!record) return

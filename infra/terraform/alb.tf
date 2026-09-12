@@ -1,6 +1,6 @@
 resource "aws_lb" "api" {
   name               = "plether-${local.deployment_name}"
-  internal           = local.frankfurt_preparation
+  internal           = false
   load_balancer_type = "application"
   idle_timeout       = 75
   security_groups    = [aws_security_group.alb.id]

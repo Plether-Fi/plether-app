@@ -469,12 +469,14 @@ spec = do
       validateNativeAaPresence False False False (Just $ T.unpack validOriginToken) completeNativeFields
         `shouldBe` Right True
 
-    it "rejects the global rollout flag unconditionally and requires a canary when enabled" $ do
+    it "requires complete public configuration or an allowlisted issuance cohort" $ do
       validateNativeAaPresence False False True Nothing (replicate 8 Nothing)
-        `shouldBe` Left globalRolloutUnsupported
+        `shouldSatisfy` isLeft
+      validateNativeAaPresence True True True (Just $ T.unpack validOriginToken) (replicate 8 (Just "configured"))
+        `shouldBe` Right True
       validateNativeAaSafety
-        (validNativeSafety {nasiGlobalRolloutEnabled = True})
-        `shouldBe` Left globalRolloutUnsupported
+        (validNativeSafety {nasiGlobalRolloutEnabled = True, nasiCanaryOwners = []})
+        `shouldBe` Right ()
       validateNativeAaSafety
         (validNativeSafety {nasiCanaryOwners = []})
         `shouldSatisfy` isLeft
@@ -576,9 +578,9 @@ spec = do
     let owners = ["0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"]
     it "keeps the default usable without a canary exception" $ do
       validateAaSafeLag 42161 True [] 600 `shouldBe` Right ()
-    it "allows at most 30 minutes for a Sepolia cohort" $ do
-      validateAaSafeLag 421614 False owners 1800 `shouldBe` Right ()
-      mapM_ (\lag -> validateAaSafeLag 421614 False owners lag `shouldSatisfy` isLeft) [59, 1801, 3600]
+    it "rejects extended safe-head lag even for an allowlisted Sepolia cohort" $ do
+      validateAaSafeLag 421614 False owners 600 `shouldBe` Right ()
+      mapM_ (\lag -> validateAaSafeLag 421614 False owners lag `shouldSatisfy` isLeft) [59, 601, 1800, 3600]
     it "rejects relaxed mainnet, global and empty-cohort limits" $ do
       validateAaSafeLag 42161 False owners 1800 `shouldSatisfy` isLeft
       validateAaSafeLag 421614 True owners 1800 `shouldSatisfy` isLeft
@@ -604,11 +606,14 @@ spec = do
       mapM_ (\mode -> resolve mode 421614 "false" owner primary `shouldSatisfy` isLeft)
         ["", "single", " single-provider-sepolia", "SINGLE-PROVIDER-SEPOLIA"]
       resolve "single-provider-sepolia" 421614 "false" owner secondary `shouldSatisfy` isLeft
-    it "rejects single-provider mainnet, global access and missing or invalid cohorts" $ do
+    it "accepts explicit public Sepolia but rejects mainnet and malformed policy" $ do
+      resolve "single-provider-sepolia" 421614 "true" "" primary
+        `shouldBe` Right (SingleProviderSepolia, primary)
+      resolve "single-provider-sepolia" 42161 "true" "" primary `shouldSatisfy` isLeft
       mapM_ (\chain -> resolve "single-provider-sepolia" chain "false" owner primary `shouldSatisfy` isLeft)
         [1, 42161, 11155111]
       mapM_ (\global -> resolve "single-provider-sepolia" 421614 global owner primary `shouldSatisfy` isLeft)
-        ["true", "invalid"]
+        ["invalid"]
       mapM_ (\owners -> resolve "single-provider-sepolia" 421614 "false" owners primary `shouldSatisfy` isLeft)
         ["", "0x0000000000000000000000000000000000000000", "invalid", owner <> "," <> owner]
     it "retains HTTPS and URL hygiene in single-provider mode" $ do
@@ -642,9 +647,6 @@ withEnvironmentVariables ((name, configuredValue) : rest) action =
 validOriginToken :: T.Text
 validOriginToken = T.replicate 63 "a" <> "b"
 
-globalRolloutUnsupported :: String
-globalRolloutUnsupported =
-  "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
 
 validNativeSafety :: NativeAaSafetyInput
 validNativeSafety =

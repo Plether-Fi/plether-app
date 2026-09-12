@@ -7,6 +7,7 @@ module Plether.AA.Gateway
   , handleNativeAaRpc
   , attestNativePaymasterProfile
   , ownerAllowedForNativeCanary
+  , isCanaryGated
   , validateHardEconomicCaps
   , nativeAccountRateClientKey
   , nativeMaxFeeAllowance
@@ -1680,8 +1681,11 @@ isCanaryGated cfg request owner =
     && Legacy.rrMethod request
       `elem` [ Legacy.GetPaymasterStubData
              , Legacy.GetPaymasterData
-             , Legacy.SendUserOperation
              ]
+
+-- Submission is authorized by the exact persisted client/digest/signature/hash,
+-- not today's issuance cohort. A public-to-allowlisted rollback must still drain
+-- already-issued operations through submitNativeOperation's unchanged checks.
 
 ownerAllowedForNativeCanary :: NativeAaConfig -> Text -> Bool
 ownerAllowedForNativeCanary cfg owner =

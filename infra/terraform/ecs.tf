@@ -429,7 +429,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.frankfurt_preparation ? [{ name = "PYTH_INGESTION_ENABLED", value = "false" }] : [], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
   }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {
@@ -451,12 +451,12 @@ resource "aws_ecs_task_definition" "api" {
       condition = !local.aa_gateway_enabled || (
         can(regex("^[0-9a-f]{64}$", var.aa_proxy_origin_token))
         && !contains(local.aa_proxy_origin_token_rejected_values, var.aa_proxy_origin_token)
-        && (local.frankfurt_preparation || (
+        && (
           trimspace(var.alb_certificate_arn) != ""
           && trimspace(var.api_hostname) != ""
-        ))
+        )
       )
-      error_message = "AA gateways require a generated origin credential and either the isolated Frankfurt private tunnel or a certificate-backed HTTPS endpoint."
+      error_message = "AA gateways require a generated origin credential and a certificate-backed HTTPS endpoint."
     }
 
     precondition {
@@ -1233,7 +1233,7 @@ resource "aws_ecs_service" "workers" {
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
-    security_groups  = concat([aws_security_group.ecs.id], aws_security_group.frankfurt_worker_client[*].id)
+    security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
 

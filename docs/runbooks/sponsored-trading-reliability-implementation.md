@@ -2,7 +2,7 @@
 
 Status: partial implementation, not release-qualified. No deployment or funding
 change is authorized by this document. Core v1.2.3, the 60-second order window,
-KMS, budget authority, canary restrictions and safe confirmation remain unchanged.
+KMS, budget authority, explicit Sepolia rollout policy and safe confirmation remain unchanged.
 
 ## Implemented locally
 
@@ -30,8 +30,7 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
   below one conservative reserve is unknown, not a proven insufficient-funding
   blocker. A verified empty account is blocked. No transaction is signed or sent,
   and no RPC is added to the browser's preparation critical path. This follow-up
-  was separately approved and deployed to Frankfurt worker revision `:8`; see
-  the 2026-09-11 rollout record for the idle and sponsored-reduction smoke tests.
+  remains subject to Singapore release verification.
 - Twenty seconds of reviewed order/sponsorship headroom before signing and ten
   seconds before first submission. A late signature is durably journaled, not
   submitted or silently renewed; recovery retains the lane until safe resolution.
@@ -56,113 +55,29 @@ KMS, budget authority, canary restrictions and safe confirmation remain unchange
   their original copy. Malformed projection input fails closed. Console capture,
   consent and replay settings are unchanged. Exporter exceptions cannot escape
   frontend capture helpers into signing/recovery.
-- Local Frankfurt analytics receive `deployment_name=sepolia-aa-temp`.
-  Existing production dashboards were not modified. PostHog project 208816 has
-  no existing Frankfurt dashboard; new dashboard/data qualification is pending.
+- Sepolia analytics use `deployment_name=sepolia` without changing consent,
+  replay or console capture settings. Live dashboard/ingestion qualification remains pending.
 - Readiness telemetry emits each distinct component/reason immediately, deduplicates
   evidence shared across actions and summarizes repeated observations every sixty
   seconds while polling is active. Recovery flushes unreported counts. Unknown or
   missing evidence never declares a dependency recovered. Exported labels use
   exact allowlists; arbitrary provider strings cannot become PostHog properties.
 
-## Migration and switch
+## Release and rollback
 
-Apply `apps/backend/config/migrations/aa-observability-v1.sql`, followed by
-`aa-observability-v2.sql`, **before** a new API/keeper image. They add nullable
-diagnostic columns and separate observation/diagnostic tables, including
-restart-safe correlation lease metadata; they do not replace authorization tables.
-The runtime roles need the documented table privileges. No startup DDL is added.
+Follow [Singapore Sepolia AA release](singapore-sepolia-aa-release.md) for migration
+ordering, Core bindings, liability recovery, KMS transition and approval gates.
 
-`enable_aa_readiness_enforcement` defaults to false and maps to
-`AA_READINESS_ENFORCEMENT_ENABLED`. Terraform rejects enabling it outside the
-Frankfurt trading canary. Keep it false through qualification. It is not an
-authorization bypass and does not stop existing recovery.
+Readiness enforcement remains observation-only until verified. The only enforcement
+switch is enable_aa_readiness_enforcement. Rollback disables it and new issuance;
+preserve exact-payload submission/recovery and all additive records.
 
-Rollback disables readiness enforcement and restores prior images. Keep additive
-tables/columns and existing operation journals. Do not delete signed preparations
-or unresolved diagnostic mappings to reset a test.
+## Unfinished release qualification
 
-## Remaining engineering work
+- Singapore all-worker funding observations and action-specific oracle readiness.
+- Public safe-mode Alto compatibility with Alchemy and the pinned account/paymaster.
+- Sanitized PostHog ingestion, outage/deduplication behavior and release dashboards.
+- Three 100-preparation warm runs, cold/retry samples and sponsored deposit/open/close.
+- At least 50% fewer RPC requests in the repeatable two-minute idle-modal capture.
 
-This is **not** the entire approved plan:
-
-- Activate and qualify the locally implemented all-worker funding observer and
-  action-specific live/FAD/frozen oracle readiness. See
-  [implementation and activation details](aa-worker-funding-and-oracle-readiness.md).
-  The observer accounts for existing journals and visible pending transaction
-  families without claiming provider-hidden liabilities are zero. Public signer
-  inventory/reserve review, the additive migration, new images and Frankfurt
-  runtime verification remain deployment work; no live activation occurred.
-- Finish verified final trade outcomes, stage durations and seven-day
-  terminal-record pruning. Current
-  diagnostics retain unresolved records; automatic retention cleanup is not
-  implemented. Late materialization no longer loses the order-to-operation link.
-  The keeper's durable latest error is recoverable; a complete per-stage failure
-  history is still needed when several different errors precede materialization
-  or a successful retry clears that latest error.
-- Complete per-attempt, per-stage failure deduplication and sixty-second recurring
-  outage summaries beyond frontend readiness, exporter drop accounting, and all
-  worker failure projections.
-  Existing CloudWatch rate-limited operational summaries are preserved.
-- Finish final trade progress/correlation in activity, clock-skew qualification,
-  and comprehensive fault-injection tests for every lifecycle stage.
-- Correct the commit-pending direction label for reductions: it currently shows
-  the selected button direction instead of the reviewed position side. The
-  2026-09-11 smoke test verified the exact saved calldata was a Short close, not
-  an opening Long order, and the actual onchain result reduced the Short position.
-- Provision and validate Frankfurt-filtered PostHog dashboards in project 208816
-  after the new schema has actually been ingested. Logs and product events are
-  separate datasets; do not treat a UserOperation confirmation as trade execution.
-
-## Verification performed
-
-- Frontend: full unit suite passed (1,340 tests), including distinct readiness
-  failures, sixty-second summaries, recovery/unknown evidence and label redaction.
-  TypeScript and ESLint passed.
-- Backend: keeper executable builds; 1,088 unit examples pass with local mock RPC
-  ports enabled. The native-AA PostgreSQL suite passes against isolated PostgreSQL
-  16, including migration, durable correlation, lease retries and rollback reads.
-- Idle-funding follow-up: sixteen tests cover first-trade independence, reserve
-  boundaries, fee spikes, concurrent fixed-block reads, malformed responses,
-  reorgs, freshness, pending liabilities and funding recovery.
-- Follow-up correlation tests: twelve receipt/identity/malformed-bundle unit cases
-  and twelve native-AA PostgreSQL integration examples pass, including competing
-  instances, recovered leases, stale-worker fencing and unchanged ledger entries.
-- Proxy: readiness/diagnostic authentication and no-cache tests pass alongside
-  existing proxy tests; redirect and deployment-validator tests pass.
-- Terraform validation and all thirty-one mocked Frankfurt plans pass, including
-  rejection of readiness enforcement before Frankfurt trading-canary activation.
-- Lua privacy fixtures and a real Fluent Bit routing test pass with synthetic
-  records and network disabled. The test asserts exactly one CloudWatch copy and
-  one sanitized PostHog copy, including preservation of alarm fields.
-
-## Deployment-dependent acceptance — partial, not release-qualified
-
-Frankfurt migrations and the observation-only deployment are complete. The
-idle-funding follow-up passed fifteen fresh readiness observations over 141
-seconds and a sponsored 1,100-plDXY Short reduction (order 11, FAD execution).
-One unsigned attempt was cancelled for an approval-guard investigation, and one
-retry was denied during safe-cursor catch-up; neither was submitted. A fresh
-attempt succeeded after reconciliation recovered. Canonical successful receipts
-were checked; the RPC safe head had not reached the new order at that readback.
-These targeted checks do not substitute for the full gates below.
-
-After the remaining engineering work and separate release approval:
-
-1. Apply the additive migration and deploy only to Frankfurt, observation-only.
-   Use localhost for frontend testing. Verify consent and project 208816 routing.
-2. Reproduce insufficient keeper funding, stale/unknown readiness, blocked opens
-   and allowed exits, delayed signatures, ambiguous submission, browser closure,
-   refreshes, multiple tabs and partial deposits. Do not change funding limits.
-3. Inject every lifecycle and exporter failure. Confirm redaction, durable
-   correlation, deduplication, backend-only outcomes and unchanged CloudWatch alarms.
-4. Capture repeatable two-minute idle-modal HARs before/after and require at least
-   50% fewer HTTP `/rpc` requests without reducing mandatory freshness.
-5. Run three sets of 100 fresh mixed-action preparations within existing budgets.
-   Keep failures/timeouts in each report. Every warm run must meet p50 <=500 ms
-   and p95 <=1 second; report cold and retry paths separately.
-6. Separately verify sponsored deposit, open and close and safe budget release.
-   Only then approve readiness blocking for the Frankfurt canary.
-
-No Singapore deployment, hosted frontend, Core configuration/deployment, new
-funding allowance, automatic refill or production rollout is included.
+No release-readiness claim follows from local tests or historical deployment results.

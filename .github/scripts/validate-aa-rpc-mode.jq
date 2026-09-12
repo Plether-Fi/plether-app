@@ -16,9 +16,11 @@ def secretvalues($name): [(.secrets // [])[] | select(.name == $name) | .valueFr
 | if $mode == "single-provider-sepolia" then
     envvalues("AA_NATIVE_CANARY_OWNERS") as $owners
     | (envvalues("PERPS_CHAIN_ID") == ["421614"]
-       and envvalues("AA_NATIVE_GLOBAL_ROLLOUT_ENABLED") == ["false"]
+       and (envvalues("AA_NATIVE_GLOBAL_ROLLOUT_ENABLED") == ["false"]
+            or envvalues("AA_NATIVE_GLOBAL_ROLLOUT_ENABLED") == ["true"])
        and ($owners | length) == 1
-       and ($owners[0] | test("^0x[0-9A-Fa-f]{40}(,0x[0-9A-Fa-f]{40})*$"))
+       and (($owners[0] == "" and envvalues("AA_NATIVE_GLOBAL_ROLLOUT_ENABLED") == ["true"])
+            or ($owners[0] | test("^0x[0-9A-Fa-f]{40}(,0x[0-9A-Fa-f]{40})*$")))
        and ($owners[0] | ascii_downcase | split(",") | all(. != "0x0000000000000000000000000000000000000000"))
        and ($owners[0] | ascii_downcase | split(",") | length == (unique | length))
        and $primary == $verification

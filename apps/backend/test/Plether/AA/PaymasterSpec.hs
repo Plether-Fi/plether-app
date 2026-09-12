@@ -11,12 +11,14 @@ import qualified Data.Text.Encoding as TE
 import Plether.AA.Paymaster
 import Plether.AA.Gateway
   ( ownerAllowedForNativeCanary
+  , isCanaryGated
   , nativeAccountRateClientKey
   , nativeMaxFeeAllowance
   , nativeStartupFailure
   , validateHardEconomicCaps
   )
 import Plether.AA.Pimlico (ProxyFailure (..))
+import qualified Plether.AA.Pimlico as Proxy
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Ethereum.Abi (keccak256)
 import Test.Hspec
@@ -120,6 +122,14 @@ spec = do
     it "uses one client-independent sentinel for the account-wide rate bucket" $
       nativeAccountRateClientKey
         `shouldBe` "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+    it "gates new issuance but not exact-payload submission after public rollback" $ do
+      let config = fixtureConfig {naaCanaryOwners = [], naaGlobalRolloutEnabled = False}
+          owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          request method = Proxy.RpcRequest Null method [] KM.empty
+      isCanaryGated config (request Proxy.GetPaymasterData) owner `shouldBe` True
+      isCanaryGated config (request Proxy.GetPaymasterStubData) owner `shouldBe` True
+      isCanaryGated config (request Proxy.SendUserOperation) owner `shouldBe` False
 
     it "derives the fee ceiling only from the exact dual-agreed block base fee" $ do
       nativeMaxFeeAllowance 1 `shouldBe` 1_000_000_000

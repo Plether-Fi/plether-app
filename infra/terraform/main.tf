@@ -16,10 +16,10 @@ provider "aws" {
   allowed_account_ids = [var.expected_aws_account_id]
 
   default_tags {
-    tags = merge({
+    tags = {
       Project     = "plether"
       Environment = var.environment
       ManagedBy   = "terraform"
-    }, local.frankfurt_preparation ? { Deployment = local.deployment_name } : {})
+    }
   }
 }

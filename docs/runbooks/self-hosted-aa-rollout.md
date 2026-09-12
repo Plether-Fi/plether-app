@@ -1,5 +1,12 @@
 # Self-hosted Account Abstraction Rollout
 
+Current public-Sepolia policy and release procedure:
+[Singapore Sepolia AA release](singapore-sepolia-aa-release.md).
+That procedure supersedes the allowlist-only and disabled-safe-mode instructions
+below, which describe the original qualification sequence. Use Alto safe mode,
+the 600-second safe-head ceiling and the canonical Core v1.2.3 bindings.
+Historical risk findings remain release-review inputs, not waived safeguards.
+
 This runbook rolls out the Arbitrum Sepolia account-abstraction stack described
 in [ADR 0002](../adr/0002-self-hosted-account-abstraction.md): a single-active
 Alto bundler behind an internal load balancer and a native Plether verifying

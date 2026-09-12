@@ -53,7 +53,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == (local.frankfurt_preparation ? local.temporary_core.contracts.orderLifecycleBook.address : "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e")
+        || lower(var.perps_order_lifecycle_book) == lower(local.sepolia_core.contracts.orderLifecycleBook.address)
       )
       error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
     }
@@ -311,8 +311,8 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
   lifecycle {
     precondition {
-      condition     = !var.provision_self_hosted_aa || (local.frankfurt_preparation ? var.aws_region == "eu-central-1" : var.aws_region == "ap-southeast-1")
-      error_message = "Self-hosted AA requires Singapore legacy or the isolated Frankfurt preparation target."
+      condition     = !var.provision_self_hosted_aa || var.aws_region == "ap-southeast-1"
+      error_message = "Self-hosted AA requires Singapore."
     }
 
     precondition {
@@ -373,13 +373,13 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.enable_native_aa_sponsorship || var.aa_native_canary_owners != ""
-      error_message = "Native sponsorship issuance requires a nonempty canary-owner allowlist for the reviewed Sepolia profile; global rollout is not approved."
+      condition     = !var.enable_native_aa_sponsorship || var.aa_native_global_rollout_enabled || var.aa_native_canary_owners != ""
+      error_message = "Native issuance requires an owner allowlist or explicitly enabled public Sepolia rollout."
     }
 
     precondition {
-      condition     = !var.aa_native_global_rollout_enabled
-      error_message = "aa_native_global_rollout_enabled must remain false: global native-AA rollout is blocked for the reviewed Sepolia profile while Alto safe mode is disabled and final sponsorship is unsigned."
+      condition     = !var.aa_native_global_rollout_enabled || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614" && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
+      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring; Alto safe mode is mandatory."
     }
 
     precondition {
@@ -425,11 +425,11 @@ resource "terraform_data" "self_hosted_aa_guard" {
     precondition {
       condition = var.aa_rpc_mode != "single-provider-sepolia" || (
         var.environment == "sepolia" && var.perps_chain_id == "421614"
-        && !var.aa_native_global_rollout_enabled && var.aa_native_canary_owners != ""
+        && (var.aa_native_global_rollout_enabled || var.aa_native_canary_owners != "")
         && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/perps-rpc-url"
         && var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
       )
-      error_message = "Single-provider mode requires Arbitrum Sepolia, a nonempty canary allowlist, no global rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
+      error_message = "Single-provider mode requires Arbitrum Sepolia, an allowlist or explicit public rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
     }
 
     precondition {

@@ -884,7 +884,7 @@ loadConfig = do
                     globalHourlyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_HOURLY_WEI" paymasterGlobalHourlyWeiStr
                     globalDailyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_DAILY_WEI" paymasterGlobalDailyWeiStr
                     canaryOwners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" nativeCanaryOwnersStr
-                    maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 1800 nativeAaSafeLagStr
+                    maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 600 nativeAaSafeLagStr
                     validateAaSafeLag perpsChainId globalRolloutEnabled canaryOwners maxSafeLag
                     unlessEither
                       (perpsChainId == 421614)
@@ -1457,14 +1457,11 @@ aaRpcModeText :: AaRpcMode -> Text
 aaRpcModeText DualIndependent = "dual-independent"
 aaRpcModeText SingleProviderSepolia = "single-provider-sepolia"
 
--- Defaults remain 600 seconds. Longer windows are testnet cohort exceptions,
--- never a mainnet or unrestricted-rollout fallback.
+-- The same ceiling applies to every cohort and verification mode.
 validateAaSafeLag :: Integer -> Bool -> [Text] -> Integer -> Either String ()
-validateAaSafeLag chain global owners lag = do
-  unlessEither (lag >= 60 && lag <= 1800)
-    "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and 1800"
-  unlessEither (lag <= 600 || (chain == 421614 && not global && not (null owners)))
-    "Safe-head lag above 600 seconds requires an allowlisted Arbitrum Sepolia canary"
+validateAaSafeLag _ _ _ lag =
+  unlessEither (lag >= 60 && lag <= 600)
+    "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and 600"
 
 -- Shared by API and reconciler startup, before any signing or ledger mutation.
 -- The legacy SECONDARY env slot explicitly reuses primary only in single mode.
@@ -1487,8 +1484,8 @@ resolveAaSecurityRpc rawMode chainId rawGlobal rawOwners primaryRaw secondaryRaw
       global <- maybe (Left "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED must be a boolean") Right
         (parseBoolStrict rawGlobal)
       owners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" rawOwners
-      unlessEither (chainId == 421614 && not global && not (null owners))
-        "single-provider-sepolia requires chain 421614, a nonempty canary owner list, and global rollout disabled"
+      unlessEither (chainId == 421614 && (global || not (null owners)))
+        "single-provider-sepolia requires chain 421614, an owner allowlist or explicit public rollout"
       unlessEither (primary == secondary)
         "single-provider-sepolia must explicitly reuse PERPS_RPC_URL in the verification RPC slot"
   pure (mode, secondary)
@@ -1535,10 +1532,7 @@ reviewedNativeAccountCodeHash =
 zeroNativeHash :: Text
 zeroNativeHash = "0x" <> T.replicate 64 "0"
 
--- | Resolve whether the native configuration is absent or complete.  The
--- global rollout switch is intentionally unavailable until a separate release
--- explicitly enables it, so setting it is always an error (even when the rest
--- of the native configuration is absent).
+-- | Require complete configuration before chain/deployment safety validation.
 validateNativeAaPresence
   :: Bool
   -> Bool
@@ -1547,14 +1541,11 @@ validateNativeAaPresence
   -> [Maybe String]
   -> Either String Bool
 validateNativeAaPresence enabled submissionEnabled globalRolloutEnabled originToken nativeSpecific
-  | globalRolloutEnabled =
-      Left
-        "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
   | maybe False (not . validAaOriginSecret . T.pack) originToken =
       Left "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
   | all (== Nothing) nativeSpecific
       && not enabled
-      && not submissionEnabled =
+      && not submissionEnabled && not globalRolloutEnabled =
       Right False
   | isJust originToken && all isJust nativeSpecific = Right True
   | otherwise =
@@ -1571,14 +1562,11 @@ validateNativeAaSafety NativeAaSafetyInput{..} = do
     (validAaOriginSecret nasiOriginToken)
     "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
   unlessEither
-    (not nasiGlobalRolloutEnabled)
-    "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED=true is not supported; native sponsorship must remain canary-scoped"
-  unlessEither
     (not nasiSponsorshipEnabled || nasiSubmissionEnabled)
     "AA_NATIVE_SPONSORSHIP_ENABLED=true requires AA_NATIVE_SUBMISSION_ENABLED=true"
   unlessEither
-    (not nasiSponsorshipEnabled || not (null nasiCanaryOwners))
-    "Native sponsorship requires at least one AA_NATIVE_CANARY_OWNERS entry"
+    (not nasiSponsorshipEnabled || nasiGlobalRolloutEnabled || not (null nasiCanaryOwners))
+    "Native sponsorship requires an owner allowlist or explicit public Sepolia rollout"
   unlessEither
     (nasiValiditySeconds >= 1 && nasiValiditySeconds <= 570)
     "AA_PAYMASTER_VALIDITY_SECONDS must be between 1 and 570"

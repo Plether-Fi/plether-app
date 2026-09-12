@@ -84,56 +84,19 @@ No network calls happen inside its publishing database transaction. The keeper's
 existing row continues to prove worker liveness; when configured, the shared
 observer owns the funding assessment rather than the legacy pending-nonce rule.
 
-## Frankfurt activation (requires deployment approval)
+## Singapore activation (separate approval required)
 
-1. Build/test the backend and log-router images, record immutable digests. Do not
-   reuse the currently deployed image pins: they predate these new files.
-2. Apply `apps/backend/config/migrations/aa-funding-v1.sql` to Frankfurt only.
-   API needs SELECT on the new table. Observer needs SELECT on existing recovery
-   journals and SELECT/INSERT/DELETE on this advisory table, not recovery writes.
-   Production database URLs retain certificate-verified TLS configuration.
-3. Supply `aa_funding_monitors` with all six role categories and the actual public
-   signers. Each entry has exactly `component`, `address`, `gasLimit`, `valueWei`
-   and `feeBufferBps`; the last three are unsigned decimal **strings**. Multiple
-   Alto executors each get their own entry. Do not copy synthetic test addresses.
-   Disabled/unconfigured workers must be resolved explicitly rather than
-   inventing a funded signer or describing them as healthy.
-4. Set `aa_funding_monitor_image` to the tested backend digest, promote the API
-   and log-router images, and review the Frankfurt-only plan. Terraform passes
-   categorical components plus the inventory fingerprint to the API; the
-   observer gets public inventory, DB/RPC access, and no signer secrets. The
-   optional nonessential sidecar stays absent when the inventory is empty.
-5. Verify all intended rows refresh while idle, then controlled pending-liability
-   and low-funding cases, LIVE/FAD/frozen readiness, and a separately approved
-   sponsored trade. Check diagnostics ingestion in PostHog 208816. No new funding
-   allowance is implied. Keep readiness observation-only until live qualification.
+Follow [the release procedure](singapore-sepolia-aa-release.md). Apply the additive
+funding migration before starting the observer. API roles read the observation
+table; the observer reads existing recovery journals and may SELECT/INSERT/DELETE
+its observation rows. It receives no signing keys or spending authority.
 
-The canary guard rejects partial inventories, missing image pins, nonconsolidated
-workers and non-Frankfurt activation. Default/live Terraform image pins and
-running services have not been changed by this implementation.
+Set aa_funding_monitors to the reviewed complete six-role public signer inventory.
+Use actual configured maximum batch gas, value and fee buffers; do not invent
+funding estimates. Set aa_funding_monitor_image to the tested backend digest.
+Terraform permits only the consolidated Singapore Sepolia native-AA deployment.
+The backend deployment workflow promotes this container with the other application
+containers; verify its digest, inventory hash and absence of private-key secrets.
 
-Rollback: remove the observer inventory and restore prior images. Retain the
-additive table and all existing recovery records. Never delete liabilities or
-rebroadcast operations as part of a readiness rollback.
-
-## Diagnostics and local verification
-
-Stable events `worker_funding_observation` and `worker_funding_monitor_failed`
-report role, state and reason. Changed states emit immediately; repetitions are
-summarized every 60 seconds. The separate PostHog projection drops balances,
-liabilities, amounts, addresses, hashes, raw transactions and provider messages.
-CloudWatch's original alarm fields and records are preserved. Frontend incidents
-use the existing categorical allowlists and outage deduplication.
-
-Verification includes backend policy/encoding tests, fixed-block RPC/reorg/lens
-outage tests, funding nonce/replacement/concurrency tests, real PostgreSQL
-migration/recovery-byte tests, native-AA integration, frontend parser and action
-isolation tests, Terraform mocked canary plans, and actual Fluent Bit dual-output
-privacy fixtures. Live Frankfurt activation, operator reserve/inventory review,
-PostHog ingestion and the wider release/performance gates remain separate.
-
-Local results (2026-09-11): 1,101 backend unit tests, 12 native-AA integration
-tests, 37 worker/PostgreSQL tests, 1,341 frontend unit tests, 32 mocked Frankfurt
-plans and both real Fluent Bit routing cases passed. TypeScript, targeted ESLint,
-Lua projection fixtures and whitespace checks passed. No live performance or
-on-chain acceptance result is claimed for these changes.
+Local tests are not proof of live reserve accuracy, provider pending-body coverage,
+healthy idle readiness or PostHog ingestion. Those are release gates.

@@ -37,19 +37,19 @@ Once selected, nonce/fees/gas cannot be rewritten by lease takeover. Existing
 authorization deadlines are never extended on retry. Config changes bind to a
 different intent fingerprint and therefore reject reuse of an old ID.
 
-## Approved Frankfurt rollout only
+## Singapore rollout (separate release approval)
 
-1. Obtain release approval. Do not dispatch the Singapore backend workflow.
+1. Obtain release approval. Follow the [Singapore release procedure](singapore-sepolia-aa-release.md).
 2. Apply `apps/backend/config/migrations/aa-preparation-v1.sql` with the reviewed
-   Frankfurt migration mechanism and database-owner role; grant the existing
+   Singapore migration mechanism and database-owner role; grant the existing
    runtime database role only SELECT/INSERT/UPDATE on the new table as needed.
    No startup DDL is added. Verify the table and constraints before activation.
 3. Deploy backend instrumentation with preparation disabled. Collect baseline.
 4. Enable `enable_native_aa_preparation` / `AA_NATIVE_PREPARATION_ENABLED` on the
-   isolated Frankfurt API only. Keep existing cohort, sponsorship/submission
-   gates and funding ceilings. Do not enable global rollout.
+   Singapore Sepolia API. Keep existing cohort, sponsorship/submission
+   gates and funding ceilings. Public access requires the separate public-release gates.
 5. Only after backend health checks, add `preparationRpcVersion: 1` to the
-   localhost native manifest. Standard manifests and Pimlico stay unchanged.
+   Sepolia native manifest. Standard manifests and Pimlico stay unchanged.
 6. Record 100 fresh preparations per run, for three runs (34 deposits, 33 opens,
    33 closes). Use valid reviewed intents for the current account state. Do not
    bulk-submit trades to manufacture samples. Wait for normal reservation
@@ -77,6 +77,6 @@ a new authorization. The emergency sponsorship gate still denies delivery.
 Local backend unit and PostgreSQL integration suites, frontend AA tests and
 type-checking, Terraform mocked tests, and the offline benchmark evaluator have
 passed. These establish regression coverage, not a latency result. The repeatable
-instrumented baseline, three Frankfurt warm runs, cold/retry measurements, and
+instrumented baseline, three Singapore warm runs, cold/retry measurements, and
 live sponsored open/close remain required after release approval. No deployment,
 capability activation, funding or Core change is performed by these local tests.

@@ -160,11 +160,11 @@ describe('analytics client', () => {
     expect(() => captureFrontendLog('error', 'Sponsored operation failed', { stage: 'submitting' })).not.toThrow()
   })
 
-  it('adds the Frankfurt diagnostic filter only to the explicitly selected local profile', async () => {
+  it('adds the Sepolia diagnostic filter only to the explicitly selected profile', async () => {
     vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
-    vi.stubEnv('VITE_AA_DIAGNOSTIC_DEPLOYMENT', 'sepolia-aa-temp')
+    vi.stubEnv('VITE_DEPLOYMENT_ENV', 'sepolia')
     await initAnalytics()
     captureAnalyticsEvent('perps sponsored operation', { stage: 'submitting' })
-    expect(posthogMock.capture).toHaveBeenCalledWith('perps sponsored operation', { stage: 'submitting', deployment_name: 'sepolia-aa-temp' })
+    expect(posthogMock.capture).toHaveBeenCalledWith('perps sponsored operation', { stage: 'submitting', deployment_name: 'sepolia' })
   })
 })

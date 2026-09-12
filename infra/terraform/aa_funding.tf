@@ -59,10 +59,10 @@ resource "terraform_data" "aa_funding_inventory_guard" {
   lifecycle {
     precondition {
       condition = length(var.aa_funding_monitors) == 0 || (
-        local.frankfurt_preparation && var.consolidate_workers && local.native_aa_backend_configured &&
+        var.environment == "sepolia" && var.aws_region == "ap-southeast-1" && var.consolidate_workers && local.native_aa_backend_configured &&
         var.aa_funding_monitor_image != "" && length(local.aa_funding_components) == 6
       )
-      error_message = "Funding monitoring requires the complete six-role inventory, a tested image, and the consolidated Frankfurt native-AA canary. No other deployment is authorized."
+      error_message = "Funding monitoring requires the complete six-role inventory, a tested image, and the consolidated Singapore Sepolia native-AA deployment. No other deployment is authorized."
     }
   }
 }

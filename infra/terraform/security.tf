@@ -3,21 +3,17 @@ resource "aws_security_group" "alb" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 80
-    to_port         = 80
-    protocol        = "tcp"
-    cidr_blocks     = local.frankfurt_preparation ? [] : ["0.0.0.0/0"]
-    security_groups = local.frankfurt_preparation ? concat([aws_security_group.frankfurt_tunnel[0].id], aws_security_group.frankfurt_worker_client[*].id) : []
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  dynamic "ingress" {
-    for_each = local.frankfurt_preparation ? [] : [1]
-    content {
-      from_port   = 443
-      to_port     = 443
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -28,16 +24,6 @@ resource "aws_security_group" "alb" {
   }
 
   lifecycle { create_before_destroy = true }
-}
-
-// Identity-only group: permits just the consolidated worker's private API path.
-// Kept separate from ecs to avoid mutually dependent inline security groups.
-resource "aws_security_group" "frankfurt_worker_client" {
-  count = local.frankfurt_preparation && local.frankfurt_trading_configured ? 1 : 0
-  name = "plether-sepolia-aa-temp-worker-api-client"
-  vpc_id = aws_vpc.main.id
-  ingress = []
-  egress = []
 }
 
 resource "aws_security_group" "ecs" {

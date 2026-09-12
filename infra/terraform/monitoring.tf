@@ -108,7 +108,7 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
   statistic           = "Sum"
   threshold           = 15000
   treat_missing_data  = "notBreaching"
-  alarm_actions       = local.frankfurt_preparation ? [] : compact([var.operations_alarm_sns_topic_arn])
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
   ok_actions          = []
 }
 

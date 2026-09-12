@@ -297,6 +297,17 @@ aaIntegrationSpec databaseUrl =
         -- Rollback code still reads/releases the same immutable preparation.
         linkPreparation conn client sender identifier "retry" (saDigest authorization) `shouldReturn` True
 
+    it "reapplies every additive release migration without changing existing signed liabilities" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        before <- getSponsorshipByDigest conn (saDigest authorization)
+        let migrations = ["aa-preparation-v1.sql", "aa-observability-v1.sql", "aa-observability-v2.sql", "aa-funding-v1.sql"]
+        mapM_ (\name -> readFile ("config/migrations/" <> name) >>= execute_ conn . fromString >> pure ()) (migrations <> migrations)
+        after <- getSponsorshipByDigest conn (saDigest authorization)
+        after `shouldBe` before
+
     it "recovers late order diagnostics with a multi-instance fenced lease and no ledger changes" $
       withFixture databaseUrl $ \conn -> do
         readyDatabase conn
