@@ -103,7 +103,7 @@ async function execute(callGas, callData = fixture.callData, {sender=fixture.sen
   const operationEvents = events.filter(e=>e.eventName==='UserOperationEvent')
   assert.equal(before-remaining,operationEvents.reduce((sum,e)=>sum+e.args.actualGasCost,0n),'paymaster accounting matches actual receipt costs')
   if (preceding) assert.equal(operationEvents.find(e=>e.args.userOpHash===preceding.hash)?.args.success,true)
-  return {...event.args,revertReason:events.find(e=>e.eventName==='UserOperationRevertReason'&&e.args.userOpHash===hash)?.args.revertReason}
+  return {...event.args,logs:receipt.logs,revertReason:events.find(e=>e.eventName==='UserOperationRevertReason'&&e.args.userOpHash===hash)?.args.revertReason}
 }
 
 test('historical deposit executes through real account, paymaster, EntryPoint and Core bytecode', async () => {
@@ -174,11 +174,21 @@ function depositCalls(amount) {
 for (const amount of [1n,1_000_000n,100_000_000n,10_000_000_000n]) {
   test(`deposit ${amount} token atoms with existing position/carry state`, async () => {
     await reset()
-    const token = manifest.contracts.usdc?.address ?? '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8'
+    const token = manifest.contracts.mockUsdc.address
+    const marginBalance = () => client.readContract({address:manifest.contracts.marginClearinghouse.address,abi:parseAbi(['function balanceUsdc(address) view returns(uint256)']),functionName:'balanceUsdc',args:[fixture.sender]})
     const before = await client.readContract({address:token,abi:tokenAbi,functionName:'balanceOf',args:[fixture.sender]})
-    assert.equal((await execute(gasPolicy(419155n),depositCalls(amount))).success,true)
+    const marginBefore = await marginBalance()
+    const result = await execute(gasPolicy(419155n),depositCalls(amount))
+    assert.equal(result.success,true)
     const after = await client.readContract({address:token,abi:tokenAbi,functionName:'balanceOf',args:[fixture.sender]})
     assert.equal(before-after,amount,'completed deposit transfers exactly the reviewed amount')
+    const carryAbi = parseAbi(['event CarryRealized(address indexed account,uint256 realizedCarryUsdc,uint256 freeSettlementConsumedUsdc,uint256 marginConsumedUsdc,uint256 remainingUnsettledCarryUsdc)'])
+    const carry = result.logs.filter(log=>log.address.toLowerCase()===manifest.contracts.cfdEngine.address.toLowerCase()).flatMap(log=>{
+      try {return [decodeEventLog({abi:carryAbi,data:log.data,topics:log.topics})]} catch {return []}
+    }).filter(e=>e.args.account.toLowerCase()===fixture.sender.toLowerCase())
+    const collected = carry.reduce((sum,e)=>sum+e.args.realizedCarryUsdc,0n)
+    assert.ok(collected>0n,'fixture must exercise actual carry collection, not just an empty-position deposit')
+    assert.equal(await marginBalance()-marginBefore,amount-collected,'margin credit must reconcile with actual carry collected by Core')
   })
 }
 
