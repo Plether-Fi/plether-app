@@ -150,3 +150,58 @@ The live database and original retained snapshot are untouched. Clean up the
 temporary audit database after evidence/import verification; retain recovery
 assets until the activation procedure is complete. No paymaster owner
 transaction has been sent yet, and the hosted manifest still uses Pimlico.
+
+## Continuation after PR #258
+
+PR #258 merged as `ddfb259ea00c7579e17a637eeb6d2acfb32a0560`.
+Fixed-digest attestation [run 34695432668](https://github.com/Plether-Fi/plether-app/actions/runs/34695432668)
+was dispatched from that exact commit and is awaiting its own explicit owner
+approval. The previous run's approval has not been reused.
+
+A private, immutable-image recovery importer was prepared with a read-only
+source transaction, exact live/source database guards, lossless PostgreSQL JSON
+row transfer, per-authorization ledger checks, canonical receipt verification,
+short destination table locks, conflict rejection and unchanged issuance-pause
+control. It rehearses inserts inside a transaction that is rolled back before
+any live import is permitted. It does not copy stale readiness/funding permission
+or overwrite current control records.
+
+Two rehearsal attempts stopped before a destination transaction began. The first
+needed an exact UserOperationEvent topic filter because other EntryPoint events
+can share the operation hash. The second refused an Alchemy safe head older
+than the normal 600-second ceiling. A follow-up read measured a current latest
+head and a 760-second-old safe head. This is not permission to extend the
+ceiling; fresh canonical evidence and a successful rehearsal are still required.
+No recovery rows have been imported and no signer-rotation transaction was sent.
+
+After the safe boundary advanced, the third rehearsal succeeded and rolled
+back. It verified all 19 canonical UserOperation receipts and exact preservation
+of 33 authorizations, 85 ledger entries, 19 events, 17 preparations, 19 retained
+recovery records, both cursor/health rows and six diagnostic mappings. The five
+existing Singapore recovery records were preserved; a successful import would
+produce 24 recovery records in total. Issuance remained paused.
+
+The commit-mode attempt used the same rehearsed program hash but stopped at
+safe-head freshness before opening the destination transaction. No live import
+committed. Both attempts have terminal ECS status (rehearsal exit 0, commit
+attempt exit 1), and their private evidence is retained for a guarded retry.
+Attestation run 34695432668 still awaits its distinct owner approval. The private
+audit database remains available pending import; the encrypted Singapore
+recovery snapshot is available and must be retained during later clone cleanup.
+
+Stanley subsequently approved attestation run 34695432668 explicitly. The
+protected preflight passed, including the prior platform and optional-field
+repairs. ECS accepted the exact task definition without a request override but
+returned three name-only `containerOverrides` entries (main, init and log router),
+plus an empty inference-accelerator list. The workflow incorrectly required an
+empty container-override array and rejected this response. Cleanup stopped the
+owned task and deregistered its temporary revision; the workflow finished failed
+without successful attestation evidence. The paymaster signer remains unchanged.
+
+The follow-up repair validates absence of effective overrides at both startup and
+terminal readback: only unique, known container names are accepted, without any
+additional container fields. Task-level role/resource changes, unknown fields,
+nonempty accelerator changes, null/malformed values and all command/environment
+overrides are rejected. No owner gate, capability boundary, command, image,
+network rule or signing policy changes. The repaired workflow must land on master
+before a new, separately approved attestation run can execute it.
