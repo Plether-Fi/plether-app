@@ -18,16 +18,20 @@ const bindings = {
   "perps_cfd_engine_settlement_sidecar": "cfdEngineSettlementSidecar",
   "perps_cfd_engine_lens": "cfdEngineLens",
   "perps_account_lens": "cfdEngineAccountLens",
-  "vault_history_house_pool_address": "housePool"
+  "vault_history_house_pool_address": "housePool",
+  "vault_history_senior_vault_address": "seniorVault",
+  "vault_history_junior_vault_address": "juniorVault"
 }
 test('Singapore release overlay exactly matches the canonical Core manifest', () => {
   const release = JSON.parse(read('config/perps/arbitrum-sepolia-v2.json'))
   const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.2.3.tfvars.json'))
   assert.equal(release.release.version, 'v1.2.3')
   assert.equal(overlay.perps_indexer_start_block, String(release.release.deploymentBlock))
+  assert.equal(overlay.vault_history_deployment_block, String(release.release.deploymentBlock))
   assert.equal(overlay.perps_chain_id, String(release.network.chainId))
   for (const [name, contract] of Object.entries(bindings)) assert.equal(overlay[name], release.contracts[contract].address)
   const guards = read('infra/terraform/deployment_target.tf')
+  assert.ok(guards.includes('var.vault_history_deployment_block == tostring(local.sepolia_core.release.deploymentBlock)'))
   for (const [name, contract] of Object.entries(bindings)) assert.ok(guards.includes('lower(var.' + name + ') == lower(local.sepolia_core.contracts.' + contract + '.address)'))
 })
 test('public overlay stages policy without enabling sponsorship or preparation', () => {

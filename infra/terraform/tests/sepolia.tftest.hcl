@@ -97,6 +97,36 @@ run "reject_public_unconfigured" {
   variables { aa_native_global_rollout_enabled = true }
   expect_failures = [terraform_data.self_hosted_aa_guard]
 }
+run "reject_mismatched_history_senior" {
+  command = plan
+  variables {
+    configure_native_aa_backend = true
+    alto_desired_count = 1
+    aa_reconciler_desired_count = 1
+    vault_history_senior_vault_address = "0x1111111111111111111111111111111111111111"
+  }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
+run "reject_mismatched_history_junior" {
+  command = plan
+  variables {
+    configure_native_aa_backend = true
+    alto_desired_count = 1
+    aa_reconciler_desired_count = 1
+    vault_history_junior_vault_address = "0x1111111111111111111111111111111111111111"
+  }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
+run "reject_mismatched_history_anchor" {
+  command = plan
+  variables {
+    configure_native_aa_backend = true
+    alto_desired_count = 1
+    aa_reconciler_desired_count = 1
+    vault_history_deployment_block = "307397197"
+  }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
 run "reject_public_mainnet_chain" {
   command = plan
   variables {
