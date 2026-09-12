@@ -6,6 +6,34 @@ import { spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const workflows = ['deploy-backend', 'deploy-alto', 'aa-admin']
 
+test('frontend health gate supports the exact legacy wrapper without accepting unhealthy bodies', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-frontend.yml', root), 'utf8')
+  const filter = source.match(/! jq --exit-status '([\s\S]*?)' "\$health_body"/)?.[1]
+  assert.ok(filter, 'extract the actual frontend health gate')
+  assert.match(source, /\[ "\$health_status" != "200" \]/)
+  for (const [body, expected] of [
+    [{ status: 'ok' }, true],
+    [JSON.stringify({ status: 'ok' }), true],
+    [{ status: 'failed' }, false],
+    [JSON.stringify({ status: 'failed' }), false],
+    [JSON.stringify(JSON.stringify({ status: 'ok' })), false],
+    ['not json', false],
+    ['ok', false],
+    [null, false],
+    [[], false],
+    [true, false],
+    [{}, false],
+  ]) {
+    const result = spawnSync('jq', ['--exit-status', filter], {
+      input: JSON.stringify(body), encoding: 'utf8',
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status === 0, expected, result.stderr)
+  }
+  const malformed = spawnSync('jq', ['--exit-status', filter], { input: '{', encoding: 'utf8' })
+  assert.notEqual(malformed.status, 0)
+})
+
 for (const workflow of workflows) {
   const source = readFileSync(new URL(`.github/workflows/${workflow}.yml`, root), 'utf8')
   // Execute the actual inline jq filters, both before and after human approval.

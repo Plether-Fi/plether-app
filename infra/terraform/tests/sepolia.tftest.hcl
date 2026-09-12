@@ -2,6 +2,21 @@
 mock_provider "aws" {
   mock_data "aws_caller_identity" { defaults = { account_id = "932542905614" } }
   mock_data "aws_availability_zones" { defaults = { names = ["ap-southeast-1a", "ap-southeast-1b"] } }
+  mock_data "aws_kms_key" {
+    defaults = { arn = "arn:aws:kms:ap-southeast-1:932542905614:key/11111111-1111-1111-1111-111111111111" }
+  }
+  mock_resource "aws_iam_role" {
+    override_during = plan
+    defaults = { arn = "arn:aws:iam::932542905614:role/synthetic-test-role" }
+  }
+  mock_resource "aws_kms_key" {
+    override_during = plan
+    defaults = { arn = "arn:aws:kms:ap-southeast-1:932542905614:key/22222222-2222-2222-2222-222222222222" }
+  }
+  mock_resource "aws_cloudwatch_log_group" {
+    override_during = plan
+    defaults = { arn = "arn:aws:logs:ap-southeast-1:932542905614:log-group:/ecs/plether-sepolia" }
+  }
   mock_resource "aws_security_group" {
     override_during = plan
     defaults = { id = "sg-0123456789abcdef0" }
@@ -40,6 +55,58 @@ run "preserve_singapore_identity" {
   assert {
     condition = !local.native_aa_backend_configured && aws_ecs_service.alto[0].desired_count == 0 && aws_ecs_service.aa_reconciler[0].desired_count == 0
     error_message = "Preparation must not start services or enable issuance."
+  }
+}
+run "deployment_metadata_permissions" {
+  command = plan
+  assert {
+    condition = one([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement : s
+      if s.Sid == "InspectAaRpcParameterMetadata"
+    ]) == {
+      Sid = "InspectAaRpcParameterMetadata"
+      Effect = "Allow"
+      Action = "ssm:DescribeParameters"
+      Resource = "*"
+      Condition = { StringEquals = { "aws:RequestedRegion" = "ap-southeast-1" } }
+    }
+    error_message = "The metadata list grant must be read-only and region-bound."
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
+      s.Action == "kms:DescribeKey" && toset(s.Resource) == toset([data.aws_kms_key.aa_ssm_managed[0].arn])
+      if s.Sid == "InspectAaRpcEncryptionKeys"
+    ])
+    error_message = "Default-key inspection must not grant decrypt/sign or wildcard key access."
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
+      toset(s.Action) == toset(["iam:GetRolePolicy", "iam:ListRolePolicies"]) &&
+      toset(s.Resource) == toset([aws_iam_role.api_execution.arn, aws_iam_role.aa_reconciler_execution[0].arn])
+      if s.Sid == "InspectAaRpcConsumerPolicies"
+    ])
+    error_message = "Consumer-policy inspection must be limited to the API/reconciler roles."
+  }
+}
+run "deployment_customer_key_metadata_permissions" {
+  command = plan
+  variables {
+    aa_rpc_mode = "dual-independent"
+    aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/secondary-rpc-url"
+    aa_reconciler_secondary_rpc_url_kms_key_arn = "arn:aws:kms:ap-southeast-1:932542905614:key/33333333-3333-3333-3333-333333333333"
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.github_deploy_self_hosted_aa[0].policy).Statement :
+      s.Action == "kms:DescribeKey" && toset(s.Resource) == toset([
+        data.aws_kms_key.aa_ssm_managed[0].arn,
+        var.aa_reconciler_secondary_rpc_url_kms_key_arn,
+      ])
+      if s.Sid == "InspectAaRpcEncryptionKeys"
+    ])
+    error_message = "Customer-key metadata inspection must name only the configured key and SSM default key."
   }
 }
 run "public_sepolia" {

@@ -233,6 +233,11 @@ resource "aws_iam_role_policy" "github_deploy" {
   })
 }
 
+data "aws_kms_key" "aa_ssm_managed" {
+  count  = local.self_hosted_aa_resource_count
+  key_id = "alias/aws/ssm"
+}
+
 resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
   count = local.self_hosted_aa_resource_count
 
@@ -242,6 +247,34 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      {
+        Sid      = "InspectAaRpcParameterMetadata"
+        Effect   = "Allow"
+        Action   = "ssm:DescribeParameters"
+        # This metadata-only list API does not support parameter resource ARNs.
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = var.aws_region }
+        }
+      },
+      {
+        Sid    = "InspectAaRpcEncryptionKeys"
+        Effect = "Allow"
+        Action = "kms:DescribeKey"
+        Resource = distinct(compact([
+          data.aws_kms_key.aa_ssm_managed[0].arn,
+          var.aa_reconciler_secondary_rpc_url_kms_key_arn,
+        ]))
+      },
+      {
+        Sid    = "InspectAaRpcConsumerPolicies"
+        Effect = "Allow"
+        Action = ["iam:GetRolePolicy", "iam:ListRolePolicies"]
+        Resource = [
+          aws_iam_role.api_execution.arn,
+          aws_iam_role.aa_reconciler_execution[0].arn,
+        ]
+      },
       {
         Sid    = "InspectAaAdminRoles"
         Effect = "Allow"
