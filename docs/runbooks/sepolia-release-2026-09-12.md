@@ -17,9 +17,31 @@ validation. Existing canonical, future-time, ledger and durable-pause rules are
 unchanged. No automatic pause reset or switch to `latest` is introduced.
 
 Local validation passed: 1102 backend unit examples, 76 AA deployment tests and
-16 mocked Terraform plans. This paragraph records implementation validation,
-not a deployed correction; deployment and healthy reconciler observation still
-need to complete before issuance recovery.
+16 mocked Terraform plans. PR #262 merged as
+`6c0b1a02d6fa7db1f9460ff781e66c9bbcd05716`; all eight PR checks passed, including
+native-AA and perps integration. A saved, inspected Terraform plan changed only
+the API/reconciler task-definition age setting from 600 to 1800. Their running
+services were not changed until the matching application image was deployed.
+
+Backend [run 34705459352](https://github.com/Plether-Fi/plether-app/actions/runs/34705459352)
+completed successfully at this commit after applying the owner's continuing
+Singapore deployment approval to its protected gate. All seven deployment jobs
+passed. API revision `plether-sepolia:54`, reconciler revision
+`plether-sepolia-aa-reconciler:7` and workers revision `plether-sepolia-workers:49`
+are deployed. The application image digest is
+`sha256:85105dcf51d388f6453e55284ad04ae04ed834a3b611b750eaf5e257a4efb543`.
+Both API and reconciler definitions specify `1800`; Alto remains healthy on
+revision 3. Public API health and hosted readiness HTTP checks passed.
+
+Reconciler task `125cdfa972684b929cc0d6790a544b05` started at 16:43:41 UTC and
+emitted six healthy heartbeats without error events during the observation.
+It advanced from safe block 308167879 to 308169431. At 16:45:32 UTC both RPCs
+reported the same canonical safe block about 770–771 seconds old while this
+task continued healthy, demonstrating the old false-failure condition no longer
+causes a restart. This bounded observation is not a guarantee against future
+chain stalls. The existing durable issuance pause and on-chain paymaster pause
+were not cleared, native capability was not enabled and the hosted frontend was
+not redeployed. Remaining funding-observer/activation qualification is separate.
 
 ### Alto startup after explicit continuation approval
 

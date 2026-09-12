@@ -513,7 +513,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
         && var.aa_paymaster_code_hash != "0x0000000000000000000000000000000000000000000000000000000000000000",
         false
       )
-      error_message = "Running the AA reconciler requires a positive start block, its canonical lowercase nonzero block hash, the canonical lowercase nonzero deployed-paymaster runtime hash, a minimum EntryPoint deposit at least as large as the native global outstanding-liability cap, poll seconds in 1..60, batch blocks in 1..10000, max safe-head lag in 60..3600 seconds, and a nonzero paymaster address."
+      error_message = "Running the AA reconciler requires a positive start block, its canonical lowercase nonzero block hash, the canonical lowercase nonzero deployed-paymaster runtime hash, a minimum EntryPoint deposit at least as large as the native global outstanding-liability cap, poll seconds in 1..60, batch blocks in 1..10000, max safe-head lag in 60..1800 seconds, and a nonzero paymaster address."
     }
 
     precondition {

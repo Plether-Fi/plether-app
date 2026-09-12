@@ -165,11 +165,13 @@ jobs:
                 has("paymasterAddress") or has("paymasterVersion")) | not);
             def native_transport:
               exact_keys(common_keys + ["bundlerRpcUrl", "paymasterRpcUrl",
-                                        "paymasterAddress", "paymasterVersion"]) and
+                                        "paymasterAddress", "paymasterVersion", "preparationRpcVersion"]) and
               .bundlerRpcUrl == "/api/perps/v1/aa/rpc" and
               .paymasterRpcUrl == "/api/perps/v1/aa/rpc" and
               (.paymasterAddress | nonzero_address) and
+              (.paymasterAddress | ascii_downcase) == "0x9761091045616a388f5fe1433721b272c78fe31b" and
               .paymasterVersion == "plether-verifying-v1" and
+              .preparationRpcVersion == 1 and
               (has("pimlicoRpcUrl") | not);
             common_profile and
             .version == "perps-aa-arbitrum-sepolia-20260910-v2" and
