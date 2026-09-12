@@ -1139,13 +1139,29 @@ jobs:
           if ! jq --exit-status \
               --arg definition "$TASK_DEFINITION" \
               --arg owner "$REGISTRATION_OWNER" \
-              '(.failures | length) == 0
+              '# ECS returns name-only placeholders even without --overrides.
+               def no_effective_overrides:
+                 if (has("overrides") | not) then true
+                 else .overrides | if type != "object" then false
+                 else ((keys - ["containerOverrides", "inferenceAcceleratorOverrides"]) | length) == 0
+                   and (if has("inferenceAcceleratorOverrides") then .inferenceAcceleratorOverrides == [] else true end)
+                   and (if has("containerOverrides") then .containerOverrides |
+                     if type != "array" then false else
+                       all(.[]; if type != "object" then false else
+                         keys == ["name"]
+                         and (.name == "plether-aa-admin" or .name == "aa-admin-tmp-init" or .name == "otel-log-router")
+                       end)
+                       and ((map(.name) | unique | length) == length)
+                     end
+                   else true end)
+                 end end;
+               (.failures | length) == 0
                and (.tasks | length) == 1
                and .tasks[0].taskDefinitionArn == $definition
                and .tasks[0].startedBy == $owner
                and .tasks[0].launchType == "FARGATE"
                and .tasks[0].platformVersion == "1.4.0"
-               and ((.tasks[0].overrides.containerOverrides // []) | length) == 0' \
+               and (.tasks[0] | no_effective_overrides)' \
               "$run_result" >/dev/null; then
             echo "::error title=ECS rejected exact admin task::No accepted task may contain a container-command override."
             exit 1
@@ -1198,7 +1214,23 @@ jobs:
               --arg init "$TMP_INIT_CONTAINER" \
               --arg capability "$CAPABILITY" \
               --arg owner "$REGISTRATION_OWNER" \
-              '(.failures | length) == 0
+              '# Apply the same no-effective-overrides boundary at terminal readback.
+               def no_effective_overrides:
+                 if (has("overrides") | not) then true
+                 else .overrides | if type != "object" then false
+                 else ((keys - ["containerOverrides", "inferenceAcceleratorOverrides"]) | length) == 0
+                   and (if has("inferenceAcceleratorOverrides") then .inferenceAcceleratorOverrides == [] else true end)
+                   and (if has("containerOverrides") then .containerOverrides |
+                     if type != "array" then false else
+                       all(.[]; if type != "object" then false else
+                         keys == ["name"]
+                         and (.name == "plether-aa-admin" or .name == "aa-admin-tmp-init" or .name == "otel-log-router")
+                       end)
+                       and ((map(.name) | unique | length) == length)
+                     end
+                   else true end)
+                 end end;
+               (.failures | length) == 0
                and (.tasks | length) == 1
                and .tasks[0].taskArn == $arn
                and .tasks[0].taskDefinitionArn == $definition
@@ -1206,7 +1238,7 @@ jobs:
                and .tasks[0].lastStatus == "STOPPED"
                and .tasks[0].launchType == "FARGATE"
                and .tasks[0].platformVersion == "1.4.0"
-               and ((.tasks[0].overrides.containerOverrides // []) | length) == 0
+               and (.tasks[0] | no_effective_overrides)
                and ([.tasks[0].tags[]?
                      | select(.key == "Capability" and .value == $capability)] | length) == 1
                and ([.tasks[0].tags[]?

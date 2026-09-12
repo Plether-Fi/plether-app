@@ -6,6 +6,72 @@ import { spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const workflows = ['deploy-backend', 'deploy-alto', 'aa-admin']
 
+const adminSource = readFileSync(new URL('.github/workflows/aa-admin.yml', root), 'utf8')
+const taskFilters = [...adminSource.matchAll(/'([^']*)'\s+\\\n\s+"\$(run_result|status_file)"/g)]
+test('AA admin validates overrides at both task startup and terminal readback', () => {
+  assert.deepEqual(taskFilters.map(match => match[2]), ['run_result', 'status_file'])
+  const helpers = taskFilters.map(match => match[1].match(/def no_effective_overrides:[\s\S]*?end end;/)?.[0])
+  assert.ok(helpers[0])
+  assert.equal(helpers[0], helpers[1])
+  const startStep = adminSource.split('- name: Start exact one-off task without overrides')[1].split('- name: Wait for terminal state')[0]
+  assert.doesNotMatch(startStep, /^\s+--overrides\b/m)
+  assert.doesNotMatch(startStep, /^\s+--enable-execute-command\b/m)
+})
+for (const [, filter, name] of taskFilters) {
+  test(`AA admin ${name}: permits only empty ECS override placeholders`, () => {
+    const args = {
+      definition: 'arn:aws:ecs:ap-southeast-1:123456789012:task-definition/plether-sepolia-aa-admin-kms-attest:1',
+      arn: 'arn:aws:ecs:ap-southeast-1:123456789012:task/plether-sepolia/fixture',
+      owner: 'aa-admin-fixture', capability: 'fixed-digest-kms-attestation',
+      app: 'plether-aa-admin', init: 'aa-admin-tmp-init',
+    }
+    const fixture = () => ({failures: [], tasks: [{
+      taskArn: args.arn, taskDefinitionArn: args.definition, startedBy: args.owner,
+      launchType: 'FARGATE', platformVersion: '1.4.0', desiredStatus: 'STOPPED', lastStatus: 'STOPPED',
+      tags: [{key: 'Capability', value: args.capability}, {key: 'WorkflowOwner', value: args.owner}],
+      containers: [args.app, 'otel-log-router', args.init].map(name => ({name, lastStatus: 'STOPPED', exitCode: 0})),
+      // Exact non-mutating shape observed from ECS despite omitting --overrides.
+      overrides: {containerOverrides: [args.app, 'otel-log-router', args.init].map(name => ({name})), inferenceAcceleratorOverrides: []},
+    }]})
+    const cases = [
+      ['ECS name-only placeholders', () => {}, true],
+      ['absent overrides', t => {delete t.overrides}, true],
+      ['empty overrides object', t => {t.overrides = {}}, true],
+      ['empty container overrides', t => {t.overrides.containerOverrides = []}, true],
+      ['subset of name-only placeholders', t => {t.overrides.containerOverrides = [{name: args.app}]}, true],
+      ...[null, [], 'invalid', true].map(value => ['malformed overrides', t => {t.overrides = value}, false]),
+      ...[null, {}, 'invalid', true].map(value => ['malformed container overrides', t => {t.overrides.containerOverrides = value}, false]),
+      ['null container', t => {t.overrides.containerOverrides = [null]}, false],
+      ['missing container name', t => {t.overrides.containerOverrides = [{}]}, false],
+      ['unknown container', t => {t.overrides.containerOverrides.push({name: 'unknown'})}, false],
+      ['duplicate container', t => {t.overrides.containerOverrides.push({name: args.app})}, false],
+      ...Object.entries({command: ['sh'], environment: [{name: 'UNREVIEWED', value: 'yes'}], environmentFiles: [], cpu: 512, memory: 1024, memoryReservation: 128, resourceRequirements: [], unknown: true}).map(([key, value]) => [
+        `container ${key} override`, t => {t.overrides.containerOverrides[0][key] = value}, false,
+      ]),
+      ['null command still rejected', t => {t.overrides.containerOverrides[0].command = null}, false],
+      ...Object.entries({taskRoleArn: 'other-role', executionRoleArn: 'other-role', cpu: '512', memory: '1024', ephemeralStorage: {sizeInGiB: 50}, unknown: true}).map(([key, value]) => [
+        `task ${key} override`, t => {t.overrides[key] = value}, false,
+      ]),
+      ['nonempty inference override', t => {t.overrides.inferenceAcceleratorOverrides = [{}]}, false],
+      ['null inference override', t => {t.overrides.inferenceAcceleratorOverrides = null}, false],
+      ['wrong immutable definition', t => {t.taskDefinitionArn += '-other'}, false],
+      ['wrong platform', t => {t.platformVersion = 'LATEST'}, false],
+    ]
+    if (name === 'status_file') cases.push(
+      ['failed main container', t => {t.containers[0].exitCode = 1}, false],
+      ['failed init container', t => {t.containers[2].exitCode = 1}, false],
+      ['wrong owner tag', t => {t.tags[1].value = 'other'}, false],
+      ['not terminal', t => {t.lastStatus = 'RUNNING'}, false],
+    )
+    for (const [label, mutate, expected] of cases) {
+      const value = fixture(); mutate(value.tasks[0])
+      const result = spawnSync('jq', ['--exit-status', ...Object.entries(args).flatMap(([key, value]) => ['--arg', key, value]), filter], {input: JSON.stringify(value), encoding: 'utf8'})
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, expected, `${name}, ${label}: ${result.stderr}`)
+    }
+  })
+}
+
 test('AA admin topology accepts ECS omitted-disabled fault injection and rejects unsafe drift', () => {
   const source = readFileSync(new URL('.github/workflows/aa-admin.yml', root), 'utf8')
   const filter = source.match(/'\n(\s+def containers\(\$name\):[\s\S]*?)'\s+\\\n\s+"\$source_file"/)?.[1]
