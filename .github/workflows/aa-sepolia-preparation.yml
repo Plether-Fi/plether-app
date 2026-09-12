@@ -24,7 +24,7 @@ jobs:
       - name: Test RPC mode and release contracts
         env:
           AA_TERRAFORM_TEST_REQUIRED: '1'
-        run: node --test scripts/aa-rpc-mode.test.mjs scripts/aa-sepolia.test.mjs
+        run: node --test scripts/aa-rpc-mode.test.mjs scripts/aa-sepolia.test.mjs scripts/aa-deployment-approval.test.mjs
       - name: Initialize provider schema without state
         run: terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
       - name: Validate and exercise mocked AWS plans
