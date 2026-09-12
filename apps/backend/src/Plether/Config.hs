@@ -8,6 +8,7 @@ module Plether.Config
   , aaRpcModeText
   , resolveAaSecurityRpc
   , validateAaSafeLag
+  , aaSafeLagCeiling
   , parseCanonicalAddressList
   , NativeAaSafetyInput (..)
   , PerpsCandleReadMode (..)
@@ -884,7 +885,7 @@ loadConfig = do
                     globalHourlyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_HOURLY_WEI" paymasterGlobalHourlyWeiStr
                     globalDailyWei <- parsePositiveDecimal "AA_PAYMASTER_GLOBAL_DAILY_WEI" paymasterGlobalDailyWeiStr
                     canaryOwners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" nativeCanaryOwnersStr
-                    maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 600 nativeAaSafeLagStr
+                    maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 (aaSafeLagCeiling perpsChainId) nativeAaSafeLagStr
                     validateAaSafeLag perpsChainId globalRolloutEnabled canaryOwners maxSafeLag
                     unlessEither
                       (perpsChainId == 421614)
@@ -1457,11 +1458,18 @@ aaRpcModeText :: AaRpcMode -> Text
 aaRpcModeText DualIndependent = "dual-independent"
 aaRpcModeText SingleProviderSepolia = "single-provider-sepolia"
 
--- The same ceiling applies to every cohort and verification mode.
+-- Arbitrum Sepolia's safe head inherits parent-chain batch confirmation timing;
+-- it can be older than ten minutes while latest is current. This is a bounded
+-- chain policy, not a cohort/provider exception or a replacement for safe reads.
+aaSafeLagCeiling :: Integer -> Integer
+aaSafeLagCeiling 421614 = 1800
+aaSafeLagCeiling _ = 600
+
+-- Cohort and provider mode do not change the chain's finality cadence.
 validateAaSafeLag :: Integer -> Bool -> [Text] -> Integer -> Either String ()
-validateAaSafeLag _ _ _ lag =
-  unlessEither (lag >= 60 && lag <= 600)
-    "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and 600"
+validateAaSafeLag chain _ _ lag =
+  unlessEither (lag >= 60 && lag <= aaSafeLagCeiling chain)
+    ("AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and " <> show (aaSafeLagCeiling chain))
 
 -- Shared by API and reconciler startup, before any signing or ledger mutation.
 -- The legacy SECONDARY env slot explicitly reuses primary only in single mode.

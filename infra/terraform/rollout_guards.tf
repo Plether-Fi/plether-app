@@ -501,7 +501,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
         && tonumber(var.aa_reconciler_batch_blocks) <= 10000
         && can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
         && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
-        && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 3600
+        && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 1800
         && can(regex("^[1-9][0-9]*$", var.aa_paymaster_min_deposit_wei))
         && can(regex("^[1-9][0-9]*$", var.aa_paymaster_global_outstanding_wei))
         && tonumber(var.aa_paymaster_min_deposit_wei) >= tonumber(var.aa_paymaster_global_outstanding_wei)

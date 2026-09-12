@@ -35,7 +35,7 @@ spec =
               `shouldBe` expected
             (validateSecurityHeaderTime limit 10000 (SecurityBlockHeader 101 blockHash timestamp 1) == Right ())
               `shouldBe` expected
-      mapM_ (\limit -> mapM_ (check limit) [-61, -60, 0, 600, 601, 1800, 1801]) [600, 1800]
+      mapM_ (\limit -> mapM_ (check limit) [-61, -60, 0, 600, 601, 620, 656, 1800, 1801]) [600, 1800]
 
     it "accepts the exact EntryPoint/paymaster/range shape" $ do
       event <- expectRight $ parseUserOperationEvent paymaster 90 110 validEvent

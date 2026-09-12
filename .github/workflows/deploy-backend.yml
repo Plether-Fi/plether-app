@@ -1350,7 +1350,7 @@ jobs:
                       )
                       and ($environment.AA_RECONCILER_POLL_SECONDS | canonical_positive_decimal and (tonumber <= 60))
                       and ($environment.AA_RECONCILER_BATCH_BLOCKS | canonical_positive_decimal and (tonumber <= 10000))
-                      and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 3600))
+                      and ($environment.AA_RECONCILER_MAX_SAFE_LAG_SECONDS | canonical_positive_decimal and (tonumber >= 60) and (tonumber <= 1800))
                       and ($environment.AA_PAYMASTER_MIN_DEPOSIT_WEI | canonical_positive_decimal)
                   )
                   and $tmp.essential == false

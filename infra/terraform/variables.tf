@@ -806,16 +806,16 @@ variable "aa_reconciler_batch_blocks" {
 variable "aa_reconciler_max_safe_lag_seconds" {
   type        = string
   default     = "600"
-  description = "Shared gateway/reconciler maximum age of the agreed safe-chain head. Maximum 600 seconds; no cohort exceptions."
+  description = "Shared gateway/reconciler safe-head age bound. Arbitrum Sepolia permits at most 1800 seconds for parent-chain batch confirmation cadence; other targets retain 600. Explicit configuration required; no automatic relaxation."
 
   validation {
     condition = try(
       can(regex("^[1-9][0-9]*$", var.aa_reconciler_max_safe_lag_seconds))
       && tonumber(var.aa_reconciler_max_safe_lag_seconds) >= 60
-      && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= 600,
+      && tonumber(var.aa_reconciler_max_safe_lag_seconds) <= (var.environment == "sepolia" && var.perps_chain_id == "421614" ? 1800 : 600),
       false
     )
-    error_message = "aa_reconciler_max_safe_lag_seconds must be a canonical decimal integer from 60 through 600."
+    error_message = "aa_reconciler_max_safe_lag_seconds must be a canonical decimal integer from 60 through 1800 for Arbitrum Sepolia, or through 600 for other targets."
   }
 }
 

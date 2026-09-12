@@ -6,6 +6,72 @@ Target: account `932542905614`, region `ap-southeast-1`, existing
 
 ## Latest activation status
 
+### Sepolia safe-head policy correction
+
+After reviewing the shared-provider readings and Arbitrum's parent-chain safe
+head derivation, the owner requested fixing the policy. The reviewed fix allows
+an explicit 1800-second bound only for Arbitrum Sepolia, independent of cohort
+and provider mode; other chains and unset defaults retain 600 seconds. API and
+reconciler share the chain-specific ceiling, with matching Terraform/deployment
+validation. Existing canonical, future-time, ledger and durable-pause rules are
+unchanged. No automatic pause reset or switch to `latest` is introduced.
+
+Local validation passed: 1102 backend unit examples, 76 AA deployment tests and
+16 mocked Terraform plans. This paragraph records implementation validation,
+not a deployed correction; deployment and healthy reconciler observation still
+need to complete before issuance recovery.
+
+### Alto startup after explicit continuation approval
+
+The owner subsequently authorized continuing the Singapore deployment and
+activation. A newly saved and inspected Terraform plan changed only
+`aws_ecs_service.alto[0].desired_count` from zero to one, retaining the exact
+workflow-staged revision `plether-sepolia-alto:3`. It applied successfully.
+Task `85faf3daac4043c389fc12caa508f336` is running and healthy, its scratch
+initializer exited zero, and the private ALB target is healthy. Safe mode remains
+true, simulation deployment false and the Alto root filesystem read-only.
+Hosted readiness now reports the bundler `READY`.
+
+Activation is still blocked by the existing safe-head age policy. A read-only
+comparison at 2026-09-12 15:38:59 UTC found both Alchemy and Arbitrum's public
+Sepolia RPC reporting canonical safe block `308152486`, hash
+`0x505510a810321dd9ab8d1145b8ea56ef3553e7aa64563b4148d27d1189233753`,
+619–620 seconds old. Both latest heads were current (0–1 seconds old).
+The second endpoint was used only for diagnosis, not configured as a provider.
+This observed pause cannot be attributed solely to Alchemy lag. Do not claim a
+provider switch would resolve it or silently extend the approved 600-second
+ceiling. The paymaster and issuance remain paused; native capability and hosted
+frontend cutover, full funding inventory and qualification are still unfinished.
+
+### Continuation after PR #261
+
+PR #261 merged as `36d97405b36927eb60e50da164916541ef9918c5`.
+All eight PR checks subsequently passed. The owner explicitly approved Singapore
+Alto staging from this commit with action `deploy`, API hostname
+`api.sepolia.plether.com` and unchanged utility cushion `5000000000000000` wei,
+keeping Alto stopped and sponsorship disabled. The protected approval was
+applied only after the run commit and dispatch fingerprint matched those inputs.
+
+Alto [run 34702304111](https://github.com/Plether-Fi/plether-app/actions/runs/34702304111)
+completed successfully. The exact temporary image exception was visible as a
+warning; configuration, immutable image, runtime bytecode and wallet funding
+checks passed. No simulation contracts were deployed. ECS readback confirmed
+`plether-sepolia-alto:3` selected on `plether-alto`, rollout `COMPLETED`, with
+desired/running/pending counts all zero. Internal running-service and public AA
+smoke checks were intentionally skipped for this stopped-service staging run.
+
+Public API health remains successful. Hosted readiness still reports
+`BUNDLER_UNAVAILABLE`, `PAYMASTER_PAUSED` and `SPONSORSHIP_DISABLED`, with
+readiness enforcement disabled. No new owner transaction, funding transfer,
+Core change or frontend deployment occurred. Native AA is **not activated**.
+Starting Alto and verifying safe-mode runtime health are separate next steps.
+Reconciler logs reached safe block 308147790 but again reported a stale safe
+boundary and restarted; stable reconciliation remains an activation blocker.
+The normal 600-second ceiling is unchanged.
+
+The following sections retain the preceding deployment history; statements
+about pending approval and failed staging there describe those earlier runs.
+
 ### Continuation after PR #260
 
 Subsequent owner decision: the owner explicitly accepted a temporary exception

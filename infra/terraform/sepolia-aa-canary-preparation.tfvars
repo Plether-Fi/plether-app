@@ -15,6 +15,10 @@ aa_native_canary_owners          = "0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B" 
 alto_desired_count               = 0
 aa_reconciler_desired_count      = 0
 
+# Arbitrum Sepolia safe blocks inherit L1 batch/confirmation delay. This does
+# not change safe/canonical verification, order validity or spending caps.
+aa_reconciler_max_safe_lag_seconds = "1800"
+
 # User-approved reuse of the backend RPC; no duplicated credential to rotate.
 alto_rpc_url_ssm_parameter_name                    = "/plether/sepolia/perps-rpc-url"
 alto_executor_private_keys_ssm_parameter_name      = "/plether/sepolia/alto-executor-private-keys"
