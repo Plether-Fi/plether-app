@@ -1563,6 +1563,15 @@ jobs:
               end
             ' task-def.json > /dev/null
 
+      - name: Check out reviewed public AA deployment policy
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+          path: deployment-policy
+
       - name: Require active Alto with reviewed validation policy for public native API
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
@@ -1576,7 +1585,7 @@ jobs:
               and .services[0].pendingCount == 0 and (.services[0].deployments | length) == 1' public-alto-service.json >/dev/null
             alto_revision=$(jq -er '.services[0].taskDefinition' public-alto-service.json)
             aws ecs describe-task-definition --task-definition "$alto_revision" --query taskDefinition > public-alto-task.json
-            jq -e -f .github/scripts/validate-aa-public-alto.jq public-alto-task.json >/dev/null
+            jq -e -f deployment-policy/.github/scripts/validate-aa-public-alto.jq public-alto-task.json >/dev/null
           fi
 
       - name: Update application images and service version
