@@ -32,7 +32,9 @@ Other high/medium findings remain subject to the existing scanner policy.
 
 Alto remains private-network-only with safe mode and normal validation enabled.
 This exception grants no new funding, changes no KMS or sponsorship limits,
-and does not relax canonical verification or the 600-second safe-head ceiling.
+and does not itself change canonical verification or the safe-head ceiling.
+The separately approved Sepolia finality-age policy is documented in the
+[release procedure](singapore-sepolia-aa-release.md).
 It does not qualify native sponsorship or permit mainnet deployment.
 
 ## Follow-up and revocation

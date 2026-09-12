@@ -31,6 +31,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Vector as V
 import Database.PostgreSQL.Simple (Connection, Only (..), query_)
 import Plether.Database (DbPool, withDb, withDbAdvisoryLock)
+import Plether.Config (aaSafeLagCeiling)
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -160,8 +161,8 @@ loadAaReconcilerConfig = do
     unless (failurePause >= 5 && failurePause <= 300) $
       Left "AA_RECONCILER_FAILURE_PAUSE_SECONDS must be between 5 and 300"
     maxSafeLag <- parseDecimal "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" maxSafeLagRaw
-    unless (maxSafeLag >= 60 && maxSafeLag <= 600) $
-      Left "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and 600"
+    unless (maxSafeLag >= 60 && maxSafeLag <= aaSafeLagCeiling chain) $
+      Left $ "AA_RECONCILER_MAX_SAFE_LAG_SECONDS must be between 60 and " <> T.pack (show $ aaSafeLagCeiling chain)
     Right $
       AaReconcilerConfig
         chain

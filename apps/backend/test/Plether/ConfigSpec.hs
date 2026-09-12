@@ -578,13 +578,16 @@ spec = do
     let owners = ["0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"]
     it "keeps the default usable without a canary exception" $ do
       validateAaSafeLag 42161 True [] 600 `shouldBe` Right ()
-    it "rejects extended safe-head lag even for an allowlisted Sepolia cohort" $ do
-      validateAaSafeLag 421614 False owners 600 `shouldBe` Right ()
-      mapM_ (\lag -> validateAaSafeLag 421614 False owners lag `shouldSatisfy` isLeft) [59, 601, 1800, 3600]
-    it "rejects relaxed mainnet, global and empty-cohort limits" $ do
-      validateAaSafeLag 42161 False owners 1800 `shouldSatisfy` isLeft
-      validateAaSafeLag 421614 True owners 1800 `shouldSatisfy` isLeft
-      validateAaSafeLag 421614 False [] 1800 `shouldSatisfy` isLeft
+    it "allows bounded Sepolia finality lag independently of cohort" $ do
+      mapM_ (\global -> mapM_ (\cohort -> do
+        mapM_ (\lag -> validateAaSafeLag 421614 global cohort lag `shouldBe` Right ()) [60, 600, 601, 620, 656, 1800]
+        mapM_ (\lag -> validateAaSafeLag 421614 global cohort lag `shouldSatisfy` isLeft) [59, 1801, 3600]
+        ) [owners, []]) [False, True]
+    it "retains the ten-minute ceiling on every other chain" $ do
+      mapM_ (\chain -> do
+        validateAaSafeLag chain True [] 600 `shouldBe` Right ()
+        mapM_ (\lag -> validateAaSafeLag chain False owners lag `shouldSatisfy` isLeft) [601, 1800]
+        ) [1, 42161, 11155111]
 
   describe "AA RPC verification modes" $ do
     let primary = "https://primary.example/rpc"

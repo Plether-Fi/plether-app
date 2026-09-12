@@ -4,7 +4,7 @@ Current public-Sepolia policy and release procedure:
 [Singapore Sepolia AA release](singapore-sepolia-aa-release.md).
 That procedure supersedes the allowlist-only and disabled-safe-mode instructions
 below, which describe the original qualification sequence. Use Alto safe mode,
-the 600-second safe-head ceiling and the canonical Core v1.2.3 bindings.
+the bounded 1800-second Sepolia safe-head ceiling and the canonical Core v1.2.3 bindings.
 Historical risk findings remain release-review inputs, not waived safeguards.
 
 This runbook rolls out the Arbitrum Sepolia account-abstraction stack described
@@ -1386,7 +1386,7 @@ aa_reconciler_start_block = "<paymaster-deployment-block>"
 aa_reconciler_start_block_hash = "0x<canonical-lowercase-deployment-block-hash>"
 aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/aa-reconciler-secondary-rpc-url"
 aa_reconciler_secondary_rpc_url_kms_key_arn = "" # or the exact customer-managed key ARN
-aa_reconciler_max_safe_lag_seconds = "600"
+aa_reconciler_max_safe_lag_seconds = "1800"
 alto_rpc_url_ssm_parameter_name = "/plether/sepolia/alto-rpc-url"
 alto_send_transaction_rpc_url_ssm_parameter_name = "" # or one exact reviewed SecureString name
 alto_executor_private_keys_ssm_parameter_name = "/plether/sepolia/alto-executor-private-keys"
@@ -1898,7 +1898,7 @@ aa_reconciler_poll_seconds = "5"
 aa_reconciler_batch_blocks = "1000"
 aa_reconciler_secondary_rpc_url_ssm_parameter_name = "/plether/sepolia/aa-reconciler-secondary-rpc-url"
 aa_reconciler_secondary_rpc_url_kms_key_arn = "" # or the exact customer-managed key ARN
-aa_reconciler_max_safe_lag_seconds = "600"
+aa_reconciler_max_safe_lag_seconds = "1800"
 aa_paymaster_min_deposit_wei = "150000000000000000"
 ```
 
@@ -1988,7 +1988,7 @@ aws --profile plether ecs describe-services \
 
 test "$(AWS_PROFILE=plether terraform \
   -chdir="$APP_ROOT/infra/terraform" \
-  output -raw aa_reconciler_max_safe_lag_seconds)" = 600
+  output -raw aa_reconciler_max_safe_lag_seconds)" = 1800
 
 export AA_RECON_ALARM_EVIDENCE="$(mktemp /tmp/plether-aa-recon-alarms.XXXXXX)"
 aws --profile plether cloudwatch describe-alarms \
@@ -2010,15 +2010,15 @@ own a running task. For reconciliation, the container must receive
 `AA_PAYMASTER_ADDRESS`, `AA_PAYMASTER_CODE_HASH`,
 `AA_RECONCILER_START_BLOCK`, `AA_RECONCILER_START_BLOCK_HASH`,
 `AA_RECONCILER_POLL_SECONDS`, `AA_RECONCILER_BATCH_BLOCKS`, and
-`AA_RECONCILER_MAX_SAFE_LAG_SECONDS=600`,
+`AA_RECONCILER_MAX_SAFE_LAG_SECONDS=1800`,
 `AA_PAYMASTER_MIN_DEPOSIT_WEI`, plus `HOME=/tmp`, `TMPDIR=/tmp`, and logging
 configuration. Verify both URLs resolve from SSM only at task start, differ in
 value and provider operator, use HTTPS/443, report chain `421614`, support the
 `safe` tag, and can scan the full required history. The reconciler must reject
-the agreed advertised safe-boundary timestamp if it is more than 600 seconds
+the agreed advertised safe-boundary timestamp if it is more than 1800 seconds
 behind its wall clock or more than 60 seconds in the future, durably pausing
 issuance rather than reporting a healthy heartbeat. During historical
-catch-up, do not apply the 600-second age limit to each intermediate batch
+catch-up, do not apply the safe-head age limit to each intermediate batch
 target: those targets are expected to be old. Each target must instead be at
 or below the already attested safe height, have a timestamp no earlier than
 the canonical cursor and no more than 60 seconds in the future, agree at both
@@ -2034,7 +2034,7 @@ Initial pass criteria over at least one full validity window plus the
 operational observation window:
 
 - the cursor advances monotonically, the advertised dual-provider safe boundary
-  remains within the configured 600-second maximum lag, and historical batch
+  remains within the configured 1800-second Sepolia maximum lag, and historical batch
   targets obey monotonic/future rules without preventing catch-up;
 - a cursor discontinuity, unknown paymaster event, or excessive actual charge
   pauses new issuance and alerts without destroying evidence;
@@ -2275,7 +2275,7 @@ that same block independently verify the paymaster runtime hash, policy ID,
 approved proxy hash, factory/implementation addresses and code hashes,
 `factory.accountImplementation()`, sole signer, and on-chain maximum
 cost/validity ceilings. It must re-read the explicit header after all profile
-reads and reject a changed, more-than-600-second-old, or implausibly future
+reads and reject a changed, more-than-1800-second-old, or implausibly future
 snapshot. There is no fallback to `latest` or one provider. While sponsorship
 is disabled the API must not initialize the signer or call KMS; retain the
 protected KMS attestation evidence from Gate 2. A persistent dual-provider

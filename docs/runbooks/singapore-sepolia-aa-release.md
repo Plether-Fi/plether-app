@@ -16,8 +16,26 @@ paymaster compatibility failure blocks public activation; never disable checks
 to make the release pass. API ingress remains authenticated and Alto private.
 
 Keep KMS, budgets, rate limits, Core's 60-second window and the maximum
-600-second safe-head age. Do not increase caps, clear liabilities or transfer
+1800-second Sepolia safe-head age. Do not increase caps, clear liabilities or transfer
 funds as an activation shortcut. Readiness remains observation-only until tested.
+
+The Sepolia age bound accommodates parent-chain batch confirmation timing, not
+RPC response latency. Nitro derives `safe` from the newest batch included at the
+parent chain's safe block ([Arbitrum reference](https://docs.arbitrum.io/how-arbitrum-works/reference/finality-and-reorgs)).
+Both Alchemy and Arbitrum's public RPC were observed serving the same progressing
+safe head over ten minutes old while `latest` was current. The explicit Sepolia
+profile therefore uses 1800 seconds; unset runtime/Terraform defaults remain 600,
+and every other chain retains a 600-second ceiling. This allowance applies equally
+to public/allowlisted and single/dual-provider modes. Those modes still require
+their independent authorization checks; this setting grants no public activation.
+
+This is a freshness tradeoff, not a guarantee every future batch arrives within
+30 minutes. Over-age/future evidence, canonical discontinuity and disagreement
+still fail closed. Genuine over-age failures retain the existing durable pause
+and recovery procedure; do not automatically clear operator/security pauses.
+Safe confirmation requirements, 120-second reconciliation-heartbeat freshness,
+reservation accounting and the on-chain sponsorship/order validity windows do
+not change. Raising this bound does not release outstanding liabilities sooner.
 
 Merging does not deploy the backend. The existing master-push frontend workflow
 publishes the mainnet redirect; the actual Sepolia app is manually deployed.
