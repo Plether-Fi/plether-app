@@ -361,7 +361,9 @@ jobs:
               def secret_names($definition):
                 ($definition.secrets // []) | map(.name);
               def reviewed_environment_names:
-                [
+                (if environment(container($alto)[0]).ALTO_SAFE_MODE == "false"
+                 then ["PLETHER_ALTO_NETWORK_CHAIN_ID", "PLETHER_ALTO_VALIDATION_POLICY"]
+                 else [] end) + [
                   "ALTO_ENTRYPOINTS",
                   "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS",
                   "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8",
@@ -513,7 +515,7 @@ jobs:
                 and $environment.ALTO_API_VERSION == "v1"
                 and $environment.ALTO_DEFAULT_API_VERSION == "v1"
                 and $environment.ALTO_RPC_METHODS == $rpc_methods
-                and $environment.ALTO_SAFE_MODE == "true"
+                and ($environment.ALTO_SAFE_MODE == "true" or $environment.ALTO_SAFE_MODE == "false")
                 and $environment.ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT == "0"
                 and $environment.ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER == "0"
                 and $environment.ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION == "false"
@@ -560,6 +562,11 @@ jobs:
                   ((.valueFrom // "") | type == "string" and length > 0))
               ' "$task_definition_file" >/dev/null; then
             echo "::error title=Alto task-definition preflight failed::Apply the reviewed Sepolia Alto Terraform topology before deploying an image."
+            exit 1
+          fi
+
+          if ! jq -e -f .github/scripts/validate-aa-public-alto.jq "$task_definition_file" >/dev/null; then
+            echo "::error title=Alto validation policy rejected::Safe mode or the exact approved Arbitrum Sepolia exception is required; ordinary validation must remain enabled."
             exit 1
           fi
 

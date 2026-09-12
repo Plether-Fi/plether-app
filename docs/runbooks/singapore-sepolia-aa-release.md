@@ -11,9 +11,15 @@ Public sponsorship is supported only on chain 421614. The existing
 AA_NATIVE_GLOBAL_ROLLOUT_ENABLED setting selects public access; false retains
 AA_NATIVE_CANARY_OWNERS. Mainnet remains prohibited. Alchemy-only verification
 is explicitly accepted for Sepolia, not independent cross-provider verification.
-Alto safe mode and normal simulation/validation are required. RPC tracing or
-paymaster compatibility failure blocks public activation; never disable checks
-to make the release pass. API ingress remains authenticated and Alto private.
+Normal Alto simulation/validation is required. On 2026-09-12 the owner approved
+`alto_sepolia_safe_mode_exception=true` only for Arbitrum Sepolia (421614),
+allowing Alchemy without custom JS tracing. This sets `ALTO_SAFE_MODE=false`,
+but keeps `ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION=false`. The deployment
+gate requires the exact Singapore task identity and exception/chain metadata,
+and independently probes the RPC chain ID before promotion. Other chains keep
+safe mode. Default configuration remains safe mode; the public Sepolia overlay
+explicitly selects the approved exception. API ingress stays authenticated and
+Alto private. See [exception scope and qualification](alto-sepolia-validation-exception-2026-09-12.md).
 
 Keep KMS, budgets, rate limits, Core's 60-second window and the maximum
 1800-second Sepolia safe-head age. Do not increase caps, clear liabilities or transfer
@@ -99,10 +105,10 @@ Build the approved SHA's backend/log-router images and record immutable digests.
 Provision/configure AA and the funding observer with issuance/preparation disabled.
 The normal deploy-backend workflow promotes every non-log-router application
 container, including plether-funding-monitor. Use deploy-alto for the pinned
-bundler image and its safe-mode preflight. No ad-hoc regional build workflow.
+bundler image and its reviewed validation-policy preflight. No ad-hoc regional build workflow.
 
 Validate reconciler freshness, idle funding, API readiness, origin authentication,
-KMS and safe-mode estimation. Test allowlisted issuance before enabling the
+KMS and normal estimation/submission under the approved validation policy. Test allowlisted issuance before enabling the
 explicit public Sepolia setting. Preserve the standard Pimlico manifest until
 backend qualification passes; then manually deploy the matching Sepolia frontend
 and native manifest. Never auto-fallback after ambiguous native preparation.

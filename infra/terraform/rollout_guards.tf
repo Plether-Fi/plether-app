@@ -379,7 +379,12 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition     = !var.aa_native_global_rollout_enabled || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614" && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
-      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring; Alto safe mode is mandatory."
+      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring."
+    }
+
+    precondition {
+      condition     = !var.alto_sepolia_safe_mode_exception || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614")
+      error_message = "The Alto safe-mode exception is approved only for Singapore Arbitrum Sepolia (421614); never mainnet or another deployment."
     }
 
     precondition {

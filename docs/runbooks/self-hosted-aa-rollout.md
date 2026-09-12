@@ -2,8 +2,10 @@
 
 Current public-Sepolia policy and release procedure:
 [Singapore Sepolia AA release](singapore-sepolia-aa-release.md).
+The owner-approved [Sepolia tracing exception](alto-sepolia-validation-exception-2026-09-12.md)
+supersedes the earlier mandatory-safe-mode requirement only on Arbitrum Sepolia.
 That procedure supersedes the allowlist-only and disabled-safe-mode instructions
-below, which describe the original qualification sequence. Use Alto safe mode,
+below, which describe the original qualification sequence. Use the reviewed Alto validation policy,
 the bounded 1800-second Sepolia safe-head ceiling and the canonical Core v1.2.3 bindings.
 Historical risk findings remain release-review inputs, not waived safeguards.
 

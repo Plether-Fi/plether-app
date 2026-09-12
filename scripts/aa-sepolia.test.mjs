@@ -40,9 +40,11 @@ test('public overlay stages policy without enabling sponsorship or preparation',
     assert.match(overlay, new RegExp(flag + '\\s*= false'))
   assert.match(overlay, /aa_native_global_rollout_enabled = true/)
 })
-test('active Alto gate rejects unsafe mode, skipped validation, debug and duplicate controls', () => {
+test('active Alto gate requires safe mode or the exact Sepolia exception', () => {
   assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_SAFE_MODE", value = tostring\(local.alto_safe_mode\)/)
-  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= true/)
+  assert.match(read('infra/terraform/alto.tf'), /alto_safe_mode\s*= !\(var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614"\)/)
+  assert.match(read('infra/terraform/variables.tf'), /variable "alto_sepolia_safe_mode_exception" \{[^}]*default\s*= false/s)
+  assert.match(read('infra/terraform/alto.tf'), /name = "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION", value = "false"/)
   const fixture = () => ({containerDefinitions:[{name:'plether-alto',environment:[
     {name:'ALTO_SAFE_MODE',value:'true'},
     {name:'ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION',value:'false'},
@@ -56,6 +58,39 @@ test('active Alto gate rejects unsafe mode, skipped validation, debug and duplic
   const duplicate=fixture(); duplicate.containerDefinitions[0].environment.push(duplicate.containerDefinitions[0].environment[0])
   assert.notEqual(validate(duplicate),0)
   assert.notEqual(validate({containerDefinitions:[]}),0)
+  const exception = () => {
+    const data = fixture()
+    data.family = 'plether-sepolia-alto'
+    data.taskDefinitionArn = 'arn:aws:ecs:ap-southeast-1:932542905614:task-definition/plether-sepolia-alto:4'
+    data.containerDefinitions[0].environment[0].value = 'false'
+    data.containerDefinitions[0].environment.push(
+      {name:'PLETHER_ALTO_NETWORK_CHAIN_ID',value:'421614'},
+      {name:'PLETHER_ALTO_VALIDATION_POLICY',value:'sepolia-testnet-exception-v1'})
+    return data
+  }
+  assert.equal(validate(exception()),0)
+  for (const index of [0,1,2,3,4]) {
+    const data = exception()
+    data.containerDefinitions[0].environment[index].value = 'invalid'
+    assert.notEqual(validate(data),0)
+    const missing = exception(); missing.containerDefinitions[0].environment.splice(index,1)
+    assert.notEqual(validate(missing),0)
+    const repeated = exception(); repeated.containerDefinitions[0].environment.push(repeated.containerDefinitions[0].environment[index])
+    assert.notEqual(validate(repeated),0)
+  }
+  for (const chain of ['42161','1','11155111']) {
+    const data = exception(); data.containerDefinitions[0].environment[3].value = chain
+    assert.notEqual(validate(data),0)
+  }
+  for (const [key,value] of [
+    ['family','plether-mainnet-alto'],
+    ['taskDefinitionArn','arn:aws:ecs:us-east-1:932542905614:task-definition/plether-sepolia-alto:4'],
+    ['taskDefinitionArn','arn:aws:ecs:ap-southeast-1:111111111111:task-definition/plether-sepolia-alto:4']
+  ]) {
+    const data = exception(); data[key] = value
+    assert.notEqual(validate(data),0)
+  }
+  assert.match(read('.github/workflows/deploy-alto.yml'), /jq -e -f \.github\/scripts\/validate-aa-public-alto\.jq "\$task_definition_file"/)
 })
 test('backend deployment promotes funding observer and keeps manual approval boundary', () => {
   const workflow=read('.github/workflows/deploy-backend.yml')

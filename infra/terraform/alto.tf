@@ -1,5 +1,10 @@
 locals {
-  alto_safe_mode = true
+  # Owner-approved testnet exception: normal UserOperation validation stays on.
+  alto_safe_mode = !(var.alto_sepolia_safe_mode_exception && var.environment == "sepolia" && var.perps_chain_id == "421614")
+  alto_validation_exception_environment = local.alto_safe_mode ? [] : [
+    { name = "PLETHER_ALTO_VALIDATION_POLICY", value = "sepolia-testnet-exception-v1" },
+    { name = "PLETHER_ALTO_NETWORK_CHAIN_ID", value = var.perps_chain_id },
+  ]
   alto_zero_post_op_environment = [
     # This reviewed native paymaster has no postOp hook and requires zero.
     # Alto otherwise simulates with 2M gas and rounds a zero estimate to 1.
@@ -257,7 +262,7 @@ resource "aws_ecs_task_definition" "alto" {
         },
       ], local.alto_optional_secrets)
 
-      environment = concat([
+      environment = concat(local.alto_validation_exception_environment, [
         { name = "ALTO_ENTRYPOINTS", value = var.alto_entrypoint_address },
         { name = "ALTO_DETERMINISTIC_DEPLOYER_ADDRESS", value = "0x4e59b44847b379578588920ca78fbf26c0b4956c" },
         { name = "ALTO_ENTRYPOINT_SIMULATION_CONTRACT_V8", value = var.alto_entrypoint_simulation_contract_v8 },

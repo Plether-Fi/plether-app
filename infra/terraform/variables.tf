@@ -608,6 +608,12 @@ variable "aa_native_global_rollout_enabled" {
   description = "Explicit public native sponsorship on Arbitrum Sepolia only. False retains the owner allowlist. Does not enable issuance or authorize a deployment."
 }
 
+variable "alto_sepolia_safe_mode_exception" {
+  description = "Owner-approved Arbitrum Sepolia-only exception for RPCs without custom JS tracing. Normal operation validation, private ingress and gateway controls remain mandatory."
+  type        = bool
+  default     = false
+}
+
 variable "alto_desired_count" {
   type        = number
   default     = 0

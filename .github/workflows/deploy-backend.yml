@@ -1563,7 +1563,7 @@ jobs:
               end
             ' task-def.json > /dev/null
 
-      - name: Require active safe-mode Alto for public native API
+      - name: Require active Alto with reviewed validation policy for public native API
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
           set -euo pipefail
