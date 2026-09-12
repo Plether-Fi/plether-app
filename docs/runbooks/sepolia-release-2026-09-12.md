@@ -59,8 +59,15 @@ unauthenticated probe returns `403 / PROXY_AUTH_FAILED`.
 
 Post-deployment logs also show repeated LP settlement simulation failures with
 `HousePool__NoLpEpochProgress()` (`0x86cca6b8`). The worker refuses to send that
-transaction. This is an unresolved operational issue, not a funding diagnosis
-or proof of successful LP settlement; do not silence or bypass the invariant.
+transaction. A block-pinned read at L2 block `308063656` confirmed a frozen
+oracle/FAD window, matured deposits, no matured redemptions, fresh mark, live
+withdrawals, zero dependency/operational blocker masks and deposit-deferral
+masks `1028` for both tranches. Core v1.2.3 blocks deposit settlement when
+`oracleFrozen`; with no redemption epochs to process, its no-progress revert
+is consistent with the weekend waiting state. The worker's repeated invariant
+error classification remains an observability issue, not a funding diagnosis.
+Do not bypass simulation, suppress unrelated failures or assume all exits are
+blocked. This PR does not change that worker classification.
 
 Frontend publication and final smoke tests remain pending. Do not treat this
 record as proof of native-AA qualification. Native activation still requires dedicated Alto funding,
