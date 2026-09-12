@@ -9,6 +9,21 @@ import { join } from 'node:path'
 const root = new URL('../', import.meta.url)
 const workflows = ['deploy-backend', 'deploy-alto', 'aa-admin']
 
+test('Alto checks out the exact reviewed policy before invoking repository files', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const deploy = source.split('\n  deploy:\n')[1]
+  const checkout = deploy.indexOf('- name: Check out reviewed deployment policy')
+  const credentials = deploy.indexOf('- name: Configure AWS credentials')
+  const validation = deploy.indexOf('jq -e -f .github/scripts/validate-aa-public-alto.jq')
+  assert.ok(checkout > deploy.indexOf('- name: Revalidate protected environment before credentials'))
+  assert.ok(credentials > checkout && validation > credentials)
+  const step = deploy.slice(checkout, credentials)
+  assert.match(step, /uses: actions\/checkout@[0-9a-f]{40}/)
+  assert.match(step, /ref: \$\{\{ github.sha \}\}/)
+  assert.match(step, /persist-credentials: false/)
+  assert.match(step, /sparse-checkout: \.github\/scripts/)
+})
+
 test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
   const section = source.split('scan_policy=$(jq -ce')[1]
