@@ -174,6 +174,54 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(onRequestFunds).toHaveBeenCalledOnce()
   })
 
+  it.each(['waiting', 'depositing'] as const)('shows automatic %s progress without a separate Deposit action', (phase) => {
+    const onDeposit = vi.fn()
+    render(
+      <TestnetWelcomeModalView
+        isOpen
+        isWalletConnected
+        isTradingAccountRecipient
+        isSubmitting
+        fundingPhase={phase}
+        walletAddress={walletAddress}
+        claim={{ address: walletAddress, amount: '100000000000', token: walletAddress, txHash: null, status: 'minted' }}
+        onClose={vi.fn()}
+        onWalletAddressChange={vi.fn()}
+        onConnectWallet={vi.fn()}
+        onRequestFunds={vi.fn()}
+        onDeposit={onDeposit}
+      />
+    )
+    expect(screen.getByRole('button', {
+      name: phase === 'waiting' ? 'Waiting for mock USDC' : 'Depositing mock USDC',
+    })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onDeposit).not.toHaveBeenCalled()
+  })
+
+  it('shows confirmed deposit success and offers to start trading', () => {
+    render(
+      <TestnetWelcomeModalView
+        isOpen
+        isWalletConnected
+        isTradingAccountRecipient
+        fundingPhase="deposited"
+        walletAddress={walletAddress}
+        claim={{ address: walletAddress, amount: '100000000000', token: walletAddress, txHash: null, status: 'minted' }}
+        onClose={vi.fn()}
+        onWalletAddressChange={vi.fn()}
+        onConnectWallet={vi.fn()}
+        onRequestFunds={vi.fn()}
+        onDeposit={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Mock USDC deposited into your Margin Account. You are ready to trade.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Mock USDC deposited' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Start trading' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
+  })
+
   it('shows an actionable faucet timeout and leaves retry available', () => {
     render(
       <TestnetWelcomeModalView
