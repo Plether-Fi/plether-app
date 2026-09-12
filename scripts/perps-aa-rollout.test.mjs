@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { protectionWorkerProvenance } from './migrate-perps-aa-client.mjs'
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -29,20 +30,32 @@ test('published client provenance matches the dependency, lockfile and installed
   assert.ok(runbook.includes(record.integrity))
 })
 
-test('rollout native candidate preserves every public manifest binding', () => {
+test('native activation preserves every reviewed candidate binding and enables fast preparation', () => {
   const candidates = [...runbook.matchAll(/```json\n([\s\S]*?)\n```/g)]
     .map(match => JSON.parse(match[1]))
     .filter(value => value.paymasterVersion === 'plether-verifying-v1')
   assert.equal(candidates.length, 1)
-  const { pimlicoRpcUrl, ...common } = manifest
-  assert.equal(pimlicoRpcUrl, '/api/perps/v1/aa/pimlico')
-  assert.deepEqual(candidates[0], {
-    ...common,
-    bundlerRpcUrl: '/api/perps/v1/aa/rpc',
-    paymasterRpcUrl: '/api/perps/v1/aa/rpc',
-    paymasterAddress: '0x_REPLACE_WITH_DEPLOYED_ADDRESS',
-    paymasterVersion: 'plether-verifying-v1',
+  assert.equal('pimlicoRpcUrl' in manifest, false)
+  assert.deepEqual(manifest, {
+    ...candidates[0],
+    paymasterAddress: '0x9761091045616A388f5fE1433721B272c78fe31b',
+    preparationRpcVersion: 1,
   })
+  assert.equal(manifest.bundlerRpcUrl, '/api/perps/v1/aa/rpc')
+  assert.equal(manifest.paymasterRpcUrl, manifest.bundlerRpcUrl)
+})
+
+test('deployment validator accepts the activated capability and rejects altered native profiles', () => {
+  const workflow = read('.github/workflows/deploy-frontend.yml')
+  const section = workflow.split('name: Validate testnet AA manifest')[1].split('name: Validate testnet backend origin')[0]
+  const filter = section.match(/jq -e '([\s\S]*?)' dist\/perps-aa-manifest.json/)[1]
+  const accepts = value => spawnSync('jq', ['-e', filter], { input: JSON.stringify(value), encoding: 'utf8' }).status === 0
+  assert.equal(accepts(manifest), true)
+  const { preparationRpcVersion, ...withoutCapability } = manifest
+  for (const invalid of [withoutCapability, { ...manifest, preparationRpcVersion: 2 },
+    { ...manifest, paymasterAddress: '0x1111111111111111111111111111111111111111' },
+    { ...manifest, pimlicoRpcUrl: '/api/perps/v1/aa/pimlico' },
+    { ...manifest, unknown: true }]) assert.equal(accepts(invalid), false)
 })
 
 test('rollout identity and public artifact checksum match the deployment', () => {

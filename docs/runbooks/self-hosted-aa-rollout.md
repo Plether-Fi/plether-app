@@ -15,9 +15,11 @@ paymaster implemented by the Haskell API. It is deliberately Sepolia-only.
 The rollout is fail-closed and reversible. Provisioning the dormant stack,
 deploying the paymaster, starting Alto, enabling native sponsorship issuance,
 and qualifying or later activating the native transport field set in a v2
-manifest are separate gates. The public manifest is already v2 but still uses
-Pimlico; a version suffix alone never selects native routing. Passing one gate
-does not authorize the next one.
+manifest are separate gates. The checked-in v2 manifest selects
+the native transport in the activation branch, with preparation RPC version 1;
+deployment and live qualification are recorded in the dated release record.
+A version suffix alone never selects native routing. Passing one gate does not
+authorize the next one. Pimlico-shaped recovery records remain supported.
 
 ## RPC verification modes
 
@@ -90,7 +92,7 @@ reads disagree with them:
 | Implementation runtime hash | `0x689a90eff03926a12aedad2fc6d4fdbcbdd9ffac86e7d0d70ce6355961305c74` |
 | SimpleAccount proxy runtime hash | `0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9` |
 | Reviewed deployed proxy sample | `0x81237a8Fc8D6F616d5F151c69865f365dF5fF052` (factory-derived index zero) |
-| Current public manifest | `perps-aa-arbitrum-sepolia-20260910-v2`, exact Pimlico transport shape |
+| Current checked-in manifest | `perps-aa-arbitrum-sepolia-20260910-v2`, native transport with preparation RPC version 1 |
 | USDC | `0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8` |
 | Order router | `0x6215d36fcbd610ca1525252eebcbfd8b223a6072` |
 | CFD engine | `0xafece93321be41aa73474457e2f47cf7b2fb738f` |
@@ -2617,7 +2619,7 @@ provider fallback after preparation or submission.
 Rerun the frontend qualification suite from Gate 1 against the candidate
 object, then use the controlled harness/preview for new-operation and recovery
 canaries. Independently prove the public manifest remains uncached and on the
-exact current v2 Pimlico transport shape:
+exact activated v2 native transport shape (only after the approved deployment):
 
 ```bash
 export MANIFEST_HEADERS="$(mktemp /tmp/plether-aa-manifest-headers.XXXXXX)"
@@ -2629,7 +2631,11 @@ curl --fail-with-body --silent --show-error \
 rg -i '^cache-control:.*no-store' "$MANIFEST_HEADERS"
 jq -e '
   .version == "perps-aa-arbitrum-sepolia-20260910-v2" and
-  .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
+  .bundlerRpcUrl == "/api/perps/v1/aa/rpc" and
+  .paymasterRpcUrl == "/api/perps/v1/aa/rpc" and
+  .paymasterAddress == "0x9761091045616A388f5fE1433721B272c78fe31b" and
+  .paymasterVersion == "plether-verifying-v1" and
+  .preparationRpcVersion == 1 and
   .usdc == "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8" and
   .marginClearinghouse == "0xfa6e677ec1062757c1194d411a5e61e1e9644499" and
   .cfdEngine == "0xafece93321be41aa73474457e2f47cf7b2fb738f" and
@@ -2637,13 +2643,10 @@ jq -e '
   .orderLifecycleBook == "0x753eb48305ffb88bb70869ade2c4efa941879221" and
   .policyEvaluator == "0x43c93d3028fcd4c1f578a50639750b8fbfdee799" and
   .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
-  (has("bundlerRpcUrl") | not) and
-  (has("paymasterRpcUrl") | not) and
-  (has("paymasterAddress") | not) and
-  (has("paymasterVersion") | not)
+  (has("pimlicoRpcUrl") | not)
 ' "$MANIFEST_BODY"
 test "$(shasum -a 256 "$MANIFEST_BODY" | awk '{print $1}')" = \
-  fb9453ce7c022c4d6408c48f181a0a6f5e829c7a3a41df9883906f1f28a10a2e
+  283732f5c3cfd65faeb182bfa72c0edb8e28a94b7e8030e74f6960b2d8cd3926
 rm -f -- "$MANIFEST_HEADERS" "$MANIFEST_BODY"
 ```
 

@@ -69,9 +69,14 @@ describe('parsePerpsAaManifest', () => {
 
     expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260910-v2')
     expect(manifest.chainId).toBe(421614)
-    expect(isPerpsAaManifestV2(manifest)).toBe(false)
+    expect(isPerpsAaManifestV2(manifest)).toBe(true)
+    expect(manifest).toMatchObject({
+      preparationRpcVersion: 1,
+      paymasterAddress: '0x9761091045616A388f5fE1433721B272c78fe31b',
+    })
+    expect(manifest).not.toHaveProperty('pimlicoRpcUrl')
     expect(bundlerRpcUrlForManifest(manifest)).toBe(
-      PERPS_AA_LEGACY_RPC_PATH
+      '/api/perps/v1/aa/rpc'
     )
   })
 
