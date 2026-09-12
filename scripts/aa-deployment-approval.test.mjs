@@ -1,10 +1,53 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const root = new URL('../', import.meta.url)
 const workflows = ['deploy-backend', 'deploy-alto', 'aa-admin']
+
+test('Alto verifies raw registry bytes against the pinned root and child digests', () => {
+  const source = readFileSync(new URL('.github/workflows/deploy-alto.yml', root), 'utf8')
+  const helper = source.match(/          fetch_verified_manifest\(\) \{[\s\S]*?\n          \}/)?.[0]
+  assert.ok(helper, 'execute the actual workflow checksum gate')
+  assert.match(source, /fetch_verified_manifest "\$ALTO_UPSTREAM_IMAGE" "\$source_root_manifest"/)
+  assert.match(source, /fetch_verified_manifest "\$selected_source_image" "\$source_image_manifest"/)
+  assert.doesNotMatch(source, /^\s+docker manifest inspect /m)
+  const directory = mkdtempSync(join(tmpdir(), 'alto-manifest-test-'))
+  try {
+    const cases = [
+      ['OCI image', '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}', null, 0, true],
+      ['OCI index', '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json"}\n', null, 0, true],
+      ['altered registry bytes', '{"schemaVersion":2}', 'sha256:' + '0'.repeat(64), 0, false],
+      ['mutable tag without digest', '{}', 'v1.2.7', 0, false],
+      ['malformed digest', '{}', 'sha256:bad', 0, false],
+      ['registry command failed after output', '{}', null, 1, false],
+    ]
+    for (const [label, body, digest, exitCode, expected] of cases) {
+      const pinned = digest ?? 'sha256:' + createHash('sha256').update(body).digest('hex')
+      const reference = pinned === 'v1.2.7' ? 'ghcr.io/pimlicolabs/alto:v1.2.7' : 'ghcr.io/pimlicolabs/alto@' + pinned
+      const result = spawnSync('bash', ['-c', `
+        set -euo pipefail
+        docker() {
+          test "$1 $2 $3 $4" = "buildx imagetools inspect --raw" || return 42
+          test "$5" = "$REFERENCE" || return 43
+          printf '%s' "$MANIFEST_BODY"
+          return "$REGISTRY_EXIT"
+        }
+        ${helper}
+        fetch_verified_manifest "$REFERENCE" "$DESTINATION"
+      `], {encoding: 'utf8', env: {...process.env, REFERENCE: reference, MANIFEST_BODY: body, REGISTRY_EXIT: String(exitCode), DESTINATION: join(directory, 'manifest.json')}})
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, expected, `${label}: ${result.stdout} ${result.stderr}`)
+      if (expected) assert.equal(readFileSync(join(directory, 'manifest.json'), 'utf8'), body)
+    }
+  } finally {
+    rmSync(directory, {recursive: true, force: true})
+  }
+})
 
 const adminSource = readFileSync(new URL('.github/workflows/aa-admin.yml', root), 'utf8')
 const taskFilters = [...adminSource.matchAll(/'([^']*)'\s+\\\n\s+"\$(run_result|status_file)"/g)]
