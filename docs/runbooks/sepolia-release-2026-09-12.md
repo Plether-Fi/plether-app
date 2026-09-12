@@ -6,6 +6,77 @@ Target: account `932542905614`, region `ap-southeast-1`, existing
 
 ## Latest activation status
 
+### Native signing enabled; public cutover blocked by RPC tracing
+
+The owner renewed authorization to continue through activation. The on-chain
+paymaster unpause succeeded in transaction
+`0xda15ec500ca80fef0c719dff0759c2715f1f07e76af6423c2d006ad47008533c`.
+Its block `308176322` was subsequently covered by canonical safe block
+`308177077`; `paused()` was false at that safe block. Signer, policy, runtime,
+deposit and maximum cost were verified unchanged.
+
+AA admin [run 34707194416](https://github.com/Plether-Fi/plether-app/actions/runs/34707194416)
+is **failed**, despite the resume task exiting zero: its short-lived FireLens
+container received termination immediately after startup and the expected
+CloudWatch audit event was missing. Do not rerun the mutation blindly.
+An independent read-only database task `582f6d2bb0954448b3a6019014ca41de`
+verified `issuance_paused=false`, null pause reason, a durable resume audit event
+at `2026-09-12T17:09:06.685Z` with the exact old reason/operator-note length,
+zero outstanding liability, and a four-second reconciliation heartbeat.
+
+Native-enabled API [run 34707457327](https://github.com/Plether-Fi/plether-app/actions/runs/34707457327)
+succeeded, but startup attestation remained unavailable while safe confirmation
+caught up with the owner unpause. After verifying the safe-state unpause,
+[run 34708116849](https://github.com/Plether-Fi/plether-app/actions/runs/34708116849)
+succeeded at the same tested `6c0b1a0` image. API revision `plether-sepolia:57`
+has issuance, preparation and submission enabled for the existing owner
+allowlist; public rollout remains false. Public readiness reports all deposit
+components ready. This health snapshot does **not** prove tracer compatibility.
+
+A single one-USDC deposit smoke attempt used existing smart-account test USDC.
+The first two harness attempts were explicitly denied (incorrect selector, then
+startup unavailable); no signatures were issued for those. The corrected attempt
+prepared successfully with KMS signing and client-side binding/hash validation.
+Observed cold request time was 3,981 ms, including 3,208 ms gateway time; this is
+not a passing latency result. Its exact signed payload is retained privately.
+UserOperation `0x4c4111cb5c1cce7ea3a5a25bfbd37f59ce41288906f6da4bde60c85bdbf0e43f`
+was rejected during Alto submission, and receipt lookups found no receipt.
+Do not discard its reservation or create an automatic replacement; normal safe
+reconciliation owns expiry/release.
+Read-only task `74771a29b62447f79e6efee48b2ee544` confirmed one submitted
+authorization with `235832246496000` wei reserved and a one-second reconciler
+heartbeat at safe block `308180310`; no liability was manually cleared.
+
+The reconstructed restricted Alto error is HTTP 400, RPC `-32600`,
+`invalid tracer value`. Independent harmless probes confirmed:
+
+- Configured Alchemy: `debug_traceCall` with `callTracer` succeeds; a minimal
+  custom JavaScript tracer returns the same `invalid tracer value` error.
+- Arbitrum public RPC: `debug_traceCall` is unavailable (`-32601`).
+- Pinned Alto v1.2.7 SafeValidator invokes its custom `bundlerCollectorTracer`;
+  replacing it with a built-in call tracer would not preserve validation.
+
+Public activation therefore requires a custom-tracer-capable RPC. Do not disable
+safe mode or ordinary validation. No new provider purchase or node provisioning
+has been authorized in this record. Alchemy documents custom tracers as a
+[dedicated-cluster capability](https://www.alchemy.com/blog/introducing-dedicated-clusters).
+
+PR #263 passed all eight checks and merged as
+`fae3039d737f2edf4d36aff0fe40e183f009e511`. It selects the native manifest and
+preparation version 1 in source; **no manual Sepolia frontend deployment was
+dispatched**. The existing master-push run only published the unchanged mainnet
+redirect. The hosted Sepolia manifest remains Pimlico pending successful native
+submission qualification.
+
+A private six-role/nine-signer funding-observer inventory and saved public
+activation plan were reviewed but **not applied**. The observer receives only
+database/RPC credentials, no keys. Reserves use the Alto/keeper whole-batch caps,
+the live 32-million chain transaction gas limit plus deployed gas buffers for
+other workers, and the current six-feed update fee (zero). These are monitoring
+estimates, not spending authority. Public rollout, observer live qualification,
+telemetry ingestion and performance gates remain outstanding. No funds were
+transferred, no caps were increased, and Core was not changed.
+
 ### Sepolia safe-head policy correction
 
 After reviewing the shared-provider readings and Arbitrum's parent-chain safe
