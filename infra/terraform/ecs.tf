@@ -554,11 +554,13 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
-  name                              = "plether-api"
-  cluster                           = aws_ecs_cluster.main.id
-  task_definition                   = aws_ecs_task_definition.api.arn
-  desired_count                     = var.api_desired_count
-  launch_type                       = "FARGATE"
+  name            = "plether-api"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.api.arn
+  desired_count   = var.api_desired_count
+  launch_type     = "FARGATE"
+  # Protected AA administration validates the API's source runtime explicitly.
+  platform_version                  = local.self_hosted_aa_resource_count == 1 ? "1.4.0" : "LATEST"
   health_check_grace_period_seconds = 300
 
   network_configuration {

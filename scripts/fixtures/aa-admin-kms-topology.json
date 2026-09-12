@@ -1,0 +1,227 @@
+{
+  "taskDefinition": {
+    "containerDefinitions": [
+      {
+        "name": "plether-aa-admin",
+        "image": "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia:latest",
+        "cpu": 0,
+        "portMappings": [],
+        "essential": true,
+        "command": [
+          "/usr/local/bin/plether-aa-admin",
+          "attest-kms"
+        ],
+        "environment": [
+          {
+            "name": "AWS_REGION",
+            "value": "ap-southeast-1"
+          },
+          {
+            "name": "AA_PAYMASTER_SIGNER_ADDRESS",
+            "value": "0x1111111111111111111111111111111111111111"
+          },
+          {
+            "name": "HOME",
+            "value": "/tmp"
+          },
+          {
+            "name": "TMPDIR",
+            "value": "/tmp"
+          },
+          {
+            "name": "AA_PAYMASTER_KMS_KEY_ID",
+            "value": "arn:aws:kms:ap-southeast-1:123456789012:key/00000000-0000-4000-8000-000000000001"
+          }
+        ],
+        "mountPoints": [
+          {
+            "sourceVolume": "aa-admin-tmp",
+            "containerPath": "/tmp",
+            "readOnly": false
+          }
+        ],
+        "volumesFrom": [],
+        "linuxParameters": {
+          "capabilities": {
+            "add": [],
+            "drop": [
+              "ALL"
+            ]
+          },
+          "initProcessEnabled": true
+        },
+        "secrets": [],
+        "dependsOn": [
+          {
+            "containerName": "aa-admin-tmp-init",
+            "condition": "SUCCESS"
+          },
+          {
+            "containerName": "otel-log-router",
+            "condition": "START"
+          }
+        ],
+        "stopTimeout": 120,
+        "user": "65534:65534",
+        "readonlyRootFilesystem": true,
+        "logConfiguration": {
+          "logDriver": "awsfirelens",
+          "options": {
+            "tls.verify": "on",
+            "log-driver-buffer-limit": "4096",
+            "batch_size": "100",
+            "compress": "gzip",
+            "log_suppress_interval": "60",
+            "logs_severity_number_message_key": "$SeverityNumber",
+            "Port": "443",
+            "logs_body_key": "$message",
+            "Host": "eu.i.posthog.com",
+            "logs_uri": "/i/v1/logs",
+            "logs_severity_text_message_key": "$SeverityText",
+            "grpc": "off",
+            "Name": "opentelemetry",
+            "Retry_Limit": "no_limits",
+            "http2": "off",
+            "tls": "on",
+            "log_response_payload": "false",
+            "logs_body_key_attributes": "true",
+            "tls.verify_hostname": "on"
+          },
+          "secretOptions": [
+            {
+              "name": "Header",
+              "valueFrom": "arn:aws:ssm:ap-southeast-1:123456789012:parameter/plether/sepolia/posthog-otlp-authorization-header"
+            }
+          ]
+        },
+        "systemControls": []
+      },
+      {
+        "name": "aa-admin-tmp-init",
+        "image": "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia:latest",
+        "cpu": 0,
+        "portMappings": [],
+        "essential": false,
+        "entryPoint": [
+          "/bin/sh",
+          "-c"
+        ],
+        "command": [
+          "chmod 1777 /tmp"
+        ],
+        "environment": [],
+        "mountPoints": [
+          {
+            "sourceVolume": "aa-admin-tmp",
+            "containerPath": "/tmp",
+            "readOnly": false
+          }
+        ],
+        "volumesFrom": [],
+        "linuxParameters": {
+          "capabilities": {
+            "add": [],
+            "drop": [
+              "ALL"
+            ]
+          },
+          "initProcessEnabled": true
+        },
+        "secrets": [],
+        "user": "0:0",
+        "readonlyRootFilesystem": true,
+        "systemControls": []
+      },
+      {
+        "name": "otel-log-router",
+        "image": "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/plether-otel-log-router-sepolia:latest",
+        "cpu": 0,
+        "memoryReservation": 128,
+        "portMappings": [],
+        "essential": true,
+        "environment": [
+          {
+            "name": "CLOUDWATCH_LOG_GROUP",
+            "value": "/ecs/plether-sepolia"
+          },
+          {
+            "name": "DEPLOYMENT_ENVIRONMENT",
+            "value": "sepolia"
+          },
+          {
+            "name": "AWS_REGION",
+            "value": "ap-southeast-1"
+          },
+          {
+            "name": "ECS_CLUSTER_NAME",
+            "value": "plether-sepolia"
+          },
+          {
+            "name": "SERVICE_VERSION",
+            "value": "unknown"
+          }
+        ],
+        "mountPoints": [],
+        "volumesFrom": [],
+        "stopTimeout": 120,
+        "user": "0",
+        "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+            "awslogs-group": "/ecs/plether-sepolia",
+            "awslogs-region": "ap-southeast-1",
+            "awslogs-stream-prefix": "router"
+          }
+        },
+        "systemControls": [],
+        "firelensConfiguration": {
+          "type": "fluentbit",
+          "options": {
+            "config-file-type": "file",
+            "config-file-value": "/fluent-bit/etc/otel-enrichment.conf",
+            "enable-ecs-log-metadata": "true"
+          }
+        }
+      }
+    ],
+    "family": "plether-sepolia-aa-admin-kms-attest",
+    "taskRoleArn": "arn:aws:iam::123456789012:role/plether-sepolia-aa-admin-kms-attest-task",
+    "executionRoleArn": "arn:aws:iam::123456789012:role/plether-sepolia-aa-admin-kms-attest-execution",
+    "networkMode": "awsvpc",
+    "volumes": [
+      {
+        "name": "aa-admin-tmp",
+        "host": {}
+      }
+    ],
+    "status": "ACTIVE",
+    "placementConstraints": [],
+    "runtimePlatform": {
+      "cpuArchitecture": "ARM64",
+      "operatingSystemFamily": "LINUX"
+    },
+    "requiresCompatibilities": [
+      "FARGATE"
+    ],
+    "cpu": "256",
+    "memory": "512"
+  },
+  "tags": [
+    {
+      "key": "Project",
+      "value": "plether"
+    },
+    {
+      "key": "Environment",
+      "value": "sepolia"
+    },
+    {
+      "key": "ManagedBy",
+      "value": "terraform"
+    },
+    {
+      "key": "Capability",
+      "value": "fixed-digest-kms-attestation"
+    }
+  ]
+}

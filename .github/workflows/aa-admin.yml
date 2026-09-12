@@ -681,7 +681,9 @@ jobs:
               and .taskDefinition.memory == "512"
               and .taskDefinition.executionRoleArn == $execution_role
               and .taskDefinition.taskRoleArn == $task_role
-              and .taskDefinition.enableFaultInjection == false
+              # ECS may omit this optional field when disabled. A present
+              # value must still be the boolean false, never null or truthy.
+              and (.taskDefinition | (has("enableFaultInjection") | not) or .enableFaultInjection == false)
               and (.taskDefinition.volumes | length) == 1
               and .taskDefinition.volumes[0].name == "aa-admin-tmp"
               and (.taskDefinition.containerDefinitions | length) == 3

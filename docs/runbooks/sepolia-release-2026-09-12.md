@@ -69,7 +69,84 @@ error classification remains an observability issue, not a funding diagnosis.
 Do not bypass simulation, suppress unrelated failures or assume all exits are
 blocked. This PR does not change that worker classification.
 
-Frontend publication and final smoke tests remain pending. Do not treat this
-record as proof of native-AA qualification. Native activation still requires dedicated Alto funding,
+## Frontend completion
+
+PR #257 merged as `ade35bcb2ac4c0ef47aab5ef1be8f7889480590c`.
+Manual Sepolia frontend [run 34688156651](https://github.com/Plether-Fi/plether-app/actions/runs/34688156651)
+completed successfully. The master-push workflow is a separate mainnet-redirect
+job, not the Sepolia publication.
+
+Post-publication HTTP smoke checks at `https://app.sepolia.plether.com`:
+
+- Page, referenced JavaScript asset and AA manifest return HTTP 200.
+- Direct and proxied API status both return HTTP 200 with verified v1.2.3
+  bindings matching the hosted manifest, including deployment block `307397196`.
+- The AA proxy accepts a malformed request through authentication and rejects
+  it with HTTP 400 / `INVALID_REQUEST`, without preparing or signing anything.
+- Backend health returns HTTP 200, and expected active ECS services remain
+  steady. Alto and native reconciler desired/running counts remain zero.
+- Hosted manifest still selects Pimlico. `/api/perps/v1/readiness` returns
+  HTTP 403 because the backend route requires `cfgNativeAaConfig`, which is
+  intentionally absent while native configuration is disabled. This is an
+  outstanding Trading status limitation, not a passed readiness check.
+
+No new wallet-signed transaction or full sponsored trade was performed during
+these HTTP smoke checks. Do not treat deployment completion as proof of
+native-AA qualification. Native activation still requires dedicated Alto funding,
 signer attestation/owner approval, retained-liability reconciliation and the
 release gates in `singapore-sepolia-aa-release.md`.
+
+## Native activation preparation after owner approval
+
+The owner approved a total 0.08 Arbitrum Sepolia ETH allocation to the five
+dedicated Alto wallets, with a 0.001 ETH transfer-gas ceiling, and the subsequent
+paymaster pause/signer-change/unpause sequence conditioned on successful
+attestation and reconciliation. After the requested deployer top-up, all five
+transfers confirmed: four executors received 0.01 ETH each and the utility
+wallet received 0.04 ETH. Actual aggregate transfer gas was
+0.000031068214054 ETH. No additional principal was transferred.
+
+The Singapore KMS public signer is
+`0x714F8C5A4e585c1887eA2CC73b64E1cB75c75779`. The reviewed Terraform update
+changed only the dormant attestation task definition's expected signer and
+the deployment guard. It did not change running services or enable issuance.
+Fixed-digest attestation [run 34692630069](https://github.com/Plether-Fi/plether-app/actions/runs/34692630069)
+was dispatched from `ade35bcb2ac4c0ef47aab5ef1be8f7889480590c`. Stanley
+explicitly approved this exact run. It stopped before attestation at two
+configuration compatibility checks:
+
+- The API service configured `LATEST`, although its task was already running
+  Fargate 1.4.0. A reviewed Terraform plan pinned only the API service platform
+  to 1.4.0, retaining task definition `plether-sepolia:50`, its image and scale.
+  The service reached steady state: one running task, zero pending tasks and
+  one completed deployment. Mainnet/non-AA platform selection is unchanged.
+- The same approved run was retried and passed that check, but ECS omitted
+  the disabled optional `enableFaultInjection` field. The workflow incorrectly
+  required an explicit `false`. The compatibility repair accepts absence or
+  boolean false only; explicit true, null and malformed values remain rejected.
+  AWS documents the field as optional and disabled by default in the
+  [TaskDefinition API](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_TaskDefinition.html).
+
+The complete topology filter now has executable regression cases against a
+sanitized ECS-shaped fixture, including wrong roles, tags, container topology,
+secrets and signer configuration. The corrected workflow must land on master;
+a new attestation run requires its own explicit owner approval. No attestation
+task or paymaster owner transaction was started by either failed preflight.
+Local verification passed 70 targeted Node tests and all 14 mocked Terraform
+cases with the canonical Core v1.2.3 overlay. Live qualification is outstanding.
+
+The retained encrypted AA ledger snapshot was copied into Singapore as
+`plether-sepolia-aa-recovery-20260912`; a separate private database
+`plether-sepolia-aa-recovery-audit` completed restoration. Its read-only audit
+found 33 terminal authorizations (19 settled, 14 expired), zero active reserved,
+signed or submitted authorizations, zero unexpired signed authorizations and
+zero outstanding ledger liability. Ledger reserves equal releases plus actual
+charges. It retains 19 UserOperation events, 19 Alto recovery records, 17
+preparations and the original reconciler cursor at block 307892415. This is
+snapshot evidence, not a fresh canonical-chain reconciliation or an import.
+Recovery records and historical diagnostics still need verification/import
+before activation; the live AA ledger must not start empty and ignore them.
+The live database and original retained snapshot are untouched. Clean up the
+temporary audit database after evidence/import verification; retain recovery
+assets until the activation procedure is complete. No paymaster owner
+transaction has been sent yet, and the hosted manifest still uses Pimlico.

@@ -49,6 +49,10 @@ variables {
 run "preserve_singapore_identity" {
   command = plan
   assert {
+    condition = aws_ecs_service.api.platform_version == "1.4.0"
+    error_message = "AA administration requires the API source service to pin reviewed Fargate 1.4.0."
+  }
+  assert {
     condition = aws_ecs_cluster.main.name == "plether-sepolia" && aws_ssm_parameter.perps_rpc_url.name == "/plether/sepolia/perps-rpc-url" && !aws_lb.api.internal && aws_iam_openid_connect_provider.github_actions.url == "https://token.actions.githubusercontent.com"
     error_message = "Existing Singapore identities, public API and shared OIDC provider must be preserved."
   }
