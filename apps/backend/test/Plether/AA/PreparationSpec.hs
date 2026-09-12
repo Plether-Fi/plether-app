@@ -77,7 +77,18 @@ spec = do
             KM.lookup "signature" op `shouldBe` Nothing
             case Paymaster.parsePackedUserOperation op of
               Left err -> expectationFailure $ T.unpack err
-              Right parsed -> Paymaster.puoCallGasLimit parsed `shouldBe` 628_733
+              Right parsed -> do
+                Paymaster.puoCallGasLimit parsed `shouldBe` 628_733
+                let provisional = Paymaster.makeSponsorshipEnvelope cfg 10 100 (naaMaxCostWei cfg) BS.empty
+                    unpadded = parsed {Paymaster.puoCallGasLimit=419_155}
+                    liability = Paymaster.maximumUserOperationCost parsed provisional
+                    envelope = Paymaster.makeSponsorshipEnvelope cfg 10 100 liability Paymaster.dummyPaymasterSignature
+                liability - Paymaster.maximumUserOperationCost unpadded provisional
+                  `shouldBe` (628_733-419_155) * Paymaster.puoMaxFeePerGas parsed
+                Paymaster.seMaxCost envelope `shouldBe` liability
+                Paymaster.sponsorshipDigest parsed envelope `shouldNotBe` Paymaster.sponsorshipDigest unpadded envelope
+                Paymaster.userOperationHash (Paymaster.applyPaymasterEnvelope parsed envelope)
+                  `shouldNotBe` Paymaster.userOperationHash (Paymaster.applyPaymasterEnvelope unpadded envelope)
         observed <- readIORef calls
         length observed `shouldBe` 3
         mapM_ (\method -> length (filter (==method) observed) `shouldBe` 1)
