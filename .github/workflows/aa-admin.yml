@@ -81,11 +81,11 @@ jobs:
               '.name == $name
                and .can_admins_bypass == false
                and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
                and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
                and .deployment_branch_policy.custom_branch_policies == true' \
               "$environment_file" >/dev/null; then
-            echo "::error title=Unsafe admin environment::$ADMIN_ENVIRONMENT must disable administrator bypass, require an independent reviewer, and use a custom branch policy."
+            echo "::error title=Unsafe admin environment::$ADMIN_ENVIRONMENT must disable administrator bypass, require a reviewer with Sepolia sole-maintainer self-review allowed, and use a custom branch policy."
             exit 1
           fi
 
@@ -159,7 +159,7 @@ jobs:
             '.name == $name
              and .can_admins_bypass == false
              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
-             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+             and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0
              and .deployment_branch_policy.custom_branch_policies == true' \
             "$environment_file" >/dev/null

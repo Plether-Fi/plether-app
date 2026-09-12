@@ -396,7 +396,7 @@ not yet available, resolve the pending run and AWS state instead of guessing.
 Before Gate 1, pre-provision the GitHub Environment
 `backend-admin-sepolia`. It must set `can_admins_bypass=false`, have exactly one
 required-reviewer protection rule with at least one reviewer and
-`prevent_self_review=true`, and enable a custom deployment branch policy that
+`prevent_self_review=false` for the sole Sepolia maintainer, and enable a custom deployment branch policy that
 contains exactly the branch `master`. Keep the Sepolia backend workflow AWS
 credential scope unchanged, but require this single protected gate to succeed
 before any later job is allowed to consume those credentials. Environment
@@ -422,11 +422,12 @@ preflight, and wait for this environment. Use `all` for the Gate 2/Gate 6
 release and reconciler staging deployments; use `api` for a later API-only
 native configuration/flag rollout. An image rollback that must also replace
 the reconciler uses `all` and requires the corresponding drain analysis.
-After selecting the run by exact SHA, a different authenticated reviewer must
+After selecting the run by exact SHA, the authenticated required reviewer must
 fetch the single matching object from
 `actions/runs/RUN_ID/pending_deployments` and approve it with `gh api --method
-POST`, as shown in full for `aa-admin-sepolia` below. Self-approval and
-administrator bypass must fail. Do not inspect, approve, or run a deployment
+POST`, as shown in full for `aa-admin-sepolia` below. The sole maintainer may
+approve their own Sepolia dispatch; administrator bypass must still fail.
+Automation must not approve its own pending runs. Do not inspect, approve, or run a deployment
 through the Actions web UI.
 
 Set the non-secret environment variable `EXPECTED_AWS_ACCOUNT_ID` on
@@ -748,7 +749,7 @@ Expected dormant resources include:
 Before the first Alto workflow operation, separately pre-provision the GitHub
 Environment `alto-admin-sepolia`. It must set `can_admins_bypass=false`, have
 exactly one required-reviewer protection rule with at least one reviewer and
-`prevent_self_review=true`, and use a custom deployment branch policy that
+`prevent_self_review=false` for the sole Sepolia maintainer, and use a custom deployment branch policy that
 contains exactly the branch `master`. Store the workflow AWS credentials only
 in that protected environment. This is distinct from `aa-admin-sepolia`; do
 not let either environment's approval satisfy the other capability. Verify the
@@ -768,13 +769,13 @@ test -n "$(gh variable get AWS_DEPLOY_ROLE_ARN \
   --repo "$APP_REPOSITORY" --env alto-admin-sepolia)"
 ```
 
-The first response must show administrator bypass disabled, one independent-
-review rule with self-review prevented, and custom branch policies enabled;
+The first response must show administrator bypass disabled, one required-
+review rule with sole-maintainer self-review allowed, and custom branch policies enabled;
 the second must contain exactly `[{"name":"master","type":"branch"}]`.
 The workflow performs a credential-free preflight and repeats the checks in
 the protected job before AWS authentication. Every `deploy-alto.yml` action
 must be dispatched with `--ref master`; after resolving the exact run ID and
-checking `headSha`, a different authenticated reviewer must approve the single
+checking `headSha`, the authenticated required reviewer must approve the single
 pending `alto-admin-sepolia` deployment with `gh api`, using the same
 `pending_deployments` procedure shown for `aa-admin-sepolia` later in Gate 2. Never
 approve or operate an Alto run through the web UI.
@@ -1037,7 +1038,7 @@ attestation digest with KMS using `MessageType=DIGEST` and
 Run it only through `.github/workflows/aa-admin.yml`. Before the first use,
 provision the GitHub Environment `aa-admin-sepolia` with
 `can_admins_bypass=false`, exactly one required-reviewer protection rule with
-`prevent_self_review=true` and at least one reviewer, and a custom deployment
+`prevent_self_review=false` and at least one reviewer, and a custom deployment
 branch policy containing exactly the branch `master`. Store the workflow AWS
 credentials only in that protected environment, and set its non-secret
 `AWS_ACCOUNT_ID=932542905614` and exact reviewed `AWS_DEPLOY_ROLE_ARN`
@@ -1122,7 +1123,7 @@ gh workflow run aa-admin.yml \
 ```
 
 Resolve its run ID by exact `RELEASE_SHA`, inspect the pending run, then have a
-different authenticated required reviewer approve the single protected
+required reviewer approve the single protected
 environment deployment with the CLI:
 
 ```bash
@@ -2182,10 +2183,11 @@ gh workflow run aa-admin.yml \
 
 Resolve the new `ADMIN_RUN_ID` by exact `RELEASE_SHA` with the same `gh run
 list`/`gh run view` checks used for KMS and require the expected input
-fingerprint in its credential-free preflight log. A different authenticated required
+fingerprint in its credential-free preflight log. The authenticated required
 reviewer must again fetch the single pending `aa-admin-sepolia` environment ID
 and approve it with the exact `gh api --method POST .../pending_deployments`
-command above; self-approval must fail. Watch the run with `gh run watch
+command above; sole-maintainer self-approval is permitted only for Sepolia.
+Do not auto-approve a pending run. Watch the run with `gh run watch
 --exit-status`. Require exit zero and the workflow's task-scoped
 `aa_admin_issuance_resumed` readback with the exact previous reason and supplied
 note length, then query the database and require `issuance_paused=false`, a null

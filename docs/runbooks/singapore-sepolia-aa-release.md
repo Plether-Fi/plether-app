@@ -25,6 +25,15 @@ Do not alter these triggers or publish a native manifest during merge preparatio
 
 ## Preflight before any approved deployment
 
+Sepolia's sole maintainer may approve their own workflow dispatch. Provision
+`backend-admin-sepolia`, `alto-admin-sepolia` and `aa-admin-sepolia` with
+Stanley as a required reviewer, `prevent_self_review=false`,
+`can_admins_bypass=false`, and exactly the custom branch policy `master`.
+This is an explicit Sepolia approval-policy change, not automatic approval:
+inspect the exact run SHA and inputs, then require the maintainer's approval
+for that run. Do not auto-approve pending deployments or reuse one gate's
+approval for another. Mainnet policy is unchanged.
+
 1. Use gh authentication, remote-SHA verification and duplicate-run checks from
    AGENTS.md. Verify AWS_PROFILE=plether identity and the exact Singapore state.
 2. Snapshot the existing database and record service/image revisions and deployed
