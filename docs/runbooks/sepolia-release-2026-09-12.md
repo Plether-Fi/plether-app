@@ -6,6 +6,63 @@ Target: account `932542905614`, region `ap-southeast-1`, existing
 
 ## Latest activation status
 
+### Continuation after PR #260
+
+Subsequent owner decision: the owner explicitly accepted a temporary exception
+for CVE-2024-5535 on the exact Sepolia image. The reviewed boundary, expiration,
+visibility and remaining risks are recorded in
+[the image exception](alto-sepolia-image-exception-2026-09-12.md). The deployment
+gate implementation still needs to land and execute successfully; this approval
+does not mean Alto or native sponsorship is already running.
+
+PR #260 merged after all eight checks passed, at
+`5461d54f3579c53e3ba2583dc8a57df43234eef4`. The owner explicitly approved
+Alto [run 34699632732](https://github.com/Plether-Fi/plether-app/actions/runs/34699632732)
+and backend [run 34699634144](https://github.com/Plether-Fi/plether-app/actions/runs/34699634144)
+at that exact commit.
+
+- Backend deployment completed successfully, including all seven service jobs.
+  API revision `plether-sepolia:52`, workers revision
+  `plether-sepolia-workers:48`, and reconciler revision
+  `plether-sepolia-aa-reconciler:5` use the new approved commit. The application
+  image digest is `sha256:6929d05c1a3627787225f23414ac3e78230f84f9d7058eb2d9264a0ff0eb4638`.
+  Public API health is HTTP 200, v1.2.3 bindings remain verified, and the hosted
+  proxy now returns a versioned readiness snapshot rather than HTTP 403.
+- Native configuration is present, but sponsorship, preparation, submission and
+  public rollout remain false. Readiness enforcement remains observation-only.
+  The paymaster remains paused with the attested Singapore signer. No new owner
+  transaction, funding transfer or Core change occurred in this continuation.
+- Alto passed the repaired raw-manifest verification and mirrored its exact
+  config/ordered-layer identity into ECR as
+  `sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a`.
+  Staging then stopped at the unchanged critical-finding gate, before updating
+  the service: ECR reports CVE-2024-5535 for OpenSSL package 3.1.4-r5 as critical.
+  [OpenSSL's advisory](https://openssl-library.org/news/secadv/20240627.txt)
+  rates the issue low severity, but this is not proof of non-applicability.
+  The image runs Node v20.12.2 with OpenSSL 3.0.13+quic; the probe did not establish
+  that runtime to be unaffected. No scanner exception or replacement image has
+  been approved or implemented. Alto remains at desired/running count zero.
+- After the backend workflow staged its reviewed image, a separate Terraform
+  plan changed only the reconciler service desired count from zero to one,
+  retaining revision 5. Its scratch initializer exited zero and both the
+  reconciler and log router started successfully. Canonical cursor advancement
+  reached block 308002415 (110,000 blocks beyond the imported cursor), then
+  `aa_reconciler_timestamp_invalid` and `aa_reconciler_crashed` were emitted when
+  Alchemy's safe head exceeded the normal age ceiling. Saved progress is retained;
+  full catch-up and a healthy heartbeat have **not** been verified. The ECS
+  service remains configured at one desired task for normal recovery; do not
+  describe this as healthy reconciliation or waive the freshness rule.
+  Its batch size is the already-supported 10,000 blocks, verified by a read-only
+  Alchemy log-range probe; the original cursor/anchor, five-second polling,
+  600-second safe-head ceiling and all event/canonical checks are unchanged.
+- The owner has been asked to choose between a patched and qualified Alto
+  image or a narrowly scoped Sepolia-only exception for the exact finding/image.
+  Neither path is presumed approved. Do not scale Alto or enable issuance via
+  another route to bypass the failed scan.
+
+The earlier status below describes preceding milestones, not the current
+service scale or the final outcome of these two runs.
+
 PR #259 merged as `f5708225e6da9ce0ba559e538a7036a45df0e697`.
 The owner approved merging further deployment bugfixes after their checks pass;
 this does not replace the exact-run protected deployment approvals below.
