@@ -3,10 +3,10 @@
 Status: partial preparation only. No Terraform apply, service deployment,
 contract transaction, funding, or native sponsorship activation was performed.
 
-The user subsequently requested a temporary full-stack deployment in a different
-AWS region, leaving Singapore untouched. This Singapore preparation overlay is
-not the target for that deployment. See [temporary-stack isolation requirements](temporary-aa-test-stack.md)
-before planning any infrastructure changes.
+This records the initial allowlisted preparation. The current target is the existing
+Singapore deployment and public Sepolia sponsorship after separate qualification.
+See [the current release procedure](singapore-sepolia-aa-release.md); do not activate
+historical settings from this record without revalidation.
 
 ## Dedicated Alto keys
 

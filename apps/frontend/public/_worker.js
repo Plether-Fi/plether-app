@@ -3,6 +3,8 @@ const ROUTES = {
   '/api/spot/v1/': 'MAINNET_BACKEND_URL',
 };
 const AA_PROXY_PATHS = new Set([
+  '/api/perps/v1/readiness',
+  '/api/perps/v1/aa/diagnostics',
   '/api/perps/v1/aa/pimlico',
   '/api/perps/v1/aa/rpc',
 ]);

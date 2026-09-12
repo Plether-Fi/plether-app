@@ -35,6 +35,7 @@ import {
   type PerpsAaDeploymentManifest,
 } from './manifest'
 import { knownSponsorshipValidUntil } from './paymasterValidity'
+import { preparationIdentifier, validateNativePreparation } from './nativePreparation'
 import type {
   ManagedUserOperation,
   PerpsAaSmartAccountRuntime,
@@ -388,8 +389,25 @@ export async function createManagedAaRuntime({
         ),
       },
     })
-    prepareUserOperation = async ({ calls }) =>
-      await smartAccountClient.prepareUserOperation({
+    prepareUserOperation = async ({ calls, preparationId }) => {
+      if (manifest.preparationRpcVersion === 1) {
+        const [callData, factoryArgs] = await Promise.all([
+          smartAccount.encodeCalls(calls.map(call => ({ ...call }))),
+          smartAccount.getFactoryArgs(),
+        ])
+        const binding = { sender: accountAddress, callData, ...factoryArgs }
+        // No transport retries/fallback with a fresh ID after an ambiguous result.
+        const response = await http(paymasterRpcUrl, { retryCount: 0,
+          fetchOptions: preparationId && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId)
+            ? { headers: { 'X-Plether-Attempt-Id': preparationId } } : undefined,
+        })({ chain: arbitrumSepolia }).request({
+          method: 'plether_prepareUserOperation',
+          params: [{ version: 1, preparationId: preparationIdentifier(preparationId ?? crypto.randomUUID()),
+            chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding }],
+        })
+        return validateNativePreparation(response, binding, manifest)
+      }
+      return await smartAccountClient.prepareUserOperation({
         account: smartAccount,
         calls: calls.map((call) => ({
           to: call.to,
@@ -397,6 +415,7 @@ export async function createManagedAaRuntime({
           data: call.data,
         })),
       }) as ManagedUserOperation
+    }
     sendUserOperation = (operation) =>
       bundlerClient.sendUserOperation({
         ...operation,
@@ -547,8 +566,14 @@ export async function createManagedAaRuntime({
       accountAddress,
       entryPoint: getAddress(manifest.entryPoint),
 
-      prepareUserOperation: async ({ calls, action }) => {
-        return prepareUserOperation({ calls, action })
+      prepareUserOperation: async (input) => {
+        const start = performance.now()
+        try {
+          return await prepareUserOperation(input)
+        } finally {
+          // Fixed-name local timing only; no account, calls or credentials.
+          performance.measure('plether.aa.preparation', { start, end: performance.now() })
+        }
       },
 
       signUserOperation: async (operation) => ({

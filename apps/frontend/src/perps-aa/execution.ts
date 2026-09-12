@@ -49,6 +49,8 @@ import type {
 } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
+import { requireDeadlineHeadroom } from './deadline'
+import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from './readiness'
 
 export interface ExecuteSponsoredPerpsActionInput {
   manifest: PerpsAaDeploymentManifest
@@ -131,7 +133,6 @@ async function waitForUserOperationOutcome(input: {
 }): Promise<UserOperationWaitOutcome> {
   const startedAt = Date.now()
   const timeoutMs = input.timeoutMs ?? 120_000
-  const pollIntervalMs = input.pollIntervalMs ?? 1_500
   let persistedInclusion:
     SponsoredOperationInclusionObservation | undefined
   let reportedInclusionHash: Hex | undefined
@@ -276,7 +277,7 @@ async function waitForUserOperationOutcome(input: {
       // transiently. Keep reconciling the already-persisted local hash.
     }
 
-    await wait(pollIntervalMs, input.signal)
+    await wait(input.pollIntervalMs ?? (Date.now() - startedAt < 60_000 ? 2_000 : 5_000), input.signal)
   }
 
   throw new BundlerRequestError({
@@ -393,11 +394,14 @@ export async function executeSponsoredPerpsAction(
 
     activeTracker.signal.throwIfAborted()
     status('requesting-sponsorship')
+    // Readiness is deliberately advisory and concurrent, never an authorization cache.
+    if (isPerpsAaManifestV2(input.manifest)) void refreshReadiness()
     let operation
     try {
       operation = await input.runtime.smartAccount.prepareUserOperation({
         calls: input.action.calls,
         action: input.action.kind,
+        preparationId: activeTracker.id,
       })
     } catch (error) {
       throw asSponsorRequestError(error)
@@ -439,6 +443,12 @@ export async function executeSponsoredPerpsAction(
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The immutable protection intent could not be journaled before signing' })
     }
     activeTracker.signal.throwIfAborted()
+    if (isPerpsAaManifestV2(input.manifest)) {
+      const action = input.orderRequestV2 ? input.orderRequestV2.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
+      const blocker = readinessBlocker(currentReadiness(), action)
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+    }
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'signing')
     status('awaiting-signature')
     const signedOperation =
       await input.runtime.smartAccount.signUserOperation(operation)
@@ -474,6 +484,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
     status('submitting')
     // No user callback runs after this point. Reconcile any storage event that
     // landed during the status update, then exact-check the singleton head,
@@ -497,6 +508,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
     let returnedUserOperationHash: Hex
+    requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
     try {
       returnedUserOperationHash =
         await input.runtime.smartAccount.sendUserOperation(signedOperation)

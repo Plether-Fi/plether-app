@@ -100,6 +100,8 @@ import Network.HTTP.Types.Status
 import qualified Network.Wai as Wai
 import Plether.Config (AaConfig (..), Config (..))
 import Plether.AA.ClientKey (pseudonymousClientKey)
+import Plether.AA.Diagnostics (validAttemptId)
+import Plether.Logging (field, logWarn, logError)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.AaSponsorship
   ( isRecoveryOperationAuthorized
@@ -190,6 +192,7 @@ data PimlicoMethod
   | GetUserOperationByHash
   | GetUserOperationStatus
   | GetSupportedEntryPoints
+  | PrepareUserOperation
   deriving stock (Eq, Show)
 
 data RpcRequest = RpcRequest
@@ -503,6 +506,7 @@ parseMethod = \case
   "eth_getUserOperationByHash" -> Just GetUserOperationByHash
   "pimlico_getUserOperationStatus" -> Just GetUserOperationStatus
   "eth_supportedEntryPoints" -> Just GetSupportedEntryPoints
+  "plether_prepareUserOperation" -> Just PrepareUserOperation
   _ -> Nothing
 
 validateMethodParams :: RpcRequest -> Either ProxyFailure (Maybe ParsedUserOperation)
@@ -510,6 +514,7 @@ validateMethodParams request =
   case rrMethod request of
     GetGasPrice -> emptyParams >> pure Nothing
     GetSupportedEntryPoints -> emptyParams >> pure Nothing
+    PrepareUserOperation -> Left $ invalidParams "Native preparation is not supported by the managed provider"
     GetUserOperationReceipt -> hashParams >> pure Nothing
     GetUserOperationByHash -> hashParams >> pure Nothing
     GetUserOperationStatus -> hashParams >> pure Nothing
@@ -1550,6 +1555,21 @@ isSponsorshipIssuanceMethod method =
 
 respondFailure :: Value -> ProxyFailure -> ActionM ()
 respondFailure requestId failure = do
+  suppliedAttempt <- fmap TL.toStrict <$> header "X-Plether-Attempt-Id"
+  let reason = pfReason failure
+      expected = reason `elem` ["POLICY_DENIED", "ACCOUNT_NOT_TRUSTED", "RATE_LIMITED", "PAYMASTER_PAUSED", "SPONSOR_BUDGET_EXCEEDED", "INVALID_REQUEST", "PROXY_AUTH_FAILED", "PREPARATION_DISABLED", "PREPARATION_EXPIRED", "PREPARATION_BUSY"]
+      stage | "BUDGET" `T.isInfixOf` reason || reason == "POLICY_DENIED" = "authorization"
+            | "SIMULATION" `T.isInfixOf` reason = "estimation"
+            | "SIGN" `T.isInfixOf` reason = "signing"
+            | "DATABASE" `T.isInfixOf` reason || "LEASE" `T.isInfixOf` reason = "persistence"
+            | otherwise = "gateway" :: Text
+      logger = if expected then logWarn else logError
+      correlation = case suppliedAttempt of
+        Just attempt | validAttemptId attempt -> [field "attempt_id" $ T.toLower attempt]
+        _ -> []
+  liftIO $ logger "aa_request_failed" "AA request did not complete"
+    ([field "reason_code" reason, field "stage" stage,
+      field "outcome" (if expected then "rejected" else "failure" :: Text)] ++ correlation)
   setHeader "Content-Type" "application/json"
   setHeader "Cache-Control" "no-store"
   status $ pfStatus failure

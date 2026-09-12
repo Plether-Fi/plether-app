@@ -111,7 +111,25 @@ async function getExactReceipt(input: {
   }
 }
 
-export async function reconcileUserOperation(input: {
+const pendingReconciliations = new WeakMap<PerpsAaSmartAccountRuntime, Map<Hex, Promise<UserOperationReconciliationOutcome>>>()
+
+// Coalesce only identical in-flight reads for this runtime. Do not cache chain
+// evidence or share results across accounts, providers or deployment changes.
+export function reconcileUserOperation(input: {
+  runtime: PerpsAaSmartAccountRuntime
+  userOperationHash: Hex
+}): Promise<UserOperationReconciliationOutcome> {
+  let requests = pendingReconciliations.get(input.runtime)
+  if (!requests) { requests = new Map(); pendingReconciliations.set(input.runtime, requests) }
+  const key = input.userOperationHash.toLowerCase() as Hex
+  const pending = requests.get(key)
+  if (pending) return pending
+  const request = reconcileOnce(input).finally(() => requests.delete(key))
+  requests.set(key, request)
+  return request
+}
+
+async function reconcileOnce(input: {
   runtime: PerpsAaSmartAccountRuntime
   userOperationHash: Hex
 }): Promise<UserOperationReconciliationOutcome> {

@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Plether.AA.PaymasterSpec (spec) where
+module Plether.AA.PaymasterSpec (spec, fixtureConfig) where
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
@@ -11,12 +11,14 @@ import qualified Data.Text.Encoding as TE
 import Plether.AA.Paymaster
 import Plether.AA.Gateway
   ( ownerAllowedForNativeCanary
+  , isCanaryGated
   , nativeAccountRateClientKey
   , nativeMaxFeeAllowance
   , nativeStartupFailure
   , validateHardEconomicCaps
   )
 import Plether.AA.Pimlico (ProxyFailure (..))
+import qualified Plether.AA.Pimlico as Proxy
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Ethereum.Abi (keccak256)
 import Test.Hspec
@@ -121,6 +123,14 @@ spec = do
       nativeAccountRateClientKey
         `shouldBe` "0x0000000000000000000000000000000000000000000000000000000000000000"
 
+    it "gates new issuance but not exact-payload submission after public rollback" $ do
+      let config = fixtureConfig {naaCanaryOwners = [], naaGlobalRolloutEnabled = False}
+          owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          request method = Proxy.RpcRequest Null method [] KM.empty
+      isCanaryGated config (request Proxy.GetPaymasterData) owner `shouldBe` True
+      isCanaryGated config (request Proxy.GetPaymasterStubData) owner `shouldBe` True
+      isCanaryGated config (request Proxy.SendUserOperation) owner `shouldBe` False
+
     it "derives the fee ceiling only from the exact dual-agreed block base fee" $ do
       nativeMaxFeeAllowance 1 `shouldBe` 1_000_000_000
       nativeMaxFeeAllowance 2_000_000_000 `shouldBe` 6_000_000_000
@@ -152,6 +162,7 @@ fixtureConfig =
     , naaAltoRpcUrl = "http://alto:4337"
     , naaSecurityRpcUrl = "https://secondary-rpc.example.invalid"
     , naaRpcMode = DualIndependent
+    , naaMaxSafeLagSeconds = 600
     , naaPaymasterAddress = "0x1111111111111111111111111111111111111111"
     , naaPaymasterCodeHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     , naaPolicyId = "0x998b46b747647acb0e13177c7c5e2531452f3ac9c8b0cce56f2b0fdbfdf37781"
@@ -159,6 +170,7 @@ fixtureConfig =
     , naaKmsKeyId = "alias/test"
     , naaAccountCodeHash = hex $ keccak256 $ decode "60006000f3"
     , naaSponsorshipEnabled = True
+    , naaPreparationEnabled = False
     , naaSubmissionEnabled = True
     , naaIpRateLimitPerMinute = 120
     , naaFinalRateLimitPerMinute = 6

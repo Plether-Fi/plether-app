@@ -49,6 +49,11 @@ vi.mock('../authorizationStore', () => ({
     authorizationMocks.clearLegacyDepositAuthorization,
 }))
 
+vi.mock('../readiness', () => ({
+  refreshReadiness: vi.fn(async () => {}), currentReadiness: () => undefined,
+  readinessBlocker: () => undefined, readinessMessage: () => '',
+}))
+
 vi.mock('../../analytics/perps', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../analytics/perps')>()
   return {
@@ -75,7 +80,8 @@ const INCLUDED_BLOCK_HASH = `0x${'77'.repeat(32)}` as Hex
 const REPLACEMENT_TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const REPLACEMENT_BLOCK_HASH = `0x${'99'.repeat(32)}` as Hex
 const AUTHORIZATION_NONCE = `0x${'ab'.repeat(32)}` as Hex
-const SPONSORSHIP_VALID_UNTIL = 1_784_869_349n
+// Successful execution fixtures must remain valid at the test's wall clock.
+const SPONSORSHIP_VALID_UNTIL = BigInt(Math.floor(Date.now() / 1000) + 3600)
 const ORDER_CLIENT_ID = `0x${'cd'.repeat(32)}` as Hex
 
 const orderRequestV2 = {
@@ -299,6 +305,39 @@ const action = {
 }
 
 describe('executeSponsoredPerpsAction', () => {
+  it('refuses signing when the reviewed order has fewer than twenty seconds left', async () => {
+    const now = Date.now()
+    const signUserOperation = vi.fn(async () => operation())
+    const sendUserOperation = vi.fn(async () => USER_OPERATION_HASH)
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(), ownerAddress: OWNER, action,
+      orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(now / 1000) + 19) },
+      runtime: runtime({ signUserOperation, sendUserOperation }),
+    })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE' })
+    expect(signUserOperation).not.toHaveBeenCalled()
+    expect(sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it('saves a late signature without submitting or releasing its recovery lane', async () => {
+    const now = Math.floor(Date.now() / 1000) * 1000
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const sendUserOperation = vi.fn(async () => USER_OPERATION_HASH)
+    try {
+      await expect(executeSponsoredPerpsAction({
+        manifest: manifest(), ownerAddress: OWNER, action,
+        orderRequestV2: { ...orderRequestV2, validUntil: String(now / 1000 + 60) },
+        runtime: runtime({ sendUserOperation, signUserOperation: vi.fn(async () => {
+          clock.mockReturnValue(now + 51_000)
+          return operation()
+        }) }),
+      })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'receipt-timeout' })
+      expect(sendUserOperation).not.toHaveBeenCalled()
+      const record = useSponsoredOperationStore.getState().operations[0]
+      expect(record).toMatchObject({ status: 'receipt-timeout', userOperationHash: USER_OPERATION_HASH })
+      expect(record.signedUserOperation).toBeDefined()
+      expect(useSponsoredOperationStore.getState().activeLanes).not.toEqual({})
+    } finally { clock.mockRestore() }
+  })
   beforeEach(() => {
     authorizationMocks.clearDepositAuthorization.mockReset()
     authorizationMocks.clearLegacyDepositAuthorization.mockReset()
@@ -643,7 +682,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(useSponsoredOperationStore.getState().activeLanes)
         .not.toEqual({})
 
-      await vi.advanceTimersByTimeAsync(1_500)
+      await vi.advanceTimersByTimeAsync(2_000)
       await expect(execution).resolves.toMatchObject({
         userOperationHash: USER_OPERATION_HASH,
         transactionHash: TRANSACTION_HASH,

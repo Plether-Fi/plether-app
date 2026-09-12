@@ -66,6 +66,7 @@ export interface PerpsAaDeploymentManifestV2
   paymasterRpcUrl: string
   paymasterAddress: Address
   paymasterVersion: PerpsPaymasterVersion
+  preparationRpcVersion?: 1
 }
 
 export type PerpsAaDeploymentManifest =
@@ -378,8 +379,13 @@ export function parsePerpsAaManifest(
   const usesNativeShape = isV2 && hasNativeFields
   assertExactKeys(
     value,
-    usesNativeShape ? MANIFEST_V2_KEYS : MANIFEST_V1_KEYS
+    usesNativeShape
+      ? ('preparationRpcVersion' in value ? [...MANIFEST_V2_KEYS, 'preparationRpcVersion'] : MANIFEST_V2_KEYS)
+      : MANIFEST_V1_KEYS
   )
+  if ('preparationRpcVersion' in value && value.preparationRpcVersion !== 1) {
+    invalid('preparationRpcVersion', 'must equal 1 when present')
+  }
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
@@ -509,6 +515,7 @@ export function parsePerpsAaManifest(
       'paymasterAddress'
     ),
     paymasterVersion: parsePaymasterVersion(value.paymasterVersion),
+    ...('preparationRpcVersion' in value ? { preparationRpcVersion: 1 as const } : {}),
   }
 }
 

@@ -13,7 +13,7 @@ resource "terraform_data" "rpc_configuration_guard" {
         for parameter_name in [
           var.rpc_auth_token_ssm_parameter_name,
           var.perps_rpc_auth_token_ssm_parameter_name,
-        ] : trimspace(parameter_name) == "" || startswith(trimspace(parameter_name), "/plether/${var.environment}/")
+        ] : trimspace(parameter_name) == "" || startswith(trimspace(parameter_name), "/plether/${local.deployment_name}/")
       ])
       error_message = "RPC bearer-token parameters must belong to the current /plether/<environment>/ SSM namespace."
     }
@@ -53,7 +53,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+        || lower(var.perps_order_lifecycle_book) == lower(local.sepolia_core.contracts.orderLifecycleBook.address)
       )
       error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
     }
@@ -290,6 +290,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     provision_self_hosted_aa                    = var.provision_self_hosted_aa
     configure_native_aa_backend                 = var.configure_native_aa_backend
     enable_native_aa_sponsorship                = var.enable_native_aa_sponsorship
+    enable_native_aa_preparation                = var.enable_native_aa_preparation
     enable_native_aa_submission                 = var.enable_native_aa_submission
     aa_native_canary_owners                     = var.aa_native_canary_owners
     aa_native_global_rollout                    = var.aa_native_global_rollout_enabled
@@ -298,7 +299,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     aa_reconciler_start_block                   = var.aa_reconciler_start_block
     aa_reconciler_start_block_hash              = var.aa_reconciler_start_block_hash
     aa_reconciler_secondary_rpc_url_kms_key_arn = var.aa_reconciler_secondary_rpc_url_kms_key_arn
-    aa_rpc_mode                               = var.aa_rpc_mode
+    aa_rpc_mode                                 = var.aa_rpc_mode
     alto_upstream_image                         = var.alto_upstream_image
     alto_entrypoint_address                     = var.alto_entrypoint_address
     aa_paymaster_address                        = var.aa_paymaster_address
@@ -311,7 +312,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
   lifecycle {
     precondition {
       condition     = !var.provision_self_hosted_aa || var.aws_region == "ap-southeast-1"
-      error_message = "The reviewed self-hosted AA stack is pinned to aws_region=ap-southeast-1."
+      error_message = "Self-hosted AA requires Singapore."
     }
 
     precondition {
@@ -357,7 +358,7 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.enable_native_aa_sponsorship || var.configure_native_aa_backend
+      condition     = (!var.enable_native_aa_sponsorship && !var.enable_native_aa_preparation) || var.configure_native_aa_backend
       error_message = "Native sponsorship issuance cannot be enabled until configure_native_aa_backend=true."
     }
 
@@ -372,13 +373,13 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
 
     precondition {
-      condition     = !var.enable_native_aa_sponsorship || var.aa_native_canary_owners != ""
-      error_message = "Native sponsorship issuance requires a nonempty canary-owner allowlist for the reviewed Sepolia profile; global rollout is not approved."
+      condition     = !var.enable_native_aa_sponsorship || var.aa_native_global_rollout_enabled || var.aa_native_canary_owners != ""
+      error_message = "Native issuance requires an owner allowlist or explicitly enabled public Sepolia rollout."
     }
 
     precondition {
-      condition     = !var.aa_native_global_rollout_enabled
-      error_message = "aa_native_global_rollout_enabled must remain false: global native-AA rollout is blocked for the reviewed Sepolia profile while Alto safe mode is disabled and final sponsorship is unsigned."
+      condition     = !var.aa_native_global_rollout_enabled || (var.environment == "sepolia" && var.perps_chain_id == "421614" && var.aws_region == "ap-southeast-1" && var.expected_aws_account_id == "932542905614" && var.configure_native_aa_backend && length(local.aa_funding_components) == 6)
+      error_message = "Public native AA requires the approved Singapore Arbitrum Sepolia configuration and complete six-role funding monitoring; Alto safe mode is mandatory."
     }
 
     precondition {
@@ -410,31 +411,31 @@ resource "terraform_data" "self_hosted_aa_guard" {
 
     precondition {
       condition = !var.provision_self_hosted_aa || (
-        startswith(trimspace(var.alto_rpc_url_ssm_parameter_name), "/plether/sepolia/")
-        && startswith(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "/plether/sepolia/")
-        && startswith(trimspace(var.alto_utility_private_key_ssm_parameter_name), "/plether/sepolia/")
+        startswith(trimspace(var.alto_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && startswith(trimspace(var.alto_executor_private_keys_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && startswith(trimspace(var.alto_utility_private_key_ssm_parameter_name), "/plether/${local.deployment_name}/")
         && (
           trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name) == ""
-          || startswith(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "/plether/sepolia/")
+          || startswith(trimspace(var.alto_send_transaction_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
         )
       )
-      error_message = "All external Alto SecureStrings must be scoped under /plether/sepolia/."
+      error_message = "All external Alto SecureStrings must be scoped under /plether/${local.deployment_name}/."
     }
 
     precondition {
       condition = var.aa_rpc_mode != "single-provider-sepolia" || (
         var.environment == "sepolia" && var.perps_chain_id == "421614"
-        && !var.aa_native_global_rollout_enabled && var.aa_native_canary_owners != ""
-        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/sepolia/perps-rpc-url"
+        && (var.aa_native_global_rollout_enabled || var.aa_native_canary_owners != "")
+        && var.aa_reconciler_secondary_rpc_url_ssm_parameter_name == "/plether/${local.deployment_name}/perps-rpc-url"
         && var.aa_reconciler_secondary_rpc_url_kms_key_arn == ""
       )
-      error_message = "Single-provider mode requires Arbitrum Sepolia, a nonempty canary allowlist, no global rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
+      error_message = "Single-provider mode requires Arbitrum Sepolia, an allowlist or explicit public rollout, and explicit reuse of the AWS-managed primary Perps RPC parameter."
     }
 
     precondition {
       condition = !var.provision_self_hosted_aa || var.aa_rpc_mode == "single-provider-sepolia" || (
-        startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/sepolia/")
-        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/sepolia/perps-rpc-url"
+        startswith(trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name), "/plether/${local.deployment_name}/")
+        && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != "/plether/${local.deployment_name}/perps-rpc-url"
         && trimspace(var.aa_reconciler_secondary_rpc_url_ssm_parameter_name) != trimspace(var.alto_rpc_url_ssm_parameter_name)
       )
       error_message = "Dual-independent mode requires a secondary RPC parameter distinct from both primary Perps RPC and Alto RPC, operated by an independent provider."

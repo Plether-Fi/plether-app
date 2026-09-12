@@ -1,0 +1,33 @@
+name: Singapore AA preparation (no deployment)
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+
+jobs:
+  mocked-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 25.2.1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.1
+          terraform_wrapper: false
+      - name: Test RPC mode and release contracts
+        env:
+          AA_TERRAFORM_TEST_REQUIRED: '1'
+        run: node --test scripts/aa-rpc-mode.test.mjs scripts/aa-sepolia.test.mjs
+      - name: Initialize provider schema without state
+        run: terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
+      - name: Validate and exercise mocked AWS plans
+        run: |
+          terraform -chdir=infra/terraform validate -no-color
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-aa-canary-preparation.tfvars -var-file=sepolia-core-v1.2.3.tfvars.json -no-color

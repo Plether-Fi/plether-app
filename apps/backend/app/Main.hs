@@ -5,7 +5,7 @@ import Control.Monad (when)
 import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Plether.AA.Gateway (nativeGatewayIssuanceError, newNativeGatewayState)
+import Plether.AA.Gateway (nativeGatewayIssuanceError, newNativeGatewayState, initializeGatewayObservability)
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
@@ -181,6 +181,7 @@ main = do
       pimlicoProxyState <- newPimlicoProxyState
       faucetGuardState <- newFaucetGuardState
       nativeGatewayState <- newNativeGatewayState manager cfg perpsClient
+      initializeGatewayObservability nativeGatewayState cfg mPool perpsClient
       case nativeGatewayIssuanceError nativeGatewayState of
         Just _ ->
           logWarn

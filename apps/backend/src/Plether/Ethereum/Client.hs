@@ -5,6 +5,7 @@ module Plether.Ethereum.Client
   , newClient
   , newClientWithOptions
   , newClientWithManager
+  , withRpcObserver
   , rpcHttpExceptionText
   , rpcCall
   , ethCall
@@ -74,6 +75,7 @@ data EthClient = EthClient
   , clientBearerToken :: Maybe Text
   , clientRole :: Text
   , clientRequestId :: IORef Integer
+  , clientObserver :: IO ()
   }
 
 data RpcClientOptions = RpcClientOptions
@@ -187,13 +189,19 @@ newClientWithManager manager reqId RpcClientOptions {..} = do
       , clientBearerToken = rcoBearerToken
       , clientRole = rcoRole
       , clientRequestId = reqId
+      , clientObserver = pure ()
       }
+
+-- Scoped request instrumentation; endpoint/credentials are never exposed.
+withRpcObserver :: IO () -> EthClient -> EthClient
+withRpcObserver observer client = client {clientObserver = clientObserver client >> observer}
 
 nextId :: EthClient -> IO Integer
 nextId client = atomicModifyIORef' (clientRequestId client) $ \n -> (n + 1, n)
 
 rpcCall :: EthClient -> Text -> Value -> IO (Either RpcError Value)
 rpcCall client method params = do
+  clientObserver client
   startedAt <- getMonotonicTimeNSec
   reqId <- nextId client
   let rpcReq =

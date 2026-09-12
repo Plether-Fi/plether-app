@@ -18,7 +18,7 @@ import Plether.AA.Reconciler
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Ethereum.Client (newClient)
-import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..))
+import Plether.Config (normalizeExternalSecurityRpcUrl, resolveAaSecurityRpc, aaRpcModeText, AaRpcMode (..), parseCanonicalAddressList, validateAaSafeLag)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode, exitFailure)
@@ -38,6 +38,9 @@ runMain = do
   rpcModeRaw <- fromMaybe "dual-independent" <$> lookupEnv "AA_RPC_MODE"
   globalRaw <- fromMaybe "false" <$> lookupEnv "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED"
   ownersRaw <- fromMaybe "" <$> lookupEnv "AA_NATIVE_CANARY_OWNERS"
+  either (fatal "aa_reconciler_configuration_invalid" . T.pack) pure $ do
+    owners <- parseCanonicalAddressList "AA_NATIVE_CANARY_OWNERS" ownersRaw
+    validateAaSafeLag (arcChainId cfg) (globalRaw /= "false") owners (arcMaxSafeLagSeconds cfg)
   rpcUrl <- maybe
     (fatal "aa_reconciler_configuration_invalid" "PERPS_RPC_URL must be a normalized HTTPS/default-443 external provider URL")
     pure

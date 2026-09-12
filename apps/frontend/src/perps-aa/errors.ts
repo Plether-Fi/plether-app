@@ -77,6 +77,7 @@ export class SponsorRequestError extends Error {
 }
 
 export class BundlerRequestError extends Error {
+  readonly reason?: string
   readonly retryable: boolean
   readonly terminalStatus?: UserOperationTerminalStatus
   readonly replacementUserOperationHash?: string
@@ -85,12 +86,14 @@ export class BundlerRequestError extends Error {
   constructor(input: {
     message: string
     retryable: boolean
+    reason?: string
     terminalStatus?: UserOperationTerminalStatus
     replacementUserOperationHash?: string
     cause?: unknown
   }) {
     super(input.message)
     this.name = 'BundlerRequestError'
+    this.reason = input.reason
     this.retryable = input.retryable
     this.terminalStatus = input.terminalStatus
     this.replacementUserOperationHash = input.replacementUserOperationHash

@@ -73,6 +73,20 @@ function runtime(
 }
 
 describe('reconcilePimlicoUserOperation', () => {
+  it('coalesces only in-flight evidence for the same runtime and hash', async () => {
+    const managedRuntime = runtime('included')
+    const input = { runtime: managedRuntime, userOperationHash: HASH }
+    const first = reconcilePimlicoUserOperation(input)
+    const second = reconcilePimlicoUserOperation(input)
+    expect(first).toBe(second)
+    await Promise.all([first, second])
+    expect(managedRuntime.smartAccount.getUserOperationReceipt).toHaveBeenCalledTimes(1)
+    await reconcilePimlicoUserOperation(input)
+    expect(managedRuntime.smartAccount.getUserOperationReceipt).toHaveBeenCalledTimes(2)
+    const other = runtime('included')
+    await reconcilePimlicoUserOperation({ runtime: other, userOperationHash: HASH })
+    expect(other.smartAccount.getUserOperationReceipt).toHaveBeenCalledOnce()
+  })
   it.each([
     'not_found',
     'not_submitted',

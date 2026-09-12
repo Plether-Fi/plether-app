@@ -11,7 +11,7 @@ locals {
 
   aa_admin_tmp_init_container = {
     name                   = "aa-admin-tmp-init"
-    image                  = "${aws_ecr_repository.api.repository_url}:latest"
+    image                  = local.api_image
     essential              = false
     readonlyRootFilesystem = true
     user                   = "0:0"
@@ -21,6 +21,7 @@ locals {
     linuxParameters = {
       initProcessEnabled = true
       capabilities = {
+        add  = []
         drop = ["ALL"]
       }
     }
@@ -41,12 +42,12 @@ locals {
 resource "aws_security_group" "aa_admin_kms_attest" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-aa-admin-kms-attest-"
+  name_prefix = "plether-${local.deployment_name}-aa-admin-kms-attest-"
   description = "One-off KMS signer attestation with HTTPS egress only."
   vpc_id      = aws_vpc.main.id
 
   tags = {
-    Name = "plether-${var.environment}-aa-admin-kms-attest"
+    Name = "plether-${local.deployment_name}-aa-admin-kms-attest"
   }
 
   lifecycle { create_before_destroy = true }
@@ -66,12 +67,12 @@ resource "aws_vpc_security_group_egress_rule" "aa_admin_kms_attest_https" {
 resource "aws_security_group" "aa_admin_resume_issuance" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-aa-admin-resume-issuance-"
+  name_prefix = "plether-${local.deployment_name}-aa-admin-resume-issuance-"
   description = "One-off issuance-control task with PostgreSQL and HTTPS egress."
   vpc_id      = aws_vpc.main.id
 
   tags = {
-    Name = "plether-${var.environment}-aa-admin-resume-issuance"
+    Name = "plether-${local.deployment_name}-aa-admin-resume-issuance"
   }
 
   lifecycle { create_before_destroy = true }
@@ -102,7 +103,7 @@ resource "aws_vpc_security_group_egress_rule" "aa_admin_resume_issuance_postgres
 resource "aws_iam_role" "aa_admin_kms_attest_execution" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-admin-kms-attest-execution"
+  name = "plether-${local.deployment_name}-aa-admin-kms-attest-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -140,7 +141,7 @@ resource "aws_iam_role_policy" "aa_admin_kms_attest_execution_secrets" {
 resource "aws_iam_role" "aa_admin_kms_attest_task" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-admin-kms-attest-task"
+  name = "plether-${local.deployment_name}-aa-admin-kms-attest-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -195,7 +196,7 @@ resource "aws_iam_role_policy" "aa_admin_kms_attest_task" {
 resource "aws_iam_role" "aa_admin_resume_issuance_execution" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-admin-resume-issuance-execution"
+  name = "plether-${local.deployment_name}-aa-admin-resume-issuance-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -239,7 +240,7 @@ resource "aws_iam_role_policy" "aa_admin_resume_issuance_execution_secrets" {
 resource "aws_iam_role" "aa_admin_resume_issuance_task" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-admin-resume-issuance-task"
+  name = "plether-${local.deployment_name}-aa-admin-resume-issuance-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -274,7 +275,7 @@ resource "aws_iam_role_policy" "aa_admin_resume_issuance_task_logs" {
 resource "aws_ecs_task_definition" "aa_admin_kms_attest" {
   count = local.self_hosted_aa_resource_count
 
-  family                   = "plether-${var.environment}-aa-admin-kms-attest"
+  family                   = "plether-${local.deployment_name}-aa-admin-kms-attest"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = 256
@@ -295,7 +296,7 @@ resource "aws_ecs_task_definition" "aa_admin_kms_attest" {
   container_definitions = jsonencode([
     {
       name                   = "plether-aa-admin"
-      image                  = "${aws_ecr_repository.api.repository_url}:latest"
+      image                  = local.api_image
       essential              = true
       command                = ["/usr/local/bin/plether-aa-admin", "attest-kms"]
       readonlyRootFilesystem = true
@@ -309,7 +310,7 @@ resource "aws_ecs_task_definition" "aa_admin_kms_attest" {
 
       linuxParameters = {
         initProcessEnabled = true
-        capabilities       = { drop = ["ALL"] }
+        capabilities       = { add = [], drop = ["ALL"] }
       }
 
       mountPoints = [{
@@ -350,7 +351,7 @@ resource "aws_ecs_task_definition" "aa_admin_kms_attest" {
 resource "aws_ecs_task_definition" "aa_admin_resume_issuance" {
   count = local.self_hosted_aa_resource_count
 
-  family                   = "plether-${var.environment}-aa-admin-resume-issuance"
+  family                   = "plether-${local.deployment_name}-aa-admin-resume-issuance"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = 256
@@ -371,7 +372,7 @@ resource "aws_ecs_task_definition" "aa_admin_resume_issuance" {
   container_definitions = jsonencode([
     {
       name      = "plether-aa-admin"
-      image     = "${aws_ecr_repository.api.repository_url}:latest"
+      image     = local.api_image
       essential = true
       command = [
         "/usr/local/bin/plether-aa-admin",
@@ -392,7 +393,7 @@ resource "aws_ecs_task_definition" "aa_admin_resume_issuance" {
 
       linuxParameters = {
         initProcessEnabled = true
-        capabilities       = { drop = ["ALL"] }
+        capabilities       = { add = [], drop = ["ALL"] }
       }
 
       mountPoints = [{

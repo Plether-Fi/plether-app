@@ -30,7 +30,7 @@ variable "protection_worker_private_key" {
 
 resource "aws_ssm_parameter" "protection_worker_private_key" {
   count = nonsensitive(var.protection_worker_private_key != "") ? 1 : 0
-  name  = "/plether/${var.environment}/protection-worker-private-key"
+  name  = "/plether/${local.deployment_name}/protection-worker-private-key"
   type  = "SecureString"
   value = var.protection_worker_private_key
   lifecycle {
@@ -46,7 +46,7 @@ resource "aws_ssm_parameter" "protection_worker_private_key" {
 
 resource "aws_ecs_task_definition" "protection_worker" {
   count                    = var.environment == "sepolia" ? 1 : 0
-  family                   = "plether-${var.environment}-protection-worker"
+  family                   = "plether-${local.deployment_name}-protection-worker"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.container_cpu
@@ -69,7 +69,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
   }
   container_definitions = jsonencode([{
     name             = "plether-position-protection-worker"
-    image            = "${aws_ecr_repository.api.repository_url}:latest"
+    image            = local.api_image
     essential        = true
     command          = ["node", "/app/protection/main.mjs"]
     logConfiguration = local.posthog_log_configuration
@@ -107,76 +107,79 @@ resource "aws_ecs_service" "protection_worker" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "protection_failure" {
-  name           = "plether-${var.environment}-protection-failure"
+  name           = "plether-${local.deployment_name}-protection-failure"
   log_group_name = aws_cloudwatch_log_group.ecs.name
   pattern        = "{ $.service = \"plether-position-protection-worker\" && $.level = \"error\" }"
   metric_transformation {
     name      = "ProtectionFailure"
-    namespace = "Plether/${var.environment}"
+    namespace = "Plether/${local.deployment_name}"
     value     = "1"
   }
 }
 
 resource "aws_cloudwatch_metric_alarm" "protection_failure" {
   count               = var.protection_worker_desired_count > 0 ? 1 : 0
-  alarm_name          = "plether-${var.environment}-protection-failure"
+  alarm_name          = "plether-${local.deployment_name}-protection-failure"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "ProtectionFailure"
-  namespace           = "Plether/${var.environment}"
+  namespace           = "Plether/${local.deployment_name}"
   period              = 60
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "protection_heartbeat" {
-  name           = "plether-${var.environment}-protection-heartbeat"
+  name           = "plether-${local.deployment_name}-protection-heartbeat"
   log_group_name = aws_cloudwatch_log_group.ecs.name
-  pattern        = "{ $.event = \"protection_worker_heartbeat\" && $.caughtUp = true }"
+  pattern        = "{ $.event = \"protection_worker_heartbeat\" && $.caughtUp IS TRUE }"
   metric_transformation {
     name      = "ProtectionHeartbeat"
-    namespace = "Plether/${var.environment}"
+    namespace = "Plether/${local.deployment_name}"
     value     = "1"
   }
 }
 
 resource "aws_cloudwatch_log_metric_filter" "protection_degraded" {
-  name           = "plether-${var.environment}-protection-degraded"
+  name           = "plether-${local.deployment_name}-protection-degraded"
   log_group_name = aws_cloudwatch_log_group.ecs.name
   pattern        = "{ $.service = \"plether-position-protection-worker\" && $.level = \"warn\" }"
   metric_transformation {
     name      = "ProtectionDegraded"
-    namespace = "Plether/${var.environment}"
+    namespace = "Plether/${local.deployment_name}"
     value     = "1"
   }
 }
 
 resource "aws_cloudwatch_metric_alarm" "protection_degraded" {
   count               = var.protection_worker_desired_count > 0 ? 1 : 0
-  alarm_name          = "plether-${var.environment}-protection-degraded"
+  alarm_name          = "plether-${local.deployment_name}-protection-degraded"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 3
   metric_name         = "ProtectionDegraded"
-  namespace           = "Plether/${var.environment}"
+  namespace           = "Plether/${local.deployment_name}"
   period              = 60
   statistic           = "Sum"
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "protection_heartbeat" {
   count               = var.protection_worker_desired_count > 0 ? 1 : 0
-  alarm_name          = "plether-${var.environment}-protection-heartbeat"
+  alarm_name          = "plether-${local.deployment_name}-protection-heartbeat"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
   metric_name         = "ProtectionHeartbeat"
-  namespace           = "Plether/${var.environment}"
+  namespace           = "Plether/${local.deployment_name}"
   period              = 60
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }

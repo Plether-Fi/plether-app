@@ -1563,6 +1563,22 @@ jobs:
               end
             ' task-def.json > /dev/null
 
+      - name: Require active safe-mode Alto for public native API
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          if jq -e '[.containerDefinitions[] | select(.name == "plether-api")
+              | .environment[] | select(.name == "AA_NATIVE_GLOBAL_ROLLOUT_ENABLED")
+              | .value] == ["true"]' task-def.json >/dev/null; then
+            aws ecs describe-services --cluster plether-sepolia --services plether-alto > public-alto-service.json
+            jq -e '.failures == [] and (.services | length) == 1
+              and .services[0].desiredCount == 1 and .services[0].runningCount == 1
+              and .services[0].pendingCount == 0 and (.services[0].deployments | length) == 1' public-alto-service.json >/dev/null
+            alto_revision=$(jq -er '.services[0].taskDefinition' public-alto-service.json)
+            aws ecs describe-task-definition --task-definition "$alto_revision" --query taskDefinition > public-alto-task.json
+            jq -e -f .github/scripts/validate-aa-public-alto.jq public-alto-task.json >/dev/null
+          fi
+
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
         env:

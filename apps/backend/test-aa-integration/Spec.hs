@@ -5,6 +5,7 @@ import Control.Exception (bracket, finally)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
 import Data.Int (Int64)
+import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -19,6 +20,8 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
+import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
+import Plether.Database.AaPreparation
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -256,6 +259,110 @@ aaIntegrationSpec databaseUrl =
           consumeAaRateLimit firstConnection "final-issuance" clientKey accountKey 2
             `shouldReturn` False
 
+    it "fences preparation leases across instances and persists immutable work" $
+      withFixture databaseUrl $ \first -> withPeerConnection databaseUrl $ \second -> do
+        let client = clientKeyOf 'a'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'
+            operation = object ["nonce" .= ("0x1" :: Text)]
+        claimPreparation first False client sender identifier intent "worker-a" `shouldReturn` PreparationDisabled
+        claimPreparation first True client sender identifier intent "worker-a" `shouldReturn` PreparationClaimed Nothing
+        claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationBusy
+        claimPreparation second True client sender identifier (hashOf 'd') "worker-b" `shouldReturn` PreparationConflict
+        savePreparedOperation second client sender identifier "worker-b" operation `shouldReturn` False
+        savePreparedOperation first client sender identifier "worker-a" operation `shouldReturn` True
+        void $ execute_ first "UPDATE aa_preparations SET lease_until=clock_timestamp()-interval '1 second'"
+        claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationClaimed (Just operation)
+        releasePreparation first client sender identifier "worker-a"
+        claimPreparation first True client sender identifier intent "worker-c" `shouldReturn` PreparationBusy
+        savePreparedOperation second client sender identifier "worker-b" (object []) `shouldReturn` False
+        releasePreparation second client sender identifier "worker-b"
+        claimPreparation first False client sender identifier intent "worker-c" `shouldReturn` PreparationClaimed (Just operation)
+        void $ execute_ first "UPDATE aa_preparations SET expires_at=clock_timestamp()-interval '1 second'"
+        claimPreparation second True client sender identifier intent "worker-d" `shouldReturn` PreparationExpired
+
+    it "persists nullable correlation with the lease-bound authorization and preserves it across retries" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- reserveSponsorship conn testConfig (draft '1' '2' '3' 0 100 now) >>= expectAuthorization
+        let client = clientKeyOf '3'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'
+            attempt = "12345678-1234-4123-8123-123456789abc"
+        claimPreparation conn True client sender identifier intent "lease" `shouldReturn` PreparationClaimed Nothing
+        linkPreparationDiagnostic conn client sender identifier "wrong-lease" (saDigest authorization) (Just attempt) chainId "deployment" `shouldReturn` False
+        linkPreparationDiagnostic conn client sender identifier "lease" (saDigest authorization) (Just attempt) chainId "deployment" `shouldReturn` True
+        releasePreparation conn client sender identifier "lease"
+        claimPreparation conn False client sender identifier intent "retry" `shouldReturn` PreparationClaimed Nothing
+        linkPreparationDiagnostic conn client sender identifier "retry" (saDigest authorization) (Just "12345678-1234-4123-8123-aaaaaaaaaaaa") chainId "changed" `shouldReturn` True
+        rows <- query_ conn "SELECT diagnostic_attempt_id::text,diagnostic_deployment FROM aa_preparations" :: IO [(Text,Text)]
+        rows `shouldBe` [(attempt,"deployment")]
+        -- Rollback code still reads/releases the same immutable preparation.
+        linkPreparation conn client sender identifier "retry" (saDigest authorization) `shouldReturn` True
+
+    it "reapplies every additive release migration without changing existing signed liabilities" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        before <- getSponsorshipByDigest conn (saDigest authorization)
+        let migrations = ["aa-preparation-v1.sql", "aa-observability-v1.sql", "aa-observability-v2.sql", "aa-funding-v1.sql"]
+        mapM_ (\name -> readFile ("config/migrations/" <> name) >>= execute_ conn . fromString >> pure ()) (migrations <> migrations)
+        after <- getSponsorshipByDigest conn (saDigest authorization)
+        after `shouldBe` before
+
+    it "recovers late order diagnostics with a multi-instance fenced lease and no ledger changes" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        let operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash authorization
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+            router = addressOf 'f'
+        settleSponsorship conn (saDigest authorization) operationHash (hashOf 'b') 101 (hashOf 'c') True 400 (object [])
+          `shouldReturn` Right ()
+        -- Receipt/indexing may precede asynchronous diagnostic materialization.
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute conn
+          "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,'prepared')"
+          (attempt,clientKeyOf '5',chainId,router,operationHash,addressOf '1')
+        claimOrderDiagnostics conn (chainId+1) router `shouldReturn` []
+        withPeerConnection databaseUrl $ \peer -> do
+          (first,second) <- concurrently (claimOrderDiagnostics conn chainId router) (claimOrderDiagnostics peer chainId router)
+          length (first++second) `shouldBe` 1
+          let (_,_,_,_,_,_,oldLease) = head $ first++second
+          void $ execute_ conn "UPDATE aa_attempt_diagnostics SET correlation_checked_at=clock_timestamp()-interval '31 seconds'"
+          recovered <- claimOrderDiagnostics peer chainId router
+          length recovered `shouldBe` 1
+          let (_,_,_,_,_,_,newLease) = head recovered
+          completeOrderDiagnostic conn attempt oldLease (Just 8) `shouldReturn` False
+          completeOrderDiagnostic peer attempt newLease (Just 8) `shouldReturn` True
+          completeOrderDiagnostic conn attempt newLease (Just 9) `shouldReturn` False
+          claimOrderDiagnostics conn chainId router `shouldReturn` []
+        rows <- query_ conn "SELECT order_id,stage FROM aa_attempt_diagnostics" :: IO [(Integer,Text)]
+        rows `shouldBe` [(8,"committed")]
+        ledger <- query_ conn "SELECT entry_type,amount_wei::text FROM aa_sponsorship_ledger ORDER BY entry_type" :: IO [(Text,Text)]
+        ledger `shouldBe` [("actual_charge","400"),("release","600"),("reserve","1000")]
+
+    it "does not claim unfinalized, failed, terminal or wrong-client evidence" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        let operationHash = maybe (hashOf '0') id $ saExpectedUserOperationHash authorization
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+            router = addressOf 'f'
+        void $ execute conn
+          "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,'prepared')"
+          (attempt,clientKeyOf '5',chainId,router,operationHash,addressOf '1')
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        settleSponsorship conn (saDigest authorization) operationHash (hashOf 'b') 101 (hashOf 'c') True 400 (object [])
+          `shouldReturn` Right ()
+        void $ execute_ conn "UPDATE aa_user_operation_events SET success=false"
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute_ conn "UPDATE aa_user_operation_events SET success=true"
+        void $ execute_ conn "UPDATE aa_attempt_diagnostics SET terminal_at=clock_timestamp()"
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+        void $ execute conn "UPDATE aa_attempt_diagnostics SET terminal_at=NULL,client_key=?" (Only $ clientKeyOf '6')
+        claimOrderDiagnostics conn chainId router `shouldReturn` []
+
 withFixture :: Text -> (Connection -> IO a) -> IO a
 withFixture databaseUrl action =
   bracket
@@ -282,6 +389,12 @@ resetSchema conn = do
   void $ execute_ conn "CREATE SCHEMA aa_integration_spec"
   void $ execute_ conn "SET search_path TO aa_integration_spec, public"
   ensureAaSponsorshipSchema conn
+  migration <- fromString <$> readFile "config/migrations/aa-preparation-v1.sql"
+  void $ execute_ conn migration
+  observability <- fromString <$> readFile "config/migrations/aa-observability-v1.sql"
+  void $ execute_ conn observability
+  correlation <- fromString <$> readFile "config/migrations/aa-observability-v2.sql"
+  void $ execute_ conn correlation
 
 cleanupSchema :: Connection -> IO ()
 cleanupSchema conn = do
@@ -370,6 +483,7 @@ testConfig =
     , naaAltoRpcUrl = "http://alto.invalid"
     , naaSecurityRpcUrl = "https://secondary-rpc.invalid"
     , naaRpcMode = DualIndependent
+    , naaMaxSafeLagSeconds = 600
     , naaPaymasterAddress = paymasterAddress
     , naaPaymasterCodeHash = hashOf '4'
     , naaPolicyId = hashOf '5'
@@ -377,6 +491,7 @@ testConfig =
     , naaKmsKeyId = "alias/integration-test"
     , naaAccountCodeHash = hashOf '6'
     , naaSponsorshipEnabled = True
+    , naaPreparationEnabled = False
     , naaSubmissionEnabled = True
     , naaIpRateLimitPerMinute = 120
     , naaFinalRateLimitPerMinute = 6

@@ -15,7 +15,7 @@ locals {
 resource "aws_security_group" "aa_reconciler_task" {
   count = local.self_hosted_aa_resource_count
 
-  name_prefix = "plether-${var.environment}-aa-reconciler-"
+  name_prefix = "plether-${local.deployment_name}-aa-reconciler-"
   description = "Native-AA reconciler with only PostgreSQL and HTTPS egress."
   vpc_id      = aws_vpc.main.id
 
@@ -47,7 +47,7 @@ resource "aws_vpc_security_group_egress_rule" "aa_reconciler_postgres" {
 resource "aws_iam_role" "aa_reconciler_execution" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-reconciler-execution"
+  name = "plether-${local.deployment_name}-aa-reconciler-execution"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -116,7 +116,7 @@ resource "aws_iam_role_policy" "aa_reconciler_execution_secondary_rpc_kms" {
 resource "aws_iam_role" "aa_reconciler_task" {
   count = local.self_hosted_aa_resource_count
 
-  name = "plether-${var.environment}-aa-reconciler-task"
+  name = "plether-${local.deployment_name}-aa-reconciler-task"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -151,7 +151,7 @@ resource "aws_iam_role_policy" "aa_reconciler_task_firelens_cloudwatch" {
 resource "aws_ecs_task_definition" "aa_reconciler" {
   count = local.self_hosted_aa_resource_count
 
-  family                   = "plether-${var.environment}-aa-reconciler"
+  family                   = "plether-${local.deployment_name}-aa-reconciler"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.aa_reconciler_container_cpu
@@ -172,7 +172,7 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
   container_definitions = jsonencode([
     {
       name                   = "plether-aa-reconciler"
-      image                  = "${aws_ecr_repository.api.repository_url}:latest"
+      image                  = local.aa_runtime_image
       essential              = true
       command                = ["/usr/local/bin/plether-aa-reconciler"]
       readonlyRootFilesystem = true
@@ -193,6 +193,7 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
       linuxParameters = {
         initProcessEnabled = true
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
@@ -242,7 +243,7 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
     },
     {
       name                   = "aa-reconciler-tmp-init"
-      image                  = "${aws_ecr_repository.api.repository_url}:latest"
+      image                  = local.aa_runtime_image
       essential              = false
       readonlyRootFilesystem = true
       user                   = "0:0"
@@ -252,6 +253,7 @@ resource "aws_ecs_task_definition" "aa_reconciler" {
       linuxParameters = {
         initProcessEnabled = true
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }

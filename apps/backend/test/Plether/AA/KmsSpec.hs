@@ -2,8 +2,11 @@ module Plether.AA.KmsSpec (spec) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.Time (UTCTime (..), fromGregorian, addUTCTime)
 import Plether.AA.Kms
   ( canonicalRequest
+  , credentialsFreshUntil
+  , parseCredentials
   , assembleRecoverableSignature
   , normalizeLowS
   , parseKmsDerSignature
@@ -14,6 +17,16 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "ECS credential caching" $ do
+    it "refreshes at the five-minute boundary and never permits expired credentials" $ do
+      let now = UTCTime (fromGregorian 2026 9 11) 0
+      credentialsFreshUntil now (addUTCTime 301 now) `shouldBe` True
+      credentialsFreshUntil now (addUTCTime 300 now) `shouldBe` False
+      credentialsFreshUntil now (addUTCTime (-1) now) `shouldBe` False
+    it "requires a valid credential expiration timestamp" $ do
+      isLeft (parseCredentials "{\"AccessKeyId\":\"fixture\",\"SecretAccessKey\":\"fixture\",\"Token\":\"fixture\"}") `shouldBe` True
+      isLeft (parseCredentials "{\"AccessKeyId\":\"fixture\",\"SecretAccessKey\":\"fixture\",\"Token\":\"fixture\",\"Expiration\":\"invalid\"}") `shouldBe` True
+      isLeft (parseCredentials "{\"AccessKeyId\":\"fixture\",\"SecretAccessKey\":\"fixture\",\"Token\":\"fixture\",\"Expiration\":\"2026-09-11T12:00:00Z\"}") `shouldBe` False
   describe "AWS KMS secp256k1 encoding" $ do
     it "strictly parses canonical DER scalars" $ do
       parseKmsDerSignature (decode "3006020101020102") `shouldBe` Right (1, 2)
@@ -60,14 +73,14 @@ spec = do
   describe "SigV4 canonical request" $ do
     it "commits every security-sensitive KMS header and exact body" $ do
       canonicalRequest
-        "kms.eu-central-1.amazonaws.com"
+        "kms.ap-southeast-1.amazonaws.com"
         "20260902T120000Z"
         "session-token"
         "TrentService.Sign"
         "{}"
         `shouldBe`
           "POST\n/\n\ncontent-type:application/x-amz-json-1.1\n\
-          \host:kms.eu-central-1.amazonaws.com\n\
+          \host:kms.ap-southeast-1.amazonaws.com\n\
           \x-amz-date:20260902T120000Z\n\
           \x-amz-security-token:session-token\n\
           \x-amz-target:TrentService.Sign\n\n\

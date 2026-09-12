@@ -373,6 +373,8 @@ jobs:
                   "ALTO_DEFAULT_API_VERSION",
                   "ALTO_RPC_METHODS",
                   "ALTO_SAFE_MODE",
+                  "ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT",
+                  "ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER",
                   "ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION",
                   "ALTO_ENABLE_DEBUG_ENDPOINTS",
                   "ALTO_ENABLE_CORS",
@@ -511,7 +513,9 @@ jobs:
                 and $environment.ALTO_API_VERSION == "v1"
                 and $environment.ALTO_DEFAULT_API_VERSION == "v1"
                 and $environment.ALTO_RPC_METHODS == $rpc_methods
-                and $environment.ALTO_SAFE_MODE == "false"
+                and $environment.ALTO_SAFE_MODE == "true"
+                and $environment.ALTO_SIMULATION_PAYMASTER_POST_OP_GAS_LIMIT == "0"
+                and $environment.ALTO_V7_PAYMASTER_POST_OP_GAS_LIMIT_MULTIPLIER == "0"
                 and $environment.ALTO_DANGEROUS_SKIP_USER_OPERATION_VALIDATION == "false"
                 and $environment.ALTO_ENABLE_DEBUG_ENDPOINTS == "false"
                 and $environment.ALTO_ENABLE_CORS == "false"

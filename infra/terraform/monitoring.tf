@@ -3,7 +3,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_sponsored_gas_alert" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-aa-sponsored-gas-alert"
+  name           = "plether-${local.deployment_name}-aa-sponsored-gas-alert"
   pattern        = "\"AA sponsored gas alert\""
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
@@ -19,7 +19,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_sponsored_gas_alert" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-aa-sponsored-gas-alert"
+  alarm_name          = "plether-${local.deployment_name}-aa-sponsored-gas-alert"
   alarm_description   = "The backend observed sponsored UserOperation receipts above the configured hourly gas-cost threshold."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -30,6 +30,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_sponsored_gas_alert" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
@@ -37,7 +38,7 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-keeper-task-missing"
+  alarm_name          = "plether-${local.deployment_name}-keeper-task-missing"
   alarm_description   = "The active keeper topology stopped publishing ECS task CPU metrics while a keeper-dependent feature is enabled."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -48,6 +49,7 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -56,36 +58,36 @@ resource "aws_cloudwatch_metric_alarm" "keeper_task_missing" {
 }
 
 resource "aws_cloudwatch_log_metric_filter" "rpc_request_count" {
-  name           = "plether-${var.environment}-rpc-request-count"
+  name           = "plether-${local.deployment_name}-rpc-request-count"
   pattern        = "{ $.event = \"rpc_request_summary\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "RpcRequestCount-${var.environment}"
+    name      = "RpcRequestCount-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.request_count"
   }
 }
 
 resource "aws_cloudwatch_log_metric_filter" "rpc_failure_count" {
-  name           = "plether-${var.environment}-rpc-failure-count"
+  name           = "plether-${local.deployment_name}-rpc-failure-count"
   pattern        = "{ $.event = \"rpc_request_summary\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "RpcFailureCount-${var.environment}"
+    name      = "RpcFailureCount-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.failure_count"
   }
 }
 
 resource "aws_cloudwatch_log_metric_filter" "rpc_request_attribution" {
-  name           = "plether-${var.environment}-rpc-request-attribution"
+  name           = "plether-${local.deployment_name}-rpc-request-attribution"
   pattern        = "{ $.event = \"rpc_request_summary\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "RpcRequestCountByRole-${var.environment}"
+    name      = "RpcRequestCountByRole-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.request_count"
     dimensions = {
@@ -96,7 +98,7 @@ resource "aws_cloudwatch_log_metric_filter" "rpc_request_attribution" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
-  alarm_name          = "plether-${var.environment}-rpc-request-rate-warning"
+  alarm_name          = "plether-${local.deployment_name}-rpc-request-rate-warning"
   alarm_description   = "Ethereum RPC traffic exceeded the steady-state 15k request/hour warning threshold for two hours."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -107,10 +109,11 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_warning" {
   threshold           = 15000
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = []
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
-  alarm_name          = "plether-${var.environment}-rpc-request-rate-critical"
+  alarm_name          = "plether-${local.deployment_name}-rpc-request-rate-critical"
   alarm_description   = "Ethereum RPC traffic exceeded 25k requests in one hour."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -121,16 +124,18 @@ resource "aws_cloudwatch_metric_alarm" "rpc_request_rate_critical" {
   threshold           = 25000
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
-  alarm_name          = "plether-${var.environment}-rpc-failure-rate"
+  alarm_name          = "plether-${local.deployment_name}-rpc-failure-rate"
   alarm_description   = "Ethereum RPC failures exceeded one percent in an hour containing at least 100 requests."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   metric_query {
     id          = "failure_rate"
@@ -167,12 +172,12 @@ resource "aws_cloudwatch_metric_alarm" "rpc_failure_rate" {
 resource "aws_cloudwatch_log_metric_filter" "liquidation_risk_inputs_unavailable" {
   count = var.liquidation_worker_desired_count > 0 ? 1 : 0
 
-  name           = "plether-${var.environment}-liquidation-risk-inputs-unavailable"
+  name           = "plether-${local.deployment_name}-liquidation-risk-inputs-unavailable"
   pattern        = "{ $.event = \"liquidation_risk_inputs_unavailable\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "LiquidationRiskInputsUnavailable-${var.environment}"
+    name      = "LiquidationRiskInputsUnavailable-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -181,7 +186,7 @@ resource "aws_cloudwatch_log_metric_filter" "liquidation_risk_inputs_unavailable
 resource "aws_cloudwatch_metric_alarm" "liquidation_risk_inputs_unavailable" {
   count = var.liquidation_worker_desired_count > 0 ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-liquidation-risk-inputs-unavailable"
+  alarm_name          = "plether-${local.deployment_name}-liquidation-risk-inputs-unavailable"
   alarm_description   = "At least three liquidation scans per hour failed to construct fresh risk inputs for two consecutive hours; candidates remain fail-closed and may be delayed."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 2
@@ -193,6 +198,7 @@ resource "aws_cloudwatch_metric_alarm" "liquidation_risk_inputs_unavailable" {
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
@@ -200,12 +206,12 @@ resource "aws_cloudwatch_log_metric_filter" "lp_settlement_heartbeat" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  name           = "plether-${var.environment}-lp-settlement-heartbeat"
+  name           = "plether-${local.deployment_name}-lp-settlement-heartbeat"
   pattern        = "{ $.event = \"lp_settlement_heartbeat\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "LpSettlementHeartbeat-${var.environment}"
+    name      = "LpSettlementHeartbeat-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -216,7 +222,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_heartbeat_missing" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  alarm_name          = "plether-${var.environment}-lp-settlement-heartbeat-missing"
+  alarm_name          = "plether-${local.deployment_name}-lp-settlement-heartbeat-missing"
   alarm_description   = "No LP settlement heartbeat was observed for three consecutive one-minute periods."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
@@ -228,6 +234,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "lp_settlement_ready_backlog" {
@@ -235,12 +242,12 @@ resource "aws_cloudwatch_log_metric_filter" "lp_settlement_ready_backlog" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  name           = "plether-${var.environment}-lp-settlement-ready-backlog"
+  name           = "plether-${local.deployment_name}-lp-settlement-ready-backlog"
   pattern        = "{ $.event = \"lp_settlement_ready_backlog\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "LpSettlementReadyBacklog-${var.environment}"
+    name      = "LpSettlementReadyBacklog-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -251,7 +258,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_ready_backlog" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  alarm_name          = "plether-${var.environment}-lp-settlement-ready-backlog"
+  alarm_name          = "plether-${local.deployment_name}-lp-settlement-ready-backlog"
   alarm_description   = "Safety-ready matured LP settlement work remained for five consecutive one-minute periods."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 5
@@ -263,6 +270,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_ready_backlog" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -287,12 +295,12 @@ resource "aws_cloudwatch_log_metric_filter" "lp_settlement_immediate_alarm" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  name           = "plether-${var.environment}-lp-settlement-${replace(each.key, "_", "-")}"
+  name           = "plether-${local.deployment_name}-lp-settlement-${replace(each.key, "_", "-")}"
   pattern        = "{ $.event = \"${each.value.event}\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "LpSettlement${replace(title(each.key), "_", "")}-${var.environment}"
+    name      = "LpSettlement${replace(title(each.key), "_", "")}-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -303,7 +311,7 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
 
   depends_on = [terraform_data.lp_settlement_keeper_guard]
 
-  alarm_name          = "plether-${var.environment}-lp-settlement-${replace(each.key, "_", "-")}"
+  alarm_name          = "plether-${local.deployment_name}-lp-settlement-${replace(each.key, "_", "-")}"
   alarm_description   = each.value.description
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -314,17 +322,18 @@ resource "aws_cloudwatch_metric_alarm" "lp_settlement_immediate_alarm" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-indexer-heartbeat"
+  name           = "plether-${local.deployment_name}-vault-indexer-heartbeat"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultIndexerHeartbeat-${var.environment}"
+    name      = "VaultIndexerHeartbeat-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -333,7 +342,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_heartbeat" {
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-indexer-heartbeat-missing"
+  alarm_name          = "plether-${local.deployment_name}-vault-indexer-heartbeat-missing"
   alarm_description   = "No successful vault-indexer heartbeat was observed for three minutes."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
@@ -345,17 +354,18 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_heartbeat" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-request-share-attribution-heartbeat"
+  name           = "plether-${local.deployment_name}-vault-request-share-attribution-heartbeat"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultRequestShareAttributionHeartbeat-${var.environment}"
+    name      = "VaultRequestShareAttributionHeartbeat-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -364,7 +374,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_hea
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbeat_missing" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-heartbeat-missing"
+  alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-heartbeat-missing"
   alarm_description   = "No successful vault request-share-attribution heartbeat was observed for three minutes."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
@@ -376,17 +386,18 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_heartbea
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-request-share-attribution-lag"
+  name           = "plether-${local.deployment_name}-vault-request-share-attribution-lag"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.lag_seconds >= 0 }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultRequestShareAttributionLagSeconds-${var.environment}"
+    name      = "VaultRequestShareAttributionLagSeconds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.lag_seconds"
   }
@@ -395,7 +406,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_lag
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-lag"
+  alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-lag"
   alarm_description   = "Vault request-share attribution lag exceeded two minutes for three consecutive periods."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -407,17 +418,18 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_lag" {
   threshold           = 120
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_backfill" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-request-share-attribution-backfill"
+  name           = "plether-${local.deployment_name}-vault-request-share-attribution-backfill"
   pattern        = "{ $.event = \"vault_request_share_attribution_heartbeat\" && $.state = \"backfilling\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultRequestShareAttributionBackfillIncomplete-${var.environment}"
+    name      = "VaultRequestShareAttributionBackfillIncomplete-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -426,7 +438,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_request_share_attribution_bac
 resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-request-share-attribution-backfill-incomplete"
+  alarm_name          = "plether-${local.deployment_name}-vault-request-share-attribution-backfill-incomplete"
   alarm_description   = "Vault request-share attribution remained incomplete for ten minutes."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 10
@@ -438,17 +450,18 @@ resource "aws_cloudwatch_metric_alarm" "vault_request_share_attribution_backfill
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-indexer-lag"
+  name           = "plether-${local.deployment_name}-vault-indexer-lag"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.lag_seconds >= 0 }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultIndexerLagSeconds-${var.environment}"
+    name      = "VaultIndexerLagSeconds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.lag_seconds"
   }
@@ -457,7 +470,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_lag" {
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-indexer-confirmed-data-lag"
+  alarm_name          = "plether-${local.deployment_name}-vault-indexer-confirmed-data-lag"
   alarm_description   = "Confirmed vault activity lag exceeded two minutes for three consecutive periods."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -469,17 +482,18 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_lag" {
   threshold           = 120
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  name           = "plether-${var.environment}-vault-indexer-backfill"
+  name           = "plether-${local.deployment_name}-vault-indexer-backfill"
   pattern        = "{ $.event = \"vault_activity_indexer_heartbeat\" && $.state = \"backfilling\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultIndexerBackfillIncomplete-${var.environment}"
+    name      = "VaultIndexerBackfillIncomplete-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -488,7 +502,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_backfill" {
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
   count = var.perps_chain_id == "421614" ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-vault-indexer-backfill-incomplete"
+  alarm_name          = "plether-${local.deployment_name}-vault-indexer-backfill-incomplete"
   alarm_description   = "The canonical vault index rebuild remained incomplete for ten minutes."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 10
@@ -500,6 +514,7 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_backfill" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -513,12 +528,12 @@ locals {
 resource "aws_cloudwatch_log_metric_filter" "vault_indexer_failure" {
   for_each = local.vault_indexer_failure_events
 
-  name           = "plether-${var.environment}-${replace(each.key, "_", "-")}-failure"
+  name           = "plether-${local.deployment_name}-${replace(each.key, "_", "-")}-failure"
   pattern        = "{ $.event = \"${each.value}\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "VaultIndexer${title(each.key)}Failure-${var.environment}"
+    name      = "VaultIndexer${title(each.key)}Failure-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -527,7 +542,7 @@ resource "aws_cloudwatch_log_metric_filter" "vault_indexer_failure" {
 resource "aws_cloudwatch_metric_alarm" "vault_indexer_failure" {
   for_each = local.vault_indexer_failure_events
 
-  alarm_name          = "plether-${var.environment}-${replace(each.key, "_", "-")}-failure"
+  alarm_name          = "plether-${local.deployment_name}-${replace(each.key, "_", "-")}-failure"
   alarm_description   = each.key == "trace" ? "Alchemy transaction tracing failed repeatedly." : "The vault indexer rejected an invariant or provider response."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = each.key == "trace" ? 3 : 1
@@ -539,12 +554,13 @@ resource "aws_cloudwatch_metric_alarm" "vault_indexer_failure" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-cpu-high"
+  alarm_name          = "plether-${local.deployment_name}-rds-cpu-high"
   alarm_description   = "RDS CPU has remained above 80%, which can starve candle ingestion, backfill, and API reads."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -555,6 +571,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   threshold           = 80
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -564,7 +581,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-cpu-credits-low"
+  alarm_name          = "plether-${local.deployment_name}-rds-cpu-credits-low"
   alarm_description   = "Burstable RDS CPU credits are low; pause candle backfills before foreground latency degrades."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -575,6 +592,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
   threshold           = 20
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -584,7 +602,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-free-storage-low"
+  alarm_name          = "plether-${local.deployment_name}-rds-free-storage-low"
   alarm_description   = "RDS free storage is below the safe rollup/backfill headroom."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -595,6 +613,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
   threshold           = var.rds_free_storage_alarm_bytes
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -604,7 +623,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
 resource "aws_cloudwatch_metric_alarm" "rds_freeable_memory_low" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-freeable-memory-low"
+  alarm_name          = "plether-${local.deployment_name}-rds-freeable-memory-low"
   alarm_description   = "RDS freeable memory is low; cold candle queries and backfill work may evict useful pages."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
@@ -615,6 +634,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_freeable_memory_low" {
   threshold           = var.rds_freeable_memory_alarm_bytes
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -624,7 +644,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_freeable_memory_low" {
 resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-connections-high"
+  alarm_name          = "plether-${local.deployment_name}-rds-connections-high"
   alarm_description   = "RDS connection usage is above the configured safe threshold."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -635,6 +655,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   threshold           = var.rds_database_connections_alarm_threshold
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -646,7 +667,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_io_latency_high" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-rds-${lower(each.key)}-high"
+  alarm_name          = "plether-${local.deployment_name}-rds-${lower(each.key)}-high"
   alarm_description   = "RDS ${each.key} has remained above 20ms; pause candle backfills and inspect I/O pressure."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -657,6 +678,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_io_latency_high" {
   threshold           = 0.02
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.postgres.identifier
@@ -666,7 +688,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_io_latency_high" {
 resource "aws_cloudwatch_log_metric_filter" "api_foreground_request_duration" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-api-foreground-request-duration"
+  name           = "plether-${local.deployment_name}-api-foreground-request-duration"
   pattern        = "{ $.event = \"api_foreground_request_completed\" && $.request_class = \"foreground\" && $.duration_ms >= 0 }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
@@ -674,7 +696,7 @@ resource "aws_cloudwatch_log_metric_filter" "api_foreground_request_duration" {
   # needs one environment-wide foreground latency series with bounded cost and
   # cardinality; normalized route/status remain available in the source logs.
   metric_transformation {
-    name      = "ApiForegroundRequestDurationMilliseconds-${var.environment}"
+    name      = "ApiForegroundRequestDurationMilliseconds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.duration_ms"
     unit      = "Milliseconds"
@@ -688,7 +710,7 @@ resource "aws_cloudwatch_log_metric_filter" "api_foreground_request_duration" {
 resource "aws_cloudwatch_metric_alarm" "alb_target_latency_high" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-api-p95-latency-high"
+  alarm_name          = "plether-${local.deployment_name}-api-p95-latency-high"
   alarm_description   = "Foreground API request p95 completion latency is above the 750ms candle rollout SLO. Expected long polls and health checks are excluded."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -700,12 +722,13 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_latency_high" {
   unit                = "Milliseconds"
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-api-target-5xx"
+  alarm_name          = "plether-${local.deployment_name}-api-target-5xx"
   alarm_description   = "The API emitted repeated target 5xx responses."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -716,6 +739,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   threshold           = 5
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.api.arn_suffix
@@ -726,7 +750,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-api-alb-5xx"
+  alarm_name          = "plether-${local.deployment_name}-api-alb-5xx"
   alarm_description   = "The API load balancer generated a 5xx response before the target could respond successfully."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -737,6 +761,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.api.arn_suffix
@@ -825,7 +850,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_resource_pressure" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-${replace(each.key, "_", "-")}-high"
+  alarm_name          = "plether-${local.deployment_name}-${replace(each.key, "_", "-")}-high"
   alarm_description   = "ECS ${each.value.service} ${each.value.metric} has remained above 80%."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -836,6 +861,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_resource_pressure" {
   threshold           = 80
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -851,7 +877,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_task_missing" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-${replace(each.key, "_", "-")}-task-missing"
+  alarm_name          = "plether-${local.deployment_name}-candle-${replace(each.key, "_", "-")}-task-missing"
   alarm_description   = "Candle dual writes are enabled but ${each.value} stopped publishing ECS task metrics."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -862,6 +888,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -872,7 +899,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_task_missing" {
 resource "aws_cloudwatch_metric_alarm" "api_task_missing" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-api-task-missing"
+  alarm_name          = "plether-${local.deployment_name}-api-task-missing"
   alarm_description   = "The API service stopped publishing ECS task metrics, indicating that no API task is running."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -883,6 +910,7 @@ resource "aws_cloudwatch_metric_alarm" "api_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -895,7 +923,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_task_missing" {
 
   depends_on = [terraform_data.self_hosted_aa_guard]
 
-  alarm_name          = "plether-${var.environment}-alto-task-missing"
+  alarm_name          = "plether-${local.deployment_name}-alto-task-missing"
   alarm_description   = "The single-active Alto service stopped publishing ECS task metrics."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -906,6 +934,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -918,7 +947,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_task_missing" {
 
   depends_on = [terraform_data.self_hosted_aa_guard]
 
-  alarm_name          = "plether-${var.environment}-aa-reconciler-task-missing"
+  alarm_name          = "plether-${local.deployment_name}-aa-reconciler-task-missing"
   alarm_description   = "The single-active AA reconciler stopped publishing ECS task metrics."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -929,6 +958,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_task_missing" {
   threshold           = 0
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     ClusterName = aws_ecs_cluster.main.name
@@ -941,7 +971,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_unhealthy_target" {
 
   depends_on = [terraform_data.self_hosted_aa_guard]
 
-  alarm_name          = "plether-${var.environment}-alto-unhealthy-target"
+  alarm_name          = "plether-${local.deployment_name}-alto-unhealthy-target"
   alarm_description   = "The internal Alto load balancer has an unhealthy target."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 2
@@ -952,6 +982,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_unhealthy_target" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.alto[0].arn_suffix
@@ -964,7 +995,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_target_5xx" {
 
   depends_on = [terraform_data.self_hosted_aa_guard]
 
-  alarm_name          = "plether-${var.environment}-alto-target-5xx"
+  alarm_name          = "plether-${local.deployment_name}-alto-target-5xx"
   alarm_description   = "Alto emitted repeated target 5xx responses through its internal load balancer."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -975,6 +1006,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_target_5xx" {
   threshold           = 5
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 
   dimensions = {
     LoadBalancer = aws_lb.alto[0].arn_suffix
@@ -985,12 +1017,12 @@ resource "aws_cloudwatch_metric_alarm" "alto_target_5xx" {
 resource "aws_cloudwatch_log_metric_filter" "alto_fatal" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-alto-fatal"
+  name           = "plether-${local.deployment_name}-alto-fatal"
   pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"fatal\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AltoFatal-${var.environment}"
+    name      = "AltoFatal-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -999,7 +1031,7 @@ resource "aws_cloudwatch_log_metric_filter" "alto_fatal" {
 resource "aws_cloudwatch_metric_alarm" "alto_fatal" {
   count = local.self_hosted_aa_resource_count
 
-  alarm_name          = "plether-${var.environment}-alto-fatal"
+  alarm_name          = "plether-${local.deployment_name}-alto-fatal"
   alarm_description   = "Alto emitted a fatal structured log record."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1010,6 +1042,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_fatal" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 locals {
@@ -1047,12 +1080,12 @@ locals {
 resource "aws_cloudwatch_log_metric_filter" "aa_native_api_fault" {
   for_each = local.aa_native_api_fault_patterns
 
-  name           = "plether-${var.environment}-aa-native-${replace(each.key, "_", "-")}"
+  name           = "plether-${local.deployment_name}-aa-native-${replace(each.key, "_", "-")}"
   pattern        = each.value
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaNativeApiFault-${var.environment}"
+    name      = "AaNativeApiFault-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1063,28 +1096,29 @@ resource "aws_cloudwatch_metric_alarm" "aa_native_api_fault" {
 
   depends_on = [aws_cloudwatch_log_metric_filter.aa_native_api_fault]
 
-  alarm_name          = "plether-${var.environment}-aa-native-api-fault"
+  alarm_name          = "plether-${local.deployment_name}-aa-native-api-fault"
   alarm_description   = "Native AA issuance, signer, bundler hash, reconciliation freshness, or durable sponsorship state failed closed."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
-  metric_name         = "AaNativeApiFault-${var.environment}"
+  metric_name         = "AaNativeApiFault-${local.deployment_name}"
   namespace           = "Plether/Operations"
   period              = 60
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_wallet_fault" {
   for_each = local.alto_wallet_fault_patterns
 
-  name           = "plether-${var.environment}-alto-${replace(each.key, "_", "-")}"
+  name           = "plether-${local.deployment_name}-alto-${replace(each.key, "_", "-")}"
   pattern        = each.value
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AltoWalletFault-${var.environment}"
+    name      = "AltoWalletFault-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1095,28 +1129,29 @@ resource "aws_cloudwatch_metric_alarm" "alto_wallet_fault" {
 
   depends_on = [aws_cloudwatch_log_metric_filter.alto_wallet_fault]
 
-  alarm_name          = "plether-${var.environment}-alto-wallet-fault"
+  alarm_name          = "plether-${local.deployment_name}-alto-wallet-fault"
   alarm_description   = "Alto could not validate, refill, or monitor its utility/executor wallets."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
-  metric_name         = "AltoWalletFault-${var.environment}"
+  metric_name         = "AltoWalletFault-${local.deployment_name}"
   namespace           = "Plether/Operations"
   period              = 60
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_initialization_error" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-alto-gas-price-initialization-error"
+  name           = "plether-${local.deployment_name}-alto-gas-price-initialization-error"
   pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"gas_price_manager\" && $.msg = \"Error during gas price initialization\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AltoGasPriceFault-${var.environment}"
+    name      = "AltoGasPriceFault-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1125,12 +1160,12 @@ resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_initialization_error
 resource "aws_cloudwatch_log_metric_filter" "alto_gas_price_refresh_error" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-alto-gas-price-refresh-error"
+  name           = "plether-${local.deployment_name}-alto-gas-price-refresh-error"
   pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"error\" && $.module = \"gas_price_manager\" && $.msg = \"Error updating gas prices in interval\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AltoGasPriceFault-${var.environment}"
+    name      = "AltoGasPriceFault-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1144,7 +1179,7 @@ resource "aws_cloudwatch_metric_alarm" "alto_gas_price_initialization_error" {
     aws_cloudwatch_log_metric_filter.alto_gas_price_refresh_error,
   ]
 
-  alarm_name          = "plether-${var.environment}-alto-gas-price-fault"
+  alarm_name          = "plether-${local.deployment_name}-alto-gas-price-fault"
   alarm_description   = "Alto could not initialize or refresh its gas-price manager; health checks can remain green while estimation and bundling are unavailable."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1155,17 +1190,18 @@ resource "aws_cloudwatch_metric_alarm" "alto_gas_price_initialization_error" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "alto_executor_insufficient_funds" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-alto-executor-insufficient-funds"
+  name           = "plether-${local.deployment_name}-alto-executor-insufficient-funds"
   pattern        = "{ $.container_name = \"plether-alto\" && $.level = \"warn\" && $.msg = \"executor has insufficient funds\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AltoExecutorInsufficientFunds-${var.environment}"
+    name      = "AltoExecutorInsufficientFunds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1174,7 +1210,7 @@ resource "aws_cloudwatch_log_metric_filter" "alto_executor_insufficient_funds" {
 resource "aws_cloudwatch_metric_alarm" "alto_executor_insufficient_funds" {
   count = local.self_hosted_aa_resource_count
 
-  alarm_name          = "plether-${var.environment}-alto-executor-insufficient-funds"
+  alarm_name          = "plether-${local.deployment_name}-alto-executor-insufficient-funds"
   alarm_description   = "Alto attempted to bundle with an executor that had insufficient funds."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1185,17 +1221,18 @@ resource "aws_cloudwatch_metric_alarm" "alto_executor_insufficient_funds" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_fatal" {
   for_each = local.aa_reconciler_fatal_events
 
-  name           = "plether-${var.environment}-${replace(each.value, "_", "-")}"
+  name           = "plether-${local.deployment_name}-${replace(each.value, "_", "-")}"
   pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"ERROR\" && $.event = \"${each.value}\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaReconcilerFatal-${var.environment}"
+    name      = "AaReconcilerFatal-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1206,28 +1243,29 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_fatal" {
 
   depends_on = [aws_cloudwatch_log_metric_filter.aa_reconciler_fatal]
 
-  alarm_name          = "plether-${var.environment}-aa-reconciler-fatal"
+  alarm_name          = "plether-${local.deployment_name}-aa-reconciler-fatal"
   alarm_description   = "The AA reconciler hit a startup, provider-agreement, cursor, operation, reservation, or durable-pause circuit breaker."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
-  metric_name         = "AaReconcilerFatal-${var.environment}"
+  metric_name         = "AaReconcilerFatal-${local.deployment_name}"
   namespace           = "Plether/Operations"
   period              = 60
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_heartbeat" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-aa-reconciler-heartbeat"
+  name           = "plether-${local.deployment_name}-aa-reconciler-heartbeat"
   pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.event = \"aa_reconciler_heartbeat\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaReconcilerHeartbeat-${var.environment}"
+    name      = "AaReconcilerHeartbeat-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1236,7 +1274,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_heartbeat" {
 resource "aws_cloudwatch_metric_alarm" "aa_reconciler_heartbeat_missing" {
   count = local.self_hosted_aa_resource_count == 1 && var.aa_reconciler_desired_count == 1 ? 1 : 0
 
-  alarm_name          = "plether-${var.environment}-aa-reconciler-heartbeat-missing"
+  alarm_name          = "plether-${local.deployment_name}-aa-reconciler-heartbeat-missing"
   alarm_description   = "No AA reconciler heartbeat was observed for two consecutive five-minute windows."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -1248,17 +1286,18 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_low_deposit" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-aa-reconciler-paymaster-low-deposit"
+  name           = "plether-${local.deployment_name}-aa-reconciler-paymaster-low-deposit"
   pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"ERROR\" && $.event = \"aa_reconciler_paymaster_low_deposit\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaReconcilerPaymasterLowDeposit-${var.environment}"
+    name      = "AaReconcilerPaymasterLowDeposit-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1267,7 +1306,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_low_deposit
 resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_low_deposit" {
   count = local.self_hosted_aa_resource_count
 
-  alarm_name          = "plether-${var.environment}-aa-paymaster-low-deposit"
+  alarm_name          = "plether-${local.deployment_name}-aa-paymaster-low-deposit"
   alarm_description   = "The paymaster EntryPoint deposit fell below the reconciler threshold; native issuance was paused in durable state."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1278,17 +1317,18 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_low_deposit" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_unstaked" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-aa-reconciler-paymaster-unstaked"
+  name           = "plether-${local.deployment_name}-aa-reconciler-paymaster-unstaked"
   pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"WARN\" && $.event = \"aa_reconciler_paymaster_unstaked\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaReconcilerPaymasterUnstaked-${var.environment}"
+    name      = "AaReconcilerPaymasterUnstaked-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1297,7 +1337,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_paymaster_unstaked" {
 resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_unstaked" {
   count = local.self_hosted_aa_resource_count
 
-  alarm_name          = "plether-${var.environment}-aa-paymaster-unstaked"
+  alarm_name          = "plether-${local.deployment_name}-aa-paymaster-unstaked"
   alarm_description   = "The paymaster is not staked in EntryPoint."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1308,17 +1348,18 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_paymaster_unstaked" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_rpc_unavailable" {
   count = local.self_hosted_aa_resource_count
 
-  name           = "plether-${var.environment}-aa-reconciler-rpc-unavailable"
+  name           = "plether-${local.deployment_name}-aa-reconciler-rpc-unavailable"
   pattern        = "{ $.container_name = \"plether-aa-reconciler\" && $.level = \"WARN\" && $.event = \"aa_reconciler_rpc_unavailable\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "AaReconcilerRpcUnavailable-${var.environment}"
+    name      = "AaReconcilerRpcUnavailable-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1327,7 +1368,7 @@ resource "aws_cloudwatch_log_metric_filter" "aa_reconciler_rpc_unavailable" {
 resource "aws_cloudwatch_metric_alarm" "aa_reconciler_rpc_unavailable" {
   count = local.self_hosted_aa_resource_count
 
-  alarm_name          = "plether-${var.environment}-aa-reconciler-rpc-unavailable"
+  alarm_name          = "plether-${local.deployment_name}-aa-reconciler-rpc-unavailable"
   alarm_description   = "The AA reconciler repeatedly could not read safe-chain or paymaster state from its RPC."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1338,6 +1379,7 @@ resource "aws_cloudwatch_metric_alarm" "aa_reconciler_rpc_unavailable" {
   threshold           = 3
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_heartbeat" {
@@ -1345,12 +1387,12 @@ resource "aws_cloudwatch_log_metric_filter" "candle_writer_heartbeat" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-${each.key}-writer-heartbeat"
+  name           = "plether-${local.deployment_name}-candle-${each.key}-writer-heartbeat"
   pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandle${title(each.key)}WriterHeartbeat-${var.environment}"
+    name      = "PerpsCandle${title(each.key)}WriterHeartbeat-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1366,7 +1408,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_heartbeat_missing" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-heartbeat-missing"
+  alarm_name          = "plether-${local.deployment_name}-candle-${each.key}-writer-heartbeat-missing"
   alarm_description   = "No successful ${each.key} candle-writer heartbeat was observed for three consecutive five-minute windows."
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 3
@@ -1378,6 +1420,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_heartbeat_missing" {
   threshold           = 1
   treat_missing_data  = "breaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_lag" {
@@ -1385,12 +1428,12 @@ resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_lag" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-${each.key}-writer-coverage-lag"
+  name           = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-lag"
   pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" && $.coverage_lag_seconds >= 0 }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandle${title(each.key)}WriterCoverageLagSeconds-${var.environment}"
+    name      = "PerpsCandle${title(each.key)}WriterCoverageLagSeconds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.coverage_lag_seconds"
   }
@@ -1406,7 +1449,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_lag" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-coverage-lag"
+  alarm_name          = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-lag"
   alarm_description   = "The live ${each.key} writer is polling, but base-minute candle coverage remains more than five minutes behind."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -1418,6 +1461,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_lag" {
   threshold           = 300
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_incomplete" {
@@ -1425,12 +1469,12 @@ resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_incomplete" 
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-${each.key}-writer-coverage-incomplete"
+  name           = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-incomplete"
   pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" && $.coverage_state = \"incomplete\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandle${title(each.key)}WriterCoverageIncomplete-${var.environment}"
+    name      = "PerpsCandle${title(each.key)}WriterCoverageIncomplete-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1441,7 +1485,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_incomplete" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-coverage-incomplete"
+  alarm_name          = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-incomplete"
   alarm_description   = "The live ${each.key} writer observed an existing candle coverage row in an incomplete state."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1452,6 +1496,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_incomplete" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_uninitialized" {
@@ -1459,12 +1504,12 @@ resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_uninitialize
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  name           = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-uninitialized"
   pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" && $.coverage_state = \"uninitialized\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandle${title(each.key)}WriterCoverageUninitialized-${var.environment}"
+    name      = "PerpsCandle${title(each.key)}WriterCoverageUninitialized-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1475,7 +1520,7 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_uninitialized" {
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  alarm_name          = "plether-${local.deployment_name}-candle-${each.key}-writer-coverage-uninitialized"
   alarm_description   = "The live ${each.key} writer has not published candle coverage for its active dataset."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1486,17 +1531,18 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_uninitialized" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_backfill_failed" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-backfill-failed"
+  name           = "plether-${local.deployment_name}-candle-backfill-failed"
   pattern        = "{ $.event = \"perps_candle_backfill_failed\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandleBackfillFailed-${var.environment}"
+    name      = "PerpsCandleBackfillFailed-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1505,7 +1551,7 @@ resource "aws_cloudwatch_log_metric_filter" "candle_backfill_failed" {
 resource "aws_cloudwatch_metric_alarm" "candle_backfill_failure" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-backfill-failed"
+  alarm_name          = "plether-${local.deployment_name}-candle-backfill-failed"
   alarm_description   = "Candle administration reported a backfill or repair failure."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1516,17 +1562,18 @@ resource "aws_cloudwatch_metric_alarm" "candle_backfill_failure" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_coverage_lag" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-coverage-lag"
+  name           = "plether-${local.deployment_name}-candle-coverage-lag"
   pattern        = "{ $.event = \"perps_candle_coverage\" && $.lag_seconds = * }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandleCoverageLagSeconds-${var.environment}"
+    name      = "PerpsCandleCoverageLagSeconds-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "$.lag_seconds"
   }
@@ -1535,7 +1582,7 @@ resource "aws_cloudwatch_log_metric_filter" "candle_coverage_lag" {
 resource "aws_cloudwatch_metric_alarm" "candle_coverage_lag" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-coverage-lag"
+  alarm_name          = "plether-${local.deployment_name}-candle-coverage-lag"
   alarm_description   = "Candle rollup coverage is more than five minutes behind after subtracting the expected bucket-alignment age."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -1546,17 +1593,18 @@ resource "aws_cloudwatch_metric_alarm" "candle_coverage_lag" {
   threshold           = 300
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
 
 resource "aws_cloudwatch_log_metric_filter" "candle_coverage_unhealthy" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  name           = "plether-${var.environment}-candle-coverage-unhealthy"
+  name           = "plether-${local.deployment_name}-candle-coverage-unhealthy"
   pattern        = "{ $.event = \"perps_candle_coverage_unhealthy\" }"
   log_group_name = aws_cloudwatch_log_group.ecs.name
 
   metric_transformation {
-    name      = "PerpsCandleCoverageUnhealthy-${var.environment}"
+    name      = "PerpsCandleCoverageUnhealthy-${local.deployment_name}"
     namespace = "Plether/Operations"
     value     = "1"
   }
@@ -1565,7 +1613,7 @@ resource "aws_cloudwatch_log_metric_filter" "candle_coverage_unhealthy" {
 resource "aws_cloudwatch_metric_alarm" "candle_coverage_unhealthy" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
-  alarm_name          = "plether-${var.environment}-candle-coverage-unhealthy"
+  alarm_name          = "plether-${local.deployment_name}-candle-coverage-unhealthy"
   alarm_description   = "A public Perps candle read failed strict rollup coverage validation."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -1576,4 +1624,5 @@ resource "aws_cloudwatch_metric_alarm" "candle_coverage_unhealthy" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
 }
