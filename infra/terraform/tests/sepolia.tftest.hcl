@@ -49,6 +49,10 @@ variables {
 run "preserve_singapore_identity" {
   command = plan
   assert {
+    condition     = local.alto_safe_mode
+    error_message = "Safe mode must remain the default without the explicit Sepolia exception."
+  }
+  assert {
     condition     = aws_ecs_service.api.platform_version == "1.4.0"
     error_message = "AA administration requires the API source service to pin reviewed Fargate 1.4.0."
   }
@@ -94,6 +98,31 @@ run "deployment_metadata_permissions" {
     error_message = "Consumer-policy inspection must be limited to the API/reconciler roles."
   }
 }
+run "approved_sepolia_alto_exception" {
+  command = plan
+  variables {
+    alto_sepolia_safe_mode_exception = true
+  }
+  assert {
+    condition = (!local.alto_safe_mode &&
+      contains(local.alto_validation_exception_environment, { name = "PLETHER_ALTO_NETWORK_CHAIN_ID", value = "421614" }) &&
+    contains(local.alto_validation_exception_environment, { name = "PLETHER_ALTO_VALIDATION_POLICY", value = "sepolia-testnet-exception-v1" }))
+    error_message = "The Sepolia exception must retain normal validation and exact chain/policy metadata."
+  }
+}
+run "reject_alto_exception_other_chain" {
+  command = plan
+  variables {
+    alto_sepolia_safe_mode_exception   = true
+    perps_chain_id                     = "42161"
+    aa_reconciler_max_safe_lag_seconds = "600"
+  }
+  assert {
+    condition     = local.alto_safe_mode
+    error_message = "An invalid exception must not disable safe mode."
+  }
+  expect_failures = [terraform_data.self_hosted_aa_guard]
+}
 run "deployment_customer_key_metadata_permissions" {
   command = plan
   variables {
@@ -117,6 +146,7 @@ run "public_sepolia" {
   command = plan
   variables {
     configure_native_aa_backend      = true
+    alto_sepolia_safe_mode_exception = true
     alto_desired_count               = 1
     aa_reconciler_desired_count      = 1
     aa_native_global_rollout_enabled = true
@@ -134,8 +164,8 @@ run "public_sepolia" {
     ]
   }
   assert {
-    condition     = local.alto_safe_mode && local.native_aa_sponsorship_enabled && var.aa_native_global_rollout_enabled && var.aa_native_canary_owners == ""
-    error_message = "Public Sepolia must retain Alto safe mode."
+    condition     = !local.alto_safe_mode && local.native_aa_sponsorship_enabled && var.aa_native_global_rollout_enabled && var.aa_native_canary_owners == ""
+    error_message = "Public Sepolia can use the explicit approved exception without changing issuance or cohort requirements."
   }
   assert {
     condition     = length(local.aa_funding_containers) == 1 && local.aa_funding_containers[0].essential == false && length(local.aa_funding_components) == 6 && !contains([for s in local.aa_funding_containers[0].secrets : s.name], "PRIVATE_KEY")

@@ -6,6 +6,16 @@ Target: account `932542905614`, region `ap-southeast-1`, existing
 
 ## Latest activation status
 
+### Owner-approved Sepolia tracing exception — implementation pending deployment
+
+The owner explicitly approved disabling Alto safe mode only on Arbitrum Sepolia
+instead of buying custom-tracer infrastructure. Normal operation validation and
+all gateway/reconciliation controls stay enabled. The
+[exception runbook](alto-sepolia-validation-exception-2026-09-12.md) records the
+scope and rollout checks. This supersedes the mandatory-safe-mode instruction
+in the earlier status below; it does not yet record a successful deployment or
+transaction, and does not clear the previously retained liability.
+
 ### Native signing enabled; public cutover blocked by RPC tracing
 
 The owner renewed authorization to continue through activation. The on-chain
