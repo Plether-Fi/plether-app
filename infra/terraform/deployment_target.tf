@@ -10,6 +10,7 @@ resource "terraform_data" "deployment_target_guard" {
         local.sepolia_core.release.version == "v1.2.3"
         && var.perps_chain_id == tostring(local.sepolia_core.network.chainId)
         && var.perps_indexer_start_block == tostring(local.sepolia_core.release.deploymentBlock)
+        && var.vault_history_deployment_block == tostring(local.sepolia_core.release.deploymentBlock)
         && alltrue([
           lower(var.perps_usdc) == lower(local.sepolia_core.contracts.mockUsdc.address),
           lower(var.perps_order_router) == lower(local.sepolia_core.contracts.orderRouter.address),
@@ -25,6 +26,8 @@ resource "terraform_data" "deployment_target_guard" {
           lower(var.perps_cfd_engine_lens) == lower(local.sepolia_core.contracts.cfdEngineLens.address),
           lower(var.perps_account_lens) == lower(local.sepolia_core.contracts.cfdEngineAccountLens.address),
           lower(var.vault_history_house_pool_address) == lower(local.sepolia_core.contracts.housePool.address),
+          lower(var.vault_history_senior_vault_address) == lower(local.sepolia_core.contracts.seniorVault.address),
+          lower(var.vault_history_junior_vault_address) == lower(local.sepolia_core.contracts.juniorVault.address),
         ])
       )
       error_message = "Native AA requires the complete checked-in Core v1.2.3 deployment bindings and indexing anchor."
