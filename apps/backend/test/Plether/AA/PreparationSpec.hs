@@ -105,8 +105,10 @@ spec = do
       executionGasWithHeadroom 200_001 `shouldBe` Right 300_002
     it "rejects rather than clips requirements above the hard cap" $ do
       executionGasWithHeadroom 1_333_333 `shouldBe` Right 2_000_000
+      executionGasWithHeadroom 1_349_330 `shouldBe` Right 2_023_995
+      executionGasWithHeadroom 1_400_000 `shouldBe` Right sepoliaExecutionGasCap
       mapM_ (\gas -> executionGasWithHeadroom gas `shouldSatisfy` isLeft)
-        [-1,0,1_333_334,2_000_000,2^(128::Int)]
+        [-1,0,1_400_001,2_100_000,2^(128::Int)]
     it "prepares with exactly two Alto calls and one nonce read, preserving other gas fields" $ do
       calls <- newIORef ([] :: [T.Text])
       let app request respond = do

@@ -1,8 +1,9 @@
 # Native AA execution-gas headroom
 
-Policy: `execution-headroom-v1-150pct-min100000`. Fresh native preparation applies
+Policy: `execution-headroom-v2-sepolia-cap2100000-150pct-min100000`. Fresh native preparation applies
 `max(ceil(estimate * 1.5), estimate + 100000)` once to Alto's execution gas. A result
-above 2,000,000 is rejected, not clipped. Other gas fields and economic caps remain
+above 2,100,000 is rejected, not clipped. This owner-approved increase is restricted
+to native Arbitrum Sepolia issuance and frontend response validation. Other gas fields and ETH spending caps remain
 unchanged. The padded payload is persisted before reservation/signing. Old signed
 operations continue exact-payload submission/recovery; they are never upgraded in
 place. A preparation under the new policy needs a newly reviewed preparation ID.
@@ -42,10 +43,55 @@ success expectations.
 Alto v1.2.7's `preVerificationGasCalculator.ts` fills fixed-width gas words with
 maximum values when computing execution calldata overhead. Arbitrum's L1-fee
 estimate separately randomizes gas quantities below 10,000,000, above our reviewed
-2,000,000 limit. Padding does not change encoded lengths. Preserve this reviewed
+2,100,000 limit. Padding does not change encoded lengths. Preserve this reviewed
 estimator, including its existing PVG buffers and validation, rather than adding
 a second preparation RPC. Arbitrum compression/fee variability still requires a
 live compatibility gate; local Anvil is not an Arbitrum fee oracle.
+
+## Execution-cap increase and action-cost audit
+
+The observed valid partial-close estimate was 1,349,330, requiring 2,023,995
+after headroom. It exceeded the former 2,000,000 cap. The owner approved 2,100,000
+on September 13. The multiplier/minimum are unchanged, so the maximum admitted
+fresh raw estimate is 1,400,000; 1,400,001 is rejected rather than clipped.
+The versioned preparation fingerprint changes, not existing signed operations.
+Backend final authorization and frontend exact-hash validation enforce the same
+ceiling for every allowed action, not a close-only bypass. Keeper finalization
+has separate gas/funding and is not changed.
+
+The owner chose **offline testing only** for this audit. No live trace profiling
+was performed. The mandatory real-EntryPoint regression now profiles each
+operation's exact account-execution call separately from total UserOperation gas
+(which includes verification, pre-verification and unused-gas penalties).
+Prerequisite deposits are separate transactions, not unsupported three-call batches.
+
+Representative pinned-state observations, in execution gas:
+
+| Successful action | Observed execution gas |
+| --- | ---: |
+| Deposit after prerequisite funding | 174,327 |
+| Withdraw margin and transfer to owner | 334,110 |
+| Add position margin | 352,825–445,812 |
+| Full-close commit | 998,516 |
+| Partial-close commit | 1,013,882 |
+| Partial-close commit with 1–4 pending orders | 920,657–1,006,108 |
+| Counterfactual first deposit | 78,659 (399,438 total UserOperation gas) |
+
+The recorded deployment permits five pending orders. The sixth attempt must
+revert `OrderRouter__TooManyPendingOrders()`, not exhaust gas. The test asserts
+the queue configuration rather than assuming it matches future deployments.
+It also asserts that a close is the most expensive **successful action in this
+pinned-state matrix**. Amounts, carry/position state, repeat deposits, factory
+creation and storage warming are covered by the accompanying execution tests.
+
+This is **not proof that close commits are globally the most expensive action**.
+The snapshot rejects opens, protection creation and protected opens in its frozen
+market state; their failure gas must not be ranked as successful-path costs.
+Claim-bearing state and active-protection replace/cancel need additional state
+fixtures. Queue depth, storage/account state and market mode can change rankings.
+Protected opens add protection work to an order commit, so cannot be assumed
+cheaper without positive execution evidence. All action families remain subject
+to the same gas and ETH-liability caps; no broader ceiling is approved implicitly.
 
 Structured `aa_preparation_gas_headroom` logs contain estimated/prepared call gas
 and headroom basis points. `aa_recovery_outcome` exports total gas utilization

@@ -1721,7 +1721,7 @@ ownerAllowedForNativeCanary cfg owner =
 
 validateHardEconomicCaps :: Paymaster.PackedUserOperation -> Either Text ()
 validateHardEconomicCaps operation = do
-  bounded "callGasLimit" 1 2_000_000 $ Paymaster.puoCallGasLimit operation
+  bounded "callGasLimit" 1 Preparation.sepoliaExecutionGasCap $ Paymaster.puoCallGasLimit operation
   bounded "verificationGasLimit" 1 1_000_000 $ Paymaster.puoVerificationGasLimit operation
   bounded "preVerificationGas" 1 1_000_000 $ Paymaster.puoPreVerificationGas operation
   bounded "maxFeePerGas" 1 10_000_000_000 $ Paymaster.puoMaxFeePerGas operation

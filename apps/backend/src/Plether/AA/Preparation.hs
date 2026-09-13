@@ -1,6 +1,6 @@
 module Plether.AA.Preparation
   ( PreparationIntent (..), parsePreparationIntent, unsignedSkeleton, intentHash, matchesIntent, internalRequest
-  , gasPolicyVersion, executionGasWithHeadroom ) where
+  , gasPolicyVersion, sepoliaExecutionGasCap, executionGasWithHeadroom ) where
 
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, encode, (.=))
@@ -24,14 +24,19 @@ data PreparationIntent = PreparationIntent
 -- Changing this identifier requires a new reviewed preparation, never a rewrite
 -- of a persisted/signed operation or its reservation.
 gasPolicyVersion :: Text
-gasPolicyVersion = "execution-headroom-v1-150pct-min100000"
+gasPolicyVersion = "execution-headroom-v2-sepolia-cap2100000-150pct-min100000"
+
+-- Native issuance is restricted to Arbitrum Sepolia. All action classes share
+-- this ceiling; the separate wei liability and verification-gas caps do not move.
+sepoliaExecutionGasCap :: Integer
+sepoliaExecutionGasCap = 2_100_000
 
 executionGasWithHeadroom :: Integer -> Either Text Integer
 executionGasWithHeadroom estimated = do
-  unless (estimated > 0 && estimated <= 2_000_000) $
+  unless (estimated > 0 && estimated <= sepoliaExecutionGasCap) $
     Left "Invalid execution gas estimate"
   let padded = max ((estimated * 3 + 1) `div` 2) (estimated + 100_000)
-  unless (padded <= 2_000_000) $
+  unless (padded <= sepoliaExecutionGasCap) $
     Left "Execution gas including headroom exceeds the reviewed sponsorship bounds"
   pure padded
 

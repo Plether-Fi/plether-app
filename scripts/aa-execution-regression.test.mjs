@@ -82,7 +82,7 @@ async function makeOperation(callGas, callData, sender, initCode, nonce) {
   op.signature = await owner.sign({hash})
   return {op,hash}
 }
-async function execute(callGas, callData = fixture.callData, {sender=fixture.sender,initCode='0x',precedingCallData,beforeSubmit} = {}) {
+async function execute(callGas, callData = fixture.callData, {sender=fixture.sender,initCode='0x',precedingCallData,beforeSubmit,measure=false} = {}) {
   const nonce = await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[sender,0n]})
   const preceding = precedingCallData ? await makeOperation(callGas,precedingCallData,sender,initCode,nonce) : null
   const {op,hash} = await makeOperation(callGas,callData,sender,preceding?'0x':initCode,nonce+(preceding?1n:0n))
@@ -103,8 +103,78 @@ async function execute(callGas, callData = fixture.callData, {sender=fixture.sen
   const operationEvents = events.filter(e=>e.eventName==='UserOperationEvent')
   assert.equal(before-remaining,operationEvents.reduce((sum,e)=>sum+e.args.actualGasCost,0n),'paymaster accounting matches actual receipt costs')
   if (preceding) assert.equal(operationEvents.find(e=>e.args.userOpHash===preceding.hash)?.args.success,true)
-  return {...event.args,logs:receipt.logs,revertReason:events.find(e=>e.eventName==='UserOperationRevertReason'&&e.args.userOpHash===hash)?.args.revertReason}
+  let executionGasUsed
+  if (measure) {
+    // LOCAL Anvil only. This is never part of production preparation/submission.
+    const trace = await rpc('debug_traceTransaction',[txHash,{tracer:'callTracer'}])
+    const matches=[]
+    const visit = call => {
+      if (call.to?.toLowerCase()===sender.toLowerCase() && call.input===callData) matches.push(call)
+      for (const child of call.calls??[]) visit(child)
+    }
+    visit(trace)
+    assert.equal(matches.length,1,'measurement must identify the exact account execution, not bundle gas')
+    executionGasUsed=BigInt(matches[0].gasUsed)
+  }
+  return {...event.args,executionGasUsed,logs:receipt.logs,revertReason:events.find(e=>e.eventName==='UserOperationRevertReason'&&e.args.userOpHash===hash)?.args.revertReason}
 }
+
+test('offline sponsored action gas inventory distinguishes successful execution from unavailable state', async t => {
+  const orderAbi=parseAbi(['function commitOrder((bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,(uint64 validUntil,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyUsdc,uint256 maxExecutionNotionalUsdc,uint256 maxGrossAccountDebitUsdc,uint256 maxActionChargeUsdc,uint256 maxExplicitFeesUsdc,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceUsdc,uint256 minPostPositionEquityUsdc,uint32 maxPostLeverageBps) bounds) request) returns(uint64)'])
+  const batch=calls=>encodeFunctionData({abi:accountAbi,functionName:'executeBatch',args:[calls]})
+  const call=(target,signature,functionName,args)=>({target,value:0n,data:encodeFunctionData({abi:parseAbi([signature]),functionName,args})})
+  const closeCall=decodeFunctionData({abi:accountAbi,data:fixture.scenarios.find(s=>s.name==='close_commit').callData}).args[0].at(-1)
+  const request=decodeFunctionData({abi:orderAbi,data:closeCall.data}).args[0]
+  // Use one reviewed execution mode, like the real gateway (not historical mask 7).
+  request.bounds.allowedExecutionModes=4
+  const open={...request,isClose:false,marginDelta:100_000_000n,bounds:{...request.bounds,allowedExecutionModes:1}}
+  const book=manifest.contracts.positionProtectionBook.address
+  const protectionAbi=parseAbi(['function createPositionProtection((uint256 takeProfitTriggerPrice,uint256 stopLossTriggerPrice) params)'])
+  const triggers={takeProfitTriggerPrice:150_000_000n,stopLossTriggerPrice:50_000_000n}
+  const protectedOpenAbi=[{type:'function',name:'commitOpenOrderWithProtection',stateMutability:'nonpayable',inputs:[orderAbi[0].inputs[0],protectionAbi[0].inputs[0]],outputs:[]}]
+  const partialClose={...request,sizeDelta:1100n*10n**18n}
+  const cases=[
+    ['deposit',depositCalls(1_000_000n)],
+    ['withdraw',batch([
+      call(manifest.contracts.marginClearinghouse.address,'function withdrawMargin(uint256)','withdrawMargin',[1_000_000n]),
+      call(manifest.contracts.mockUsdc.address,'function transfer(address,uint256) returns(bool)','transfer',[owner.address,1_000_000n]),
+    ])],
+    ['add_margin',batch([call(manifest.contracts.cfdEngine.address,'function addMargin(address,uint256)','addMargin',[fixture.sender,1_000_000n])])],
+    ['settle_claim',batch([call(manifest.contracts.cfdEngine.address,'function settleTraderClaim(address)','settleTraderClaim',[fixture.sender])])],
+    ['close_commit',batch([{...closeCall,data:encodeFunctionData({abi:orderAbi,functionName:'commitOrder',args:[request]})}])],
+    ['partial_close_commit',batch([{...closeCall,data:encodeFunctionData({abi:orderAbi,functionName:'commitOrder',args:[partialClose]})}])],
+    ['open_commit',batch([{...closeCall,data:encodeFunctionData({abi:orderAbi,functionName:'commitOrder',args:[open]})}])],
+    ['protection_create',batch([{target:book,value:0n,data:encodeFunctionData({abi:protectionAbi,functionName:'createPositionProtection',args:[triggers]})}])],
+    ['protected_open',batch([{target:book,value:0n,data:encodeFunctionData({abi:protectedOpenAbi,functionName:'commitOpenOrderWithProtection',args:[open,triggers]})}])],
+  ]
+  const observations=[]
+  for (const [action,data] of cases) {
+    await reset()
+    // Funding is an earlier transaction, NEVER an unsupported three-call batch.
+    assert.equal((await execute(gasPolicy(419155n),depositCalls(1_000_000_000n))).success,true)
+    const result=await execute(2_023_995n,data,{measure:true})
+    if (['deposit','withdraw','add_margin','close_commit','partial_close_commit'].includes(action)) assert.equal(result.success,true,`${action}: ${result.revertReason}`)
+    observations.push({action,success:result.success,executionGasUsed:Number(result.executionGasUsed),totalUserOperationGas:Number(result.actualGasUsed)})
+  }
+  await reset()
+  assert.equal((await execute(gasPolicy(419155n),depositCalls(1_000_000_000n))).success,true)
+  const queueLimit=await client.readContract({address:manifest.contracts.orderRouter.address,abi:parseAbi(['function maxPendingOrders() view returns(uint256)']),functionName:'maxPendingOrders'})
+  assert.equal(queueLimit,5n,'pinned historical queue policy; do not assume the current deployment has this same limit')
+  for(let index=0;index<=Number(queueLimit);index++) {
+    const queued={...partialClose,clientOrderId:keccak256(toHex(`offline-queued-close-${index}`))}
+    const data=batch([{...closeCall,data:encodeFunctionData({abi:orderAbi,functionName:'commitOrder',args:[queued]})}])
+    const result=await execute(2_023_995n,data,{measure:true})
+    if(index===Number(queueLimit)) {
+      assert.equal(result.success,false)
+      assert.equal(result.revertReason,'0xd997657d','Core must reject an overfull queue, not run out of gas')
+    } else assert.equal(result.success,true,`queued close ${index}: ${result.revertReason}`)
+    observations.push({action:`partial_close_pending_${index}`,success:result.success,executionGasUsed:Number(result.executionGasUsed),totalUserOperationGas:Number(result.actualGasUsed)})
+  }
+  const successful=observations.filter(row=>row.success)
+  const mostExpensive=successful.reduce((a,b)=>a.executionGasUsed>b.executionGasUsed?a:b)
+  assert.match(mostExpensive.action,/close/,'close must remain the most expensive successful action in this pinned-state matrix')
+  t.diagnostic(JSON.stringify({observations,scope:'Pinned historical state only; failed claims/open/protection are not worst-case measurements; active protection replace/cancel and claim-bearing state require additional fixtures.'}))
+})
 
 test('historical deposit executes through real account, paymaster, EntryPoint and Core bytecode', async () => {
   await reset()
@@ -192,7 +262,7 @@ for (const amount of [1n,1_000_000n,100_000_000n,10_000_000_000n]) {
   })
 }
 
-test('counterfactual factory creation and first deposit with real account runtime', async () => {
+test('counterfactual factory creation and first deposit with real account runtime', async t => {
   await reset()
   const factory = '0x13E9ed32155810FDbd067D4522C492D6f68E5944'
   const abi = parseAbi(['function getAddress(address,uint256) view returns(address)','function createAccount(address,uint256) returns(address)'])
@@ -202,7 +272,9 @@ test('counterfactual factory creation and first deposit with real account runtim
   const mint = await wallet.sendTransaction({chain:null,to:token,data:encodeFunctionData({abi:parseAbi(['function mint(address,uint256)']),functionName:'mint',args:[sender,100_000_000n]}),gas:100000n})
   assert.equal((await client.waitForTransactionReceipt({hash:mint})).status,'success')
   const initCode = concatHex([factory,encodeFunctionData({abi,functionName:'createAccount',args:[owner.address,0n]})])
-  assert.equal((await execute(gasPolicy(419155n),depositCalls(100_000_000n),{sender,initCode})).success,true)
+  const result=await execute(gasPolicy(419155n),depositCalls(100_000_000n),{sender,initCode,measure:true})
+  assert.equal(result.success,true)
+  t.diagnostic(JSON.stringify({action:'counterfactual_first_deposit',executionGasUsed:Number(result.executionGasUsed),totalUserOperationGas:Number(result.actualGasUsed)}))
   assert.equal(keccak256(await client.getCode({address:sender})),fixture.accounts[fixture.sender.toLowerCase()].codeHash)
   assert.equal((await execute(gasPolicy(419155n),depositCalls(1n),{sender})).success,false,'completed transfer must not repeat when the wallet has no tokens')
 })
