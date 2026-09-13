@@ -107,7 +107,7 @@ jobs:
 
       - name: Cache the pinned Core compiler (no RPC)
         working-directory: .ci-core/packages/perps
-        run: forge build
+        run: forge build --skip test --skip script
 
       - name: Require protected-open and claim lifecycle regressions (offline)
         working-directory: .
