@@ -4,6 +4,8 @@ import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { manifestSponsorshipValidUntil } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
 
+export const SEPOLIA_NATIVE_EXECUTION_GAS_CAP = 2_100_000n
+
 export interface PreparationBinding {
   sender: Address
   callData: Hex
@@ -24,6 +26,7 @@ function record(value: unknown): Record<string, unknown> {
 export function validateNativePreparation(
   value: unknown, expected: PreparationBinding, manifest: PerpsAaDeploymentManifestV2,
 ): ManagedUserOperation {
+  if (manifest.chainId !== 421614) throw new Error('Native preparation is restricted to Arbitrum Sepolia')
   const response = record(value)
   if (Object.keys(response).some(key => !['version', 'entryPoint', 'operation', 'userOperationHash'].includes(key))
     || response.version !== 1 || response.entryPoint !== manifest.entryPoint.toLowerCase()) {
@@ -57,7 +60,7 @@ export function validateNativePreparation(
     || op.factoryData?.toLowerCase() !== expected.factoryData?.toLowerCase()
     || op.paymaster?.toLowerCase() !== manifest.paymasterAddress.toLowerCase()
     || op.nonce < 0n || op.nonce >= 1n << 64n
-    || op.callGasLimit < 1n || op.callGasLimit > 2_000_000n
+    || op.callGasLimit < 1n || op.callGasLimit > SEPOLIA_NATIVE_EXECUTION_GAS_CAP
     || op.verificationGasLimit < 1n || op.verificationGasLimit > 1_000_000n
     || op.preVerificationGas < 1n || op.preVerificationGas > 1_000_000n
     || op.maxFeePerGas < 1n || op.maxFeePerGas > 10_000_000_000n

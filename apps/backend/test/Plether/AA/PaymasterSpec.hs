@@ -93,6 +93,10 @@ spec = do
       maximumUserOperationCost operation envelope
         `shouldBe` 1_930_000_000_000_000
       validateHardEconomicCaps operation `shouldBe` Right ()
+      validateHardEconomicCaps operation {puoCallGasLimit = 2_023_995} `shouldBe` Right ()
+      validateHardEconomicCaps operation {puoCallGasLimit = 2_100_000} `shouldBe` Right ()
+      validateHardEconomicCaps operation {puoCallGasLimit = 2_100_001}
+        `shouldSatisfy` isLeft
       validateHardEconomicCaps operation {puoPreVerificationGas = 1_000_001}
         `shouldSatisfy` isLeft
 
