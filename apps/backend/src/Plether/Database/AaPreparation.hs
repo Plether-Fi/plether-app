@@ -1,9 +1,10 @@
 module Plether.Database.AaPreparation
-  ( PreparationClaim (..), claimPreparation, savePreparedOperation, releasePreparation, linkPreparation, linkPreparationDiagnostic ) where
+  ( PreparationClaim (..), claimPreparation, claimPreparationCompatible, savePreparedOperation, releasePreparation, linkPreparation, linkPreparationDiagnostic ) where
 
 import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
+import Data.Maybe (isJust)
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple
 
@@ -13,7 +14,13 @@ data PreparationClaim = PreparationBusy | PreparationConflict | PreparationExpir
 -- A short transaction owns only the lease, never an upstream RPC or KMS call.
 -- The chosen operation is immutable once written, including across lease loss.
 claimPreparation :: Connection -> Bool -> Text -> Text -> Text -> Text -> Text -> IO PreparationClaim
-claimPreparation conn allowNew client sender identifier intent lease = withTransaction conn $ do
+claimPreparation conn allowNew client sender identifier intent lease =
+  claimPreparationCompatible conn allowNew client sender identifier intent [] lease
+
+-- Compatibility is only for an already-persisted operation from a reviewed
+-- prior gas policy. Empty work never acquires permission to use a retired policy.
+claimPreparationCompatible :: Connection -> Bool -> Text -> Text -> Text -> Text -> [Text] -> Text -> IO PreparationClaim
+claimPreparationCompatible conn allowNew client sender identifier intent priorIntents lease = withTransaction conn $ do
   if allowNew then do
     _ <- execute conn
       "INSERT INTO aa_preparations(client_key,sender,preparation_id,intent_hash) VALUES (?,?,?,?) ON CONFLICT DO NOTHING"
@@ -25,7 +32,7 @@ claimPreparation conn allowNew client sender identifier intent lease = withTrans
     (client,sender,identifier) :: IO [(Text, Maybe Value, Bool, Bool)]
   case rows of
     [(stored, operation, available, fresh)]
-      | stored /= intent -> pure PreparationConflict
+      | stored /= intent && not (isJust operation && stored `elem` priorIntents) -> pure PreparationConflict
       | not fresh -> pure PreparationExpired
       | not available -> pure PreparationBusy
       | otherwise -> do

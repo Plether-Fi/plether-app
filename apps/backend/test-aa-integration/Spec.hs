@@ -36,6 +36,8 @@ import Plether.Database.AaSponsorship
   , getAaIssuancePause
   , getSponsorshipByDigest
   , getSponsorshipByUserOperationHash
+  , getRecoveryReceiptLocator
+  , ReceiptLocator(..)
   , initializeAaReconcilerCursor
   , isRecoveryOperationAuthorized
   , isSponsorshipDeliveryAllowed
@@ -146,6 +148,8 @@ aaIntegrationSpec databaseUrl =
             blockHash = hashOf 'c'
             event = object ["source" .= ("aa-integration" :: Text)]
 
+        getRecoveryReceiptLocator conn operationHash (saClientKey authorization) `shouldReturn` Nothing
+
         settleSponsorship
           conn digest operationHash transactionHash 101 blockHash True 400 event
           `shouldReturn` Right ()
@@ -158,6 +162,14 @@ aaIntegrationSpec databaseUrl =
 
         stored <- getSponsorshipByDigest conn digest
         fmap saState stored `shouldBe` Just "settled"
+        recovered <- getRecoveryReceiptLocator conn operationHash (saClientKey authorization)
+        fmap rlTransactionHash recovered `shouldBe` Just transactionHash
+        fmap rlNonce recovered `shouldBe` Just (saNonce authorization)
+        fmap rlEvent recovered `shouldBe` Just event
+        getRecoveryReceiptLocator conn operationHash (clientKeyOf '0') `shouldReturn` Nothing
+        getRecoveryReceiptLocator conn (hashOf '0') (saClientKey authorization) `shouldReturn` Nothing
+        pauseAaIssuance conn "integration recovery while paused"
+        getRecoveryReceiptLocator conn operationHash (saClientKey authorization) `shouldReturn` recovered
         ledger <-
           query_ conn
             "SELECT entry_type,amount_wei::TEXT FROM aa_sponsorship_ledger ORDER BY entry_type" :: IO [(Text, Text)]
@@ -268,6 +280,8 @@ aaIntegrationSpec databaseUrl =
         claimPreparation first True client sender identifier intent "worker-a" `shouldReturn` PreparationClaimed Nothing
         claimPreparation second True client sender identifier intent "worker-b" `shouldReturn` PreparationBusy
         claimPreparation second True client sender identifier (hashOf 'd') "worker-b" `shouldReturn` PreparationConflict
+        claimPreparationCompatible second True client sender identifier (hashOf 'd') [intent] "worker-b"
+          `shouldReturn` PreparationConflict
         savePreparedOperation second client sender identifier "worker-b" operation `shouldReturn` False
         savePreparedOperation first client sender identifier "worker-a" operation `shouldReturn` True
         void $ execute_ first "UPDATE aa_preparations SET lease_until=clock_timestamp()-interval '1 second'"
@@ -278,7 +292,12 @@ aaIntegrationSpec databaseUrl =
         savePreparedOperation second client sender identifier "worker-b"
           (object ["nonce" .= ("0x1" :: Text),"callGasLimit" .= ("0xe63fc" :: Text)]) `shouldReturn` False
         releasePreparation second client sender identifier "worker-b"
-        claimPreparation first False client sender identifier intent "worker-c" `shouldReturn` PreparationClaimed (Just operation)
+        -- A reviewed policy-only upgrade resumes the old exact padded payload;
+        -- it never rewrites it or adopts a changed nonce/fee/intent.
+        claimPreparationCompatible first False client sender identifier (hashOf 'd') [intent] "worker-c"
+          `shouldReturn` PreparationClaimed (Just operation)
+        savePreparedOperation first client sender identifier "worker-c"
+          (object ["nonce" .= ("0x2" :: Text),"callGasLimit" .= ("0x2dc6c0" :: Text)]) `shouldReturn` False
         void $ execute_ first "UPDATE aa_preparations SET expires_at=clock_timestamp()-interval '1 second'"
         claimPreparation second True client sender identifier intent "worker-d" `shouldReturn` PreparationExpired
 

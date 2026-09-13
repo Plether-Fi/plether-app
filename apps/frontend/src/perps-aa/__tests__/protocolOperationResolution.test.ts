@@ -370,7 +370,8 @@ describe('resolveProtocolOperation', () => {
 
     expect(managedRuntime.getRecoverySnapshot).toHaveBeenCalledWith(
       HASH,
-      nonceKey
+      nonceKey,
+      expect.objectContaining({ nonce: (nonceKey << 64n) + 8n })
     )
   })
 

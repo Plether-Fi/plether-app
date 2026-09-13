@@ -90,7 +90,13 @@ export async function resolveProtocolOperation(input: {
 
     const snapshot = await input.runtime.getRecoverySnapshot(
       input.userOperationHash,
-      operationNonce === undefined ? 0n : operationNonce >> 64n
+      operationNonce === undefined ? 0n : operationNonce >> 64n,
+      {
+        transactionHash: input.operation.includedTransactionHash ?? input.operation.transactionHash,
+        nonce: operationNonce,
+        paymaster: signedOperation?.paymaster,
+        attemptId: input.operation.id,
+      }
     )
     if (snapshot.userOperationEvidence.kind === 'included') {
       return {

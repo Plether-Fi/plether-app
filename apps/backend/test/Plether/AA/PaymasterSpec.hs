@@ -94,10 +94,16 @@ spec = do
         `shouldBe` 1_930_000_000_000_000
       validateHardEconomicCaps operation `shouldBe` Right ()
       validateHardEconomicCaps operation {puoCallGasLimit = 2_023_995} `shouldBe` Right ()
-      validateHardEconomicCaps operation {puoCallGasLimit = 2_100_000} `shouldBe` Right ()
-      validateHardEconomicCaps operation {puoCallGasLimit = 2_100_001}
+      validateHardEconomicCaps operation {puoCallGasLimit = 3_000_000} `shouldBe` Right ()
+      validateHardEconomicCaps operation {puoCallGasLimit = 3_000_001}
         `shouldSatisfy` isLeft
       validateHardEconomicCaps operation {puoPreVerificationGas = 1_000_001}
+        `shouldSatisfy` isLeft
+      let aggregateBoundary = operation {puoCallGasLimit = 3_000_000,
+            puoVerificationGasLimit = 1_000_000, puoPreVerificationGas = 900_000,
+            puoPaymasterVerificationGasLimit = Just 100_000, puoPaymasterPostOpGasLimit = Just 0}
+      validateHardEconomicCaps aggregateBoundary `shouldBe` Right ()
+      validateHardEconomicCaps aggregateBoundary {puoPreVerificationGas = 900_001}
         `shouldSatisfy` isLeft
 
   describe "native owner canary" $ do

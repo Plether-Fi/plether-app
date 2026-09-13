@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, parseAbiItem, type Address, type Hex } from 'viem'
 import type {
   PerpsAaDeploymentManifestV1,
   PerpsAaDeploymentManifestV2,
@@ -648,6 +648,28 @@ describe('createManagedPimlicoRuntime', () => {
       blockNumber: 555n,
     }))
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each(['null', 'evicted-error'])('recovers a retained transaction without asking Alto (%s)', async mode => {
+    const bundler = mocks.createBundlerClient.getMockImplementation()!()
+    if (mode === 'null') bundler.getUserOperationReceipt.mockResolvedValue(null)
+    else bundler.getUserOperationReceipt.mockRejectedValue(new Error('receipt evicted'))
+    mocks.createBundlerClient.mockReturnValue(bundler)
+    const eventAbi = [parseAbiItem('event UserOperationEvent(bytes32 indexed userOpHash, address indexed sender, address indexed paymaster, uint256 nonce, bool success, uint256 actualGasCost, uint256 actualGasUsed)')]
+    const receipt = { transactionHash: TRANSACTION_HASH, status: 'success', blockNumber: 554n, blockHash: INCLUDED_BLOCK_HASH,
+      logs: [{ address: ENTRY_POINT, blockNumber: 554n, blockHash: INCLUDED_BLOCK_HASH, transactionHash: TRANSACTION_HASH, removed: false,
+        topics: encodeEventTopics({ abi: eventAbi, eventName: 'UserOperationEvent', args: { userOpHash: HASH, sender: ACCOUNT, paymaster: v2Manifest.paymasterAddress } }),
+        data: encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], [7n, true, 1000n, 900n]) }] }
+    const runtime = await createManagedPimlicoRuntime({ manifest: v2Manifest, ownerAddress: OWNER,
+      walletClient: { chain: { id: 421614 }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: 421614 }, getChainId: async () => 421614, readContract: async () => 9n,
+        getTransactionReceipt: async () => receipt,
+        getBlock: async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 555n,
+          hash: blockNumber === 554n ? INCLUDED_BLOCK_HASH : SAFE_BLOCK_HASH, timestamp: 1000n }) } as never,
+    })
+    await expect(runtime.getRecoverySnapshot?.(HASH, 0n, { transactionHash: TRANSACTION_HASH, nonce: 7n, paymaster: v2Manifest.paymasterAddress }))
+      .resolves.toMatchObject({ userOperationEvidence: { kind: 'included', success: true, transactionHash: TRANSACTION_HASH } })
+    expect(bundler.getUserOperationReceipt).not.toHaveBeenCalled()
   })
 
   it('uses the Alto receipt client for native recovery without Blockscout', async () => {

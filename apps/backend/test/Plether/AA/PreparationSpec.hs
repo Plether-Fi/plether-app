@@ -2,6 +2,7 @@ module Plether.AA.PreparationSpec (spec) where
 
 import Control.Concurrent.MVar
 import Control.Concurrent.Async (async, wait)
+import Control.Monad (forM_)
 import Data.Aeson (Value (..), object, (.=), encode, eitherDecode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
@@ -106,10 +107,11 @@ spec = do
     it "rejects rather than clips requirements above the hard cap" $ do
       executionGasWithHeadroom 1_333_333 `shouldBe` Right 2_000_000
       executionGasWithHeadroom 1_349_330 `shouldBe` Right 2_023_995
-      executionGasWithHeadroom 1_400_000 `shouldBe` Right sepoliaExecutionGasCap
+      executionGasWithHeadroom 2_000_000 `shouldBe` Right sepoliaExecutionGasCap
       mapM_ (\gas -> executionGasWithHeadroom gas `shouldSatisfy` isLeft)
-        [-1,0,1_400_001,2_100_000,2^(128::Int)]
-    it "prepares with exactly two Alto calls and one nonce read, preserving other gas fields" $ do
+        [-1,0,2_000_001,3_000_000,2^(128::Int)]
+    forM_ [(419_155,628_733),(1_545_240,2_317_860),(2_000_000,3_000_000)] $ \(raw,padded) ->
+     it ("prepares " <> show raw <> " gas with exactly two Alto calls and one nonce read") $ do
       calls <- newIORef ([] :: [T.Text])
       let app request respond = do
             bytes <- strictRequestBody request
@@ -121,7 +123,7 @@ spec = do
                         ["maxFeePerGas" .= ("0x3b9aca00" :: T.Text), "maxPriorityFeePerGas" .= ("0x1" :: T.Text)]]
                       "eth_call" -> String $ "0x" <> T.replicate 64 "0"
                       "eth_estimateUserOperationGas" -> object
-                        ["callGasLimit" .= ("0x66553" :: T.Text), "verificationGasLimit" .= ("0x7815" :: T.Text), "preVerificationGas" .= ("0xd734" :: T.Text)]
+                        ["callGasLimit" .= Paymaster.canonicalQuantity raw, "verificationGasLimit" .= ("0x7815" :: T.Text), "preVerificationGas" .= ("0xd734" :: T.Text)]
                       _ -> Null
                 respond $ responseLBS status200 [] $ encode $ object
                   ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input, "result" .= result]
@@ -137,7 +139,7 @@ spec = do
         case result of
           Left err -> expectationFailure $ show err
           Right op -> do
-            KM.lookup "callGasLimit" op `shouldBe` Just (String "0x997fd")
+            KM.lookup "callGasLimit" op `shouldBe` Just (String $ Paymaster.canonicalQuantity padded)
             KM.lookup "verificationGasLimit" op `shouldBe` Just (String "0x7815")
             KM.lookup "preVerificationGas" op `shouldBe` Just (String "0xd734")
             KM.lookup "paymasterPostOpGasLimit" op `shouldBe` Just (String "0x0")
@@ -145,13 +147,13 @@ spec = do
             case Paymaster.parsePackedUserOperation op of
               Left err -> expectationFailure $ T.unpack err
               Right parsed -> do
-                Paymaster.puoCallGasLimit parsed `shouldBe` 628_733
+                Paymaster.puoCallGasLimit parsed `shouldBe` padded
                 let provisional = Paymaster.makeSponsorshipEnvelope cfg 10 100 (naaMaxCostWei cfg) BS.empty
-                    unpadded = parsed {Paymaster.puoCallGasLimit=419_155}
+                    unpadded = parsed {Paymaster.puoCallGasLimit=raw}
                     liability = Paymaster.maximumUserOperationCost parsed provisional
                     envelope = Paymaster.makeSponsorshipEnvelope cfg 10 100 liability Paymaster.dummyPaymasterSignature
                 liability - Paymaster.maximumUserOperationCost unpadded provisional
-                  `shouldBe` (628_733-419_155) * Paymaster.puoMaxFeePerGas parsed
+                  `shouldBe` (padded-raw) * Paymaster.puoMaxFeePerGas parsed
                 Paymaster.seMaxCost envelope `shouldBe` liability
                 Paymaster.sponsorshipDigest parsed envelope `shouldNotBe` Paymaster.sponsorshipDigest unpadded envelope
                 Paymaster.userOperationHash (Paymaster.applyPaymasterEnvelope parsed envelope)

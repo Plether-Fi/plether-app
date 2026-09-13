@@ -225,6 +225,8 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
       return 'Plether gas sponsorship is temporarily paused.'
     case 'POLICY_DENIED':
       return 'This action is not eligible for sponsored network gas.'
+    case 'EXECUTION_GAS_CAP_EXCEEDED':
+      return 'This action exceeds the sponsored execution-gas limit. Your action was not sent.'
     case 'ACCOUNT_NOT_TRUSTED':
       return 'The configured Trading Account could not be verified.'
     case 'SPONSOR_UNAVAILABLE':

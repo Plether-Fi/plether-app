@@ -4,7 +4,7 @@ import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { manifestSponsorshipValidUntil } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
 
-export const SEPOLIA_NATIVE_EXECUTION_GAS_CAP = 2_100_000n
+export const SEPOLIA_NATIVE_EXECUTION_GAS_CAP = 3_000_000n
 
 export interface PreparationBinding {
   sender: Address
@@ -73,6 +73,10 @@ export function validateNativePreparation(
   }
   const liability = (op.callGasLimit + op.verificationGasLimit + op.preVerificationGas
     + paymasterVerificationGasLimit + paymasterPostOpGasLimit) * op.maxFeePerGas
+  if (op.callGasLimit + op.verificationGasLimit + op.preVerificationGas
+      + paymasterVerificationGasLimit + paymasterPostOpGasLimit > 5_000_000n) {
+    throw new Error('Prepared operation exceeds the bundler aggregate gas limit')
+  }
   const signedCeiling = hexToBigInt(slice(paymasterData, 12, 28))
   if (liability > signedCeiling || signedCeiling > 10_000_000_000_000_000n) {
     throw new Error('Prepared sponsorship exceeds the reviewed economic ceiling')

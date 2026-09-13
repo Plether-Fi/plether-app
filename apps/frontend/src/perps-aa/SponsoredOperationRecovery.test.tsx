@@ -890,7 +890,8 @@ describe('SponsoredOperationRecovery', () => {
     })
     expect(getRecoverySnapshot).toHaveBeenCalledWith(
       USER_OPERATION_HASH,
-      0n
+      0n,
+      expect.objectContaining({ nonce: 7n })
     )
     expect(
       useSponsoredOperationStore.getState().activeLanes
@@ -1009,7 +1010,7 @@ describe('SponsoredOperationRecovery', () => {
     )
 
     await waitFor(() => {
-      expect(getRecoverySnapshot).toHaveBeenCalledWith(USER_OPERATION_HASH, 0n)
+      expect(getRecoverySnapshot).toHaveBeenCalledWith(USER_OPERATION_HASH, 0n, expect.objectContaining({ nonce: 7n }))
     })
     expect(status).not.toHaveBeenCalled()
     expect(
@@ -1133,7 +1134,8 @@ describe('SponsoredOperationRecovery', () => {
     await waitFor(() => {
       expect(getRecoverySnapshot).toHaveBeenCalledWith(
         USER_OPERATION_HASH,
-        nonceKey
+        nonceKey,
+        expect.objectContaining({ nonce })
       )
     })
   })

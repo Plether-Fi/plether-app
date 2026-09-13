@@ -37,6 +37,12 @@ describe('native preparation response binding', () => {
   it('does not widen the paymaster liability allowance', () => {
     expect(() => validateNativePreparation(fixture(2_023_995n, 350000000000n), expected, manifest)).toThrow('economic ceiling')
   })
+  it('rejects aggregate gas over Alto’s unchanged 5M ceiling', () => {
+    const response = fixture(3_000_000n, 10_000_000_000_000_000n)
+    response.operation.verificationGasLimit = numberToHex(1_000_000n)
+    response.operation.preVerificationGas = numberToHex(900_001n)
+    expect(() => validateNativePreparation(response, expected, manifest)).toThrow('aggregate gas limit')
+  })
   it('does not enable native preparation for mainnet', () => {
     expect(() => validateNativePreparation(fixture(2_023_995n), expected, { ...manifest, chainId: 42161 } as unknown as PerpsAaDeploymentManifestV2)).toThrow('restricted to Arbitrum Sepolia')
   })
