@@ -82,7 +82,10 @@ function closeReceiptEconomics({
   preSettlementBalanceUsdc: bigint
   postSettlementBalanceUsdc: bigint
 }): PerpsOrderReceiptEconomics {
-  const actionChargeAssessedUsdc = carryUsdc + (vpiUsdc > 0n ? vpiUsdc : 0n)
+  const netChargeUsdc = carryUsdc + vpiUsdc + executionFeeUsdc
+  const actionChargeAssessedUsdc = netChargeUsdc > 0n ? netChargeUsdc : 0n
+  const toCollectUsdc = actionChargeAssessedUsdc - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
+  const actionChargeCollectedUsdc = toCollectUsdc > 0n ? toCollectUsdc : 0n
   return {
     executionNotionalUsdc: '100000000000',
     executionBountyUsdc: '0',
@@ -92,8 +95,8 @@ function closeReceiptEconomics({
     executionFeeUsdc: executionFeeUsdc.toString(),
     frozenSpreadUsdc: '0',
     actionChargeAssessedUsdc: actionChargeAssessedUsdc.toString(),
-    actionChargeCollectedUsdc: actionChargeAssessedUsdc.toString(),
-    grossAccountDebitUsdc: (actionChargeAssessedUsdc + executionFeeUsdc).toString(),
+    actionChargeCollectedUsdc: actionChargeCollectedUsdc.toString(),
+    grossAccountDebitUsdc: (actionChargeCollectedUsdc + (realizedPnlUsdc < 0n ? -realizedPnlUsdc : 0n)).toString(),
     preSettlementBalanceUsdc: preSettlementBalanceUsdc.toString(),
     postSettlementBalanceUsdc: postSettlementBalanceUsdc.toString(),
     preTraderClaimBalanceUsdc: '0',
