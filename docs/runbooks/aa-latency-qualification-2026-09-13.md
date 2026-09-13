@@ -109,3 +109,14 @@ particular operation fits the gas cap. Positive close execution, market-dependen
 open/protection execution, the three mixed-action 100-preparation runs and the
 two-minute RPC-reduction gate remain unqualified. This deployment is not a claim
 that all release acceptance criteria passed.
+
+Post-deployment read-only database inspection confirmed issuance unpaused,
+reconciler heartbeat age 1–4 seconds, 54 settled authorizations, 23 expired,
+three signed benchmark authorizations and one separate submitted operation.
+Outstanding ledger liability was 0.0009876573741 ETH. The submitted operation
+was created at 09:09:34 UTC, not by the close harness. Its canonical EntryPoint
+event reports success at block 308407366 (199,392 actual gas used), in transaction
+`0x25a452861bc3b40e63053029f80f4657cb5f76204ade71464e8019db6d2b0add`.
+At inspection the safe head was 308406308, so settlement was correctly pending.
+Do not manually release this unrelated submitted liability or count its unknown
+action as the planned close smoke test. Both read-only audit tasks exited zero.
