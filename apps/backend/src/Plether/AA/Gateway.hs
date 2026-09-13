@@ -16,6 +16,7 @@ module Plether.AA.Gateway
   , validateSecurityHeaderTime
   , advanceEvidenceSnapshots
   , buildPreparedOperation
+  , revalidateSecuritySnapshot
   ) where
 
 import Control.Exception (SomeException, try)
@@ -766,7 +767,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
                     , sdClientKey = clientKey
                     , sdOperation = Object $ Paymaster.puoObject operation
                     }
-            snapshotReady <- liftIO $ revalidateSecurityContext context
+            snapshotReady <- timeContext context "canonical_before_reservation" $ liftIO $ revalidateSecurityContext context
             case snapshotReady of
               Left reason -> respondSecurityAttestationFailure requestId reason
               Right () -> do
@@ -848,7 +849,7 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                 Legacy.respondFailure requestId $
                   Legacy.unavailable "SIGNER_UNAVAILABLE" "AWS KMS could not sign the sponsorship"
               Right signature -> do
-                snapshotAfterSigning <- liftIO $ revalidateSecurityContext securityContext
+                snapshotAfterSigning <- timeContext securityContext "canonical_after_signing" $ liftIO $ revalidateSecurityContext securityContext
                 case snapshotAfterSigning of
                   Left reason -> respondSecurityAttestationFailure requestId reason
                   Right () -> do
@@ -987,10 +988,13 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
   case ngsSecurityClient gatewayState of
     Nothing -> pure $ Left securityAttestationUnavailable
     Just secondaryClient -> do
-      (primaryChain, secondaryChain) <- providerPair (naaRpcMode nativeCfg) (attestRpcChain primaryClient) (attestRpcChain secondaryClient)
+      -- Both are read-only evidence. No estimation, reservation or signing can
+      -- start until chain identity AND the canonical snapshot have passed.
+      ((primaryChain, secondaryChain), snapshot) <- concurrently
+        (providerPair (naaRpcMode nativeCfg) (attestRpcChain primaryClient) (attestRpcChain secondaryClient))
+        (readAgreedSecurityBlock (naaRpcMode nativeCfg) (naaMaxSafeLagSeconds nativeCfg) primaryClient secondaryClient)
       case (primaryChain, secondaryChain) of
         (Right (), Right ()) -> do
-          snapshot <- readAgreedSecurityBlock (naaRpcMode nativeCfg) (naaMaxSafeLagSeconds nativeCfg) primaryClient secondaryClient
           case snapshot of
             Left _ -> pure $ Left securityAttestationUnavailable
             Right header -> do
@@ -1005,14 +1009,17 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
                       (attestProfileAt nativeCfg primaryClient blockNumber)
                       (attestProfileAt nativeCfg secondaryClient blockNumber)
                     pure $ first >> second
-              profileResult <- if naaPreparationEnabled nativeCfg
-                then Cache.evidenceObserved (ngsProfileEvidence gatewayState)
-                  (\event -> maybe (pure ()) (\timing -> timingCount timing $ "profile_cache_" <> event) $ ngsTiming gatewayState)
-                  (sbhHash header) "profile" profile
-                else profile
-              (primaryPause, secondaryPause) <- providerPair (naaRpcMode nativeCfg)
-                (readBoolAt primaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
-                (readBoolAt secondaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
+                  profileEvidence = if naaPreparationEnabled nativeCfg
+                    then Cache.evidenceObserved (ngsProfileEvidence gatewayState)
+                      (\event -> maybe (pure ()) (\timing -> timingCount timing $ "profile_cache_" <> event) $ ngsTiming gatewayState)
+                      (sbhHash header) "profile" profile
+                    else profile
+              -- Permission is read afresh; only immutable block-specific profile
+              -- evidence can be cached. The trailing header check brackets both.
+              (profileResult, (primaryPause, secondaryPause)) <- concurrently profileEvidence $
+                providerPair (naaRpcMode nativeCfg)
+                  (readBoolAt primaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
+                  (readBoolAt secondaryClient blockNumber (naaPaymasterAddress nativeCfg) "paused()" [])
               finalHeader <-
                 readAgreedSecurityHeaderAt (naaRpcMode nativeCfg) primaryClient secondaryClient blockNumber
               case (trustedSnapshot, profileResult, primaryPause, secondaryPause, finalHeader) of
@@ -1060,20 +1067,25 @@ verifyAccountIdentityUncached context operation = do
     _ -> Left securityAttestationUnavailable
 
 revalidateSecurityContext :: NativeSecurityContext -> IO (Either Text ())
-revalidateSecurityContext context = do
-  let blockNumber = sbhNumber $ nscHeader context
-  (primarySafe, secondarySafe) <- providerPair (nscRpcMode context) (readSecurityHeader (nscPrimaryClient context) "safe") (readSecurityHeader (nscSecondaryClient context) "safe")
-  current <-
-    readAgreedSecurityHeaderAt
-      (nscRpcMode context)
-      (nscPrimaryClient context)
-      (nscSecondaryClient context)
-      blockNumber
+revalidateSecurityContext context = revalidateSecuritySnapshot
+  (nscRpcMode context) (nscMaxSafeLagSeconds context)
+  (nscPrimaryClient context) (nscSecondaryClient context) (nscHeader context)
+
+-- Keep every authorization-boundary check fresh. These two reads are independent
+-- because the explicit block number is already captured, not derived from the
+-- new safe-head response. No permission or canonical-header result is cached.
+revalidateSecuritySnapshot
+  :: AaRpcMode -> Integer -> EthClient -> EthClient -> SecurityBlockHeader
+  -> IO (Either Text ())
+revalidateSecuritySnapshot mode maxSafeLag primaryClient secondaryClient captured = do
+  let blockNumber = sbhNumber captured
+  ((primarySafe, secondarySafe), current) <- concurrently
+    (providerPair mode (readSecurityHeader primaryClient "safe") (readSecurityHeader secondaryClient "safe"))
+    (readAgreedSecurityHeaderAt mode primaryClient secondaryClient blockNumber)
   now <- floor <$> getPOSIXTime
   pure $ do
     firstSafe <- primarySafe
     secondSafe <- secondarySafe
-    let captured = nscHeader context
     unless (sbhNumber firstSafe >= blockNumber && sbhNumber secondSafe >= blockNumber) $
       Left "a security provider's safe head moved behind the authorization snapshot"
     when (sbhNumber firstSafe == blockNumber && firstSafe /= captured) $
@@ -1083,7 +1095,7 @@ revalidateSecurityContext context = do
     header <- current
     unless (header == captured) $
       Left "the agreed security block changed during request authorization"
-    validateSecurityHeaderTime (nscMaxSafeLagSeconds context) now header
+    validateSecurityHeaderTime maxSafeLag now header
 
 respondSecurityAttestationFailure :: Value -> Text -> ActionM ()
 respondSecurityAttestationFailure requestId _reason = do
@@ -1363,7 +1375,10 @@ verifyNativeAccountRuntimeDual
 verifyNativeAccountRuntimeDual cfg context operation =
   case Legacy.puoFactoryOwner operation of
     Just _ -> pure $ Right ()
-    Nothing -> do
+    Nothing -> fmap (fmap $ const ()) $ Cache.evidenceObserved (nscAccountEvidence context)
+      (\event -> maybe (pure ()) (\timing -> timingCount timing $ "runtime_cache_" <> event) $ nscTiming context)
+      (sbhHash $ nscHeader context)
+      ("runtime:" <> T.toLower (Legacy.puoSender operation) <> ":" <> T.toLower (naaAccountCodeHash cfg)) $ do
       let blockNumber = sbhNumber $ nscHeader context
           sender = Legacy.puoSender operation
       (primary, secondary) <- providerPair (nscRpcMode context)
@@ -1373,7 +1388,7 @@ verifyNativeAccountRuntimeDual cfg context operation =
         (Right firstCode, Right secondCode)
           | firstCode /= secondCode -> Left securityAttestationUnavailable
           | BS.null firstCode -> Left $ Legacy.policyDenied "Trading Account runtime code is missing"
-          | encodeHex (keccak256 firstCode) == T.toLower (naaAccountCodeHash cfg) -> Right ()
+          | encodeHex (keccak256 firstCode) == T.toLower (naaAccountCodeHash cfg) -> Right $ naaAccountCodeHash cfg
           | otherwise -> Left $ Legacy.policyDenied "Trading Account runtime code hash is not approved"
         _ -> Left securityAttestationUnavailable
 

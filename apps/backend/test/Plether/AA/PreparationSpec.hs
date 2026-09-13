@@ -7,13 +7,14 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.IORef
+import Data.Foldable (toList)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.AA.Preparation
 import qualified Plether.AA.Pimlico as Legacy
 import Plether.AA.EvidenceCache
-import Plether.AA.Gateway (advanceEvidenceSnapshots, attestNativePaymasterProfile, buildPreparedOperation)
+import Plether.AA.Gateway (SecurityBlockHeader (..), advanceEvidenceSnapshots, attestNativePaymasterProfile, buildPreparedOperation, revalidateSecuritySnapshot)
 import Plether.AA.Timing (newTiming)
 import qualified Plether.AA.Paymaster as Paymaster
 import Plether.AA.PaymasterSpec (fixtureConfig)
@@ -30,6 +31,70 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "fresh authorization-boundary reads" $ do
+    mapM_ (\(mode, expectedCalls) ->
+      it ("runs independent header reads concurrently in " <> show mode) $ do
+        arrived <- newIORef (0 :: Int)
+        gate <- newEmptyMVar
+        now <- floor <$> getPOSIXTime
+        let app request respond = do
+              bytes <- strictRequestBody request
+              case eitherDecode bytes of
+                Right (Object input) -> do
+                  count <- atomicModifyIORef' arrived $ \n -> (n+1,n+1)
+                  if count == expectedCalls then putMVar gate () else pure ()
+                  readMVar gate -- sequential implementations cannot cross this barrier
+                  respond $ responseLBS status200 [] $ encode $ object
+                    ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input,
+                     "result" .= securityHeader 100 snapshotHash now]
+                _ -> respond $ responseLBS status200 [] "{}"
+        testWithApplication (pure app) $ \port -> do
+          client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+          result <- timeout 5_000_000 $ revalidateSecuritySnapshot mode 600 client client
+            (SecurityBlockHeader 100 snapshotHash now 1)
+          result `shouldBe` Just (Right ())
+          readIORef arrived `shouldReturn` expectedCalls)
+      [(SingleProviderSepolia,2),(DualIndependent,4)]
+    mapM_ (\(label,safeNumber,safeHash,explicitNumber,explicitHash,age) ->
+      it ("rejects " <> label <> " at the parallel boundary") $ do
+        now <- floor <$> getPOSIXTime
+        let app request respond = do
+              bytes <- strictRequestBody request
+              case eitherDecode bytes of
+                Right (Object input) -> do
+                  let safe = case KM.lookup "params" input of
+                        Just (Array values) -> take 1 (toList values) == [String "safe"]
+                        _ -> False
+                  respond $ responseLBS status200 [] $ encode $ object
+                    ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input,
+                     "result" .= if safe then securityHeader safeNumber safeHash (now-age)
+                       else securityHeader explicitNumber explicitHash (now-age)]
+                _ -> respond $ responseLBS status200 [] "{}"
+        testWithApplication (pure app) $ \port -> do
+          client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+          revalidateSecuritySnapshot SingleProviderSepolia 600 client client
+            (SecurityBlockHeader 100 snapshotHash (now-age) 1) >>= (`shouldSatisfy` isLeft))
+      [("safe-head regression",99,snapshotHash,100,snapshotHash,0),
+       ("same-height safe reorg",100,otherHash,100,snapshotHash,0),
+       ("canonical reorg",101,otherHash,100,otherHash,0),
+       ("wrong explicit block number",100,snapshotHash,99,snapshotHash,0),
+       ("stale captured evidence",100,snapshotHash,100,snapshotHash,601),
+       ("future captured evidence",100,snapshotHash,100,snapshotHash,-1000)]
+    it "rejects provider disagreement despite individually well-formed headers" $ do
+      now <- floor <$> getPOSIXTime
+      let app blockHash request respond = do
+            bytes <- strictRequestBody request
+            case eitherDecode bytes of
+              Right (Object input) -> respond $ responseLBS status200 [] $ encode $ object
+                ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" input,
+                 "result" .= securityHeader 100 blockHash now]
+              _ -> respond $ responseLBS status200 [] "{}"
+      testWithApplication (pure $ app snapshotHash) $ \firstPort ->
+        testWithApplication (pure $ app otherHash) $ \secondPort -> do
+          first <- newClient $ "http://127.0.0.1:" <> T.pack (show firstPort)
+          second <- newClient $ "http://127.0.0.1:" <> T.pack (show secondPort)
+          revalidateSecuritySnapshot DualIndependent 600 first second
+            (SecurityBlockHeader 100 snapshotHash now 1) >>= (`shouldSatisfy` isLeft)
   describe "bounded native execution gas headroom" $ do
     it "covers the historical reverted deposit" $
       executionGasWithHeadroom 419_155 `shouldBe` Right 628_733
@@ -199,6 +264,12 @@ spec = do
       wait first `shouldReturn` Right "a"
       wait second `shouldReturn` Right "b"
  where
+  snapshotHash = "0x" <> T.replicate 64 "a"
+  otherHash = "0x" <> T.replicate 64 "b"
+  securityHeader :: Integer -> T.Text -> Integer -> Value
+  securityHeader number blockHash timestamp = object
+    ["number" .= ("0x" <> T.pack (showHex number "")), "hash" .= blockHash,
+     "timestamp" .= ("0x" <> T.pack (showHex timestamp "")), "baseFeePerGas" .= ("0x1" :: T.Text)]
   address = "0x2222222222222222222222222222222222222222"
   hex = ("0x" <>) . TE.decodeUtf8 . B16.encode
   payload = encodeCall "approve(address,uint256)" [encodeAddress address,encodeUint256 1]
