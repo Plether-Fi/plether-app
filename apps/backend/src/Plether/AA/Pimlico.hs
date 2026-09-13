@@ -1557,9 +1557,9 @@ respondFailure :: Value -> ProxyFailure -> ActionM ()
 respondFailure requestId failure = do
   suppliedAttempt <- fmap TL.toStrict <$> header "X-Plether-Attempt-Id"
   let reason = pfReason failure
-      expected = reason `elem` ["POLICY_DENIED", "ACCOUNT_NOT_TRUSTED", "RATE_LIMITED", "PAYMASTER_PAUSED", "SPONSOR_BUDGET_EXCEEDED", "INVALID_REQUEST", "PROXY_AUTH_FAILED", "PREPARATION_DISABLED", "PREPARATION_EXPIRED", "PREPARATION_BUSY"]
+      expected = reason `elem` ["POLICY_DENIED", "EXECUTION_GAS_CAP_EXCEEDED", "ACCOUNT_NOT_TRUSTED", "RATE_LIMITED", "PAYMASTER_PAUSED", "SPONSOR_BUDGET_EXCEEDED", "INVALID_REQUEST", "PROXY_AUTH_FAILED", "PREPARATION_DISABLED", "PREPARATION_EXPIRED", "PREPARATION_BUSY"]
       stage | "BUDGET" `T.isInfixOf` reason || reason == "POLICY_DENIED" = "authorization"
-            | "SIMULATION" `T.isInfixOf` reason = "estimation"
+            | "SIMULATION" `T.isInfixOf` reason || reason == "EXECUTION_GAS_CAP_EXCEEDED" = "estimation"
             | "SIGN" `T.isInfixOf` reason = "signing"
             | "DATABASE" `T.isInfixOf` reason || "LEASE" `T.isInfixOf` reason = "persistence"
             | otherwise = "gateway" :: Text

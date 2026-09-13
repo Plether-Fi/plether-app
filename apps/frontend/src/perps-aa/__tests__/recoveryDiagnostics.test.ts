@@ -20,6 +20,7 @@ describe('recovery diagnostics', () => {
     expect(captureFrontendLog).toHaveBeenCalledWith('info', 'Sponsored operation recovery', {
       component: 'sponsored_operation_recovery', operation: 'reconcile',
       reason_code: 'awaiting_safe_head', safe_block_number: '100', included_block_number: '110',
+      attempt_id: undefined, recovery_source: undefined,
     })
     vi.advanceTimersByTime(60_000)
     reportRecoveryDiagnostic(diagnostic)
@@ -30,5 +31,16 @@ describe('recovery diagnostics', () => {
     vi.mocked(captureFrontendLog).mockImplementationOnce(() => { throw new Error('logging unavailable') })
     expect(() => reportRecoveryDiagnostic({ operationKey: 'second', stage: 'receipt_check_failed' }))
       .not.toThrow()
+  })
+
+  it('correlates canonical recovery with an opaque attempt, without exporting the operation hash', () => {
+    const attemptId = '12345678-1234-4123-8123-123456789abc'
+    reportRecoveryDiagnostic({ operationKey: 'private-hash', attemptId, stage: 'canonical_receipt_recovered' })
+    reportRecoveryDiagnostic({ operationKey: 'private-hash', attemptId, stage: 'canonical_receipt_recovered' })
+    expect(captureFrontendLog).toHaveBeenCalledOnce()
+    expect(captureFrontendLog).toHaveBeenCalledWith('info', 'Sponsored operation recovery', expect.objectContaining({
+      attempt_id: attemptId, recovery_source: 'transaction_hint', reason_code: 'canonical_receipt_recovered',
+    }))
+    expect(JSON.stringify(vi.mocked(captureFrontendLog).mock.calls)).not.toContain('private-hash')
   })
 })

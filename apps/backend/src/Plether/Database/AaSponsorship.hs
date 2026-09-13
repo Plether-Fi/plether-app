@@ -30,6 +30,8 @@ module Plether.Database.AaSponsorship
   , expireSponsorshipsThrough
   , cancelStaleUnsignedReservations
   , controlBootstrapReason
+  , ReceiptLocator (..)
+  , getRecoveryReceiptLocator
   ) where
 
 import Control.Monad (unless, void, when)
@@ -84,6 +86,26 @@ data BudgetTotals = BudgetTotals Integer Integer Integer Integer Integer Integer
 instance FromRow BudgetTotals where
   fromRow = BudgetTotals <$> numericIntegerField <*> numericIntegerField <*> numericIntegerField
     <*> numericIntegerField <*> numericIntegerField <*> numericIntegerField
+
+-- A durable locator, never a substitute for canonical chain verification.
+data ReceiptLocator = ReceiptLocator
+  { rlSender :: Text, rlNonce :: Integer, rlTransactionHash :: Text
+  , rlBlockNumber :: Integer, rlBlockHash :: Text, rlSuccess :: Bool
+  , rlGasCost :: Integer, rlEvent :: Value, rlOperation :: Value
+  } deriving stock (Eq, Show)
+instance FromRow ReceiptLocator where
+  fromRow = ReceiptLocator <$> field <*> numericIntegerField <*> field <*> field
+    <*> field <*> field <*> numericIntegerField <*> field <*> field
+
+getRecoveryReceiptLocator :: Connection -> Text -> Text -> IO (Maybe ReceiptLocator)
+getRecoveryReceiptLocator conn operationHash clientKey = do
+  rows <- query conn
+    "SELECT a.sender,a.nonce,e.transaction_hash,e.block_number,e.block_hash,e.success,e.actual_gas_cost_wei,e.event_json,a.operation FROM aa_user_operation_events e JOIN aa_sponsorship_authorizations a ON a.digest=e.digest AND a.expected_user_operation_hash=e.user_operation_hash WHERE e.user_operation_hash=? AND a.client_key=? AND a.state='settled' AND e.finalized_at IS NOT NULL"
+    (T.toLower operationHash,clientKey)
+  case rows of
+    [] -> pure Nothing
+    [row] -> pure $ Just row
+    _ -> fail "Ambiguous recovery locator"
 
 data SponsorshipAuthorization = SponsorshipAuthorization
   { saRequestKey :: Text

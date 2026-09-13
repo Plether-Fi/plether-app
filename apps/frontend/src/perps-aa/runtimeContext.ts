@@ -96,6 +96,14 @@ export type ObservedInclusionCanonicality =
   | 'reorged'
   | 'unknown'
 
+/** Persisted values are locators only; recovery must verify chain evidence. */
+export interface RecoveryOperationContext {
+  transactionHash?: Hex
+  nonce?: bigint
+  paymaster?: Address
+  attemptId?: string
+}
+
 export interface PerpsAaSmartAccountRuntime {
   chainId: number
   ownerAddress: Address
@@ -111,7 +119,8 @@ export interface PerpsAaSmartAccountRuntime {
   ): bigint | undefined
   getRecoverySnapshot?(
     userOperationHash: Hex,
-    nonceKey?: bigint
+    nonceKey?: bigint,
+    context?: RecoveryOperationContext
   ): Promise<SponsoredOperationRecoverySnapshot>
   verifyObservedInclusion?(
     inclusion: ObservedUserOperationInclusion

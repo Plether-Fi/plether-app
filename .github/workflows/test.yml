@@ -96,6 +96,23 @@ jobs:
         working-directory: .
         run: node --test scripts/aa-execution-regression.test.mjs
 
+      - name: Fetch immutable Core v1.2.3 lifecycle test source
+        uses: actions/checkout@v4
+        with:
+          repository: Plether-Fi/plether-core
+          ref: ffe45937b7f38133133ad292c5435828bf99357d
+          path: .ci-core
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Cache the pinned Core compiler (no RPC)
+        working-directory: .ci-core/packages/perps
+        run: forge build --skip test --skip script
+
+      - name: Require protected-open and claim lifecycle regressions (offline)
+        working-directory: .
+        run: node scripts/aa-lifecycle-regression.mjs .ci-core
+
       - name: Install Insights story dependencies
         working-directory: apps/insights
         run: npm ci

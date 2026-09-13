@@ -1,4 +1,9 @@
 dofile('posthog-projection.lua')
+local _,_,recovery = project_posthog('test',0,{event='aa_receipt_recovery',recovery_source='finalized_record',
+  reason_code='RECOVERY_EVIDENCE_UNAVAILABLE',attempt_id='12345678-1234-4123-8123-123456789abc',
+  transaction_hash='0xsecret',sender='0xsecret',receipt={data='secret'}})
+assert(recovery.recovery_source=='finalized_record' and recovery.reason_code=='RECOVERY_EVIDENCE_UNAVAILABLE')
+assert(recovery.transaction_hash==nil and recovery.sender==nil and recovery.receipt==nil)
 local _,_,gas = project_posthog('test',0,{event='aa_preparation_gas_headroom',gas_headroom_bps=5000,estimated_call_gas=419155,calldata='secret'})
 assert(gas.event=='aa_preparation_gas_headroom' and gas.gas_headroom_bps==5000 and gas.estimated_call_gas==nil and gas.calldata==nil)
 local _,_,oog = project_posthog('test',0,{event='aa_execution_diagnosed',reason_code='USER_OPERATION_OUT_OF_GAS',trace={input='secret'}})

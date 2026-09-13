@@ -40,6 +40,7 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'market_phase',
   'modal_id',
   'reason_code',
+  'recovery_source',
   'reduce_only',
   'retry_count',
   'size_bucket',

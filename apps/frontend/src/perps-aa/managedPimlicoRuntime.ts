@@ -1,4 +1,5 @@
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
 import { createPimlicoClient } from 'permissionless/clients/pimlico'
@@ -501,8 +502,27 @@ export async function createManagedAaRuntime({
         return 'unknown'
       }
     },
-    getRecoverySnapshot: async (userOperationHash, nonceKey = 0n) => {
+    getRecoverySnapshot: async (userOperationHash, nonceKey = 0n, context) => {
       const block = await publicClient.getBlock({ blockTag: 'safe' })
+      if (context?.transactionHash) {
+        const [accountNonce, userOperationEvidence] = await Promise.all([
+          publicClient.readContract({ address: manifest.entryPoint, abi: ENTRY_POINT_NONCE_ABI,
+            functionName: 'getNonce', args: [accountAddress, nonceKey], blockNumber: block.number }),
+          recoverCanonicalInclusion({ client: publicClient, chainId: manifest.chainId,
+            entryPoint: manifest.entryPoint, sender: accountAddress, operationHash: userOperationHash,
+            context: { ...context, transactionHash: context.transactionHash }, safeBlock: block })
+            .then(evidence => {
+              if (evidence.kind === 'included') reportRecoveryDiagnostic({ operationKey: userOperationHash, attemptId: context.attemptId, stage: 'canonical_receipt_recovered' })
+              return evidence
+            })
+            .catch(() => {
+              reportRecoveryDiagnostic({ operationKey: userOperationHash, attemptId: context.attemptId, stage: 'canonical_receipt_unverified' })
+              // A missing receipt/provider outage must not erase persisted inclusion.
+              return { kind: 'inconclusive' as const }
+            }),
+        ])
+        return { blockNumber: block.number, blockTimestamp: block.timestamp, accountNonce, userOperationEvidence }
+      }
       const [accountNonce, receiptEvidence] = await Promise.all([
         publicClient.readContract({
           address: manifest.entryPoint,

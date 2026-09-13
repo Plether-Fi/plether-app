@@ -27,6 +27,7 @@ library
         Plether.Keeper.Funding
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
+        Plether.AA.RecoveryReceipt
         Plether.AA.OrderDiagnostics
         Plether.AA.Preparation
         Plether.AA.EvidenceCache
@@ -356,6 +357,7 @@ test-suite plether-api-test
         Plether.AA.OrderDiagnosticsSpec
         Plether.AA.ExecutionDiagnosticsSpec
         Plether.AA.ReconcilerSpec
+        Plether.AA.RecoveryReceiptSpec
         Plether.CacheSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec

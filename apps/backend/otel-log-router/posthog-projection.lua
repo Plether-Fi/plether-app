@@ -4,6 +4,7 @@ local categories = {
   event=true, component=true, stage=true, reason_code=true, outcome=true,
   action_kind=true, sponsorship_status=true, terminal_outcome=true,
   deployment_name=true, rpc_role=true, wallet_family=true,
+  recovery_source=true,
 }
 local function set(words)
   local values = {}
@@ -13,7 +14,7 @@ end
 -- Values as well as keys are allowlisted. An arbitrary alphanumeric exception
 -- or provider credential must not become an event, stage or reason label.
 local events = set([[
-aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed
+aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed aa_receipt_recovery
 aa_preparation_gas_headroom aa_execution_diagnosed
 worker_funding_observation worker_funding_monitor_failed
 aa_order_execution_attempt_failed aa_diagnostic_export_dropped aa_diagnostic_queue_full
@@ -41,6 +42,7 @@ liquidation_worker_failed liquidation_worker_startup_failed oracle_worker_failed
 api_started rpc_request_failed rpc_request_completed
 ]])
 local values = {
+  recovery_source=set('finalized_record transaction_hint'),
   component=set('keeper funding oracle readiness sponsorship reconciliation bundler paymaster liquidation protection lp_settlement alto'),
   stage=set('prepared preparation authorization estimation signing persistence gateway submitted submitting included committed execution execution_attempt_failed user_operation_confirmed user_operation_reverted authorization_expired recovery'),
   outcome=set('ready blocked unknown rejected failure success confirmed expired pending'),
@@ -62,7 +64,8 @@ ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
 AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
-USER_OPERATION_OUT_OF_GAS
+USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
+RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
 ]]),
 }
 local numbers = {

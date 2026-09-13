@@ -24,12 +24,12 @@ data PreparationIntent = PreparationIntent
 -- Changing this identifier requires a new reviewed preparation, never a rewrite
 -- of a persisted/signed operation or its reservation.
 gasPolicyVersion :: Text
-gasPolicyVersion = "execution-headroom-v2-sepolia-cap2100000-150pct-min100000"
+gasPolicyVersion = "execution-headroom-v3-sepolia-cap3000000-150pct-min100000"
 
 -- Native issuance is restricted to Arbitrum Sepolia. All action classes share
 -- this ceiling; the separate wei liability and verification-gas caps do not move.
 sepoliaExecutionGasCap :: Integer
-sepoliaExecutionGasCap = 2_100_000
+sepoliaExecutionGasCap = 3_000_000
 
 executionGasWithHeadroom :: Integer -> Either Text Integer
 executionGasWithHeadroom estimated = do

@@ -3,9 +3,12 @@ module Plether.AA.Diagnostics (Diagnostic(..), DiagnosticSink, startDiagnostics,
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, SomeAsyncException, try, fromException, throwIO)
-import Control.Monad (forever, void, unless, forM_)
+import Control.Monad (forever, void, unless, when, forM_)
 import Data.Char (isHexDigit)
 import Data.Text (Text)
+import Data.IORef (newIORef, readIORef, writeIORef)
+import qualified Data.Map.Strict as Map
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (execute, query, query_, Only(..))
@@ -23,6 +26,8 @@ data Diagnostic = Diagnostic
   , diagnosticDeployment :: Text, diagnosticPreparation :: Text, diagnosticHash :: Text
   , diagnosticSender :: Text
   }
+  | RecoveryDiagnostic
+    { diagnosticClient :: Text, diagnosticHash :: Text, diagnosticRecovered :: Bool }
 type DiagnosticSink = TBQueue Diagnostic
 
 validAttemptId :: Text -> Bool
@@ -35,6 +40,7 @@ validAttemptId value = case T.splitOn "-" value of
 startDiagnostics :: Config -> DbPool -> EthClient -> IO DiagnosticSink
 startDiagnostics cfg pool client = do
   queue <- newTBQueueIO 256
+  recoverySeen <- newIORef Map.empty
   void $ forkIO $ forever $ do
     result <- try $ timeout 20_000_000 $ recoverExecutionDiagnostics cfg pool client
     case result of
@@ -75,10 +81,28 @@ startDiagnostics cfg pool client = do
     threadDelay 10_000_000
   void $ forkIO $ forever $ do
     diagnostic <- atomically $ readTBQueue queue
-    result <- try $ timeout 2_000_000 $ withDb pool $ \conn -> execute conn
-      "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,preparation_id,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,?,'prepared') ON CONFLICT DO NOTHING"
-      (diagnosticAttempt diagnostic, diagnosticClient diagnostic, diagnosticChain diagnostic,
-        diagnosticDeployment diagnostic, diagnosticPreparation diagnostic, diagnosticHash diagnostic, diagnosticSender diagnostic)
+    result <- try $ timeout 2_000_000 $ withDb pool $ \conn -> case diagnostic of
+      RecoveryDiagnostic clientKey operationHash recovered -> do
+        -- This lookup and export run off the recovery request's critical path.
+        refs <- query conn "SELECT attempt_id::text FROM aa_attempt_diagnostics WHERE client_key=? AND operation_hash=? LIMIT 1"
+          (clientKey, operationHash) :: IO [Only Text]
+        now <- getPOSIXTime
+        seen <- Map.filter (\timestamp -> now - timestamp < 60) <$> readIORef recoverySeen
+        let reference = case refs of [Only ref] -> ref; _ -> clientKey <> ":" <> operationHash
+            key = (reference,recovered)
+        when (not (Map.member key seen) && Map.size seen >= 1024) dropped
+        unless (Map.member key seen || Map.size seen >= 1024) $ do
+          writeIORef recoverySeen $ Map.insert key now seen
+          logInfo "aa_receipt_recovery" "Canonical recovery verification outcome"
+            [field "attempt_id" $ case refs of [Only ref] -> Just ref; _ -> Nothing,
+             field "stage" ("recovery" :: Text), field "recovery_source" ("finalized_record" :: Text),
+             field "outcome" (if recovered then "confirmed" else "unknown" :: Text),
+             field "reason_code" (if recovered then "RECOVERY_VERIFIED" else "RECOVERY_EVIDENCE_UNAVAILABLE" :: Text)]
+        pure 0
+      Diagnostic {} -> execute conn
+        "INSERT INTO aa_attempt_diagnostics(attempt_id,client_key,chain_id,deployment,preparation_id,operation_hash,sender,stage) VALUES (?::uuid,?,?,?,?,?,?,'prepared') ON CONFLICT DO NOTHING"
+        (diagnosticAttempt diagnostic, diagnosticClient diagnostic, diagnosticChain diagnostic,
+          diagnosticDeployment diagnostic, diagnosticPreparation diagnostic, diagnosticHash diagnostic, diagnosticSender diagnostic)
     case result of
       Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err

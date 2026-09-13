@@ -66,6 +66,7 @@ import Network.HTTP.Types.Header (hRetryAfter)
 import Network.HTTP.Types.Status (status200, status400, status403, status413, statusCode)
 import qualified Plether.AA.Paymaster as Paymaster
 import qualified Plether.AA.Preparation as Preparation
+import qualified Plether.AA.RecoveryReceipt as RecoveryReceipt
 import Plether.AA.Readiness (newReadiness)
 import qualified Plether.AA.Diagnostics as Diagnostics
 import qualified Plether.Database.AaPreparation as PreparationDb
@@ -89,6 +90,8 @@ import Plether.Database.AaSponsorship
   , getAaIssuancePause
   , getSponsorshipByDigest
   , getSponsorshipByRequestKey
+  , getSponsorshipByUserOperationHash
+  , getRecoveryReceiptLocator
   , isRecoveryOperationAuthorized
   , isSponsorshipDeliveryAllowed
   , markSponsorshipSubmitted
@@ -361,9 +364,12 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           unless (ownerAllowedForNativeCanary nativeCfg owner) $
             throwE $ Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
           _ <- ioStage timing "runtime" $ verifyNativeAccountRuntimeDual nativeCfg context policy
-          claim <- db $ \conn -> PreparationDb.claimPreparation conn (naaPreparationEnabled nativeCfg) clientKey
+          let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
+              profile = preparationProfileFingerprint nativeCfg
+              previous = T.replace Preparation.gasPolicyVersion "execution-headroom-v2-sepolia-cap2100000-150pct-min100000" profile
+          claim <- db $ \conn -> PreparationDb.claimPreparationCompatible conn (naaPreparationEnabled nativeCfg) clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent)
-            (encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> preparationProfileFingerprint nativeCfg) identifier
+            (boundIntent profile) [boundIntent previous] identifier
           stored <- case claim of
             PreparationDb.PreparationConflict -> throwE $ Legacy.invalidParams "Preparation ID is bound to another intent"
             PreparationDb.PreparationExpired -> throwE $ Legacy.policyDenied "Preparation expired; review a new intent"
@@ -499,7 +505,11 @@ buildPreparedOperation timing cfg client manager intent = runExceptT $ do
   gas <- case estimates of
     Object values -> do
       estimated <- quantity values "callGasLimit"
-      padded <- ExceptT $ pure $ firstInvalidParams $ Preparation.executionGasWithHeadroom estimated
+      padded <- case Preparation.executionGasWithHeadroom estimated of
+        Right value -> pure value
+        Left reason | estimated > 2_000_000 -> throwE $
+          (Legacy.policyDenied reason) {Legacy.pfReason = "EXECUTION_GAS_CAP_EXCEEDED"}
+        Left reason -> throwE $ Legacy.invalidParams reason
       rest <- traverse (\name -> (name,) . String . Paymaster.canonicalQuantity <$> quantity values name)
         ["verificationGasLimit","preVerificationGas"]
       liftIO $ logInfo "aa_preparation_gas_headroom" "Applied bounded execution gas headroom"
@@ -628,7 +638,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                       owner
                                       request
                                       packedOperation
-          _ -> handleOperationless nativeCfg pool manager clientKey request
+          _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager clientKey request
 
 handleOperation
   :: NativeGatewayState
@@ -955,14 +965,71 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
   requestId = Legacy.rrId request
 
 handleOperationless
-  :: NativeAaConfig
+  :: NativeGatewayState
+  -> EthClient
+  -> NativeAaConfig
   -> DbPool
   -> Manager
   -> Text
   -> Legacy.RpcRequest
   -> ActionM ()
-handleOperationless nativeCfg _pool manager _clientKey request =
-  relayToAlto nativeCfg manager request Nothing
+handleOperationless gatewayState primary nativeCfg pool manager clientKey request
+  | Legacy.rrMethod request == Legacy.GetUserOperationReceipt
+  , String operationHash : _ <- Legacy.rrParams request = do
+      upstream <- liftIO $ forwardAlto manager (naaAltoRpcUrl nativeCfg) request
+      let forward = case upstream of
+            Left failure -> Legacy.respondFailure requestId failure
+            Right (value, retryAfter) -> do
+              setHeader "Cache-Control" "no-store"
+              maybe (pure ()) (setHeader "Retry-After" . TL.fromStrict) retryAfter
+              status status200
+              json value
+      if not (RecoveryReceipt.needsReceiptFallback upstream) then forward else do
+        located <- liftDb $ withDb pool $ \conn -> getRecoveryReceiptLocator conn operationHash clientKey
+        case located of
+          Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "recovery-receipt-locator"
+          Right Nothing -> do
+            authorization <- liftDb $ withDb pool $ \conn -> getSponsorshipByUserOperationHash conn operationHash
+            case authorization of
+              Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "recovery-receipt-authorization"
+              Right (Just saved) | saClientKey saved == clientKey && saState saved /= "expired" ->
+                Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_EVIDENCE_UNAVAILABLE"
+                  "Operation reconciliation has not produced a verifiable receipt; retry recovery"
+              _ -> forward
+          Right (Just locator) -> do
+            let recover client = RecoveryReceipt.recoverReceipt client 421614
+                  (naaPaymasterAddress nativeCfg) operationHash locator
+                secondary = case ngsSecurityClient gatewayState of
+                  Just client -> recover client
+                  Nothing -> pure $ Left "RECOVERY_PROVIDER_UNAVAILABLE"
+            verified <- liftIO $ timeout 5_000_000 $
+              providerPair (naaRpcMode nativeCfg) (recover primary) secondary
+            let recovered = case verified of
+                  Just (Right first, Right second) -> receiptIdentity first == receiptIdentity second
+                  _ -> False
+            liftIO $ do
+              sink <- readMVar $ ngsDiagnostics gatewayState
+              mapM_ (\queue -> Diagnostics.enqueueDiagnostic queue $
+                Diagnostics.RecoveryDiagnostic clientKey operationHash recovered) sink
+            case verified of
+              Just (Right first, Right second) | receiptIdentity first == receiptIdentity second ->
+                respondSuccess requestId first
+              _ -> Legacy.respondFailure requestId $
+                Legacy.unavailable "RECOVERY_EVIDENCE_UNAVAILABLE" "Canonical operation receipt could not be verified; retry recovery"
+  | otherwise = relayToAlto nativeCfg manager request Nothing
+ where
+  requestId = Legacy.rrId request
+  -- Provider-specific transaction receipt extensions are not operation identity.
+  receiptIdentity (Object fields) = Object $ KM.mapWithKey normalizeField $ KM.delete "receipt" fields
+  receiptIdentity value = value
+  normalizeField "logs" (Array values) = Array $ fmap normalizeLog values
+  normalizeField _ value = normalizeHex value
+  normalizeLog (Object fields) = Object $ KM.map normalizeHex $ KM.filterWithKey
+    (\key _ -> key `elem` ["address","topics","data","blockHash","blockNumber","transactionHash","logIndex"]) fields
+  normalizeLog value = value
+  normalizeHex (String value) = String $ T.toLower value
+  normalizeHex (Array values) = Array $ fmap normalizeHex values
+  normalizeHex value = value
 
 requiresDualSecurity :: Legacy.RpcRequest -> Bool
 requiresDualSecurity request =
@@ -1724,6 +1791,11 @@ validateHardEconomicCaps operation = do
   bounded "callGasLimit" 1 Preparation.sepoliaExecutionGasCap $ Paymaster.puoCallGasLimit operation
   bounded "verificationGasLimit" 1 1_000_000 $ Paymaster.puoVerificationGasLimit operation
   bounded "preVerificationGas" 1 1_000_000 $ Paymaster.puoPreVerificationGas operation
+  bounded "aggregateGas" 1 5_000_000 $
+    Paymaster.puoCallGasLimit operation + Paymaster.puoVerificationGasLimit operation
+    + Paymaster.puoPreVerificationGas operation
+    + maybe 100_000 id (Paymaster.puoPaymasterVerificationGasLimit operation)
+    + maybe 0 id (Paymaster.puoPaymasterPostOpGasLimit operation)
   bounded "maxFeePerGas" 1 10_000_000_000 $ Paymaster.puoMaxFeePerGas operation
   bounded "maxPriorityFeePerGas" 0 2_000_000_000 $ Paymaster.puoMaxPriorityFeePerGas operation
  where
