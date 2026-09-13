@@ -211,6 +211,7 @@ function loadTradingViewLibrary(libraryPath: string): Promise<TradingViewNamespa
 
 export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
+  entryPrice?: number
   liquidationPrice?: number
   takeProfitPrice?: number
   stopLossPrice?: number
@@ -221,6 +222,7 @@ export interface TradingViewAdvancedChartProps {
 
 export function TradingViewAdvancedChart({
   interval,
+  entryPrice,
   liquidationPrice,
   takeProfitPrice,
   stopLossPrice,
@@ -241,9 +243,9 @@ export function TradingViewAdvancedChart({
   const intervalRef = useRef(interval)
   const readyRef = useRef(false)
   const liquidationPriceRef = useRef(liquidationPrice)
-  const protectionPricesRef = useRef({ takeProfitPrice, stopLossPrice })
-  const protectionLinesRef = useRef<TradingViewEntityId[]>([])
-  const protectionRevisionRef = useRef(0)
+  const positionPricesRef = useRef({ entryPrice, takeProfitPrice, stopLossPrice })
+  const positionLinesRef = useRef<TradingViewEntityId[]>([])
+  const positionRevisionRef = useRef(0)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000)
@@ -298,22 +300,26 @@ export function TradingViewAdvancedChart({
     })
   }, [])
 
-  const syncProtectionLines = useCallback((chart: TradingViewChart, prices: { takeProfitPrice?: number; stopLossPrice?: number }) => {
-    const revision = ++protectionRevisionRef.current
-    for (const id of protectionLinesRef.current) chart.removeEntity(id)
-    protectionLinesRef.current = []
-    for (const [text, price, color] of [['Take profit', prices.takeProfitPrice, '#4ade80'], ['Stop loss', prices.stopLossPrice, '#fb7185']] as const) {
+  const syncPositionLines = useCallback((chart: TradingViewChart, prices: { entryPrice?: number; takeProfitPrice?: number; stopLossPrice?: number }) => {
+    const revision = ++positionRevisionRef.current
+    for (const id of positionLinesRef.current) chart.removeEntity(id)
+    positionLinesRef.current = []
+    for (const [text, price, color] of [
+      ['Entry', prices.entryPrice, BRAND_PEACH],
+      ['Take profit', prices.takeProfitPrice, '#4ade80'],
+      ['Stop loss', prices.stopLossPrice, '#fb7185'],
+    ] as const) {
       if (price === undefined || !Number.isFinite(price) || price <= 0) continue
       void chart.createShape({ price }, { shape: 'horizontal_line', text, lock: true, disableSelection: true, disableSave: true, disableUndo: true, showInObjectsTree: false, zOrder: 'top', overrides: { linecolor: color, textcolor: color, linestyle: 2, linewidth: 2, showPrice: true, fontsize: 12, horzLabelsAlign: 'right' } }).then(id => {
-        if (revision !== protectionRevisionRef.current) { if (readyRef.current) chart.removeEntity(id); return }
-        if (readyRef.current) protectionLinesRef.current.push(id)
-      }).catch(() => { /* The Protections panel remains authoritative if a chart drawing fails. */ })
+        if (revision !== positionRevisionRef.current) { if (readyRef.current) chart.removeEntity(id); return }
+        if (readyRef.current) positionLinesRef.current.push(id)
+      }).catch(() => { /* The account panel remains authoritative if a chart drawing fails. */ })
     }
   }, [])
   useEffect(() => {
-    protectionPricesRef.current = { takeProfitPrice, stopLossPrice }
-    if (readyRef.current && widgetRef.current) syncProtectionLines(widgetRef.current.activeChart(), protectionPricesRef.current)
-  }, [takeProfitPrice, stopLossPrice, syncProtectionLines])
+    positionPricesRef.current = { entryPrice, takeProfitPrice, stopLossPrice }
+    if (readyRef.current && widgetRef.current) syncPositionLines(widgetRef.current.activeChart(), positionPricesRef.current)
+  }, [entryPrice, takeProfitPrice, stopLossPrice, syncPositionLines])
 
   useEffect(() => {
     onIntervalChangeRef.current = onIntervalChange
@@ -489,7 +495,7 @@ export function TradingViewAdvancedChart({
             applyPletherMarketStatus(marketStatusAdapter, marketStatusRef.current)
             readyRef.current = true
             syncLiquidationLine(widget.activeChart(), liquidationPriceRef.current)
-            syncProtectionLines(widget.activeChart(), protectionPricesRef.current)
+            syncPositionLines(widget.activeChart(), positionPricesRef.current)
 
             const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
             if (widget.activeChart().resolution() !== desiredResolution) {
@@ -512,8 +518,8 @@ export function TradingViewAdvancedChart({
       cancelled = true
       readyRef.current = false
       liquidationLineRevisionRef.current += 1
-      protectionRevisionRef.current += 1
-      protectionLinesRef.current = []
+      positionRevisionRef.current += 1
+      positionLinesRef.current = []
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
       }
@@ -527,7 +533,7 @@ export function TradingViewAdvancedChart({
       widgetRef.current = null
       datafeed.destroy()
     }
-  }, [queryClient, syncLiquidationLine, syncProtectionLines])
+  }, [queryClient, syncLiquidationLine, syncPositionLines])
 
   useEffect(() => {
     intervalRef.current = interval
