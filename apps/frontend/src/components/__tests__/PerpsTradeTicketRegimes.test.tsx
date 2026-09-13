@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
+import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 
 let mockReadContractsData: readonly {
   status: 'failure' | 'success'
@@ -172,6 +173,7 @@ function closeTicket({
   postPositionSize = 0n,
   postPositionMarginUsdc = 0n,
   includeMarginSnapshot = true,
+  receiptEconomics,
 }: {
   enableLiveTrading?: boolean
   lifecycleState?: 'executed' | 'preview'
@@ -186,14 +188,20 @@ function closeTicket({
   postPositionSize?: bigint
   postPositionMarginUsdc?: bigint
   includeMarginSnapshot?: boolean
+  receiptEconomics?: PerpsOrderReceiptEconomics
 }) {
   const frozenSpreadAssessedUsdc = oracleFrozen ? 12_345_678n : 0n
   const frozenSpreadPaidUsdc = oracleFrozen ? 10_000_000n : 0n
   const settledVpiUsdc = finalVpiUsdc ?? 0n
-  const realizedPnlUsdc = 30_000_000n
+  const realizedPnlUsdc = oracleFrozen ? -30_000_000n : 30_000_000n
   const carryUsdc = 4_000_000n
   const executionFeeUsdc = 1_000_000n
-  const nonSpreadAssessedUsdc = 5_000_000n
+  const netAssessedUsdc = carryUsdc + executionFeeUsdc + settledVpiUsdc + frozenSpreadAssessedUsdc
+  const actionChargeAssessedUsdc = netAssessedUsdc > 0n ? netAssessedUsdc : 0n
+  const toCollectUsdc = actionChargeAssessedUsdc
+    - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
+    - (frozenSpreadAssessedUsdc - frozenSpreadPaidUsdc)
+  const actionChargeCollectedUsdc = toCollectUsdc > 0n ? toCollectUsdc : 0n
   const netCloseResultUsdc = realizedPnlUsdc
     - settledVpiUsdc
     - carryUsdc
@@ -208,9 +216,9 @@ function closeTicket({
     carryUsdc: carryUsdc.toString(),
     executionFeeUsdc: executionFeeUsdc.toString(),
     frozenSpreadUsdc: frozenSpreadAssessedUsdc.toString(),
-    actionChargeAssessedUsdc: (nonSpreadAssessedUsdc + frozenSpreadAssessedUsdc).toString(),
-    actionChargeCollectedUsdc: (nonSpreadAssessedUsdc + frozenSpreadPaidUsdc).toString(),
-    grossAccountDebitUsdc: (nonSpreadAssessedUsdc + frozenSpreadPaidUsdc).toString(),
+    actionChargeAssessedUsdc: actionChargeAssessedUsdc.toString(),
+    actionChargeCollectedUsdc: actionChargeCollectedUsdc.toString(),
+    grossAccountDebitUsdc: (actionChargeCollectedUsdc + (realizedPnlUsdc < 0n ? -realizedPnlUsdc : 0n)).toString(),
     preSettlementBalanceUsdc: preSettlementBalanceUsdc.toString(),
     postSettlementBalanceUsdc: (preSettlementBalanceUsdc + netCloseResultUsdc).toString(),
     preTraderClaimBalanceUsdc: '0',
@@ -249,7 +257,7 @@ function closeTicket({
         lifecycleState === 'executed' ? 1 : undefined
       }
       initialFinalReceiptEconomics={
-        lifecycleState === 'executed' ? finalReceiptEconomics : undefined
+        lifecycleState === 'executed' ? (receiptEconomics ?? finalReceiptEconomics) : undefined
       }
       initialCommittedPrePositionMarginUsdc={
         lifecycleState === 'executed' && includeMarginSnapshot
@@ -668,15 +676,38 @@ describe('perps ticket oracle regime matrix', () => {
     expect(accountingTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
       .not.toBeInTheDocument()
-    expect(within(finalResult!).getByText('Frozen spread paid'))
+    expect(within(finalResult!).getByText('Frozen spread charged'))
       .toBeInTheDocument()
     expect(within(finalResult!).queryByText(/Estimated/i)).not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Execution reward')).toBeInTheDocument()
     expect(
-      within(finalResult!).getByText('Frozen spread paid').closest('div')?.querySelector('dd')
+      within(finalResult!).getByText('Frozen spread charged').closest('div')?.querySelector('dd')
     ).toHaveTextContent('-10')
     expect(within(finalResult!).getByText('Frozen spread assessed')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Frozen spread waived')).toBeInTheDocument()
+  })
+
+  it('shows order 14 accounting instead of the unavailable fallback', () => {
+    renderCloseTicket({
+      lifecycleState: 'executed',
+      marketPhase: 'close-only',
+      oracleFrozen: true,
+      isFullClose: false,
+      includeMarginSnapshot: false,
+      receiptEconomics: closeOrder14Receipt,
+    })
+    expect(screen.queryByText('Detailed close accounting unavailable')).not.toBeInTheDocument()
+    const disclosure = screen.getByRole('button', { name: /Detailed close accounting/ })
+    expect(disclosure).toHaveTextContent('-4.73')
+    fireEvent.click(disclosure)
+    const details = within(screen.getByTestId('close-reconciliation'))
+    const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
+    expect(amount('VPI rebate')).toHaveTextContent('+1.35')
+    expect(amount('Frozen spread charged')).toHaveTextContent('-5.46')
+    expect(amount('Net close result')).toHaveTextContent('-4.73')
+    expect(amount('Margin Account balance change')).toHaveTextContent('-4.73')
+    expect(details.queryByText('Frozen spread waived')).not.toBeInTheDocument()
+    expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
   })
 
   it.each([

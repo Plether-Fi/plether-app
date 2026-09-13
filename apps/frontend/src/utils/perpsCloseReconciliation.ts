@@ -8,7 +8,7 @@ export interface PerpsCloseReconciliation {
   carryUsdc: bigint
   executionFeeUsdc: bigint
   frozenSpreadAssessedUsdc: bigint
-  frozenSpreadPaidUsdc: bigint
+  frozenSpreadChargedUsdc: bigint
   frozenSpreadWaivedUsdc: bigint
   netCloseResultUsdc: bigint
   marginAccountChangeUsdc: bigint
@@ -93,6 +93,7 @@ export function derivePerpsCloseReconciliation(
   const unsignedValues = [
     executionNotionalUsdc,
     executionBountyUsdc,
+    carryUsdc,
     executionFeeUsdc,
     frozenSpreadAssessedUsdc,
     actionChargeAssessedUsdc,
@@ -109,8 +110,16 @@ export function derivePerpsCloseReconciliation(
   if (unsignedValues.some((value) => value < 0n)) return undefined
   if (executionNotionalUsdc === 0n) return undefined
   if (executionBountyUsdc > grossAccountDebitUsdc) return undefined
-  if (actionChargeAssessedUsdc < frozenSpreadAssessedUsdc) return undefined
-  if (actionChargeCollectedUsdc > actionChargeAssessedUsdc) return undefined
+  // Core v1.2.3 _buildCloseAssessment reports net charges, not gross spread.
+  // Negative VPI can offset spread, fees and carry. Already-realized carry can
+  // still be collected even when the remaining action is a rebate.
+  const netActionChargeUsdc = vpiUsdc + carryUsdc + executionFeeUsdc + frozenSpreadAssessedUsdc
+  if (actionChargeAssessedUsdc !== (netActionChargeUsdc > 0n ? netActionChargeUsdc : 0n)) {
+    return undefined
+  }
+  if (actionChargeCollectedUsdc > (
+    actionChargeAssessedUsdc > carryUsdc ? actionChargeAssessedUsdc : carryUsdc
+  )) return undefined
   if (
     postPositionSize === 0n &&
     (postPositionMarginUsdc !== 0n || postPositionEquityUsdc !== 0n || postLeverageBps !== 0n)
@@ -119,18 +128,25 @@ export function derivePerpsCloseReconciliation(
   }
   if (postPositionSize > 0n && postPositionEquityUsdc < 0n) return undefined
 
-  const nonSpreadAssessedUsdc = actionChargeAssessedUsdc - frozenSpreadAssessedUsdc
-  const frozenSpreadPaidUsdc = clamp(
-    actionChargeCollectedUsdc - nonSpreadAssessedUsdc,
+  // Collection excludes charges withheld from positive price PnL. The gap is
+  // a waiver only after accounting for that withholding. Realized carry is
+  // present in both receipt charge fields and cancels out in this difference.
+  const uncollectedChargeUsdc = actionChargeAssessedUsdc - actionChargeCollectedUsdc
+    - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
+  const effectiveSpreadUsdc = clamp(
+    frozenSpreadAssessedUsdc + (vpiUsdc < 0n ? vpiUsdc : 0n),
     0n,
     frozenSpreadAssessedUsdc
   )
-  const frozenSpreadWaivedUsdc = frozenSpreadAssessedUsdc - frozenSpreadPaidUsdc
+  const frozenSpreadWaivedUsdc = clamp(uncollectedChargeUsdc, 0n, effectiveSpreadUsdc)
+  // Economic charge, NOT Core's cash-revenue `frozenSpreadPaidUsdc`: VPI is
+  // displayed separately below, so subtracting the rebate here would count it twice.
+  const frozenSpreadChargedUsdc = frozenSpreadAssessedUsdc - frozenSpreadWaivedUsdc
   const netCloseResultUsdc = realizedPnlUsdc
     - vpiUsdc
     - carryUsdc
     - executionFeeUsdc
-    - frozenSpreadPaidUsdc
+    - frozenSpreadChargedUsdc
     - executionBountyUsdc
   const marginAccountChangeUsdc = postSettlementBalanceUsdc - preSettlementBalanceUsdc
   const traderClaimChangeUsdc = postTraderClaimBalanceUsdc - preTraderClaimBalanceUsdc
@@ -173,7 +189,7 @@ export function derivePerpsCloseReconciliation(
     carryUsdc,
     executionFeeUsdc,
     frozenSpreadAssessedUsdc,
-    frozenSpreadPaidUsdc,
+    frozenSpreadChargedUsdc,
     frozenSpreadWaivedUsdc,
     netCloseResultUsdc,
     marginAccountChangeUsdc,

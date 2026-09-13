@@ -74,7 +74,7 @@ export function PerpsCloseReconciliationDetails({
   const carryEffectUsdc = -reconciliation.carryUsdc
   const executionFeeEffectUsdc = -reconciliation.executionFeeUsdc
   const executionRewardEffectUsdc = -reconciliation.executionBountyUsdc
-  const frozenSpreadEffectUsdc = -reconciliation.frozenSpreadPaidUsdc
+  const frozenSpreadEffectUsdc = -reconciliation.frozenSpreadChargedUsdc
   const traderClaimLabel = reconciliation.traderClaimChangeUsdc > 0n
     ? 'Trader claim created'
     : reconciliation.traderClaimChangeUsdc < 0n
@@ -96,7 +96,7 @@ export function PerpsCloseReconciliationDetails({
               : 'VPI'}
           amount={vpiEffectUsdc}
         />
-        <ReconciliationRow label="Frozen spread paid" amount={frozenSpreadEffectUsdc} />
+        <ReconciliationRow label="Frozen spread charged" amount={frozenSpreadEffectUsdc} />
         {reconciliation.frozenSpreadWaivedUsdc > 0n ? (
           <>
             <ReconciliationRow
@@ -119,6 +119,12 @@ export function PerpsCloseReconciliationDetails({
           emphasized
         />
       </ReconciliationSection>
+
+      {reconciliation.frozenSpreadAssessedUsdc > 0n && reconciliation.vpiUsdc < 0n ? (
+        <p className="text-xs leading-5 text-content-secondary">
+          The VPI rebate is shown separately and offsets the charges above. Charges withheld from profit are not waived.
+        </p>
+      ) : null}
 
       <ReconciliationSection title="Account outcome">
         <ReconciliationRow
