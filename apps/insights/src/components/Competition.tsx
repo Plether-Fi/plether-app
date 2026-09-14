@@ -149,9 +149,9 @@ function DesktopTable({ standings, competitionSlug, competitionStatus }: { stand
               <td className="px-3 py-4"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></td>
               <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} usdcKind="mock" /></td>
               <td className={`px-3 py-4 text-right text-sm tabular-nums ${standing.roiBps !== null && standing.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}`}>{formatRoi(standing.roiBps)}</td>
-              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{formatCompactMockUsdc(standing.volume)}</td>
-              <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.trades}</td>
-              <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.activeDays}<span className="text-content-tertiary"> / 5</span></td>
+              <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{standing.pnl === null ? '—' : formatCompactMockUsdc(standing.volume)}</td>
+              <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.pnl === null ? '—' : standing.trades}</td>
+              <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.pnl === null ? '—' : standing.activeDays}<span className="text-content-tertiary"> / 5</span></td>
               <td className="px-5 py-4 text-right"><EligibilityBadge standing={standing} competitionStatus={competitionStatus} /></td>
             </tr>
           ))}
@@ -177,7 +177,7 @@ function MobileList({ standings, competitionSlug, competitionStatus }: { standin
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 text-xs text-content-tertiary">
-                <span>{standing.activeDays} active days · {standing.trades} trades</span>
+                <span>{standing.pnl === null ? 'Updating trading data…' : <>{standing.activeDays} active days · {standing.trades} trades</>}</span>
                 <EligibilityBadge standing={standing} competitionStatus={competitionStatus} />
               </div>
             </div>
@@ -192,7 +192,13 @@ export function Leaderboard({ standings, search, competitionSlug, competitionSta
   if (standings.length === 0) {
     return <EmptyState title={search ? 'No matching traders' : 'No standings yet'} message={search ? 'Try a different alias or full wallet address.' : 'Standings will appear after the first finalized trades are indexed.'} />
   }
-  return <><DesktopTable standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} /><MobileList standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} /></>
+  return <>
+    {standings.some((standing) => standing.pnl === null) ? (
+      <p role="status" className="border-b border-brand-border/20 px-4 py-3 text-sm text-content-secondary">Trading data is updating for some traders. Their scores will appear automatically when ready.</p>
+    ) : null}
+    <DesktopTable standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} />
+    <MobileList standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} />
+  </>
 }
 
 export function LeaderboardTitle({ count, competitionSlug }: { count: number; competitionSlug: string }) {

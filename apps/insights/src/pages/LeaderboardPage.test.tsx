@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LeaderboardPage } from './LeaderboardPage'
@@ -53,6 +53,28 @@ beforeEach(() => {
 })
 
 describe('LeaderboardPage', () => {
+  it('labels unscored traders as updating instead of showing zero activity', () => {
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ standings: [{
+        address: '0x1111111111111111111111111111111111111111',
+        displayName: 'Alice', rank: null, pnl: null, roiBps: null, volume: '0',
+        trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
+        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+      }], provisional: true, nextCursor: null }] },
+      hasNextPage: false, isError: false, isLoading: false,
+    })
+
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+
+    expect(screen.getByText(/Trading data is updating for some traders/)).toHaveAttribute('role', 'status')
+    expect(screen.getByText('Updating trading data…')).toBeInTheDocument()
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell')
+    expect(cells[4]).toHaveTextContent('—')
+    expect(cells[5]).toHaveTextContent('—')
+    expect(cells[6]).toHaveTextContent('— / 5')
+    expect(screen.queryByText('0 active days · 0 trades')).not.toBeInTheDocument()
+  })
+
   it.each([
     ['scheduled', 'Registered'],
     ['live', 'Registered'],

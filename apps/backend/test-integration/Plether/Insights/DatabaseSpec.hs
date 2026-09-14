@@ -24,6 +24,7 @@ import Plether.Database.Insights
   , ensureInsightsSchema
   , getCompetitionLeaderboard
   , getCompetitionWallet
+  , getCompetitionWalletActivity
   , getCurrentCompetition
   , hasCompleteAccountSnapshotBatch
   , insertManualAdjustment
@@ -181,13 +182,14 @@ insightsDatabaseSpec databaseUrl =
         result `shouldBe`
           Left "The competition is missing, finalized, or uses verified first-party registration; wallet remaps are locked"
 
-    it "invalidates incomplete late-roster batches, rebuilds them, and accepts an all-zero final batch" $
+    it "preserves published standings during late-roster rebuilds and accepts an all-zero final batch" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         insertParticipant conn walletA "trader-a"
         setCompetitionBoundaryBlocks
           conn competitionSlug
           (Just (startBlock, startHash, baselineHash))
           (Just (finalBlock, finalHash))
+        insertTrade conn walletA 103 3
 
         publishAccountSnapshotBatch conn
           [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
@@ -197,17 +199,42 @@ insightsDatabaseSpec databaseUrl =
           `shouldReturn` True
         hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive liveBlock liveHash
           `shouldReturn` True
+        initialRows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        original <- requireWallet walletA initialRows
+        ilrRank original `shouldBe` Just 1
+        ilrFinalPnlUsdc original `shouldBe` Just gain
+        ilrExecutedTrades original `shouldBe` 1
+        activityBefore <- getCompetitionWalletActivity conn competitionSlug walletA 20
+        activityBefore `shouldSatisfy` (not . null)
 
         insertParticipant conn walletB "trader-b"
         hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotStart baselineBlock baselineHash
           `shouldReturn` False
         hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive liveBlock liveHash
           `shouldReturn` False
+        publishAccountSnapshotBatch conn
+          [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)]
+          `shouldThrow` anyIOException
+        during <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        existing <- requireWallet walletA during
+        existing `shouldBe` original
+        newcomer <- requireWallet walletB during
+        ilrRank newcomer `shouldBe` Nothing
+        ilrFinalPnlUsdc newcomer `shouldBe` Nothing
+        getCompetitionWallet conn competitionSlug walletA `shouldReturn` Just original
+        getCompetitionWalletActivity conn competitionSlug walletA 20
+          `shouldReturn` activityBefore
 
         publishAccountSnapshotBatch conn
           [ snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll
           , snapshot walletB SnapshotStart baselineBlock baselineHash baselineTimestamp 0
           ]
+        -- A failed/delayed live capture must not erase existing scores after
+        -- the expanded baseline has already been published.
+        baselineOnly <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        requireWallet walletA baselineOnly `shouldReturn` original
+        waiting <- requireWallet walletB baselineOnly
+        ilrFinalPnlUsdc waiting `shouldBe` Nothing
         publishAccountSnapshotBatch conn
           [ snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)
           , snapshot walletB SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)
@@ -216,6 +243,9 @@ insightsDatabaseSpec databaseUrl =
           `shouldReturn` True
         hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive liveBlock liveHash
           `shouldReturn` True
+        rebuilt <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        joined <- requireWallet walletB rebuilt
+        ilrFinalPnlUsdc joined `shouldBe` Just (bankroll + gain)
 
         -- A successful exact lens read can legitimately return zero state for
         -- the entire roster. It must replace the earlier stateful batch.
