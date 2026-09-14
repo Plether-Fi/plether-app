@@ -25,6 +25,7 @@ import {
   type ReleaseSponsoredOperationBrowserLock,
 } from './laneLock'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { isRecoveryPending } from './errors'
 import { SponsoredOperationLockedError } from './operationLockError'
 import { reconcileUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
@@ -156,6 +157,7 @@ export function SponsoredOperationRecovery() {
 
     const recovering = new Set<string>()
     const nextProtocolCheckAt = new Map<string, number>()
+    const nextReceiptCheckAt = new Map<string, number>()
 
     const scan = () => {
       const store = useSponsoredOperationStore.getState()
@@ -258,6 +260,7 @@ export function SponsoredOperationRecovery() {
           continue
         }
         const now = globalThis.performance.now()
+        if ((nextReceiptCheckAt.get(operation.id) ?? 0) > now) continue
         if (protocolOnly && (nextProtocolCheckAt.get(operation.id) ?? 0) > now) {
           continue
         }
@@ -380,7 +383,12 @@ export function SponsoredOperationRecovery() {
                   userOperationHash,
                 })
               }
-            } catch {
+            } catch (error) {
+              if (isRecoveryPending(error)) {
+                nextReceiptCheckAt.set(latestOperation.id, globalThis.performance.now() + 60_000)
+                reportRecoveryDiagnostic({ operationKey: userOperationHash, stage: 'awaiting_recovery_evidence' })
+                return
+              }
               reportRecoveryDiagnostic({
                 operationKey: userOperationHash,
                 stage: 'receipt_check_failed',
@@ -656,6 +664,7 @@ export function SponsoredOperationRecovery() {
       globalThis.clearInterval(interval)
       recovering.clear()
       nextProtocolCheckAt.clear()
+      nextReceiptCheckAt.clear()
     }
   }, [accountAddress, runtime])
 

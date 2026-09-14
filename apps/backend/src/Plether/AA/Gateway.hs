@@ -18,6 +18,7 @@ module Plether.AA.Gateway
   , buildPreparedOperation
   , revalidateSecuritySnapshot
   , agreeAccountIdentity
+  , forwardAlto
   ) where
 
 import Control.Exception (SomeException, try)
@@ -68,6 +69,7 @@ import Network.HTTP.Types.Status (status200, status400, status403, status413, st
 import qualified Plether.AA.Paymaster as Paymaster
 import qualified Plether.AA.Preparation as Preparation
 import qualified Plether.AA.RecoveryReceipt as RecoveryReceipt
+import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.Readiness (newReadiness)
 import qualified Plether.AA.Diagnostics as Diagnostics
 import qualified Plether.Database.AaPreparation as PreparationDb
@@ -563,8 +565,8 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
   case validateNativeParams request of
     Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
     Right (mPolicyOperation, mPackedOperation) -> do
-      authorizedRead <- authorizeRecoveryRead pool clientKey request
-      if not authorizedRead
+      recoveryClient <- authorizeRecoveryRead nativeCfg pool clientKey request
+      if recoveryClient == Nothing
         then
           Legacy.respondFailure (Legacy.rrId request) $
             Legacy.ProxyFailure status403 (-32001) "Forbidden" "RECOVERY_HASH_NOT_AUTHORIZED" False
@@ -639,7 +641,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                       owner
                                       request
                                       packedOperation
-          _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager clientKey request
+          _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager (maybe clientKey id recoveryClient) request
 
 handleOperation
   :: NativeGatewayState
@@ -847,7 +849,9 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                         Paymaster.applyPaymasterEnvelope operation finalEnvelope
                 if saExpectedUserOperationHash authorization /= Just expectedHash
                   then Legacy.respondFailure requestId databaseUnavailable
-                  else deliver finalEnvelope
+                  else do
+                    issueRecoveryCapability nativeCfg expectedHash (saClientKey authorization)
+                    deliver finalEnvelope
           Nothing -> do
             signatureResult <- timeContext securityContext "kms_sign" $ liftIO $ psSignDigest signer $ Paymaster.sponsorshipDigest operation unsignedEnvelope
             case signatureResult of
@@ -994,8 +998,7 @@ handleOperationless gatewayState primary nativeCfg pool manager clientKey reques
             case authorization of
               Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "recovery-receipt-authorization"
               Right (Just saved) | saClientKey saved == clientKey && saState saved /= "expired" ->
-                Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_EVIDENCE_UNAVAILABLE"
-                  "Operation reconciliation has not produced a verifiable receipt; retry recovery"
+                respondRecoveryPending requestId
               _ -> forward
           Right (Just locator) -> do
             let recover client = RecoveryReceipt.recoverReceipt client 421614
@@ -1209,8 +1212,26 @@ nativeStartupFailure =
     "SIGNER_UNAVAILABLE"
     "Native sponsorship startup attestation failed"
 
-authorizeRecoveryRead :: DbPool -> Text -> Legacy.RpcRequest -> ActionM Bool
-authorizeRecoveryRead pool clientKey request =
+issueRecoveryCapability :: NativeAaConfig -> Text -> Text -> ActionM ()
+issueRecoveryCapability cfg operation client = do
+  now <- liftEpochSeconds
+  setHeader "X-Plether-AA-Recovery" $ TL.fromStrict $
+    RecoveryCapability.issue (naaProxyOriginToken cfg) (naaPaymasterAddress cfg) now operation client
+
+-- Pending is deliberately NOT a null receipt: clients must not interpret lack
+-- of finalized evidence as permission to release the lane or resubmit.
+respondRecoveryPending :: Value -> ActionM ()
+respondRecoveryPending requestId = do
+  liftIO $ logInfo "aa_recovery_pending" "Awaiting verified recovery evidence" []
+  setHeader "Cache-Control" "no-store"
+  setHeader "Retry-After" "60"
+  status status200
+  json $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= requestId,
+    "error" .= object ["code" .= (-32001 :: Int), "message" .= ("Recovery is awaiting verified evidence" :: Text),
+      "data" .= object ["reason" .= ("RECOVERY_PENDING" :: Text), "retryable" .= True, "retryAfter" .= (60 :: Int)]]]
+
+authorizeRecoveryRead :: NativeAaConfig -> DbPool -> Text -> Legacy.RpcRequest -> ActionM (Maybe Text)
+authorizeRecoveryRead cfg pool clientKey request =
   case Legacy.rrMethod request of
     method
       | method `elem`
@@ -1220,13 +1241,22 @@ authorizeRecoveryRead pool clientKey request =
           ] ->
           case Legacy.rrParams request of
             [String operationHash] -> do
+              credential <- header "X-Plether-AA-Recovery"
+              now <- liftEpochSeconds
+              let capabilityClient = credential >>= RecoveryCapability.verify (naaProxyOriginToken cfg)
+                    (naaPaymasterAddress cfg) now operationHash . TL.toStrict
+                  authorizedClient = maybe clientKey id capabilityClient
               result <-
                 liftDb $
                   withDb pool $ \conn ->
-                    isRecoveryOperationAuthorized conn operationHash clientKey "alto"
-              pure $ either (const False) id result
-            _ -> pure False
-    _ -> pure True
+                    isRecoveryOperationAuthorized conn operationHash authorizedClient "alto"
+              case result of
+                Right True -> do
+                  issueRecoveryCapability cfg operationHash authorizedClient
+                  pure $ Just authorizedClient
+                _ -> pure Nothing
+            _ -> pure Nothing
+    _ -> pure $ Just clientKey
 
 validateNativeParams
   :: Legacy.RpcRequest
@@ -1323,6 +1353,10 @@ forwardAlto
   -> Legacy.RpcRequest
   -> IO (Either Legacy.ProxyFailure (Value, Maybe Text))
 forwardAlto manager rpcUrl request = do
+  -- Alto 1.2.7 only accepts numeric IDs. Each HTTP call has one response, so
+  -- a local numeric ID is sufficient; validate it BEFORE restoring caller ID.
+  let upstreamRpc = request {Legacy.rrId = Number 1,
+        Legacy.rrObject = KM.insert "id" (Number 1) $ Legacy.rrObject request}
   result <- try @HttpException $ timeout 20_000_000 $ do
     base <- parseRequest $ T.unpack rpcUrl
     let upstreamRequest =
@@ -1332,7 +1366,7 @@ forwardAlto manager rpcUrl request = do
                 [ ("Content-Type", "application/json")
                 , ("Accept", "application/json")
                 ]
-            , requestBody = RequestBodyLBS $ encode $ Object $ Legacy.rrObject request
+            , requestBody = RequestBodyLBS $ encode $ Object $ Legacy.rrObject upstreamRpc
             , responseTimeout = responseTimeoutMicro 20_000_000
             , redirectCount = 0
             , checkResponse = \_ _ -> pure ()
@@ -1356,10 +1390,10 @@ forwardAlto manager rpcUrl request = do
       case eitherDecodeStrict' body of
         Left _ ->
           Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned an invalid response"
-        Right value@(Object responseObject)
-          | validAltoResponse request responseObject ->
+        Right (Object responseObject)
+          | validAltoResponse upstreamRpc responseObject ->
               Right
-                ( value
+                ( Object $ KM.insert "id" (Legacy.rrId request) responseObject
                 , TE.decodeUtf8' <$> retryAfterBytes >>= either (const Nothing) Just
                 )
         Right _ ->

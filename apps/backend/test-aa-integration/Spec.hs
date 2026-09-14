@@ -21,6 +21,7 @@ import Database.PostgreSQL.Simple
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
+import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
 import Plether.Database.AaPreparation
 import Plether.Database.AaSponsorship
@@ -131,6 +132,17 @@ aaIntegrationSpec databaseUrl =
           `shouldReturn` True
         isRecoveryOperationAuthorized conn operationHash (clientKeyOf 'a') "alto"
           `shouldReturn` False
+        -- A read-only credential retains the original DB binding across IP
+        -- changes. It cannot authorize another hash/provider or expired row.
+        let token = RecoveryCapability.issue "secret" "deployment" now operationHash clientKey
+        case RecoveryCapability.verify "secret" "deployment" (now+1) operationHash token of
+          Nothing -> expectationFailure "credential rejected"
+          Just originalClient -> do
+            isRecoveryOperationAuthorized conn operationHash originalClient "alto" `shouldReturn` True
+            isRecoveryOperationAuthorized conn (hashOf '0') originalClient "alto" `shouldReturn` False
+            isRecoveryOperationAuthorized conn operationHash originalClient "other" `shouldReturn` False
+            void $ execute conn "UPDATE aa_recovery_operations SET created_at=clock_timestamp()-INTERVAL '8 days', expires_at=clock_timestamp()-INTERVAL '1 second' WHERE user_operation_hash=?" (Only operationHash)
+            isRecoveryOperationAuthorized conn operationHash originalClient "alto" `shouldReturn` False
 
         stored <- getSponsorshipByUserOperationHash conn operationHash
         fmap saState stored `shouldBe` Just "submitted"

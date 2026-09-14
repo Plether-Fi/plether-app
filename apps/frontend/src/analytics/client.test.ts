@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   captureAnalyticsEvent,
   captureFrontendLog,
+  captureReactException,
   createAnalyticsConfig,
   initAnalytics,
   resetAnalyticsForTests,
@@ -13,6 +14,7 @@ import {
 const posthogMock = vi.hoisted(() => ({
   capture: vi.fn(),
   captureLog: vi.fn(),
+  captureException: vi.fn(),
   init: vi.fn(),
   startSessionRecording: vi.fn(),
 }))
@@ -22,6 +24,44 @@ vi.mock('posthog-js', () => ({
 }))
 
 describe('analytics client', () => {
+  it('queues sanitized React exceptions while loading and includes component stack and release', async () => {
+    resetAnalyticsForTests()
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+    const initialization = initAnalytics()
+    const error = new Error('Cannot read properties of undefined')
+    captureReactException(error, { componentStack: '\n    at Funding (/src/Funding.tsx:10:1)' }, 'uncaught')
+    await initialization
+    expect(posthogMock.captureException).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({
+      error_category: 'uncaught', component_stack: expect.stringContaining('Funding'), build_commit: expect.any(String),
+    }))
+    expect(posthogMock.captureException.mock.lastCall?.[0]).not.toBe(error)
+  })
+  it('never throws from exception reporting, including malformed error getters', () => {
+    const error = new Error('hidden')
+    Object.defineProperty(error, 'message', { get() { throw new Error('getter') } })
+    expect(() => captureReactException(error, {}, 'uncaught')).not.toThrow()
+  })
+  it('omits credentials and signed payloads from replay network metadata', () => {
+    const mask = createAnalyticsConfig(0.05, 'sepolia').session_recording?.maskCapturedNetworkRequestFn
+    const input = { name: '/api/aa/rpc?token=secret', entryType: 'resource', startTime: 0, duration: 1,
+      requestHeaders: { 'X-Plether-AA-Recovery': 'secret' }, responseHeaders: { 'X-Plether-AA-Recovery': 'secret' },
+      requestBody: 'signed operation', responseBody: 'credential' }
+    const result = mask?.(input)
+    expect(result).toEqual({ name: '/api/aa/rpc', entryType: 'resource', startTime: 0, duration: 1 })
+  })
+  it('keeps exception metadata but drops SDK URL and arbitrary context properties', () => {
+    const before = createAnalyticsConfig(0.05, 'sepolia').before_send
+    if (typeof before !== 'function') throw new Error('missing exception privacy filter')
+    const result = before({ uuid: 'test', event: '$exception', properties: {
+      $exception_list: [{ type: 'TypeError', value: 'Cannot read properties of undefined' }],
+      $session_id: 'session', build_commit: 'release', component_stack: 'at Funding',
+      $current_url: 'https://rpc.example/secret', $referrer: 'private', request: 'signed operation',
+    } })
+    expect(result?.properties).toEqual({
+      $exception_list: [{ type: 'TypeError', value: 'Cannot read properties of undefined' }],
+      $session_id: 'session', build_commit: 'release', component_stack: 'at Funding',
+    })
+  })
   beforeEach(() => {
     vi.unstubAllEnvs()
     resetAnalyticsForTests()

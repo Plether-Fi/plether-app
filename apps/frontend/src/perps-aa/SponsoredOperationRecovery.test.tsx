@@ -164,6 +164,33 @@ function beginHashOperation(input: {
 }
 
 describe('SponsoredOperationRecovery', () => {
+  it('keeps the lane blocked and backs off pending evidence without interpreting it as a missing receipt', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let clock = 1000
+    const started = Date.now()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    beginHashOperation({ id: 'pending-evidence', operation: signedOperation() })
+    vi.spyOn(Date, 'now').mockImplementation(() => started + clock)
+    const receipt = vi.fn(async () => { throw { cause: { data: { reason: 'RECOVERY_PENDING', retryable: true } } } })
+    const status = vi.fn()
+    render(<PerpsAaRuntimeContext value={runtimeValue({ receipt, status })}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    // Drain hydration/lock acquisition before the clock-controlled scan.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    await waitFor(() => expect(receipt).toHaveBeenCalledOnce())
+    expect(status).not.toHaveBeenCalled()
+    const operation = useSponsoredOperationStore.getState().operations[0]
+    expect(operation.status).toBe('receipt-timeout')
+    expect(operation.retryable).toBe(false)
+    expect(Object.keys(useSponsoredOperationStore.getState().activeLanes)).toHaveLength(1)
+    clock += 55_000
+    await act(async () => { await vi.advanceTimersByTimeAsync(55_000) })
+    expect(receipt).toHaveBeenCalledOnce()
+    clock += 5_000
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(receipt).toHaveBeenCalledTimes(2)
+    expect(Object.keys(useSponsoredOperationStore.getState().activeLanes)).toHaveLength(1)
+    expect(status).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     vi.stubGlobal('navigator', {
       locks: {
@@ -182,6 +209,7 @@ describe('SponsoredOperationRecovery', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     releaseSponsoredOperationSignal('live-operation')
     vi.restoreAllMocks()
     vi.unstubAllGlobals()

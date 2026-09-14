@@ -1,6 +1,6 @@
 import { captureFrontendLog } from '../analytics/client'
 
-type RecoveryStage = 'awaiting_safe_head' | 'receipt_check_failed' |
+type RecoveryStage = 'awaiting_recovery_evidence' | 'awaiting_safe_head' | 'receipt_check_failed' |
   'protocol_check_failed' | 'coordination_failed' | 'inclusion_persistence_failed' |
   'canonical_receipt_recovered' | 'canonical_receipt_unverified'
 
@@ -25,7 +25,7 @@ export function reportRecoveryDiagnostic(input: {
     }
     lastReported.set(key, now)
     captureFrontendLog(
-      input.stage === 'awaiting_safe_head' || input.stage === 'canonical_receipt_recovered' ? 'info' : 'warn',
+      input.stage.startsWith('awaiting_') || input.stage === 'canonical_receipt_recovered' ? 'info' : 'warn',
       'Sponsored operation recovery',
       {
         component: 'sponsored_operation_recovery',

@@ -21,6 +21,7 @@ library
         Plether.AA.Pimlico
         Plether.AA.ClientKey
         Plether.AA.Gateway
+        Plether.AA.RecoveryCapability
         Plether.AA.Timing
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
@@ -349,6 +350,8 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.GatewaySpec
+        Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
         Plether.AA.PreparationSpec

@@ -2,6 +2,7 @@ import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless'
+import { recoveryHttp } from './recoveryTransport'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
 import { createPimlicoClient } from 'permissionless/clients/pimlico'
 import {
@@ -362,7 +363,7 @@ export async function createManagedAaRuntime({
 
   if (isNativePaymasterManifest(manifest)) {
     const paymasterClient = createPaymasterClient({
-      transport: http(paymasterRpcUrl, { retryCount: 0 }),
+      transport: recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl),
     })
     const unsignedPaymasterClient = createUnsignedPaymasterActions(
       paymasterClient
@@ -372,13 +373,13 @@ export async function createManagedAaRuntime({
     // preparing, re-sponsoring, or re-signing it a second time.
     const bundlerClient = createBundlerClient({
       chain: arbitrumSepolia,
-      transport: http(bundlerRpcUrl),
+      transport: recoveryHttp(bundlerRpcUrl),
     })
     const smartAccountClient = createSmartAccountClient({
       account: smartAccount,
       chain: arbitrumSepolia,
       client: publicClient,
-      bundlerTransport: http(bundlerRpcUrl),
+      bundlerTransport: recoveryHttp(bundlerRpcUrl),
       paymaster: unsignedPaymasterClient,
       paymasterContext: {},
       userOperation: {
@@ -399,10 +400,10 @@ export async function createManagedAaRuntime({
         ])
         const binding = { sender: accountAddress, callData, ...factoryArgs }
         // No transport retries/fallback with a fresh ID after an ambiguous result.
-        const response = await http(paymasterRpcUrl, { retryCount: 0,
+        const response = await recoveryHttp(paymasterRpcUrl, { retryCount: 0,
           fetchOptions: preparationId && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId)
             ? { headers: { 'X-Plether-Attempt-Id': preparationId } } : undefined,
-        })({ chain: arbitrumSepolia }).request({
+        }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
           method: 'plether_prepareUserOperation',
           params: [{ version: 1, preparationId: preparationIdentifier(preparationId ?? crypto.randomUUID()),
             chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding }],

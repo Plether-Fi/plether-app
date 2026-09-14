@@ -157,6 +157,10 @@ function sponsorMetadata(error: unknown): {
   }
 }
 
+export function isRecoveryPending(error: unknown): boolean {
+  return sponsorMetadata(error).reason === 'RECOVERY_PENDING'
+}
+
 function walkCauses<T>(
   error: unknown,
   predicate: (value: unknown) => value is T
