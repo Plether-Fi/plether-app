@@ -5,7 +5,6 @@ import {
   getPerpsErrorMessage,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
-  COMMIT_UNDECODED_FALLBACK_MESSAGE,
 } from '../perpsErrors'
 
 const PERPS_TEST_ERROR_ABI = parseAbi([
@@ -98,6 +97,16 @@ describe('getPerpsErrorMessage', () => {
     })
     expect(error.data).toMatchObject({ errorName: 'Panic', args: [17n] })
     expect(getPerpsErrorMessage(error, 'review')).toContain('internal arithmetic error')
+  })
+
+  it('keeps bounty invariant failures distinct from ordinary funding failures', () => {
+    const data = encodeErrorResult({ abi: parseAbi(['error CfdOrderPolicyEvaluator__InsufficientBountyBacking(uint256 settlementUsdc,uint256 bountyUsdc)']), errorName: 'CfdOrderPolicyEvaluator__InsufficientBountyBacking', args: [0n, 200_000n] })
+    expect(getPerpsErrorMessage({ cause: { data } }, 'review')).toContain('inconsistent execution-bounty accounting')
+    expect(getPerpsErrorMessage({ cause: { data } }, 'review')).not.toContain('short by')
+  })
+
+  it('does not invent a contract reason when a review has no revert data', () => {
+    expect(getPerpsErrorMessage(new Error('execution reverted'), 'review')).toBe('Order review is unavailable. No order was submitted. Refresh and try again.')
   })
 
   it('preserves instrumented commit receipt diagnostics', () => {

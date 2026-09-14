@@ -377,15 +377,16 @@ async function reviewPerpsOrderWithContext(
   const assessAtReviewedPrices = async (bounds = permissiveBounds) => {
     input.signal?.throwIfAborted()
     if (input.isClose) {
-      if (!context.closePreviewAddress) throw new Error('Close review is unavailable: preview deployment is not verified.')
+      const closePreviewAddress = context.closePreviewAddress
+      if (!closePreviewAddress) throw new Error('Close review is unavailable: preview deployment is not verified.')
       const previews = await Promise.all(prices.map(async (price) => asClosePreview(await withPreparationStep('order_assessment', 'previewClose', () => client.readContract({
-        address: context.closePreviewAddress!,
+        address: closePreviewAddress,
         abi: PERPS_CFD_CLOSE_PREVIEW_ABI,
         functionName: 'previewClose',
         args: [manifest.cfdEngine, order, manifest.orderRouter, price, blockTimestamp, bounds],
         blockNumber,
       }), {
-        chainId: manifest.chainId, address: context.closePreviewAddress!, account: input.account,
+        chainId: manifest.chainId, address: closePreviewAddress, account: input.account,
         blockNumber, blockHash, samplePrice: price,
         assessmentPoint: price === context.currentPrice ? 'current' : price === targetPrice ? 'limit' : 'midpoint',
       }))))

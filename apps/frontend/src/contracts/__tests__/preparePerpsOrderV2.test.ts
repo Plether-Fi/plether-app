@@ -283,6 +283,27 @@ describe('reviewed leverage validation', () => {
     expect(simulateContract).toHaveBeenCalledOnce()
   })
 
+  it('keeps commitment carry out of the free-settlement funding gate', async () => {
+    const { client, readContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const original = readContract.getMockImplementation()!
+    readContract.mockImplementation(async request => {
+      if (request.functionName === 'getFreeBuyingPowerUsdc') return 200_000n
+      const result = await original(request)
+      return request.functionName === 'previewClose' ? { ...(result as object), commitmentCarryUsdc: 1_250_000n } : result
+    })
+    // The lens has already paid carry from position margin; remaining free USDC
+    // covers the bounty. Adding carry to the local funding gate would block this.
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryUsdc: 1_250_000n, availableFundingUsdc: 200_000n, requiredFundingUsdc: 200_000n })
+  })
+
+  it('keeps frozen-mode bits, signed economics and deferred claims in the nested assessment', async () => {
+    const { client } = reviewClient(() => ({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n, postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    expect(prepared.request.bounds.allowedExecutionModes).toBe(4)
+    expect(prepared.reviewSummary?.currentAssessment).toMatchObject({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n })
+  })
+
   it('does not let a missing close lens block opens', async () => {
     const { client } = reviewClient(() => ({ postLeverageBps: 0n }))
     vi.mocked(verifyClosePreviewDeployment).mockRejectedValueOnce(new Error('Close lens unavailable'))

@@ -29,7 +29,8 @@ export async function verifyClosePreviewDeployment(
   manifest: PerpsAaDeploymentManifest,
   blockNumber: bigint,
 ): Promise<Address> {
-  const pin = closePreview.contracts?.cfdClosePreview
+  const configuration: { contracts?: { cfdClosePreview?: { address: string; runtimeCodeHash: string } } } = closePreview
+  const pin = configuration.contracts?.cfdClosePreview
   if (!pin || !isAddress(pin.address) || !/^0x[0-9a-f]{64}$/i.test(pin.runtimeCodeHash)) {
     throw new Error('Close review is unavailable: preview deployment configuration is invalid.')
   }
