@@ -2001,6 +2001,8 @@ hasCompleteAccountSnapshotBatchQuerySql =
     \   WHERE s.competition_slug = b.competition_slug AND s.snapshot_kind = b.snapshot_kind\
     \   AND s.block_number = b.block_number AND LOWER(s.block_hash) = LOWER(b.block_hash)\
     \   AND s.chain_id = b.chain_id AND s.release_router = b.release_router\
+    \   AND (c.slug <> 'testnet-trading-2026-09' OR c.finalized\
+    \     OR s.raw_data->>'accountValuationVersion' = 'full-account-v2')\
     \ ))"
 
 invalidateSnapshotBatchesAfter :: Connection -> Text -> Integer -> Text -> IO ()

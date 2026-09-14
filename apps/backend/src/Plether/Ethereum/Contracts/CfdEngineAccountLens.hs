@@ -4,6 +4,9 @@ module Plether.Ethereum.Contracts.CfdEngineAccountLens
   , getAccountLedgerSnapshotAtBlock
   , getAccountLedgerSnapshotCall
   , decodeAccountLedgerSnapshot
+  , getPendingCarryAtBlock
+  , pendingCarryPreviewCall
+  , decodePendingCarryPreview
   ) where
 
 import Data.ByteString (ByteString)
@@ -16,6 +19,7 @@ import Plether.Ethereum.Abi
   , decodeUint256
   , encodeAddress
   , encodeCall
+  , encodeUint256
   )
 import Plether.Ethereum.Client
   ( CallParams (..)
@@ -84,6 +88,27 @@ getAccountLedgerSnapshotAtBlock client accountLens account blockNumber = do
 getAccountLedgerSnapshotCall :: Text -> ByteString
 getAccountLedgerSnapshotCall account =
   encodeCall "getAccountLedgerSnapshot(address)" [encodeAddress account]
+
+-- | The V2 open planner populates pending carry before rejecting a zero-size
+-- order. This read-only diagnostic exposes the full charge even when carry
+-- has exhausted the pledge and the account lens's price-risk equity cannot
+-- reveal how much additional carry consumes free settlement.
+getPendingCarryAtBlock :: EthClient -> Text -> Text -> Integer -> IO (Either RpcError Integer)
+getPendingCarryAtBlock client engineLens account blockNumber = do
+  result <- ethCallAtBlock client (CallParams engineLens $ pendingCarryPreviewCall account) blockNumber
+  pure $ case result of
+    Left err -> Left err
+    Right bytes -> either (Left . RpcJsonError) Right $ decodePendingCarryPreview bytes
+
+pendingCarryPreviewCall :: Text -> ByteString
+pendingCarryPreviewCall account =
+  encodeCall "previewOpen(address,uint8,uint256,uint256,uint256,uint64)"
+    [encodeAddress account, encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0]
+
+decodePendingCarryPreview :: ByteString -> Either Text Integer
+decodePendingCarryPreview bytes
+  | BS.length bytes /= 24 * abiWordLength = Left "Expected 768 bytes for V2 open carry preview"
+  | otherwise = Right $ decodeUint256 $ wordAt bytes 11
 
 decodeAccountLedgerSnapshot :: ByteString -> Either Text AccountLedgerSnapshot
 decodeAccountLedgerSnapshot bytes

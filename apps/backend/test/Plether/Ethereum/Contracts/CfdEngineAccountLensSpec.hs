@@ -9,6 +9,23 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "pending carry preview" $ do
+    it "reads pending carry even when the zero-size diagnostic is not a valid open" $ do
+      let response = mconcat $ map encodeUint256 $
+            [0, 1] <> replicate 9 0 <> [3_814_861] <> replicate 12 0
+      decodePendingCarryPreview response `shouldBe` Right 3_814_861
+
+    it "rejects truncated and incompatible preview layouts" $ do
+      decodePendingCarryPreview (BS.replicate (23 * 32) 0)
+        `shouldBe` Left "Expected 768 bytes for V2 open carry preview"
+      decodePendingCarryPreview (BS.replicate (25 * 32) 0)
+        `shouldBe` Left "Expected 768 bytes for V2 open carry preview"
+
+    it "encodes a read-only zero-size open diagnostic" $ do
+      let account = "0x1111111111111111111111111111111111111111"
+      BS.drop 4 (pendingCarryPreviewCall account)
+        `shouldBe` encodeAddress account <> BS.replicate (5 * 32) 0
+
   describe "getAccountLedgerSnapshotCall" $ do
     it "encodes the account-lens selector and address" $ do
       expectedSelector <- parseHex "f4bb62c1"

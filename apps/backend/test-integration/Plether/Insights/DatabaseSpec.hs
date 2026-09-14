@@ -228,6 +228,24 @@ insightsDatabaseSpec databaseUrl =
         rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         sort (map ilrCurrentAccountValueUsdc rows) `shouldBe` [Just 0, Just 0]
 
+    it "recaptures unversioned September snapshots without invalidating finalized results" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertParticipant conn walletA "trader-a"
+        setCompetitionBoundaryBlocks conn competitionSlug
+          (Just (startBlock, startHash, baselineHash)) (Just (finalBlock, finalHash))
+        let corrected = snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll
+            old = corrected { asiRawData = object ["pendingOrderCount" .= ("0" :: Text)] }
+        publishAccountSnapshotBatch conn [old]
+        hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotStart baselineBlock baselineHash
+          `shouldReturn` False
+        publishAccountSnapshotBatch conn [corrected]
+        hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotStart baselineBlock baselineHash
+          `shouldReturn` True
+        publishAccountSnapshotBatch conn [old]
+        void $ execute conn "UPDATE insights_competitions SET finalized = TRUE WHERE slug = ?" (Only competitionSlug)
+        hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotStart baselineBlock baselineHash
+          `shouldReturn` True
+
     it "serves immutable materialized standings after a canonical history rebuild" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         insertParticipant conn walletA "trader-a"
@@ -510,7 +528,10 @@ snapshot wallet kind blockNumber blockHash timestamp value =
     , asiBlockHash = blockHash
     , asiTimestamp = timestamp
     , asiEquity = EquitySnapshot False 0 value 0
-    , asiRawData = object ["pendingOrderCount" .= ("0" :: Text)]
+    , asiRawData = object
+        [ "pendingOrderCount" .= ("0" :: Text)
+        , "accountValuationVersion" .= ("full-account-v2" :: Text)
+        ]
     }
 
 requireCompetition :: Connection -> Text -> IO CompetitionRow
