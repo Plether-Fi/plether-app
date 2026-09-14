@@ -14,6 +14,32 @@ let mockReadContractsData: readonly {
   result?: unknown
 }[] | undefined
 
+// These presentation tests supply a completed commitment-aware review. The
+// engine-lens tuple remains a separate source for instantaneous risk fields.
+vi.mock('../../hooks/usePerpsOrderPreparation', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../hooks/usePerpsOrderPreparation')>()
+  const { prepared } = await import('../../test/fixtures/preparedOrder')
+  return { ...actual, usePerpsOrderPreparation: () => {
+    const tuple = mockReadContractsData?.[0]?.result as readonly unknown[] | undefined
+    const result = prepared()
+    result.reviewSummary = {
+      requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
+      commitmentCarryUsdc: 10_000n, requiredFundingUsdc: 200_000n, availableFundingUsdc: 1_000_000n,
+      worstPostLeverageBps: 50_000n, reviewedBlockNumber: 1n, reviewedBlockHash: '0x12', reviewedPrice: 100_000_000n,
+      currentAssessment: {
+        mode: 1, executionNotionalUsdc: 500_000_000n, grossAccountDebitUsdc: 200_000n,
+        actionChargeAssessedUsdc: 0n, actionChargeCollectedUsdc: 0n, explicitFeesUsdc: 0n,
+        preSettlementBalanceUsdc: 500_000_000n, postSettlementBalanceUsdc: 499_800_000n,
+        realizedPnlUsdc: 0n, vpiUsdc: tuple?.[5] as bigint ?? 0n, carryUsdc: 0n,
+        executionFeeUsdc: 0n, frozenSpreadUsdc: tuple?.[21] as bigint ?? 0n,
+        preTraderClaimUsdc: 0n, postTraderClaimUsdc: 0n, postPositionSize: 500n * 10n ** 18n,
+        postPositionMarginUsdc: 250_000_000n, postPositionEquityUsdc: 250_000_000n, postLeverageBps: 50_000n,
+      },
+    }
+    return { matches: true, status: 'ready', result, retry: vi.fn() }
+  } }
+})
+
 const perpsTradingMocks = vi.hoisted(() => ({
   cleanupExpiredOrder: vi.fn(),
   commitOrder: vi.fn(),

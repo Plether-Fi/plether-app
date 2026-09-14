@@ -1,7 +1,7 @@
-import { decodeErrorResult, parseAbi } from 'viem'
-import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
+import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
+import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
-type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute'
+type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
@@ -100,8 +100,10 @@ const PERPS_ERROR_ABI = parseAbi([
   'error CfdEngine__WithdrawBlockedByOpenPosition()',
   'error CfdEngine__MarkPriceStale()',
   'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking()',
+  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
 ])
+
+const ALL_PERPS_ERROR_ABI = [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI, ...PERPS_CFD_CLOSE_PREVIEW_ABI]
 
 const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
 
@@ -215,7 +217,7 @@ function decodePerpsError(error: unknown): { name?: string; args?: readonly unkn
   const data = extractRevertData(error)
   if (data) {
     try {
-      const decoded = decodeErrorResult({ abi: [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI], data: data as `0x${string}` })
+      const decoded = decodeErrorResult({ abi: ALL_PERPS_ERROR_ABI, data: data as `0x${string}` })
       return { name: decoded.errorName, args: decoded.args }
     } catch {
       // Fall back to viem's decoded metadata below.
@@ -229,7 +231,7 @@ function decodePerpsError(error: unknown): { name?: string; args?: readonly unkn
 }
 
 const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
-  [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI]
+  ALL_PERPS_ERROR_ABI
     .filter(item => item.type === 'error')
     .map(item => item.name)
 )
@@ -237,7 +239,8 @@ const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
 /** Only ABI-defined names may leave the app; never return error arguments or data. */
 export function getPerpsContractErrorCode(error: unknown): string | undefined {
   try {
-    const { name } = decodePerpsError(error)
+    const { name, args } = decodePerpsError(error)
+    if (name === 'Panic') return argNumber(args) === 17 ? 'arithmetic_panic' : 'solidity_panic'
     return name && KNOWN_PERPS_ERROR_NAMES.has(name) ? name : undefined
   } catch {
     return undefined
@@ -377,7 +380,22 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'CfdEngine__MarkPriceOutOfOrder':
       return 'The engine rejected an out-of-order mark price. Refresh and retry.'
     case 'CfdEngine__InsufficientCloseOrderBountyBacking':
-      return 'There is not enough margin backing to reserve the close-order execution bounty.'
+      if (args?.length === 3 && args.every(value => typeof value === 'bigint' && value >= 0n)) {
+        const [required, available, unpaid] = args as readonly bigint[]
+        const shortfall = required > available ? required - available : 0n
+        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is free after carry. Free settlement is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
+      }
+      return 'Free settlement after carry cannot fund the close execution reserve. Refresh the account and review again.'
+    case 'CfdOrderPolicyEvaluator__InsufficientBountyBacking':
+      return 'The protocol returned inconsistent execution-bounty accounting. Refresh the review; contact support if this persists.'
+    case 'CfdEngine__PartialCloseUnhealthy':
+      return 'This partial close fails the position health check. Refresh the position and review again.'
+    case 'CfdEngine__InvalidCloseSizeQuantum':
+      return INVALID_SIZE_QUANTUM_MESSAGE
+    case 'CfdEngine__ZeroAmount':
+      return 'Order size must be greater than zero.'
+    case 'CfdClosePreview__NotCloseOrder':
+      return 'The close review received an invalid order. Refresh and review again.'
     case 'OrderRouter__CloseWithPositiveMargin':
       return 'Close/reduce orders cannot add margin.'
     case 'OrderRouter__NoQueuedPosition':
@@ -499,6 +517,8 @@ function fallbackMessage(action: PerpsAction): string {
       return 'Claim settlement failed. Refresh the Trading Account claim balance and retry.'
     case 'commit':
       return COMMIT_UNDECODED_FALLBACK_MESSAGE
+    case 'review':
+      return 'Order review is unavailable. No order was submitted. Refresh and try again.'
     case 'execute':
       return 'Self-execute failed. Retry with fresh Pyth data; the previous update may have expired.'
   }
@@ -553,6 +573,12 @@ export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): s
 
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {
   const decoded = decodePerpsError(error)
+  if (decoded.name === 'Panic') {
+    const reason = argNumber(decoded.args) === 17 ? 'an internal arithmetic error' : 'an internal error'
+    return action === 'review'
+      ? `Order review failed because the protocol hit ${reason}. No order was submitted. Refresh and try again.`
+      : `The protocol hit ${reason}. Refresh account activity before retrying.`
+  }
   const decodedMessage = messageForDecodedError(decoded.name, decoded.args)
   if (decodedMessage) return decodedMessage
 

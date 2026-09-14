@@ -1,5 +1,6 @@
 import type { Address, Hex, PublicClient } from 'viem'
 import {
+  PERPS_CFD_CLOSE_PREVIEW_ABI,
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_LENS_ABI,
   PERPS_HOUSE_POOL_ABI,
@@ -21,11 +22,12 @@ import {
   relaxedWebPerpsExecutionBounds,
   reviewedExecutionBountyMaximum,
   type PerpsExecutionAssessment,
+  type PerpsClosePreview,
   type PerpsOrderReviewSummary,
   type PreparedPerpsOrderV2,
   type PerpsOrderRequestV2,
 } from './perpsOrderV2'
-import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from './verifyPerpsV2Bindings'
+import { verifyClosePreviewDeployment, verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from './verifyPerpsV2Bindings'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
 import { getPerpsTargetPrice, type PerpsDirection } from '../utils/perps'
 import { PROTECTION_CONFIG_ABI, validateProtectionParams, type PositionProtectionParams } from './positionProtection'
@@ -81,6 +83,7 @@ export class PerpsOrderReviewError extends Error {
 }
 
 interface PerpsOrderReviewContext {
+  closePreviewAddress?: Address
   client: PublicClient
   manifest: PerpsAaDeploymentManifest
   orderLifecycleBook: Address
@@ -132,6 +135,12 @@ function assessmentPrices(currentPrice: bigint, targetPrice: bigint): bigint[] {
 
 function asAssessment(value: unknown): PerpsExecutionAssessment {
   return value as PerpsExecutionAssessment
+}
+
+function asClosePreview(value: unknown): PerpsClosePreview {
+  const preview = value as PerpsClosePreview
+  if (![1, 2, 3].includes(preview.assessment.mode)) throw new Error('Close review returned an invalid execution mode.')
+  return preview
 }
 
 function maximum(values: bigint[]): bigint {
@@ -337,7 +346,7 @@ async function reviewPerpsOrderWithContext(
     : context.lastMarkPrice === 0n
       ? 100_000_000n
       : context.lastMarkPrice
-  const executionBountyUsdc = exactExecutionBounty({
+  let executionBountyUsdc = exactExecutionBounty({
     isClose: input.isClose,
     sizeDelta: input.sizeDelta,
     commitReferencePrice,
@@ -364,9 +373,34 @@ async function reviewPerpsOrderWithContext(
     isClose: input.isClose,
   }
   const prices = assessmentPrices(context.currentPrice, targetPrice)
+  let commitmentCarryUsdc: bigint | undefined
   const assessAtReviewedPrices = async (bounds = permissiveBounds) => {
     input.signal?.throwIfAborted()
-    return Promise.all(prices.map(async (price) => asAssessment(await withPreparationStep('order_assessment', 'assessOrder', () => client.readContract({
+    if (input.isClose) {
+      if (!context.closePreviewAddress) throw new Error('Close review is unavailable: preview deployment is not verified.')
+      const previews = await Promise.all(prices.map(async (price) => asClosePreview(await withPreparationStep('order_assessment', 'previewClose', () => client.readContract({
+        address: context.closePreviewAddress!,
+        abi: PERPS_CFD_CLOSE_PREVIEW_ABI,
+        functionName: 'previewClose',
+        args: [manifest.cfdEngine, order, manifest.orderRouter, price, blockTimestamp, bounds],
+        blockNumber,
+      }), {
+        chainId: manifest.chainId, address: context.closePreviewAddress!, account: input.account,
+        blockNumber, blockHash, samplePrice: price,
+        assessmentPoint: price === context.currentPrice ? 'current' : price === targetPrice ? 'limit' : 'midpoint',
+      }))))
+      input.signal?.throwIfAborted()
+      const current = previews[0]
+      if (previews.some(preview => preview.executionBountyUsdc !== context.closeBounty ||
+        preview.commitmentCarryUsdc !== current.commitmentCarryUsdc) ||
+        (commitmentCarryUsdc !== undefined && commitmentCarryUsdc !== current.commitmentCarryUsdc)) {
+        throw preparationFailure(new Error('Close review changed at the reviewed block. Refresh and try again.'), 'order_assessment', 'previewClose')
+      }
+      executionBountyUsdc = current.executionBountyUsdc
+      commitmentCarryUsdc = current.commitmentCarryUsdc
+      return previews.map(preview => preview.assessment)
+    }
+    const assessments = await Promise.all(prices.map(async (price) => asAssessment(await withPreparationStep('order_assessment', 'assessOrder', () => client.readContract({
       address: policyEvaluator,
       abi: PERPS_ORDER_POLICY_EVALUATOR_ABI,
       functionName: 'assessOrder',
@@ -382,6 +416,8 @@ async function reviewPerpsOrderWithContext(
       ],
       blockNumber,
     })))))
+    input.signal?.throwIfAborted()
+    return assessments
   }
   let assessments = await assessAtReviewedPrices()
 
@@ -423,11 +459,12 @@ async function reviewPerpsOrderWithContext(
 
   const finalAssessments = await assessAtReviewedPrices(bounds)
   const reviewSummary: PerpsOrderReviewSummary = {
+    ...(input.isClose ? { commitmentCarryUsdc } : {}),
     requiredMarginUsdc: reviewedMarginDelta,
     executionBountyUsdc,
     // Reserve for the reviewed maximum, while displaying the current quote
     // separately. Never apply tolerance again to persisted/signed requests.
-    requiredFundingUsdc: reviewedMarginDelta + bounds.maxExecutionBountyUsdc,
+    requiredFundingUsdc: reviewedMarginDelta + (input.isClose ? executionBountyUsdc : bounds.maxExecutionBountyUsdc),
     availableFundingUsdc: context.freeBuyingPowerUsdc,
     worstPostLeverageBps: maximum(
       finalAssessments.map((assessment) => assessment.postLeverageBps)
@@ -483,6 +520,11 @@ export async function reviewPerpsOrderV2(
   input.signal?.throwIfAborted()
   validateInput(input)
   const context = await withPreparationStep('context_read', undefined, () => loadPerpsOrderReviewContext(client, manifest, input.account))
+  if (input.isClose) {
+    context.closePreviewAddress = await withPreparationStep('deployment_verification', undefined,
+      () => verifyClosePreviewDeployment(client, manifest, context.blockNumber))
+    input.signal?.throwIfAborted()
+  }
   let protection: PreparedPerpsOrderV2['positionProtection']
   if (input.positionProtection) {
     await withPreparationStep('deployment_verification', undefined, () => verifyProtectionDeployment(client, manifest, context.blockNumber))

@@ -73,7 +73,7 @@ const PERPS_TEST_ERROR_ABI = parseAbi([
   'error CfdEngine__WithdrawBlockedByOpenPosition()',
   'error CfdEngine__MarkPriceStale()',
   'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking()',
+  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
 ])
 
 const ZERO_FEED_ID = '0x0000000000000000000000000000000000000000000000000000000000000000'
@@ -89,7 +89,7 @@ function encodedErrorMessage(errorName: string, args: readonly unknown[], action
 }
 
 describe('getPerpsErrorMessage', () => {
-  it('reproduces the screenshot fallback for the close evaluator arithmetic panic', () => {
+  it('decodes the arithmetic panic that previously produced the screenshot fallback', () => {
     // Captured from the deployed v1.2.3 evaluator at block 308891788 using
     // scripts/reproduce-close-review.mjs. The RPC DOES return decodable data.
     const error = new ContractFunctionRevertedError({
@@ -97,7 +97,7 @@ describe('getPerpsErrorMessage', () => {
       data: '0x4e487b710000000000000000000000000000000000000000000000000000000000000011',
     })
     expect(error.data).toMatchObject({ errorName: 'Panic', args: [17n] })
-    expect(getPerpsErrorMessage(error, 'commit')).toBe(COMMIT_UNDECODED_FALLBACK_MESSAGE)
+    expect(getPerpsErrorMessage(error, 'review')).toContain('internal arithmetic error')
   })
 
   it('preserves instrumented commit receipt diagnostics', () => {
@@ -211,7 +211,7 @@ describe('getPerpsErrorMessage', () => {
     ['CfdEngine__WithdrawBlockedByOpenPosition', [], 'Withdrawal is blocked'],
     ['CfdEngine__MarkPriceStale', [], 'mark price is stale'],
     ['CfdEngine__MarkPriceOutOfOrder', [], 'out-of-order mark price'],
-    ['CfdEngine__InsufficientCloseOrderBountyBacking', [], 'not enough margin backing'],
+    ['CfdEngine__InsufficientCloseOrderBountyBacking', [200_000n, 199_999n, 3n], 'short by 0.000001 USDC'],
   ] satisfies Array<[string, readonly unknown[], string, Parameters<typeof getPerpsErrorMessage>[1]?]>)(
     'maps %s to explicit copy',
     (errorName, args, expected, action = 'commit') => {

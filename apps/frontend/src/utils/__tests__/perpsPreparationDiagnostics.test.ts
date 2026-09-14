@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { encodeErrorResult, parseAbi } from 'viem'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE } from '../perpsErrors'
-import { getPreparationFailureProperties, preparationFailure, withPreparationStep } from '../perpsPreparationDiagnostics'
+import { getPreparationDebugContext, getPreparationFailureProperties, preparationFailure, withPreparationStep } from '../perpsPreparationDiagnostics'
 
 describe('preparation diagnostics privacy', () => {
   it('retains the inner failing step through UI normalization and decodes only the ABI name', async () => {
@@ -20,6 +20,14 @@ describe('preparation diagnostics privacy', () => {
     expect(getPreparationFailureProperties(wrapped)).toEqual({
       error_code: 'OrderRouter__CommitValidation', stage: 'order_assessment', contract_function: 'assessOrder',
     })
+  })
+
+  it('retains close RPC context locally and sends only a bounded sample label', async () => {
+    const context = { chainId: 421614, address: 'lens-address', account: 'private-account', blockNumber: 123n, blockHash: 'block-hash', samplePrice: 102_500_000n, assessmentPoint: 'limit' as const }
+    const failure = Object.assign(new Error('private RPC request'), { data: '0x4e487b710000000000000000000000000000000000000000000000000000000000000011' })
+    const error = await withPreparationStep('order_assessment', 'previewClose', () => Promise.reject(failure), context).catch(cause => new Error('Review failed', { cause }))
+    expect(getPreparationDebugContext(error)).toEqual({ context, error: failure })
+    expect(getPreparationFailureProperties(error)).toEqual({ stage: 'order_assessment', contract_function: 'previewClose', error_code: 'arithmetic_panic', assessment_point: 'limit' })
   })
 
   it('never emits arbitrary error names, messages, functions or RPC payloads', () => {

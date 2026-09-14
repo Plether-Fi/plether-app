@@ -128,6 +128,12 @@ export interface PerpsExecutionAssessment {
   postLeverageBps: bigint
 }
 
+export interface PerpsClosePreview {
+  commitmentCarryUsdc: bigint
+  executionBountyUsdc: bigint
+  assessment: PerpsExecutionAssessment
+}
+
 export interface PerpsExecutionProtectionSummary {
   validUntil: bigint
   executionMode: PerpsExecutionMode
@@ -135,6 +141,8 @@ export interface PerpsExecutionProtectionSummary {
 }
 
 export interface PerpsOrderReviewSummary {
+  /** Close commitment debit, separate from execution economics. Absent in older summaries. */
+  commitmentCarryUsdc?: bigint
   requiredMarginUsdc: bigint
   executionBountyUsdc: bigint
   requiredFundingUsdc: bigint

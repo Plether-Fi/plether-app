@@ -4,11 +4,12 @@ import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
 import { PerpsOrderReviewError, preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
-import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
+import { verifyClosePreviewDeployment, verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
 import { getPreparationFailureProperties } from '../../utils/perpsPreparationDiagnostics'
 
 vi.mock('../verifyPerpsV2Bindings', () => ({
   verifyPerpsV2DeploymentBindings: vi.fn(),
+  verifyClosePreviewDeployment: vi.fn(async () => '0x202A2C5156563Ec4fEF7D3997771bBCa90e98117'),
   verifyProtectionDeployment: vi.fn(),
 }))
 
@@ -212,9 +213,10 @@ describe('reviewed leverage validation', () => {
       getFreeBuyingPowerUsdc: 10_000_000_000n,
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
-      if (functionName === 'assessOrder') {
+      if (functionName === 'assessOrder' || functionName === 'previewClose') {
         const price = args?.[3] as bigint
-        return { ...assessment(price, 2_000_000_000n), ...overrides(price) }
+        const result = { ...assessment(price, 2_000_000_000n), ...overrides(price) }
+        return functionName === 'previewClose' ? { commitmentCarryUsdc: 123_456n, executionBountyUsdc: 200_000n, assessment: result } : result
       }
       if (functionName in values) return values[functionName]
       throw new Error(`Unexpected read ${functionName}`)
@@ -226,14 +228,13 @@ describe('reviewed leverage validation', () => {
 
   beforeEach(() => {
     vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
-      block,
       block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
   })
 
   it.each([
     ['getLatestPrice', 'context_read'],
-    ['assessOrder', 'order_assessment'],
+    ['previewClose', 'order_assessment'],
     ['commitOrder', 'commit_simulation'],
   ])('identifies the failing %s call without changing the thrown error', async (functionName, stage) => {
     const { client, readContract, simulateContract } = reviewClient(() => ({}))
@@ -248,6 +249,7 @@ describe('reviewed leverage validation', () => {
     expect(error).toBe(failure)
     expect(getPreparationFailureProperties(new Error('Normalized review error', { cause: error }))).toEqual({
       error_code: 'undecoded_revert', stage, contract_function: functionName,
+      ...(functionName === 'previewClose' ? { assessment_point: 'current' } : {}),
     })
   })
 
@@ -259,6 +261,47 @@ describe('reviewed leverage validation', () => {
     expect(error).toBe(failure)
     expect(readContract).not.toHaveBeenCalled()
     expect(getPreparationFailureProperties(error)).toEqual({ error_code: 'network_failure', stage: 'deployment_verification' })
+  })
+
+  it('uses all six-argument close previews and keeps commitment carry outside execution bounds', async () => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const calls = readContract.mock.calls.map(([request]) => request).filter(request => request.functionName === 'previewClose')
+    expect(calls).toHaveLength(6)
+    expect(new Set(calls.map(call => call.args?.[3])).size).toBe(3)
+    for (const call of calls) {
+      expect(call).toMatchObject({ address: '0x202A2C5156563Ec4fEF7D3997771bBCa90e98117', blockNumber: block.number })
+      expect(call.args).toHaveLength(6)
+      expect(call.args?.[0]).toBe(manifest.cfdEngine)
+      expect(call.args?.[1]).toMatchObject({ account, marginDelta: 0n, orderId: 0n, isClose: true })
+      expect(call.args?.[2]).toBe(manifest.orderRouter)
+      expect(call.args?.[4]).toBe(block.timestamp)
+    }
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
+    expect(prepared.reviewSummary).toMatchObject({ commitmentCarryUsdc: 123_456n, executionBountyUsdc: 200_000n, requiredFundingUsdc: 200_000n })
+    expect(prepared.request.bounds.maxGrossAccountDebitUsdc).toBe((1n << 256n) - 1n)
+    expect(simulateContract).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a missing close lens block opens', async () => {
+    const { client } = reviewClient(() => ({ postLeverageBps: 0n }))
+    vi.mocked(verifyClosePreviewDeployment).mockRejectedValueOnce(new Error('Close lens unavailable'))
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, isClose: false, marginDelta: 2_000_000_000n })).resolves.toBeDefined()
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Close lens unavailable')
+  })
+
+  it.each(['executionBountyUsdc', 'commitmentCarryUsdc'])('rejects inconsistent %s across close samples without fallback', async field => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({}))
+    const original = readContract.getMockImplementation()!
+    let samples = 0
+    readContract.mockImplementation(async request => {
+      const result = await original(request)
+      if (request.functionName === 'previewClose' && ++samples === 2) return { ...(result as object), [field]: 1n }
+      return result
+    })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Close review changed')
+    expect(simulateContract).not.toHaveBeenCalled()
+    expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
   })
 
   it('allows a reduction above the opening slider limit without adding margin', async () => {
@@ -350,6 +393,7 @@ describe('Max opening review', () => {
           postEquityUsdc: typeof leverage === 'function' ? 999_000_000n : (notionalBps + leverage - 1n) / leverage }
         return functionName === 'previewOpen' ? preview : { maxSizeDelta: size, preview, limitingReason: 9 }
       }
+      if (functionName === 'previewClose') return { commitmentCarryUsdc: 0n, executionBountyUsdc: 200_000n, assessment: assessment(args?.[3] as bigint, 2_000_000_000n) }
       if (functionName === 'assessOrder') {
         if (assessmentFailure) throw assessmentFailure
         const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }

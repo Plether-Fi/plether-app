@@ -53,7 +53,7 @@ remain product events rather than high-volume operational logs.
 - `error_code`: an ABI-allowlisted contract error name, or a stable classification
   such as `undecoded_revert`, `funding_shortfall`, `review_validation`,
   `review_leverage`, `network_failure`, `timeout`, `review_expired`, `aborted`,
-  or `unknown`. Contract error arguments and revert bytes are never included.
+  `arithmetic_panic`, `solidity_panic`, or `unknown`. Contract error arguments and revert bytes are never included.
 - `stage`: `preflight`, `deployment_verification`, `context_read`,
   `max_size_quote`, `order_assessment`, `review_validation`, `funding_check`,
   `commit_simulation`, `preparation_timeout`, or `review_freshness`.
@@ -73,3 +73,8 @@ and `refresh` for requests started in review; a `background` request can also
 be reused by an open review. These fields are available only after deployment
 and cannot classify historical preparation failures retroactively. Unique
 PostHog identities remain anonymous and nonpersistent, not verified people.
+
+Close-preview failures use `contract_function=previewClose` and an allowlisted
+`assessment_point` (`current`, `midpoint`, `limit`). `getPreparationDebugContext`
+retains chain, lens, account, block/hash, sample price and the original RPC error
+in local error metadata only. Never serialize this debug object to analytics.

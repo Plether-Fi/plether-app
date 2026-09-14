@@ -834,7 +834,7 @@ export function usePerpsTrading() {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'commit'), { cause: error })
+      throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
   }, [address, publicClient, requireSponsoredExecution])
 
