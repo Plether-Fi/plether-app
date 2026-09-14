@@ -12,7 +12,7 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
-import { perpsMaxOpenMarginBudget } from './perpsMaxOpen'
+import { constrainPerpsMaxOpen, constrainPerpsMaxOpenPreview, perpsMaxOpenMarginBudget } from './perpsMaxOpen'
 import {
   deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
@@ -44,7 +44,7 @@ export interface PreparePerpsOrderV2Input {
   selectedMaxLeverageBps: number
   clientOrderId?: Hex
   positionProtection?: PositionProtectionParams
-  /** Refresh the engine maximum at the reviewed block before confirmation. */
+  /** Refresh the maximum within selected leverage at the reviewed block. */
   maxSize?: boolean
   signal?: AbortSignal
 }
@@ -385,7 +385,7 @@ async function reviewPerpsOrderWithContext(
 
   // Reserve funding can absorb a margin increase before it becomes position
   // equity. Bound the retries and stop if equity no longer improves.
-  // Max keeps the lens margin budget fixed and reports a leverage failure.
+  // Max keeps the margin budget fixed and adjusts size to fit selected leverage.
   for (let attempt = 0; !input.isClose && !input.maxSize && attempt < 4; attempt += 1) {
     const additionalMargin = deriveAdditionalPerpsMarginForLeverage({
       selectedMaxLeverageBps: input.selectedMaxLeverageBps,
@@ -522,10 +522,38 @@ export async function reviewPerpsOrderV2(
   if (quote.maxSizeDelta === 0n || !quote.preview.valid) {
     throw new Error(getPerpsOpenRevertMessage(quote.preview.invalidReason || quote.limitingReason))
   }
-  // The lens can find valid ranges beyond rejected smaller sizes. Do not cap
-  // its answer with the ticket's earlier quote or search planner validity here.
-  // Router, slippage, funding and selected-leverage validation still apply.
-  return review({ ...input, sizeDelta: quote.maxSizeDelta, marginDelta })
+  // Apply selected leverage before reviewing adverse execution prices: the
+  // unrestricted protocol maximum may already fail entry margin at those prices.
+  const opening = await constrainPerpsMaxOpenPreview({
+    quote,
+    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
+    oraclePrice: context.currentPrice,
+    capPrice: context.capPrice,
+    signal: input.signal,
+    preview: (sizeDelta) => client.readContract({
+      address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+      abi: PERPS_CFD_ENGINE_LENS_ABI,
+      functionName: 'previewOpen',
+      args: [input.account, input.side, sizeDelta, marginDelta, context.currentPrice, context.blockTimestamp],
+      blockNumber: context.blockNumber,
+    }),
+  })
+  const constrained = await constrainPerpsMaxOpen({
+    maxSizeDelta: opening?.sizeDelta ?? 0n,
+    selectedMaxLeverageBps: input.selectedMaxLeverageBps,
+    signal: input.signal,
+    assess: async (sizeDelta) => {
+      try {
+        const value = await review({ ...input, sizeDelta, marginDelta })
+        return { leverageBps: value.reviewSummary.worstPostLeverageBps, value }
+      } catch (error) {
+        if (!(error instanceof PerpsOrderReviewError) || error.reason !== 'leverage') throw error
+        return { leverageBps: error.reviewSummary.worstPostLeverageBps, value: undefined }
+      }
+    },
+  })
+  if (!constrained?.value) throw new Error('Available margin cannot fund an opening order at the selected leverage.')
+  return constrained.value
 }
 
 export async function simulateReviewedPerpsOrderV2(

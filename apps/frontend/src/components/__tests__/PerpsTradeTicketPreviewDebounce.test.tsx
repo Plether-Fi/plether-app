@@ -8,11 +8,12 @@ const wagmiMocks = vi.hoisted(() => ({
   accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
+  maxQuote: vi.fn(),
 }))
 
-// Max has an independent quote lifecycle; these assertions cover typed-size previews.
+// Keep the Max quote lifecycle independent from typed-size preview reads.
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
-  usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
+  usePerpsMaxOpenQuote: wagmiMocks.maxQuote,
 }))
 
 vi.mock('../../perps-aa', () => {
@@ -142,6 +143,7 @@ function latestReadOptions(): ReadContractsOptions {
 describe('Perps trade preview debounce', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    wagmiMocks.maxQuote.mockReset().mockReturnValue({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false })
     wagmiMocks.accountAddress = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     wagmiMocks.useReadContracts.mockReset()
     wagmiMocks.commitOrder.mockReset()
@@ -155,6 +157,31 @@ describe('Perps trade preview debounce', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('passes selected leverage to Max and updates a filled maximum when leverage changes', async () => {
+    wagmiMocks.maxQuote.mockImplementation(({ selectedMaxLeverageBps }: { selectedMaxLeverageBps: number }) => ({
+      quote: { maxSizeDelta: BigInt(selectedMaxLeverageBps) * 10n ** 17n, preview: { valid: true } },
+      marginDelta: 1_000_000_000n, isPending: false, isFetching: false,
+    }))
+    render(<PerpsTradeTicket enableLiveTrading initialLeverage={10} oraclePriceRaw={100_000_000n}
+      oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('10 000')
+    fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '5' } })
+    expect(wagmiMocks.maxQuote).toHaveBeenLastCalledWith(expect.objectContaining({ selectedMaxLeverageBps: 50_000 }))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('5 000')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '100' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Leverage' }), { target: { value: '20' } })
+    expect(wagmiMocks.maxQuote).toHaveBeenLastCalledWith(expect.objectContaining({ selectedMaxLeverageBps: 200_000 }))
+    expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('100')
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+    fireEvent.change(screen.getByRole('slider', { name: 'Leverage slider' }), { target: { value: '10' } })
+    const quantity = screen.getByRole('textbox', { name: 'Order quantity' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(quantity).toHaveValue('10 000')
   })
 
   it('prepares while the ticket is idle, reuses the result on opening, and never submits in the background', async () => {

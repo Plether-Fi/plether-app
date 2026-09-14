@@ -297,7 +297,7 @@ describe('Max opening review', () => {
   function maxClient({ size = 7_900n * quantum, available = 1_000_000_000n, failure,
     leverage = 330_000n, quoteValid = true, assessmentFailure,
   }: {
-    size?: bigint; available?: bigint; failure?: unknown; leverage?: bigint;
+    size?: bigint; available?: bigint; failure?: unknown; leverage?: bigint | ((size: bigint, price: bigint) => bigint);
     quoteValid?: boolean; assessmentFailure?: unknown;
   } = {}) {
     const values: Record<string, unknown> = {
@@ -311,15 +311,21 @@ describe('Max opening review', () => {
       positionProtectionTriggerBountyUsdc: 200_000n, getPosition: { exists: false },
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
-      if (functionName === 'quoteMaxOpen') {
+      if (functionName === 'quoteMaxOpen' || functionName === 'previewOpen') {
         if (failure) throw failure
-        return { maxSizeDelta: size, preview: { valid: quoteValid, invalidReason: quoteValid ? 0 : 9 }, limitingReason: 9 }
+        const previewSize = functionName === 'quoteMaxOpen' ? size : args?.[2] as bigint
+        const notionalBps = previewSize * 100_000_000n / 10n ** 20n * 10_000n
+        const preview = { valid: quoteValid, invalidReason: quoteValid ? 0 : 9, postSize: previewSize,
+          postEquityUsdc: typeof leverage === 'function' ? 999_000_000n : (notionalBps + leverage - 1n) / leverage }
+        return functionName === 'previewOpen' ? preview : { maxSizeDelta: size, preview, limitingReason: 9 }
       }
       if (functionName === 'assessOrder') {
         if (assessmentFailure) throw assessmentFailure
         const { sizeDelta, marginDelta } = args?.[1] as { sizeDelta: bigint; marginDelta: bigint }
         return { ...assessment(args?.[3] as bigint, marginDelta),
-          postPositionSize: sizeDelta, postLeverageBps: leverage, postPositionEquityUsdc: 999_000_000n,
+          postPositionSize: sizeDelta,
+          postLeverageBps: typeof leverage === 'function' ? leverage(sizeDelta, args?.[3] as bigint) : leverage,
+          postPositionEquityUsdc: 999_000_000n,
         } satisfies PerpsExecutionAssessment
       }
       if (functionName in values) return values[functionName]
@@ -388,11 +394,30 @@ describe('Max opening review', () => {
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
-  it('retains the selected leverage limit and fixed quote budget without resizing', async () => {
-    const { client, readContract, simulateContract } = maxClient({ leverage: 330_001n })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toMatchObject({ reason: 'leverage' })
+  it('reports no capacity when no smaller size fits the selected leverage', async () => {
+    const { client, readContract, simulateContract } = maxClient({ leverage: 400_000n })
+    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Available margin cannot fund an opening order at the selected leverage.')
     expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
     expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('resizes Max to fit selected leverage at the worst reviewed price with its fixed budget', async () => {
+    const { client, readContract, simulateContract } = maxClient({
+      leverage: (size, price) => (size * price / 10n ** 20n) * 10_000n / 999_000_000n,
+    })
+    const read = readContract.getMockImplementation()!
+    readContract.mockImplementation(async request => {
+      if (request.functionName === 'assessOrder' && (request.args?.[1] as { sizeDelta: bigint }).sizeDelta > 100n * quantum) {
+        throw new Error('Unrestricted maximum fails entry margin at adverse prices')
+      }
+      return read(request)
+    })
+    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
+    expect(prepared.request.sizeDelta).toBe(97n * quantum)
+    expect(prepared.request.marginDelta).toBe(999_800_000n)
+    expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
+    for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
+    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))
   })
 
   it('retains router rejection without retrying another size', async () => {
