@@ -1,4 +1,8 @@
 import type { Address } from 'viem'
+import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
+
+/** Additive review dependency; never replaces the execution evaluator. */
+export const PERPS_CLOSE_PREVIEW_ADDRESS = closePreview.contracts.cfdClosePreview.address as Address
 
 export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = 307_397_196

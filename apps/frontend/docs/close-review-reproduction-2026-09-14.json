@@ -1,0 +1,157 @@
+{
+  "release": "v1.2.3",
+  "blockNumber": "308891788",
+  "screenshot": {
+    "size": "15927400000000000000000000",
+    "inferredRawPrice": "98895064",
+    "targetPrice": "98796168",
+    "displayedPrice": "101104936",
+    "exposureUsdc": "16103387576464",
+    "displayedExecutionLimit": "101203832"
+  },
+  "assumptions": "Synthetic full short close; entry price equals current price; no pending orders, carry or claims; one-sided pool with 1 billion USDC; varied remaining settlement/margin. Not the screenshot account.",
+  "riskParams": {
+    "vpiFactor": "10000000000000000",
+    "maxSkewRatio": "400000000000000000",
+    "maintMarginBps": "10",
+    "initMarginBps": "20",
+    "fadMarginBps": "300",
+    "baseCarryBps": "500",
+    "minBountyUsdc": "1000000",
+    "bountyBps": "10",
+    "keeperShareBps": "5000",
+    "protocolShareBps": "0"
+  },
+  "cases": [
+    {
+      "marginUsdc": "3000000000000",
+      "assessedRawPrice": "98895064",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6300564969",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "0",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6300564969",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "assessment": {
+        "postSettlementBalanceUsdc": "2999999800000",
+        "postPositionSize": "0"
+      }
+    },
+    {
+      "marginUsdc": "3000000000000",
+      "assessedRawPrice": "98845616",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6297414657",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "7875780752",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6297414657",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "assessment": {
+        "postSettlementBalanceUsdc": "2992124019248",
+        "postPositionSize": "0"
+      }
+    },
+    {
+      "marginUsdc": "3000000000000",
+      "assessedRawPrice": "98796168",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6294264344",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "15751561504",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6294264344",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "assessment": {
+        "postSettlementBalanceUsdc": "2984248238496",
+        "postPositionSize": "0"
+      }
+    },
+    {
+      "marginUsdc": "10000000000",
+      "assessedRawPrice": "98895064",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6300564969",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "0",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6300564969",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "assessment": {
+        "postSettlementBalanceUsdc": "9999800000",
+        "postPositionSize": "0"
+      }
+    },
+    {
+      "marginUsdc": "10000000000",
+      "assessedRawPrice": "98845616",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6297414657",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "7875780752",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6297414657",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "assessment": {
+        "postSettlementBalanceUsdc": "2124019248",
+        "postPositionSize": "0"
+      }
+    },
+    {
+      "marginUsdc": "10000000000",
+      "assessedRawPrice": "98796168",
+      "executionBountyUsdc": "200000",
+      "planner": {
+        "valid": true,
+        "revertCode": 0,
+        "executionFeeUsdc": "6294264344",
+        "realizedCarryUsdc": "0",
+        "pricePnlPledgeConsumedUsdc": "10000000000",
+        "actionChargeCollectedUsdc": "0",
+        "actionRebatePaidUsdc": "0",
+        "actionChargeWaivedUsdc": "6294264344",
+        "deletePosition": true
+      },
+      "stage": "evaluateClose",
+      "error": {
+        "name": "Panic",
+        "args": [
+          "17"
+        ],
+        "raw": "0x4e487b710000000000000000000000000000000000000000000000000000000000000011",
+        "message": "The contract function \"evaluateClose\" reverted with the following reason:\nArithmetic operation resulted in underflow or overflow."
+      }
+    }
+  ]
+}

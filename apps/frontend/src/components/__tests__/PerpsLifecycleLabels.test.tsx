@@ -1507,12 +1507,14 @@ describe('perps lifecycle labels', () => {
       } }]
       const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
       const reviewSummary = {
+        commitmentCarryUsdc: 1_250_000n,
         requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
         requiredFundingUsdc: 200_000n, availableFundingUsdc: 100_000_000n,
         worstPostLeverageBps: fullClose ? 0n : 50_300n,
         reviewedBlockNumber: 123n, reviewedBlockHash: original.reviewedBlockHash,
         reviewedPrice: 100_000_000n,
         currentAssessment: {
+          executionFeeUsdc: 0n, frozenSpreadUsdc: 0n, postSettlementBalanceUsdc: 12_345_000n, postTraderClaimUsdc: 2_000_000n,
           postPositionSize: fullClose ? 0n : 100n * 10n ** 18n,
           postLeverageBps: fullClose ? 0n : 49_700n,
         } as PerpsExecutionAssessment,
@@ -1541,6 +1543,9 @@ describe('perps lifecycle labels', () => {
       })
       expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
       expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginUsdc: 0n }))
+      expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDC')
+      expect(within(dialog).getByText('Settlement after execution').closest('div')).toHaveTextContent('12.3USDC')
+      expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDC')
     }
   )
 

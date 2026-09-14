@@ -10,6 +10,7 @@ export { MORPHO_ABI } from './Morpho'
 export { MORPHO_ORACLE_ABI } from './MorphoOracle'
 export { MORPHO_IRM_ABI } from './MorphoIrm'
 export {
+  PERPS_CFD_CLOSE_PREVIEW_ABI,
   PERPS_CFD_ENGINE_ABI,
   PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
   PERPS_CFD_ENGINE_LENS_ABI,

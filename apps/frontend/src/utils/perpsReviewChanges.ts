@@ -23,6 +23,7 @@ export function perpsReviewChanges(before?: PreparedPerpsOrderV2, after?: Prepar
   add('VPI', before.reviewSummary?.currentAssessment.vpiUsdc, after.reviewSummary?.currentAssessment.vpiUsdc, usdc)
   add('Frozen spread', before.reviewSummary?.currentAssessment.frozenSpreadUsdc, after.reviewSummary?.currentAssessment.frozenSpreadUsdc, usdc)
   add('Carry', before.reviewSummary?.currentAssessment.carryUsdc, after.reviewSummary?.currentAssessment.carryUsdc, usdc)
+  add('Commitment carry', before.reviewSummary?.commitmentCarryUsdc, after.reviewSummary?.commitmentCarryUsdc, usdc)
   add('Explicit fees', before.reviewSummary?.currentAssessment.explicitFeesUsdc, after.reviewSummary?.currentAssessment.explicitFeesUsdc, usdc)
   add('Highest reviewed leverage', before.reviewSummary?.worstPostLeverageBps, after.reviewSummary?.worstPostLeverageBps, leverage)
   add('Execution conditions', before.protection.executionMode, after.protection.executionMode,

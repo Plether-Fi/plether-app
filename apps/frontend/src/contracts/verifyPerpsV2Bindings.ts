@@ -1,5 +1,6 @@
-import { isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
+import { isAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
 import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
+import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
 import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -20,6 +21,33 @@ function requireSameAddress(
       `${label} binding mismatch: expected ${expected}, received ${actual}`
     )
   }
+}
+
+/** Call only for prospective closes, after the existing graph verification. */
+export async function verifyClosePreviewDeployment(
+  client: PublicClient,
+  manifest: PerpsAaDeploymentManifest,
+  blockNumber: bigint,
+): Promise<Address> {
+  const configuration: { contracts?: { cfdClosePreview?: { address: string; runtimeCodeHash: string } } } = closePreview
+  const pin = configuration.contracts?.cfdClosePreview
+  if (!pin || !isAddress(pin.address) || !/^0x[0-9a-f]{64}$/i.test(pin.runtimeCodeHash)) {
+    throw new Error('Close review is unavailable: preview deployment configuration is invalid.')
+  }
+  if (manifest.chainId !== closePreview.network.chainId || await client.getChainId() !== closePreview.network.chainId) {
+    throw new Error('Close review requires Arbitrum Sepolia.')
+  }
+  requireSameAddress('Close preview Engine', manifest.cfdEngine, closePreview.existingProtocol.engine as Address)
+  requireSameAddress('Close preview Router', manifest.orderRouter, closePreview.existingProtocol.router as Address)
+  requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, closePreview.existingProtocol.policyEvaluator as Address)
+  if (isAddressEqual(pin.address, manifest.policyEvaluator)) {
+    throw new Error('Close review is unavailable: preview aliases the execution evaluator.')
+  }
+  const code = await client.getCode({ address: pin.address, blockNumber })
+  if (!code || code === '0x' || keccak256(code) !== pin.runtimeCodeHash.toLowerCase()) {
+    throw new Error('Close review is unavailable: preview bytecode does not match the verified deployment.')
+  }
+  return pin.address
 }
 
 export async function verifyProtectionDeployment(client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint): Promise<void> {

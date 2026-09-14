@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
 import { captureAnalyticsEvent } from '../analytics/client'
+import { getPreparationFailureProperties, preparationFailure } from '../utils/perpsPreparationDiagnostics'
 
 export const PREPARATION_IDLE_MS = 500
 export const PREPARATION_REUSE_MS = 10_000
@@ -164,12 +165,13 @@ class PreparationController<T> {
       clearTimeout(jobTimeout)
       this.jobs.delete(jobTimeout)
       if (current() && result && Number(result.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000) {
-        error = new Error('This review has expired or is about to expire. Retry review for fresh order terms.')
+        error = preparationFailure(new Error('This review has expired or is about to expire. Retry review for fresh order terms.'), 'review_freshness')
         result = undefined
       }
       if (!this.disposed) captureAnalyticsEvent('perps order preparation finished', {
         surface: 'perps', duration_ms: Date.now() - startedAt, reason_code: source,
         error_category: !current() ? 'cancelled' : error ? 'preparation_failed' : 'none',
+        ...(current() && error ? getPreparationFailureProperties(error) : {}),
       })
       if (current()) {
         this.clearTimers()
@@ -183,7 +185,7 @@ class PreparationController<T> {
       if (!this.disposed && this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()
     }
     this.slowTimer = setTimeout(() => { if (current()) this.publish({ slow: true }) }, 3000)
-    const jobTimeout = setTimeout(() => { abortController.abort(); finish(undefined, new Error('Order checks took too long. Retry review.')) }, PREPARATION_TIMEOUT_MS)
+    const jobTimeout = setTimeout(() => { abortController.abort(); finish(undefined, preparationFailure(new Error('Order checks took too long. Retry review.'), 'preparation_timeout')) }, PREPARATION_TIMEOUT_MS)
     this.jobs.add(jobTimeout)
     try {
       void options.prepare(candidate.input, abortController.signal).then(
