@@ -1,4 +1,5 @@
 import { createContext, use } from 'react'
+import type { DeploymentConfirmationMonitor } from './deploymentConfirmation'
 import type {
   PerpsActionKind,
   SmartAccountCall,
@@ -105,6 +106,7 @@ export interface RecoveryOperationContext {
 }
 
 export interface PerpsAaSmartAccountRuntime {
+  deploymentConfirmation?: DeploymentConfirmationMonitor
   chainId: number
   ownerAddress: Address
   smartAccount: ManagedSmartAccount

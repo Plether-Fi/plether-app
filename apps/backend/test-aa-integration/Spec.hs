@@ -1,6 +1,7 @@
 module Main (main) where
 
-import Control.Concurrent.Async (concurrently)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (concurrently, withAsync, wait)
 import Control.Exception (bracket, finally)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
@@ -29,6 +30,9 @@ import Plether.Database.AaSponsorship
   , SponsorshipAuthorization (..)
   , SponsorshipDraft (..)
   , advanceAaReconcilerCursor
+  , publishAaReconcilerProgress
+  , aaReconcilerIsFresh
+  , getAaReconcilerCursor
   , cancelStaleUnsignedReservations
   , consumeAaRateLimit
   , controlBootstrapReason
@@ -220,6 +224,72 @@ aaIntegrationSpec databaseUrl =
                      , (hashOf '5', "release", "1000")
                      , (hashOf '5', "reserve", "1000")
                      ]
+
+    it "atomically exposes completed cursor and health to concurrent readers" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        void $ execute_ conn
+          "CREATE FUNCTION hold_heartbeat() RETURNS trigger LANGUAGE plpgsql AS $$ \
+          \BEGIN PERFORM pg_advisory_xact_lock(887766); RETURN NEW; END $$"
+        void $ execute_ conn
+          "CREATE TRIGGER hold_heartbeat BEFORE UPDATE ON aa_reconciler_health \
+          \FOR EACH ROW EXECUTE FUNCTION hold_heartbeat()"
+        let previous = AaReconcilerCursor 100 deploymentBlockHash
+            next = AaReconcilerCursor 101 (hashOf '2')
+        withPeerConnection databaseUrl $ \peer -> do
+          void (query_ peer "SELECT 1::INT FROM pg_advisory_lock(887766)" :: IO [Only Int])
+          withAsync (publishAaReconcilerProgress conn chainId paymasterAddress previous next now True) $ \publication -> do
+            (do
+              waitForPublicationLock peer 200
+              -- The writer has advanced its cursor and is paused at health.
+              -- A separate connection must still see the old consistent pair.
+              getAaReconcilerCursor peer chainId paymasterAddress `shouldReturn` Just previous
+              aaReconcilerIsFresh peer testConfig `shouldReturn` True
+              ) `finally` void (query_ peer "SELECT pg_advisory_unlock(887766)" :: IO [Only Bool])
+            wait publication `shouldReturn` True
+          getAaReconcilerCursor peer chainId paymasterAddress `shouldReturn` Just next
+          aaReconcilerIsFresh peer testConfig `shouldReturn` True
+          authorization <- reserveSponsorship peer testConfig (draft 'd' 'e' 'f' 10 1_000 now) >>= expectAuthorization
+          storeSponsorshipSignature peer testConfig (saDigest authorization) (signatureOf '1') (hashOf '3')
+            `shouldReturn` True
+          isSponsorshipDeliveryAllowed peer testConfig (saDigest authorization) `shouldReturn` True
+
+    it "keeps partial progress stale and rejects a lost cursor CAS without refreshing health" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let previous = AaReconcilerCursor 100 deploymentBlockHash
+            next = AaReconcilerCursor 101 (hashOf '2')
+        publishAaReconcilerProgress conn chainId paymasterAddress previous next now False `shouldReturn` True
+        aaReconcilerIsFresh conn testConfig `shouldReturn` False
+        reserveSponsorship conn testConfig (draft 'd' 'e' 'f' 10 1_000 now) `shouldReturn` Left "RECONCILER_STALE"
+        publishAaReconcilerProgress conn chainId paymasterAddress previous next now True `shouldReturn` False
+        aaReconcilerIsFresh conn testConfig `shouldReturn` False
+        publishAaReconcilerProgress conn chainId paymasterAddress next next now True `shouldReturn` True
+        aaReconcilerIsFresh conn testConfig `shouldReturn` True
+        void $ execute_ conn "UPDATE aa_reconciler_health SET last_success_at=clock_timestamp()-INTERVAL '121 seconds'"
+        aaReconcilerIsFresh conn testConfig `shouldReturn` False
+
+    it "rolls back cursor and liability cleanup if completed publication fails" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- submittedAuthorization conn now
+        void $ execute_ conn
+          "CREATE FUNCTION fail_pruning() RETURNS trigger LANGUAGE plpgsql AS $$ \
+          \BEGIN RAISE EXCEPTION 'injected cleanup failure'; END $$"
+        void $ execute_ conn
+          "CREATE TRIGGER fail_pruning BEFORE DELETE ON aa_rate_windows \
+          \FOR EACH STATEMENT EXECUTE FUNCTION fail_pruning()"
+        let previous = AaReconcilerCursor 100 deploymentBlockHash
+            next = AaReconcilerCursor 101 (hashOf '2')
+        publishAaReconcilerProgress conn chainId paymasterAddress previous next (now + 10000) True
+          `shouldThrow` anyException
+        getAaReconcilerCursor conn chainId paymasterAddress `shouldReturn` Just previous
+        aaReconcilerIsFresh conn testConfig `shouldReturn` True
+        restored <- getSponsorshipByDigest conn (saDigest authorization)
+        fmap saState restored `shouldBe` Just "submitted"
 
     it "fails closed when reconciliation is stale or issuance is paused" $
       withFixture databaseUrl $ \conn -> do
@@ -428,6 +498,16 @@ aaIntegrationSpec databaseUrl =
         claimOrderDiagnostics conn chainId router `shouldReturn` []
         void $ execute conn "UPDATE aa_attempt_diagnostics SET terminal_at=NULL,client_key=?" (Only $ clientKeyOf '6')
         claimOrderDiagnostics conn chainId router `shouldReturn` []
+
+waitForPublicationLock :: Connection -> Int -> IO ()
+waitForPublicationLock conn attempts = do
+  rows <- query_ conn
+    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=887766 AND NOT granted)" :: IO [Only Bool]
+  if rows == [Only True]
+    then pure ()
+    else if attempts <= 0
+      then expectationFailure "publication did not reach the heartbeat barrier"
+      else threadDelay 10000 >> waitForPublicationLock conn (attempts - 1)
 
 withFixture :: Text -> (Connection -> IO a) -> IO a
 withFixture databaseUrl action =

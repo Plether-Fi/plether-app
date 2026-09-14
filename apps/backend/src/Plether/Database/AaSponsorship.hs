@@ -26,6 +26,7 @@ module Plether.Database.AaSponsorship
   , initializeAaReconcilerCursor
   , aaSponsorshipStateIsEmpty
   , advanceAaReconcilerCursor
+  , publishAaReconcilerProgress
   , recordAaReconcilerHeartbeat
   , expireSponsorshipsThrough
   , cancelStaleUnsignedReservations
@@ -1377,7 +1378,12 @@ advanceAaReconcilerCursor
   -> AaReconcilerCursor
   -> AaReconcilerCursor
   -> IO Bool
-advanceAaReconcilerCursor conn chainId paymaster previous next = withTransaction conn $ do
+advanceAaReconcilerCursor conn chainId paymaster previous next =
+  withTransaction conn $ advanceAaReconcilerCursorInTransaction conn chainId paymaster previous next
+
+advanceAaReconcilerCursorInTransaction
+  :: Connection -> Integer -> Text -> AaReconcilerCursor -> AaReconcilerCursor -> IO Bool
+advanceAaReconcilerCursorInTransaction conn chainId paymaster previous next = do
   affected <- execute conn
     "UPDATE aa_reconciler_cursor SET safe_block=?,safe_block_hash=?,updated_at=clock_timestamp() \
     \WHERE chain_id=? AND paymaster=? AND safe_block=? AND safe_block_hash=?"
@@ -1389,6 +1395,26 @@ advanceAaReconcilerCursor conn chainId paymaster previous next = withTransaction
     , T.toLower $ arcSafeBlockHash previous
     )
   pure $ affected == (1 :: Int64)
+
+-- | The caller must attest the complete canonical range before publishing.
+-- Only a target equal to the reverified safe tip may refresh health. Readers
+-- see either the old cursor/health pair or the completed new pair, never an
+-- intermediate commit. Cleanup failure rolls back cursor and health together.
+publishAaReconcilerProgress
+  :: Connection -> Integer -> Text -> AaReconcilerCursor -> AaReconcilerCursor
+  -> Integer -> Bool -> IO Bool
+publishAaReconcilerProgress conn chainId paymaster previous next safeTimestamp caughtUp =
+  withTransaction conn $ do
+    acquireAaBudgetLock conn
+    advanced <- advanceAaReconcilerCursorInTransaction conn chainId paymaster previous next
+    when advanced $ do
+      void $ expireSponsorshipsThroughInTransaction conn safeTimestamp
+      void $ cancelStaleUnsignedReservationsInTransaction conn
+      void $ pruneAaRateWindows conn
+      void $ pruneExpiredRecoveryOperations conn
+      when caughtUp $
+        recordAaReconcilerHeartbeat conn chainId paymaster (arcSafeBlock next) (arcSafeBlockHash next)
+    pure advanced
 
 recordAaReconcilerHeartbeat
   :: Connection
@@ -1416,6 +1442,10 @@ recordAaReconcilerHeartbeat conn chainId paymaster safeBlock safeBlockHash = do
 expireSponsorshipsThrough :: Connection -> Integer -> IO Int64
 expireSponsorshipsThrough conn safeTimestamp = withTransaction conn $ do
   acquireAaBudgetLock conn
+  expireSponsorshipsThroughInTransaction conn safeTimestamp
+
+expireSponsorshipsThroughInTransaction :: Connection -> Integer -> IO Int64
+expireSponsorshipsThroughInTransaction conn safeTimestamp = do
   expired <- query conn
     "UPDATE aa_sponsorship_authorizations SET state='expired',settled_at=clock_timestamp(),updated_at=clock_timestamp() \
     \WHERE state IN ('signed','submitted') AND valid_until < ? \
@@ -1433,6 +1463,10 @@ expireSponsorshipsThrough conn safeTimestamp = withTransaction conn $ do
 cancelStaleUnsignedReservations :: Connection -> IO Int64
 cancelStaleUnsignedReservations conn = withTransaction conn $ do
   acquireAaBudgetLock conn
+  cancelStaleUnsignedReservationsInTransaction conn
+
+cancelStaleUnsignedReservationsInTransaction :: Connection -> IO Int64
+cancelStaleUnsignedReservationsInTransaction conn = do
   cancelled <- query_ conn
     "UPDATE aa_sponsorship_authorizations SET state='cancelled',settled_at=clock_timestamp(),updated_at=clock_timestamp() \
     \WHERE state='reserved' AND signature IS NULL AND created_at < clock_timestamp()-INTERVAL '10 minutes' \
