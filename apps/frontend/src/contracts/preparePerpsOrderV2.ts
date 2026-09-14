@@ -19,6 +19,7 @@ import {
   generatePerpsClientOrderId,
   permissivePerpsExecutionBounds,
   relaxedWebPerpsExecutionBounds,
+  reviewedExecutionBountyMaximum,
   type PerpsExecutionAssessment,
   type PerpsOrderReviewSummary,
   type PreparedPerpsOrderV2,
@@ -423,7 +424,9 @@ async function reviewPerpsOrderWithContext(
   const reviewSummary: PerpsOrderReviewSummary = {
     requiredMarginUsdc: reviewedMarginDelta,
     executionBountyUsdc,
-    requiredFundingUsdc: reviewedMarginDelta + executionBountyUsdc,
+    // Reserve for the reviewed maximum, while displaying the current quote
+    // separately. Never apply tolerance again to persisted/signed requests.
+    requiredFundingUsdc: reviewedMarginDelta + bounds.maxExecutionBountyUsdc,
     availableFundingUsdc: context.freeBuyingPowerUsdc,
     worstPostLeverageBps: maximum(
       finalAssessments.map((assessment) => assessment.postLeverageBps)
@@ -504,7 +507,7 @@ export async function reviewPerpsOrderV2(
 
   const marginDelta = perpsMaxOpenMarginBudget(
     context.freeBuyingPowerUsdc,
-    context.maximumOpenBounty,
+    reviewedExecutionBountyMaximum(context.maximumOpenBounty),
     protection ? protection.triggerBountyUsdc + protection.executionBountyUsdc : 0n
   )
   if (marginDelta <= 0n) {

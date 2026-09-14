@@ -40,6 +40,12 @@ describe('trading readiness', () => {
   })
 })
 describe('deadline safety', () => {
+  it('rounds fractional seconds conservatively and uses the earlier deadline', () => {
+    expect(() => requireDeadlineHeadroom(120n, '200', 'signing', 100_001)).toThrow()
+    expect(() => requireDeadlineHeadroom(200n, '120', 'signing', 100_001)).toThrow()
+    expect(() => requireDeadlineHeadroom(110n, '200', 'submission', 100_001)).toThrow()
+    expect(() => requireDeadlineHeadroom(200n, '110', 'submission', 100_001)).toThrow()
+  })
   it('requires 20 seconds before signing and ten before submission', () => {
     expect(() => requireDeadlineHeadroom(150n, '120', 'signing', 100_000)).not.toThrow()
     expect(() => requireDeadlineHeadroom(150n, '119', 'signing', 100_000)).toThrow()

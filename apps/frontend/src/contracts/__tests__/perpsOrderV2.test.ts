@@ -17,6 +17,7 @@ import {
   PERPS_EXECUTION_MODE_MASK,
   persistPerpsOrderRequestV2,
   relaxedWebPerpsExecutionBounds,
+  reviewedExecutionBountyMaximum,
   restorePerpsOrderRequestV2,
   type PerpsExecutionAssessment,
   type PerpsOrderRequestV2,
@@ -101,6 +102,33 @@ describe('bounded V2 order identity', () => {
 })
 
 describe('bounded V2 execution protections', () => {
+  it.each([[119_061n, 119_064n, 120_252n], [118_746n, 118_750n, 119_934n]])(
+    'covers recorded bounty drift from %s without unbounded permission', (quote, actual, cap) => {
+      expect(reviewedExecutionBountyMaximum(quote)).toBe(cap)
+      expect(actual).toBeLessThanOrEqual(cap)
+      expect(cap + 1n).toBeGreaterThan(reviewedExecutionBountyMaximum(quote))
+    })
+
+  it('rounds upward, applies the ten-micro minimum and rejects invalid/overflowing quotes', () => {
+    expect(reviewedExecutionBountyMaximum(0n)).toBe(10n)
+    expect(reviewedExecutionBountyMaximum(999n)).toBe(1009n)
+    expect(reviewedExecutionBountyMaximum(1001n)).toBe(1012n)
+    expect(() => reviewedExecutionBountyMaximum(-1n)).toThrow()
+    expect(() => reviewedExecutionBountyMaximum((1n << 256n) - 1n)).toThrow()
+  })
+
+  it('does not increase the maximum again when restoring a reviewed request', () => {
+    const request: PerpsOrderRequestV2 = {
+      clientOrderId: `0x${'11'.repeat(32)}`, side: PERPS_SIDE.SHORT,
+      sizeDelta: 100n, marginDelta: 10n, targetPrice: 1234n, isClose: false,
+      bounds: relaxedWebPerpsExecutionBounds({ validUntil: 2_000_000_000n,
+        expectedConfigHash: CONFIG_HASH, executionBountyUsdc: 119_061n,
+        executionMode: PERPS_EXECUTION_MODE.LIVE }),
+    }
+    const restored = restorePerpsOrderRequestV2(persistPerpsOrderRequestV2(ACCOUNT, request))
+    expect(restored).toEqual(request)
+    expect(restored.bounds.maxExecutionBountyUsdc).toBe(120_252n)
+  })
   it('keeps web accounting bounds wide while pinning lifecycle protections', () => {
     const bounds = relaxedWebPerpsExecutionBounds({
       validUntil: 2_000_000_000n,
@@ -114,7 +142,7 @@ describe('bounded V2 execution protections', () => {
       validUntil: 2_000_000_000n,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: CONFIG_HASH,
-      maxExecutionBountyUsdc: 200_000n,
+      maxExecutionBountyUsdc: 202_000n,
       maxExecutionNotionalUsdc: uint256Max,
       maxGrossAccountDebitUsdc: uint256Max,
       maxActionChargeUsdc: uint256Max,

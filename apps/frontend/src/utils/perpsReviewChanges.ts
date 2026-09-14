@@ -18,6 +18,7 @@ export function perpsReviewChanges(before?: PreparedPerpsOrderV2, after?: Prepar
   add('Required margin', before.request.marginDelta, after.request.marginDelta, usdc)
   add('Required funding', before.reviewSummary?.requiredFundingUsdc, after.reviewSummary?.requiredFundingUsdc, usdc)
   add('Execution reward', before.executionBountyUsdc, after.executionBountyUsdc, usdc)
+  add('Maximum execution reward', before.request.bounds.maxExecutionBountyUsdc, after.request.bounds.maxExecutionBountyUsdc, usdc)
   add('Execution fee', before.reviewSummary?.currentAssessment.executionFeeUsdc, after.reviewSummary?.currentAssessment.executionFeeUsdc, usdc)
   add('VPI', before.reviewSummary?.currentAssessment.vpiUsdc, after.reviewSummary?.currentAssessment.vpiUsdc, usdc)
   add('Frozen spread', before.reviewSummary?.currentAssessment.frozenSpreadUsdc, after.reviewSummary?.currentAssessment.frozenSpreadUsdc, usdc)

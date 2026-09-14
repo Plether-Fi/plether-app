@@ -26,6 +26,7 @@ aa_reconciler_paymaster_unstaked aa_reconciler_unknown_operation
 aa_reconciler_cost_exceeds_reservation aa_reconciler_cursor_discontinuity
 aa_reconciler_safe_block_advanced aa_reconciler_timestamp_invalid
 keeper_transaction_failed keeper_transaction_mined keeper_transaction_deferred
+keeper_order_deferral_summary keeper_deferral_cache_evicted
 keeper_order_failed keeper_order_finalized_failed keeper_readiness_unavailable keeper_funding_low
 keeper_queue_head_refresh_failed keeper_queue_context_fetch_failed keeper_batch_refresh_failed
 keeper_cached_payload_decode_failed keeper_cached_payload_invalid keeper_order_logs_fetch_failed
@@ -55,6 +56,9 @@ local values = {
 READY FUNDING_LOW FUNDING_UNVERIFIED KEEPER_INSUFFICIENT_FUNDS KEEPER_RPC_TIMEOUT
 WORKER_INSUFFICIENT_FUNDS
 KEEPER_EXECUTION_FAILED READINESS_UNAVAILABLE WORKER_HEARTBEAT_STALE ORACLE_UNAVAILABLE
+KEEPER_CLOSE_ONLY KEEPER_SAME_BLOCK KEEPER_MEV_BOUNDARY KEEPER_HISTORICAL_PRICE_UNAVAILABLE
+KEEPER_INSUFFICIENT_GAS KEEPER_MARK_PRICE_OUT_OF_ORDER KEEPER_ENGINE_FAILURE
+KEEPER_RECEIPT_FAILURE KEEPER_CLEANUP_LIMIT KEEPER_PENDING_UNKNOWN
 OPEN_EXECUTION_UNAVAILABLE EXIT_MODE_REQUIRES_VALIDATION BUNDLER_UNAVAILABLE
 PROTECTION_TRIGGER_UNAVAILABLE
 SPONSORSHIP_DISABLED PAYMASTER_PAUSED RECONCILIATION_STALE RECONCILER_STALE
@@ -72,6 +76,7 @@ local numbers = {
   duration_ms=true, retry_count=true, occurrence_count=true, suppressed_count=true,
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
+  remaining_deadline_seconds=true,
 }
 local resources = {
   ["service.name"]=true, ["service.version"]=true,

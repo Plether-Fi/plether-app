@@ -59,6 +59,7 @@ import Database.PostgreSQL.Simple (Connection, execute)
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
+import Plether.Keeper.Deferrals (recordDeferral, finishDeferrals, pendingReasonCode)
 import Plether.Keeper.Funding
   ( readFundingEvidence, keeperFeeCaps, keeperReserveCost, classifyKeeperReserve )
 import System.Timeout (timeout)
@@ -219,6 +220,7 @@ data V2PreflightResult
 data V2PreflightAction
   = V2PreflightSubmit
   | V2PreflightIncreaseGas
+  | V2PreflightProbeEngineGas
   | V2PreflightDefer Text
   | V2PreflightReject Text
   deriving stock (Show, Eq)
@@ -2145,7 +2147,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
             , field "chain_head_block" latestBlock
             ]
       | isOrderPastValidUntil chainNow fpoValidUntil ->
-          submitIntent cfg conn client dryRun observeCost $ CleanupExpired freshHead
+          submitIntent cfg conn client dryRun observeCost [(pkorOrderId freshHead, fpoValidUntil)] $ CleanupExpired freshHead
       | chainNow < pkorCommitTime freshHead + 1 ->
           logInfoEvery
             300
@@ -2171,7 +2173,7 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
             , field "error" err
             ]
         Right (Just (payload, publishTimes, updateData)) ->
-          submitIntent cfg conn client dryRun observeCost $
+          submitIntent cfg conn client dryRun observeCost [(pkorOrderId freshHead, validUntil)] $
             ExecuteReady [freshHead] payload publishTimes updateData
         Right Nothing ->
           executeHistoricalReadyHead remainingPending freshHead freshHeadIsClose validUntil
@@ -2184,20 +2186,12 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
           (pkorCommitTime freshHead + settlementWindow)
       case mPayload of
         Nothing ->
-          logInfoEvery
-            300
-            "keeper_waiting_for_cached_payload"
-            "Queue head is waiting for its first post-commit Pyth payload"
-            [field "order_id" $ pkorOrderId freshHead]
+          unless dryRun $ recordDeferral (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead)
+            "KEEPER_HISTORICAL_PRICE_UNAVAILABLE" 0 validUntil Nothing
         Just payload
           | not (isHistoricalRevealPayload payload) ->
-              logInfoEvery
-                300
-                "keeper_waiting_for_historical_payload"
-                "Queue head is waiting for an exact historical Pyth payload"
-                [ field "order_id" $ pkorOrderId freshHead
-                , field "cached_payload_source" $ puprSource payload
-                ]
+              unless dryRun $ recordDeferral (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead)
+                "KEEPER_HISTORICAL_PRICE_UNAVAILABLE" 0 validUntil Nothing
         Just payload ->
           case decodePayload payload of
             Left err -> do
@@ -2248,7 +2242,8 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
                         "Cached Pyth payload is not the first post-commit payload for the queue head"
                         [field "order_id" $ pkorOrderId freshHead]
                     orders ->
-                      submitIntent cfg conn client dryRun observeCost $
+                      submitIntent cfg conn client dryRun observeCost
+                        [(pkorOrderId (fpoOrder o), fpoValidUntil o) | o <- refreshed] $
                         ExecuteReady orders payload publishTimes updateData
 
     tryFrozenClosePayload freshHead freshHeadIsClose
@@ -2315,6 +2310,8 @@ reconcileTerminalOrder cfg conn order outcome = do
         (Perps.otoTerminalBlock outcome)
         (Perps.otoTerminalReason outcome)
     _ -> pure ()
+  when (Perps.otoLifecycleStatus outcome `elem` [2, 3]) $
+    finishDeferrals (cfgPerpsOrderRouter cfg) orderId
   logInfo
     "keeper_queue_head_reconciled_terminal"
     "Keeper reconciled a stale queue head from canonical lifecycle state"
@@ -2444,8 +2441,8 @@ refreshContiguousOrders cfg client (order : orders) = do
       (freshOrder :) <$> refreshContiguousOrders cfg client orders
     Right (RefreshedTerminalOrder _) -> pure []
 
-submitIntent :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> ExecutionIntent -> IO ()
-submitIntent cfg conn client dryRun observeCost intent = do
+submitIntent :: Config -> Connection -> EthClient -> Bool -> (Integer -> IO ()) -> [(Integer, Integer)] -> ExecutionIntent -> IO ()
+submitIntent cfg conn client dryRun observeCost deadlines intent = do
   let targetOrders = intentOrders intent
       targetIds = map pkorOrderId targetOrders
       (callKind, callData) =
@@ -2462,7 +2459,13 @@ submitIntent cfg conn client dryRun observeCost intent = do
   case valueResult of
     Left err -> recordAllErrors cfg conn targetIds err
     Right value -> do
-      preflight <- preflightV2OrderTransaction cfg client value callKind callData
+      let observePending reason gasLimit = unless dryRun $ forM_ (take 1 targetIds) $ \orderId ->
+            forM_ (lookup orderId deadlines) $ \deadline ->
+              recordDeferral (cfgPerpsOrderRouter cfg) orderId (pendingReasonCode reason) gasLimit deadline $
+                case intent of
+                  CleanupExpired _ -> Nothing
+                  ExecuteReady _ _ publishTimes _ -> listToMaybe publishTimes
+      preflight <- preflightV2OrderTransaction cfg client value callKind callData observePending
       case preflight of
         Left err ->
           if dryRun
@@ -2475,15 +2478,8 @@ submitIntent cfg conn client dryRun observeCost intent = do
                 , field "error" err
                 ]
             else recordAllErrors cfg conn targetIds err
-        Right (V2PreflightDeferred reason) ->
-          logInfoEvery
-            60
-            "keeper_transaction_deferred"
-            "V2 execution preflight made no terminal progress; no transaction was broadcast"
-            [ field "intent" $ describeIntent intent
-            , field "order_ids" targetIds
-            , field "reason" reason
-            ]
+        -- Each typed pending observation is already recorded per order/reason.
+        Right (V2PreflightDeferred _) -> pure ()
         Right (V2PreflightReady gasLimit) ->
           if dryRun
             then
@@ -2531,8 +2527,9 @@ preflightV2OrderTransaction
   -> Integer
   -> OrderCallKind
   -> ByteString
+  -> (Integer -> Integer -> IO ())
   -> IO (Either Text V2PreflightResult)
-preflightV2OrderTransaction cfg client value callKind callData =
+preflightV2OrderTransaction cfg client value callKind callData observePending =
   case cfgKeeperPrivateKey cfg of
     Nothing -> pure $ Left "KEEPER_PRIVATE_KEY is not configured"
     Just privateKey ->
@@ -2568,12 +2565,18 @@ preflightV2OrderTransaction cfg client value callKind callData =
             SingleOrderCall expectedOrderId ->
               case Perps.decodeOrderExecutionResult bytes of
                 Left err -> pure $ Left $ rpcErrorText err
-                Right result ->
+                Right result -> do
+                  when (Perps.oerOrderId result == expectedOrderId && Perps.oerLifecycleStatus result == 1) $
+                    observePending (Perps.oerPendingReason result) gasLimit
                   applyAction fromAddr gasLimit False $ assessSingleOrderPreflight expectedOrderId result
             BatchOrderCall ->
               case Perps.decodeOrderBatchResult bytes of
                 Left err -> pure $ Left $ rpcErrorText err
-                Right result ->
+                Right result -> do
+                  -- Batch stop reasons describe the next unexecuted order,
+                  -- not every order in the batch. Record only no-progress batches.
+                  when (Perps.obrTerminalCount result == 0) $
+                    observePending (Perps.obrStopReason result) gasLimit
                   applyAction
                     fromAddr
                     gasLimit
@@ -2584,6 +2587,11 @@ preflightV2OrderTransaction cfg client value callKind callData =
       V2PreflightSubmit -> pure $ Right $ V2PreflightReady gasLimit
       V2PreflightDefer reason -> pure $ Right $ V2PreflightDeferred reason
       V2PreflightReject err -> pure $ Left err
+      -- Core can catch an inner OOG as EngineFailure. A bounded read-only
+      -- probe distinguishes that case; it never authorizes a pending result.
+      V2PreflightProbeEngineGas
+        | gasLimit < v2OrderGasLimitCap -> retryWithMoreGas fromAddr gasLimit
+        | otherwise -> pure $ Right $ V2PreflightDeferred "engine failure persists at keeper gas cap"
       V2PreflightIncreaseGas
         | gasLimit < v2OrderGasLimitCap -> retryWithMoreGas fromAddr gasLimit
         | hasProgress -> pure $ Right $ V2PreflightReady gasLimit
@@ -2620,6 +2628,8 @@ assessSingleOrderPreflight expectedOrderId result
   | Perps.oerLifecycleStatus result == 1
       && Perps.oerPendingReason result == v2InsufficientGasReason =
       V2PreflightIncreaseGas
+  | Perps.oerLifecycleStatus result == 1 && Perps.oerPendingReason result == 7 =
+      V2PreflightProbeEngineGas
   | Perps.oerLifecycleStatus result == 1 =
       V2PreflightDefer $
         "order remains pending with reason "
@@ -2634,6 +2644,7 @@ assessBatchOrderPreflight :: Perps.OrderBatchResult -> V2PreflightAction
 assessBatchOrderPreflight result
   | Perps.obrStopReason result == v2InsufficientGasReason = V2PreflightIncreaseGas
   | Perps.obrTerminalCount result > 0 = V2PreflightSubmit
+  | Perps.obrStopReason result == 7 = V2PreflightProbeEngineGas
   | otherwise =
       V2PreflightDefer $
         "batch made no terminal progress and stopped with reason "
@@ -2727,6 +2738,7 @@ applyReceipt cfg conn targetIds receipt = do
         ]
       orderEvents = filter (notSuperseded finalizedOrderIds) decodedEvents
   seenIds <- foldM applyEvent [] orderEvents
+  forM_ seenIds $ finishDeferrals (cfgPerpsOrderRouter cfg)
   let missingIds = filter (`notElem` seenIds) targetIds
   if receiptSucceeded receipt
     then

@@ -5,6 +5,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Plether.Config (LpSettlementMode (..))
+import Plether.Keeper.Deferrals (Deferral(..), observeDeferral, pendingReasonCode)
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
   , isAdmittedPythPayloadSource
@@ -45,6 +46,23 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "per-order deferral diagnostics" $ do
+    it "retains first/last observations and counts without cross-order suppression" $ do
+      let (first, emitFirst) = observeDeferral 100 "reference-a" Nothing
+          (second, emitSecond) = observeDeferral 105 "ignored" (Just first)
+          (summary, emitSummary) = observeDeferral 160 "ignored" (Just second)
+      emitFirst `shouldBe` True
+      emitSecond `shouldBe` False
+      emitSummary `shouldBe` True
+      firstAt summary `shouldBe` 100
+      lastAt summary `shouldBe` 160
+      occurrences summary `shouldBe` 3
+      diagnosticRef summary `shouldBe` "reference-a"
+      snd (observeDeferral 105 "other-order-or-reason" Nothing) `shouldBe` True
+    it "exports stable reasons, never raw provider text" $ do
+      pendingReasonCode 2 `shouldBe` "KEEPER_SAME_BLOCK"
+      pendingReasonCode 7 `shouldBe` "KEEPER_ENGINE_FAILURE"
+      pendingReasonCode 999 `shouldBe` "KEEPER_PENDING_UNKNOWN"
   keeperSource <- runIO loadKeeperSource
   let normalizedKeeperSource = T.unwords $ T.words keeperSource
 
@@ -214,6 +232,15 @@ spec = do
       nextV2GasLimit 30_000_000 30_000_000 `shouldBe` Nothing
 
   describe "typed V2 execution preflight" $ do
+    it "probes EngineFailure at higher gas but does not authorize a pending call" $ do
+      assessSingleOrderPreflight 1 (executionResult 1 1 7) `shouldBe` V2PreflightProbeEngineGas
+      assessBatchOrderPreflight (Perps.OrderBatchResult 1 0 7) `shouldBe` V2PreflightProbeEngineGas
+      assessBatchOrderPreflight (Perps.OrderBatchResult 2 1 7) `shouldBe` V2PreflightSubmit
+      assessSingleOrderPreflight 1 (executionResult 2 1 7)
+        `shouldBe` V2PreflightReject "executeOrder preflight returned a different order ID"
+    it "does not probe gas for the same-block or historical-price boundaries" $ do
+      assessSingleOrderPreflight 1 (executionResult 1 1 2)
+        `shouldBe` V2PreflightDefer "order remains pending with reason 2"
     it "increases gas instead of broadcasting a successful InsufficientGas no-op" $ do
       assessSingleOrderPreflight 1 (executionResult 1 1 5)
         `shouldBe` V2PreflightIncreaseGas

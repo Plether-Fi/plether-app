@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process'
 
 for (const [container,event,reason] of [
   ['plether-keeper','keeper_transaction_failed','KEEPER_INSUFFICIENT_FUNDS'],
+  ['plether-keeper','keeper_order_deferral_summary','KEEPER_ENGINE_FAILURE'],
   ['plether-funding-monitor','worker_funding_observation','WORKER_INSUFFICIENT_FUNDS'],
   ['plether-api','aa_execution_diagnosed','USER_OPERATION_OUT_OF_GAS'],
   ['plether-api','aa_receipt_recovery','RECOVERY_EVIDENCE_UNAVAILABLE'],

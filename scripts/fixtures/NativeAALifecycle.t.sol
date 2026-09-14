@@ -35,6 +35,10 @@ interface PM {
     function policyId() external view returns (bytes32);
 }
 
+interface V2Committer {
+    function commitOrder(OrderV2Types.OrderRequest calldata request) external returns (uint64);
+}
+
 // Exact release source + real captured AA runtime. Only Pyth input and initial
 // claims are synthetic; no RPC, production key, Core deployment or authorization.
 contract NativeAALifecycleTest is BasePerpTest {
@@ -49,6 +53,7 @@ contract NativeAALifecycleTest is BasePerpTest {
     address constant ENTRY = 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108;
     address constant PAYMASTER = 0x9761091045616A388f5fE1433721B272c78fe31b;
     uint256 constant CAP = 3_000_000;
+    bytes private lastOperationRevert;
     bytes32 constant OP_EVENT = keccak256("UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)");
     bytes32 constant REVERT_EVENT = keccak256("UserOperationRevertReason(bytes32,address,uint256,bytes)");
 
@@ -127,6 +132,7 @@ contract NativeAALifecycleTest is BasePerpTest {
     function _sponsorAtGas(string memory label, address target, bytes memory data, bool expected, uint256 gasLimit)
         internal
     {
+        delete lastOperationRevert;
         PackedOp memory op;
         op.sender = ALICE;
         op.nonce = EP(ENTRY).getNonce(ALICE, 0);
@@ -166,6 +172,7 @@ contract NativeAALifecycleTest is BasePerpTest {
             if (logs[i].emitter != ENTRY || logs[i].topics.length < 2 || logs[i].topics[1] != hash) continue;
             if (logs[i].topics[0] == REVERT_EVENT) {
                 (, bytes memory reason) = abi.decode(logs[i].data, (uint256, bytes));
+                lastOperationRevert = reason;
                 emit log_named_bytes(label, reason);
             }
             if (logs[i].topics[0] == OP_EVENT) {
@@ -301,6 +308,91 @@ contract NativeAALifecycleTest is BasePerpTest {
         assertEq(protectionViews.activePositionProtectionId(ALICE), 0);
         assertEq(_freeSettlementUsdc(ALICE), free);
         assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, 0);
+    }
+
+    // A typed no-op is a successful EVM call, so estimating it does not prove
+    // that the engine has enough gas to settle once the MEV boundary clears.
+    function test_NativeAA_KeeperEngineFailureGasEnvelope() public {
+        _setupAA();
+        _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_USDC, 120_000_000);
+        OrderV2Types.OrderRequest memory request = _protectedOpenRequest();
+        request.isClose = true;
+        request.side = CfdTypes.Side.SHORT;
+        request.marginDelta = 0;
+        request.targetPrice = 120_000_000;
+        uint64 id = router.nextCommitId();
+        _sponsor("keeper_close_commit", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), true);
+        // Cheatcode read avoids Solidity treating block.number as invariant
+        // across the later vm.roll inside _mockPythUpdateData.
+        uint256 commitBlock = vm.getBlockNumber();
+        bytes[] memory tick = _mockPythUpdateData(120_000_000);
+        uint256 baseline = vm.snapshotState();
+        vm.roll(commitBlock);
+        vm.prank(EXECUTION_KEEPER);
+        OrderV2Types.ExecutionResult memory sameBlock = router.executeOrder(id, tick);
+        assertEq(uint8(sameBlock.pendingReason), uint8(OrderV2Types.PendingReason.SameBlock));
+        assertTrue(vm.revertToState(baseline));
+        bool sawEngineFailure;
+        bool sawSuccess;
+        for (uint256 allowance = 500_000; allowance <= 8_000_000; allowance += 250_000) {
+            vm.prank(EXECUTION_KEEPER);
+            (bool ok, bytes memory result) = address(router).call{gas: allowance}(
+                abi.encodeCall(router.executeOrder, (id, tick))
+            );
+            if (ok) {
+                OrderV2Types.ExecutionResult memory outcome = abi.decode(result, (OrderV2Types.ExecutionResult));
+                emit log_named_uint("keeper allowance", allowance);
+                emit log_named_uint("pending reason", uint8(outcome.pendingReason));
+                if (outcome.pendingReason == OrderV2Types.PendingReason.EngineFailure) sawEngineFailure = true;
+                if (outcome.status == OrderV2Types.LifecycleStatus.Executed) sawSuccess = true;
+            }
+            assertTrue(vm.revertToState(baseline));
+        }
+        assertTrue(sawEngineFailure, "must reproduce successful call reporting EngineFailure at low gas");
+        assertTrue(sawSuccess, "same order must execute at a bounded larger allowance");
+
+        // A genuine engine error is still pending even at the keeper hard cap.
+        vm.mockCallRevert(address(engine), abi.encodeWithSelector(engine.processOrderTyped.selector), hex"deadbeef");
+        vm.prank(EXECUTION_KEEPER);
+        (bool ok, bytes memory result) = address(router).call{gas: 30_000_000}(
+            abi.encodeCall(router.executeOrder, (id, tick))
+        );
+        assertTrue(ok);
+        OrderV2Types.ExecutionResult memory failed = abi.decode(result, (OrderV2Types.ExecutionResult));
+        assertEq(uint8(failed.status), uint8(OrderV2Types.LifecycleStatus.Pending));
+        assertEq(uint8(failed.pendingReason), uint8(OrderV2Types.PendingReason.EngineFailure));
+    }
+
+    function test_NativeAA_RecordedBountyDriftFirst() public { _bountyDrift(119_061, 119_064); }
+    function test_NativeAA_RecordedBountyDriftSecond() public { _bountyDrift(118_746, 118_750); }
+
+    function _bountyDrift(uint256 quote, uint256 actual) private {
+        _setupAA();
+        bytes[] memory tick = _mockPythUpdateData(actual * 1000);
+        router.updateMarkPrice(tick);
+        OrderV2Types.OrderRequest memory request = _protectedOpenRequest();
+        request.sizeDelta = 1000e18;
+        request.marginDelta = 200e6;
+        request.bounds.maxExecutionBountyUsdc = quote;
+        _sponsor("exact_bounty_rejected", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), false);
+        assertEq(lastOperationRevert, abi.encodeWithSelector(
+            bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")), actual, quote
+        ));
+        assertEq(router.pendingOrderCounts(ALICE), 0);
+        uint256 tolerance = (quote + 99) / 100;
+        request.bounds.maxExecutionBountyUsdc = quote + (tolerance > 10 ? tolerance : 10);
+        uint256 baseline = vm.snapshotState();
+        _sponsor("bounded_bounty_accepted", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), true);
+        assertEq(router.getAccountReservations(ALICE).executionBountyUsdc, actual, "charge actual, not cap");
+        assertTrue(vm.revertToState(baseline));
+        tick = _mockPythUpdateData((request.bounds.maxExecutionBountyUsdc + 1) * 1000);
+        router.updateMarkPrice(tick);
+        _sponsor("above_reviewed_cap_rejected", address(router), abi.encodeCall(V2Committer.commitOrder, (request)), false);
+        assertEq(lastOperationRevert, abi.encodeWithSelector(
+            bytes4(keccak256("OrderLifecycleBook__ExecutionBountyAboveBound(uint256,uint256)")),
+            request.bounds.maxExecutionBountyUsdc + 1, request.bounds.maxExecutionBountyUsdc
+        ));
+        assertEq(router.pendingOrderCounts(ALICE), 0);
     }
 
     function test_NativeAA_ClaimWithoutPositionAndDuplicateRejection() public {

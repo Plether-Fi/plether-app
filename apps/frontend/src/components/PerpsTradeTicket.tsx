@@ -4811,9 +4811,13 @@ export function PerpsTradeTicket({
                           label: 'Economic bounds',
                           value: 'Relaxed for web trading',
                         },
+                        {
+                          label: 'Maximum execution reward',
+                          value: `${formatPerpsUsdc(displayedExecutionProtections.request.bounds.maxExecutionBountyUsdc, 6)} USDC`,
+                        },
                       ]} />
                       <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                        The web ticket uses wide accounting bounds so normal price and rounding movement cannot invalidate the order. Your execution limit, deadline, pinned regime, and reviewed protocol configuration still apply.
+                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, deadline, pinned regime, reward maximum, and reviewed protocol configuration still apply.
                       </p>
                     </div>
                   ) : (

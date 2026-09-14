@@ -40,6 +40,20 @@ assert(failure.error==nil and failure.log==nil)
 local _,_,credential = project_posthog('plether-alto-firelens-test',0,{event='AKIAEXAMPLECREDENTIAL',stage='private_alphanumeric_secret',reason_code='MY_PRIVATE_SECRET'})
 assert(credential.message=='unclassified_service_log' and credential.stage==nil and credential.reason_code==nil)
 print('PostHog projection privacy fixtures passed')
+for _,reason in ipairs({'KEEPER_SAME_BLOCK','KEEPER_ENGINE_FAILURE','KEEPER_INSUFFICIENT_GAS'}) do
+  local original = { event='keeper_order_deferral_summary', reason_code=reason,
+    occurrence_count=4, duration_ms=21000, remaining_deadline_seconds=7,
+    attempt_id='12345678-1234-4123-8123-123456789abc', order_id=40,
+    order_router='0xsecret', gas_limit=3500000, payload_publish_time=123456789,
+    valid_until=123456799, first_observed_at=123456780, last_observed_at=123456788,
+    error='private calldata' }
+  local _,_,projected=project_posthog('test',0,original)
+  assert(projected.event=='keeper_order_deferral_summary' and projected.reason_code==reason)
+  assert(projected.occurrence_count==4 and projected.duration_ms==21000 and projected.remaining_deadline_seconds==7)
+  assert(projected.attempt_id==original.attempt_id)
+  for _,key in ipairs({'order_id','order_router','gas_limit','payload_publish_time','valid_until','first_observed_at','last_observed_at','error'}) do assert(projected[key]==nil) end
+  assert(original.order_id==40 and original.error=='private calldata')
+end
 for _,component in ipairs({'alto','keeper','oracle','liquidation','protection','lp_settlement'}) do
   local operational = {event='worker_funding_observation',component=component,outcome='blocked',reason_code='WORKER_INSUFFICIENT_FUNDS',occurrence_count=2,
     balance_wei='12345',liability_wei='567',reserve_wei='89',signer_address='0xdead',raw_transaction='0xsecret'}

@@ -273,7 +273,7 @@ export function relaxedWebPerpsExecutionBounds(input: {
     validUntil: input.validUntil,
     allowedExecutionModes: executionModeMask(input.executionMode),
     expectedConfigHash: input.expectedConfigHash,
-    maxExecutionBountyUsdc: input.executionBountyUsdc,
+    maxExecutionBountyUsdc: reviewedExecutionBountyMaximum(input.executionBountyUsdc),
     maxExecutionNotionalUsdc: UINT256_MAX,
     maxGrossAccountDebitUsdc: UINT256_MAX,
     maxActionChargeUsdc: UINT256_MAX,
@@ -283,6 +283,15 @@ export function relaxedWebPerpsExecutionBounds(input: {
     minPostPositionEquityUsdc: 0n,
     maxPostLeverageBps: UINT32_MAX,
   }
+}
+
+/** Six-decimal USDC: a reviewed ceiling, not a charge or a sponsorship gas cap. */
+export function reviewedExecutionBountyMaximum(quote: bigint): bigint {
+  if (quote < 0n || quote > UINT256_MAX) throw new Error('Invalid execution bounty quote')
+  const percent = (quote + 99n) / 100n
+  const maximum = quote + (percent > 10n ? percent : 10n)
+  if (maximum > UINT256_MAX) throw new Error('Execution bounty maximum exceeds uint256')
+  return maximum
 }
 
 function maximum(values: bigint[]): bigint {
