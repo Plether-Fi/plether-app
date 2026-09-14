@@ -2662,6 +2662,9 @@ competitionSelect =
 -- start_block itself is the first canonical block at or after the opening time.
 -- External flows are therefore counted over [start_block, snapshot_block]. At and after cutoff, current snapshot
 -- selection is pinned to the configured cutoff block/timestamp.
+-- Published batches remain valid for their captured wallets when registration
+-- grows the roster. New wallets remain unscored until both snapshots exist;
+-- publication and finalization still require the complete current roster.
 leaderboardQuery :: Query
 leaderboardQuery =
   ("WITH target AS (\
@@ -2675,7 +2678,7 @@ leaderboardQuery =
   \ AND (LOWER(b.block_hash) = LOWER(t.start_snapshot_block_hash)\
   \   OR (t.slug = 'testnet-trading-2026' AND t.start_snapshot_block_hash IS NULL))\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-  \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
+  \ AND (NOT t.finalized OR b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug))\
   \ ORDER BY b.block_number DESC, b.published_at DESC LIMIT 1\
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
@@ -2684,7 +2687,7 @@ leaderboardQuery =
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-  \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
+  \ AND (NOT t.finalized OR b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug))\
   \ AND (t.score_cutoff_block IS NULL OR b.block_number <= t.score_cutoff_block)\
   \ AND (NOT t.finalized OR (b.snapshot_kind = 'final' AND b.block_number = t.score_cutoff_block\
   \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)))\
@@ -2878,7 +2881,7 @@ walletActivityQuery =
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-  \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
+  \ AND (NOT t.finalized OR b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug))\
   \ AND (t.score_cutoff_block IS NULL OR b.block_number <= t.score_cutoff_block)\
   \ AND (NOT t.finalized OR (b.snapshot_kind = 'final' AND b.block_number = t.score_cutoff_block\
   \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)))\
