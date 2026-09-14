@@ -3,6 +3,15 @@ import { prepared } from '../../test/fixtures/preparedOrder'
 import { perpsReviewChanges } from '../perpsReviewChanges'
 
 describe('refreshed review changes', () => {
+  it('shows a changed bounty ceiling even when the current quote is unchanged', () => {
+    const before = prepared()
+    const after = structuredClone(before)
+    before.request.bounds.maxExecutionBountyUsdc = 120_251n
+    after.request.bounds.maxExecutionBountyUsdc = 120_252n
+    expect(perpsReviewChanges(before, after)).toEqual([
+      { label: 'Maximum execution reward', before: '0.120251 USDC', after: '0.120252 USDC' },
+    ])
+  })
   it('ignores refreshed IDs, block metadata, and deadlines', () => {
     const before = prepared()
     const after = structuredClone(before)

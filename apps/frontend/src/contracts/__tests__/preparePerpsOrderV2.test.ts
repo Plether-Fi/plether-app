@@ -186,7 +186,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       clientOrderId: `0x${'44'.repeat(32)}`,
     })).rejects.toMatchObject({
       name: 'PerpsOrderFundingShortfallError',
-      shortfallUsdc: 1_700_000n,
+      shortfallUsdc: 1_702_000n,
     })
     expect(simulateContract).toHaveBeenCalledTimes(1)
   })
@@ -346,12 +346,12 @@ describe('Max opening review', () => {
     const { client, readContract, simulateContract } = maxClient()
     const prepared = await preparePerpsOrderV2(client, manifest, input)
     expect(prepared.request.sizeDelta).toBe(7_900n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_800_000n)
+    expect(prepared.request.marginDelta).toBe(999_798_000n)
     expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
     const quotes = readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')
     expect(quotes).toHaveLength(1)
     expect(quotes[0][0]).toMatchObject({
-      args: [account, 1, 999_800_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
+      args: [account, 1, 999_798_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
     })
     const assessments = readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')
     expect(assessments).toHaveLength(6)
@@ -366,9 +366,9 @@ describe('Max opening review', () => {
       ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
     })
     expect(prepared.request.sizeDelta).toBe(200n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_400_000n)
+    expect(prepared.request.marginDelta).toBe(999_398_000n)
     expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
-    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_400_000n, 100_000_000n, block.timestamp] }))
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_398_000n, 100_000_000n, block.timestamp] }))
   })
 
   it('does not quote when the account cannot cover the router reward reserve', async () => {
@@ -414,7 +414,7 @@ describe('Max opening review', () => {
     })
     const prepared = await preparePerpsOrderV2(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
     expect(prepared.request.sizeDelta).toBe(97n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_800_000n)
+    expect(prepared.request.marginDelta).toBe(999_798_000n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
     for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))

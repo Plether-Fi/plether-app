@@ -109,7 +109,7 @@ jobs:
         working-directory: .ci-core/packages/perps
         run: forge build --skip test --skip script
 
-      - name: Require protected-open and claim lifecycle regressions (offline)
+      - name: Require AA lifecycle, bounty drift and keeper gas regressions (offline)
         working-directory: .
         run: node scripts/aa-lifecycle-regression.mjs .ci-core
 

@@ -1038,6 +1038,9 @@ describe('perps lifecycle labels', () => {
   })
 
   it('does not repeat the execution reward in execution protections', async () => {
+    const reviewed = await perpsTradingMocks.prepareOrder()
+    reviewed.request.bounds.maxExecutionBountyUsdc = 120_252n
+    perpsTradingMocks.prepareOrder.mockResolvedValue(reviewed)
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{
@@ -1065,6 +1068,8 @@ describe('perps lifecycle labels', () => {
     const protections = within(dialog).getByText('Execution protections').closest('details')
     expect(protections).not.toBeNull()
     expect(within(protections!).getByText('Pinned regime')).toBeInTheDocument()
+    expect(within(protections!).getByText('Maximum execution reward')).toBeInTheDocument()
+    expect(within(protections!).getByText('0.120252 USDC')).toBeInTheDocument()
     expect(within(protections!).queryByText('Execution reward')).not.toBeInTheDocument()
   })
 

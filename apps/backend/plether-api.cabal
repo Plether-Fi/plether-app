@@ -25,6 +25,7 @@ library
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
         Plether.Keeper.Funding
+        Plether.Keeper.Deferrals
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
         Plether.AA.RecoveryReceipt
