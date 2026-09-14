@@ -1,12 +1,13 @@
 import { useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCurrentCompetition, useInsightsStatus, useLeaderboard } from '../api'
+import type { Competition } from '../api'
 import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, RulesSummary } from '../components/Competition'
 import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
 import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
 
-function LeaderboardContent({ slug, search }: { slug: string; search: string }) {
+function LeaderboardContent({ slug, search, competitionStatus }: { slug: string; search: string; competitionStatus: Competition['status'] }) {
   const query = useLeaderboard(slug, search)
   const standings = query.data?.pages.flatMap((page) => page.standings) ?? []
   const provisional = query.data?.pages[0]?.provisional ?? true
@@ -21,7 +22,7 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
         <strong className="text-content-primary">Ranked by net P&amp;L.</strong> Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 mock USDC and rank above active accounts whose net return is negative.
       </div>
       <Panel>
-        <Leaderboard standings={standings} search={search} competitionSlug={slug} />
+        <Leaderboard standings={standings} search={search} competitionSlug={slug} competitionStatus={competitionStatus} />
       </Panel>
       {query.hasNextPage ? (
         <div className="text-center">
@@ -85,7 +86,7 @@ export function LeaderboardPage() {
             <button type="submit" className="border border-brand-orange bg-brand-orange px-4 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">Search</button>
           </form>
         </div>
-        <LeaderboardContent slug={competitionData.slug} search={debouncedSearch} />
+        <LeaderboardContent slug={competitionData.slug} search={debouncedSearch} competitionStatus={competitionData.status} />
       </section>
     </div>
   )

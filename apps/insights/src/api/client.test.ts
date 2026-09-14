@@ -31,6 +31,21 @@ const competition: Competition = {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Insights API client', () => {
+  it('does not present an unreviewed registration as an eligibility problem', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      competition,
+      wallet: { wallet: '0x1111111111111111111111111111111111111111',
+        activeDays: 5, liquidations: 0, eligibilityStatus: 'pending', prizeEligible: false,
+        meetsProfitRequirement: true, meetsActiveDaysRequirement: true,
+      },
+      activity: [],
+    }), { status: 200 })))
+    const { wallet } = await getWallet(competition.slug, '0x1111111111111111111111111111111111111111')
+    expect(wallet.eligibilityStatus).toBe('pending')
+    expect(wallet.eligible).toBe(false)
+    expect(wallet.eligibilityReasons).toEqual([])
+  })
+
   it('normalizes the current competition envelope', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition }), { status: 200 })))
     await expect(getCurrentCompetition()).resolves.toEqual(competition)

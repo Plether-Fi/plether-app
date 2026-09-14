@@ -18,6 +18,7 @@ module Plether.Insights.Competition
   , july2026CompetitionSlug
   , september2026Competition
   , september2026CompetitionSlug
+  , september2026ReleaseManifest
   , defaultCompetitionSlug
   , competitionRules
   , competitionRulesForSlug
@@ -58,6 +59,7 @@ import Data.Time
   , DayOfWeek (..)
   )
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import qualified Plether.Perps.Manifest as Manifest
 
 -- | All monetary values in this module are integer USDC base units (six
 -- decimals). Keeping the scoring core integral makes profit boundaries and ties
@@ -147,6 +149,24 @@ competitionReleaseManifestText CompetitionReleaseManifest {..} =
 competitionReleaseIsBound :: CompetitionRules -> CompetitionReleaseManifest -> Bool
 competitionReleaseIsBound rules manifest =
   T.strip (crmReleaseId manifest) == crSlug rules
+
+-- | The September leaderboard uses the same release as the trading app.
+-- Deployment identities remain sourced from the checksum-pinned Core manifest.
+september2026ReleaseManifest :: CompetitionReleaseManifest
+september2026ReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = september2026CompetitionSlug
+    , crmChainId = Manifest.releaseChainId
+    , crmUsdc = Manifest.mockUsdcAddress
+    , crmOrderRouter = Manifest.orderRouterAddress
+    , crmMarginClearinghouse = Manifest.marginClearinghouseAddress
+    , crmAccountLens = Manifest.cfdEngineAccountLensAddress
+    , crmCfdEngine = Manifest.cfdEngineAddress
+    , crmCfdEngineLens = Manifest.cfdEngineLensAddress
+    , crmSettlementSidecar = Manifest.cfdEngineSettlementSidecarAddress
+    , crmPletherOracle = Manifest.pletherOracleAddress
+    , crmIndexerStartBlock = Manifest.releaseDeploymentBlock
+    }
 
 -- | Stable sentinel persisted while registration is open but the competition
 -- contracts have not yet been bound.  It is deliberately not a valid release

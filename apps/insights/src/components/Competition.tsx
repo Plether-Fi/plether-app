@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api'
 import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCompactUsdc, formatCountdown, formatRoi, formatUsdc, formatUtc } from '../utils/format'
-import { EmptyState, Panel, Pnl, StatusBadge, WalletIdentity } from './ui'
+import { EligibilityBadge, EmptyState, Panel, Pnl, WalletIdentity } from './ui'
 
 function labelMockUsdc(value: string): string {
   return value.replace(/ USDC$/, ' mock USDC')
@@ -126,7 +126,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
   return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc)}</div>
 }
 
-function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
+function DesktopTable({ standings, competitionSlug, competitionStatus }: { standings: Standing[]; competitionSlug: string; competitionStatus: Competition['status'] }) {
   return (
     <div className="hidden overflow-x-auto lg:block">
       <table className="w-full min-w-[920px] border-collapse text-left">
@@ -139,7 +139,7 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
             <th className="px-3 py-3 text-right">Volume</th>
             <th className="px-3 py-3 text-right">Trades</th>
             <th className="px-3 py-3 text-right">Active days</th>
-            <th className="px-5 py-3 text-right">Eligibility</th>
+            <th className="px-5 py-3 text-right">Entry status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-brand-border/15">
@@ -152,7 +152,7 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
               <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{formatCompactMockUsdc(standing.volume)}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.trades}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums">{standing.activeDays}<span className="text-content-tertiary"> / 5</span></td>
-              <td className="px-5 py-4 text-right"><StatusBadge eligible={standing.eligible} label={eligibilityLabel(standing)} /></td>
+              <td className="px-5 py-4 text-right"><EligibilityBadge standing={standing} competitionStatus={competitionStatus} /></td>
             </tr>
           ))}
         </tbody>
@@ -161,7 +161,7 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
   )
 }
 
-function MobileList({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
+function MobileList({ standings, competitionSlug, competitionStatus }: { standings: Standing[]; competitionSlug: string; competitionStatus: Competition['status'] }) {
   return (
     <div className="divide-y divide-brand-border/15 lg:hidden">
       {standings.map((standing) => (
@@ -178,7 +178,7 @@ function MobileList({ standings, competitionSlug }: { standings: Standing[]; com
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 text-xs text-content-tertiary">
                 <span>{standing.activeDays} active days · {standing.trades} trades</span>
-                <StatusBadge eligible={standing.eligible} label={eligibilityLabel(standing)} />
+                <EligibilityBadge standing={standing} competitionStatus={competitionStatus} />
               </div>
             </div>
           </div>
@@ -188,11 +188,11 @@ function MobileList({ standings, competitionSlug }: { standings: Standing[]; com
   )
 }
 
-export function Leaderboard({ standings, search, competitionSlug }: { standings: Standing[]; search: string; competitionSlug: string }) {
+export function Leaderboard({ standings, search, competitionSlug, competitionStatus }: { standings: Standing[]; search: string; competitionSlug: string; competitionStatus: Competition['status'] }) {
   if (standings.length === 0) {
     return <EmptyState title={search ? 'No matching traders' : 'No standings yet'} message={search ? 'Try a different alias or full wallet address.' : 'Standings will appear after the first finalized trades are indexed.'} />
   }
-  return <><DesktopTable standings={standings} competitionSlug={competitionSlug} /><MobileList standings={standings} competitionSlug={competitionSlug} /></>
+  return <><DesktopTable standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} /><MobileList standings={standings} competitionSlug={competitionSlug} competitionStatus={competitionStatus} /></>
 }
 
 export function LeaderboardTitle({ count, competitionSlug }: { count: number; competitionSlug: string }) {
@@ -284,11 +284,4 @@ export function RulesSummary({ competition }: { competition: Competition }) {
       </div>
     </section>
   )
-}
-
-function eligibilityLabel(standing: Standing): string {
-  if (standing.eligible) return 'Eligible'
-  if (standing.eligibilityStatus === 'pending') return 'Pending review'
-  if (standing.eligibilityStatus === 'under_review') return 'Under review'
-  return 'Not eligible'
 }

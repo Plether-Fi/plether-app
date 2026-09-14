@@ -1,25 +1,32 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import type { Competition, Standing } from '../api/types'
 import { formatSignedUsdc, shortAddress, xProfileUrl } from '../utils/format'
+import { eligibilityPresentation } from '../utils/eligibility'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={`border border-brand-border/25 bg-surface-panel ${className}`}>{children}</section>
 }
 
-export function StatusBadge({ eligible, label }: { eligible: boolean; label?: string }) {
+export function StatusBadge({ eligible, label, neutral = false, title }: { eligible: boolean; label?: string; neutral?: boolean; title?: string }) {
   return (
-    <span className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${eligible ? 'border-positive/35 bg-positive/10 text-positive' : 'border-brand-orange/40 bg-brand-orange/10 text-brand-peach'}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${eligible ? 'bg-positive' : 'bg-brand-orange'}`} />
+    <span title={title} className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${neutral ? 'border-brand-border/35 bg-surface-panel text-content-secondary' : eligible ? 'border-positive/35 bg-positive/10 text-positive' : 'border-brand-orange/40 bg-brand-orange/10 text-brand-peach'}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${neutral ? 'bg-content-secondary' : eligible ? 'bg-positive' : 'bg-brand-orange'}`} />
       {label ?? (eligible ? 'Eligible' : 'Not eligible')}
     </span>
   )
+}
+
+export function EligibilityBadge({ standing, competitionStatus }: { standing: Pick<Standing, 'eligible' | 'eligibilityStatus'>; competitionStatus: Competition['status'] }) {
+  const presentation = eligibilityPresentation(standing, competitionStatus)
+  return <StatusBadge eligible={standing.eligible} label={presentation.label} neutral={presentation.neutral} title={presentation.explanation ?? undefined} />
 }
 
 export function ProvisionalNotice() {
   return (
     <div className="flex gap-3 border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow" role="status">
       <span aria-hidden="true">●</span>
-      <p><strong>Provisional standings.</strong> Final eligibility is confirmed after the competition integrity review.</p>
+      <p><strong>Provisional standings.</strong> Registered traders have completed their entry. Prize eligibility is reviewed after the competition ends.</p>
     </div>
   )
 }

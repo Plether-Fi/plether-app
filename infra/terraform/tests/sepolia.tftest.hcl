@@ -46,6 +46,37 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
+run "insights_v123_without_native_aa" {
+  command = plan
+  variables {
+    insights_active_competition_slug = "testnet-trading-2026-09"
+    insights_competition_release_id  = "testnet-trading-2026-09"
+  }
+  assert {
+    condition = !local.native_aa_backend_configured && contains(local.insights_competition_environment, {
+      name = "INSIGHTS_COMPETITION_RELEASE_ID", value = "testnet-trading-2026-09"
+    })
+    error_message = "The API, indexer, and snapshot worker must share the September release binding without requiring native AA."
+  }
+}
+run "reject_insights_other_release_lens" {
+  command = plan
+  variables {
+    insights_active_competition_slug = "testnet-trading-2026-09"
+    insights_competition_release_id  = "testnet-trading-2026-09"
+    perps_account_lens               = "0x1111111111111111111111111111111111111111"
+  }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
+run "reject_insights_incomplete_history" {
+  command = plan
+  variables {
+    insights_active_competition_slug = "testnet-trading-2026-09"
+    insights_competition_release_id  = "testnet-trading-2026-09"
+    perps_indexer_start_block        = "307397197"
+  }
+  expect_failures = [terraform_data.deployment_target_guard]
+}
 run "preserve_singapore_identity" {
   command = plan
   assert {

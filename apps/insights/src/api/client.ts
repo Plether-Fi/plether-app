@@ -446,7 +446,6 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
   if (raw.meetsActiveDaysRequirement === false) {
     reasons.push(`${String(raw.activeDays)} of ${String(minimumDays)} active days`)
   }
-  if (raw.eligibilityStatus === 'pending') reasons.push('Integrity review pending')
   if (raw.eligibilityStatus === 'under_review') reasons.push('Integrity review in progress')
   if (raw.eligibilityStatus === 'ineligible') {
     reasons.push(raw.eligibilityReason ?? 'Not eligible after integrity review')

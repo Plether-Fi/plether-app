@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
-import { EmptyState, ErrorState, LoadingState, Panel, Pnl, StatusBadge } from '../components/ui'
+import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
+import { eligibilityPresentation } from '../utils/eligibility'
 import { formatCompactUsdc, formatPrice, formatRoi, formatSignedUsdc, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { calculatePnlBreakdown } from '../utils/pnl'
 
@@ -171,6 +172,7 @@ export function WalletPage() {
   }
 
   const { wallet, activity, activityStatus, competition } = query.data
+  const eligibility = eligibilityPresentation(wallet, competition.status)
   const profileUrl = xProfileUrl(wallet.displayName)
   const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
@@ -209,7 +211,12 @@ export function WalletPage() {
               </a>
             </p>
           </div>
-          <StatusBadge eligible={wallet.eligible} label={wallet.eligible ? 'Prize eligible' : wallet.eligibilityStatus === 'pending' ? 'Pending review' : wallet.eligibilityStatus === 'under_review' ? 'Under review' : 'Not eligible'} />
+          <div className="max-w-sm sm:text-right">
+            <EligibilityBadge standing={wallet} competitionStatus={competition.status} />
+            {eligibility.explanation ? (
+              <p className="mt-2 text-sm leading-6 text-content-secondary">{eligibility.explanation}</p>
+            ) : null}
+          </div>
         </div>
       </div>
 

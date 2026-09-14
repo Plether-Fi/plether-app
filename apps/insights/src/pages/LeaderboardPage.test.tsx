@@ -53,6 +53,37 @@ beforeEach(() => {
 })
 
 describe('LeaderboardPage', () => {
+  it.each([
+    ['scheduled', 'Registered'],
+    ['live', 'Registered'],
+    ['ended', 'Awaiting prize review'],
+    ['review', 'Awaiting prize review'],
+  ])('shows the correct entry status during %s on desktop and mobile', (status, label) => {
+    const current = apiMocks.useCurrentCompetition.getMockImplementation()?.()
+    apiMocks.useCurrentCompetition.mockReturnValue({ ...current, data: { ...current.data, status } })
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ standings: [{
+        address: '0x1111111111111111111111111111111111111111',
+        displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
+        trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
+        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+      }], provisional: true, nextCursor: null }] },
+      hasNextPage: false, isError: false, isLoading: false,
+    })
+
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+
+    expect(screen.getAllByText(label)).toHaveLength(2)
+    expect(screen.queryByText('Pending review')).not.toBeInTheDocument()
+    expect(screen.getByText(/Prize eligibility is reviewed after the competition ends/)).toBeInTheDocument()
+    if (label === 'Registered') {
+      for (const badge of screen.getAllByText(label)) {
+        expect(badge).not.toHaveClass('text-brand-peach')
+        expect(badge).not.toHaveClass('text-positive')
+      }
+    }
+  })
+
   it('fills competition metrics from the shared status query', () => {
     render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
 
