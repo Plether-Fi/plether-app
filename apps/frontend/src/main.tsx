@@ -6,7 +6,7 @@ import { config, scheduleAppKitInitialization } from './config/wagmi'
 import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
-import { captureFrontendLog, scheduleAnalyticsInitialization } from './analytics/client'
+import { captureFrontendLog, captureReactException, scheduleAnalyticsInitialization } from './analytics/client'
 import { PerpsAaProvider } from './perps-aa'
 
 scheduleAnalyticsInitialization()
@@ -32,7 +32,8 @@ if (!rootElement) {
 }
 
 createRoot(rootElement, {
-  onCaughtError: () => {
+  onCaughtError: (error, info) => {
+    captureReactException(error, info, 'caught')
     captureFrontendLog('error', 'react render error caught', {
       component: 'react_root',
       operation: 'render',
@@ -40,7 +41,8 @@ createRoot(rootElement, {
       error_category: 'caught_error',
     })
   },
-  onUncaughtError: () => {
+  onUncaughtError: (error, info) => {
+    captureReactException(error, info, 'uncaught')
     captureFrontendLog('fatal', 'react render error uncaught', {
       component: 'react_root',
       operation: 'render',
@@ -48,7 +50,8 @@ createRoot(rootElement, {
       error_category: 'uncaught_error',
     })
   },
-  onRecoverableError: () => {
+  onRecoverableError: (error, info) => {
+    captureReactException(error, info, 'recoverable')
     captureFrontendLog('warn', 'react render error recovered', {
       component: 'react_root',
       operation: 'render',
