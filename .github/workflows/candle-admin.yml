@@ -1020,11 +1020,10 @@ jobs:
                 and (.[0] | test(":(latest|master)$") | not)
                 and (.[0] | test("(:[0-9a-f]{40}|@sha256:[0-9a-f]{64})$")))
              and (.taskRoleArn
-                  | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-task$"))
-             and (.executionRoleArn
-                  | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-execution$"))' \
+                  | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-(ecs|api)-task$"))
+             and (.executionRoleArn == (.taskRoleArn | sub("-task$"; "-execution")))' \
             "$task_definition_file" >/dev/null; then
-            echo "::error title=Immutable backend image required::The stable task definition must contain one $ECS_CONTAINER image pinned by commit SHA or digest."
+            echo "::error title=Invalid backend task identity::The stable task definition must contain one $ECS_CONTAINER image pinned by commit SHA or digest and matching $TARGET_ENV API or legacy ECS roles."
             exit 1
           fi
 
