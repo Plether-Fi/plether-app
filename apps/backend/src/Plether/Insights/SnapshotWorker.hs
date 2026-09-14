@@ -2,6 +2,8 @@ module Plether.Insights.SnapshotWorker
   ( runInsightsSnapshotCycle
   , findLastBlockBeforeTimestamp
   , snapshotToJson
+  , ledgerToEquity
+  , inferPendingCarry
   , defaultSnapshotMulticallSize
   , maxSnapshotMulticallSize
   , parseSnapshotMulticallSize
@@ -11,7 +13,8 @@ module Plether.Insights.SnapshotWorker
   ) where
 
 import Control.Monad (forM, forM_, unless, when)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text)
 import qualified Data.Text as T
 import Plether.Config (Config (..))
@@ -35,13 +38,14 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
   , decodeAccountLedgerSnapshot
   , getAccountLedgerSnapshotAtBlock
   , getAccountLedgerSnapshotCall
+  , getPendingCarryAtBlock
   )
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc
   ( RpcBlock (..)
   , ethGetBlockByNumber
   )
-import Plether.Insights.Competition (CompetitionRules (..), EquitySnapshot (..))
+import Plether.Insights.Competition (CompetitionRules (..), EquitySnapshot (..), september2026CompetitionSlug)
 import Text.Read (readMaybe)
 
 defaultSnapshotMulticallSize :: Int
@@ -294,13 +298,26 @@ captureBatch client pool cfg multicallSize competition participants kind block
           <> " does not match competition account lens "
           <> T.unpack (icrAccountLensAddress competition)
   | otherwise = do
-      captureResult <-
+      ledgerResult <-
         captureAccountSnapshots
           client
           (icrAccountLensAddress competition)
           multicallSize
           (rpcBlockNumber block)
           participants
+      captureResult <- case ledgerResult of
+        Left failures -> pure $ Left failures
+        Right results -> fmap sequence $ forM results $ \(participant, ledger) -> do
+          carryResult <-
+            if icrSlug competition /= september2026CompetitionSlug
+              then pure $ Right 0
+              else case inferPendingCarry ledger of
+                Just carry -> pure $ Right carry
+                Nothing -> getPendingCarryAtBlock client (cfgPerpsCfdEngineLens cfg)
+                  (iprWallet participant) (rpcBlockNumber block)
+          pure $ case carryResult of
+            Left err -> Left [(Just participant, err)]
+            Right carry -> Right (participant, ledger, carry)
       case captureResult of
         Right results -> do
           -- A numeric eth_call block tag is resolved independently by the RPC
@@ -322,8 +339,8 @@ captureBatch client pool cfg multicallSize competition participants kind block
               | otherwise ->
                   withDb pool $ \conn ->
                     publishAccountSnapshotBatch conn $
-                      [ snapshotInput participant ledger
-                      | (participant, ledger) <- results
+                      [ snapshotInput participant ledger carry
+                      | (participant, ledger, carry) <- results
                       ]
         Left failures ->
           forM_ failures $ \(mParticipant, err) ->
@@ -339,7 +356,7 @@ captureBatch client pool cfg multicallSize competition participants kind block
                   )
                   err
   where
-    snapshotInput participant ledger =
+    snapshotInput participant ledger carry =
       AccountSnapshotInput
         { asiCompetitionSlug = icrSlug competition
         , asiWallet = iprWallet participant
@@ -350,9 +367,10 @@ captureBatch client pool cfg multicallSize competition participants kind block
         , asiBlockNumber = rpcBlockNumber block
         , asiBlockHash = rpcBlockHash block
         , asiTimestamp = rpcBlockTimestamp block
-        , asiEquity = ledgerToEquity ledger
-        , asiRawData = snapshotToJson ledger
+        , asiEquity = if correctedValuation then ledgerToEquity ledger carry else legacyLedgerToEquity ledger
+        , asiRawData = if correctedValuation then valuedSnapshotToJson ledger carry else snapshotToJson ledger
         }
+    correctedValuation = icrSlug competition == september2026CompetitionSlug
 
 captureAccountSnapshots
   :: EthClient
@@ -470,14 +488,42 @@ decodeSnapshotResults expectedCount results
                   <> err
             Right snapshot -> Right snapshot
 
-ledgerToEquity :: AccountLedgerSnapshot -> EquitySnapshot
-ledgerToEquity AccountLedgerSnapshot {..} =
+-- | Price-risk equity contains only the post-carry pledge, claims and PnL.
+-- While any pledge remains, its reduction reveals the full pending carry.
+-- At zero pledge the reduction is saturated; read the full charge separately.
+inferPendingCarry :: AccountLedgerSnapshot -> Maybe Integer
+inferPendingCarry AccountLedgerSnapshot {..}
+  | not alsHasPosition = Just 0
+  | projectedPledge > 0 && projectedPledge <= alsActivePositionMarginUsdc =
+      Just $ alsActivePositionMarginUsdc - projectedPledge
+  | otherwise = Nothing
+  where
+    projectedPledge = alsNetEquityUsdc - alsTraderClaimBalanceUsdc - alsUnrealizedPnlUsdc
+
+-- | Mark the entire settlement balance to market, retaining free collateral
+-- and locked reserves. Claims are excluded here because economicAccountValue
+-- and the SQL scorer add them once. Pending carry is charged in full, including
+-- carry that consumes free settlement or remains uncovered by settlement.
+ledgerToEquity :: AccountLedgerSnapshot -> Integer -> EquitySnapshot
+ledgerToEquity ledger@AccountLedgerSnapshot {..} pendingCarry =
+  (legacyLedgerToEquity ledger)
+    { esSignedNetEquityUsdc = alsLiquidationReachableSettlementUsdc + alsUnrealizedPnlUsdc - pendingCarry
+    }
+
+legacyLedgerToEquity :: AccountLedgerSnapshot -> EquitySnapshot
+legacyLedgerToEquity AccountLedgerSnapshot {..} =
   EquitySnapshot
     { esHasOpenPosition = alsHasPosition
     , esSignedNetEquityUsdc = alsNetEquityUsdc
     , esTerminalReachableUsdc = alsLiquidationReachableSettlementUsdc
     , esTraderClaimsUsdc = alsTraderClaimBalanceUsdc
     }
+
+valuedSnapshotToJson :: AccountLedgerSnapshot -> Integer -> Value
+valuedSnapshotToJson ledger pendingCarry = case snapshotToJson ledger of
+  Object fields -> Object $ KeyMap.insert "accountValuationVersion" (String "full-account-v2") $
+    KeyMap.insert "pendingCarryUsdc" (String $ T.pack $ show pendingCarry) fields
+  value -> value
 
 snapshotToJson :: AccountLedgerSnapshot -> Value
 snapshotToJson AccountLedgerSnapshot {..} =

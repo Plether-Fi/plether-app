@@ -815,6 +815,21 @@ accepts `activityLimit`.
 `realizedPnlUsdc` field sums directional close/liquidation P&L before execution
 fees, VPI, carry, rewards, and manual competition adjustments.
 
+September snapshots value the full account: settlement less execution-bounty
+reservations, plus unrealized price P&L and trader claims, less pending carry.
+Free collateral and locked liquidation/order reserves remain account assets.
+The account lens's `netEquityUsdc` is position risk equity, not account equity;
+it already includes claims and only reflects carry consumed from the pledge.
+When carry exhausts that pledge, the worker reads the full pending charge from
+the V2 engine lens's zero-size `previewOpen` diagnostic at the same block.
+All reads must succeed and the block hash is rechecked before publication.
+
+Corrected snapshots carry `accountValuationVersion: full-account-v2` and
+`pendingCarryUsdc` in their raw data. After an upgrade, the worker automatically
+recaptures unversioned September start/final batches before treating them as
+complete; live batches refresh normally. July and finalized standings retain
+their historical valuation.
+
 ## Response Format
 
 All responses follow this structure:

@@ -422,8 +422,10 @@ participantEligibilityFromText value =
     "disqualified" -> Just EligibilityIneligible
     _ -> Nothing
 
--- | Raw account-ledger outputs captured at one finalized block. A flat account
--- uses terminalReachable; an account with exposure uses signed netEquity.
+-- | Normalized account values captured at one finalized block. A flat account
+-- uses terminalReachable; an account with exposure uses signed account equity
+-- after PnL and carry, including free collateral and locked reserves. This is
+-- distinct from the V2 account lens's position-only price-risk netEquity.
 -- Trader claims are added in both cases because they remain economically owned
 -- by the trader but sit outside those ledger values.
 data EquitySnapshot = EquitySnapshot

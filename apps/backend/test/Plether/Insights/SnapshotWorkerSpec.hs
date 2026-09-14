@@ -11,6 +11,8 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
   )
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcBlock (..))
+import Plether.Insights.Competition
+  ( EquitySnapshot (..), ScoreInput (..), ScoreBreakdown (..), calculateScore, economicAccountValue )
 import Plether.Insights.SnapshotWorker
   ( accountSnapshotMulticallCalls
   , chunkInOrder
@@ -20,11 +22,73 @@ import Plether.Insights.SnapshotWorker
   , maxSnapshotMulticallSize
   , parseSnapshotMulticallSize
   , snapshotToJson
+  , ledgerToEquity
+  , inferPendingCarry
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "full account valuation" $ do
+    it "reconciles the reported wallet at Arbitrum Sepolia block 308781536" $ do
+      -- The old position-only value was 73,603.094480, omitting 30,425.778922
+      -- of free settlement and liquidation reserve from a 100,000 deposit.
+      let ledger = sampleSnapshot
+            { alsSettlementBalanceUsdc = 99_155_238_343
+            , alsLiquidationReachableSettlementUsdc = 99_155_238_343
+            , alsFreeSettlementUsdc = 29_051_217_243
+            , alsActivePositionMarginUsdc = 68_729_459_421
+            , alsOtherLockedMarginUsdc = 1_374_561_679
+            , alsTraderClaimBalanceUsdc = 0
+            , alsUnrealizedPnlUsdc = 4_877_449_920
+            , alsNetEquityUsdc = 73_603_094_480
+            }
+          carry = 3_814_861
+          equity = ledgerToEquity ledger carry
+          score = calculateScore $ ScoreInput
+            (EquitySnapshot False 0 0 0) equity 100_000_000_000 0 0
+      inferPendingCarry ledger `shouldBe` Just carry
+      economicAccountValue equity `shouldBe` 104_028_873_402
+      sbFinalPnlUsdc score `shouldBe` 4_028_873_402
+      sbFinalPnlUsdc score - alsUnrealizedPnlUsdc ledger `shouldBe` -848_576_518
+
+    it "counts claims once and retains order and liquidation reserves" $ do
+      let ledger = sampleSnapshot
+            { alsSettlementBalanceUsdc = 1_000
+            , alsLiquidationReachableSettlementUsdc = 980
+            , alsExecutionBountyReserveUsdc = 20
+            , alsFreeSettlementUsdc = 650
+            , alsActivePositionMarginUsdc = 100
+            , alsOtherLockedMarginUsdc = 250
+            , alsTraderClaimBalanceUsdc = 40
+            , alsUnrealizedPnlUsdc = -25
+            , alsNetEquityUsdc = 105 -- 100 pledge - 10 carry + 40 claims - 25 PnL
+            }
+      inferPendingCarry ledger `shouldBe` Just 10
+      economicAccountValue (ledgerToEquity ledger 10) `shouldBe` 985
+
+    it "requires the full carry charge once the projected pledge is exhausted" $ do
+      let ledger = sampleSnapshot
+            { alsLiquidationReachableSettlementUsdc = 1_000
+            , alsActivePositionMarginUsdc = 100
+            , alsTraderClaimBalanceUsdc = 40
+            , alsUnrealizedPnlUsdc = -25
+            , alsNetEquityUsdc = 15 -- zero pledge + claims + price PnL
+            }
+      inferPendingCarry ledger `shouldBe` Nothing
+      -- Includes the extra 50 consumed from free settlement.
+      economicAccountValue (ledgerToEquity ledger 150) `shouldBe` 865
+      -- Uncovered carry remains a liability; floor only the full account value.
+      economicAccountValue (ledgerToEquity ledger 1_100) `shouldBe` 0
+
+    it "does not invent carry from inconsistent risk fields" $
+      inferPendingCarry sampleSnapshot `shouldBe` Nothing
+
+    it "uses reachable settlement and claims for a flat account" $ do
+      let ledger = sampleSnapshot { alsHasPosition = False }
+      inferPendingCarry ledger `shouldBe` Just 0
+      economicAccountValue (ledgerToEquity ledger 0) `shouldBe` 910
+
   describe "findLastBlockBeforeTimestamp" $ do
     it "returns the block immediately before an exact timestamp boundary" $ do
       result <- findLastBlockBeforeTimestamp fetchBlock 9 50
