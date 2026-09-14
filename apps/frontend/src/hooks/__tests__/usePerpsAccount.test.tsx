@@ -500,6 +500,24 @@ describe('usePerpsAccount', () => {
     expect(result.current.position?.vpiReserveUnderfunded).toBe(true)
   })
 
+  it('exposes only free settlement remaining after carry consumes position margin', () => {
+    mocks.primaryData = riskData()
+    mocks.primaryData[12] = success(250_000_001n)
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(result.current.freeSettlementUsdc).toBe(750_000_000n)
+    expect(result.current.carryProjection).toEqual({ positionMarginUsdc: 0n, freeSettlementUsdc: 749_999_999n, uncoveredCarryUsdc: 0n })
+  })
+
+  it.each([1, 7, 12])('withholds funding projection when required position, balance or carry read %i fails', index => {
+    mocks.primaryData = riskData()
+    const { result, rerender } = renderHook(() => usePerpsAccount())
+    expect(result.current.carryProjection?.freeSettlementUsdc).toBe(750_000_000n)
+    mocks.primaryData = [...mocks.primaryData]
+    mocks.primaryData[index] = failure('temporarily unavailable')
+    rerender()
+    expect(result.current.carryProjection).toBeUndefined()
+  })
+
   it.each([0, 1, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 22, 23, 24])('does not present missing read %i as no liquidation risk', index => {
     mocks.primaryData = riskData()
     mocks.immutableData = [success(200_000_000n)]
@@ -533,10 +551,12 @@ describe('usePerpsAccount', () => {
     expect(result.current.position?.liquidationPrice).toBeUndefined()
     expect(result.current.position?.riskStatus).toBe('unavailable')
     expect(result.current.display.availableToTrade).toBe('--')
+    expect(result.current.carryProjection).toBeUndefined()
     mocks.invalidated = false
     mocks.dynamicError = undefined
     rerender()
     expect(result.current.position?.liquidationPrice).toBe(102_397_603n)
+    expect(result.current.carryProjection?.freeSettlementUsdc).toBe(750_000_000n)
   })
 
   it('uses current FAD risk parameters despite stale cached configuration', () => {

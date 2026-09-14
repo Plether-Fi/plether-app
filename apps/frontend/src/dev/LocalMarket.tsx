@@ -18,6 +18,7 @@ interface State {
   cap: bigint
   trader: string
   pendingOrders: number
+  availableFreeSettlementUsdc: bigint | undefined
   autoExecute: boolean
   log: { action: string; tx?: string; time: string }[]
 }
@@ -94,7 +95,7 @@ function LocalMarket() {
           <p>Account equity: {formatUnits(state.account.equityUsdc, 6)} USDC</p>
           <p>{state.position.exists ? `${state.position.direction} · ${formatUnits(state.position.size, 18)} plDXY` : 'No open position'} · {state.pendingOrders} queued orders</p>
           <p role="status">Protection: {protectionStatusLabel(state.protection?.status)}</p>
-          <PositionProtectionManager protection={state.protection} position={state.position} rawMark={state.protocol.lastMarkPrice} cap={state.cap} configuration={state.configuration} pendingOrders={state.pendingOrders} accountAddress={state.trader} onManage={(request: ProtectionManagementRequest) => act('manage', request)} />
+          <PositionProtectionManager protection={state.protection} position={state.position} rawMark={state.protocol.lastMarkPrice} cap={state.cap} configuration={state.configuration} pendingOrders={state.pendingOrders} availableFreeSettlementUsdc={state.availableFreeSettlementUsdc} accountAddress={state.trader} onManage={(request: ProtectionManagementRequest) => act('manage', request)} />
         </section>
       </div>
       <section className="border border-brand-border p-4"><h2 className="mb-3 font-semibold">Local transaction log</h2><ul className="space-y-2 text-xs">{state.log.map(item => <li key={item.tx ?? item.time} className="break-all"><strong>{item.action}</strong> {item.tx}</li>)}</ul></section>

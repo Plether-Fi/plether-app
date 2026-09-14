@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { encodeErrorResult, parseAbi } from 'viem'
+import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsErrorMessage,
@@ -46,6 +47,7 @@ const PERPS_TEST_ERROR_ABI = parseAbi([
   'error OrderRouter__AccountQueueCorrupt()',
   'error OrderRouter__GlobalQueueCorrupt()',
   'error OrderRouter__Unauthorized()',
+  'error OrderRouter__InsufficientFreeEquity()',
 
   'error PletherOracle__MissingUpdateData()',
   'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
@@ -88,6 +90,42 @@ function encodedErrorMessage(errorName: string, args: readonly unknown[], action
 }
 
 describe('getPerpsErrorMessage', () => {
+  it('decodes the reported TP/SL settlement shortfall through a standard Error cause', () => {
+    const error = new Error('Execution reverted for an unknown reason.', {
+      cause: { code: 3, message: 'execution reverted', data: '0x024ec6ee' },
+    })
+
+    expect(getPerpsErrorMessage(error, 'protection')).toBe(
+      'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+    )
+  })
+
+  it('distinguishes the router risk check from the TP/SL settlement lock', () => {
+    expect(encodedErrorMessage('OrderRouter__InsufficientFreeEquity', [], 'protection')).toBe(
+      'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
+    )
+  })
+
+  it.each([
+    ['OrderRouter__NoOpenPosition', 'no open position'],
+    ['OrderRouter__ProtectionAlreadyActive', 'already has TP/SL'],
+    ['OrderRouter__PendingOrdersExist', 'pending orders to finish'],
+    ['OrderRouter__PositionChanged', 'position changed'],
+    ['OrderRouter__ProtectionMarkTooStale', 'market price is too old'],
+    ['OrderRouter__InvalidProtectionPrices', 'trigger price is no longer valid'],
+    ['OrderRouter__ConditionalTriggerFrozen', 'market oracle is frozen'],
+  ] as const)('describes %s for TP/SL management', (errorName, expected) => {
+    const data = encodeErrorResult({ abi: PERPS_POSITION_PROTECTION_BOOK_ABI, errorName })
+    expect(getPerpsErrorMessage({ cause: { data } }, 'protection')).toContain(expected)
+  })
+
+  it('uses a TP/SL fallback without exposing raw calldata when revert data is unavailable', () => {
+    const error = new Error('Execution reverted for an unknown reason. Raw Call Arguments: from: 0x123')
+    expect(getPerpsErrorMessage(error, 'protection')).toBe(
+      'TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.'
+    )
+  })
+
   it('preserves instrumented commit receipt diagnostics', () => {
     const message = 'Commit reverted after wallet confirmation, but the receipt did not include decodable revert data. Failed tx: 0x123.'
 
