@@ -340,7 +340,7 @@ export function Perps() {
           <PerpsAccountPanel
             positionProtection={perpsAccount.activePositionProtection}
             protectionCapPrice={perpsAccount.capPrice}
-            protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} onRefresh={() => void handleAccountRefresh()} /> : undefined}
+            protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} availableFreeSettlementUsdc={perpsAccount.carryProjection?.freeSettlementUsdc} onRefresh={() => void handleAccountRefresh()} /> : undefined}
             position={perpsAccount.position}
             equityUsdc={perpsAccount.positionEquityUsdc}
             freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}

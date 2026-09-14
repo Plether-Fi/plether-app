@@ -1156,34 +1156,46 @@ export function usePerpsTrading() {
     params?: PositionProtectionParams
     onStatus?: (status: SponsoredExecutionStatus) => void
   }) => {
-    const sponsored = requireSponsoredExecution()
-    const client = requireClient(publicClient)
-    if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
-    await verifyPerpsV2DeploymentBindings(client, sponsored.manifest)
-    await verifyProtectionDeployment(client, sponsored.manifest)
-    const book = sponsored.manifest.positionProtectionBook
-    const account = sponsored.accountAddress
-    if (input.action !== 'create' && input.protectionId === undefined) throw new Error('Select a protection first')
-    if (input.action !== 'cancel' && input.params === undefined) throw new Error('Enter TP/SL triggers first')
-    const protectionId = input.protectionId ?? 0n
-    const params = input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }
-    const action = input.action === 'cancel'
-      ? buildCancelProtectionAction({ account, book, protectionId })
-      : input.action === 'replace'
-        ? buildReplaceProtectionAction({ account, book, protectionId, params })
-        : buildCreateProtectionAction({ account, book, params })
-    await client.call({ account, to: book, data: action.calls[0].data, value: 0n })
-    const result = await executeSponsoredPerpsAction({
-      manifest: sponsored.manifest, ownerAddress: sponsored.ownerAddress, runtime: sponsored.runtime, action,
-      protectionIntent: persistProtectionIntent(book, input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }, input.protectionId),
-      onStatus: input.onStatus,
-    })
-    const eventName = input.action === 'create' ? 'PositionProtectionCreated' : input.action === 'replace' ? 'PositionProtectionReplaced' : 'PositionProtectionCancelled'
-    const events = parseEventLogs({ abi: PERPS_POSITION_PROTECTION_BOOK_ABI, eventName, logs: result.receipt.logs.filter(log => isAddressEqual(log.address, book)) })
-      .filter(event => isAddressEqual(event.args.account, account) && (input.protectionId === undefined || event.args.protectionId === input.protectionId))
-    invalidatePerpsReads()
-    if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
-    return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
+    try {
+      const sponsored = requireSponsoredExecution()
+      const client = requireClient(publicClient)
+      if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
+      await verifyPerpsV2DeploymentBindings(client, sponsored.manifest)
+      await verifyProtectionDeployment(client, sponsored.manifest)
+      const book = sponsored.manifest.positionProtectionBook
+      const account = sponsored.accountAddress
+      if (input.action !== 'create' && input.protectionId === undefined) throw new Error('Select a protection first')
+      if (input.action !== 'cancel' && input.params === undefined) throw new Error('Enter TP/SL triggers first')
+      const protectionId = input.protectionId ?? 0n
+      const params = input.params ?? { takeProfitTriggerPrice: 0n, stopLossTriggerPrice: 0n }
+      const action = input.action === 'cancel'
+        ? buildCancelProtectionAction({ account, book, protectionId })
+        : input.action === 'replace'
+          ? buildReplaceProtectionAction({ account, book, protectionId, params })
+          : buildCreateProtectionAction({ account, book, params })
+      const simulation = { account, address: book, abi: PERPS_POSITION_PROTECTION_BOOK_ABI } as const
+      if (input.action === 'cancel') {
+        await client.simulateContract({ ...simulation, functionName: 'cancelPositionProtection', args: [protectionId] })
+      } else if (input.action === 'replace') {
+        await client.simulateContract({ ...simulation, functionName: 'replacePositionProtection', args: [protectionId, params] })
+      } else {
+        await client.simulateContract({ ...simulation, functionName: 'createPositionProtection', args: [params] })
+      }
+      const result = await executeSponsoredPerpsAction({
+        manifest: sponsored.manifest, ownerAddress: sponsored.ownerAddress, runtime: sponsored.runtime, action,
+        protectionIntent: persistProtectionIntent(book, params, input.protectionId),
+        onStatus: input.onStatus,
+      })
+      const eventName = input.action === 'create' ? 'PositionProtectionCreated' : input.action === 'replace' ? 'PositionProtectionReplaced' : 'PositionProtectionCancelled'
+      const events = parseEventLogs({ abi: PERPS_POSITION_PROTECTION_BOOK_ABI, eventName, logs: result.receipt.logs.filter(log => isAddressEqual(log.address, book)) })
+        .filter(event => isAddressEqual(event.args.account, account) && (input.protectionId === undefined || event.args.protectionId === input.protectionId))
+      invalidatePerpsReads()
+      if (events.length !== 1) throw new Error('The operation was included but its protection event could not be reconciled. Refresh protections before another submission.')
+      return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
+    } catch (error) {
+      const sponsorError = findSponsorRequestError(error)
+      throw new Error(sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { cause: error })
+    }
   }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
 
   return {
