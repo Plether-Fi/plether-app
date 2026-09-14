@@ -1,17 +1,26 @@
 module Plether.AA.PimlicoSpec (spec) where
 
-import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson (Value (..), decode, encode, object, toJSON, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Either (isLeft, isRight)
+import Data.Foldable (toList)
+import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
+import Network.HTTP.Types (status200)
+import Network.Wai (responseLBS, strictRequestBody)
+import Network.Wai.Handler.Warp (testWithApplication)
+import Plether.Ethereum.Client (EthClient, newClient)
+import Plether.AA.Gateway (agreeAccountIdentity)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (addUTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeOrError)
 import Plether.AA.Pimlico
   ( PimlicoMethod (..)
+  , ParsedUserOperation (..)
+  , ProxyFailure (..)
   , RpcRequest (..)
   , SmartCall (..)
   , decodeSmartAccountCalls
@@ -22,6 +31,9 @@ import Plether.AA.Pimlico
   , recordSubmittedOperation
   , validateActionSequence
   , validateMethodParams
+  , verifyAccountIdentity
+  , verifyAccountIdentityAtBlock
+  , unavailable
   )
 import Plether.Config
   ( AaConfig (..)
@@ -139,6 +151,49 @@ spec = do
         Left failure -> expectationFailure $ showFailure failure
         Right parsed ->
           validateMethodParams parsed `shouldSatisfy` isRight
+
+  describe "account deployment confirmation" $ do
+    let deployed = ParsedUserOperation sender Nothing []
+        reason = either pfReason (const "AUTHORIZED")
+    it "reports pending only for a trusted latest account absent at the safe snapshot" $
+      withIdentityRpc False "valid" $ \client calls -> do
+        result <- verifyAccountIdentityAtBlock client 100 deployed
+        reason result `shouldBe` "ACCOUNT_DEPLOYMENT_PENDING"
+        result `shouldSatisfy` isLeft
+        length <$> readIORef calls `shouldReturn` 13
+    it "does not add latest reads to an already safe account" $
+      withIdentityRpc True "valid" $ \client calls -> do
+        verifyAccountIdentityAtBlock client 100 deployed `shouldReturn` Right owner
+        length <$> readIORef calls `shouldReturn` 7
+    it "verifies the account normally only after the safe snapshot advances" $
+      withIdentityRpc False "valid" $ \client calls -> do
+        reason <$> verifyAccountIdentityAtBlock client 100 deployed `shouldReturn` "ACCOUNT_DEPLOYMENT_PENDING"
+        verifyAccountIdentityAtBlock client 101 deployed `shouldReturn` Right owner
+        length <$> readIORef calls `shouldReturn` 20
+    it "does not treat missing safe RPC evidence as pending or authorize using latest" $
+      withIdentityRpc False "safe-rpc-failure" $ \client calls -> do
+        reason <$> verifyAccountIdentityAtBlock client 100 deployed `shouldReturn` "SPONSOR_UNAVAILABLE"
+        length <$> readIORef calls `shouldReturn` 6
+    it "preserves counterfactual first-operation verification without latest reads" $
+      withIdentityRpc False "valid" $ \client calls -> do
+        verifyAccountIdentityAtBlock client 100 (deployed {puoFactoryOwner = Just owner}) `shouldReturn` Right owner
+        length <$> readIORef calls `shouldReturn` 3
+    it "never labels an unknown or untrusted latest account as pending" $
+      mapM_ (\mode -> withIdentityRpc False mode $ \client _ -> do
+        result <- verifyAccountIdentityAtBlock client 100 deployed
+        result `shouldSatisfy` isLeft
+        reason result `shouldNotBe` "ACCOUNT_DEPLOYMENT_PENDING") ["missing", "wrong-entrypoint", "rpc-failure"]
+    it "keeps latest-only (Pimlico) validation unchanged" $
+      withIdentityRpc False "valid" $ \client calls -> do
+        verifyAccountIdentity client deployed `shouldReturn` Right owner
+        length <$> readIORef calls `shouldReturn` 7
+    it "requires agreement on pending and does not authorize either provider mode" $ do
+      let pending = Left $ unavailable "ACCOUNT_DEPLOYMENT_PENDING" "pending"
+          outage = Left $ unavailable "SPONSOR_UNAVAILABLE" "unavailable"
+      agreeAccountIdentity pending pending `shouldBe` pending
+      reason (agreeAccountIdentity pending (Right owner)) `shouldBe` "SECURITY_ATTESTATION_UNAVAILABLE"
+      reason (agreeAccountIdentity pending outage) `shouldBe` "SECURITY_ATTESTATION_UNAVAILABLE"
+      reason (agreeAccountIdentity (Right owner) pending) `shouldBe` "SECURITY_ATTESTATION_UNAVAILABLE"
 
   describe "recovery read authorization" $ do
     it "accepts only recent hashes from the original trusted client IP" $ do
@@ -531,3 +586,39 @@ hex bytes = "0x" <> TE.decodeUtf8 (B16.encode bytes)
 
 showFailure :: a -> String
 showFailure _ = "AA proxy validation unexpectedly failed"
+
+-- Offline RPC fixture: a trusted account exists at latest, but can be absent
+-- at the exact safe block. Empty owner() responses mirror the reported incident.
+withIdentityRpc :: Bool -> T.Text -> (EthClient -> IORef [Value] -> IO ()) -> IO ()
+withIdentityRpc safePresent mode action = do
+  calls <- newIORef []
+  let impl = "0x28426d752372d68d34340bd94390950dce3c9ec3"
+      word = String . hex . encodeAddress
+      app request respond = do
+        body <- strictRequestBody request
+        let obj = case decode body of Just (Object o) -> o; _ -> KM.empty
+            method = KM.lookup "method" obj
+            params = case KM.lookup "params" obj of Just (Array xs) -> toList xs; _ -> []
+            atLatest = String "latest" `elem` params
+            present = if atLatest then mode /= "missing" else safePresent || String "0x65" `elem` params
+            result = case (method, params) of
+              (Just (String "eth_getCode"), _) ->
+                if (atLatest && mode == "rpc-failure") || (not atLatest && mode == "safe-rpc-failure")
+                  then Null else String $ if present then "0x6000" else "0x"
+              (Just (String "eth_getStorageAt"), [_, String slot, _]) ->
+                if present && T.isPrefixOf "0x3608" slot then word impl else word zeroAddress
+              (Just (String "eth_call"), Object call : _) ->
+                let target = KM.lookup "to" call
+                    dat = KM.lookup "data" call
+                in if target == Just (String $ T.toLower simpleAccountFactory)
+                  then if dat == Just (String $ hex $ encodeCall "accountImplementation()" []) then word impl else word sender
+                  else if not present then String "0x"
+                  else if dat == Just (String $ hex $ encodeCall "owner()" []) then word owner
+                  else word $ if mode == "wrong-entrypoint" then attacker else entryPoint
+              _ -> Null
+        atomicModifyIORef' calls $ \xs -> (toJSON params : xs, ())
+        respond $ responseLBS status200 [] $ encode $ object
+          ["jsonrpc" .= ("2.0" :: T.Text), "id" .= KM.lookup "id" obj, "result" .= result]
+  testWithApplication (pure app) $ \port -> do
+    client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
+    action client calls
