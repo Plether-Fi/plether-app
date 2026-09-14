@@ -105,6 +105,31 @@ beforeEach(() => {
 })
 
 describe('WalletPage activity costs', () => {
+  it.each([
+    ['live', 'pending', false, 'Registered'],
+    ['review', 'pending', false, 'Awaiting prize review'],
+    ['review', 'under_review', false, 'Prize review in progress'],
+    ['final', 'eligible', true, 'Prize eligible'],
+    ['final', 'ineligible', false, 'Not eligible'],
+  ])('distinguishes registration and prize review for %s / %s', (status, eligibilityStatus, eligible, label) => {
+    const current = apiMocks.useWallet.getMockImplementation()?.()
+    apiMocks.useWallet.mockReturnValue({ ...current, data: {
+      ...current.data,
+      competition: { ...current.data.competition, status },
+      wallet: { ...current.data.wallet, eligibilityStatus, eligible },
+    } })
+    render(
+      <MemoryRouter initialEntries={[`/competitions/testnet-trading-2026/wallets/${address}`]}>
+        <Routes><Route path="/competitions/:slug/wallets/:address" element={<WalletPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(label)).toBeInTheDocument()
+    expect(screen.queryByText('Pending review')).not.toBeInTheDocument()
+    if (status === 'live') {
+      expect(screen.getByText('Registration is complete. Prize eligibility will be reviewed after the competition ends.')).toBeInTheDocument()
+    }
+  })
+
   it('shows protocol fee and signed VPI on trade rows', () => {
     render(
       <MemoryRouter initialEntries={[`/competitions/testnet-trading-2026/wallets/${address}`]}>

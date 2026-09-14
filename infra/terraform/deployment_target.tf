@@ -6,7 +6,10 @@ locals {
 resource "terraform_data" "deployment_target_guard" {
   lifecycle {
     precondition {
-      condition = !local.native_aa_backend_configured || (
+      condition = !(local.native_aa_backend_configured || (
+        var.insights_active_competition_slug == "testnet-trading-2026-09"
+        && var.insights_competition_release_id != ""
+        )) || (
         local.sepolia_core.release.version == "v1.2.3"
         && var.perps_chain_id == tostring(local.sepolia_core.network.chainId)
         && var.perps_indexer_start_block == tostring(local.sepolia_core.release.deploymentBlock)
@@ -30,7 +33,7 @@ resource "terraform_data" "deployment_target_guard" {
           lower(var.vault_history_junior_vault_address) == lower(local.sepolia_core.contracts.juniorVault.address),
         ])
       )
-      error_message = "Native AA requires the complete checked-in Core v1.2.3 deployment bindings and indexing anchor."
+      error_message = "Native AA and the bound September Insights competition require the complete checked-in Core v1.2.3 deployment bindings and indexing anchor."
     }
     precondition {
       condition     = !var.enable_aa_readiness_enforcement || (var.environment == "sepolia" && var.aws_region == "ap-southeast-1" && local.native_aa_backend_configured)

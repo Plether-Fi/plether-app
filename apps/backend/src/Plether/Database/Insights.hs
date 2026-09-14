@@ -93,9 +93,11 @@ import Plether.Insights.Competition
   , pendingCompetitionReleaseManifestText
   , participantEligibilityText
   , september2026CompetitionSlug
+  , september2026ReleaseManifest
   )
 import qualified Plether.Database.Insights.Registration as RegistrationDb
 import Plether.Perps.IndexerFormat (competitionIndexerNamespace, competitionIndexerNamespaceSql)
+import qualified Plether.Perps.Manifest as Manifest
 import Plether.Utils.Address (isValidAddress)
 
 -- Immutable values used only to migrate the already-published July row. A
@@ -1007,6 +1009,7 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
     case (storedRows, bindingRows) of
       ([stored], [Only storedReleaseBound])
         | releaseBound && not storedReleaseBound -> do
+            validateCompetitionRulesSeed expected stored
             bindPendingCompetitionRelease conn expected
             validateOrMigrateCompetitionSeed conn expected expected
         | releaseBound -> validateOrMigrateCompetitionSeed conn expected stored
@@ -1021,15 +1024,26 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
 -- already exist, but no boundary, snapshot, or finalized state may have been
 -- created. This keeps registration independent while preserving immutable
 -- scoring history from the first on-chain read onward.
+-- September v1.2.3 may recover an unbound row during trading: the stack was
+-- deployed before the original baseline, and workers replay that historical
+-- baseline. The explicit release ID is still required; no existing bound
+-- release, schedule, participant, boundary, or snapshot is rewritten.
 bindPendingCompetitionRelease :: Connection -> CompetitionSeedMetadata -> IO ()
 bindPendingCompetitionRelease conn expected = do
+  let allowSeptemberRecovery =
+        Manifest.releaseVersion == "v1.2.3"
+          && csmSlug expected == september2026CompetitionSlug
+          && csmChainId expected == Manifest.releaseChainId
+          && csmReleaseManifest expected == competitionReleaseManifestText september2026ReleaseManifest
+          && csmStartTimestamp expected >= Manifest.releaseVolumeHistoryStartTimestamp
   affected <- execute conn
     "UPDATE insights_competitions SET release_router = ?, usdc_address = ?,\
     \ margin_clearinghouse_address = ?, account_lens_address = ?, release_manifest = ?,\
     \ release_bound_at = NOW(), updated_at = NOW()\
     \ WHERE slug = ? AND release_bound_at IS NULL AND NOT finalized\
     \ AND start_block IS NULL AND score_cutoff_block IS NULL\
-    \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+    \ AND (NOW() < TO_TIMESTAMP(start_timestamp)\
+    \      OR (? AND NOW() < TO_TIMESTAMP(score_cutoff_timestamp)))\
     \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
     \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)"
     ( csmReleaseRouter expected
@@ -1038,6 +1052,7 @@ bindPendingCompetitionRelease conn expected = do
     , csmAccountLensAddress expected
     , csmReleaseManifest expected
     , csmSlug expected
+    , allowSeptemberRecovery
     , csmSlug expected
     , csmSlug expected
     )
@@ -1045,7 +1060,7 @@ bindPendingCompetitionRelease conn expected = do
     ioError $ userError $
       "Refusing to bind the Insights release for "
         <> T.unpack (csmSlug expected)
-        <> " after baseline resolution, snapshot publication, competition start, or finalization"
+        <> " after baseline resolution, snapshot publication, or finalization; late binding requires the pinned September v1.2.3 release before scoring closes"
 
 validateCompetitionRulesSeed
   :: CompetitionSeedMetadata

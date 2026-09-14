@@ -157,6 +157,7 @@ export function RegistrationConfirmation({ competition, registration }: { compet
         <h1 className="mt-2 text-3xl font-semibold">Congratulations, you’re in.</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">
           {completionMessage}
+          {' '}Prize eligibility is reviewed after the competition ends.
         </p>
         <div className="mt-5 border-l-2 border-positive pl-4">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">{countdownLabel}</p>

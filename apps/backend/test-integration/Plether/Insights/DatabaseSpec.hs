@@ -31,6 +31,7 @@ import Plether.Database.Insights
   , publishAccountSnapshotBatch
   , refreshCompetitionIntegrityFlags
   , setCompetitionBoundaryBlocks
+  , seedCompetition
   , stageCompetitionParticipantWalletRemap
   )
 import Plether.Database.Insights.Registration (ensureRegistrationSchema)
@@ -49,12 +50,60 @@ import Plether.Insights.Competition
   , EquitySnapshot (..)
   , july2026Competition
   , september2026Competition
+  , september2026ReleaseManifest
   )
 import Test.Hspec
 
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    it "binds pending v1.2.3 during trading without changing the roster or schedule" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        insertParticipant conn walletA "existing-registration"
+        before <- requireCompetition conn competitionSlug
+        seedRelease conn rules september2026ReleaseManifest
+        after <- requireCompetition conn competitionSlug
+        icrReleaseReady after `shouldBe` True
+        icrReleaseRouter after `shouldBe` crmOrderRouter september2026ReleaseManifest
+        icrStartTimestamp after `shouldBe` icrStartTimestamp before
+        icrScoreCutoffTimestamp after `shouldBe` icrScoreCutoffTimestamp before
+        rows <- query conn
+          "SELECT wallet, trader_reference FROM insights_competition_participants WHERE competition_slug = ?"
+          (Only competitionSlug) :: IO [(Text, Text)]
+        rows `shouldBe` [(walletA, "existing-registration")]
+        seedRelease conn rules september2026ReleaseManifest
+        requireCompetition conn competitionSlug `shouldReturn` after
+
+    it "rejects a different release during late binding" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        seedRelease conn rules (september2026ReleaseManifest {crmAccountLens = fixtureLens})
+          `shouldThrow` anyIOException
+        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+
+    it "rejects late binding after baseline resolution" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        void $ execute conn "UPDATE insights_competitions SET start_block = 307400000 WHERE slug = ?" (Only competitionSlug)
+        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
+        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+
+    it "rejects late binding when the stored schedule differs" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        seedRelease conn (rules {crStartAt = addUTCTime 1 $ crStartAt rules}) september2026ReleaseManifest
+          `shouldThrow` anyIOException
+        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+
+    it "rejects late binding after scoring closes" $
+      withPendingV123Competition databaseUrl $ \conn rules -> do
+        let closed = rules
+              { crNewRiskCutoffAt = crStartAt rules
+              , crScoreCutoffAt = crStartAt rules
+              }
+        void $ execute conn
+          "UPDATE insights_competitions SET new_risk_cutoff_timestamp = start_timestamp, score_cutoff_timestamp = start_timestamp WHERE slug = ?"
+          (Only competitionSlug)
+        seedRelease conn closed september2026ReleaseManifest `shouldThrow` anyIOException
+        icrReleaseReady <$> requireCompetition conn competitionSlug `shouldReturn` False
+
     it "preserves finalized July data while selecting the configured September competition" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         void $ execute conn
@@ -298,6 +347,24 @@ insightsDatabaseSpec databaseUrl =
         afterSubstitution <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA afterSubstitution) `shouldBe` False
 
+
+seedRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
+seedRelease conn rules manifest =
+  seedCompetition conn rules (crmChainId manifest) (crmOrderRouter manifest)
+    (crmUsdc manifest) (crmMarginClearinghouse manifest) (crmAccountLens manifest) manifest
+
+withPendingV123Competition :: Text -> (Connection -> CompetitionRules -> IO a) -> IO a
+withPendingV123Competition databaseUrl action =
+  withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+    now <- getCurrentTime
+    let rules = testSeptemberRules
+          { crStartAt = addUTCTime (-3600) now
+          , crNewRiskCutoffAt = addUTCTime 3600 now
+          , crScoreCutoffAt = addUTCTime 3600 now
+          }
+    void $ execute conn "DELETE FROM insights_competitions WHERE slug = ?" (Only competitionSlug)
+    seedRelease conn rules (september2026ReleaseManifest {crmReleaseId = "release-pending"})
+    action conn rules
 
 withInsightsDatabase :: Text -> (DbPool -> IO a) -> IO a
 withInsightsDatabase databaseUrl action =

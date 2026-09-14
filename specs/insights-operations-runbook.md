@@ -41,8 +41,21 @@ insights_active_competition_slug = "testnet-trading-2026-09"
 insights_competition_release_id  = ""
 ```
 
-After deployment, set `insights_competition_release_id` to the same slug and
-supply the reviewed September values for every manifest field:
+The September leaderboard targets **plether-core v1.2.3**, pinned in
+`config/perps/arbitrum-sepolia-v2.json`, starting at block **307397196**.
+Use both checked-in Terraform overlays, after the environment's base variables:
+
+```text
+-var-file=sepolia-core-v1.2.3.tfvars.json
+-var-file=sepolia-insights-v1.2.3.tfvars.json
+```
+
+The first supplies the complete contract deployment; the second selects and
+binds `testnet-trading-2026-09`. Its release ID is the competition slug, not the
+Core version string. Terraform checks the bound competition against the exact
+v1.2.3 contracts and indexing anchor even when native AA is disabled. All API,
+perps-indexer, and Insights snapshot-worker containers inherit the same binding.
+The contract overlay supplies every competition manifest field:
 
 - `perps_usdc`
 - `perps_order_router`
@@ -60,6 +73,31 @@ new positive value. Verify the deployed bytecode and frontend release manifest,
 then record their reviewed addresses and deployment transaction hashes in the
 restricted launch record. Terraform rejects a partial, inherited, or role-
 swapped July manifest.
+
+Binding an existing registration-only competition requires no resolved
+boundaries, no snapshots or snapshot batches, and an unfinalized row. During
+trading, the backend permits one-time recovery only for the exact pinned
+September v1.2.3 manifest, deployed before the original baseline, and only
+before scoring closes. Stored rules and dates must still match. Other releases
+must bind before competition start. No existing bound release can be replaced.
+
+Before activating, verify archive RPC access to the original baseline and
+retain the registration roster; do not reset the competition or move its start
+time. The indexer retains history from deployment block 307397196 so funding
+provenance and the pre-start account state remain available. Leaderboard scoring
+starts at the competition's configured timestamp, not the deployment block.
+The configured backend RPC was verified on September 14, 2026: block
+`308578017` is the first block at `2026-09-13T21:00:00Z` (hash
+`0xb6ec254c2c380b702f2105e2f0147ee9b289d29c8a081dbde7fc1b910918394b`).
+The baseline is block `308578016`, timestamp `1789333199`, hash
+`0xebb3459384af8f627b26fc2b69031130e44ec1a1b9c1418ae4e1241958f3571a`.
+At that block, all nine indexing/snapshot contract runtime hashes matched
+v1.2.3 and a registered account's lens call returned the complete 768-byte
+snapshot. The public Arbitrum Sepolia RPC lacked this historical state; retain
+archive access through the backend's configured provider.
+A successful activation must report
+`releaseReady: true` from `/api/insights/v1/competitions/current`, followed by
+advancing indexer and snapshot coverage in the competition status endpoint.
 
 ### Registration database TLS and optional storage encryption
 

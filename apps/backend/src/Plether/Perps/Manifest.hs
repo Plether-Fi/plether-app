@@ -3,6 +3,7 @@
 -- | The checked-in release manifest is the single source of deployed identities.
 module Plether.Perps.Manifest
   ( releaseChainId
+  , releaseVersion
   , releaseDeploymentBlock
   , releaseVolumeHistoryStartTimestamp
   , releaseAaManifestVersion
@@ -47,6 +48,9 @@ import Plether.Perps.Manifest.Embed (manifestInteger, manifestText)
 
 releaseChainId :: Integer
 releaseChainId = $(manifestInteger ["network", "chainId"])
+
+releaseVersion :: Text
+releaseVersion = $(manifestText ["release", "version"])
 
 releaseDeploymentBlock :: Integer
 releaseDeploymentBlock = $(manifestInteger ["release", "deploymentBlock"])

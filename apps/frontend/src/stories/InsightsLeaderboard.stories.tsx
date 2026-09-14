@@ -24,7 +24,7 @@ const standings: Standing[] = [
     prizeAmountUsdc: null,
     eligible: false,
     eligibilityStatus: 'pending',
-    eligibilityReasons: ['Integrity review pending'],
+    eligibilityReasons: [],
   },
   {
     rank: 2,
@@ -107,7 +107,7 @@ function InsightsLeaderboardPreview() {
         <div className="mx-auto max-w-6xl space-y-4">
           <LeaderboardTitle count={standings.length} competitionSlug={competitionSlug} />
           <Panel>
-            <Leaderboard standings={standings} search="" competitionSlug={competitionSlug} />
+            <Leaderboard standings={standings} search="" competitionSlug={competitionSlug} competitionStatus="live" />
           </Panel>
         </div>
       </main>
