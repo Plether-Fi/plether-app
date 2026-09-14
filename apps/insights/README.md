@@ -9,7 +9,10 @@ occupied paid places equally; wallet address only stabilizes display order.
 
 The September leaderboard indexes **plether-core v1.2.3** on Arbitrum Sepolia,
 using the backend's shared `config/perps/arbitrum-sepolia-v2.json` manifest and
-deployment block **307397196**. The UI consumes the Insights API; it does not
+deployment block **307397196**. Account activity is indexed across the release;
+competition scoring starts **September 13, 2026 at 21:00 UTC** for the registered
+roster, using the account state immediately before that time as its baseline.
+The UI consumes the Insights API; it does not
 select contracts or index the chain itself. Backend release binding requires
 both the `sepolia-core-v1.2.3.tfvars.json` and
 `sepolia-insights-v1.2.3.tfvars.json` Terraform overlays. See

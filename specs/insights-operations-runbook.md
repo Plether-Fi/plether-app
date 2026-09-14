@@ -86,6 +86,15 @@ retain the registration roster; do not reset the competition or move its start
 time. The indexer retains history from deployment block 307397196 so funding
 provenance and the pre-start account state remain available. Leaderboard scoring
 starts at the competition's configured timestamp, not the deployment block.
+The configured backend RPC was verified on September 14, 2026: block
+`308578017` is the first block at `2026-09-13T21:00:00Z` (hash
+`0xb6ec254c2c380b702f2105e2f0147ee9b289d29c8a081dbde7fc1b910918394b`).
+The baseline is block `308578016`, timestamp `1789333199`, hash
+`0xebb3459384af8f627b26fc2b69031130e44ec1a1b9c1418ae4e1241958f3571a`.
+At that block, all nine indexing/snapshot contract runtime hashes matched
+v1.2.3 and a registered account's lens call returned the complete 768-byte
+snapshot. The public Arbitrum Sepolia RPC lacked this historical state; retain
+archive access through the backend's configured provider.
 A successful activation must report
 `releaseReady: true` from `/api/insights/v1/competitions/current`, followed by
 advancing indexer and snapshot coverage in the competition status endpoint.
