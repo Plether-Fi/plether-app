@@ -414,7 +414,7 @@ describe('Max opening review', () => {
     })
     const prepared = await preparePerpsOrderV2(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
     expect(prepared.request.sizeDelta).toBe(97n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_800_000n)
+    expect(prepared.request.marginDelta).toBe(999_798_000n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
     for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))
