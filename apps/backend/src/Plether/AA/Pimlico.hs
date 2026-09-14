@@ -1233,27 +1233,43 @@ verifyDeployedAccountIdentityAt client blockTag sender = do
       | implementation /= simpleAccountImplementation ->
           pure $ Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
       | otherwise ->
-          case ownerResult of
+          -- Inspect code before decoding owner(): an account deployed after
+          -- this safe snapshot legitimately returns empty data for owner().
+          -- Latest evidence only classifies the denial; it NEVER authorizes it.
+          case code of
             Left failure -> pure $ Left failure
-            Right owner -> do
-              expected <- readFactoryAddressAt client blockTag owner
-              pure $ do
-                accountCode <- code
-                expectedSender <- expected
-                actualEntryPoint <- accountEntryPoint
-                actualImplementation <- implementationSlot
-                actualBeacon <- beaconSlot
-                when (BS.null accountCode) $
-                  Left $ accountNotTrusted "Deployed UserOperation sender has no code"
-                when (owner == zeroAddress || expectedSender /= sender) $
-                  Left $ accountNotTrusted "Trading Account owner does not derive the sender"
-                unless (actualEntryPoint == entryPointAddress) $
-                  Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
-                unless (T.toLower actualImplementation == implementationWord) $
-                  Left $ accountNotTrusted "Trading Account implementation is not approved"
-                unless (T.toLower actualBeacon == zeroWord) $
-                  Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
-                Right owner
+            Right accountCode | BS.null accountCode -> case blockTag of
+              BlockNumber _ -> do
+                latest <- verifyDeployedAccountIdentity client sender
+                pure $ case latest of
+                  Right _ -> Left $ unavailable "ACCOUNT_DEPLOYMENT_PENDING"
+                    "Trading Account deployment is awaiting safe confirmation. Wait before preparing another action."
+                  Left failure -> Left failure
+              _ -> verifyOwner ownerResult code accountEntryPoint implementationSlot beaconSlot
+            Right _ -> verifyOwner ownerResult code accountEntryPoint implementationSlot beaconSlot
+  where
+    verifyOwner ownerResult code accountEntryPoint implementationSlot beaconSlot =
+      case ownerResult of
+        Left failure -> pure $ Left failure
+        Right owner -> do
+          expected <- readFactoryAddressAt client blockTag owner
+          pure $ do
+            accountCode <- code
+            expectedSender <- expected
+            actualEntryPoint <- accountEntryPoint
+            actualImplementation <- implementationSlot
+            actualBeacon <- beaconSlot
+            when (BS.null accountCode) $
+              Left $ accountNotTrusted "Deployed UserOperation sender has no code"
+            when (owner == zeroAddress || expectedSender /= sender) $
+              Left $ accountNotTrusted "Trading Account owner does not derive the sender"
+            unless (actualEntryPoint == entryPointAddress) $
+              Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
+            unless (T.toLower actualImplementation == implementationWord) $
+              Left $ accountNotTrusted "Trading Account implementation is not approved"
+            unless (T.toLower actualBeacon == zeroWord) $
+              Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
+            Right owner
 
 readFactoryAddress :: EthClient -> Text -> IO (Either ProxyFailure Text)
 readFactoryAddress client = readFactoryAddressAt client Latest
@@ -1557,7 +1573,7 @@ respondFailure :: Value -> ProxyFailure -> ActionM ()
 respondFailure requestId failure = do
   suppliedAttempt <- fmap TL.toStrict <$> header "X-Plether-Attempt-Id"
   let reason = pfReason failure
-      expected = reason `elem` ["POLICY_DENIED", "EXECUTION_GAS_CAP_EXCEEDED", "ACCOUNT_NOT_TRUSTED", "RATE_LIMITED", "PAYMASTER_PAUSED", "SPONSOR_BUDGET_EXCEEDED", "INVALID_REQUEST", "PROXY_AUTH_FAILED", "PREPARATION_DISABLED", "PREPARATION_EXPIRED", "PREPARATION_BUSY"]
+      expected = reason `elem` ["POLICY_DENIED", "EXECUTION_GAS_CAP_EXCEEDED", "ACCOUNT_NOT_TRUSTED", "ACCOUNT_DEPLOYMENT_PENDING", "RATE_LIMITED", "PAYMASTER_PAUSED", "SPONSOR_BUDGET_EXCEEDED", "INVALID_REQUEST", "PROXY_AUTH_FAILED", "PREPARATION_DISABLED", "PREPARATION_EXPIRED", "PREPARATION_BUSY"]
       stage | "BUDGET" `T.isInfixOf` reason || reason == "POLICY_DENIED" = "authorization"
             | "SIMULATION" `T.isInfixOf` reason || reason == "EXECUTION_GAS_CAP_EXCEEDED" = "estimation"
             | "SIGN" `T.isInfixOf` reason = "signing"

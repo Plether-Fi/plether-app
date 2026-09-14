@@ -155,7 +155,37 @@ describe('createManagedPimlicoRuntime', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('blocks native re-preparation until a throttled safe-code check passes, never signing or submitting', async () => {
+    let now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const prepare = vi.fn().mockRejectedValueOnce({ data: { reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true } }).mockResolvedValue(operation)
+    mocks.createSmartAccountClient.mockReturnValue({ prepareUserOperation: prepare })
+    const getCode = vi.fn().mockResolvedValue('0x')
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: v2Manifest,
+      ownerAddress: OWNER,
+      walletClient: { chain: { id: 421614 }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: 421614 }, getCode } as never,
+    })
+    const input = { calls: [{ to: ACCOUNT, value: 0n, data: '0x' as Hex }] }
+    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(getCode).not.toHaveBeenCalled()
+    expect(prepare).toHaveBeenCalledTimes(1)
+    now = 15_000
+    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(getCode).toHaveBeenCalledWith({ address: ACCOUNT, blockTag: 'safe' })
+    now = 30_000
+    getCode.mockResolvedValue('0x6000')
+    await expect(runtime.smartAccount.prepareUserOperation(input)).resolves.toEqual(operation)
+    expect(prepare).toHaveBeenCalledTimes(2)
+    const account = await mocks.toSimpleSmartAccount.mock.results[0].value
+    expect(account.signUserOperation).not.toHaveBeenCalled()
+    expect(mocks.createBundlerClient.mock.results[0].value.sendUserOperation).not.toHaveBeenCalled()
   })
 
   it('pins deterministic SimpleAccount v0.8 derivation to index and nonce key zero', async () => {

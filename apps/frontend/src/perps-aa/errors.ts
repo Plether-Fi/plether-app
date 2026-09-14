@@ -7,6 +7,7 @@ export type StableSponsorReason =
   | 'POLICY_DENIED'
   | 'PAYMASTER_PAUSED'
   | 'ACCOUNT_NOT_TRUSTED'
+  | 'ACCOUNT_DEPLOYMENT_PENDING'
   | 'UNKNOWN'
   | (string & {})
 
@@ -229,6 +230,8 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
       return 'This action exceeds the sponsored execution-gas limit. Your action was not sent.'
     case 'ACCOUNT_NOT_TRUSTED':
       return 'The configured Trading Account could not be verified.'
+    case 'ACCOUNT_DEPLOYMENT_PENDING':
+      return 'Your Trading Account deployment is awaiting safe confirmation. This can take several minutes. Wait before retrying; this action has not been sent.'
     case 'SPONSOR_UNAVAILABLE':
       return 'Plether gas sponsorship is temporarily unavailable. Your action was not sent.'
     default:

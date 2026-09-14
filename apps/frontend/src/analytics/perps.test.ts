@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   trackPerpsMarginLifecycle,
   trackPerpsOrderLifecycle,
+  trackPerpsSponsoredOperation,
 } from './perps'
 
 const analyticsMock = vi.hoisted(() => ({
@@ -17,6 +18,14 @@ vi.mock('./client', () => ({
 describe('perps structured logs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('records pending account confirmation as an expected rejection, not an infrastructure failure', () => {
+    trackPerpsSponsoredOperation('failed', { reason_code: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(analyticsMock.captureFrontendLog).toHaveBeenCalledWith(
+      'warn', 'Sponsored operation did not complete',
+      expect.objectContaining({ reason_code: 'ACCOUNT_DEPLOYMENT_PENDING', outcome: 'rejected' }),
+    )
   })
 
   it('logs order failures with stable messages and structured context', () => {

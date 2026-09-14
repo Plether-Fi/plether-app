@@ -1,4 +1,5 @@
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
@@ -361,7 +362,7 @@ export async function createManagedAaRuntime({
 
   if (isNativePaymasterManifest(manifest)) {
     const paymasterClient = createPaymasterClient({
-      transport: http(paymasterRpcUrl),
+      transport: http(paymasterRpcUrl, { retryCount: 0 }),
     })
     const unsignedPaymasterClient = createUnsignedPaymasterActions(
       paymasterClient
@@ -473,6 +474,10 @@ export async function createManagedAaRuntime({
       pimlicoClient.getUserOperationReceipt({ hash: userOperationHash })
   }
   const accountAddress = getAddress(smartAccount.address)
+  const deploymentGate = createDeploymentConfirmationGate(async () => {
+    const code = await publicClient.getCode({ address: accountAddress, blockTag: 'safe' })
+    return code !== undefined && isHex(code) && size(code) > 0
+  })
 
   return {
     chainId: manifest.chainId,
@@ -589,7 +594,9 @@ export async function createManagedAaRuntime({
       prepareUserOperation: async (input) => {
         const start = performance.now()
         try {
-          return await prepareUserOperation(input)
+          return await (isNativePaymasterManifest(manifest)
+            ? deploymentGate(() => prepareUserOperation(input))
+            : prepareUserOperation(input))
         } finally {
           // Fixed-name local timing only; no account, calls or credentials.
           performance.measure('plether.aa.preparation', { start, end: performance.now() })

@@ -17,6 +17,7 @@ module Plether.AA.Gateway
   , advanceEvidenceSnapshots
   , buildPreparedOperation
   , revalidateSecuritySnapshot
+  , agreeAccountIdentity
   ) where
 
 import Control.Exception (SomeException, try)
@@ -1123,13 +1124,22 @@ verifyAccountIdentityUncached context operation = do
   (primary, secondary) <- providerPair (nscRpcMode context)
     (Legacy.verifyAccountIdentityAtBlock (nscPrimaryClient context) blockNumber operation)
     (Legacy.verifyAccountIdentityAtBlock (nscSecondaryClient context) blockNumber operation)
-  pure $ case (primary, secondary) of
+  pure $ agreeAccountIdentity primary secondary
+
+-- A pending deployment is advisory only and must agree across providers, just
+-- like a definitive denial. Never let one provider's pending state hide a
+-- disagreement or an unavailable proof from the other provider.
+agreeAccountIdentity
+  :: Either Legacy.ProxyFailure Text -> Either Legacy.ProxyFailure Text
+  -> Either Legacy.ProxyFailure Text
+agreeAccountIdentity primary secondary = case (primary, secondary) of
     (Right firstOwner, Right secondOwner)
       | T.toLower firstOwner == T.toLower secondOwner -> Right $ T.toLower firstOwner
       | otherwise -> Left securityAttestationUnavailable
     (Left firstFailure, Left secondFailure)
       | firstFailure == secondFailure
-      , not (Legacy.pfRetryable firstFailure) -> Left firstFailure
+      , not (Legacy.pfRetryable firstFailure)
+          || Legacy.pfReason firstFailure == "ACCOUNT_DEPLOYMENT_PENDING" -> Left firstFailure
       | otherwise -> Left securityAttestationUnavailable
     _ -> Left securityAttestationUnavailable
 

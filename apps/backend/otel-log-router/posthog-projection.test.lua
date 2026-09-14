@@ -1,4 +1,8 @@
 dofile('posthog-projection.lua')
+local _,_,pending = project_posthog('test',0,{event='aa_request_failed',reason_code='ACCOUNT_DEPLOYMENT_PENDING',
+  outcome='rejected',sender='0xsecret',error='provider payload'})
+assert(pending.reason_code=='ACCOUNT_DEPLOYMENT_PENDING' and pending.outcome=='rejected')
+assert(pending.sender==nil and pending.error==nil)
 local _,_,recovery = project_posthog('test',0,{event='aa_receipt_recovery',recovery_source='finalized_record',
   reason_code='RECOVERY_EVIDENCE_UNAVAILABLE',attempt_id='12345678-1234-4123-8123-123456789abc',
   transaction_hash='0xsecret',sender='0xsecret',receipt={data='secret'}})
