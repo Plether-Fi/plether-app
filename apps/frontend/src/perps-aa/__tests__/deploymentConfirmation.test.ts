@@ -1,10 +1,91 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDeploymentConfirmationGate } from '../deploymentConfirmation'
 import { SponsorRequestError, sponsorReasonMessage } from '../errors'
 
 const pending = () => new SponsorRequestError({ reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'pending' })
 
 describe('deployment confirmation preparation gate', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('persists waiting across reloads, isolates deployments, and clears only after a safe read', async () => {
+    const values = new Map<string, string>()
+    const storage = () => ({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+    })
+    const scope = '421614:factory:entrypoint:manifest:account-a'
+    const run = createDeploymentConfirmationGate(async () => false, undefined, { scope, storage })
+    await expect(run(async () => { throw pending() })).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    const reloaded = createDeploymentConfirmationGate(async () => false, undefined, { scope, storage })
+    expect(reloaded.getSnapshot()).toBe('waiting')
+    const other = createDeploymentConfirmationGate(async () => false, undefined, { scope: `${scope}-other`, storage })
+    expect(other.getSnapshot()).toBe('idle')
+    const prepare = vi.fn()
+    await expect(reloaded(prepare)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(prepare).not.toHaveBeenCalled()
+    const confirmed = createDeploymentConfirmationGate(async () => true, undefined, { scope, storage })
+    await confirmed(async () => 'manually retried')
+    expect(values.size).toBe(0)
+    expect(createDeploymentConfirmationGate(async () => false, undefined, { scope, storage }).getSnapshot()).toBe('idle')
+  })
+
+  it('polls only read-only evidence, not actions, and stops polling on cleanup', async () => {
+    vi.useFakeTimers()
+    const check = vi.fn().mockResolvedValue(false)
+    const run = createDeploymentConfirmationGate(check, () => Date.now())
+    const prepare = vi.fn().mockRejectedValue(pending())
+    const changed = vi.fn()
+    const unsubscribe = run.subscribe(changed)
+    await expect(run(prepare)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    const stop = run.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(run.getSnapshot()).toBe('waiting')
+    check.mockRejectedValueOnce(new Error('provider down'))
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(run.getSnapshot()).toBe('waiting')
+    check.mockResolvedValue(true)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(run.getSnapshot()).toBe('ready')
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(changed).toHaveBeenCalledTimes(2)
+    stop()
+    unsubscribe()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(check).toHaveBeenCalledTimes(3)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('survives denied persistence and still gates repeated actions', async () => {
+    const run = createDeploymentConfirmationGate(async () => false, undefined, {
+      scope: 'account', storage: () => { throw new Error('storage denied') },
+    })
+    const prepare = vi.fn().mockRejectedValue(pending())
+    await expect(run(prepare)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(run.getSnapshot()).toBe('waiting')
+    await expect(run(prepare)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
+    expect(prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let an older safe read erase a newer backend pending decision', async () => {
+    let now = 0
+    let confirm!: (value: boolean) => void
+    let rejectSecond!: (error: unknown) => void
+    const run = createDeploymentConfirmationGate(() => new Promise<boolean>(yes => { confirm = yes }), () => now)
+    // Both actions started before either backend response marked the account pending.
+    const delayed = expect(run(() => new Promise<string>((_, no) => { rejectSecond = no }))).rejects.toThrow()
+    await expect(run(async () => { throw pending() })).rejects.toThrow()
+    now = 15_000
+    const stop = run.start()
+    rejectSecond(pending())
+    await delayed
+    confirm(true)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(run.getSnapshot()).toBe('waiting')
+    stop()
+  })
+
   it('adds no reads to ordinary preparation and preserves unrelated errors', async () => {
     const check = vi.fn()
     const run = createDeploymentConfirmationGate(check)

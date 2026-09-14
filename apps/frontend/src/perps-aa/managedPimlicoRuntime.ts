@@ -478,9 +478,13 @@ export async function createManagedAaRuntime({
   const deploymentGate = createDeploymentConfirmationGate(async () => {
     const code = await publicClient.getCode({ address: accountAddress, blockTag: 'safe' })
     return code !== undefined && isHex(code) && size(code) > 0
+  }, undefined, {
+    scope: [manifest.chainId, manifest.smartAccountFactory, manifest.entryPoint,
+      manifest.version, accountAddress].join(':'),
   })
 
   return {
+    deploymentConfirmation: isNativePaymasterManifest(manifest) ? deploymentGate : undefined,
     chainId: manifest.chainId,
     ownerAddress: getAddress(ownerAddress),
     factoryAddress: getAddress(manifest.smartAccountFactory),

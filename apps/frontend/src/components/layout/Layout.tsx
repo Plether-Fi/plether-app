@@ -8,6 +8,7 @@ import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
 import { useAccount } from 'wagmi'
 import { useTransactionStore } from '../../stores/transactionStore'
 import { isSepoliaDeployment } from '../../utils/deployment'
+import { AccountDeploymentConfirmation } from '../../perps-aa/AccountDeploymentConfirmation'
 
 interface LayoutProps {
   children: ReactNode
@@ -29,6 +30,7 @@ export function Layout({ children }: LayoutProps) {
       <div data-app-sticky-header className="sticky top-0 z-50">
         {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
+        <AccountDeploymentConfirmation />
       </div>
       <main className={`w-full min-w-0 flex-grow ${fullWidth ? 'p-4 sm:p-6' : 'page-gutter py-6 sm:py-8 mx-auto max-w-7xl'}`}>
         {children}

@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
+import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
@@ -1822,6 +1823,8 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
+  const deploymentConfirmation = useAccountDeploymentConfirmation()
+  const isAwaitingAccountConfirmation = enableLiveTrading && deploymentConfirmation === 'waiting'
   const identity = usePerpsIdentity()
   const address = identity.accountAddress
   const isConnected = identity.ownerAddress !== undefined
@@ -3528,7 +3531,7 @@ export function PerpsTradeTicket({
       : direction === 'long' ? 'Review Long' : 'Review Short'
   const isConnectWalletCta = enableLiveTrading && !isConnected
   const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
-  const isReviewButtonDisabled = (
+  const isReviewButtonDisabled = isAwaitingAccountConfirmation || (
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
@@ -3601,7 +3604,7 @@ export function PerpsTradeTicket({
     : undefined
   const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
-  const isMarginActionSubmitDisabled = isMarginActionPending
+  const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
   const orderDxyExposureNumber = usdcRawToNumber(orderDxyExposureUsdc)
   const commonAnalyticsProperties = useMemo<PerpsAnalyticsProperties>(() => ({
@@ -4599,7 +4602,7 @@ export function PerpsTradeTicket({
               error={executionProtectionsError}
               changes={reviewChanges}
               direction={direction}
-              canConfirm={!reviewValidationError && (!enableLiveTrading || preparation.ready)}
+              canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready)}
               onCancel={closeReviewModal}
               onConfirm={() => { void handleConfirmCommit() }}
               onRetry={reviewFundingShortfallUsdc === undefined ? retryExecutionProtections : undefined}
