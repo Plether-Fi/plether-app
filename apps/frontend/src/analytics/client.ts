@@ -36,6 +36,8 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'direction',
   'duration_ms',
   'error_category',
+  'error_code',
+  'contract_function',
   'lifecycle_state',
   'manifest_version',
   'market_phase',

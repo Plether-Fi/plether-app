@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { encodeErrorResult, parseAbi } from 'viem'
+import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsErrorMessage,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
+  COMMIT_UNDECODED_FALLBACK_MESSAGE,
 } from '../perpsErrors'
 
 const PERPS_TEST_ERROR_ABI = parseAbi([
@@ -88,6 +89,17 @@ function encodedErrorMessage(errorName: string, args: readonly unknown[], action
 }
 
 describe('getPerpsErrorMessage', () => {
+  it('reproduces the screenshot fallback for the close evaluator arithmetic panic', () => {
+    // Captured from the deployed v1.2.3 evaluator at block 308891788 using
+    // scripts/reproduce-close-review.mjs. The RPC DOES return decodable data.
+    const error = new ContractFunctionRevertedError({
+      abi: [], functionName: 'assessOrder',
+      data: '0x4e487b710000000000000000000000000000000000000000000000000000000000000011',
+    })
+    expect(error.data).toMatchObject({ errorName: 'Panic', args: [17n] })
+    expect(getPerpsErrorMessage(error, 'commit')).toBe(COMMIT_UNDECODED_FALLBACK_MESSAGE)
+  })
+
   it('preserves instrumented commit receipt diagnostics', () => {
     const message = 'Commit reverted after wallet confirmation, but the receipt did not include decodable revert data. Failed tx: 0x123.'
 

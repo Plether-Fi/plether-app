@@ -43,3 +43,33 @@ The frontend is reported as service `plether-web`, with
 Current structured logs cover React render failures, backend API failures, and
 failed Perps order or margin lifecycle operations. Expected validation blocks
 remain product events rather than high-volume operational logs.
+
+## Order preparation failures
+
+`perps order preparation finished` retains its existing `reason_code` source
+(`background`, `cold`, `refresh`) and `error_category` outcome (`none`,
+`cancelled`, `preparation_failed`). Active failures additionally emit:
+
+- `error_code`: an ABI-allowlisted contract error name, or a stable classification
+  such as `undecoded_revert`, `funding_shortfall`, `review_validation`,
+  `review_leverage`, `network_failure`, `timeout`, `review_expired`, `aborted`,
+  or `unknown`. Contract error arguments and revert bytes are never included.
+- `stage`: `preflight`, `deployment_verification`, `context_read`,
+  `max_size_quote`, `order_assessment`, `review_validation`, `funding_check`,
+  `commit_simulation`, `preparation_timeout`, or `review_freshness`.
+- `contract_function`: a source-defined function name when a directly
+  instrumented contract call failed. It is omitted for local checks, timeouts,
+  and deployment verification; it is never copied from an RPC error.
+
+Successes and obsolete/cancelled requests do not emit failure fields. Timeouts
+emit once even if the underlying request later rejects. UI error normalization
+retains diagnostic metadata through the local cause chain, without sending
+messages, stack traces, addresses, amounts, request parameters, or raw payloads.
+
+To investigate the generic revert during order review, filter on
+`error_category=preparation_failed` and `error_code=undecoded_revert`, then
+break down by `stage` and `contract_function`. Limit `reason_code` to `cold`
+and `refresh` for requests started in review; a `background` request can also
+be reused by an open review. These fields are available only after deployment
+and cannot classify historical preparation failures retroactively. Unique
+PostHog identities remain anonymous and nonpersistent, not verified people.

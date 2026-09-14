@@ -228,6 +228,22 @@ function decodePerpsError(error: unknown): { name?: string; args?: readonly unkn
   }
 }
 
+const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
+  [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI]
+    .filter(item => item.type === 'error')
+    .map(item => item.name)
+)
+
+/** Only ABI-defined names may leave the app; never return error arguments or data. */
+export function getPerpsContractErrorCode(error: unknown): string | undefined {
+  try {
+    const { name } = decodePerpsError(error)
+    return name && KNOWN_PERPS_ERROR_NAMES.has(name) ? name : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function argNumber(args: readonly unknown[] | undefined, index = 0): number | undefined {
   const value = args?.[index]
   if (typeof value === 'number') return value

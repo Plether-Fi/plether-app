@@ -5,6 +5,7 @@ import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
 import { PerpsOrderReviewError, preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
 import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
+import { getPreparationFailureProperties } from '../../utils/perpsPreparationDiagnostics'
 
 vi.mock('../verifyPerpsV2Bindings', () => ({
   verifyPerpsV2DeploymentBindings: vi.fn(),
@@ -228,6 +229,36 @@ describe('reviewed leverage validation', () => {
       block,
       block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
+  })
+
+  it.each([
+    ['getLatestPrice', 'context_read'],
+    ['assessOrder', 'order_assessment'],
+    ['commitOrder', 'commit_simulation'],
+  ])('identifies the failing %s call without changing the thrown error', async (functionName, stage) => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({}))
+    const failure = new Error('execution reverted with private request parameters')
+    const originalRead = readContract.getMockImplementation()!
+    readContract.mockImplementation(async request => {
+      if (request.functionName === functionName) throw failure
+      return originalRead(request)
+    })
+    if (functionName === 'commitOrder') simulateContract.mockRejectedValueOnce(failure)
+    const error = await preparePerpsOrderV2(client, manifest, input).catch((error: unknown) => error)
+    expect(error).toBe(failure)
+    expect(getPreparationFailureProperties(new Error('Normalized review error', { cause: error }))).toEqual({
+      error_code: 'undecoded_revert', stage, contract_function: functionName,
+    })
+  })
+
+  it('separates deployment verification failures from review validation', async () => {
+    const { client, readContract } = reviewClient(() => ({}))
+    const failure = new Error('HTTP request failed at a private endpoint')
+    vi.mocked(verifyPerpsV2DeploymentBindings).mockRejectedValueOnce(failure)
+    const error = await preparePerpsOrderV2(client, manifest, input).catch((error: unknown) => error)
+    expect(error).toBe(failure)
+    expect(readContract).not.toHaveBeenCalled()
+    expect(getPreparationFailureProperties(error)).toEqual({ error_code: 'network_failure', stage: 'deployment_verification' })
   })
 
   it('allows a reduction above the opening slider limit without adding margin', async () => {

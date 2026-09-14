@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import { orderPreparationKey, usePerpsOrderPreparation } from '../usePerpsOrderPreparation'
+import { preparationFailure } from '../../utils/perpsPreparationDiagnostics'
 
 const analytics = vi.hoisted(() => vi.fn())
 vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: analytics }))
@@ -27,6 +28,40 @@ function setup(mode: Mode = 'background', prepare = vi.fn<(input: Input) => Prom
 describe('order preparation lifecycle', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); analytics.mockClear() })
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+
+  it('records safe failure details through the normalized error cause', async () => {
+    const cause = preparationFailure(new Error('execution reverted with private RPC data'), 'commit_simulation', 'commitOrder')
+    const error = new Error('Commit reverted before creating an order', { cause })
+    const view = setup('review', vi.fn().mockRejectedValue(error))
+    await advance(0)
+    expect(view.result.current.error).toBe(error)
+    expect(analytics).toHaveBeenCalledWith('perps order preparation finished', {
+      surface: 'perps', duration_ms: 0, reason_code: 'cold', error_category: 'preparation_failed',
+      error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder',
+    })
+  })
+
+  it('distinguishes timeouts from late rejected work and records only one failure', async () => {
+    const pending = deferred<PreparedPerpsOrderV2>()
+    setup('review', vi.fn().mockReturnValue(pending.promise))
+    await advance(30_000)
+    await act(async () => { pending.reject(new Error('execution reverted')) })
+    expect(analytics.mock.calls.filter(([name]) => name === 'perps order preparation finished')).toEqual([
+      ['perps order preparation finished', { surface: 'perps', duration_ms: 30_000, reason_code: 'cold',
+        error_category: 'preparation_failed', error_code: 'timeout', stage: 'preparation_timeout' }],
+    ])
+  })
+
+  it('does not attach failure codes to obsolete requests or successful retries', async () => {
+    const pending = deferred<PreparedPerpsOrderV2>()
+    const view = setup('review', vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(prepared()))
+    view.update({ mode: 'review', key: 'two' })
+    await advance(0)
+    await act(async () => { pending.reject(preparationFailure(new Error('execution reverted'), 'context_read', 'getLatestPrice') as Error) })
+    const events = analytics.mock.calls.filter(([name]) => name === 'perps order preparation finished').map(([, properties]) => properties)
+    expect(events.map(properties => properties.error_category)).toEqual(['none', 'cancelled'])
+    expect(events.every(properties => !('error_code' in properties) && !('stage' in properties))).toBe(true)
+  })
 
   it('debounces edits and reuses a warm order immediately when review opens', async () => {
     const view = setup()
