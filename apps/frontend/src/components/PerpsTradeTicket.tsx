@@ -2591,12 +2591,15 @@ export function PerpsTradeTicket({
     oraclePrice: oraclePriceRaw,
     publishTime: oraclePublishTime,
     protectionRewardsUsdc: maxProtectionRewardsUsdc,
+    selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
   })
   const maxOpenSizeRaw = maxOpenQuote.quote?.preview.valid ? maxOpenQuote.quote.maxSizeDelta : 0n
   const maxOpenQuoteMessage = maxOpenQuote.error
     ? 'Maximum size quote failed. Refresh market data or enter a quantity manually.'
     : maxOpenQuote.quote?.maxSizeDelta === 0n
-      ? getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
+      ? maxOpenQuote.quote.preview.valid
+        ? 'Available margin cannot fund an opening order at the selected leverage.'
+        : getPerpsOpenRevertMessage(maxOpenQuote.quote.preview.invalidReason || maxOpenQuote.quote.limitingReason)
       : undefined
   const maxOrderSizeRaw = isReducingCurrentPosition ? availableCloseSizeRaw : maxOpenSizeRaw
   const maxOrderQuantityDisplayAmount = formatPerpsPositionSize(maxOrderSizeRaw, 0)
@@ -2621,8 +2624,8 @@ export function PerpsTradeTicket({
   const availableToTradeFillQuantity = formatPerpsPositionSize(availableToTradeFillSizeRaw, 0)
   const effectiveOrderSizeRaw = isFullCloseIntent && isReducingCurrentPosition
     ? availableCloseSizeRaw
-    : enteredOrderSizeRaw
-  const orderQuantityInputValue = isFullCloseIntent && isReducingCurrentPosition
+    : isMaxOpenIntent && !isReducingCurrentPosition && !isReviewOpen ? maxOpenSizeRaw : enteredOrderSizeRaw
+  const orderQuantityInputValue = (isFullCloseIntent && isReducingCurrentPosition) || (isMaxOpenIntent && !isReducingCurrentPosition && !isReviewOpen)
     ? maxOrderQuantityInputAmount
     : orderQuantity
   const orderSizeDelta = isReviewOpen && reviewSnapshot && !reviewSnapshot.maxSize ? reviewSnapshot.sizeDelta : effectiveOrderSizeRaw
@@ -4475,6 +4478,7 @@ export function PerpsTradeTicket({
               return
             }
             if (canPrepare) setReviewSnapshot({ ...draftSnapshot, preparationKey: draftPreparationKey, identityKey: preparationIdentityKey })
+            if (isMaxOpenIntent && !isReducingCurrentPosition) setOrderQuantity(maxOrderQuantityInputAmount)
             setIsReviewOpen(true)
           }}
         >

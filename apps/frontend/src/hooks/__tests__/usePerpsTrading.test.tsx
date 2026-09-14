@@ -739,6 +739,7 @@ describe('usePerpsTrading', () => {
       predicate: (query: { queryKey: readonly unknown[] }) => boolean
     }
     expect(invalidateOptions.predicate({ queryKey: ['perps', 'protections', ACCOUNT] })).toBe(true)
+    expect(invalidateOptions.predicate({ queryKey: ['perps', 'max-open', 421614, ACCOUNT] })).toBe(true)
     expect(invalidateOptions.predicate({ queryKey: ['perps', 'protection-events', '7'] })).toBe(true)
     expect(invalidateOptions.predicate({
       queryKey: ['readContracts', {

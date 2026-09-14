@@ -5,6 +5,10 @@ import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 
+vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
+  usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
+}))
+
 let mockReadContractsData: readonly {
   status: 'failure' | 'success'
   result?: unknown
