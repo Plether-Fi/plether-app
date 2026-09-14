@@ -9,6 +9,7 @@ module Plether.AA.Reconciler
   , validateTargetTimestamp
   , validateSafeHeadFreshness
   , boundariesRemainCanonical
+  , targetReachesSafeBoundary
   , validateDeploymentAnchor
   ) where
 
@@ -36,16 +37,11 @@ import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
   , aaSponsorshipStateIsEmpty
-  , advanceAaReconcilerCursor
-  , cancelStaleUnsignedReservations
-  , expireSponsorshipsThrough
+  , publishAaReconcilerProgress
   , getAaReconcilerCursor
   , getSponsorshipByUserOperationHash
   , initializeAaReconcilerCursor
-  , recordAaReconcilerHeartbeat
   , pauseAaIssuance
-  , pruneAaRateWindows
-  , pruneExpiredRecoveryOperations
   , settleSponsorship
   )
 import Plether.Ethereum.Abi
@@ -118,7 +114,7 @@ data FatalFailure
   deriving stock (Eq, Show)
 
 data StepResult
-  = StepAdvanced BlockHeader Int
+  = StepAdvanced BlockHeader Int Bool
   | StepCaughtUp BlockHeader
   | StepRetry Text
   | StepFatal FatalFailure
@@ -262,35 +258,32 @@ reconcileOnAttestedChain pool primaryClient secondaryClient cfg = do
           -- A prior process may have committed the cursor and crashed before
           -- releasing expired liabilities.  Re-run idempotent housekeeping at
           -- the verified boundary before claiming a fresh healthy heartbeat.
-          _ <- withDb pool $ \conn ->
-            expireSponsorshipsThrough conn $ bhTimestamp safeHeader
-          _ <- withDb pool cancelStaleUnsignedReservations
-          _ <- withDb pool pruneAaRateWindows
-          _ <- withDb pool pruneExpiredRecoveryOperations
-          withDb pool $ \conn ->
-            recordAaReconcilerHeartbeat
-              conn
-              (arcChainId cfg)
-              (arcPaymaster cfg)
-              (bhNumber safeHeader)
-              (bhHash safeHeader)
-          logInfoEvery
-            60
-            "aa_reconciler_heartbeat"
-            "AA reconciler is caught up to the dual-provider safe boundary"
-            (healthFields health <> [field "safe_block" $ bhNumber safeHeader])
-          pure $ Right ()
-        StepAdvanced header eventCount -> do
-          -- Advancing one historical batch is progress, not proof that the
-          -- entire advertised safe range has been scanned. Only StepCaughtUp
-          -- may refresh the issuance-authorizing heartbeat.
+          let cursor = AaReconcilerCursor (bhNumber safeHeader) (bhHash safeHeader)
+          published <- withDb pool $ \conn ->
+            publishAaReconcilerProgress conn (arcChainId cfg) (arcPaymaster cfg)
+              cursor cursor (bhTimestamp safeHeader) True
+          if not published
+            then handleFatal pool $ CursorDiscontinuity "caught-up cursor compare-and-swap failed"
+            else do
+              logInfoEvery
+                60
+                "aa_reconciler_heartbeat"
+                "AA reconciler is caught up to the dual-provider safe boundary"
+                (healthFields health <> [field "safe_block" $ bhNumber safeHeader])
+              pure $ Right ()
+        StepAdvanced header eventCount caughtUp -> do
           logInfo
             "aa_reconciler_safe_block_advanced"
             "AA reconciler advanced its dual-provider verified safe cursor"
             [ field "safe_block" $ bhNumber header
             , field "safe_block_hash" $ bhHash header
             , field "event_count" eventCount
+            , field "caught_up" caughtUp
             ]
+          when caughtUp $
+            logInfoEvery 60 "aa_reconciler_heartbeat"
+              "AA reconciler is caught up to the dual-provider safe boundary"
+              (healthFields health <> [field "safe_block" $ bhNumber header])
           pure $ Right ()
         StepFatal failure -> handleFatal pool failure
 
@@ -415,8 +408,8 @@ reconcileFromCursor pool primaryClient secondaryClient cfg safeHeader cursor = d
                                 (_, ProviderMismatch err, _) -> pure $ StepFatal $ ProviderDisagreement err
                                 (_, _, ProviderMismatch err) -> pure $ StepFatal $ ProviderDisagreement err
                                 (ProviderAgreed secondSafe, ProviderAgreed secondCursor, ProviderAgreed secondHeader)
-                                  | bhNumber secondSafe < targetNumber ->
-                                      pure $ StepFatal $ ProviderDisagreement "a provider safe boundary moved behind the verified target"
+                                  | Left reason <- targetReachesSafeBoundary targetHeader secondSafe ->
+                                      pure $ StepFatal $ ProviderDisagreement reason
                                   | Left reason <- boundariesRemainCanonical canonicalCursor targetHeader secondCursor secondHeader ->
                                       pure $ StepFatal $ ProviderDisagreement reason
                                   | otherwise -> do
@@ -424,22 +417,27 @@ reconcileFromCursor pool primaryClient secondaryClient cfg safeHeader cursor = d
                                       case processed of
                                         Left fatal -> pure $ StepFatal fatal
                                         Right eventCount -> do
+                                          let caughtUp = targetReachesSafeBoundary targetHeader secondSafe == Right True
                                           advanced <- withDb pool $ \conn ->
-                                            advanceAaReconcilerCursor
+                                            publishAaReconcilerProgress
                                               conn
                                               (arcChainId cfg)
                                               (arcPaymaster cfg)
                                               cursor
                                               (AaReconcilerCursor targetNumber $ bhHash targetHeader)
+                                              (bhTimestamp targetHeader)
+                                              caughtUp
                                           if not advanced
                                             then pure $ StepFatal $ CursorDiscontinuity "cursor compare-and-swap failed"
-                                            else do
-                                              _ <- withDb pool $ \conn ->
-                                                expireSponsorshipsThrough conn $ bhTimestamp targetHeader
-                                              _ <- withDb pool cancelStaleUnsignedReservations
-                                              _ <- withDb pool pruneAaRateWindows
-                                              _ <- withDb pool pruneExpiredRecoveryOperations
-                                              pure $ StepAdvanced targetHeader eventCount
+                                            else pure $ StepAdvanced targetHeader eventCount caughtUp
+
+-- | Use the second safe-boundary read, not the tip captured before scanning.
+-- A moving tip is partial progress; a conflicting/regressing tip is unsafe.
+targetReachesSafeBoundary :: BlockHeader -> BlockHeader -> Either Text Bool
+targetReachesSafeBoundary target safe
+  | bhNumber safe < bhNumber target = Left "a provider safe boundary moved behind the verified target"
+  | bhNumber safe == bhNumber target && safe /= target = Left "safe boundary conflicts with the verified target"
+  | otherwise = Right $ safe == target
 
 boundariesRemainCanonical
   :: BlockHeader
