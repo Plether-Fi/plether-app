@@ -15,6 +15,8 @@ import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
+import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
+import Plether.Database.CloseAssistance
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
   ( AccountSnapshotInput (..)
@@ -396,6 +398,38 @@ insightsDatabaseSpec databaseUrl =
         ilrFundingIntegrityClear (requireWalletUnsafe walletA afterSubstitution) `shouldBe` False
 
 
+    it "subtracts verified assistance from PnL without treating it as extra bankroll, including late registration" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        seedOfficialAllocation conn walletA 80 90 "prefund-a"
+        insertDeposit conn walletA 105 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 198000 "assisted"
+        let digest = "0x" <> T.replicate 64 "a"
+            grant = CloseAssistanceReservation fixtureRouter walletA ("0x" <> T.replicate 64 "b") ("0x" <> T.replicate 64 "c") fixtureLens 198000
+        void $ execute conn
+          "INSERT INTO aa_sponsorship_authorizations(request_key,digest,sender,owner,nonce,valid_after,valid_until,max_cost_wei,client_key,operation,state) VALUES(?,?,?,?,0,1,2,1,?,'{}','settled') ON CONFLICT DO NOTHING"
+          (digest,digest,walletA,walletA,digest)
+        insertCloseAssistanceReservation conn digest grant
+        -- Registration follows assistance: provenance is attached to the account and exact event.
+        insertParticipant conn walletA "assisted-trader"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain + 198000)]
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        unverified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear (requireWalletUnsafe walletA unverified) `shouldBe` False
+        confirmCloseAssistance conn digest (hashText "txassisted") 105 (hashText "blassisted") 4 1 `shouldReturn` True
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        verified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        let row = requireWalletUnsafe walletA verified
+        ilrFundingIntegrityClear row `shouldBe` True
+        ilrDepositsUsdc row `shouldBe` 198000
+        ilrFinalPnlUsdc row `shouldBe` Just gain
+        insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "unrelated"
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        unrelated <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
+        void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
+        void $ execute conn "DELETE FROM aa_sponsorship_authorizations WHERE digest=?" (Only digest)
+
 seedRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
 seedRelease conn rules manifest =
   seedCompetition conn rules (crmChainId manifest) (crmOrderRouter manifest)
@@ -431,6 +465,7 @@ assertDedicatedDatabase pool = withDb pool $ \conn -> do
 
 prepareDatabase :: DbPool -> IO ()
 prepareDatabase pool = withDb pool $ \conn -> do
+  ensureAaSponsorshipSchema conn
   ensureTestnetFaucetSchema conn
   ensurePerpsHistorySchema conn
   -- Install all tables using the historical rule first, then add the new

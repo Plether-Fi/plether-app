@@ -366,6 +366,12 @@ spec = do
       sbCurrentAccountValueUsdc score `shouldBe` 0
       sbFinalPnlUsdc score `shouldBe` (-100_000_000_000)
 
+  describe "fundingCapacityContribution" $ do
+    it "excludes verified assistance from bankroll capacity, but retains other deposits and withdrawals" $ do
+      fundingCapacityContribution True True 198000 `shouldBe` 0
+      fundingCapacityContribution True False 198000 `shouldBe` 198000
+      fundingCapacityContribution False True 198000 `shouldBe` (-198000)
+
   describe "fundingIntegrityFlags" $ do
     it "accepts the two permitted 100,000 bankroll paths" $ do
       fundingIntegrityFlags (FundingIntegrityInput (Just 100_000_000_000) False 0 100_000_000_000 [100_000_000_000] 100_000_000_000 [] 0 100_000_000_000)

@@ -4596,6 +4596,9 @@ export function PerpsTradeTicket({
         footer={
           lifecycleState === 'preview' ? (
             <PerpsReviewFooter
+              sponsoredCloseUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.amountUsdc) : undefined}
+              depositCarryUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.depositCarryUsdc) : undefined}
+              commitmentCarryUsdc={displayedExecutionProtections?.reviewSummary?.commitmentCarryUsdc ? formatPerpsUsdc(displayedExecutionProtections.reviewSummary.commitmentCarryUsdc) : undefined}
               preparing={isExecutionProtectionsLoading}
               refreshing={preparation.refreshing}
               slow={preparation.slow}

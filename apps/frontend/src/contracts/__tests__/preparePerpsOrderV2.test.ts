@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex, PublicClient } from 'viem'
+import { ContractFunctionRevertedError, encodeErrorResult, keccak256, type Address, type Hex, type PublicClient } from 'viem'
+import { CFD_CLOSE_PREVIEW_ABI } from '../abis/CfdClosePreview'
+import { buildSponsoredCloseAction } from '../../perps-aa/sponsoredClose'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
@@ -325,6 +327,34 @@ describe('reviewed leverage validation', () => {
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
   })
 
+  it('reviews deposit carry and simulates the entire funded batch with the final request', async () => {
+    const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
+    const original = readContract.getMockImplementation()!
+    const closeAssistance = { lens: account, lensCodeHash: keccak256('0x1234'), paymasterAddress: manifest.usdc }
+    Object.assign(client, { getCode: vi.fn(async () => '0x1234') })
+    readContract.mockImplementation(async call => {
+      if (call.functionName === 'owner') return manifest.orderRouter
+      if (call.functionName === 'previewClose') throw new ContractFunctionRevertedError({
+        abi: CFD_CLOSE_PREVIEW_ABI, functionName: 'previewClose',
+        data: encodeErrorResult({ abi: CFD_CLOSE_PREVIEW_ABI, errorName: 'CfdEngine__InsufficientCloseOrderBountyBacking', args: [200_000n, 2_000n, 0n] }),
+      })
+      if (call.functionName === 'previewSponsoredClose') return { subsidyUsdc: 198_000n, depositCarryUsdc: 123n,
+        commitmentCarryUsdc: 0n, executionBountyUsdc: 200_000n,
+        assessment: { ...assessment(100_000_000n, 2_000_000_000n), postPositionSize: 0n, postLeverageBps: 0n, postPositionEquityUsdc: 0n } }
+      return original(call)
+    })
+    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, closeAssistance })
+    expect(prepared.sponsoredClose?.depositCarryUsdc).toBe(123n)
+    expect(prepared.reviewSummary?.currentAssessment.carryUsdc).toBe(0n)
+    const action = buildSponsoredCloseAction(manifest, account, prepared.request, prepared.sponsoredClose!)
+    expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      account: manifest.orderRouter, address: account, functionName: 'executeBatch', blockNumber: block.number,
+      args: [action.calls.map(call => ({ target: call.to, value: call.value, data: call.data }))],
+    }))
+    simulateContract.mockRejectedValueOnce(new Error('Funding requirement changed'))
+    await expect(preparePerpsOrderV2(client, manifest, { ...input, closeAssistance })).rejects.toThrow('Funding requirement changed')
+  })
+
   it('allows a reduction above the opening slider limit without adding margin', async () => {
     const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
     const prepared = await preparePerpsOrderV2(client, manifest, input)
@@ -442,12 +472,12 @@ describe('Max opening review', () => {
     const { client, readContract, simulateContract } = maxClient()
     const prepared = await preparePerpsOrderV2(client, manifest, input)
     expect(prepared.request.sizeDelta).toBe(7_900n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_798_000n)
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
+    expect(prepared.request.marginDelta).toBe(999_598_000n)
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(999_800_000n)
     const quotes = readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')
     expect(quotes).toHaveLength(1)
     expect(quotes[0][0]).toMatchObject({
-      args: [account, 1, 999_798_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
+      args: [account, 1, 999_598_000n, 100_000_000n, block.timestamp], blockNumber: block.number,
     })
     const assessments = readContract.mock.calls.filter(([request]) => request.functionName === 'assessOrder')
     expect(assessments).toHaveLength(6)
@@ -462,9 +492,9 @@ describe('Max opening review', () => {
       ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
     })
     expect(prepared.request.sizeDelta).toBe(200n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_398_000n)
-    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(1_000_000_000n)
-    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_398_000n, 100_000_000n, block.timestamp] }))
+    expect(prepared.request.marginDelta).toBe(999_198_000n)
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(999_800_000n)
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'quoteMaxOpen', args: [account, 1, 999_198_000n, 100_000_000n, block.timestamp] }))
   })
 
   it('does not quote when the account cannot cover the router reward reserve', async () => {
@@ -510,7 +540,7 @@ describe('Max opening review', () => {
     })
     const prepared = await preparePerpsOrderV2(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
     expect(prepared.request.sizeDelta).toBe(97n * quantum)
-    expect(prepared.request.marginDelta).toBe(999_798_000n)
+    expect(prepared.request.marginDelta).toBe(999_598_000n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
     for (const [request] of readContract.mock.calls) expect(request).toMatchObject({ blockNumber: block.number })
     expect(simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [prepared.request] }))

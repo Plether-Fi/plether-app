@@ -33,7 +33,7 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness)
+import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
 import qualified Plether.AA.Pimlico as AaProxy
 import qualified Plether.AA.Diagnostics as AaDiagnostics
 import Plether.AA.ClientKey (pseudonymousClientKey)
@@ -201,6 +201,10 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   get "/api/health" $ do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
+
+  get "/api/aa/close-assistance" $ do
+    setHeader "Cache-Control" "no-store"
+    json $ closeAssistanceStatus nativeGatewayState cfg
 
   get "/api/aa/status" $ do
     let releaseConfigured =

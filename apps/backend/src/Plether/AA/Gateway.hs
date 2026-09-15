@@ -19,6 +19,7 @@ module Plether.AA.Gateway
   , revalidateSecuritySnapshot
   , agreeAccountIdentity
   , forwardAlto
+  , closeAssistanceStatus
   ) where
 
 import Control.Exception (SomeException, try)
@@ -98,7 +99,7 @@ import Plether.Database.AaSponsorship
   , isRecoveryOperationAuthorized
   , isSponsorshipDeliveryAllowed
   , markSponsorshipSubmitted
-  , reserveSponsorship
+  , reserveSponsorshipWithAssistance
   , storeSponsorshipSignature
   )
 import Plether.Ethereum.Abi
@@ -127,6 +128,10 @@ import Web.Scotty
   )
 import qualified Web.Scotty as Scotty
 import System.Timeout (timeout)
+import System.Environment (lookupEnv)
+import Data.Maybe (isJust)
+import Plether.Database.CloseAssistance (CloseAssistanceReservation (..))
+import qualified Plether.Perps.Manifest as Manifest
 
 data NativeGatewayState = NativeGatewayState
   { ngsSigner :: Maybe PaymasterSigner
@@ -139,6 +144,7 @@ data NativeGatewayState = NativeGatewayState
   , ngsReadiness :: MVar (Maybe (IO Value))
   , ngsDiagnostics :: MVar (Maybe Diagnostics.DiagnosticSink)
   , ngsAttemptId :: Maybe Text
+  , ngsCloseAssistance :: Maybe CloseAssistanceConfig
   }
 
 data SecurityBlockHeader = SecurityBlockHeader
@@ -168,12 +174,28 @@ newNativeGatewayState
   -> EthClient
   -> IO NativeGatewayState
 newNativeGatewayState manager cfg client = do
+  base <- newNativeGatewayBaseState manager cfg client
+  enabled <- lookupEnv "PERPS_CLOSE_ASSISTANCE_ENABLED"
+  global <- lookupEnv "PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED"
+  lens <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS"
+  codeHash <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH"
+  unless (enabled `elem` [Nothing,Just "false",Just "true"] && global `elem` [Nothing,Just "false",Just "true"]) $
+    fail "Close assistance flags must be true or false"
+  assistance <- if lens == Nothing && codeHash == Nothing && enabled /= Just "true" then pure Nothing else case (lens,codeHash,cfgNativeAaConfig cfg) of
+    (Just address,Just hash,Just native)
+      | isFixedHex 20 address && isFixedHex 32 hash && naaRpcMode native == DualIndependent ->
+          pure $ Just $ CloseAssistanceConfig (T.toLower address) (T.toLower hash) (global == Just "true") (enabled == Just "true")
+    _ -> fail "Enabled close assistance requires a lens, runtime hash, and independently verified native AA"
+  pure base { ngsCloseAssistance = assistance }
+
+newNativeGatewayBaseState :: Manager -> Config -> EthClient -> IO NativeGatewayState
+newNativeGatewayBaseState manager cfg client = do
   profiles <- Cache.newEvidenceCache 2
   accounts <- Cache.newEvidenceCache 1024
   snapshots <- newMVar []
   readiness <- newMVar Nothing
   diagnostics <- newMVar Nothing
-  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing Nothing
       warm state nativeCfg = do
         when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
           void $ forkIO $ forever $ do
@@ -223,6 +245,27 @@ initializeGatewayObservability state cfg pool client = case (cfgNativeAaConfig c
       Just _ -> pure current
       Nothing -> Just <$> Diagnostics.startDiagnostics cfg database client
   _ -> pure ()
+
+data CloseAssistanceConfig = CloseAssistanceConfig
+  { cacLens :: Text
+  , cacCodeHash :: Text
+  , cacGlobal :: Bool
+  , cacEnabled :: Bool
+  }
+
+closeAssistanceStatus :: NativeGatewayState -> Config -> Value
+closeAssistanceStatus state cfg = case (ngsCloseAssistance state,cfgNativeAaConfig cfg) of
+  (Just assistance,Just native)
+    | cacEnabled assistance && naaSponsorshipEnabled native && naaSubmissionEnabled native && isJust (ngsSigner state) ->
+        object ["enabled" .= True,"chainId" .= (421614 :: Integer),"lens" .= cacLens assistance,
+          "lensCodeHash" .= cacCodeHash assistance,"paymasterAddress" .= naaPaymasterAddress native]
+  _ -> object ["enabled" .= False]
+
+assistanceLens :: NativeGatewayState -> Maybe Text
+assistanceLens = fmap cacLens . ngsCloseAssistance
+
+assistanceGlobal :: NativeGatewayState -> Maybe Legacy.CloseAssistanceIntent -> Bool
+assistanceGlobal state intent = isJust intent && maybe False cacGlobal (ngsCloseAssistance state)
 
 handleNativeAaRpc
   :: NativeGatewayState
@@ -363,8 +406,10 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           policy <- checked (Legacy.validateMethodParams policyRequest) >>= maybe
             (throwE $ Legacy.invalidParams "Missing preparation account") pure
           owner <- ioStage timing "identity" $ verifyAccountIdentityDual context policy
-          checked $ Legacy.validateActionSequence cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
-          unless (ownerAllowedForNativeCanary nativeCfg owner) $
+          assistance <- checked $ Legacy.validateNativeActionSequence (assistanceLens gatewayState) cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
+          when (isJust assistance && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)) $ throwE paymasterPaused
+          _ <- ioStage timing "close_assistance" $ validateCloseAssistanceDual gatewayState (Just context) (Preparation.piSender intent) assistance
+          unless (ownerAllowedForNativeCanary nativeCfg owner || assistanceGlobal gatewayState assistance) $
             throwE $ Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
           _ <- ioStage timing "runtime" $ verifyNativeAccountRuntimeDual nativeCfg context policy
           let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
@@ -395,14 +440,14 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           finalPolicyRequest <- checked $ Preparation.internalRequest "eth_estimateUserOperationGas"
             [Object $ KM.insert "signature" (String Legacy.dummySignature) operationObject, String nativeEntryPoint]
           _ <- checked $ Legacy.validateMethodParams finalPolicyRequest
-          pure (context, owner, operation)
+          pure (context, owner, operation, assistance)
         case result of
           Left failure -> do
             _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
             Legacy.respondFailure requestId failure
-          Right (context, owner, operation) ->
-            deliverPreparation gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
+          Right (context, owner, operation, assistance) ->
+            deliverPreparation assistance gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
               let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
               linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
@@ -452,11 +497,11 @@ emitTiming timing = do
 
 -- Rollback disables new reservations but permits delivery of an already signed
 -- authorization, subject to the same pause, expiry and canonical-state checks.
-deliverPreparation :: NativeGatewayState -> NativeAaConfig -> DbPool -> NativeSecurityContext
+deliverPreparation :: Maybe Legacy.CloseAssistanceIntent -> NativeGatewayState -> NativeAaConfig -> DbPool -> NativeSecurityContext
   -> Text -> Text -> Legacy.RpcRequest -> Paymaster.PackedUserOperation
   -> (Paymaster.SponsorshipEnvelope -> ActionM ()) -> ActionM ()
-deliverPreparation state cfg pool context clientKey owner request operation deliver
-  | naaPreparationEnabled cfg = issueSponsorship state cfg pool (Just context) clientKey owner request operation deliver
+deliverPreparation assistance state cfg pool context clientKey owner request operation deliver
+  | naaPreparationEnabled cfg = issueSponsorship assistance state cfg pool (Just context) clientKey owner request operation deliver
   | otherwise = do
       now <- liftEpochSeconds
       existing <- liftDb $ withDb pool $ \conn -> getSponsorshipByRequestKey conn (sponsorshipRequestKey cfg clientKey owner operation)
@@ -590,7 +635,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
               Right False -> Legacy.respondFailure (Legacy.rrId request) Legacy.rateLimited
               Right True -> do
                 securityContext <-
-                  if requiresDualSecurity request
+                  if requiresDualSecurity request || length (Legacy.puoCalls policyOperation) == 5
                     then timeGateway gatewayState "security" $ liftIO $ nativeSecurityContext nativeCfg gatewayState perpsClient
                     else pure $ Right Nothing
                 case securityContext of
@@ -608,14 +653,14 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                           mSecurityContext
                           failure
                       Right owner ->
-                        case Legacy.validateActionSequence
+                        case Legacy.validateNativeActionSequence (assistanceLens gatewayState)
                           cfg
                           (Legacy.puoSender policyOperation)
                           owner
                           (Legacy.puoCalls policyOperation) of
                           Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
-                          Right ()
-                            | isCanaryGated nativeCfg request owner ->
+                          Right assistance
+                            | isCanaryGated nativeCfg request owner && not (assistanceGlobal gatewayState assistance || (isJust assistance && Legacy.rrMethod request == Legacy.SendUserOperation)) ->
                                 Legacy.respondFailure (Legacy.rrId request) $
                                   Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
                             | otherwise -> do
@@ -632,6 +677,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                       failure
                                   Right () ->
                                     handleOperation
+                                      assistance
                                       gatewayState
                                       nativeCfg
                                       pool
@@ -644,7 +690,8 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
           _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager (maybe clientKey id recoveryClient) request
 
 handleOperation
-  :: NativeGatewayState
+  :: Maybe Legacy.CloseAssistanceIntent
+  -> NativeGatewayState
   -> NativeAaConfig
   -> DbPool
   -> Manager
@@ -654,8 +701,17 @@ handleOperation
   -> Legacy.RpcRequest
   -> Paymaster.PackedUserOperation
   -> ActionM ()
-handleOperation gatewayState nativeCfg pool manager securityContext clientKey owner request operation =
-  case Legacy.rrMethod request of
+handleOperation assistance gatewayState nativeCfg pool manager securityContext clientKey owner request operation = do
+  eligible <- if isJust assistance && Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
+    && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)
+    then pure $ Left paymasterPaused
+    else liftIO $ validateCloseAssistanceDual gatewayState securityContext (Paymaster.puoSender operation) assistance
+  case eligible of
+    Left failure -> Legacy.respondFailure requestId failure
+    Right () -> dispatch
+ where
+  requestId = Legacy.rrId request
+  dispatch = case Legacy.rrMethod request of
     Legacy.GetPaymasterStubData ->
       if not (naaSponsorshipEnabled nativeCfg)
         then Legacy.respondFailure requestId paymasterPaused
@@ -677,21 +733,20 @@ handleOperation gatewayState nativeCfg pool manager securityContext clientKey ow
                             Paymaster.makeSponsorshipEnvelope
                               nativeCfg
                               (max 0 $ now - 30)
-                              (now + naaValiditySeconds nativeCfg)
+                              (maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance)
                               (naaMaxCostWei nativeCfg)
                               Paymaster.dummyPaymasterSignature
                       respondSuccess requestId $ paymasterResponse False envelope
     Legacy.GetPaymasterData ->
-      issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation
+      issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation
         (respondSuccess requestId . paymasterResponse True)
     Legacy.SendUserOperation ->
       submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
     _ -> relayToAlto nativeCfg manager request Nothing
- where
-  requestId = Legacy.rrId request
 
 issueSponsorship
-  :: NativeGatewayState
+  :: Maybe Legacy.CloseAssistanceIntent
+  -> NativeGatewayState
   -> NativeAaConfig
   -> DbPool
   -> Maybe NativeSecurityContext
@@ -701,7 +756,7 @@ issueSponsorship
   -> Paymaster.PackedUserOperation
   -> (Paymaster.SponsorshipEnvelope -> ActionM ())
   -> ActionM ()
-issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation deliver
+issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation deliver
   | not (naaSponsorshipEnabled nativeCfg) =
       Legacy.respondFailure requestId paymasterPaused
   | Just _ <- ngsIssuanceError gatewayState =
@@ -753,7 +808,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
   reserveNew signer context requestKey = do
         now <- liftEpochSeconds
         let validAfter = max 0 $ now - 30
-            validUntil = now + naaValiditySeconds nativeCfg
+            validUntil = maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance
             provisional =
               Paymaster.makeSponsorshipEnvelope
                 nativeCfg validAfter validUntil (naaMaxCostWei nativeCfg) BS.empty
@@ -784,7 +839,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
             case snapshotReady of
               Left reason -> respondSecurityAttestationFailure requestId reason
               Right () -> do
-                reserved <- timeContext context "reservation_and_lock" $ liftDb $ withDb pool $ \conn -> reserveSponsorship conn nativeCfg draft
+                reserved <- timeContext context "reservation_and_lock" $ liftDb $ withDb pool $ \conn -> reserveSponsorshipWithAssistance conn nativeCfg draft (fmap (assistanceReservation (Paymaster.puoSender operation)) assistance)
                 case reserved of
                   Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "reservation"
                   Right (Left "PAYMASTER_PAUSED") -> Legacy.respondFailure requestId paymasterPaused
@@ -1917,3 +1972,43 @@ sponsorshipRequestKey cfg clientKey owner operation =
               , T.pack $ show $ naaValiditySeconds cfg
               ]
           )
+
+
+assistanceReservation :: Text -> Legacy.CloseAssistanceIntent -> CloseAssistanceReservation
+assistanceReservation sender intent = CloseAssistanceReservation
+  Manifest.orderRouterAddress sender (encodeHex $ Legacy.caiClientOrderId intent)
+  (encodeHex $ keccak256 $ Legacy.caiRequest intent) (Legacy.caiLens intent) (Legacy.caiAmountUsdc intent)
+
+validateCloseAssistanceDual
+  :: NativeGatewayState -> Maybe NativeSecurityContext -> Text -> Maybe Legacy.CloseAssistanceIntent
+  -> IO (Either Legacy.ProxyFailure ())
+validateCloseAssistanceDual _ _ _ Nothing = pure $ Right ()
+validateCloseAssistanceDual state (Just context) sender (Just intent)
+  | Just config <- ngsCloseAssistance state = do
+      -- Eligibility is current state. The safe snapshot may predate this position or
+      -- make a fresh order deadline appear too far in the future. Pin both live reads
+      -- to the same explicit block and bracket them with independent header agreement.
+      let primary = nscPrimaryClient context
+          secondary = nscSecondaryClient context
+      heads <- concurrently (readSecurityHeader primary "latest") (readSecurityHeader secondary "latest")
+      case heads of
+        (Right first, Right second) -> do
+          let blockNumber = min (sbhNumber first) (sbhNumber second)
+          before <- readAgreedSecurityHeaderAt DualIndependent primary secondary blockNumber
+          now <- floor <$> getPOSIXTime
+          case before of
+            Right header | validateSecurityHeaderTime 30 now header == Right () -> do
+              let call client = do
+                    hash <- readCodeHashAt client blockNumber (cacLens config)
+                    result <- rpcCall client "eth_call" $ toJSON
+                      [object ["from" .= sender,"to" .= cacLens config,"data" .= encodeHex (Legacy.caiGuardData intent)],
+                       String $ Paymaster.canonicalQuantity blockNumber]
+                    pure $ hash == Right (cacCodeHash config) && result == Right (String "0x")
+              (firstValid,secondValid) <- concurrently (call primary) (call secondary)
+              after <- readAgreedSecurityHeaderAt DualIndependent primary secondary blockNumber
+              canonical <- revalidateSecurityContext context
+              pure $ if firstValid && secondValid && before == after && canonical == Right () then Right ()
+                else Left $ Legacy.policyDenied "Close assistance eligibility or deployment changed; review again"
+            _ -> pure $ Left securityAttestationUnavailable
+        _ -> pure $ Left securityAttestationUnavailable
+validateCloseAssistanceDual _ _ _ _ = pure $ Left securityAttestationUnavailable

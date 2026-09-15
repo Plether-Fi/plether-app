@@ -5,6 +5,7 @@ module Plether.Database.AaSponsorship
   , AaReconcilerCursor (..)
   , ensureAaSponsorshipSchema
   , reserveSponsorship
+  , reserveSponsorshipWithAssistance
   , storeSponsorshipSignature
   , isSponsorshipDeliveryAllowed
   , markSponsorshipSubmitted
@@ -64,6 +65,7 @@ import Database.PostgreSQL.Simple.FromRow
   )
 import Database.PostgreSQL.Simple.ToRow (ToRow)
 import Plether.Config (NativeAaConfig (..))
+import Plether.Database.CloseAssistance
 import Text.Read (readMaybe)
 
 -- | Immutable fields committed by a sponsorship digest.  The client key is an
@@ -272,6 +274,7 @@ ensureAaSponsorshipSchema conn = withTransaction conn $ do
     \CHECK (state IN ('reserved','signed','submitted','settled','expired','cancelled')),\
     \CHECK ((state = 'reserved' AND signature IS NULL) OR state <> 'reserved')\
     \)"
+  ensureCloseAssistanceSchema conn
   void $ execute_ conn
     "ALTER TABLE aa_sponsorship_authorizations \
     \ADD COLUMN IF NOT EXISTS request_key VARCHAR(66)"
@@ -869,7 +872,12 @@ reserveSponsorship
   -> NativeAaConfig
   -> SponsorshipDraft
   -> IO (Either Text SponsorshipAuthorization)
-reserveSponsorship conn cfg draft = withTransaction conn $ do
+reserveSponsorship conn cfg draft = reserveSponsorshipWithAssistance conn cfg draft Nothing
+
+reserveSponsorshipWithAssistance
+  :: Connection -> NativeAaConfig -> SponsorshipDraft -> Maybe CloseAssistanceReservation
+  -> IO (Either Text SponsorshipAuthorization)
+reserveSponsorshipWithAssistance conn cfg draft assistance = withTransaction conn $ do
   acquireAaBudgetLock conn
   pauseReason <- getAaIssuancePause conn
   case pauseReason of
@@ -915,8 +923,10 @@ reserveSponsorship conn cfg draft = withTransaction conn $ do
           case totals of
             [value] -> pure value
             _ -> fail "budget totals must return exactly one row"
+        assistanceAllowed <- maybe (pure True) (closeAssistanceReservationAllowed conn) assistance
         let cost = sdMaxCostWei draft
             denied
+              | not assistanceAllowed = Just "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED"
               | cost > naaMaxCostWei cfg = Just "PER_OPERATION_BUDGET_EXCEEDED"
               | accountOutstanding + cost > naaAccountOutstandingWei cfg = Just "ACCOUNT_OUTSTANDING_BUDGET_EXCEEDED"
               | clientOutstanding + cost > naaClientOutstandingWei cfg = Just "CLIENT_OUTSTANDING_BUDGET_EXCEEDED"
@@ -950,6 +960,7 @@ reserveSponsorship conn cfg draft = withTransaction conn $ do
               "INSERT INTO aa_sponsorship_ledger (digest, entry_type, amount_wei, created_at) \
               \VALUES (?, 'reserve', ?, clock_timestamp())"
               (T.toLower $ sdDigest draft, sdMaxCostWei draft)
+            maybe (pure ()) (insertCloseAssistanceReservation conn (sdDigest draft)) assistance
             maybe
               (fail "aa sponsorship reservation could not be read back")
               (pure . Right)
