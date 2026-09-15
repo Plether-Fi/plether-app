@@ -1,5 +1,31 @@
-// Generated from plether-core CfdClosePreview; refresh with the verified release artifact.
+// Generated from the verified sponsored-close release; see backend/deployments/close-assistance-arbitrum-sepolia.json.
 export const CFD_CLOSE_PREVIEW_ABI = [
+  {
+    "type": "function",
+    "name": "MAX_CLOSE_SUBSIDY_USDC",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SPONSORED_ENGINE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
   {
     "type": "function",
     "name": "previewClose",

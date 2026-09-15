@@ -2,7 +2,7 @@
 
 Close assistance funds only the exact missing keeper bounty, up to 200,000 USDC atomic units. It has no automatic expiry. The protocol remains v1.2.3 and its configured bounty remains unchanged. A full or partial close must otherwise be valid and existing collateral must cover accrued carry.
 
-The release binding is `apps/backend/deployments/close-assistance-arbitrum-sepolia.json`. The lens is `0xA1E188928FE0b310e334A58f780492518DE64B7f`, runtime Keccak256 `0xad79a00704dbd2876dcc392bcce0fe741d415c1511a86a11080f4ce39f9818e8`. Its source is core commit `17a4e8044b6b4d3ea2ccb60986a489917969a559`.
+The release binding is `apps/backend/deployments/close-assistance-arbitrum-sepolia.json`. The lens is `0xC8Ad43019D371DEe7784C06dFa1A2F1538E0D7cf`, runtime Keccak256 `0x7cb66d1cb8f7c6748bd34150207ad1b8ead01ce8e77002dde384160ba3a1333e`. Its source is core commit `fc7d89abdedc7fb42b88467bc5ab9775cc57d98e`.
 
 ## Transaction and recovery
 

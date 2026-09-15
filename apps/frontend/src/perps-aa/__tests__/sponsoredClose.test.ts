@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../manifest'
-import { buildSponsoredCloseAction, closeAssistanceManifest, type SponsoredCloseFunding } from '../sponsoredClose'
+import { buildSponsoredCloseAction, closeAssistanceManifest, loadCloseAssistanceConfig, type SponsoredCloseFunding } from '../sponsoredClose'
 import { CFD_CLOSE_PREVIEW_ABI } from '../../contracts/abis/CfdSponsoredClosePreview'
 import { PERPS_ORDER_ROUTER_ABI } from '../../contracts/abis'
 import { permissivePerpsExecutionBounds, type PerpsOrderRequestV2 } from '../../contracts/perpsOrderV2'
@@ -48,5 +48,32 @@ describe('sponsored close action', () => {
     expect(assisted.smartAccountFactory).toBe(manifest.smartAccountFactory)
     expect(assisted.orderRouter).toBe(manifest.orderRouter)
     expect('pimlicoRpcUrl' in assisted).toBe(false)
+  })
+})
+
+describe('close assistance availability', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const serve = (body: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })))
+  const enabled = () => ({ enabled: true, chainId: 421614, ...funding.config, canaryOwners: [] })
+
+  it('limits canary availability to its owners independently of global gas sponsorship', async () => {
+    serve({ ...enabled(), canaryOwners: [account] })
+    expect(await loadCloseAssistanceConfig(account)).toEqual(funding.config)
+    expect(await loadCloseAssistanceConfig(funding.config.lens)).toBeUndefined()
+  })
+  it('supports all testnet owners without a competition-date cutoff', async () => {
+    serve(enabled())
+    expect(await loadCloseAssistanceConfig(account)).toEqual(funding.config)
+    expect(await loadCloseAssistanceConfig(funding.config.lens)).toEqual(funding.config)
+  })
+  it('returns ordinary-close availability when issuance is disabled', async () => {
+    serve({ enabled: false })
+    expect(await loadCloseAssistanceConfig(account)).toBeUndefined()
+  })
+  it('rejects malformed or cross-chain configuration', async () => {
+    for (const invalid of [null, { ...enabled(), chainId: 42161 }, { ...enabled(), canaryOwners: [7] }, { ...enabled(), lensCodeHash: '0x12' }]) {
+      serve(invalid)
+      await expect(loadCloseAssistanceConfig(account)).rejects.toThrow('Invalid close assistance')
+    }
   })
 })
