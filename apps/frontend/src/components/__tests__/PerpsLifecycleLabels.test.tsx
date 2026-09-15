@@ -62,6 +62,7 @@ import {
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../contracts/preparePerpsOrderV2'
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
+import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
 const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
@@ -1172,9 +1173,9 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Liquidation reward 0.2')).toBeInTheDocument()
   })
 
-  it('opens the receipt-backed close breakdown from transaction history', () => {
+  it.each(['claim', 'adjustment'] as const)('opens the receipt-backed close breakdown with a %s from transaction history', (scenario) => {
     const revealTxHash = '0x7500000000000000000000000000000000000000000000000000000000000001' as const
-    const receiptEconomics = {
+    const receiptEconomics = scenario === 'adjustment' ? closeSettlementAdjustmentReceipt : {
       ...closeReceiptEconomics({
         realizedPnlUsdc: 30_000_000n,
         vpiUsdc: 2_000_000n,
@@ -1228,9 +1229,19 @@ describe('perps lifecycle labels', () => {
     expect(within(dialog).getByText('Close result')).toBeInTheDocument()
     expect(within(dialog).getByText('Execution reward')).toBeInTheDocument()
     expect(within(dialog).getByText('Account outcome')).toBeInTheDocument()
-    expect(within(dialog).getByText('Trader claim created')).toBeInTheDocument()
-    expect(within(dialog).getByText('Net close result').closest('div')?.querySelector('dd'))
-      .toHaveTextContent('+23')
+    expect(within(dialog).getByText(scenario === 'claim' ? 'Trader claim created' : 'Trader claim change'))
+      .toBeInTheDocument()
+    expect(within(dialog).getByText('Close result before settlement adjustments').closest('div')?.querySelector('dd'))
+      .toHaveTextContent(scenario === 'claim' ? '+23' : '-13 228.1')
+    expect(within(dialog).getByText('Actual account change').closest('div')?.querySelector('dd'))
+      .toHaveTextContent(scenario === 'claim' ? '+23' : '-7 271.14')
+    if (scenario === 'adjustment') {
+      expect(within(dialog).getByText('Settlement adjustment').closest('div')?.querySelector('dd'))
+        .toHaveTextContent('+5 956.96')
+    } else {
+      expect(within(dialog).queryByText('Settlement adjustment')).not.toBeInTheDocument()
+    }
+    expect(within(dialog).queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Position margin released')).not.toBeInTheDocument()
   })
 
