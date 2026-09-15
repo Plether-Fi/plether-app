@@ -30,6 +30,7 @@ import Plether.AA.Pimlico
   , parseRpcRequest
   , recordSubmittedOperation
   , validateActionSequence
+  , validateNativeActionSequence
   , validateMethodParams
   , verifyAccountIdentity
   , verifyAccountIdentityAtBlock
@@ -348,6 +349,30 @@ spec = do
         `shouldSatisfy` isLeft
       validate [orderCallWith (BS.replicate 32 0x11) 7]
         `shouldSatisfy` isLeft
+  describe "native close assistance" $ do
+    it "allows only the native guarded exact-amount batch" $ do
+      let calls = assistedCalls 198000 sender
+      validateNativeActionSequence (Just attacker) testConfig sender owner calls `shouldSatisfy` isRight
+      validateActionSequence testConfig sender owner calls `shouldSatisfy` isLeft
+      validateNativeActionSequence Nothing testConfig sender owner calls `shouldSatisfy` isLeft
+    it "rejects excessive amounts, wrong recipients, and changed requests" $ do
+      validateNativeActionSequence (Just attacker) testConfig sender owner (assistedCalls 200001 sender) `shouldSatisfy` isLeft
+      validateNativeActionSequence (Just attacker) testConfig sender owner (assistedCalls 198000 owner) `shouldSatisfy` isLeft
+      let calls = assistedCalls 198000 sender
+      validateNativeActionSequence (Just attacker) testConfig sender owner (take 4 calls ++ [orderCall]) `shouldSatisfy` isLeft
+
+    it "rejects native value, target changes, extra calls and unequal funding legs" $ do
+      let calls = assistedCalls 198000 sender
+          replace index call = take index calls ++ [call] ++ drop (index + 1) calls
+          validateNative = validateNativeActionSequence (Just attacker) testConfig sender owner
+      mapM_ (\index -> do
+        validateNative (replace index ((calls !! index) {smartCallValue = 1})) `shouldSatisfy` isLeft
+        validateNative (replace index ((calls !! index) {smartCallTarget = owner})) `shouldSatisfy` isLeft
+        ) [0..4]
+      validateNative (calls ++ [orderCall]) `shouldSatisfy` isLeft
+      validateNative (assistedCalls 0 sender) `shouldSatisfy` isLeft
+      mapM_ (\index -> validateNative (replace index (assistedCalls 197999 sender !! index)) `shouldSatisfy` isLeft) [0..3]
+
   where
     validate = validateActionSequence testConfig sender owner
 
@@ -622,3 +647,14 @@ withIdentityRpc safePresent mode action = do
   testWithApplication (pure app) $ \port -> do
     client <- newClient $ "http://127.0.0.1:" <> T.pack (show port)
     action client calls
+
+assistedCalls :: Integer -> T.Text -> [SmartCall]
+assistedCalls amount recipient =
+  let raw = BS.drop 4 $ smartCallData orderCall
+      closeRequest = BS.take (3*32) raw <> encodeUint256 0 <> BS.take 32 (BS.drop (4*32) raw)
+        <> encodeUint256 1 <> BS.drop (6*32) raw
+      close = smartCall router $ selector "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))" <> closeRequest
+      guard = smartCall attacker $ selector "validateSponsoredClose(address,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),uint256)" <> encodeAddress engine <> closeRequest <> encodeUint256 amount
+  in [guard,smartCall usdc $ encodeCall "mint(address,uint256)" [encodeAddress recipient,encodeUint256 amount],
+      smartCall usdc $ encodeCall "approve(address,uint256)" [encodeAddress clearinghouse,encodeUint256 amount],
+      smartCall clearinghouse $ encodeCall "depositMargin(uint256)" [encodeUint256 amount],close]

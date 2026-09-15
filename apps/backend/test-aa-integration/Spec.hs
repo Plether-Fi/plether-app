@@ -51,11 +51,13 @@ import Plether.Database.AaSponsorship
   , pauseAaIssuance
   , recordAaReconcilerHeartbeat
   , reserveSponsorship
+  , reserveSponsorshipWithAssistance
   , resumeAaIssuance
   , settleSponsorship
   , storeSponsorshipSignature
   )
 import System.Environment (lookupEnv)
+import Plether.Database.CloseAssistance
 import System.Exit (die)
 import Test.Hspec
 
@@ -78,6 +80,37 @@ main = do
 aaIntegrationSpec :: Text -> Spec
 aaIntegrationSpec databaseUrl =
   describe "native AA PostgreSQL authorization lifecycle" $ do
+    it "serializes assistance across different requests and preserves failed-attempt retries" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let first = draft '1' '2' '3' 7 1000 now
+            second = draft '4' '5' '3' 8 1000 now
+            grant = CloseAssistanceReservation (addressOf '8') (addressOf '1') (hashOf '6') (hashOf '7') (addressOf '9') 198000
+        _ <- reserveSponsorshipWithAssistance conn testConfig first (Just grant) >>= expectAuthorization
+        getCloseAssistanceReservation conn (sdDigest first) `shouldReturn` Just grant
+        reserveSponsorshipWithAssistance conn testConfig second (Just grant)
+          `shouldReturn` Left "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED"
+        void $ execute conn "UPDATE aa_sponsorship_authorizations SET state='cancelled' WHERE digest=?" (Only $ sdDigest first)
+        _ <- reserveSponsorshipWithAssistance conn testConfig second (Just grant) >>= expectAuthorization
+        pure ()
+
+    it "permits only one of two concurrent assisted intents for the same account" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let first = draft '1' '2' '3' 7 1000 now
+            second = draft '4' '5' '3' 8 1000 now
+            grant = CloseAssistanceReservation (addressOf '8') (addressOf '1') (hashOf '6') (hashOf '7') (addressOf '9') 198000
+        withPeerConnection databaseUrl $ \peer -> do
+          (a,b) <- concurrently
+            (reserveSponsorshipWithAssistance conn testConfig first (Just grant))
+            (reserveSponsorshipWithAssistance peer testConfig second (Just $ grant { carClientOrderId = hashOf 'a' }))
+          length [() | Right _ <- [a,b]] `shouldBe` 1
+          length [() | Left "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED" <- [a,b]] `shouldBe` 1
+        count <- query_ conn "SELECT COUNT(*) FROM aa_close_assistance" :: IO [Only Int64]
+        count `shouldBe` [Only 1]
+
     it "boots paused and requires an exact audited operator resume" $
       withFixture databaseUrl $ \conn -> do
         getAaIssuancePause conn `shouldReturn` Just controlBootstrapReason

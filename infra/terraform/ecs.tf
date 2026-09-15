@@ -242,6 +242,10 @@ locals {
   )
 
   native_aa_environment = local.native_aa_backend_configured ? [
+    { name = "PERPS_CLOSE_ASSISTANCE_ENABLED", value = tostring(var.perps_close_assistance_enabled) },
+    { name = "PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED", value = tostring(var.perps_close_assistance_global_enabled) },
+    { name = "PERPS_CLOSE_ASSISTANCE_LENS", value = var.perps_close_assistance_lens },
+    { name = "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH", value = var.perps_close_assistance_lens_code_hash },
     { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },

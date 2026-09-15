@@ -82,8 +82,4 @@ if (walletConnectionConfigured) {
 
 export const wagmiConfig = wagmiAdapter.wagmiConfig as Config<readonly [typeof arbitrumSepolia]>
 
-declare module 'wagmi' {
-  interface Register {
-    config: typeof wagmiConfig
-  }
-}
+// Shared with the trading frontend; avoid installing a conflicting global wagmi Register type.

@@ -10,7 +10,7 @@ export type PreparationFunction = 'maxOrderAge' | 'currentExecutionConfigHash'
   | 'lastMarkPrice' | 'CAP_PRICE' | 'totalAssets' | 'getLatestPrice'
   | 'activePositionProtectionId' | 'getPendingOrders' | 'maxPendingOrders'
   | 'getFreeBuyingPowerUsdc' | 'positionProtectionTriggerBountyUsdc' | 'getPosition'
-  | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose'
+  | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose' | 'previewSponsoredClose' | 'executeBatch'
   | 'commitOrder' | 'commitOpenOrderWithProtection'
 
 export interface PreparationDebugContext {

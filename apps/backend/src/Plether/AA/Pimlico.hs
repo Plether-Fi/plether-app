@@ -13,6 +13,8 @@ module Plether.AA.Pimlico
   , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
+  , validateNativeActionSequence
+  , CloseAssistanceIntent (..)
   , injectSponsorshipPolicy
   , resolveTradingAccountAddress
   , UndeployedTradingAccountFailure (..)
@@ -747,8 +749,8 @@ decodeExecuteBatch callData = do
   unless (rootOffset == 32) $
     Left $ policyDenied "executeBatch root offset is not canonical"
   countInteger <- wordInteger payload 32
-  unless (countInteger > 0 && countInteger <= 2) $
-    Left $ policyDenied "executeBatch must contain one or two calls"
+  unless (countInteger `elem` [1, 2, 5]) $
+    Left $ policyDenied "executeBatch must contain one, two, or five calls"
   let count = fromInteger countInteger
       elementsBase = 64
       tableEnd = elementsBase + count * 32
@@ -779,6 +781,45 @@ decodeExecuteBatch callData = do
             (index + 1)
             count
             (SmartCall target value innerData : acc)
+
+-- | Only the native gateway can authorize the expanded, guarded close batch.
+data CloseAssistanceIntent = CloseAssistanceIntent
+  { caiLens :: Text
+  , caiGuardData :: ByteString
+  , caiClientOrderId :: ByteString
+  , caiRequest :: ByteString
+  , caiAmountUsdc :: Integer
+  , caiValidUntil :: Integer
+  } deriving stock (Eq, Show)
+
+validateNativeActionSequence
+  :: Maybe Text -> Config -> Text -> Text -> [SmartCall]
+  -> Either ProxyFailure (Maybe CloseAssistanceIntent)
+validateNativeActionSequence mLens cfg sender owner calls = case calls of
+  [guard, mint, approval, deposit, close] -> do
+    lens <- maybe (Left $ policyDenied "Close assistance is disabled") (Right . T.toLower) mLens
+    unless (all ((== 0) . smartCallValue) calls && smartCallTarget guard == lens
+      && smartCallTarget mint == T.toLower (cfgPerpsUsdc cfg)
+      && smartCallTarget close == T.toLower (cfgPerpsOrderRouter cfg)) $
+        Left $ policyDenied "Close assistance targets are not approved"
+    validateActionSequence cfg sender owner [approval, deposit]
+    validateActionSequence cfg sender owner [close]
+    _ <- fixedWords (decodeSelector "ce3d6bc7") 20 (smartCallData guard)
+    (recipient, minted) <- decodeAddressUintCall (decodeSelector "40c10f19") (smartCallData mint)
+    deposited <- decodeUintCall selectorDepositMargin (smartCallData deposit)
+    let payload = BS.drop 4 $ smartCallData guard
+        requestBytes = BS.take (18 * 32) $ BS.drop 32 payload
+    engine <- wordAddress payload 0
+    expected <- wordInteger payload (19 * 32)
+    isClose <- wordInteger requestBytes (5 * 32)
+    deadline <- wordInteger requestBytes (6 * 32)
+    unless (engine == T.toLower (cfgPerpsCfdEngine cfg) && recipient == T.toLower sender
+      && minted > 0 && minted <= 200_000 && minted == deposited && minted == expected
+      && isClose == 1 && BS.drop 4 (smartCallData close) == requestBytes) $
+        Left $ policyDenied "Close assistance must fund the exact same close and account"
+    pure $ Just $ CloseAssistanceIntent lens (smartCallData guard) (BS.take 32 requestBytes)
+      requestBytes minted deadline
+  _ -> validateActionSequence cfg sender owner calls >> pure Nothing
 
 validateActionSequence
   :: Config
