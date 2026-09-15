@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PerpsOrderReceiptEconomics } from '../hooks/usePerpsHistory'
 import { derivePerpsCloseReconciliation } from './perpsCloseReconciliation'
 import { closeOrder14Receipt } from './__fixtures__/closeOrder14'
+import { closeSettlementAdjustmentReceipt } from './__fixtures__/closeSettlementAdjustment'
 
 const USDC = 1_000_000n
 
@@ -32,6 +33,19 @@ function receipt(
 }
 
 describe('derivePerpsCloseReconciliation', () => {
+  it('keeps a screenshot-sized settlement difference unclassified and reports the actual account change', () => {
+    const result = derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!
+    expect(result).toMatchObject({
+      netCloseResultUsdc: -13_228_098_000n,
+      settlementAdjustmentUsdc: 5_956_960_000n,
+      actualAccountChangeUsdc: -7_271_138_000n,
+      marginAccountChangeUsdc: -7_271_138_000n,
+      traderClaimChangeUsdc: 0n,
+    })
+    expect(result.netCloseResultUsdc + result.settlementAdjustmentUsdc)
+      .toBe(result.marginAccountChangeUsdc + result.traderClaimChangeUsdc)
+  })
+
   it('reconciles order 14 without treating VPI netting or withheld profit as a waiver', () => {
     expect(derivePerpsCloseReconciliation(closeOrder14Receipt)).toMatchObject({
       frozenSpreadAssessedUsdc: 5_455_562n,
@@ -40,7 +54,7 @@ describe('derivePerpsCloseReconciliation', () => {
       netCloseResultUsdc: -4_731_125n,
       marginAccountChangeUsdc: -4_731_125n,
       traderClaimChangeUsdc: 0n,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 
@@ -51,9 +65,10 @@ describe('derivePerpsCloseReconciliation', () => {
       carryUsdc: 4n * USDC,
       executionFeeUsdc: 1n * USDC,
       netCloseResultUsdc: 23n * USDC,
+      actualAccountChangeUsdc: 23n * USDC,
       marginAccountChangeUsdc: 23n * USDC,
       traderClaimChangeUsdc: 0n,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 
@@ -75,7 +90,7 @@ describe('derivePerpsCloseReconciliation', () => {
       netCloseResultUsdc: -57_219_607n,
       marginAccountChangeUsdc: -57_219_607n,
       traderClaimChangeUsdc: 0n,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 
@@ -87,6 +102,7 @@ describe('derivePerpsCloseReconciliation', () => {
       postTraderClaimBalanceUsdc: (27n * USDC).toString(),
     }))).toMatchObject({
       netCloseResultUsdc: 27n * USDC,
+      actualAccountChangeUsdc: 27n * USDC,
       marginAccountChangeUsdc: 0n,
       traderClaimChangeUsdc: 27n * USDC,
     })
@@ -103,13 +119,14 @@ describe('derivePerpsCloseReconciliation', () => {
       postTraderClaimBalanceUsdc: '0',
     }))).toMatchObject({
       netCloseResultUsdc: -97n * USDC,
+      actualAccountChangeUsdc: -97n * USDC,
       marginAccountChangeUsdc: -80n * USDC,
       traderClaimChangeUsdc: -17n * USDC,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 
-  it('records only the terminal shortfall as uncovered loss', () => {
+  it('reports a terminal settlement adjustment without assigning a cause', () => {
     expect(derivePerpsCloseReconciliation(receipt({
       realizedPnlUsdc: (-100n * USDC).toString(),
       actionChargeCollectedUsdc: (7n * USDC).toString(),
@@ -120,9 +137,10 @@ describe('derivePerpsCloseReconciliation', () => {
       postTraderClaimBalanceUsdc: '0',
     }))).toMatchObject({
       netCloseResultUsdc: -107n * USDC,
+      actualAccountChangeUsdc: -100n * USDC,
       marginAccountChangeUsdc: -80n * USDC,
       traderClaimChangeUsdc: -20n * USDC,
-      uncoveredLossUsdc: 7n * USDC,
+      settlementAdjustmentUsdc: 7n * USDC,
     })
   })
 
@@ -153,7 +171,7 @@ describe('derivePerpsCloseReconciliation', () => {
       frozenSpreadChargedUsdc: 1n * USDC,
       frozenSpreadWaivedUsdc: 4n * USDC,
       netCloseResultUsdc: -100n * USDC,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
     expect(
       partiallyWaived!.frozenSpreadChargedUsdc + partiallyWaived!.frozenSpreadWaivedUsdc
@@ -198,7 +216,7 @@ describe('derivePerpsCloseReconciliation', () => {
       frozenSpreadChargedUsdc: (5n - waived) * USDC,
       frozenSpreadWaivedUsdc: waived * USDC,
       netCloseResultUsdc: net * USDC,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 
@@ -218,7 +236,7 @@ describe('derivePerpsCloseReconciliation', () => {
       frozenSpreadChargedUsdc: 5n * USDC,
       frozenSpreadWaivedUsdc: 0n,
       netCloseResultUsdc: net * USDC,
-      uncoveredLossUsdc: 0n,
+      settlementAdjustmentUsdc: 0n,
     })
   })
 

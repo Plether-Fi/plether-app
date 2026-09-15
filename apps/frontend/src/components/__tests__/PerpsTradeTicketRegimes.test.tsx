@@ -4,6 +4,7 @@ import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
+import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
@@ -701,7 +702,7 @@ describe('perps ticket oracle regime matrix', () => {
       name: /Detailed close accounting/,
     })
     expect(accountingTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(accountingTrigger).toHaveTextContent('Net')
+    expect(accountingTrigger).toHaveTextContent('Actual account change')
     fireEvent.click(accountingTrigger)
     expect(accountingTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
@@ -715,6 +716,29 @@ describe('perps ticket oracle regime matrix', () => {
     ).toHaveTextContent('-10')
     expect(within(finalResult!).getByText('Frozen spread assessed')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Frozen spread waived')).toBeInTheDocument()
+  })
+
+  it('shows the actual account change and a neutral adjustment in the final result', () => {
+    renderCloseTicket({
+      lifecycleState: 'executed',
+      marketPhase: 'open',
+      oracleFrozen: false,
+      includeMarginSnapshot: false,
+      receiptEconomics: closeSettlementAdjustmentReceipt,
+    })
+    const disclosure = screen.getByRole('button', { name: /Detailed close accounting/ })
+    expect(disclosure).toHaveTextContent('Actual account change')
+    expect(disclosure).toHaveTextContent('-7 271.14')
+    expect(disclosure).not.toHaveTextContent('-13 228.1')
+    fireEvent.click(disclosure)
+    const details = within(screen.getByTestId('close-reconciliation'))
+    const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
+    expect(amount('Close result before settlement adjustments')).toHaveTextContent('-13 228.1')
+    expect(amount('Settlement adjustment')).toHaveTextContent('+5 956.96')
+    expect(amount('Settlement adjustment')).toHaveClass('text-content-primary')
+    expect(amount('Actual account change')).toHaveTextContent('-7 271.14')
+    expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
+    expect(screen.queryByText('Detailed close accounting unavailable')).not.toBeInTheDocument()
   })
 
   it('shows order 14 accounting instead of the unavailable fallback', () => {
@@ -734,8 +758,10 @@ describe('perps ticket oracle regime matrix', () => {
     const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
     expect(amount('VPI rebate')).toHaveTextContent('+1.35')
     expect(amount('Frozen spread charged')).toHaveTextContent('-5.46')
-    expect(amount('Net close result')).toHaveTextContent('-4.73')
+    expect(amount('Close result before settlement adjustments')).toHaveTextContent('-4.73')
     expect(amount('Margin Account balance change')).toHaveTextContent('-4.73')
+    expect(amount('Actual account change')).toHaveTextContent('-4.73')
+    expect(details.queryByText('Settlement adjustment')).not.toBeInTheDocument()
     expect(details.queryByText('Frozen spread waived')).not.toBeInTheDocument()
     expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
   })
@@ -766,7 +792,7 @@ describe('perps ticket oracle regime matrix', () => {
     }))
     const vpiRow = within(finalResult!).getByText(label).closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
-    expect(within(finalResult!).getByText('Net close result')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Close result before settlement adjustments')).toBeInTheDocument()
   })
 
   it('shows released and remaining margin only when the execution-bound snapshot exists', () => {
