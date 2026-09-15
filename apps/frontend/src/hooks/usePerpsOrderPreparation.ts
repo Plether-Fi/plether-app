@@ -64,6 +64,8 @@ class PreparationController<T> {
   timer?: ReturnType<typeof setTimeout>
   slowTimer?: ReturnType<typeof setTimeout>
   jobs = new Set<ReturnType<typeof setTimeout>>()
+  oracleRecoveryExhausted = false
+  oracleRecovery?: { startedAt: number; deadline: number; error: unknown }
   resumeRecovery?: () => void
   backgroundGeneration?: number
   disposed = false
@@ -78,7 +80,7 @@ class PreparationController<T> {
   clearTimers() {
     clearTimeout(this.timer); clearTimeout(this.slowTimer)
   }
-  invalidate() { this.resumeRecovery = undefined; this.generation++; this.abortController?.abort(); this.clearTimers() }
+  invalidate() { this.oracleRecovery = undefined; this.resumeRecovery = undefined; this.generation++; this.abortController?.abort(); this.clearTimers() }
   reusable() {
     return Date.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
       (this.state.status === 'pending' || (this.state.status === 'ready' && this.hasDeadline()))
@@ -98,6 +100,7 @@ class PreparationController<T> {
       return
     }
     if (!changed && contextChanged && options.mode === 'review') {
+      if (this.oracleRecoveryExhausted) { this.publish({ contextKey: options.contextKey }); return }
       this.start('refresh')
       return
     }
@@ -151,21 +154,26 @@ class PreparationController<T> {
     const options = this.options
     if (!options?.candidate || options.mode === 'inactive' || !this.state.visible || this.disposed) return
     if (source === 'background' && (options.mode !== 'background' || this.backgroundGeneration !== undefined)) return
+    const continuingRecovery = source === 'refresh' && this.state.recoveringOracle &&
+      this.state.key === options.candidate.key && this.state.identityKey === options.identityKey
+      ? this.oracleRecovery : undefined
     this.invalidate()
+    this.oracleRecovery = continuingRecovery
+    this.oracleRecoveryExhausted = false
     const abortController = new AbortController()
     this.abortController = abortController
     const candidate = options.candidate
     const generation = this.generation
-    const startedAt = Date.now()
+    const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : Date.now()
     const previous = source === 'refresh' ? this.state.result : undefined
     if (source === 'background') this.backgroundGeneration = generation
     if (source === 'refresh') { this.openedAt = startedAt; this.admission = 'refresh' }
     this.publish({ key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey, status: 'pending', startedAt,
-      result: previous, previous, error: undefined, slow: false, recoveringOracle: false, refreshing: source === 'refresh' })
+      result: previous, previous, error: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
     const current = () => !this.disposed && generation === this.generation
     let finished = false
-    let recoveryStartedAt: number | undefined
-    let lastRecoveryError: unknown
+    let recoveryStartedAt = continuingRecovery?.startedAt
+    let lastRecoveryError = continuingRecovery?.error
     let inFlight = false
     let retryAt = 0
     const trackRecovery = (reason: 'started' | 'succeeded' | 'exhausted' | 'failed') => {
@@ -191,6 +199,8 @@ class PreparationController<T> {
       if (current()) {
         this.clearTimers()
         this.resumeRecovery = undefined
+        this.oracleRecovery = undefined
+        this.oracleRecoveryExhausted = error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE
         if (recoveryStartedAt !== undefined) trackRecovery(error
           ? error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE ? 'exhausted' : 'failed'
           : 'succeeded')
@@ -209,7 +219,7 @@ class PreparationController<T> {
       finish(undefined, recoveryStartedAt === undefined
         ? preparationFailure(new Error('Order checks took too long. Retry review.'), 'preparation_timeout')
         : new Error(ORACLE_RECOVERY_UNAVAILABLE, { cause: lastRecoveryError }))
-    }, PREPARATION_TIMEOUT_MS)
+    }, Math.max(0, startedAt + PREPARATION_TIMEOUT_MS - Date.now()))
     this.jobs.add(jobTimeout)
     const scheduleRecovery = () => {
       if (!current() || finished || inFlight || !this.state.visible || this.options?.mode !== 'review') return
@@ -224,6 +234,7 @@ class PreparationController<T> {
         if (current() && !finished && this.options?.mode === 'review' && isPerpsOracleSyncError(error)) {
           lastRecoveryError = error
           if (recoveryStartedAt === undefined) { recoveryStartedAt = Date.now(); trackRecovery('started') }
+          this.oracleRecovery = { startedAt: recoveryStartedAt, deadline: startedAt + PREPARATION_TIMEOUT_MS, error }
           this.publish({ recoveringOracle: true })
           retryAt = Date.now() + ORACLE_RECOVERY_RETRY_MS
           this.resumeRecovery = scheduleRecovery

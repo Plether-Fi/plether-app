@@ -415,6 +415,33 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.ready).toBe(true)
     expect(prepare).toHaveBeenCalledTimes(2)
   })
+  it('keeps the recovery deadline when market polling changes context repeatedly', async () => {
+    const prepare = vi.fn().mockRejectedValue(syncError())
+    const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({
+      candidate: { key: 'draft', input: { quantity: 100n } }, identityKey: 'account',
+      contextKey, mode: 'review', prepare,
+    }), { initialProps: { contextKey: '0' } })
+    await advance(0)
+    for (let i = 1; i <= 5; i++) {
+      await advance(5000)
+      view.rerender({ contextKey: String(i) })
+      await advance(0)
+    }
+    await advance(5000)
+    expect(view.result.current.error).toMatchObject({ message: ORACLE_RECOVERY_UNAVAILABLE })
+    expect(view.result.current.ready).toBe(false)
+    expect(analytics.mock.calls.filter(call => call[0] === 'perps oracle recovery' && call[1].reason_code === 'started')).toHaveLength(1)
+    expect(analytics).toHaveBeenCalledWith('perps oracle recovery', expect.objectContaining({ reason_code: 'exhausted', duration_ms: 30_000 }))
+    const attempts = prepare.mock.calls.length
+    view.rerender({ contextKey: 'after-exhaustion' })
+    await advance(5000)
+    expect(prepare).toHaveBeenCalledTimes(attempts)
+    expect(view.result.current.error).toMatchObject({ message: ORACLE_RECOVERY_UNAVAILABLE })
+    expect(view.result.current.matches).toBe(true)
+    act(() => { view.result.current.retry() })
+    await advance(0)
+    expect(prepare).toHaveBeenCalledTimes(attempts + 1)
+  })
   it('stops recovery immediately on an unrelated error', async () => {
     const view = setup('review', vi.fn().mockRejectedValueOnce(syncError()).mockRejectedValue(new Error('insufficient margin')))
     await advance(30_000)
