@@ -38,6 +38,15 @@ describe('sponsored close recovery routing', () => {
     await routed.smartAccount.getUserOperationReceipt(otherHash)
     expect(legacy.smartAccount.getUserOperationReceipt).toHaveBeenCalledWith(otherHash)
   })
+  it('routes ordinary native operations using their journaled paymaster after a flag change', async () => {
+    const entry = operation()
+    delete entry.orderRequestV2
+    const native = runtime(), factory = vi.fn(async () => native)
+    const routed = withCloseAssistanceRecovery(runtime(), () => [entry], factory)
+    await routed.smartAccount.getUserOperationReceipt(hash)
+    expect(factory).toHaveBeenCalledWith({ paymasterAddress: paymaster })
+    expect(native.smartAccount.getUserOperationReceipt).toHaveBeenCalledWith(hash)
+  })
   it('rejects a mismatched persisted paymaster instead of guessing a recovery route', async () => {
     const entry = operation()
     entry.sponsorshipAuthority!.paymasterAddress = owner

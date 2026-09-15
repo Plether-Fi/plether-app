@@ -3,6 +3,9 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, waitFor, within } from 'storybook/test'
 import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
+import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
+import type { PreparationStatusV1 } from '../perps-aa/preparedOperation'
 import {
   PerpsIdentityContext,
   isSponsoredOperationTerminal,
@@ -182,9 +185,11 @@ const mixedOperations = [
 function WalletHeaderPreview({
   operations,
   confirmOperationId,
+  runtime,
 }: {
   operations: SponsoredOperation[]
   confirmOperationId?: string
+  runtime?: PerpsAaSmartAccountRuntime
 }) {
   useLayoutEffect(() => {
     const previousOperations =
@@ -226,6 +231,7 @@ function WalletHeaderPreview({
   }, [confirmOperationId, operations])
 
   return (
+    <PerpsAaRuntimeContext value={runtime}>
     <PerpsIdentityContext.Provider value={IDENTITY}>
       <div className="min-h-40 bg-app-bg p-8">
         <div className="ml-auto flex w-fit items-center gap-4 border border-brand-border/30 bg-surface-panel p-4">
@@ -243,6 +249,7 @@ function WalletHeaderPreview({
         </div>
       </div>
     </PerpsIdentityContext.Provider>
+    </PerpsAaRuntimeContext>
   )
 }
 
@@ -391,3 +398,89 @@ export const ModalOpen: Story = {
     ).toBeVisible()
   },
 }
+
+const NATIVE_MANIFEST: PerpsAaDeploymentManifestV2 = {
+  ...MANIFEST,
+  version: 'perps-aa-arbitrum-sepolia-v2',
+  bundlerRpcUrl: '/storybook/aa/rpc',
+  paymasterRpcUrl: '/storybook/aa/rpc',
+  paymasterAddress: '0x3333333333333333333333333333333333333333',
+  paymasterVersion: 'plether-verifying-v1',
+  preparationRpcVersion: 1,
+}
+
+function recoveryFixture(action: SponsoredOperation['action'], interrupted = false): SponsoredOperation {
+  const id = hash(action === 'deposit' ? 'a' : 'b')
+  return {
+    ...operation({ id, action, status: interrupted ? 'preparation-pending' : 'signature-declined', minutesAgo: 1 }),
+    walletPreparationOutcome: interrupted ? 'unknown' : 'declined',
+    walletPreparationRevision: 1,
+    nativePreparation: {
+      version: 1, preparationId: id, manifest: NATIVE_MANIFEST,
+      action: { kind: action, account: ACCOUNT_ADDRESS, calls: [] },
+    },
+    preparedOperation: {
+      version: 1, expectedHash: hash('c'), validUntil: '2000000000',
+      operation: {
+        sender: ACCOUNT_ADDRESS, nonce: '0', callData: '0x', callGasLimit: '100000',
+        verificationGasLimit: '100000', preVerificationGas: '50000',
+        maxFeePerGas: '10000000', maxPriorityFeePerGas: '1000000',
+      },
+    },
+  }
+}
+
+const RESUMABLE_STATUS: PreparationStatusV1 = {
+  version: 1, authorizationState: 'signed', phase: 'prepared', reason: 'RESUMABLE',
+  recoverable: true, freshReviewAllowed: true, validUntil: '2000000000',
+  serverTime: String(NOW / 1000), safeBlockTimestamp: String(NOW / 1000 - 60),
+  userOperationHash: hash('c'), transactionHash: null,
+}
+
+function previewRuntime(status: PreparationStatusV1): PerpsAaSmartAccountRuntime {
+  // Status is local fixture data. Signing/submission are deliberately unavailable
+  // in these visual examples; never connect a Storybook fixture to a real wallet.
+  const unavailable = async (): Promise<never> => {
+    throw new Error('This Storybook example previews recovery controls. Wallet signing is available in the app.')
+  }
+  return {
+    chainId: MANIFEST.chainId, ownerAddress: OWNER_ADDRESS,
+    factoryAddress: MANIFEST.smartAccountFactory,
+    accountVersion: MANIFEST.smartAccountVersion, accountIndex: MANIFEST.smartAccountIndex,
+    smartAccount: {
+      accountAddress: ACCOUNT_ADDRESS, entryPoint: MANIFEST.entryPoint,
+      getPreparationStatus: async () => status,
+      prepareUserOperation: unavailable, signUserOperation: unavailable,
+      sendUserOperation: unavailable, getUserOperationReceipt: unavailable,
+      getUserOperationStatus: unavailable, getUserOperationHash: () => hash('c'),
+    },
+  }
+}
+
+function recoveryStory(action: SponsoredOperation['action'], status = RESUMABLE_STATUS, interrupted = false): Story {
+  const operations = [recoveryFixture(action, interrupted)]
+  const runtime = previewRuntime(status)
+  return {
+    parameters: { docs: { description: { story: 'Real activity UI with a mocked preparation-status response. Wallet signing and submission are unavailable in this visual preview.' } } },
+    render: () => <WalletHeaderPreview operations={operations} runtime={runtime} />,
+    play: async ({ canvasElement }) => {
+      await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
+      const dialog = within(await within(document.body).findByRole('dialog'))
+      const resume = await dialog.findByRole('button', { name: /^Resume / })
+      await waitFor(() => {
+        if (status.recoverable) expect(resume).toBeEnabled()
+        else expect(resume).toBeDisabled()
+        if (status.freshReviewAllowed && !interrupted) expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled()
+        else expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeDisabled()
+      })
+    },
+  }
+}
+
+export const SignatureDeclinedDeposit: Story = recoveryStory('deposit')
+export const SignatureDeclinedOrder: Story = recoveryStory('place-order')
+export const InterruptedWalletRecovery: Story = recoveryStory('deposit', RESUMABLE_STATUS, true)
+export const SponsorshipReservationWait: Story = recoveryStory('place-order', {
+  ...RESUMABLE_STATUS, phase: 'expiry-awaiting-reconciliation', reason: 'SAFE_EXPIRY_WAIT',
+  recoverable: false, freshReviewAllowed: false,
+})

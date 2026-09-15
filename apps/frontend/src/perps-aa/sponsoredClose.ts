@@ -47,12 +47,12 @@ export async function verifyCloseAssistanceLens(client: PublicClient, config: Cl
   }
 }
 
-export function closeAssistanceManifest(manifest: PerpsAaDeploymentManifest, config: CloseAssistanceConfig): PerpsAaDeploymentManifestV2 {
+export function closeAssistanceManifest(manifest: PerpsAaDeploymentManifest, config: Pick<CloseAssistanceConfig, 'paymasterAddress'>): PerpsAaDeploymentManifestV2 {
   const fields = { ...manifest } as Record<string, unknown>
   delete fields.pimlicoRpcUrl
   return parsePerpsAaManifest({ ...fields,
     bundlerRpcUrl: '/api/perps/v1/aa/rpc', paymasterRpcUrl: '/api/perps/v1/aa/rpc',
-    paymasterAddress: config.paymasterAddress, paymasterVersion: 'plether-verifying-v1',
+    paymasterAddress: config.paymasterAddress, paymasterVersion: 'plether-verifying-v1', preparationRpcVersion: 1,
   }) as PerpsAaDeploymentManifestV2
 }
 

@@ -5534,7 +5534,7 @@ export function PerpsTradeTicket({
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               <p>{marginActionError}</p>
-              {marginAction === 'deposit' && usesOwnerDepositAuthorization ? (
+              {marginAction === 'deposit' && usesOwnerDepositAuthorization && !activeAccountOperation?.nativePreparation ? (
                 <button
                   type="button"
                   className="mt-2 font-semibold underline underline-offset-2"

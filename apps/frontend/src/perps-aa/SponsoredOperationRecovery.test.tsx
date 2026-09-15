@@ -26,6 +26,7 @@ import {
   type SponsoredOperationRecoverySnapshot,
   UserOperationReceiptNotSafeError,
 } from './runtimeContext'
+import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { SponsoredOperationRecovery } from './SponsoredOperationRecovery'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
@@ -260,6 +261,22 @@ describe('SponsoredOperationRecovery', () => {
     expect(
       useSponsoredOperationStore.getState().operations.at(-1)?.id
     ).toBe('next-operation')
+  })
+
+  it('moves an interrupted native preparation into recovery without releasing its lane or opening a wallet', async () => {
+    const store = useSponsoredOperationStore.getState()
+    store.beginOperation({ id: 'native-interrupted', ownerAddress: OWNER, accountAddress: ACCOUNT, chainId: 421614,
+      accountMode: 'simple', manifestVersion: MANIFEST_VERSION, action: 'deposit' })
+    store.recordPreparation('native-interrupted', { version: 1, preparationId: 'native-interrupted',
+      manifest: { version: MANIFEST_VERSION, chainId: 421614 } as PerpsAaDeploymentManifestV2,
+      action: { kind: 'deposit', account: ACCOUNT, calls: [] } })
+    store.transition('native-interrupted', 'awaiting-signature')
+    const runtime = runtimeValue()
+    render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await waitFor(() => { expect(useSponsoredOperationStore.getState().operations[0].status).toBe('preparation-pending') })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('native-interrupted')
+    expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
   })
 
   it('does not release a live pre-hash operation owned by another tab', async () => {

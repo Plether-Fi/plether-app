@@ -29,6 +29,10 @@ export type PerpsMarginLifecycleEvent =
   | 'withdraw_succeeded'
   | 'withdraw_failed'
 export type PerpsSponsoredOperationStatus =
+  | 'resume-started'
+  | 'signature-declined'
+  | 'preparation-pending'
+  | 'sponsorship-refused'
   | 'preflight_failed'
   | 'building'
   | 'requesting-stub'
@@ -205,6 +209,7 @@ export function perpsSizeBucket(value: number): AnalyticsPropertyValue {
 export function perpsErrorCategory(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const normalized = message.toLowerCase()
+  if (normalized.startsWith('signature declined.')) return 'user_rejected'
   if (normalized.includes('user rejected') || normalized.includes('rejected')) return 'user_rejected'
   if (normalized.includes('network') || normalized.includes('chain')) return 'network_or_chain'
   if (normalized.includes('allowance') || normalized.includes('approve')) return 'allowance'

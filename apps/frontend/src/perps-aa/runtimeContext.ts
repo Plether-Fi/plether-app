@@ -1,4 +1,7 @@
 import { createContext, use } from 'react'
+import type { ReviewedActionStateInput } from './reviewedActionState'
+import type { PreparationStatusV1 } from './preparedOperation'
+import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import type { DeploymentConfirmationMonitor } from './deploymentConfirmation'
 import type {
   PerpsActionKind,
@@ -48,7 +51,9 @@ export interface ManagedSmartAccount {
     calls: readonly SmartAccountCall[]
     action: PerpsActionKind
     preparationId?: string
+    preparedOperation?: ManagedUserOperation
   }): Promise<ManagedUserOperation>
+  getPreparationStatus?(locator: { preparationId: string } | { userOperationHash: Hex }): Promise<PreparationStatusV1>
   signUserOperation(
     operation: ManagedUserOperation
   ): Promise<ManagedUserOperation>
@@ -106,6 +111,8 @@ export interface RecoveryOperationContext {
 }
 
 export interface PerpsAaSmartAccountRuntime {
+  readReviewedActionState?(input: ReviewedActionStateInput): Promise<string>
+  getPreparedOperationRuntime?(manifest: PerpsAaDeploymentManifestV2): Promise<PerpsAaSmartAccountRuntime>
   deploymentConfirmation?: DeploymentConfirmationMonitor
   chainId: number
   ownerAddress: Address

@@ -1,3 +1,4 @@
+import { isExplicitSignatureRejection } from './preparedOperation'
 import type {
   PerpsActionKind,
   SponsoredExecutionStatus,
@@ -34,6 +35,7 @@ export interface SponsoredOperationAnalyticsMetadata {
 export interface SponsoredOperationMetadata
   extends SponsoredOperationAnalyticsMetadata {
   id?: string
+  resume?: boolean
   ownerAddress: Address
   accountAddress: Address
   chainId: number
@@ -158,7 +160,7 @@ export function beginSponsoredOperationTracking(
   const startedAt = performance.now()
   let previousStatus: string | undefined
   const store = useSponsoredOperationStore.getState()
-  store.beginOperation({
+  if (!metadata.resume) store.beginOperation({
     id,
     ownerAddress: metadata.ownerAddress,
     accountAddress: metadata.accountAddress,
@@ -173,9 +175,9 @@ export function beginSponsoredOperationTracking(
     lane: metadata.lane,
   })
 
-  trackPerpsSponsoredOperation('building', analyticsProperties(metadata, {
+  trackPerpsSponsoredOperation(metadata.resume ? 'resume-started' : 'building', analyticsProperties(metadata, {
     attempt_id: id,
-    stage: 'building',
+    stage: metadata.resume ? 'resume' : 'building',
     duration_ms: 0,
     sponsorship_accepted: false,
     retry_count: 0,
@@ -197,7 +199,7 @@ export function beginSponsoredOperationTracking(
         duration_ms: Math.round(performance.now() - startedAt),
         sponsorship_accepted: operation?.sponsorshipAccepted ?? false,
         retry_count: operation?.retryCount ?? 0,
-        ...(status === 'confirmed' ? { terminal_outcome: 'confirmed' } : {}),
+        ...(status === 'confirmed' ? { terminal_outcome: 'confirmed', resumed: metadata.resume ?? false } : {}),
       }))
     },
 
@@ -239,6 +241,17 @@ export function beginSponsoredOperationTracking(
         return
       }
       const sponsorError = findSponsorRequestError(error)
+      if (currentOperation?.nativePreparation && !currentOperation.userOperationHash) {
+        const declined = currentOperation.status === 'awaiting-signature' && isExplicitSignatureRejection(error)
+        if (currentOperation.status === 'awaiting-signature') useSponsoredOperationStore.getState().recordWalletPreparationOutcome(id, declined ? 'declined' : 'unknown')
+        const status = declined ? 'signature-declined' : sponsorError ? 'sponsorship-refused' : 'preparation-pending'
+        useSponsoredOperationStore.getState().transition(id, status)
+        trackPerpsSponsoredOperation(status, analyticsProperties(metadata, {
+          attempt_id: id, stage: 'preparation', reason_code: sponsorError?.reason,
+          preparation_outcome: declined ? 'wallet_rejected' : sponsorError ? 'sponsorship_refused' : 'unknown',
+        }))
+        return
+      }
       const bundlerError = findBundlerRequestError(error)
       const hasPersistedHash = currentOperation?.userOperationHash !== undefined
       const terminalStatus = bundlerError?.terminalStatus

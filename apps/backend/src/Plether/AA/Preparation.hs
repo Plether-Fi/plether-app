@@ -1,5 +1,6 @@
 module Plether.AA.Preparation
   ( PreparationIntent (..), parsePreparationIntent, unsignedSkeleton, intentHash, matchesIntent, internalRequest
+  , PreparationLocator (..), parsePreparationLocator, preparationStatusResponse
   , gasPolicyVersion, sepoliaExecutionGasCap, executionGasWithHeadroom ) where
 
 import Control.Monad (unless)
@@ -9,6 +10,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isHexDigit)
+import Text.Read (readMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -17,7 +19,7 @@ import Plether.Ethereum.Abi (keccak256)
 
 data PreparationIntent = PreparationIntent
   { piIdentifier :: Text, piSender :: Text, piCallData :: Text
-  , piFactory :: Maybe Text, piFactoryData :: Maybe Text
+  , piFactory :: Maybe Text, piFactoryData :: Maybe Text, piResumeOnly :: Bool
   } deriving stock (Eq, Show)
 
 -- Applied ONLY to a fresh Alto estimate, before immutable preparation storage.
@@ -42,12 +44,16 @@ executionGasWithHeadroom estimated = do
 
 parsePreparationIntent :: [Value] -> Either Legacy.ProxyFailure PreparationIntent
 parsePreparationIntent [Object fields] = do
-  unless (all (`elem` ["version","preparationId","chainId","entryPoint","sender","callData","factory","factoryData"]) $ KM.keys fields) $
+  unless (all (`elem` ["version","preparationId","chainId","entryPoint","sender","callData","factory","factoryData","resumeOnly"]) $ KM.keys fields) $
     Left $ Legacy.invalidParams "Preparation contains unsupported fields"
   unless (KM.lookup "version" fields == Just (Number 1)
     && KM.lookup "chainId" fields == Just (String "0x66eee")
     && fmap lower (KM.lookup "entryPoint" fields) == Just (String entryPoint)) $
     Left $ Legacy.invalidParams "Unsupported preparation version, chain or EntryPoint"
+  resumeOnly <- case KM.lookup "resumeOnly" fields of
+    Nothing -> Right False
+    Just (Bool value) -> Right value
+    _ -> Left $ Legacy.invalidParams "resumeOnly must be boolean"
   identifier <- requiredHex fields "preparationId" (Just 32)
   sender <- requiredHex fields "sender" (Just 20)
   callData <- requiredHex fields "callData" Nothing
@@ -55,7 +61,7 @@ parsePreparationIntent [Object fields] = do
     (Nothing,Nothing) -> pure (Nothing,Nothing)
     (Just _,Just _) -> (,) <$> (Just <$> requiredHex fields "factory" (Just 20)) <*> (Just <$> requiredHex fields "factoryData" Nothing)
     _ -> Left $ Legacy.invalidParams "Factory fields must be paired"
-  let intent = PreparationIntent identifier sender callData (fst pair) (snd pair)
+  let intent = PreparationIntent identifier sender callData (fst pair) (snd pair) resumeOnly
   -- Reuse the strict reviewed account ABI / action parser, including index and
   -- factory checks. No caller-controlled signature reaches this path.
   request <- internalRequest "eth_estimateUserOperationGas" [Object $ unsignedSkeleton intent, String entryPoint]
@@ -96,3 +102,57 @@ internalRequest method params = Legacy.parseRpcRequest $ object
   -- Alto 1.2.7 accepts numeric request IDs; string IDs fail its request schema.
   -- Each internal request has its own HTTP response and retains strict ID checks.
   ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "method" .= method, "params" .= params]
+
+-- Locators contain no credentials or transaction payload. Exactly one ID is required.
+data PreparationLocator = PreparationLocator
+  { plSender :: Text, plIdentifier :: Maybe Text, plHash :: Maybe Text
+  } deriving stock (Eq, Show)
+
+parsePreparationLocator :: [Value] -> Either Legacy.ProxyFailure PreparationLocator
+parsePreparationLocator [Object fields] = do
+  unless (all (`elem` ["version","chainId","sender","preparationId","userOperationHash"]) $ KM.keys fields) $
+    Left $ Legacy.invalidParams "Preparation status contains unsupported fields"
+  unless (KM.lookup "version" fields == Just (Number 1) && KM.lookup "chainId" fields == Just (String "0x66eee")) $
+    Left $ Legacy.invalidParams "Unsupported preparation status locator"
+  sender <- requiredHex fields "sender" (Just 20)
+  case (KM.member "preparationId" fields, KM.member "userOperationHash" fields) of
+    (True, False) -> PreparationLocator sender . Just <$> requiredHex fields "preparationId" (Just 32) <*> pure Nothing
+    (False, True) -> PreparationLocator sender Nothing . Just <$> requiredHex fields "userOperationHash" (Just 32)
+    _ -> Left $ Legacy.invalidParams "Exactly one preparation ID or operation hash is required"
+parsePreparationLocator _ = Left $ Legacy.invalidParams "Preparation status requires one versioned locator"
+
+-- Recoverability is guidance only: the preparation endpoint revalidates the
+-- immutable batch. An expiry timestamp never releases a reservation here.
+preparationStatusResponse :: Integer -> Maybe Integer -> Bool -> KM.KeyMap Value -> Value
+preparationStatusResponse now safeTimestamp requestedAssistance fields = Object $ KM.union (KM.fromList
+  [("version",Number 1),("serverTime",String $ T.pack $ show now),
+   ("safeBlockTimestamp",maybe Null (String . T.pack . show) safeTimestamp),
+   ("phase",String phase),("reason",String reason),("recoverable",Bool resume),
+   ("freshReviewAllowed",Bool $ not blocked && (resolved || (not observed && state `elem` map (Just . String) ["signed","preparing"])))]) fields
+ where
+  state = KM.lookup "authorizationState" fields
+  expiry = KM.lookup "validUntil" fields >>= \case
+    String value -> readMaybe (T.unpack value)
+    _ -> Nothing
+  expired = maybe False (<= now) expiry
+  settled = state == Just (String "settled")
+  resolved = state `elem` map (Just . String) ["expired","cancelled"] || settled
+  assisted = requestedAssistance || KM.lookup "assisted" fields == Just (Bool True)
+  blocked = assisted && KM.lookup "assistanceBlocked" fields == Just (Bool True)
+  observed = case KM.lookup "transactionHash" fields of Just (String _) -> True; _ -> False
+  resume = not observed && not (blocked && state == Just (String "preparing"))
+    && state `elem` map (Just . String) ["signed","preparing"] && not expired
+    && KM.lookup "preparationAvailable" fields == Just (Bool True)
+  phase :: Text
+  phase | settled = "settled"
+        | Just (String _) <- KM.lookup "transactionHash" fields = "included"
+        | state == Just (String "submitted") = "submitted"
+        | expired && not resolved = "expiry-awaiting-reconciliation"
+        | resolved = "resolved"
+        | otherwise = "prepared"
+  reason :: Text
+  reason | settled && assisted && KM.lookup "executionSuccess" fields == Just (Bool True) && KM.lookup "assistanceVerified" fields == Just (Bool True) = "INTENT_ALREADY_COMMITTED"
+         | blocked && expired && not resolved = "SAFE_EXPIRY_WAIT"
+         | blocked && not resume = "ASSISTANCE_RESERVATION_PENDING"
+         | resume = "RESUMABLE"
+         | otherwise = "PREPARATION_UNUSABLE"

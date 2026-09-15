@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { PreparedOperationRecovery } from '../perps-aa/PreparedOperationRecovery'
 import { TradingStatus } from './TradingStatus'
 import { OperationDiagnostic } from './OperationDiagnostic'
 import { isPerpsAaManifestV2 } from '../perps-aa/manifest'
@@ -156,7 +157,7 @@ function isForegroundInProgressOperation(
 ): boolean {
   return !isAwaitingSafeConfirmation(operation) &&
     !isSponsoredOperationTerminal(operation.status) &&
-    operation.status !== 'receipt-timeout'
+    !isSponsoredOperationAttentionStatus(operation.status)
 }
 
 function isAttentionOperation(operation: SponsoredOperation): boolean {
@@ -220,6 +221,9 @@ function operationReasonMessage(
   }
 
   switch (operation.status) {
+    case 'signature-declined': return 'Signature declined. Your transaction was not sent.'
+    case 'preparation-pending': return 'The wallet or preparation response was interrupted. Check recovery before continuing.'
+    case 'sponsorship-refused': return 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
     case 'execution-reverted':
       return 'The transaction was included but failed during onchain execution.'
     case 'dropped':
@@ -518,6 +522,10 @@ function OperationHistoryItem({
         ) : null}
       </div>
 
+      {!operation.userOperationHash && ((operation.nativePreparation !== undefined && (!operation.preparationResolved || !isSponsoredOperationTerminal(operation.status)))
+        || (!operation.nativePreparation && operation.status === 'failed' && manifest && isPerpsAaManifestV2(manifest) && operation.manifestVersion === manifest.version)) && (
+        <PreparedOperationRecovery operation={operation} fallbackManifest={manifest && isPerpsAaManifestV2(manifest) ? manifest : undefined} />
+      )}
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (
         <p className="text-xs leading-5 text-content-secondary">
           The sponsored order commit is confirmed. Keeper execution is tracked separately in order history.
