@@ -172,6 +172,7 @@ export function SponsoredOperationRecovery() {
         if (
           !isSponsoredOperationTerminal(operation.status) &&
           operation.userOperationHash === undefined &&
+          !(operation.nativePreparation && ['signature-declined', 'sponsorship-refused', 'preparation-pending'].includes(operation.status)) &&
           !hasSponsoredOperationSignal(operation.id) &&
           !recovering.has(operation.id)
         ) {
@@ -212,7 +213,9 @@ export function SponsoredOperationRecovery() {
                   accountAddress
                 )
               ) {
-                useSponsoredOperationStore.getState().failOperation({
+                if (latestOperation.nativePreparation) {
+                  useSponsoredOperationStore.getState().transition(latestOperation.id, 'preparation-pending')
+                } else useSponsoredOperationStore.getState().failOperation({
                   id: latestOperation.id,
                   reason: 'UNKNOWN',
                   retryable: true,

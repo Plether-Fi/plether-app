@@ -1,6 +1,7 @@
 module Plether.Database.CloseAssistance
   ( CloseAssistanceReservation (..)
   , ensureCloseAssistanceSchema
+  , closeAssistanceReservationReason
   , closeAssistanceReservationAllowed
   , insertCloseAssistanceReservation
   , getCloseAssistanceReservation
@@ -80,3 +81,19 @@ confirmCloseAssistance conn digest tx blockNumber blockHash depositIndex orderId
     (T.toLower tx,blockNumber,T.toLower blockHash,depositIndex,orderId,T.toLower digest,
      T.toLower tx,T.toLower blockHash,depositIndex,orderId)
   pure $ count == 1
+
+-- Keep the compatibility predicate, while new callers expose distinct recovery reasons.
+closeAssistanceReservationReason :: Connection -> CloseAssistanceReservation -> IO (Maybe Text)
+closeAssistanceReservationReason conn r = do
+  rows <- query conn
+    "SELECT CASE WHEN BOOL_OR(COALESCE(e.success,FALSE) AND g.verified AND g.client_order_id=?)\
+    \ THEN 'INTENT_ALREADY_COMMITTED' ELSE 'ASSISTANCE_RESERVATION_PENDING' END\
+    \ FROM aa_close_assistance g JOIN aa_sponsorship_authorizations a USING(digest)\
+    \ LEFT JOIN aa_user_operation_events e USING(digest) WHERE g.router=? AND g.account=?\
+    \ AND (a.state IN ('reserved','signed','submitted') OR (COALESCE(e.success,FALSE) AND (NOT g.verified OR g.client_order_id=?)))\
+    \ HAVING COUNT(*) > 0"
+    (T.toLower $ carClientOrderId r,T.toLower $ carRouter r,T.toLower $ carAccount r,T.toLower $ carClientOrderId r) :: IO [Only Text]
+  case rows of
+    [] -> pure Nothing
+    [Only reason] -> pure $ Just reason
+    _ -> fail "Ambiguous assistance reservation state"

@@ -53,6 +53,11 @@ export function recoveryFetch(rpcUrl: string, fetcher: typeof fetch = fetch, cre
         && 'params' in body && Array.isArray(body.params) && body.params.length === 1 && typeof body.params[0] === 'string') {
         hash = body.params[0].toLowerCase()
       }
+      if (body && typeof body === 'object' && 'method' in body && body.method === 'plether_getPreparationStatus'
+        && 'params' in body && Array.isArray(body.params) && body.params.length === 1) {
+        const locator = body.params[0] as { userOperationHash?: unknown; preparationId?: unknown }
+        if (locator && locator.preparationId === undefined && typeof locator.userOperationHash === 'string') hash = locator.userOperationHash.toLowerCase()
+      }
     } catch { /* Upstream validates malformed requests. */ }
     const saved = hash && credentials().get(`${scope}|${hash}`)
     if (saved) headers.set(HEADER, saved)

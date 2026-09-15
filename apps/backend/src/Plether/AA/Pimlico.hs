@@ -195,6 +195,7 @@ data PimlicoMethod
   | GetUserOperationStatus
   | GetSupportedEntryPoints
   | PrepareUserOperation
+  | GetPreparationStatus
   deriving stock (Eq, Show)
 
 data RpcRequest = RpcRequest
@@ -508,6 +509,7 @@ parseMethod = \case
   "eth_getUserOperationByHash" -> Just GetUserOperationByHash
   "pimlico_getUserOperationStatus" -> Just GetUserOperationStatus
   "eth_supportedEntryPoints" -> Just GetSupportedEntryPoints
+  "plether_getPreparationStatus" -> Just GetPreparationStatus
   "plether_prepareUserOperation" -> Just PrepareUserOperation
   _ -> Nothing
 
@@ -516,6 +518,7 @@ validateMethodParams request =
   case rrMethod request of
     GetGasPrice -> emptyParams >> pure Nothing
     GetSupportedEntryPoints -> emptyParams >> pure Nothing
+    GetPreparationStatus -> Left $ invalidParams "Native preparation status is not supported by the managed provider"
     PrepareUserOperation -> Left $ invalidParams "Native preparation is not supported by the managed provider"
     GetUserOperationReceipt -> hashParams >> pure Nothing
     GetUserOperationByHash -> hashParams >> pure Nothing

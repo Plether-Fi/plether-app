@@ -218,6 +218,14 @@ export function findBundlerRequestError(error: unknown): BundlerRequestError | u
 
 export function sponsorReasonMessage(error: SponsorRequestError): string {
   switch (error.reason) {
+    case 'CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED':
+    case 'ASSISTANCE_RESERVATION_PENDING':
+    case 'SAFE_EXPIRY_WAIT':
+      return 'Waiting for sponsorship reservation to clear. Authorization expiry and safe reconciliation are separate; check Trading Account activity for updates.'
+    case 'INTENT_ALREADY_COMMITTED':
+      return 'This order intent was already committed. Check order activity before reviewing a new action.'
+    case 'PREPARATION_UNUSABLE':
+      return 'The original preparation can no longer be signed. Check recovery and review a new transaction when available.'
     case 'RESTART_ESTIMATION':
       return 'The gas estimate changed. Plether is preparing a fresh sponsored transaction.'
     case 'RATE_LIMITED':

@@ -20,6 +20,7 @@ module Plether.AA.Gateway
   , agreeAccountIdentity
   , forwardAlto
   , closeAssistanceStatus
+  , observePreparationInclusion
   ) where
 
 import Control.Exception (SomeException, try)
@@ -30,6 +31,7 @@ import Control.Monad (forever, void)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Data.Foldable (toList)
 import Data.Aeson
   ( Value (..)
   , eitherDecode
@@ -69,6 +71,7 @@ import Network.HTTP.Types.Header (hRetryAfter)
 import Network.HTTP.Types.Status (status200, status400, status403, status413, statusCode)
 import qualified Plether.AA.Paymaster as Paymaster
 import qualified Plether.AA.Preparation as Preparation
+import qualified Plether.AA.Reconciler as Reconciler
 import qualified Plether.AA.RecoveryReceipt as RecoveryReceipt
 import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.Readiness (newReadiness)
@@ -91,6 +94,8 @@ import Plether.Database.AaSponsorship
   ( SponsorshipAuthorization (..)
   , SponsorshipDraft (..)
   , consumeAaRateLimit
+  , AaReconcilerCursor (..)
+  , getAaReconcilerCursor
   , getAaIssuancePause
   , getSponsorshipByDigest
   , getSponsorshipByRequestKey
@@ -418,17 +423,32 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
               profile = preparationProfileFingerprint nativeCfg
               previous = T.replace Preparation.gasPolicyVersion "execution-headroom-v2-sepolia-cap2100000-150pct-min100000" profile
-          claim <- db $ \conn -> PreparationDb.claimPreparationCompatible conn (naaPreparationEnabled nativeCfg) clientKey
+          claim <- db $ \conn -> PreparationDb.claimPreparationCompatible conn (naaPreparationEnabled nativeCfg && not (Preparation.piResumeOnly intent)) clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent)
             (boundIntent profile) [boundIntent previous] identifier
           stored <- case claim of
             PreparationDb.PreparationConflict -> throwE $ Legacy.invalidParams "Preparation ID is bound to another intent"
-            PreparationDb.PreparationExpired -> throwE $ Legacy.policyDenied "Preparation expired; review a new intent"
+            PreparationDb.PreparationExpired -> throwE $ (Legacy.policyDenied "Preparation expired; review a new intent") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
             PreparationDb.PreparationDisabled -> throwE $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
             PreparationDb.PreparationBusy -> throwE $ Legacy.unavailable "PREPARATION_BUSY" "Retry the same preparation ID"
             PreparationDb.PreparationClaimed operation -> pure operation
+          bound <- db $ \conn -> PreparationDb.bindPreparationDeployment conn clientKey
+            (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
+          unless bound $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
           operationObject <- case stored of
-            Just (Object operation) -> pure operation
+            Just (Object operation) -> do
+              estimate <- ioStage timing "resume_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
+              unless (KM.lookup "nonce" estimate == KM.lookup "nonce" operation) $
+                throwE $ (Legacy.policyDenied "The account nonce changed; review account activity") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
+              let quantityIn fields key = KM.lookup key fields >>= \case
+                    String value -> parseRpcQuantity value
+                    _ -> Nothing
+                  fits key = case (quantityIn estimate key, quantityIn operation key) of
+                    (Just needed, Just prepared) -> needed <= prepared
+                    _ -> False
+              unless (all fits ["callGasLimit","verificationGasLimit","preVerificationGas"]) $
+                throwE $ (Legacy.policyDenied "The batch now requires more gas than the prepared limits") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
+              pure operation
             Just _ -> throwE databaseUnavailable
             Nothing -> do
               unless (naaPreparationEnabled nativeCfg) $ throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
@@ -439,6 +459,7 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
               pure built
           unless (Preparation.matchesIntent intent operationObject) $ throwE databaseUnavailable
           operation <- checked $ firstInvalidParams $ Paymaster.parsePackedUserOperation operationObject
+          when (isJust stored) $ ioStage timing "resume_fee_validation" $ validateLiveFeeCapDual context operation
           -- Validate the exact estimated payload again, not just the skeleton.
           finalPolicyRequest <- checked $ Preparation.internalRequest "eth_estimateUserOperationGas"
             [Object $ KM.insert "signature" (String Legacy.dummySignature) operationObject, String nativeEntryPoint]
@@ -450,7 +471,7 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
             Legacy.respondFailure requestId failure
           Right (context, owner, operation, assistance) ->
-            deliverPreparation assistance gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
+            deliverPreparation assistance gatewayState (if Preparation.piResumeOnly intent then nativeCfg { naaPreparationEnabled = False } else nativeCfg) pool context clientKey owner request operation $ \envelope -> do
               let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
               linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
@@ -607,6 +628,8 @@ dispatchNative
   -> Legacy.RpcRequest
   -> ActionM ()
 dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp clientKey request
+  | Legacy.rrMethod request == Legacy.GetPreparationStatus =
+      preparationStatus nativeCfg pool perpsClient manager clientKey request
   | Legacy.rrMethod request == Legacy.PrepareUserOperation =
       prepareNativeOperation gatewayState cfg nativeCfg pool perpsClient manager clientKey request
   | otherwise =
@@ -2022,3 +2045,83 @@ validateCloseAssistanceDual state (Just context) sender (Just intent)
             _ -> pure $ Left securityAttestationUnavailable
         _ -> pure $ Left securityAttestationUnavailable
 validateCloseAssistanceDual _ _ _ _ = pure $ Left securityAttestationUnavailable
+
+-- Status remains available with issuance disabled. No security/signing/bundler
+-- mutation is reachable from this handler; the reconciler alone releases liability.
+preparationStatus :: NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+preparationStatus cfg pool client manager clientKey request = case Preparation.parsePreparationLocator $ Legacy.rrParams request of
+  Left failure -> Legacy.respondFailure requestId failure
+  Right locator -> do
+    credential <- header "X-Plether-AA-Recovery"
+    now <- liftEpochSeconds
+    let hash = Preparation.plHash locator
+        capabilityClient = hash >>= \h -> credential >>= RecoveryCapability.verify
+          (naaProxyOriginToken cfg) (naaPaymasterAddress cfg) now h . TL.toStrict
+        authorizedClient = maybe clientKey id capabilityClient
+    status <- liftDb $ withDb pool $ \conn -> PreparationDb.getPreparationStatus conn
+      authorizedClient (Preparation.plSender locator) (Preparation.plIdentifier locator) hash
+    case status of
+      Left _ -> Legacy.respondFailure requestId databaseUnavailable
+      Right Nothing -> Legacy.respondFailure requestId $
+        Legacy.ProxyFailure status403 (-32001) "Preparation is unavailable for this client" "PREPARATION_NOT_AUTHORIZED" False
+      Right (Just (Object fields, storedOperation)) -> do
+        cursor <- liftDb $ withDb pool $ \conn -> getAaReconcilerCursor conn 421614 (naaPaymasterAddress cfg)
+        safeTimestamp <- case cursor of
+          Right (Just position) -> do
+            block <- liftIO $ readSecurityHeader client (Paymaster.canonicalQuantity $ arcSafeBlock position)
+            pure $ case block of
+              Right value | sbhHash value == arcSafeBlockHash position -> Just $ sbhTimestamp value
+              _ -> Nothing
+          _ -> pure Nothing
+        let requestedAssistance = case storedOperation of
+              Just (Object payload) -> case Preparation.internalRequest "eth_estimateUserOperationGas"
+                [Object $ KM.insert "signature" (String Legacy.dummySignature) payload, String nativeEntryPoint]
+                >>= Legacy.validateMethodParams of
+                  Right (Just policy) -> length (Legacy.puoCalls policy) == 5
+                  _ -> False
+              _ -> False
+        case KM.lookup "userOperationHash" fields of
+          Just (String h) -> issueRecoveryCapability cfg h authorizedClient
+          _ -> pure ()
+        observed <- case (KM.lookup "authorizationState" fields, KM.lookup "userOperationHash" fields, storedOperation) of
+          (Just (String state), Just (String h), Just (Object payload)) | state `elem` ["signed","submitted"] ->
+            liftIO $ observePreparationInclusion cfg client manager h payload
+          _ -> pure Nothing
+        let withObservation = case observed of
+              Just (tx, success) -> KM.insert "transactionHash" (String tx) $ KM.insert "executionSuccess" (Bool success) fields
+              Nothing -> fields
+        respondSuccess requestId $ Preparation.preparationStatusResponse now safeTimestamp requestedAssistance withObservation
+      _ -> Legacy.respondFailure requestId databaseUnavailable
+ where requestId = Legacy.rrId request
+
+-- Alto supplies a locator only. Direct receipt/event and block-hash checks must
+-- agree before reporting an observed (still unsafe) inclusion. No evidence is
+-- retained across reads, so a reorg retracts this observation on the next poll.
+observePreparationInclusion :: NativeAaConfig -> EthClient -> Manager -> Text -> KM.KeyMap Value -> IO (Maybe (Text, Bool))
+observePreparationInclusion cfg client manager expectedHash payload = do
+  locator <- altoResult manager cfg "eth_getUserOperationReceipt" [String expectedHash]
+  case locator of
+    Right (Object fields) | Just (Object receipt) <- KM.lookup "receipt" fields,
+      Just (String tx) <- KM.lookup "transactionHash" receipt, isFixedHex 32 tx -> do
+        direct <- rpcCall client "eth_getTransactionReceipt" $ toJSON [String tx]
+        case direct of
+          Right (Object canonicalReceipt) | Just (String numberText) <- KM.lookup "blockNumber" canonicalReceipt,
+            Just number <- parseRpcQuantity numberText,
+            Just (String blockHash) <- KM.lookup "blockHash" canonicalReceipt,
+            KM.lookup "status" canonicalReceipt == Just (String "0x1"),
+            KM.lookup "transactionHash" canonicalReceipt == Just (String tx),
+            Just (Array logs) <- KM.lookup "logs" canonicalReceipt,
+            Right operation <- Paymaster.parsePackedUserOperation payload -> do
+              headerResult <- readSecurityHeader client numberText
+              let events = [event | raw <- toList logs,
+                    Right event <- [Reconciler.parseUserOperationEvent (naaPaymasterAddress cfg) number number raw],
+                    Reconciler.uoeHash event == expectedHash,
+                    Reconciler.uoeSender event == Paymaster.puoSender operation,
+                    Reconciler.uoeNonce event == Paymaster.puoNonce operation,
+                    Reconciler.uoeTransactionHash event == T.toLower tx,
+                    Reconciler.uoeBlockHash event == T.toLower blockHash]
+              pure $ case (headerResult, events) of
+                (Right block, [event]) | sbhHash block == T.toLower blockHash -> Just (T.toLower tx, Reconciler.uoeSuccess event)
+                _ -> Nothing
+          _ -> pure Nothing
+    _ -> pure Nothing

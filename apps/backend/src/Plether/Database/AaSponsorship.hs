@@ -923,10 +923,10 @@ reserveSponsorshipWithAssistance conn cfg draft assistance = withTransaction con
           case totals of
             [value] -> pure value
             _ -> fail "budget totals must return exactly one row"
-        assistanceAllowed <- maybe (pure True) (closeAssistanceReservationAllowed conn) assistance
+        assistanceReason <- maybe (pure Nothing) (closeAssistanceReservationReason conn) assistance
         let cost = sdMaxCostWei draft
             denied
-              | not assistanceAllowed = Just "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED"
+              | Just reason <- assistanceReason = Just reason
               | cost > naaMaxCostWei cfg = Just "PER_OPERATION_BUDGET_EXCEEDED"
               | accountOutstanding + cost > naaAccountOutstandingWei cfg = Just "ACCOUNT_OUTSTANDING_BUDGET_EXCEEDED"
               | clientOutstanding + cost > naaClientOutstandingWei cfg = Just "CLIENT_OUTSTANDING_BUDGET_EXCEEDED"

@@ -4,7 +4,8 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently, withAsync, wait)
 import Control.Exception (bracket, finally)
 import Control.Monad (void)
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value(..), object, (.=))
+import qualified Data.Aeson.KeyMap as KM
 import Data.Int (Int64)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -90,7 +91,7 @@ aaIntegrationSpec databaseUrl =
         _ <- reserveSponsorshipWithAssistance conn testConfig first (Just grant) >>= expectAuthorization
         getCloseAssistanceReservation conn (sdDigest first) `shouldReturn` Just grant
         reserveSponsorshipWithAssistance conn testConfig second (Just grant)
-          `shouldReturn` Left "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED"
+          `shouldReturn` Left "ASSISTANCE_RESERVATION_PENDING"
         void $ execute conn "UPDATE aa_sponsorship_authorizations SET state='cancelled' WHERE digest=?" (Only $ sdDigest first)
         _ <- reserveSponsorshipWithAssistance conn testConfig second (Just grant) >>= expectAuthorization
         pure ()
@@ -107,7 +108,7 @@ aaIntegrationSpec databaseUrl =
             (reserveSponsorshipWithAssistance conn testConfig first (Just grant))
             (reserveSponsorshipWithAssistance peer testConfig second (Just $ grant { carClientOrderId = hashOf 'a' }))
           length [() | Right _ <- [a,b]] `shouldBe` 1
-          length [() | Left "CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED" <- [a,b]] `shouldBe` 1
+          length [() | Left "ASSISTANCE_RESERVATION_PENDING" <- [a,b]] `shouldBe` 1
         count <- query_ conn "SELECT COUNT(*) FROM aa_close_assistance" :: IO [Only Int64]
         count `shouldBe` [Only 1]
 
@@ -386,6 +387,38 @@ aaIntegrationSpec databaseUrl =
           secondAllowed `shouldBe` True
           consumeAaRateLimit firstConnection "final-issuance" clientKey accountKey 2
             `shouldReturn` False
+
+    it "reads an assisted preparation by client or hash without changing its authorization" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let first = draft '1' '2' '3' 7 1000 now
+            grant = CloseAssistanceReservation (addressOf '8') (addressOf '1') (hashOf '6') (hashOf '7') (addressOf '9') 198000
+            client = clientKeyOf '3'; sender = addressOf '1'; identifier = hashOf 'b'; intent = hashOf 'c'; operationHash = hashOf 'a'
+            operation = object ["nonce" .= ("0x7" :: Text)]
+        authorization <- reserveSponsorshipWithAssistance conn testConfig first (Just grant) >>= expectAuthorization
+        storeSponsorshipSignature conn testConfig (saDigest authorization) (signatureOf '6') operationHash `shouldReturn` True
+        claimPreparation conn True client sender identifier intent "lease" `shouldReturn` PreparationClaimed Nothing
+        savePreparedOperation conn client sender identifier "lease" operation `shouldReturn` True
+        bindPreparationDeployment conn client sender identifier "lease" chainId (addressOf '8') `shouldReturn` True
+        linkPreparation conn client sender identifier "lease" (saDigest authorization) `shouldReturn` True
+        byId <- getPreparationStatus conn client sender (Just identifier) Nothing
+        byHash <- getPreparationStatus conn client sender Nothing (Just operationHash)
+        byHash `shouldBe` byId
+        case byId of
+          Just (Object fields', Just saved) -> do
+            saved `shouldBe` operation
+            KM.lookup "authorizationState" fields' `shouldBe` Just (String "signed")
+            KM.lookup "assistanceBlocked" fields' `shouldBe` Just (Bool True)
+            KM.member "signature" fields' `shouldBe` False
+            KM.member "clientKey" fields' `shouldBe` False
+          _ -> expectationFailure "missing status projection"
+        getPreparationStatus conn (clientKeyOf '4') sender (Just identifier) Nothing `shouldReturn` Nothing
+        getPreparationStatus conn client (addressOf '4') Nothing (Just operationHash) `shouldReturn` Nothing
+        void $ pauseAaIssuance conn "test pause"
+        getPreparationStatus conn client sender (Just identifier) Nothing `shouldReturn` byId
+        count <- query_ conn "SELECT COUNT(*) FROM aa_sponsorship_authorizations" :: IO [Only Int64]
+        count `shouldBe` [Only 1]
 
     it "fences preparation leases across instances and persists immutable work" $
       withFixture databaseUrl $ \first -> withPeerConnection databaseUrl $ \second -> do

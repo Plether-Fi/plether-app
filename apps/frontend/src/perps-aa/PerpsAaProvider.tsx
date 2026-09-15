@@ -110,6 +110,7 @@ export function PerpsAaProvider({
             await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
             () => useSponsoredOperationStore.getState().operations,
             config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
+            preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
           )
         )
         cacheEntry = {

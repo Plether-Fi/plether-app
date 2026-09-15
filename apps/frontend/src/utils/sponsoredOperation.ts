@@ -25,6 +25,9 @@ export function sponsoredOperationStatusLabel(
   status: SponsoredOperationStatus
 ): string {
   switch (status) {
+    case 'signature-declined': return 'Signature declined'
+    case 'preparation-pending': return 'Preparation recovery'
+    case 'sponsorship-refused': return 'Sponsorship unavailable'
     case 'building':
     case 'requesting-stub':
     case 'estimating':

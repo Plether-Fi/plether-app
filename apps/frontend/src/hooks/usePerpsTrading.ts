@@ -1160,6 +1160,8 @@ export function usePerpsTrading() {
     ) {
       return
     }
+    const active = useSponsoredOperationStore.getState().getActiveOperation(identity.accountAddress)
+    if (active?.nativePreparation) return
     clearDepositAuthorization({
       chainId: identity.manifest.chainId,
       ownerAddress: identity.ownerAddress,

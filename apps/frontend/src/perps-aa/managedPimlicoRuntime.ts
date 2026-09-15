@@ -1,3 +1,4 @@
+import { readReviewedActionState } from './reviewedActionState'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
@@ -38,6 +39,7 @@ import {
   type PerpsAaDeploymentManifest,
 } from './manifest'
 import { knownSponsorshipValidUntil } from './paymasterValidity'
+import { parsePreparationStatus } from './preparedOperation'
 import { preparationIdentifier, validateNativePreparation } from './nativePreparation'
 import type {
   ManagedUserOperation,
@@ -392,11 +394,11 @@ export async function createManagedAaRuntime({
         ),
       },
     })
-    prepareUserOperation = async ({ calls, preparationId }) => {
+    prepareUserOperation = async ({ calls, preparationId, preparedOperation }) => {
       if (manifest.preparationRpcVersion === 1) {
         const [callData, factoryArgs] = await Promise.all([
           smartAccount.encodeCalls(calls.map(call => ({ ...call }))),
-          smartAccount.getFactoryArgs(),
+          preparedOperation ? Promise.resolve({ factory: preparedOperation.factory, factoryData: preparedOperation.factoryData }) : smartAccount.getFactoryArgs(),
         ])
         const binding = { sender: accountAddress, callData, ...factoryArgs }
         // No transport retries/fallback with a fresh ID after an ambiguous result.
@@ -406,7 +408,7 @@ export async function createManagedAaRuntime({
         }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
           method: 'plether_prepareUserOperation',
           params: [{ version: 1, preparationId: preparationIdentifier(preparationId ?? crypto.randomUUID()),
-            chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding }],
+            chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding, ...(preparedOperation ? { resumeOnly: true } : {}) }],
         })
         return validateNativePreparation(response, binding, manifest)
       }
@@ -484,6 +486,7 @@ export async function createManagedAaRuntime({
   })
 
   return {
+    readReviewedActionState: input => readReviewedActionState(publicClient, manifest, accountAddress, input),
     deploymentConfirmation: isNativePaymasterManifest(manifest) ? deploymentGate : undefined,
     chainId: manifest.chainId,
     ownerAddress: getAddress(ownerAddress),
@@ -608,6 +611,14 @@ export async function createManagedAaRuntime({
         }
       },
 
+      ...(isNativePaymasterManifest(manifest) ? {
+        getPreparationStatus: async (locator: { preparationId: string } | { userOperationHash: Hex }) => parsePreparationStatus(
+          await recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
+            method: 'plether_getPreparationStatus', params: [{ version: 1, chainId: '0x66eee', sender: accountAddress,
+              ...('preparationId' in locator ? { preparationId: preparationIdentifier(locator.preparationId) } : locator) }],
+          })
+        ),
+      } : {}),
       signUserOperation: async (operation) => ({
         ...operation,
         signature: await smartAccount.signUserOperation({
