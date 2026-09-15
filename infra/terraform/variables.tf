@@ -1383,6 +1383,11 @@ variable "insights_snapshot_multicall_size" {
   }
 }
 
+variable "perps_oracle_updater_health_poll_seconds" {
+  type    = string
+  default = "5"
+}
+
 variable "perps_oracle_updater_poll_seconds" {
   type    = string
   default = "30"

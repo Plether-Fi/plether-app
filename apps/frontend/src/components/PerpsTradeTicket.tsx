@@ -4600,6 +4600,7 @@ export function PerpsTradeTicket({
               depositCarryUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.depositCarryUsdc, 6) : undefined}
               commitmentCarryUsdc={displayedExecutionProtections?.reviewSummary?.commitmentCarryUsdc ? formatPerpsUsdc(displayedExecutionProtections.reviewSummary.commitmentCarryUsdc, 6) : undefined}
               preparing={isExecutionProtectionsLoading}
+              recoveringOracle={preparation.recoveringOracle}
               refreshing={preparation.refreshing}
               slow={preparation.slow}
               error={executionProtectionsError}

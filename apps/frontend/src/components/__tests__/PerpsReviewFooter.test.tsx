@@ -34,3 +34,16 @@ describe('commit review feedback', () => {
     expect(onRetry).toHaveBeenCalledOnce()
   })
 })
+
+it('shows oracle recovery, preserves cancel focus, and cannot submit', () => {
+  const onConfirm = vi.fn()
+  render(<PerpsReviewFooter {...props} recoveringOracle slow onConfirm={onConfirm} />)
+  expect(screen.getByRole('status')).toHaveTextContent('Updating market price…')
+  const cancel = screen.getByRole('button', { name: 'Cancel' })
+  cancel.focus()
+  const confirm = screen.getByRole('button', { name: 'Updating market price…' })
+  expect(confirm).toBeDisabled()
+  fireEvent.click(confirm)
+  expect(onConfirm).not.toHaveBeenCalled()
+  expect(cancel).toHaveFocus()
+})
