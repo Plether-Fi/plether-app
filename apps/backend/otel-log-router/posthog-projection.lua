@@ -40,6 +40,9 @@ lp_settlement_confirmed lp_settlement_broadcast lp_settlement_worker_restarting 
 protection_signer_low_balance protection_worker_heartbeat protection_worker_failed
 protection_worker_startup_failed protection_reorg liquidation_worker_heartbeat
 liquidation_worker_failed liquidation_worker_startup_failed oracle_worker_failed
+oracle_sync_lag oracle_sync_pending oracle_update_mined oracle_update_not_needed
+oracle_update_payload_stale oracle_update_dry_run oracle_worker_started
+oracle_worker_iteration_failed oracle_worker_fatal
 api_started rpc_request_failed rpc_request_completed
 ]])
 local values = {
@@ -77,6 +80,7 @@ local numbers = {
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
   remaining_deadline_seconds=true,
+  lag_seconds=true, previous_lag_seconds=true, poll_seconds=true, health_poll_seconds=true,
 }
 local resources = {
   ["service.name"]=true, ["service.version"]=true,
@@ -111,6 +115,11 @@ local function projection(record)
   for key,_ in pairs(numbers) do
     local value = record[key]
     if type(value) == "number" and value == value and value >= 0 and value < 1e12 then output[key] = value end
+  end
+  if event:match('^oracle_') then
+    for _,key in ipairs({'repair','synchronized'}) do
+      if type(record[key]) == 'boolean' then output[key] = record[key] end
+    end
   end
   if uuid(record.attempt_id) then output.attempt_id = record.attempt_id end
   local attrs = type(record.resource) == "table" and record.resource.attributes or nil

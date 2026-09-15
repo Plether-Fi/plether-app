@@ -62,3 +62,19 @@ for _,component in ipairs({'alto','keeper','oracle','liquidation','protection','
   assert(exported.balance_wei==nil and exported.liability_wei==nil and exported.reserve_wei==nil and exported.signer_address==nil and exported.raw_transaction==nil)
   assert(operational.balance_wei=='12345' and operational.signer_address=='0xdead')
 end
+
+for _,event in ipairs({'oracle_sync_lag','oracle_sync_pending','oracle_update_mined','oracle_update_not_needed',
+  'oracle_update_payload_stale','oracle_update_dry_run','oracle_worker_started','oracle_worker_iteration_failed','oracle_worker_fatal'}) do
+  local original = {event=event, lag_seconds=5, previous_lag_seconds=10, poll_seconds=30, health_poll_seconds=5,
+    repair=true, synchronized=false, transaction_hash='0xsecret', update_fee_wei='123', error='raw provider secret',
+    updateData={'signed payload'}, updater_address='0xsecret'}
+  local _,_,projected = project_posthog('test',0,original)
+  assert(projected.event==event and projected.message==event)
+  assert(projected.lag_seconds==5 and projected.previous_lag_seconds==10)
+  assert(projected.poll_seconds==30 and projected.health_poll_seconds==5)
+  assert(projected.repair==true and projected.synchronized==false)
+  assert(projected.transaction_hash==nil and projected.error==nil and projected.updateData==nil and projected.updater_address==nil)
+  assert(original.error=='raw provider secret')
+end
+local _,_,badLag = project_posthog('test',0,{event='oracle_sync_lag',lag_seconds='secret',repair='secret',synchronized={private='secret'}})
+assert(badLag.lag_seconds==nil and badLag.repair==nil and badLag.synchronized==nil)

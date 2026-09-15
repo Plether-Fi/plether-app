@@ -245,10 +245,10 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       previous_mark_time: tx.markTime, mark_time: after.status.lastMarkTime,
       mark_price: after.status.lastMarkPrice, oracle_frozen: after.status.oracleFrozen,
       trading_active: after.status.tradingActive, repair: tx.repair,
-      previous_lag_seconds: tx.lag, lag_seconds: after.lag, synchronized: recovered,
+      previous_lag_seconds: Number(tx.lag), lag_seconds: Number(after.lag), synchronized: recovered,
     })
     if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Stored Pyth feeds remain behind the engine mark', {
-      lag_seconds: after.lag, mark_time: after.status.lastMarkTime, oldest_publish_time: after.oldest,
+      lag_seconds: Number(after.lag), mark_time: after.status.lastMarkTime, oldest_publish_time: after.oldest,
     })
     return { status: recovered ? 'synchronized' : 'lagging', hash: tx.hash, lag: after.lag }
   }
@@ -260,7 +260,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       const before = await readHealth(publicClient, feeds)
       const repair = before.lag > 0n
       if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Stored Pyth feeds are behind the engine mark', {
-        lag_seconds: before.lag, mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
+        lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
       })
       if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
       nextRefreshAt = now() + pollSeconds * 1000
@@ -272,7 +272,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
         logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
           min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
-          lag_seconds: before.lag,
+          lag_seconds: Number(before.lag),
         })
         return { status: 'waiting_for_payload' }
       }
@@ -287,7 +287,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         functionName: 'getUpdateFee', args: [payload.updateData] })
       if (dryRun) {
         log('INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
-          min_publish_time: minPublishTime, update_fee_wei: fee, repair, lag_seconds: before.lag,
+          min_publish_time: minPublishTime, update_fee_wei: fee, repair, lag_seconds: Number(before.lag),
         })
         return { status: 'dry_run' }
       }
