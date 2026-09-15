@@ -361,6 +361,18 @@ spec = do
       let calls = assistedCalls 198000 sender
       validateNativeActionSequence (Just attacker) testConfig sender owner (take 4 calls ++ [orderCall]) `shouldSatisfy` isLeft
 
+    it "rejects native value, target changes, extra calls and unequal funding legs" $ do
+      let calls = assistedCalls 198000 sender
+          replace index call = take index calls ++ [call] ++ drop (index + 1) calls
+          validateNative = validateNativeActionSequence (Just attacker) testConfig sender owner
+      mapM_ (\index -> do
+        validateNative (replace index ((calls !! index) {smartCallValue = 1})) `shouldSatisfy` isLeft
+        validateNative (replace index ((calls !! index) {smartCallTarget = owner})) `shouldSatisfy` isLeft
+        ) [0..4]
+      validateNative (calls ++ [orderCall]) `shouldSatisfy` isLeft
+      validateNative (assistedCalls 0 sender) `shouldSatisfy` isLeft
+      mapM_ (\index -> validateNative (replace index (assistedCalls 197999 sender !! index)) `shouldSatisfy` isLeft) [0..3]
+
   where
     validate = validateActionSequence testConfig sender owner
 

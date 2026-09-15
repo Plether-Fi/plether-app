@@ -740,8 +740,16 @@ processEvents pool primaryClient secondaryClient = foldM processOne $ Right 0
         first <- rpcCall primaryClient "eth_getTransactionReceipt" params
         second <- rpcCall secondaryClient "eth_getTransactionReceipt" params
         pure $ case (first,second) of
-          (Right a,Right b) | a == b -> Just <$> verifyCloseAssistanceReceipt reservation
-            (uoeHash event) (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) (uoeLogIndex event) a
+          (Right a,Right b) -> do
+            -- Providers may include different optional receipt metadata. Verify
+            -- the complete required provenance independently, then agree on
+            -- the exact deposit index and newly committed order.
+            let verify = verifyCloseAssistanceReceipt reservation
+                  (uoeHash event) (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) (uoeLogIndex event)
+            firstProof <- verify a
+            secondProof <- verify b
+            if firstProof == secondProof then Right $ Just firstProof
+              else Left "Assistance receipt proofs disagree"
           _ -> Left "Assistance receipt providers disagree or are unavailable"
 
 handleFatal :: DbPool -> FatalFailure -> IO a
