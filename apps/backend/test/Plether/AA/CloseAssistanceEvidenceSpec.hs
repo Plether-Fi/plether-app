@@ -1,6 +1,7 @@
 module Plether.AA.CloseAssistanceEvidenceSpec (spec) where
 
 import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Either (isLeft)
@@ -25,8 +26,20 @@ spec = describe "close assistance receipt provenance" $ do
     verify (receipt $ take 2 validLogs ++ [deposit] ++ drop 2 validLogs) `shouldSatisfy` isLeft
   it "rejects missing fresh-intent evidence even when USDC was deposited" $
     verify (receipt $ take 2 validLogs ++ drop 3 validLogs) `shouldSatisfy` isLeft
+  it "excludes validation-phase mints before EntryPoint begins execution" $
+    verifyAt 6 (receiptWithoutStart $ validationMint : laterExecutionStart : shiftedLogs) `shouldBe` Right (3,7)
+  it "does not accept validation-phase funding in place of execution funding" $
+    verifyAt 6 (receiptWithoutStart $ validationMint : laterExecutionStart : drop 1 shiftedLogs) `shouldSatisfy` isLeft
+  it "attributes the correct operation when two EntryPoint batches share a transaction" $
+    verifyAt 7 (receiptWithoutStart $ [executionStart, operationEvent 1 otherHash,
+      logEntry 2 "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" [topic "BeforeExecution()"] BS.empty]
+      ++ shiftLogsFrom 3 validLogs) `shouldBe` Right (4,7)
+  it "requires an unambiguous preceding EntryPoint execution-start boundary" $ do
+    verify (receiptWithoutStart validLogs) `shouldSatisfy` isLeft
+    verify (receipt $ executionStart : validLogs) `shouldSatisfy` isLeft
  where
-  verify = verifyCloseAssistanceReceipt grant opHash tx 100 blockHash 5
+  verify = verifyAt 5
+  verifyAt = verifyCloseAssistanceReceipt grant opHash tx 100 blockHash
 
 account, otherAccount, opHash, otherHash, tx, blockHash :: Text
 account = "0x" <> T.replicate 40 "1"
@@ -43,7 +56,25 @@ request :: BS.ByteString
 request = BS.replicate (18*32) 0
 
 receipt :: [Value] -> Value
-receipt logs = object ["transactionHash" .= tx,"blockHash" .= blockHash,"blockNumber" .= String "0x64","status" .= String "0x1","logs" .= logs]
+receipt logs = receiptWithoutStart $ executionStart : logs
+
+receiptWithoutStart :: [Value] -> Value
+receiptWithoutStart logs = object ["transactionHash" .= tx,"blockHash" .= blockHash,"blockNumber" .= String "0x64","status" .= String "0x1","logs" .= logs]
+
+executionStart, laterExecutionStart, validationMint :: Value
+executionStart = logEntry 0 "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" [topic "BeforeExecution()"] BS.empty
+laterExecutionStart = logEntry 1 "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" [topic "BeforeExecution()"] BS.empty
+validationMint = logEntry 0 Manifest.mockUsdcAddress
+  [topic "Transfer(address,address,uint256)",hex $ BS.replicate 32 0,hex $ encodeAddress account] (encodeUint256 198000)
+
+shiftedLogs :: [Value]
+shiftedLogs = shiftLogsFrom 2 validLogs
+
+shiftLogsFrom :: Int -> [Value] -> [Value]
+shiftLogsFrom first = zipWith shift [first..]
+ where
+  shift index (Object fields) = Object $ KM.insert "logIndex" (String $ "0x" <> T.pack (show index)) fields
+  shift _ value = value
 
 validLogs :: [Value]
 validLogs = [mint account,deposit,intent,commit,operationEvent 5 opHash]

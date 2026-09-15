@@ -17,7 +17,8 @@ import qualified Plether.Perps.Manifest as Manifest
 data ReceiptLog = ReceiptLog { rlAddress :: Text, rlTopics :: [Text], rlData :: BS.ByteString, rlIndex :: Integer }
 
 -- | A receipt can contain many UserOperations. Only logs between the previous EntryPoint operation event and
--- this operation's event may provide funding evidence. A same-amount deposit elsewhere is never sufficient.
+-- this operation's event may provide funding evidence. Validation logs before BeforeExecution are excluded.
+-- A same-amount deposit elsewhere is never sufficient.
 verifyCloseAssistanceReceipt
   :: CloseAssistanceReservation -> Text -> Text -> Integer -> Text -> Integer -> Value
   -> Either Text (Integer, Integer)
@@ -29,9 +30,15 @@ verifyCloseAssistanceReceipt grant operationHash tx blockNumber blockHash eventI
   unless (receiptBlock == blockNumber && status == 1) $ Left "Assistance receipt block or status mismatch"
   values <- case KM.lookup "logs" receipt of Just (Array xs) -> Right $ V.toList xs; _ -> Left "Missing receipt logs"
   logs <- traverse parseLog values
+  let starts = filter (\l -> rlAddress l == entryPoint && rlTopics l == [topic "BeforeExecution()"]
+        && BS.null (rlData l) && rlIndex l < eventIndex) logs
+      latestStart = maximum $ (-1) : map rlIndex starts
+  startIndex <- case filter ((== latestStart) . rlIndex) starts of
+    [start] -> Right $ rlIndex start
+    _ -> Left "Assistance execution-start boundary is missing or ambiguous"
   let operationEvents = filter isOperationEvent logs
       matching = filter (\l -> rlIndex l == eventIndex && take 2 (rlTopics l) == [operationTopic, T.toLower operationHash]) operationEvents
-      previous = maximum $ (-1) : [rlIndex l | l <- operationEvents, rlIndex l < eventIndex]
+      previous = maximum $ startIndex : [rlIndex l | l <- operationEvents, rlIndex l < eventIndex]
       scoped = filter (\l -> rlIndex l > previous && rlIndex l < eventIndex) logs
       accountTopic = addressTopic $ carAccount grant
       token = T.toLower Manifest.mockUsdcAddress
@@ -71,7 +78,10 @@ parseLog (Object value) = do
 parseLog _ = Left "Invalid receipt log"
 
 isOperationEvent :: ReceiptLog -> Bool
-isOperationEvent l = rlAddress l == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" && take 1 (rlTopics l) == [operationTopic]
+isOperationEvent l = rlAddress l == entryPoint && take 1 (rlTopics l) == [operationTopic]
+
+entryPoint :: Text
+entryPoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
 
 operationTopic, intentTopic, zeroTopic :: Text
 operationTopic = topic "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"
