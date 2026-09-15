@@ -8,6 +8,7 @@ import { hasSponsoredOperationSignal, isSponsoredOperationTerminal, restoreSpons
 import { usePerpsAaRuntime } from './runtimeContext'
 import type { PreparationStatusV1 } from './preparedOperation'
 import { sponsoredOperationActionLabel } from '../utils/sponsoredOperation'
+import { Button } from '../components/ui/Button'
 
 /** Mounted only in the visible recovery view. Status changes never sign or submit. */
 export function PreparedOperationRecovery({ operation, fallbackManifest }: { operation: SponsoredOperation; fallbackManifest?: PerpsAaDeploymentManifestV2 }) {
@@ -77,14 +78,15 @@ export function PreparedOperationRecovery({ operation, fallbackManifest }: { ope
     {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
     {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
     {error && <p role="alert">{error}</p>}
-    <div className="flex gap-3">
-      <button type="button" className="underline disabled:opacity-40" disabled={active || (operation.preparedOperation ? !status?.recoverable : waiting)} onClick={() => {
+    {status?.recoverable && <p>Resume asks your wallet to sign the saved transaction again.</p>}
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
+      <Button type="button" variant="primary" size="sm" disabled={active || (operation.preparedOperation ? !status?.recoverable : waiting)} onClick={() => {
         setWorking(true); setError(undefined)
         void resumeSponsoredPerpsAction(operation, runtime).catch((cause: unknown) => {
           setError(cause instanceof Error ? cause.message : 'Resume could not complete')
         }).finally(() => { setWorking(false) })
-      }}>Resume {sponsoredOperationActionLabel(operation.action).toLowerCase() || 'transaction'}</button>
-      <button type="button" className="underline disabled:opacity-40" disabled={active || !freshAllowed} onClick={() => {
+      }}>Resume {sponsoredOperationActionLabel(operation.action).toLowerCase() || 'transaction'}</Button>
+      <Button type="button" variant="secondary" size="sm" disabled={active || !freshAllowed} onClick={() => {
         setWorking(true)
         void (async () => {
           const release = await acquireSponsoredOperationBrowserLane({ chainId: operation.chainId, accountAddress: operation.accountAddress, lane: operation.lane })
@@ -118,8 +120,8 @@ export function PreparedOperationRecovery({ operation, fallbackManifest }: { ope
               } else store.failOperation({ id: current.id, status: 'execution-reverted', retryable: false })
             } else useSponsoredOperationStore.getState().transition(operation.id, 'cancelled')
           } finally { await release() }
-        })().catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : 'Unable to start a fresh review') }).finally(() => { setWorking(false) })
-      }}>Review a new transaction</button>
+        })().catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : 'Unable to discard the saved transaction') }).finally(() => { setWorking(false) })
+      }}>Discard saved transaction</Button>
     </div>
   </div>
 }

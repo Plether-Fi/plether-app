@@ -51,7 +51,7 @@ describe('visible preparation recovery', () => {
     const view = mount(vi.fn(async () => ({ ...status, reason: 'SAFE_EXPIRY_WAIT', recoverable: false, freshReviewAllowed: false })))
     await act(async () => {})
     expect(screen.getByText('Waiting for sponsorship reservation to clear')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Review a new transaction' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Discard saved transaction' })).toBeDisabled()
     expect(resume).not.toHaveBeenCalled()
     view.unmount()
   })
