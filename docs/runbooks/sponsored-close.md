@@ -63,3 +63,20 @@ WHERE e.success AND NOT g.verified;
 ```
 
 A confirmed grant is retained after any later order failure. A subsequent close requires a new intent and fresh exact funding; there is no lifetime grant-count cap.
+
+## September 15 release evidence
+
+Core PR #100 deployed and verified the lens above. App PRs #284, #285 and #287 implement the sponsored path, receipt boundaries and deployment checkout correction. The combined application release includes oracle recovery from #286 at `a093ce4b66992de25223639684246b1c0db9f976`.
+
+- Backend with issuance disabled: [34956069365](https://github.com/Plether-Fi/plether-app/actions/runs/34956069365), successful.
+- Sepolia frontend: [34957122917](https://github.com/Plether-Fi/plether-app/actions/runs/34957122917), successful.
+- Operator-only API: [34957445713](https://github.com/Plether-Fi/plether-app/actions/runs/34957445713), successful.
+
+Operator account `0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc` opened 5,000 units using the real frontend runtime. Both assisted closes used one owner signature, five calls, zero native value, and identical mint/approval/deposit amounts.
+
+| Close | Free settlement before review | Assistance | Resulting order | Commitment transaction |
+| --- | ---: | ---: | ---: | --- |
+| Partial, 5,000 to 2,500 units | $0.002000 | $0.198000 | 2183 | [0xe7c600…0ef0](https://sepolia.arbiscan.io/tx/0xe7c60065e75d046841993c7c24f276edfe8a9dac5ab7c45d936ed224f03a0ef0) |
+| Full, 2,500 to zero units | $0.000000 | $0.200000 | 2220 | [0x585bfb…f2e9](https://sepolia.arbiscan.io/tx/0x585bfb693ab8d2b8acf1f39f5e59de821adb0b3cbecf8cb7a856451cc388f2e9) |
+
+Keeper execution completed for both orders. The full-close transaction contains multiple UserOperations; its assistance deposit is log 12, while the partial-close deposit is log 4. Both grants are safely reconciled and settled, with no unresolved assistance record; the full grant was verified at 2026-09-15 10:55:29 UTC. The reviewed Terraform overlay records the intended all-trader state; use the workflow's `disabled` mode and override both overlay issuance flags to false for a disabled bootstrap.
