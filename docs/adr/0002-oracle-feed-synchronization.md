@@ -24,6 +24,12 @@ The current release does not weaken oracle guards, change historical execution p
 
 Do not claim deployed verification from local source inspection or mocked tests. Record actual rollout SHA, workflow results, and smoke evidence separately.
 
+## Verification evidence (2026-09-15)
+
+- `npm run test:oracle-sync-fork` passed against Arbitrum Sepolia block 309107473 using the deployed oracle/router/engine. It reproduced the ordering error after historical resolution and authorized mark installation, repaired all six feeds at the same timestamp, and checked that the historical execution price remained unchanged.
+- The fork test substitutes Pyth signature verification/storage with independent historical and stored state. It does not broadcast or claim to test Pyth cryptography, a complete user trade, or a live production incident.
+- `oracleSyncRecovery.test.tsx` exercises the actual worker iteration and review controller together with injected chain I/O; it checks preserved draft inputs, a fresh block, and no user submission.
+
 ## Future phase: synchronize atomically in the contracts
 
 This is a follow-up design, not part of the current implementation. Its desired invariant is: an execution that installs a mark leaves every required stored Pyth feed at least as recent as that mark in the same transaction.

@@ -245,8 +245,8 @@ class PreparationController<T> {
     clearTimeout(this.timer)
     if (!visible) return
     if (this.options?.mode === 'review') {
-      if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
       if (this.options.contextKey !== this.state.contextKey) this.start(this.state.result ? 'refresh' : 'cold')
+      else if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
       else if ((this.state.status === 'ready' || this.state.status === 'pending') && !this.reusable()) this.start(this.state.result ? 'refresh' : 'cold')
       else if (this.state.status === 'idle') this.start('cold')
       else this.scheduleRefresh()

@@ -396,6 +396,25 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
   })
+  it('rebuilds changed account context before resuming hidden recovery', async () => {
+    const prepare = vi.fn().mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared())
+    const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({
+      candidate: { key: 'draft', input: { quantity: 100n } }, identityKey: 'account',
+      contextKey, mode: 'review', prepare,
+    }), { initialProps: { contextKey: 'before' } })
+    await advance(0)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    view.rerender({ contextKey: 'after' })
+    await advance(5000)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await advance(0)
+    expect(view.result.current.contextKey).toBe('after')
+    expect(view.result.current.ready).toBe(true)
+    expect(prepare).toHaveBeenCalledTimes(2)
+  })
   it('stops recovery immediately on an unrelated error', async () => {
     const view = setup('review', vi.fn().mockRejectedValueOnce(syncError()).mockRejectedValue(new Error('insufficient margin')))
     await advance(30_000)

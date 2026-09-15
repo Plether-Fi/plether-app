@@ -249,8 +249,21 @@ export function getPerpsContractErrorCode(error: unknown): string | undefined {
 
 /** Only decoded ordering failures are eligible for read-only review recovery. */
 export function isPerpsOracleSyncError(error: unknown): boolean {
-  const { name } = decodePerpsError(error)
-  return name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder'
+  // Native Error.cause is non-enumerable; the generic decoder also supports
+  // provider-specific enumerable wrappers, but cannot walk this chain alone.
+  const seen = new Set<unknown>()
+  try {
+    for (let current = error, depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+      seen.add(current)
+      const { name } = decodePerpsError(current)
+      if (name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder') return true
+      if (typeof current !== 'object') break
+      current = (current as { cause?: unknown }).cause
+    }
+  } catch {
+    // Malformed provider errors must never break the recovery controller.
+  }
+  return false
 }
 
 function argNumber(args: readonly unknown[] | undefined, index = 0): number | undefined {
