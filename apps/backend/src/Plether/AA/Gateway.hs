@@ -181,9 +181,9 @@ newNativeGatewayState manager cfg client = do
   codeHash <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH"
   unless (enabled `elem` [Nothing,Just "false",Just "true"] && global `elem` [Nothing,Just "false",Just "true"]) $
     fail "Close assistance flags must be true or false"
-  assistance <- if lens == Nothing && codeHash == Nothing && enabled /= Just "true" then pure Nothing else case (lens,codeHash,cfgNativeAaConfig cfg) of
+  assistance <- if lens `elem` [Nothing,Just ""] && codeHash `elem` [Nothing,Just ""] && enabled /= Just "true" then pure Nothing else case (lens,codeHash,cfgNativeAaConfig cfg) of
     (Just address,Just hash,Just native)
-      | isFixedHex 20 address && isFixedHex 32 hash && naaRpcMode native == DualIndependent ->
+      | isFixedHex 20 address && isFixedHex 32 hash && (enabled /= Just "true" || naaRpcMode native == DualIndependent) ->
           pure $ Just $ CloseAssistanceConfig (T.toLower address) (T.toLower hash) (global == Just "true") (enabled == Just "true")
     _ -> fail "Enabled close assistance requires a lens, runtime hash, and independently verified native AA"
   pure base { ngsCloseAssistance = assistance }
@@ -258,7 +258,8 @@ closeAssistanceStatus state cfg = case (ngsCloseAssistance state,cfgNativeAaConf
   (Just assistance,Just native)
     | cacEnabled assistance && naaSponsorshipEnabled native && naaSubmissionEnabled native && isJust (ngsSigner state) ->
         object ["enabled" .= True,"chainId" .= (421614 :: Integer),"lens" .= cacLens assistance,
-          "lensCodeHash" .= cacCodeHash assistance,"paymasterAddress" .= naaPaymasterAddress native]
+          "lensCodeHash" .= cacCodeHash assistance,"paymasterAddress" .= naaPaymasterAddress native,
+          "canaryOwners" .= (if cacGlobal assistance then [] else naaCanaryOwners native)]
   _ -> object ["enabled" .= False]
 
 assistanceLens :: NativeGatewayState -> Maybe Text
@@ -409,7 +410,9 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           assistance <- checked $ Legacy.validateNativeActionSequence (assistanceLens gatewayState) cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
           when (isJust assistance && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)) $ throwE paymasterPaused
           _ <- ioStage timing "close_assistance" $ validateCloseAssistanceDual gatewayState (Just context) (Preparation.piSender intent) assistance
-          unless (ownerAllowedForNativeCanary nativeCfg owner || assistanceGlobal gatewayState assistance) $
+          unless (case assistance of
+            Nothing -> ownerAllowedForNativeCanary nativeCfg owner
+            Just _ -> assistanceGlobal gatewayState assistance || T.toLower owner `elem` naaCanaryOwners nativeCfg) $
             throwE $ Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
           _ <- ioStage timing "runtime" $ verifyNativeAccountRuntimeDual nativeCfg context policy
           let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
@@ -660,7 +663,10 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                           (Legacy.puoCalls policyOperation) of
                           Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
                           Right assistance
-                            | isCanaryGated nativeCfg request owner && not (assistanceGlobal gatewayState assistance || (isJust assistance && Legacy.rrMethod request == Legacy.SendUserOperation)) ->
+                            | (case assistance of
+                                Nothing -> isCanaryGated nativeCfg request owner
+                                Just _ -> Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
+                                  && not (assistanceGlobal gatewayState assistance || T.toLower owner `elem` naaCanaryOwners nativeCfg)) ->
                                 Legacy.respondFailure (Legacy.rrId request) $
                                   Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
                             | otherwise -> do
@@ -702,7 +708,11 @@ handleOperation
   -> Paymaster.PackedUserOperation
   -> ActionM ()
 handleOperation assistance gatewayState nativeCfg pool manager securityContext clientKey owner request operation = do
-  eligible <- if isJust assistance && Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
+  -- Sending an already-authorized operation must remain recoverable after the
+  -- intent commits or issuance is disabled. Submission verifies its durable
+  -- authorization; the atomic lens guard enforces eligibility when it executes.
+  eligible <- if Legacy.rrMethod request == Legacy.SendUserOperation then pure $ Right ()
+    else if isJust assistance && Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
     && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)
     then pure $ Left paymasterPaused
     else liftIO $ validateCloseAssistanceDual gatewayState securityContext (Paymaster.puoSender operation) assistance
@@ -1984,7 +1994,7 @@ validateCloseAssistanceDual
   -> IO (Either Legacy.ProxyFailure ())
 validateCloseAssistanceDual _ _ _ Nothing = pure $ Right ()
 validateCloseAssistanceDual state (Just context) sender (Just intent)
-  | Just config <- ngsCloseAssistance state = do
+  | Just config <- ngsCloseAssistance state, nscRpcMode context == DualIndependent = do
       -- Eligibility is current state. The safe snapshot may predate this position or
       -- make a fresh order deadline appear too far in the future. Pin both live reads
       -- to the same explicit block and bracket them with independent header agreement.

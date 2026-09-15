@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContractFunctionRevertedError, encodeErrorResult, keccak256, type Address, type Hex, type PublicClient } from 'viem'
-import { CFD_CLOSE_PREVIEW_ABI } from '../abis/CfdClosePreview'
+import { CFD_CLOSE_PREVIEW_ABI } from '../abis/CfdSponsoredClosePreview'
 import { buildSponsoredCloseAction } from '../../perps-aa/sponsoredClose'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'

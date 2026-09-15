@@ -1,3 +1,4 @@
+import { CFD_CLOSE_PREVIEW_ABI } from './abis/CfdSponsoredClosePreview'
 import { BaseError, ContractFunctionRevertedError, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
 import { buildSponsoredCloseAction, verifyCloseAssistanceLens, SIMPLE_ACCOUNT_BATCH_ABI, type CloseAssistanceConfig, type SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
 import {
@@ -397,7 +398,7 @@ async function reviewPerpsOrderWithContext(
             || reverted.data?.errorName !== 'CfdEngine__InsufficientCloseOrderBountyBacking') throw error
           const config = input.closeAssistance
           const preview = await withPreparationStep('order_assessment', 'previewSponsoredClose', () => client.readContract({
-            address: config.lens, abi: PERPS_CFD_CLOSE_PREVIEW_ABI, functionName: 'previewSponsoredClose',
+            address: config.lens, abi: CFD_CLOSE_PREVIEW_ABI, functionName: 'previewSponsoredClose',
             args: [manifest.cfdEngine, input.account,
               { clientOrderId, side: input.side, sizeDelta: input.sizeDelta, marginDelta: 0n, targetPrice, isClose: true, bounds },
               manifest.orderRouter, price, blockTimestamp], blockNumber,

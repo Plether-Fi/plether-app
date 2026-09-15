@@ -570,3 +570,20 @@ resource "terraform_data" "self_hosted_aa_guard" {
     }
   }
 }
+
+resource "terraform_data" "close_assistance_guard" {
+  input = [var.perps_close_assistance_enabled, var.perps_close_assistance_global_enabled, var.perps_close_assistance_lens, var.perps_close_assistance_lens_code_hash]
+  lifecycle {
+    precondition {
+      condition = !var.perps_close_assistance_enabled || (
+        var.environment == "sepolia" && var.perps_chain_id == "421614"
+        && var.configure_native_aa_backend && var.enable_native_aa_sponsorship && var.enable_native_aa_submission
+        && var.aa_rpc_mode == "dual-independent"
+        && can(regex("^0x[0-9a-fA-F]{40}$", var.perps_close_assistance_lens))
+        && lower(var.perps_close_assistance_lens) != "0x0000000000000000000000000000000000000000"
+        && can(regex("^0x[0-9a-fA-F]{64}$", var.perps_close_assistance_lens_code_hash))
+      )
+      error_message = "Close assistance requires the pinned Sepolia deployment, independent verification RPCs, enabled native submission and sponsorship, and reviewed lens bindings."
+    }
+  }
+}

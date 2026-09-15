@@ -1,6 +1,6 @@
 import { encodeFunctionData, getAddress, isHex, keccak256, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
-import { CFD_CLOSE_PREVIEW_ABI } from '../contracts/abis/CfdClosePreview'
+import { CFD_CLOSE_PREVIEW_ABI } from '../contracts/abis/CfdSponsoredClosePreview'
 import type { PerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 import { buildPlaceOrderV2Action } from './orderActionV2'
 import { parsePerpsAaManifest, type PerpsAaDeploymentManifest, type PerpsAaDeploymentManifestV2 } from './manifest'
@@ -24,14 +24,19 @@ const FUNDING_ABI = parseAbi([
   'function depositMargin(uint256 amount)',
 ])
 
-export async function loadCloseAssistanceConfig(signal?: AbortSignal): Promise<CloseAssistanceConfig | undefined> {
+export async function loadCloseAssistanceConfig(owner?: Address, signal?: AbortSignal): Promise<CloseAssistanceConfig | undefined> {
   const response = await fetch('/api/perps/v1/aa/close-assistance', { signal, cache: 'no-store' })
   if (!response.ok) throw new Error('Close assistance availability could not be checked. Retry review.')
-  const config = await response.json()
+  const body: unknown = await response.json()
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new Error('Invalid close assistance configuration')
+  const config = body as Record<string, unknown>
   if (config.enabled === false) return undefined
-  if (config.enabled !== true || config.chainId !== 421614 || !isHex(config.lensCodeHash) || config.lensCodeHash.length !== 66) {
+  if (config.enabled !== true || config.chainId !== 421614 || typeof config.lensCodeHash !== 'string' || !isHex(config.lensCodeHash) || config.lensCodeHash.length !== 66) {
     throw new Error('Invalid close assistance configuration')
   }
+  if (typeof config.lens !== 'string' || typeof config.paymasterAddress !== 'string') throw new Error('Invalid close assistance configuration')
+  if (!Array.isArray(config.canaryOwners) || !config.canaryOwners.every((value: unknown) => typeof value === 'string')) throw new Error('Invalid close assistance cohort')
+  if (config.canaryOwners.length > 0 && (!owner || !config.canaryOwners.some((value: unknown) => typeof value === 'string' && getAddress(value) === getAddress(owner)))) return undefined
   return { lens: getAddress(config.lens), lensCodeHash: config.lensCodeHash, paymasterAddress: getAddress(config.paymasterAddress) }
 }
 

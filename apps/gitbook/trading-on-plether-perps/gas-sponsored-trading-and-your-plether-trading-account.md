@@ -6,6 +6,16 @@ Plether sponsors network gas for eligible Trading Account actions, subject to av
 
 Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], execution rewards and the frozen-close spread remain USDC[^usdc] costs.
 
+### Close — sponsored on Arbitrum Sepolia
+
+When close assistance is available, an otherwise valid full or partial close can receive the exact USDC amount missing from its keeper bounty, up to $0.20. Close review displays **Close — sponsored**, the covered amount and sponsored gas. You authorize one Trading Account operation; funding and order commitment happen together, without a separate deposit step.
+
+Your existing collateral must cover accrued carry. Assistance does not waive trading charges, partial-close health checks, minimum sizes, pending-order restrictions or active position protection. A changed funding requirement requires a fresh review. Successful commitment queues the close; the keeper still executes it separately.
+
+Competition scoring treats this funding separately from the initial faucet allocation. The assistance deposit is subtracted from PnL, so the bounty remains a trading cost. For example, if $0.002 is available and Plether supplies $0.198 for a $0.20 bounty, the full $0.20 remains a trading cost. Verified assistance does not count as unexpected funding or extra bankroll. Other deposits still follow the existing competition rules.
+
+Assistance has no automatic expiration and can be explicitly disabled. Competition registration and scoring dates do not change; assistance after the scoring cutoff does not extend the competition window.
+
 ### Your wallet, Trading Account and Margin Account
 
 | Term                 | Meaning                                                                                                  |

@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test close assistance deployment controls
+        working-directory: .
+        run: python3 .github/scripts/test-configure-close-assistance.py
+
       - name: Test candle administration task identity
         working-directory: .
         run: node --test scripts/candle-admin-task-identity.test.mjs

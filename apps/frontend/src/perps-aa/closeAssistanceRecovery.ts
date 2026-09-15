@@ -29,7 +29,7 @@ export function withCloseAssistanceRecovery(
           throw new Error('Sponsored close recovery account changed')
         }
         return runtime
-      }).catch(error => { cache.delete(key); throw error })
+      }).catch((error: unknown) => { cache.delete(key); throw error })
       cache.set(key, pending)
     }
     return pending

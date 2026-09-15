@@ -323,6 +323,14 @@ spec = do
         `shouldBe` 0
 
   describe "calculateScore" $ do
+    it "keeps the close bounty as a cost when exact assistance funds it" $ do
+      let start = snapshot False 0 100_000_000_000 0
+          score value deposit = sbFinalPnlUsdc $ calculateScore $ ScoreInput start (snapshot False 0 value 0) deposit 0 0
+          selfFunded = score (100_000_000_000 - 200_000) 0
+          assisted = score (100_000_000_000 - 200_000 + 198_000) 198_000
+      assisted `shouldBe` selfFunded
+      assisted `shouldBe` (-200_000)
+
     it "neutralizes deposits and withdrawals and applies audited adjustments" $ do
       let score = calculateScore $
             ScoreInput

@@ -1859,3 +1859,24 @@ variable "rds_database_connections_alarm_threshold" {
     error_message = "rds_database_connections_alarm_threshold must be a positive whole number."
   }
 }
+
+variable "perps_close_assistance_enabled" {
+  type        = bool
+  default     = false
+  description = "Issue exact close-bounty shortfalls on Arbitrum Sepolia. Manual kill switch; no automatic expiry. Keep lens bindings when disabling so existing operations recover."
+}
+variable "perps_close_assistance_global_enabled" {
+  type        = bool
+  default     = false
+  description = "Allow sponsored close assistance beyond the existing operator canary cohort."
+}
+variable "perps_close_assistance_lens" {
+  type        = string
+  default     = ""
+  description = "Verified CfdClosePreview deployment supporting the exact five-call sponsored close batch."
+}
+variable "perps_close_assistance_lens_code_hash" {
+  type        = string
+  default     = ""
+  description = "Keccak256 of the reviewed deployed close-assistance lens runtime."
+}

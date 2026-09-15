@@ -3,7 +3,7 @@ import { decodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../manifest'
 import { buildSponsoredCloseAction, closeAssistanceManifest, type SponsoredCloseFunding } from '../sponsoredClose'
-import { CFD_CLOSE_PREVIEW_ABI } from '../../contracts/abis/CfdClosePreview'
+import { CFD_CLOSE_PREVIEW_ABI } from '../../contracts/abis/CfdSponsoredClosePreview'
 import { PERPS_ORDER_ROUTER_ABI } from '../../contracts/abis'
 import { permissivePerpsExecutionBounds, type PerpsOrderRequestV2 } from '../../contracts/perpsOrderV2'
 

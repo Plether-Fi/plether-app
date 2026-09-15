@@ -820,7 +820,7 @@ export function usePerpsTrading() {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
-      const closeAssistance = isClose ? await loadCloseAssistanceConfig(signal) : undefined
+      const closeAssistance = isClose && sponsored.manifest.chainId === 421614 ? await loadCloseAssistanceConfig(sponsored.ownerAddress, signal) : undefined
       return await preparePerpsOrderV2(client, sponsored.manifest, {
         closeAssistance,
         account: sponsored.accountAddress,
@@ -976,7 +976,7 @@ export function usePerpsTrading() {
       let executionManifest = sponsored.manifest
       let executionRuntime = sponsored.runtime
       if (assisted) {
-        const live = await loadCloseAssistanceConfig()
+        const live = await loadCloseAssistanceConfig(sponsored.ownerAddress)
         if (!live || !isAddressEqual(live.lens, assisted.config.lens) || live.lensCodeHash !== assisted.config.lensCodeHash
           || !isAddressEqual(live.paymasterAddress, assisted.config.paymasterAddress)) throw new Error('Close assistance changed. Review again.')
         if (!walletClient) throw new Error('Connect the owner wallet before signing the sponsored close')

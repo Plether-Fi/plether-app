@@ -142,8 +142,8 @@ export interface PerpsExecutionProtectionSummary {
 }
 
 export interface PerpsOrderReviewSummary {
-  /** Close commitment debit, separate from execution economics. Absent in older summaries. */
   sponsoredClose?: SponsoredCloseFunding
+  /** Close commitment debit, separate from execution economics. Absent in older summaries. */
   commitmentCarryUsdc?: bigint
   requiredMarginUsdc: bigint
   executionBountyUsdc: bigint

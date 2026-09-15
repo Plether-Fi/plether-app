@@ -24,7 +24,6 @@ export function perpsReviewChanges(before?: PreparedPerpsOrderV2, after?: Prepar
   add('Frozen spread', before.reviewSummary?.currentAssessment.frozenSpreadUsdc, after.reviewSummary?.currentAssessment.frozenSpreadUsdc, usdc)
   add('Sponsored USDC', before.sponsoredClose?.amountUsdc ?? 0n, after.sponsoredClose?.amountUsdc ?? 0n, usdc)
   add('Deposit carry', before.sponsoredClose?.depositCarryUsdc ?? 0n, after.sponsoredClose?.depositCarryUsdc ?? 0n, usdc)
-  add('Commitment carry', before.reviewSummary?.commitmentCarryUsdc ?? 0n, after.reviewSummary?.commitmentCarryUsdc ?? 0n, usdc)
   add('Carry', before.reviewSummary?.currentAssessment.carryUsdc, after.reviewSummary?.currentAssessment.carryUsdc, usdc)
   add('Commitment carry', before.reviewSummary?.commitmentCarryUsdc, after.reviewSummary?.commitmentCarryUsdc, usdc)
   add('Explicit fees', before.reviewSummary?.currentAssessment.explicitFeesUsdc, after.reviewSummary?.currentAssessment.explicitFeesUsdc, usdc)

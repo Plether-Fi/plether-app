@@ -16,6 +16,16 @@ on:
         required: false
         default: false
         type: boolean
+      close_assistance_mode:
+        description: Sepolia close assistance issuance (preserve, disable, operator canary, or all traders)
+        required: false
+        default: preserve
+        type: choice
+        options:
+          - preserve
+          - disabled
+          - canary
+          - all
       deployment_scope:
         description: Deploy every backend service or only the API
         required: false
@@ -1426,6 +1436,12 @@ jobs:
             )
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
+
+      - name: Configure exact Sepolia close assistance release
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
+        env:
+          CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
+        run: python3 .github/scripts/configure-close-assistance.py task-def.json apps/backend/deployments/close-assistance-arbitrum-sepolia.json "$CLOSE_ASSISTANCE_MODE"
 
       - name: Patch liquidation worker cost controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
