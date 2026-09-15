@@ -1120,6 +1120,7 @@ resource "aws_ecs_task_definition" "workers" {
           name  = "PERPS_ORACLE_UPDATER_BACKEND_URL"
           value = var.api_hostname != "" ? "https://${var.api_hostname}" : "http://${aws_lb.api.dns_name}"
         },
+        { name = "PERPS_ORACLE_UPDATER_HEALTH_POLL_SECONDS", value = var.perps_oracle_updater_health_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
       ]

@@ -247,6 +247,12 @@ export function getPerpsContractErrorCode(error: unknown): string | undefined {
   }
 }
 
+/** Only decoded ordering failures are eligible for read-only review recovery. */
+export function isPerpsOracleSyncError(error: unknown): boolean {
+  const { name } = decodePerpsError(error)
+  return name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder'
+}
+
 function argNumber(args: readonly unknown[] | undefined, index = 0): number | undefined {
   const value = args?.[index]
   if (typeof value === 'number') return value

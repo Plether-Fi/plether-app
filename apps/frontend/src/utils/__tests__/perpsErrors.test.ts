@@ -3,6 +3,7 @@ import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsErrorMessage,
+  isPerpsOracleSyncError,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../perpsErrors'
@@ -284,4 +285,17 @@ it('decodes maximum quote search exhaustion without reporting zero capacity', ()
   expect(getPerpsErrorMessage({ cause: { data } }, 'commit')).toBe(
     'The maximum size quote exceeded its search limit. Retry or enter a quantity manually.'
   )
+})
+
+describe('oracle synchronization error classification', () => {
+  it('recognizes encoded errors through Error.cause and decoded metadata', () => {
+    const data = encodeErrorResult({ abi: PERPS_TEST_ERROR_ABI, errorName: 'PletherOracle__PriceOutOfOrder', args: [1n, 2n] })
+    expect(isPerpsOracleSyncError(new Error('Wrapped', { cause: { data } }))).toBe(true)
+    expect(isPerpsOracleSyncError({ cause: { errorName: 'OrderRouter__MarkPriceOutOfOrder' } })).toBe(true)
+  })
+  it('does not classify displayed English, unrelated errors, or malformed data', () => {
+    expect(isPerpsOracleSyncError(new Error('The oracle update is older than the stored mark.'))).toBe(false)
+    expect(isPerpsOracleSyncError({ errorName: 'PletherOracle__StalePrice' })).toBe(false)
+    expect(isPerpsOracleSyncError({ data: '0xabcd' })).toBe(false)
+  })
 })
