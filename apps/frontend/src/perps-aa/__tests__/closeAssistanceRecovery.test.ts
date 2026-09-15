@@ -29,9 +29,10 @@ describe('sponsored close recovery routing', () => {
     const routed = withCloseAssistanceRecovery(legacy, () => [operation()], factory)
     await routed.smartAccount.getUserOperationReceipt(hash)
     await routed.smartAccount.getUserOperationStatus(hash)
-    await routed.getRecoverySnapshot!(hash)
+    const evidence = { transactionHash: otherHash, nonce: 0n, paymaster }
+    await routed.getRecoverySnapshot!(hash, undefined, evidence)
     expect(native.smartAccount.getUserOperationReceipt).toHaveBeenCalledWith(hash)
-    expect(native.getRecoverySnapshot).toHaveBeenCalledWith(hash, undefined)
+    expect(native.getRecoverySnapshot).toHaveBeenCalledWith(hash, undefined, evidence)
     expect(factory).toHaveBeenCalledTimes(1)
     expect(legacy.smartAccount.getUserOperationReceipt).not.toHaveBeenCalled()
     await routed.smartAccount.getUserOperationReceipt(otherHash)

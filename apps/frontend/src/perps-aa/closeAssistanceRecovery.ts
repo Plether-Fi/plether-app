@@ -39,10 +39,10 @@ export function withCloseAssistanceRecovery(
       getUserOperationReceipt: async hash => (await forHash(hash)).smartAccount.getUserOperationReceipt(hash),
       getUserOperationStatus: async hash => (await forHash(hash)).smartAccount.getUserOperationStatus(hash),
     },
-    getRecoverySnapshot: async (hash, nonceKey) => {
+    getRecoverySnapshot: async (hash, nonceKey, context) => {
       const runtime = await forHash(hash)
       if (!runtime.getRecoverySnapshot) throw new Error('Safe recovery is unavailable')
-      return runtime.getRecoverySnapshot(hash, nonceKey)
+      return runtime.getRecoverySnapshot(hash, nonceKey, context)
     },
   }
 }
