@@ -110,6 +110,8 @@ export function useTradingReadiness(enabled: boolean) {
 }
 
 const messages: Record<string, string> = {
+  AUTHORIZATION_EXPIRED: 'The unused gas sponsorship expired and was safely reconciled. Recover and discard the saved attempt before preparing a new action.',
+  PREPARATION_UNUSABLE: 'The saved preparation can no longer be signed. Check recovery to discard it when available.',
   SPONSORSHIP_DISABLED: 'Gas sponsorship is temporarily disabled.',
   PAYMASTER_PAUSED: 'Gas sponsorship is paused.',
   RECONCILIATION_STALE: 'Sponsorship accounting is catching up.',

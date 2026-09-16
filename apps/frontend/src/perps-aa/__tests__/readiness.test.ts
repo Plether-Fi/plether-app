@@ -10,6 +10,8 @@ describe('trading readiness', () => {
     expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('ran out of execution gas')
     expect(readinessMessage('USER_OPERATION_OUT_OF_GAS')).toContain('separately completed transfer')
     expect(readinessMessage('USER_OPERATION_REVERTED')).toContain('could not be verified')
+    expect(readinessMessage('AUTHORIZATION_EXPIRED')).toContain('expired and was safely reconciled')
+    expect(readinessMessage('PREPARATION_UNUSABLE')).toContain('can no longer be signed')
   })
   it('blocks only fresh confirmed blockers with enforcement on', () => {
     expect(readinessBlocker(sample(), 'open', 110_000)?.reason).toBe('KEEPER_INSUFFICIENT_FUNDS')

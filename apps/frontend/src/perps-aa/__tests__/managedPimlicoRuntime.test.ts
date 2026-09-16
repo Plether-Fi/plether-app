@@ -155,6 +155,7 @@ describe('createManagedPimlicoRuntime', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -311,7 +312,8 @@ describe('createManagedPimlicoRuntime', () => {
     })
   })
 
-  it('uses one preparation RPC and never falls back or signs after an ambiguous failure', async () => {
+  it.each([0, 15_000])('uses one preparation RPC with a %i ms response and never falls back or signs after an ambiguous failure', async delay => {
+    vi.useFakeTimers()
     const sign = vi.fn()
     mocks.toSimpleSmartAccount.mockResolvedValue({ address: ACCOUNT, signUserOperation: sign,
       encodeCalls: vi.fn(async () => '0x1234'), getFactoryArgs: vi.fn(async () => ({})) })
@@ -319,6 +321,7 @@ describe('createManagedPimlicoRuntime', () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body))
       requests.push(body)
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay))
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id,
         error: { code: -32001, message: 'Retry the same preparation ID' } }),
       { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -330,8 +333,12 @@ describe('createManagedPimlicoRuntime', () => {
       publicClient: { chain: { id: 421614 } } as never,
     })
     const input = { calls: [{ to: ACCOUNT, value: 0n, data: '0x1234' as Hex }], action: 'place-order' as const, preparationId: 'same-durable-attempt' }
-    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow()
-    await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow()
+    const first = expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow('Retry the same preparation ID')
+    await vi.advanceTimersByTimeAsync(delay)
+    await first
+    const retry = expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toThrow('Retry the same preparation ID')
+    await vi.advanceTimersByTimeAsync(delay)
+    await retry
     expect(requests).toHaveLength(2)
     expect(requests[0]).toMatchObject({ method: 'plether_prepareUserOperation' })
     expect(requests[0].params).toEqual(requests[1].params)

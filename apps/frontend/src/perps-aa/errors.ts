@@ -181,9 +181,10 @@ function walkCauses<T>(
 export function asSponsorRequestError(error: unknown): SponsorRequestError {
   if (error instanceof SponsorRequestError) return error
   const metadata = sponsorMetadata(error)
+  const timedOut = walkCauses(error, (value): value is { name: 'TimeoutError' } => recordOf(value)?.name === 'TimeoutError')
 
   return new SponsorRequestError({
-    reason: metadata.reason ?? 'UNKNOWN',
+    reason: metadata.reason ?? (timedOut ? 'SPONSOR_REQUEST_TIMEOUT' : 'UNKNOWN'),
     message: error instanceof Error ? error.message : String(error),
     retryable: metadata.retryable ?? false,
     callIndex: metadata.callIndex,
@@ -197,6 +198,16 @@ export function findSponsorRequestError(error: unknown): SponsorRequestError | u
     error,
     (value): value is SponsorRequestError => value instanceof SponsorRequestError
   )
+}
+
+/** Only explicit denials prove that this request refused sponsorship. A lost
+ * response may still have produced an authorization on the backend. */
+export function isDefinitiveSponsorshipRefusal(reason?: string): boolean {
+  return reason !== undefined && [
+    'RESTART_ESTIMATION', 'RATE_LIMITED', 'SPONSOR_BUDGET_EXCEEDED',
+    'SIMULATION_FAILED', 'POLICY_DENIED', 'PAYMASTER_PAUSED',
+    'ACCOUNT_NOT_TRUSTED', 'EXECUTION_GAS_CAP_EXCEEDED',
+  ].includes(reason)
 }
 
 export function findSponsoredPreflightError(
@@ -226,6 +237,8 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
       return 'This order intent was already committed. Check order activity before reviewing a new action.'
     case 'PREPARATION_UNUSABLE':
       return 'The original preparation can no longer be signed. Check recovery and review a new transaction when available.'
+    case 'SPONSOR_REQUEST_TIMEOUT':
+      return 'The sponsorship response timed out. Check saved transaction recovery before preparing another action.'
     case 'RESTART_ESTIMATION':
       return 'The gas estimate changed. Plether is preparing a fresh sponsored transaction.'
     case 'RATE_LIMITED':
