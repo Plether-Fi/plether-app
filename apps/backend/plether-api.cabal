@@ -86,6 +86,8 @@ library
         Plether.Database.CloseAssistance
         Plether.Database.AaSponsorship
         Plether.Database.AaPreparation
+        Plether.Database.AaPreparationRecovery
+        Plether.AA.PreparationRecovery
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
@@ -357,6 +359,7 @@ test-suite plether-api-test
         Plether.AA.PaymasterSpec
         Plether.AA.KmsSpec
         Plether.AA.PreparationSpec
+        Plether.AA.PreparationRecoverySpec
         Plether.AA.ReadinessSpec
         Plether.AA.OracleReadinessSpec
         Plether.Keeper.FundingSpec
@@ -497,6 +500,8 @@ test-suite plether-aa-integration-test
         plether-api,
         hspec >= 2.11,
         aeson >= 2.1,
+        bytestring >= 0.11,
+        base16-bytestring >= 1.0,
         async >= 2.2,
         postgresql-simple >= 0.7,
         text >= 2.0,

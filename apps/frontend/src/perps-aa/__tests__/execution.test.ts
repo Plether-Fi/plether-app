@@ -27,6 +27,7 @@ import type {
   PerpsAaSmartAccountRuntime,
 } from '../runtimeContext'
 import { UserOperationReceiptNotSafeError } from '../runtimeContext'
+import { SponsorRequestError } from '../errors'
 import {
   PLETHER_PAYMASTER_POLICY_ID,
   PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
@@ -409,6 +410,28 @@ describe('executeSponsoredPerpsAction', () => {
     await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toThrow('payload changed')
     expect(sign).toHaveBeenCalledTimes(1)
     expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it('preserves an account-confirmation rejection across reload and resumes the same attempt', async () => {
+    const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(new SponsorRequestError({
+      reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'Account awaiting safe confirmation',
+    }))
+    const managed = runtime({ prepareUserOperation: prepare })
+    managed.smartAccount.getPreparationStatus = vi.fn().mockRejectedValue(new Error('PREPARATION_NOT_AUTHORIZED'))
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    expect(saved).toMatchObject({ status: 'preparation-pending', reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true })
+    expect(saved.preparedOperation).toBeUndefined()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(saved.id)
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    await resumeSponsoredPerpsAction(saved, managed)
+    expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: saved.id }))
+    expect(managed.smartAccount.getPreparationStatus).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+    expect(useSponsoredOperationStore.getState().operations[0].reason).toBeUndefined()
   })
 
   it('retries a dropped preparation response through its original ID without another journal entry', async () => {

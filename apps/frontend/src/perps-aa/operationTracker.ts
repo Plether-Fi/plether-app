@@ -244,11 +244,14 @@ export function beginSponsoredOperationTracking(
       if (currentOperation?.nativePreparation && !currentOperation.userOperationHash) {
         const declined = currentOperation.status === 'awaiting-signature' && isExplicitSignatureRejection(error)
         if (currentOperation.status === 'awaiting-signature') useSponsoredOperationStore.getState().recordWalletPreparationOutcome(id, declined ? 'declined' : 'unknown')
-        const status = declined ? 'signature-declined' : sponsorError ? 'sponsorship-refused' : 'preparation-pending'
-        useSponsoredOperationStore.getState().transition(id, status)
+        const accountPending = sponsorError?.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
+        const status = declined ? 'signature-declined' : sponsorError && !accountPending ? 'sponsorship-refused' : 'preparation-pending'
+        useSponsoredOperationStore.getState().failOperation({
+          id, status, reason: sponsorError?.reason, retryable: sponsorError?.retryable ?? false,
+        })
         trackPerpsSponsoredOperation(status, analyticsProperties(metadata, {
           attempt_id: id, stage: 'preparation', reason_code: sponsorError?.reason,
-          preparation_outcome: declined ? 'wallet_rejected' : sponsorError ? 'sponsorship_refused' : 'unknown',
+          preparation_outcome: declined ? 'wallet_rejected' : sponsorError && !accountPending ? 'sponsorship_refused' : 'unknown',
         }))
         return
       }

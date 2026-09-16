@@ -7,6 +7,9 @@ import Control.Monad (void)
 import Data.Aeson (Value(..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import Data.Int (Int64)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
+import qualified Plether.AA.Paymaster as Paymaster
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -26,6 +29,7 @@ import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnost
 import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
 import Plether.Database.AaPreparation
+import qualified Plether.Database.AaPreparationRecovery as Recovery
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -53,9 +57,12 @@ import Plether.Database.AaSponsorship
   , recordAaReconcilerHeartbeat
   , reserveSponsorship
   , reserveSponsorshipWithAssistance
+  , reserveSponsorshipFenced
+  , isSponsorshipDeliveryAllowedFenced
   , resumeAaIssuance
   , settleSponsorship
   , storeSponsorshipSignature
+  , storeSponsorshipSignatureFenced
   )
 import System.Environment (lookupEnv)
 import Plether.Database.CloseAssistance
@@ -81,6 +88,186 @@ main = do
 aaIntegrationSpec :: Text -> Spec
 aaIntegrationSpec databaseUrl =
   describe "native AA PostgreSQL authorization lifecycle" $ do
+    it "retires a missing attempt durably and rejects every delayed claim" $
+      withFixture databaseUrl $ \conn -> do
+        let scope = Recovery.Scope chainId paymasterAddress (addressOf '1') (hashOf '2')
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Right ()
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Right ()
+        Recovery.beginPreparation conn scope "late" `shouldReturn` Left "PREPARATION_RETIRED"
+
+    it "fences expired in-flight preparation before it can reserve sponsorship" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let candidate = draft '1' '2' '3' 7 1000 now
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+        Right fence <- Recovery.beginPreparation conn scope "worker"
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+        void $ execute_ conn "UPDATE aa_preparation_registry SET lease_until=clock_timestamp()-interval '1 second'"
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Right ()
+        reserveSponsorshipFenced conn testConfig candidate Nothing (Just fence) `shouldReturn` Left "PREPARATION_LEASE_LOST"
+        claimPreparationCompatibleFenced conn fence True (sdClientKey candidate) (sdSender candidate) (hashOf '4') (hashOf '5') [] "late-worker" `shouldReturn` PreparationFenceLost
+        (query_ conn "SELECT count(*)::bigint FROM aa_preparations" :: IO [Only Int64]) `shouldReturn` [Only 0]
+        (query_ conn "SELECT count(*)::bigint FROM aa_sponsorship_authorizations" :: IO [Only Int64]) `shouldReturn` [Only 0]
+
+    it "finds unlinked liabilities and rejects retirement until safe reconciliation" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let candidate = draft '1' '2' '3' 7 1000 now
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+        Right fence <- Recovery.beginPreparation conn scope "worker"
+        authorization <- reserveSponsorshipFenced conn testConfig candidate Nothing (Just fence) >>= expectAuthorization
+        Recovery.releasePreparation conn fence
+        -- No aa_preparations row/digest linkage exists; the reservation still blocks discard.
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+        void $ execute conn "UPDATE aa_sponsorship_authorizations SET valid_after=0,valid_until=1 WHERE digest=?" (Only $ saDigest authorization)
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+        void $ execute conn "UPDATE aa_sponsorship_authorizations SET state='cancelled',settled_at=clock_timestamp() WHERE digest=?" (Only $ saDigest authorization)
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Right ()
+        isSponsorshipDeliveryAllowedFenced conn testConfig (saDigest authorization) (Just fence) `shouldReturn` False
+
+    it "recovers a legacy signed authorization only for its verified scope and exact hash" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let candidate = draft '1' '2' '3' 7 1000 now
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+            operationHash = hashOf '5'
+        authorization <- reserveSponsorship conn testConfig candidate >>= expectAuthorization
+        storeSponsorshipSignature conn testConfig (saDigest authorization) (signatureOf '6') operationHash `shouldReturn` True
+        Right fence <- Recovery.beginPreparation conn scope "worker"
+        _ <- claimPreparation conn True (sdClientKey candidate) (sdSender candidate) (hashOf '4') (hashOf '9') "preparation-worker"
+        -- Delivery of an existing authorization must also acquire registry linkage.
+        isSponsorshipDeliveryAllowedFenced conn testConfig (saDigest authorization) (Just fence) `shouldReturn` True
+        Recovery.saveChallenge conn scope "challenge" (sdOwner candidate) "message"
+        Recovery.consumeChallenge conn scope "challenge" (sdOwner candidate) "token" `shouldReturn` True
+        Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Just (sdClientKey candidate)
+        Recovery.sessionSubmissionClient conn paymasterAddress "token" (hashOf '7') `shouldReturn` Nothing
+        Recovery.sessionSubmissionClient conn (addressOf '8') "token" operationHash `shouldReturn` Nothing
+        Recovery.saveChallenge conn (scope {Recovery.scopeId = hashOf '8'}) "wrong-attempt" (sdOwner candidate) "message"
+        Recovery.consumeChallenge conn (scope {Recovery.scopeId = hashOf '8'}) "wrong-attempt" (sdOwner candidate) "other-token" `shouldReturn` True
+        Recovery.sessionSubmissionClient conn paymasterAddress "other-token" operationHash `shouldReturn` Nothing
+        _ <- claimPreparation conn True (clientKeyOf '9') (sdSender candidate) (hashOf '4') (hashOf '9') "historical-worker"
+        Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
+        void $ execute_ conn "UPDATE aa_preparation_recovery_sessions SET expires_at=clock_timestamp()-interval '1 second'"
+        Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
+
+    it "proves a historical omitted paymaster from its immutable sponsorship digest" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let Object fields = object ["sender" .= addressOf '1', "nonce" .= ("0x7"::Text), "callData" .= ("0x"::Text),
+              "callGasLimit" .= ("0x1"::Text), "verificationGasLimit" .= ("0x1"::Text), "preVerificationGas" .= ("0x1"::Text),
+              "maxFeePerGas" .= ("0x1"::Text), "maxPriorityFeePerGas" .= ("0x1"::Text)]
+            Right operation = Paymaster.parsePackedUserOperation fields
+            envelope = Paymaster.makeSponsorshipEnvelope testConfig (now-30) (now+300) 1000 BS.empty
+            digest = "0x" <> TE.decodeUtf8 (B16.encode $ Paymaster.sponsorshipDigest operation envelope)
+            candidate = (draft '1' '2' '3' 7 1000 now) {sdDigest=digest,sdOperation=Object fields}
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+        _ <- reserveSponsorship conn testConfig candidate >>= expectAuthorization
+        _ <- claimPreparation conn True (sdClientKey candidate) (sdSender candidate) (hashOf '4') (hashOf '5') "worker"
+        bindPreparationDeployment conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker" chainId (addressOf '8') `shouldReturn` True
+        linkPreparation conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker" digest `shouldReturn` True
+        releasePreparation conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker"
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn (testConfig {naaPaymasterAddress=addressOf '9'}) (scope {Recovery.scopePaymaster=addressOf '9'}) (addressOf '8')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '9')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '8')
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '8')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,True)]
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+
+    it "binds new unsigned rows to their paymaster and preserves cross-IP ambiguity" $
+      withFixture databaseUrl $ \conn -> do
+        let sender = addressOf '1'; identifier = hashOf '2'; client = clientKeyOf '3'
+            scope = Recovery.Scope chainId paymasterAddress sender identifier
+        Right fence <- Recovery.beginPreparation conn scope "registry-worker"
+        _ <- claimPreparation conn True client sender identifier (hashOf '4') "worker"
+        bindPreparationDeployment conn client sender identifier "worker" chainId (addressOf '8') `shouldReturn` True
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(client,Nothing,False)]
+        Recovery.bindDeployment conn fence client `shouldReturn` True
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(client,Nothing,True)]
+        let other = clientKeyOf '5'
+        _ <- claimPreparation conn True other sender identifier (hashOf '4') "worker"
+        bindPreparationDeployment conn other sender identifier "worker" chainId (addressOf '8') `shouldReturn` True
+        Recovery.bindDeployment conn fence other `shouldReturn` True
+        matches <- Recovery.matchingPreparations conn scope (addressOf '8')
+        length matches `shouldBe` 2
+        releasePreparation conn client sender identifier "worker"
+        releasePreparation conn other sender identifier "worker"
+        Recovery.releasePreparation conn fence
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Right ()
+        Recovery.bindDeployment conn fence client `shouldReturn` False
+
+    it "serializes retirement with reservation and cannot clear issued liability" $
+      withFixture databaseUrl $ \conn -> withPeerConnection databaseUrl $ \peer -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let candidate = draft '1' '2' '3' 7 1000 now
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+        Right fence <- Recovery.beginPreparation conn scope "worker"
+        (retired, reserved) <- concurrently
+          (Recovery.retirePreparation conn scope (addressOf '8'))
+          (reserveSponsorshipFenced peer testConfig candidate Nothing (Just fence))
+        retired `shouldBe` Left "RECOVERY_LIABILITY_PENDING"
+        authorization <- expectAuthorization reserved
+        Recovery.releasePreparation conn fence
+        (retirement, delivery) <- concurrently
+          (Recovery.retirePreparation conn scope (addressOf '8'))
+          (storeSponsorshipSignatureFenced peer testConfig (saDigest authorization) (signatureOf '5') (hashOf '6') (Just fence))
+        retirement `shouldBe` Left "RECOVERY_LIABILITY_PENDING"
+        delivery `shouldBe` False
+        Recovery.registryRetired conn scope `shouldReturn` False
+
+    it "serializes retirement against concurrent claims" $
+      withFixture databaseUrl $ \conn -> withPeerConnection databaseUrl $ \peer -> do
+        let scope = Recovery.Scope chainId paymasterAddress (addressOf '1') (hashOf '2')
+        (retired,claimed) <- concurrently
+          (Recovery.retirePreparation conn scope (addressOf '8'))
+          (Recovery.beginPreparation peer scope "worker")
+        case (retired,claimed) of
+          (Right (),Left "PREPARATION_RETIRED") -> pure ()
+          (Left "RECOVERY_LIABILITY_PENDING",Right _) -> pure ()
+          other -> expectationFailure $ "Unsafe concurrent outcome: " <> show other
+
+    it "keeps historical deployment ambiguity unresolved" $
+      withFixture databaseUrl $ \conn -> do
+        let sender = addressOf '1'; identifier = hashOf '2'
+            scope = Recovery.Scope chainId paymasterAddress sender identifier
+        _ <- claimPreparation conn True (clientKeyOf '3') sender identifier (hashOf '4') "worker"
+        releasePreparation conn (clientKeyOf '3') sender identifier "worker"
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_BINDING_UNRESOLVED"
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(clientKeyOf '3',Nothing,False)]
+
+    it "consumes wallet challenges exactly once and scopes expiring sessions" $
+      withFixture databaseUrl $ \conn -> withPeerConnection databaseUrl $ \peer -> do
+        let scope = Recovery.Scope chainId paymasterAddress (addressOf '1') (hashOf '2')
+            owner = addressOf '3'
+        Recovery.saveChallenge conn scope "challenge" owner "message"
+        Recovery.readChallenge conn scope "challenge" `shouldReturn` Just (owner,"message")
+        (first,second) <- concurrently
+          (Recovery.consumeChallenge conn scope "challenge" owner "token-a")
+          (Recovery.consumeChallenge peer scope "challenge" owner "token-b")
+        (first /= second) `shouldBe` True
+        let token = if first then "token-a" else "token-b"
+        Recovery.sessionOwner conn scope token `shouldReturn` Just owner
+        Recovery.sessionOwner conn (scope { Recovery.scopeSender = addressOf '4' }) token `shouldReturn` Nothing
+        Recovery.sessionOwner conn (scope { Recovery.scopePaymaster = addressOf '5' }) token `shouldReturn` Nothing
+        Recovery.readChallenge conn scope "challenge" `shouldReturn` Nothing
+        void $ execute_ conn "UPDATE aa_preparation_recovery_sessions SET expires_at=clock_timestamp()-interval '1 second'"
+        Recovery.sessionOwner conn scope token `shouldReturn` Nothing
+
+    it "does not consume expired challenges or accept the wrong owner" $
+      withFixture databaseUrl $ \conn -> do
+        let scope = Recovery.Scope chainId paymasterAddress (addressOf '1') (hashOf '2')
+        Recovery.saveChallenge conn scope "challenge" (addressOf '3') "message"
+        Recovery.consumeChallenge conn scope "challenge" (addressOf '4') "token" `shouldReturn` False
+        void $ execute_ conn "UPDATE aa_preparation_recovery_challenges SET expires_at=clock_timestamp()-interval '1 second'"
+        Recovery.consumeChallenge conn scope "challenge" (addressOf '3') "token" `shouldReturn` False
+
     it "serializes assistance across different requests and preserves failed-attempt retries" $
       withFixture databaseUrl $ \conn -> do
         readyDatabase conn
@@ -473,7 +660,7 @@ aaIntegrationSpec databaseUrl =
         now <- currentEpochSeconds
         authorization <- submittedAuthorization conn now
         before <- getSponsorshipByDigest conn (saDigest authorization)
-        let migrations = ["aa-preparation-v1.sql", "aa-observability-v1.sql", "aa-observability-v2.sql", "aa-funding-v1.sql"]
+        let migrations = ["aa-preparation-v1.sql", "aa-observability-v1.sql", "aa-observability-v2.sql", "aa-funding-v1.sql", "aa-preparation-recovery-v1.sql"]
         mapM_ (\name -> readFile ("config/migrations/" <> name) >>= execute_ conn . fromString >> pure ()) (migrations <> migrations)
         after <- getSponsorshipByDigest conn (saDigest authorization)
         after `shouldBe` before
@@ -607,6 +794,8 @@ resetSchema conn = do
   void $ execute_ conn observability
   correlation <- fromString <$> readFile "config/migrations/aa-observability-v2.sql"
   void $ execute_ conn correlation
+  recovery <- fromString <$> readFile "config/migrations/aa-preparation-recovery-v1.sql"
+  void $ execute_ conn recovery
 
 cleanupSchema :: Connection -> IO ()
 cleanupSchema conn = do

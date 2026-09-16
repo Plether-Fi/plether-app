@@ -1824,7 +1824,7 @@ export function PerpsTradeTicket({
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
   const deploymentConfirmation = useAccountDeploymentConfirmation()
-  const isAwaitingAccountConfirmation = enableLiveTrading && deploymentConfirmation === 'waiting'
+  const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
   const address = identity.accountAddress
   const isConnected = identity.ownerAddress !== undefined

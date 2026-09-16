@@ -640,7 +640,10 @@ const requestHandler = {
         // after the matching Worker-to-origin credential has been verified.
         headers.delete(AA_PROXY_AUTH_HEADER);
         headers.delete(FAUCET_PROXY_AUTH_HEADER);
-        if (!AA_PROXY_PATHS.has(url.pathname)) headers.delete('X-Plether-AA-Recovery');
+        if (!AA_PROXY_PATHS.has(url.pathname)) {
+          headers.delete('X-Plether-AA-Recovery');
+          headers.delete('X-Plether-AA-Preparation-Recovery');
+        }
         if (AA_PROXY_PATHS.has(url.pathname)) {
           if (!env.AA_PROXY_ORIGIN_TOKEN) {
             return new Response('AA proxy authentication not configured', {

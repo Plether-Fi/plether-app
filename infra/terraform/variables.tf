@@ -1885,3 +1885,23 @@ variable "perps_close_assistance_lens_code_hash" {
   default     = ""
   description = "Keccak256 of the reviewed deployed close-assistance lens runtime."
 }
+
+variable "aa_preparation_recovery_origin" {
+  type        = string
+  default     = ""
+  description = "Exact HTTPS frontend origin for wallet recovery; empty disables recovery until migration and fenced backend rollout."
+  validation {
+    condition     = var.aa_preparation_recovery_origin == "" || can(regex("^https://[a-zA-Z0-9.-]+(:[0-9]+)?$", var.aa_preparation_recovery_origin))
+    error_message = "Recovery origin must be an exact HTTPS origin without a path."
+  }
+}
+
+variable "aa_preparation_retirement_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable only after every API instance enforces the preparation registry fence. Retain fences or disable issuance on rollback."
+  validation {
+    condition     = !var.aa_preparation_retirement_enabled || var.aa_preparation_recovery_origin != ""
+    error_message = "Preparation retirement requires a configured recovery origin."
+  }
+}

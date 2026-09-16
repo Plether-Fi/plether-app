@@ -43,12 +43,12 @@ describe('deployment confirmation preparation gate', () => {
     expect(run.getSnapshot()).toBe('waiting')
     check.mockRejectedValueOnce(new Error('provider down'))
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(run.getSnapshot()).toBe('waiting')
+    expect(run.getSnapshot()).toBe('check-unavailable')
     check.mockResolvedValue(true)
     await vi.advanceTimersByTimeAsync(15_000)
     expect(run.getSnapshot()).toBe('ready')
     expect(prepare).toHaveBeenCalledTimes(1)
-    expect(changed).toHaveBeenCalledTimes(2)
+    expect(changed).toHaveBeenCalledTimes(4)
     stop()
     unsubscribe()
     await vi.advanceTimersByTimeAsync(60_000)
@@ -141,4 +141,58 @@ describe('deployment confirmation preparation gate', () => {
     expect(sponsorReasonMessage(pending())).toContain('awaiting safe confirmation')
     expect(sponsorReasonMessage(pending())).toContain('has not been sent')
   })
+  it('pauses hidden-page checks, refreshes on focus, and retains elapsed time after reload', async () => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>()
+    const persistence = { scope: 'scope', storage: () => ({ getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }) }
+    const check = vi.fn(async () => false)
+    const run = createDeploymentConfirmationGate(check, () => Date.now(), persistence)
+    await expect(run(async () => { throw pending() })).rejects.toThrow()
+    const started = run.getDetails().waitingSince
+    const stop = run.start()
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    await vi.advanceTimersByTimeAsync(300_000)
+    expect(check).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(run.getDetails().lastSuccessfulCheckAt).toBeDefined()
+    const restored = createDeploymentConfirmationGate(check, () => Date.now(), persistence)
+    expect(restored.getDetails().waitingSince).toBe(started)
+    stop()
+  })
+
+  it('migrates the legacy wait once without resurrecting it after confirmation', async () => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>([['plether:deployment-confirmation:v1:legacy', 'waiting']])
+    const persistence = { scope: 'paymaster-scope', legacyScope: 'legacy', storage: () => ({ getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }) }
+    const check = vi.fn(async () => true)
+    const run = createDeploymentConfirmationGate(check, () => Date.now(), persistence)
+    expect(run.getSnapshot()).toBe('waiting')
+    expect(values.has('plether:deployment-confirmation:v1:legacy')).toBe(false)
+    const stop = run.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run.getSnapshot()).toBe('ready')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(createDeploymentConfirmationGate(check, () => Date.now(), persistence).getSnapshot()).toBe('idle')
+    stop()
+  })
+
+  it('ignores an in-flight confirmation after the saved scope unmounts', async () => {
+    vi.useFakeTimers()
+    let complete!: (ready: boolean) => void
+    const run = createDeploymentConfirmationGate(() => new Promise<boolean>(resolve => { complete = resolve }), () => Date.now())
+    await expect(run(async () => { throw pending() })).rejects.toThrow()
+    const stop = run.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    stop()
+    complete(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run.getSnapshot()).toBe('waiting')
+  })
+
 })

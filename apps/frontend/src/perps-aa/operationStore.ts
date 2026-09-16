@@ -109,6 +109,8 @@ export interface SponsoredOperation {
   transactionHashVerified?: boolean
   reason?: StableSponsorReason
   retryable?: boolean
+  confirmationWaitingSince?: number
+  confirmationLastSuccessfulCheckAt?: number
   replacementUserOperationHash?: Hex
   retryCount: number
   createdAt: number
@@ -153,6 +155,7 @@ interface SponsoredOperationState {
   activeLanes: Record<string, string>
 
   beginOperation: (input: BeginSponsoredOperationInput) => void
+  recordConfirmationTiming: (id: string, waitingSince?: number, lastSuccessfulCheckAt?: number) => void
   markPreparationResolved: (id: string) => void
   recordWalletPreparationOutcome: (id: string, outcome: 'declined' | 'unknown') => void
   recordPreparation: (id: string, request: NativePreparationRequestV1, prepared?: PreparedOperationV1, authority?: PersistedSponsorshipAuthorityV1) => boolean
@@ -185,7 +188,7 @@ interface SponsoredOperationState {
   }[]) => void
   failOperation: (input: {
     id: string
-    status?: 'failed' | 'outcome-unknown' | UserOperationTerminalStatus
+    status?: 'failed' | 'outcome-unknown' | 'signature-declined' | 'preparation-pending' | 'sponsorship-refused' | UserOperationTerminalStatus
     reason?: StableSponsorReason
     retryable: boolean
     replacementUserOperationHash?: Hex
@@ -2459,6 +2462,16 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           })
         },
 
+        recordConfirmationTiming: (id, waitingSince, lastSuccessfulCheckAt) => {
+          const current = get().operations.find(operation => operation.id === id)
+          const valid = (value?: number) => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= Date.now() ? value : undefined
+          const start = valid(current?.confirmationWaitingSince) ?? valid(waitingSince)
+          const last = valid(lastSuccessfulCheckAt) ?? valid(current?.confirmationLastSuccessfulCheckAt)
+          if (!current || (current.confirmationWaitingSince === start && current.confirmationLastSuccessfulCheckAt === last)) return
+          set(state => ({ operations: updateOperation(state.operations, id, operation => ({
+            ...operation, confirmationWaitingSince: start, confirmationLastSuccessfulCheckAt: last,
+          })) }))
+        },
         markPreparationResolved: id => {
           const current = get().operations.find(operation => operation.id === id)
           if (!current || current.preparationResolved) return

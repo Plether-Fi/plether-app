@@ -218,3 +218,19 @@ export function perpsErrorCategory(error: unknown): string {
   if (normalized.includes('timeout') || normalized.includes('expired')) return 'timeout_or_expired'
   return 'unknown'
 }
+
+/** Recovery telemetry is deliberately bounded and excludes wallet proofs/tokens. */
+export function trackPerpsPreparationRecovery(input: {
+  attemptId: string
+  outcome: 'waiting' | 'ready' | 'check-unavailable' | 'verified' | 'retired' | 'unresolved' | 'ambiguous' | 'missing'
+  reason?: string
+  durationMs?: number
+}): void {
+  captureAnalyticsEvent('perps preparation recovery', compactProperties({
+    attempt_id: /^[0-9a-f-]{36}$/i.test(input.attemptId) ? input.attemptId : undefined,
+    outcome: input.outcome,
+    reason_code: input.reason && /^[A-Z_]{1,64}$/.test(input.reason) ? input.reason : undefined,
+    confirmation_duration_ms: typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)
+      ? Math.min(604_800_000, Math.max(0, Math.floor(input.durationMs))) : undefined,
+  }))
+}

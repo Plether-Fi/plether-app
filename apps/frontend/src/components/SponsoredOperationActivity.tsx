@@ -199,6 +199,9 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
 }
 
 function operationStatusLabel(operation: SponsoredOperation): string {
+  if (operation.status === 'preparation-pending' && operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
+    return 'Account confirmation required'
+  }
   if (isAwaitingSafeConfirmation(operation)) {
     return operation.includedSuccess === false
       ? 'Failed onchain · Awaiting confirmation'
@@ -223,7 +226,9 @@ function operationReasonMessage(
 
   switch (operation.status) {
     case 'signature-declined': return 'Signature declined. Your transaction was not sent.'
-    case 'preparation-pending': return 'The wallet or preparation response was interrupted. Check recovery before continuing.'
+    case 'preparation-pending': return operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
+      ? 'Preparation paused for Trading Account confirmation. Resume this attempt once the account is confirmed.'
+      : 'The wallet or preparation response was interrupted. Check recovery before continuing.'
     case 'sponsorship-refused': return 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
     case 'execution-reverted':
       return 'The transaction was included but failed during onchain execution.'
@@ -523,8 +528,9 @@ function OperationHistoryItem({
         ) : null}
       </div>
 
-      {!operation.userOperationHash && ((operation.nativePreparation !== undefined && (!operation.preparationResolved || !isSponsoredOperationTerminal(operation.status)))
-        || (!operation.nativePreparation && operation.status === 'failed' && manifest && isPerpsAaManifestV2(manifest) && operation.manifestVersion === manifest.version)) && (
+      {((operation.nativePreparation !== undefined && (!operation.preparationResolved || !isSponsoredOperationTerminal(operation.status))
+          && (!operation.userOperationHash || !isSponsoredOperationTerminal(operation.status)))
+        || (!operation.userOperationHash && !operation.nativePreparation && operation.status === 'failed' && manifest && isPerpsAaManifestV2(manifest) && operation.manifestVersion === manifest.version)) && (
         <PreparedOperationRecovery operation={operation} fallbackManifest={manifest && isPerpsAaManifestV2(manifest) ? manifest : undefined} />
       )}
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (

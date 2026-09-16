@@ -6,8 +6,11 @@ module Plether.Database.AaSponsorship
   , ensureAaSponsorshipSchema
   , reserveSponsorship
   , reserveSponsorshipWithAssistance
+  , reserveSponsorshipFenced
   , storeSponsorshipSignature
+  , storeSponsorshipSignatureFenced
   , isSponsorshipDeliveryAllowed
+  , isSponsorshipDeliveryAllowedFenced
   , markSponsorshipSubmitted
   , getSponsorshipByDigest
   , getSponsorshipByRequestKey
@@ -65,6 +68,7 @@ import Database.PostgreSQL.Simple.FromRow
   )
 import Database.PostgreSQL.Simple.ToRow (ToRow)
 import Plether.Config (NativeAaConfig (..))
+import qualified Plether.Database.AaPreparationRecovery as Recovery
 import Plether.Database.CloseAssistance
 import Text.Read (readMaybe)
 
@@ -877,20 +881,33 @@ reserveSponsorship conn cfg draft = reserveSponsorshipWithAssistance conn cfg dr
 reserveSponsorshipWithAssistance
   :: Connection -> NativeAaConfig -> SponsorshipDraft -> Maybe CloseAssistanceReservation
   -> IO (Either Text SponsorshipAuthorization)
-reserveSponsorshipWithAssistance conn cfg draft assistance = withTransaction conn $ do
+reserveSponsorshipWithAssistance conn cfg draft assistance = reserveSponsorshipFenced conn cfg draft assistance Nothing
+
+reserveSponsorshipFenced
+  :: Connection -> NativeAaConfig -> SponsorshipDraft -> Maybe CloseAssistanceReservation
+  -> Maybe Recovery.Fence -> IO (Either Text SponsorshipAuthorization)
+reserveSponsorshipFenced conn cfg draft assistance fence = withTransaction conn $ do
   acquireAaBudgetLock conn
-  pauseReason <- getAaIssuancePause conn
-  case pauseReason of
-    Just _ -> pure $ Left "PAYMASTER_PAUSED"
-    Nothing -> do
-      fresh <- aaReconcilerIsFresh conn cfg
-      wallClock <- currentWallClockSeconds conn
-      if fresh && sdValidUntil draft > wallClock + signatureValiditySafetySeconds
-        then reserveWhileUnpaused
-        else if not fresh
-          then pure $ Left "RECONCILER_STALE"
-          else pure $ Left "SPONSORSHIP_VALIDITY_TOO_SHORT"
+  valid <- maybe (pure True) (Recovery.fenceValid conn) fence
+  if not valid then pure $ Left "PREPARATION_LEASE_LOST" else do
+    result <- reserveChecked
+    case result of
+      Right authorization -> maybe (pure ()) (\f -> Recovery.linkAuthorization conn f $ saDigest authorization) fence
+      _ -> pure ()
+    pure result
  where
+  reserveChecked = do
+    pauseReason <- getAaIssuancePause conn
+    case pauseReason of
+      Just _ -> pure $ Left "PAYMASTER_PAUSED"
+      Nothing -> do
+        fresh <- aaReconcilerIsFresh conn cfg
+        wallClock <- currentWallClockSeconds conn
+        if fresh && sdValidUntil draft > wallClock + signatureValiditySafetySeconds
+          then reserveWhileUnpaused
+          else if not fresh
+            then pure $ Left "RECONCILER_STALE"
+            else pure $ Left "SPONSORSHIP_VALIDITY_TOO_SHORT"
   reserveWhileUnpaused = do
     existing <- getSponsorshipByRequestKey conn (sdRequestKey draft)
     case existing of
@@ -967,16 +984,23 @@ reserveSponsorshipWithAssistance conn cfg draft assistance = withTransaction con
               =<< getSponsorshipByDigest conn (sdDigest draft)
 
 storeSponsorshipSignature :: Connection -> NativeAaConfig -> Text -> Text -> Text -> IO Bool
-storeSponsorshipSignature conn cfg digest signature expectedUserOperationHash = withTransaction conn $ do
+storeSponsorshipSignature conn cfg digest signature expectedUserOperationHash = storeSponsorshipSignatureFenced conn cfg digest signature expectedUserOperationHash Nothing
+
+storeSponsorshipSignatureFenced :: Connection -> NativeAaConfig -> Text -> Text -> Text -> Maybe Recovery.Fence -> IO Bool
+storeSponsorshipSignatureFenced conn cfg digest signature expectedUserOperationHash fence = withTransaction conn $ do
   acquireAaBudgetLock conn
+  registryActive <- Recovery.deliveryActive conn digest
+  validFence <- maybe (pure True) (Recovery.fenceValid conn) fence
+  let active = registryActive && validFence
+  when active $ maybe (pure ()) (\f -> Recovery.linkAuthorization conn f digest) fence
   pauseReason <- getAaIssuancePause conn
-  case pauseReason of
-    Just _ -> pure False
-    Nothing -> do
+  case (active, pauseReason) of
+    (True, Nothing) -> do
       fresh <- aaReconcilerIsFresh conn cfg
       if not fresh
         then pure False
         else storeWhileFresh
+    _ -> pure False
  where
   storeWhileFresh = do
     affected <- execute conn
@@ -1011,12 +1035,18 @@ storeSponsorshipSignature conn cfg digest signature expectedUserOperationHash = 
           existing
 
 isSponsorshipDeliveryAllowed :: Connection -> NativeAaConfig -> Text -> IO Bool
-isSponsorshipDeliveryAllowed conn cfg digest = withTransaction conn $ do
+isSponsorshipDeliveryAllowed conn cfg digest = isSponsorshipDeliveryAllowedFenced conn cfg digest Nothing
+
+isSponsorshipDeliveryAllowedFenced :: Connection -> NativeAaConfig -> Text -> Maybe Recovery.Fence -> IO Bool
+isSponsorshipDeliveryAllowedFenced conn cfg digest fence = withTransaction conn $ do
   acquireAaBudgetLock conn
+  registryActive <- Recovery.deliveryActive conn digest
+  validFence <- maybe (pure True) (Recovery.fenceValid conn) fence
+  let active = registryActive && validFence
+  when active $ maybe (pure ()) (\f -> Recovery.linkAuthorization conn f digest) fence
   pauseReason <- getAaIssuancePause conn
-  case pauseReason of
-    Just _ -> pure False
-    Nothing -> do
+  case (active, pauseReason) of
+    (True, Nothing) -> do
       rows <- query conn
         "SELECT EXISTS (SELECT 1 FROM aa_sponsorship_authorizations a \
         \WHERE a.digest=? AND a.state IN ('reserved','signed','submitted') \
@@ -1033,6 +1063,7 @@ isSponsorshipDeliveryAllowed conn cfg digest = withTransaction conn $ do
       case rows of
         [Only allowed] -> pure allowed
         _ -> fail "sponsorship delivery authorization query returned an invalid row count"
+    _ -> pure False
 
 markSponsorshipSubmitted :: Connection -> Text -> Text -> Text -> IO Bool
 markSponsorshipSubmitted conn digest userOperationHash clientKey = withTransaction conn $ do
