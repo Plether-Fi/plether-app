@@ -5,6 +5,7 @@ import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl } fr
 import { eligibilityPresentation } from '../utils/eligibility'
 import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { TradeBreakdown, TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
+import { ClosedPositionBreakdown } from '../components/ClosedPositionBreakdown'
 import { calculatePnlBreakdown } from '../utils/pnl'
 
 const ARBITRUM_SEPOLIA_EXPLORER = 'https://sepolia.arbiscan.io'
@@ -65,7 +66,7 @@ function ActivityTable({ activity, activityStatus }: {
 
   return (
     <>
-      <p className="px-5 py-3 text-xs leading-5 text-content-secondary">Protocol fees are assessed amounts from executed receipts. VPI is shown before fees and settlement adjustments. Directional realized P&amp;L excludes costs. Expand a trade to see its actual account change.</p>
+      <p className="px-5 py-3 text-xs leading-5 text-content-secondary">Protocol fees are assessed amounts from executed receipts. VPI is shown before fees and settlement adjustments. Directional realized P&amp;L excludes costs. Open a breakdown to see exact amounts and actual account change.</p>
       <div className="activity-table-desktop overflow-x-auto">
         <table className="w-full min-w-[980px] border-collapse text-left">
           <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">plDXY price</th><th className="px-3 py-3 text-right">Protocol fee assessed</th><th className="px-3 py-3 text-right">VPI</th><th className="px-5 py-3 text-right">Directional realized P&amp;L</th></tr></thead>
@@ -83,7 +84,9 @@ function ActivityTable({ activity, activityStatus }: {
                   <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <TradeVpi item={item} /> : '—'}</td>
                   <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
                 </tr>
-                {showTradeCosts && <tr><td colSpan={8} className="p-0"><TradeBreakdown item={item} /></td></tr>}
+                {showTradeCosts && <tr><td colSpan={8} className="p-0">{item.type.toLowerCase() === 'close'
+                  ? <div className="px-5 py-3"><ClosedPositionBreakdown item={item} /></div>
+                  : <TradeBreakdown item={item} />}</td></tr>}
                 </Fragment>
               )
             })}
@@ -103,7 +106,9 @@ function ActivityTable({ activity, activityStatus }: {
                   <div className="text-right"><dt className="text-content-tertiary">VPI</dt><dd className="mt-1 font-semibold"><TradeVpi item={item} /></dd></div>
                 </dl>
               ) : null}
-              {showTradeCosts && <div className="mt-3 -mx-4"><TradeBreakdown item={item} /></div>}
+              {showTradeCosts && (item.type.toLowerCase() === 'close'
+                ? <div className="mt-3"><ClosedPositionBreakdown item={item} /></div>
+                : <div className="mt-3 -mx-4"><TradeBreakdown item={item} /></div>)}
             </div>
           )
         })}

@@ -151,7 +151,9 @@ describe('WalletPage activity costs', () => {
     expect(within(closeRow).getByText('Rebate 1,755.48 USDC')).toHaveClass('text-positive')
     expect(within(depositRow).queryByText('866.45 USDC')).not.toBeInTheDocument()
     expect(screen.getAllByText('Fee deducted from rebate').length).toBeGreaterThanOrEqual(2)
-    expect(screen.getAllByText('Trade breakdown')).toHaveLength(4)
+    expect(screen.getAllByText('Trade breakdown')).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'View breakdown' })).toHaveLength(2)
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   })
 
   it('explains that live activity is intentionally omitted after finalization', () => {
