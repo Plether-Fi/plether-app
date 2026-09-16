@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
+import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
+import deployedManifest from '../../../public/perps-aa-manifest.json'
 
 const identityMocks = vi.hoisted(() => ({
   ownerAddress: '0x1111111111111111111111111111111111111111',
@@ -144,6 +146,27 @@ describe('SponsoredOperationHistoryButton', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('keeps owner recovery visible after signed-attempt discovery retries are exhausted', async () => {
+    const saved = { ...operation({ id: 'signed-recovery', action: 'place-order', status: 'outcome-unknown',
+      updatedAt: Date.now(), userOperationHash: USER_OPERATION_HASH }),
+      nativePreparation: { version: 1, manifest: deployedManifest, preparationId: 'signed-recovery', action: { kind: 'place-order', calls: [] } },
+    } as unknown as SponsoredOperation
+    useSponsoredOperationStore.setState({ operations: [saved] })
+    const verify = vi.fn()
+    const runtime = { chainId: identityMocks.chainId, ownerAddress: identityMocks.ownerAddress,
+      smartAccount: { accountAddress: identityMocks.accountAddress, getPreparationStatus: vi.fn().mockRejectedValue(new Error('unavailable')) },
+      preparationRecovery: { verify },
+    } as unknown as PerpsAaSmartAccountRuntime
+    render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Trading Account activity. 1 action needs attention.' }))
+    await act(async () => {})
+    expect(screen.getByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    expect(verify).not.toHaveBeenCalled()
+    act(() => { useSponsoredOperationStore.setState({ operations: [{ ...saved, status: 'expired' }] }) })
+    expect(screen.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
   })
 
   it.each([

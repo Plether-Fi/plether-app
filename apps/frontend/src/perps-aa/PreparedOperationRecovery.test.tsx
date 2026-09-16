@@ -153,6 +153,25 @@ describe('visible preparation recovery', () => {
     expect(verify).not.toHaveBeenCalled()
     view.unmount()
   })
+  it('offers owner verification for a signed attempt even when the status error has no reason', async () => {
+    const verify = vi.fn(async () => {})
+    const hash = `0x${'a'.repeat(64)}` as `0x${string}`
+    const check = vi.fn(async () => ({ ...status, userOperationHash: hash, phase: 'resolved', authorizationState: 'expired', recoverable: false, canRetire: true }))
+    const runtime = { smartAccount: { getPreparationStatus: vi.fn().mockRejectedValue(new Error('unavailable')) },
+      preparationRecovery: { verify, status: check } } as unknown as PerpsAaSmartAccountRuntime
+    const view = render(<PerpsAaRuntimeContext value={runtime}><PreparedOperationRecovery operation={{
+      ...operation, userOperationHash: hash, status: 'receipt-timeout',
+    }} /></PerpsAaRuntimeContext>)
+    await act(async () => {})
+    expect(screen.getByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+    expect(verify).not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
+    expect(check).toHaveBeenCalledWith(operation.id)
+    expect(screen.getByText(/Checking the signed transaction against the chain/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    expect(resume).not.toHaveBeenCalled()
+    view.unmount()
+  })
   it('tracks ambiguous outcomes and never offers to resume an arbitrary match', async () => {
     const hash = `0x${'1'.repeat(64)}`
     const recovery = { verify: vi.fn(async () => {}), status: vi.fn(async () => ({ version: 1, recoveryState: 'ambiguous',

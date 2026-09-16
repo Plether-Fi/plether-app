@@ -44,6 +44,13 @@ describe('wallet preparation recovery', () => {
   it('does not report an arbitrary error reason as a support code', () => {
     expect(recoveryReason({ reason: 'secret wallet contents', cause: { code: 4001 } })).toBe('WALLET_SIGNATURE_DECLINED')
   })
+  it.each([
+    'RECOVERY_VERIFICATION_REQUIRED',
+    '{"data":{"reason":"secret wallet contents"}}',
+    'x'.repeat(8_193),
+  ])('ignores unstructured, sensitive, or oversized HTTP details', details => {
+    expect(recoveryReason({ name: 'HttpRequestError', details })).toBeUndefined()
+  })
   it('only signs after explicit verification and sends the scoped session on recovery requests', async () => {
     const { api, sign, calls } = setup()
     expect(sign).not.toHaveBeenCalled()

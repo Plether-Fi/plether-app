@@ -193,8 +193,11 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
         return <p key={hash} className="break-all">{label}: <code>{hash}</code></p>
       })}
     </>}
-    {walletRecovery && !verified && (!operation.userOperationHash || walletRequired) && <div>
-      <p>Verify ownership with a gas-free wallet message to check or discard this saved attempt.</p>
+    {walletRecovery && !verified && (!operation.userOperationHash || walletRequired
+      || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown') && <div>
+      <p>{operation.userOperationHash
+        ? 'Verify ownership with a gas-free wallet message to restore status checks for this signed attempt. This does not submit it again.'
+        : 'Verify ownership with a gas-free wallet message to check or discard this saved attempt.'}</p>
       <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => {
         setWorking(true); setError(undefined)
         void walletRecovery.verify(operation.id).then(() => {
@@ -209,7 +212,9 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     {waiting && <><p>Waiting for sponsorship reservation to clear</p><p>Authorization expiry and safe reconciliation are separate. Clearance depends on verified chain progress.</p></>}
     {status?.phase === 'expiry-awaiting-reconciliation' && !waiting && <p>The authorization expired. Checking safe chain evidence before resolving the operation.</p>}
     {safelyResolved && <p>{status.authorizationState === 'expired'
-      ? 'The unused sponsorship has safely expired.' : 'The original sponsorship has been safely resolved.'} Discard this saved attempt to unlock a fresh action.
+      ? 'The unused sponsorship has safely expired.' : 'The original sponsorship has been safely resolved.'} {operation.userOperationHash
+        ? 'Checking the signed transaction against the chain before unlocking a fresh action.'
+        : 'Discard this saved attempt to unlock a fresh action.'}
       {operation.action === 'cancel-protection' && ' Discarding does not cancel TP/SL onchain.'}</p>}
     {!safelyResolved && status?.reason === 'PREPARATION_UNUSABLE' && <p>This preparation cannot be resumed. Check recovery to discard it when available.</p>}
     {status?.reason === 'INTENT_ALREADY_COMMITTED' && <p>This intent was already committed. Check order activity before reviewing a new action.</p>}
