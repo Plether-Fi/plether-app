@@ -10,6 +10,7 @@ import {
   getWallet,
   InsightsApiError,
 } from './client'
+import rebate from '../../../../scripts/fixtures/insights-close-rebate.json'
 import type { Competition } from './types'
 
 const competition: Competition = {
@@ -273,6 +274,18 @@ describe('Insights API client', () => {
       executionFee: '1765060537',
       vpi: '4854090357',
     })
+  })
+
+  it('preserves receipt economics independently of the legacy preview fee', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      competition,
+      wallet: { wallet: '0x1111111111111111111111111111111111111111', activeDays: 1, liquidations: 0 },
+      activity: [{ activityType: 'Close', occurredAt: '2026-09-15T02:27:59Z', executionFeeUsdc: '0', execution: rebate.execution }],
+    }), { status: 200 })))
+    const response = await getWallet(competition.slug, '0x1111111111111111111111111111111111111111')
+    expect(response.activity?.[0].executionFee).toBe('0')
+    expect(response.activity?.[0].execution).toEqual(rebate.execution)
+    expect(response.activity?.[0].execution?.receipt.executionFeeUsdc).toBe('866453105')
   })
 
   it('normalizes protocol-fee aliases and signed close VPI', async () => {

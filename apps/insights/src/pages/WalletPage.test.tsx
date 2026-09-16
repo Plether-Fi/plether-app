@@ -1,6 +1,8 @@
 import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import waiver from '../../../../scripts/fixtures/insights-close-waiver.json'
+import rebate from '../../../../scripts/fixtures/insights-close-rebate.json'
 import { WalletPage } from './WalletPage'
 
 const apiMocks = vi.hoisted(() => ({
@@ -55,6 +57,7 @@ beforeEach(() => {
       activity: [
         {
           id: 'open',
+          execution: { ...waiver.execution, receipt: { ...waiver.execution.receipt, realizedPnlUsdc: '0' } },
           type: 'Open',
           occurredAt: '2026-07-20T12:00:00Z',
           market: 'DXY',
@@ -69,6 +72,7 @@ beforeEach(() => {
         },
         {
           id: 'close',
+          execution: rebate.execution,
           type: 'Close',
           occurredAt: '2026-07-20T13:00:00Z',
           market: 'DXY',
@@ -130,7 +134,7 @@ describe('WalletPage activity costs', () => {
     }
   })
 
-  it('shows protocol fee and signed VPI on trade rows', () => {
+  it('shows assessed receipt fees and explicit VPI labels on desktop and mobile', () => {
     render(
       <MemoryRouter initialEntries={[`/competitions/testnet-trading-2026/wallets/${address}`]}>
         <Routes>
@@ -139,17 +143,15 @@ describe('WalletPage activity costs', () => {
       </MemoryRouter>,
     )
 
-    const [headerRow, openRow, closeRow, depositRow] = screen.getAllByRole('row')
-    expect(within(headerRow).getByText('Protocol fee')).toBeInTheDocument()
-    expect(within(headerRow).getByText('VPI')).toHaveAttribute(
-      'title',
-      'Positive VPI is a charge; negative VPI is a rebate.',
-    )
-    expect(within(openRow).getByText('1,765.06 USDC')).toBeInTheDocument()
-    expect(within(openRow).getByText('+4,854.09 USDC')).toHaveClass('text-brand-orange')
-    expect(within(closeRow).getByText('11.28 USDC')).toBeInTheDocument()
-    expect(within(closeRow).getByText('-30.99 USDC')).toHaveClass('text-positive')
-    expect(within(depositRow).queryByText('11.28 USDC')).not.toBeInTheDocument()
+    const [headerRow, openRow, , closeRow, , depositRow] = screen.getAllByRole('row')
+    expect(within(headerRow).getByText('Protocol fee assessed')).toBeInTheDocument()
+    expect(within(openRow).getByText('1,105.09 USDC')).toBeInTheDocument()
+    expect(within(openRow).getByText('Charge 6,708.30 USDC')).toHaveClass('text-brand-orange')
+    expect(within(closeRow).getByText('866.45 USDC')).toBeInTheDocument()
+    expect(within(closeRow).getByText('Rebate 1,755.48 USDC')).toHaveClass('text-positive')
+    expect(within(depositRow).queryByText('866.45 USDC')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Fee deducted from rebate').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText('Trade breakdown')).toHaveLength(4)
   })
 
   it('explains that live activity is intentionally omitted after finalization', () => {

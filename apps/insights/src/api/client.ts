@@ -111,6 +111,7 @@ interface WirePosition {
 }
 
 interface WireActivity {
+  execution?: WalletActivity['execution']
   id?: string
   type?: string
   activityType?: string
@@ -488,6 +489,7 @@ function normalizeActivity(raw: WireActivity): WalletActivity {
     sizeDelta,
     price: normalizePrice(priceRaw),
     pnl: raw.pnl ?? raw.pnlUsdc ?? null,
+    execution: raw.execution ?? null,
     executionFee:
       raw.executionFee
       ?? raw.executionFeeUsdc
