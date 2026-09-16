@@ -7,6 +7,35 @@ on:
     branches: [master, main]
 
 jobs:
+  faucet-recovery:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: faucet_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/backend/oracle-worker/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: apps/backend/oracle-worker
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify nonce recovery proofs and atomic database recovery
+        run: node --test apps/backend/scripts/recover-faucet-nonce.test.mjs
+        env:
+          FAUCET_NODE_PACKAGE: ${{ github.workspace }}/apps/backend/oracle-worker/package.json
+          FAUCET_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test
+
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -33,6 +62,12 @@ jobs:
         with:
           terraform_version: 1.16.1
           terraform_wrapper: false
+
+      - name: Test mocked Sepolia deployment and signer isolation guards
+        working-directory: .
+        run: |
+          terraform -chdir=infra/terraform init -backend=false -input=false
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-core-v1.2.3.tfvars.json -no-color
 
       - name: Test AA RPC deployment mode guards
         env:

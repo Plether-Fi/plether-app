@@ -94,6 +94,22 @@ describe('automatic testnet funding', () => {
     expect(mocks.deposit).not.toHaveBeenCalled()
   })
 
+  it('preserves a timed-out claim and checks the backend again only on manual retry', async () => {
+    mocks.receipt.mockRejectedValueOnce(new Error('RPC raw timeout details'))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(result.current.error).toContain('Your claim is saved. Use Check confirmation')
+    expect(result.current.error).not.toContain('RPC raw')
+    expect(result.current.claim?.txHash).toBe(`0x${'a'.repeat(64)}`)
+    expect(mocks.deposit).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+    expect(mocks.claim).toHaveBeenCalledTimes(1)
+    mocks.claim.mockResolvedValue(funding('submitted', { txHash: `0x${'b'.repeat(64)}` }))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(mocks.receipt).toHaveBeenLastCalledWith({ hash: `0x${'b'.repeat(64)}`, timeout: 120_000 })
+    expect(mocks.deposit).toHaveBeenCalledTimes(1)
+  })
+
   it('does not deposit after a reverted faucet transaction', async () => {
     mocks.receipt.mockResolvedValue({ status: 'reverted' })
     const { result } = renderHook(() => useTestnetFunding(account, true))
