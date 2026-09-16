@@ -164,6 +164,24 @@ describe('deployment confirmation preparation gate', () => {
     stop()
   })
 
+  it('migrates the legacy wait once without resurrecting it after confirmation', async () => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>([['plether:deployment-confirmation:v1:legacy', 'waiting']])
+    const persistence = { scope: 'paymaster-scope', legacyScope: 'legacy', storage: () => ({ getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }) }
+    const check = vi.fn(async () => true)
+    const run = createDeploymentConfirmationGate(check, () => Date.now(), persistence)
+    expect(run.getSnapshot()).toBe('waiting')
+    expect(values.has('plether:deployment-confirmation:v1:legacy')).toBe(false)
+    const stop = run.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run.getSnapshot()).toBe('ready')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(createDeploymentConfirmationGate(check, () => Date.now(), persistence).getSnapshot()).toBe('idle')
+    stop()
+  })
+
   it('ignores an in-flight confirmation after the saved scope unmounts', async () => {
     vi.useFakeTimers()
     let complete!: (ready: boolean) => void

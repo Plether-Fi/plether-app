@@ -420,6 +420,8 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager currentCli
           claimed <- liftDb $ withDb pool $ \conn -> RecoveryDb.beginPreparation conn scope token
           case claimed of
             Left _ -> Legacy.respondFailure requestId databaseUnavailable
+            Right (Left "PREPARATION_RETIRED") -> Legacy.respondFailure requestId $
+              Legacy.ProxyFailure status403 (-32001) "This preparation was retired and cannot be reused" "PREPARATION_RETIRED" False
             Right (Left reason) -> Legacy.respondFailure requestId $ Legacy.unavailable reason "Preparation cannot currently be resumed"
             Right (Right fence) -> do
               prepareNativeOperationFenced (gatewayState { ngsPreparationFence = Just fence }) cfg nativeCfg pool client manager clientKey request

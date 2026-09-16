@@ -34,7 +34,8 @@ export function createDeploymentConfirmationGate(
   const storage = () => persistence?.storage ? persistence.storage() : window.localStorage
   let details: DeploymentConfirmationDetails = { status: 'idle' }
   try {
-    const saved = key && (storage().getItem(key) ?? (persistence?.legacyScope ? storage().getItem(`plether:deployment-confirmation:v1:${persistence.legacyScope.toLowerCase()}`) : null))
+    const legacyKey = persistence?.legacyScope ? `plether:deployment-confirmation:v1:${persistence.legacyScope.toLowerCase()}` : undefined
+    const saved = key && (storage().getItem(key) ?? (legacyKey ? storage().getItem(legacyKey) : null))
     if (saved === 'waiting') details = { status: 'waiting', waitingSince: Date.now() }
     else if (saved) {
       const parsed = JSON.parse(saved) as { waitingSince?: unknown }
@@ -42,6 +43,10 @@ export function createDeploymentConfirmationGate(
         && parsed.waitingSince > 0 && parsed.waitingSince <= Date.now()) {
         details = { status: 'waiting', waitingSince: parsed.waitingSince }
       }
+    }
+    if (key && legacyKey && key !== legacyKey && confirmationPending(details.status)) {
+      storage().setItem(key, JSON.stringify({ waitingSince: details.waitingSince }))
+      storage().removeItem(legacyKey)
     }
   } catch { /* Advisory persistence must not block recovery. */ }
   const listeners = new Set<() => void>()
