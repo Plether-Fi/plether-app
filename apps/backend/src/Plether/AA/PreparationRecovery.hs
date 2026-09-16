@@ -1,5 +1,6 @@
 module Plether.AA.PreparationRecovery
   ( parseRecoveryRequest, requiredText, renderChallenge, randomToken, tokenHash
+  , PreparationClientRecovery (..), selectPreparationClient
   ) where
 
 import Control.Monad (unless)
@@ -51,3 +52,15 @@ randomToken = TE.decodeUtf8 . B16.encode <$> (getRandomBytes 32 :: IO ByteString
 
 tokenHash :: Text -> Text
 tokenHash token = TE.decodeUtf8 $ B16.encode (convert (hash $ TE.encodeUtf8 token :: Digest SHA256) :: ByteString)
+
+-- A verified missing preparation can retry its original ID in the current
+-- namespace. A known historical match must retain its original namespace.
+data PreparationClientRecovery = ClientAllowed Text | ClientProofRequired Text | ClientAmbiguous
+  deriving stock (Eq, Show)
+
+selectPreparationClient :: Text -> Bool -> [(Text,Maybe Text,Bool)] -> PreparationClientRecovery
+selectPreparationClient current supplied matches = case matches of
+  [] -> if supplied then ClientProofRequired current else ClientAllowed current
+  [(client,_,_)] | client == current && not supplied -> ClientAllowed current
+  [(client,_,True)] -> ClientProofRequired client
+  _ -> ClientAmbiguous

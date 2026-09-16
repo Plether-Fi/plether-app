@@ -43,3 +43,10 @@ spec = describe "owner-scoped preparation recovery protocol" $ do
           renderChallenge "https://testnet.plether.com" (scope { scopeChain = 1 }) owner "nonce" 123,
           renderChallenge "https://testnet.plether.com" (scope { scopePaymaster = sender }) owner "nonce" 123]
     mapM_ (\value -> recoverPersonalSignAddress value signature >>= (`shouldNotBe` Right owner)) altered
+  it "allows verified missing attempts to retry while preserving original historical namespaces" $ do
+    selectPreparationClient "new-ip" True [] `shouldBe` ClientProofRequired "new-ip"
+    selectPreparationClient "new-ip" False [] `shouldBe` ClientAllowed "new-ip"
+    selectPreparationClient "new-ip" True [("old-ip",Nothing,True)] `shouldBe` ClientProofRequired "old-ip"
+    selectPreparationClient "new-ip" False [("old-ip",Nothing,True)] `shouldBe` ClientProofRequired "old-ip"
+    selectPreparationClient "new-ip" True [("old-ip",Nothing,False)] `shouldBe` ClientAmbiguous
+    selectPreparationClient "new-ip" True [("old-ip",Nothing,True),("other-ip",Nothing,True)] `shouldBe` ClientAmbiguous

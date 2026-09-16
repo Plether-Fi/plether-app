@@ -2205,12 +2205,12 @@ preparationRecoveryClient cfg pool scope current = do
   supplied <- header "X-Plether-AA-Preparation-Recovery"
   case matches of
     Left _ -> pure $ Left databaseUnavailable
-    Right [] | supplied == Nothing -> pure $ Right current
-    Right [(client,_,_)] | client == current && supplied == Nothing -> pure $ Right current
-    Right [(client,_,True)] -> do
-      verified <- recoverySessionOwner pool scope
-      pure $ client <$ verified
-    _ -> pure $ Left recoveryDenied
+    Right records -> case Recovery.selectPreparationClient current (supplied /= Nothing) records of
+      Recovery.ClientAllowed client -> pure $ Right client
+      Recovery.ClientProofRequired client -> do
+        verified <- recoverySessionOwner pool scope
+        pure $ client <$ verified
+      Recovery.ClientAmbiguous -> pure $ Left recoveryDenied
 
 handlePreparationRecovery
   :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
