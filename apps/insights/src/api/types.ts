@@ -109,6 +109,22 @@ export interface WalletDetails extends Standing {
   position: WalletPosition | null
 }
 
+export interface TradeSettlement {
+  protocolFeeCollectedUsdc?: string
+  kind: 'ActionChargeSettled' | 'ActionRebateSettled' | 'FrozenCloseSpreadSettled'
+  assessedUsdc: string
+  recoveredUsdc: string
+  waivedUsdc: string
+}
+
+export interface TradeExecution {
+  orderId: string
+  protocolVersion: string
+  status: 'pending' | 'complete'
+  receipt: Record<string, string>
+  settlements: TradeSettlement[]
+}
+
 export interface WalletActivity {
   id: string
   type: string
@@ -119,6 +135,7 @@ export interface WalletActivity {
   sizeDelta: string | null
   price: string | null
   pnl: UsdcUnits | null
+  execution?: TradeExecution | null
   executionFee: UsdcUnits | null
   vpi: UsdcUnits | null
   txHash: string | null
