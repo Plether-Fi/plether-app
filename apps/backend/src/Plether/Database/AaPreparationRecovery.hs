@@ -3,13 +3,19 @@
 module Plether.Database.AaPreparationRecovery
   ( Scope (..), Fence (..), recoveryLock, beginPreparation, releasePreparation
   , fenceValid, bindDeployment, linkAuthorization, deliveryActive, retirePreparation
-  , matchingPreparations, operationOutcomes, registryRetired, retirementReason, saveChallenge, saveChallengeAt, readChallenge
+  , matchingPreparations, bindHistoricalAuthorizations, operationOutcomes, registryRetired, retirementReason, saveChallenge, saveChallengeAt, readChallenge
   , consumeChallenge, sessionOwner, sessionSubmissionClient
   ) where
 
-import Control.Monad (void)
-import Data.Aeson (Value)
+import Control.Monad (void, forM_, when)
+import Data.Aeson (Value(..))
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
+import qualified Data.Text.Encoding as TE
+import Plether.Config (NativeAaConfig)
+import qualified Plether.AA.Paymaster as Paymaster
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple
 
@@ -82,6 +88,27 @@ matchingPreparations :: Connection -> Scope -> Text -> IO [(Text,Maybe Text,Bool
 matchingPreparations conn (Scope chain paymaster sender identifier) router = query conn
   "SELECT p.client_key,a.expected_user_operation_hash,(p.diagnostic_chain_id=? AND p.diagnostic_deployment=? AND p.recovery_paymaster=?) IS TRUE FROM aa_preparations p LEFT JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest WHERE p.sender=? AND p.preparation_id=? ORDER BY p.client_key LIMIT 21"
   (chain,router,paymaster,sender,identifier)
+
+-- Old authorization payloads intentionally omitted paymaster/paymasterData.
+-- Prove their deployment by recomputing the stored EIP-712 digest, never by
+-- assigning the current paymaster merely because the account/ID matches.
+-- Call only after owner-session verification. Unknown profiles stay unresolved.
+bindHistoricalAuthorizations :: Connection -> NativeAaConfig -> Scope -> Text -> IO ()
+bindHistoricalAuthorizations conn cfg scope@(Scope chain paymaster sender identifier) router = withTransaction conn $ do
+  recoveryLock conn
+  rows <- query conn
+    "SELECT p.client_key,a.digest,a.valid_after,a.valid_until,a.max_cost_wei::text,a.operation FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest AND a.client_key=p.client_key AND a.sender=p.sender WHERE p.sender=? AND p.preparation_id=? AND p.recovery_paymaster IS NULL AND p.diagnostic_chain_id=? AND p.diagnostic_deployment=? ORDER BY p.client_key LIMIT 21"
+    (sender,identifier,chain,router) :: IO [(Text,Text,Integer,Integer,Text,Value)]
+  forM_ rows $ \(client,digest,validAfter,validUntil,cost,payload) -> case payload of
+    Object fields | [(maxCost,"")] <- reads $ T.unpack cost,
+      Right operation <- Paymaster.parsePackedUserOperation fields -> do
+        let envelope = Paymaster.makeSponsorshipEnvelope cfg validAfter validUntil maxCost BS.empty
+            verifiedDigest = "0x" <> TE.decodeUtf8 (B16.encode $ Paymaster.sponsorshipDigest operation envelope)
+        when (Paymaster.puoSender operation == sender && verifiedDigest == digest && T.toLower (Paymaster.sePaymaster envelope) == paymaster) $ do
+          ensureRegistry conn scope
+          void $ execute conn "UPDATE aa_preparations SET recovery_paymaster=? WHERE client_key=? AND sender=? AND preparation_id=? AND recovery_paymaster IS NULL" (paymaster,client,sender,identifier)
+          void $ execute conn "INSERT INTO aa_preparation_authorizations(chain_id,paymaster,sender,preparation_id,digest) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING" (chain,paymaster,sender,identifier,digest)
+    _ -> pure ()
 
 -- Bounded durable outcomes; only finalized events are presented as settled.
 operationOutcomes :: Connection -> Scope -> IO [Value]

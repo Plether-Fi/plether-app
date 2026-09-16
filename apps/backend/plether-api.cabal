@@ -500,6 +500,8 @@ test-suite plether-aa-integration-test
         plether-api,
         hspec >= 2.11,
         aeson >= 2.1,
+        bytestring >= 0.11,
+        base16-bytestring >= 1.0,
         async >= 2.2,
         postgresql-simple >= 0.7,
         text >= 2.0,

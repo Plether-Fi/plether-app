@@ -67,6 +67,10 @@ Lost responses can be retried: retirement is idempotent.
    role apply `apps/backend/config/migrations/aa-preparation-recovery-v1.sql`
    after existing preparation and observability migrations. It preserves old
    rows and backfills only paymasters supported by durable authorization data.
+   Old unsigned authorization payloads omit the paymaster. After owner
+   verification, recovery recomputes their persisted EIP-712 sponsorship digest
+   under the configured deployment before binding and linking them. This is
+   limited to 21 matches and requires the recorded chain/router to agree.
    Unknown bindings remain null and cannot be discarded through recovery.
 3. Grant the existing API database role SELECT/INSERT/UPDATE on
    `aa_preparation_registry` and `aa_preparation_authorizations`, and

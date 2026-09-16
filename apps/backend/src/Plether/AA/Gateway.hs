@@ -2275,36 +2275,41 @@ handlePreparationRecovery state cfg native pool client manager clientKey request
             authorized <- recoverySessionOwner pool scope
             case authorized of
               Left failure -> Legacy.respondFailure requestId failure
-              Right _ -> case method of
-                Legacy.RetirePreparation | ngsRetirementEnabled state -> do
-                  result <- liftDb $ withDb pool $ \conn -> RecoveryDb.retirePreparation conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
-                  case result of
-                    Left _ -> Legacy.respondFailure requestId databaseUnavailable
-                    Right (Left reason) -> respondRecoveryState "unresolved" reason False []
-                    Right (Right ()) -> do
-                      liftIO $ logInfo "aa_preparation_retired" "Saved preparation safely retired" [field "stage" ("recovery"::Text),field "attempt_id" (ngsAttemptId state)]
-                      respondRecoveryState "retired" "PREPARATION_RETIRED" False []
-                Legacy.RetirePreparation -> respondRecoveryState "unresolved" "RECOVERY_RETIREMENT_DISABLED" False []
-                _ -> do
-                  result <- liftDb $ withDb pool $ \conn -> do
-                    retired <- RecoveryDb.registryRetired conn scope
-                    matches <- RecoveryDb.matchingPreparations conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
-                    reason <- RecoveryDb.retirementReason conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
-                    pure (retired,matches,reason)
-                  case result of
-                    Left _ -> Legacy.respondFailure requestId databaseUnavailable
-                    Right (True,_,_) -> respondRecoveryState "retired" "PREPARATION_RETIRED" False []
-                    Right (False,matches,reason) -> do
-                      let canRetire = ngsRetirementEnabled state && reason == Nothing
-                          hashes = [h | (_,Just h,_) <- take 20 matches]
-                      case matches of
-                        [] -> case reason of
-                          Just why -> respondRecoveryState "unresolved" why False []
-                          Nothing -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
-                        [(originalClient,_,True)] -> preparationStatusWithRecovery (Just canRetire) native pool client manager originalClient request
-                        _ | any (\(_,_,bound) -> not bound) matches -> respondRecoveryState "unresolved" "RECOVERY_BINDING_UNRESOLVED" False hashes
-                          | otherwise -> respondRecoveryState "ambiguous" "RECOVERY_MULTIPLE_PREPARATIONS" canRetire hashes
+              Right _ -> do
+                historical <- liftDb $ withDb pool $ \conn -> RecoveryDb.bindHistoricalAuthorizations conn native scope (T.toLower $ cfgPerpsOrderRouter cfg)
+                case historical of
+                  Left _ -> Legacy.respondFailure requestId databaseUnavailable
+                  Right () -> handleVerified scope
  where
+  handleVerified scope = case method of
+    Legacy.RetirePreparation | ngsRetirementEnabled state -> do
+      result <- liftDb $ withDb pool $ \conn -> RecoveryDb.retirePreparation conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+      case result of
+        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+        Right (Left reason) -> respondRecoveryState "unresolved" reason False []
+        Right (Right ()) -> do
+          liftIO $ logInfo "aa_preparation_retired" "Saved preparation safely retired" [field "stage" ("recovery"::Text),field "attempt_id" (ngsAttemptId state)]
+          respondRecoveryState "retired" "PREPARATION_RETIRED" False []
+    Legacy.RetirePreparation -> respondRecoveryState "unresolved" "RECOVERY_RETIREMENT_DISABLED" False []
+    _ -> do
+      result <- liftDb $ withDb pool $ \conn -> do
+        retired <- RecoveryDb.registryRetired conn scope
+        matches <- RecoveryDb.matchingPreparations conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+        reason <- RecoveryDb.retirementReason conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+        pure (retired,matches,reason)
+      case result of
+        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+        Right (True,_,_) -> respondRecoveryState "retired" "PREPARATION_RETIRED" False []
+        Right (False,matches,reason) -> do
+          let canRetire = ngsRetirementEnabled state && reason == Nothing
+              hashes = [h | (_,Just h,_) <- take 20 matches]
+          case matches of
+            [] -> case reason of
+              Just why -> respondRecoveryState "unresolved" why False []
+              Nothing -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
+            [(originalClient,_,True)] -> preparationStatusWithRecovery (Just canRetire) native pool client manager originalClient request
+            _ | any (\(_,_,bound) -> not bound) matches -> respondRecoveryState "unresolved" "RECOVERY_BINDING_UNRESOLVED" False hashes
+              | otherwise -> respondRecoveryState "ambiguous" "RECOVERY_MULTIPLE_PREPARATIONS" canRetire hashes
   requestId = Legacy.rrId request
   method = Legacy.rrMethod request
   extra | method == Legacy.GetRecoveryChallenge = ["owner","origin"]

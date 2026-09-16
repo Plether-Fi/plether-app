@@ -7,6 +7,9 @@ import Control.Monad (void)
 import Data.Aeson (Value(..), object, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import Data.Int (Int64)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
+import qualified Plether.AA.Paymaster as Paymaster
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -149,6 +152,33 @@ aaIntegrationSpec databaseUrl =
         Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
         void $ execute_ conn "UPDATE aa_preparation_recovery_sessions SET expires_at=clock_timestamp()-interval '1 second'"
         Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
+
+    it "proves a historical omitted paymaster from its immutable sponsorship digest" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        let Object fields = object ["sender" .= addressOf '1', "nonce" .= ("0x7"::Text), "callData" .= ("0x"::Text),
+              "callGasLimit" .= ("0x1"::Text), "verificationGasLimit" .= ("0x1"::Text), "preVerificationGas" .= ("0x1"::Text),
+              "maxFeePerGas" .= ("0x1"::Text), "maxPriorityFeePerGas" .= ("0x1"::Text)]
+            Right operation = Paymaster.parsePackedUserOperation fields
+            envelope = Paymaster.makeSponsorshipEnvelope testConfig (now-30) (now+300) 1000 BS.empty
+            digest = "0x" <> TE.decodeUtf8 (B16.encode $ Paymaster.sponsorshipDigest operation envelope)
+            candidate = (draft '1' '2' '3' 7 1000 now) {sdDigest=digest,sdOperation=Object fields}
+            scope = Recovery.Scope chainId paymasterAddress (sdSender candidate) (hashOf '4')
+        _ <- reserveSponsorship conn testConfig candidate >>= expectAuthorization
+        _ <- claimPreparation conn True (sdClientKey candidate) (sdSender candidate) (hashOf '4') (hashOf '5') "worker"
+        bindPreparationDeployment conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker" chainId (addressOf '8') `shouldReturn` True
+        linkPreparation conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker" digest `shouldReturn` True
+        releasePreparation conn (sdClientKey candidate) (sdSender candidate) (hashOf '4') "worker"
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn (testConfig {naaPaymasterAddress=addressOf '9'}) (scope {Recovery.scopePaymaster=addressOf '9'}) (addressOf '8')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '9')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,False)]
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '8')
+        Recovery.bindHistoricalAuthorizations conn testConfig scope (addressOf '8')
+        Recovery.matchingPreparations conn scope (addressOf '8') `shouldReturn` [(sdClientKey candidate,Nothing,True)]
+        Recovery.retirePreparation conn scope (addressOf '8') `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
 
     it "binds new unsigned rows to their paymaster and preserves cross-IP ambiguity" $
       withFixture databaseUrl $ \conn -> do
