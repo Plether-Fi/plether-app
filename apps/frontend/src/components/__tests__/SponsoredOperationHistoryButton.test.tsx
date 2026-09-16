@@ -37,6 +37,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
 })
 
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+import { usePerpsUiStore } from '../../stores/perpsUiStore'
 import {
   createSponsoredOperationSignal,
   useSponsoredOperationStore,
@@ -122,6 +123,7 @@ function timestampForLabel(
 
 describe('SponsoredOperationHistoryButton', () => {
   beforeEach(() => {
+    usePerpsUiStore.setState({ activityRequest: null })
     globalThis.localStorage.clear()
     vi.stubGlobal('navigator', {
       locks: {
@@ -142,6 +144,17 @@ describe('SponsoredOperationHistoryButton', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it.each([
+    { chainId: 1 },
+    { accountAddress: OTHER_ACCOUNT },
+    { ownerAddress: OTHER_ACCOUNT },
+  ])('ignores an activity shortcut for another identity: %j', changedIdentity => {
+    usePerpsUiStore.getState().requestActivity({ ...identityMocks, operationId: 'other-wallet', ...changedIdentity })
+    render(<SponsoredOperationHistoryButton />)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(usePerpsUiStore.getState().activityRequest).toBeNull()
   })
 
   it('does not claim sponsorship for a failure before submission', () => {

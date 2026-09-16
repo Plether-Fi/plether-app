@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { PreparedOperationRecovery } from '../perps-aa/PreparedOperationRecovery'
 import { TradingStatus } from './TradingStatus'
 import { OperationDiagnostic } from './OperationDiagnostic'
@@ -659,7 +660,8 @@ function OperationHistoryItem({
 export function SponsoredOperationHistoryButton() {
   const identity = usePerpsIdentity()
   const operations = useSponsoredOperationStore((state) => state.operations)
-  const [openedActivity, setOpenedActivity] = useState<{
+  const activityRequest = usePerpsUiStore(state => state.activityRequest)
+  const [locallyOpenedActivity, setOpenedActivity] = useState<{
     identityKey: string
     attentionOperationIds: string[]
   } | null>(null)
@@ -668,6 +670,25 @@ export function SponsoredOperationHistoryButton() {
     : null
   const accountAddress = identity.accountAddress?.toLowerCase()
   const ownerAddress = identity.ownerAddress?.toLowerCase()
+  const requestedIdentityMatches = activityRequest !== null &&
+    activityRequest.chainId === identity.chainId &&
+    activityRequest.accountAddress.toLowerCase() === accountAddress &&
+    activityRequest.ownerAddress.toLowerCase() === ownerAddress
+  const openedActivity = requestedIdentityMatches && identityKey
+    ? { identityKey, attentionOperationIds: [activityRequest.operationId] }
+    : locallyOpenedActivity
+  useEffect(() => {
+    if (!activityRequest) return
+    if (!requestedIdentityMatches) {
+      usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
+      return
+    }
+    const store = useSponsoredOperationStore.getState()
+    const operation = store.operations.find(item => item.id === activityRequest.operationId)
+    if (operation && isUnreviewedAttentionOperation(operation)) {
+      store.acknowledgeOperations([{ id: operation.id, attentionRevision: getSponsoredOperationAttentionRevision(operation) }])
+    }
+  }, [activityRequest, requestedIdentityMatches])
   const accountOperations = accountAddress && identity.chainId !== undefined
     ? operations
         .filter((operation) =>
@@ -992,6 +1013,7 @@ export function SponsoredOperationHistoryButton() {
         isOpen={openedActivity?.identityKey === identityKey}
         onClose={() => {
           setOpenedActivity(null)
+          if (activityRequest) usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
         }}
         title="Trading Account activity"
         size="xl"
