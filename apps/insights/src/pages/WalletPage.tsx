@@ -4,8 +4,8 @@ import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActiv
 import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
 import { eligibilityPresentation } from '../utils/eligibility'
 import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
-import { TradeBreakdown, TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
-import { ClosedPositionBreakdown } from '../components/ClosedPositionBreakdown'
+import { TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
+import { PositionBreakdown } from '../components/PositionBreakdown'
 import { calculatePnlBreakdown } from '../utils/pnl'
 
 const ARBITRUM_SEPOLIA_EXPLORER = 'https://sepolia.arbiscan.io'
@@ -84,9 +84,7 @@ function ActivityTable({ activity, activityStatus }: {
                   <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <TradeVpi item={item} /> : '—'}</td>
                   <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
                 </tr>
-                {showTradeCosts && <tr><td colSpan={8} className="p-0">{item.type.toLowerCase() === 'close'
-                  ? <div className="px-5 py-3"><ClosedPositionBreakdown item={item} /></div>
-                  : <TradeBreakdown item={item} />}</td></tr>}
+                {showTradeCosts && <tr><td colSpan={8} className="px-5 py-3"><PositionBreakdown item={item} /></td></tr>}
                 </Fragment>
               )
             })}
@@ -106,9 +104,7 @@ function ActivityTable({ activity, activityStatus }: {
                   <div className="text-right"><dt className="text-content-tertiary">VPI</dt><dd className="mt-1 font-semibold"><TradeVpi item={item} /></dd></div>
                 </dl>
               ) : null}
-              {showTradeCosts && (item.type.toLowerCase() === 'close'
-                ? <div className="mt-3"><ClosedPositionBreakdown item={item} /></div>
-                : <div className="mt-3 -mx-4"><TradeBreakdown item={item} /></div>)}
+              {showTradeCosts && <div className="mt-3"><PositionBreakdown item={item} /></div>}
             </div>
           )
         })}

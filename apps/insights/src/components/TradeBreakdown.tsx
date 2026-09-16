@@ -20,13 +20,6 @@ export function TradeNotice({ item }: { item: WalletActivity }) {
   return <p className="mt-1 text-xs font-normal text-content-secondary">{breakdown?.notice ?? (breakdown ? null : 'Breakdown unavailable')}</p>
 }
 
-export function TradeBreakdown({ item }: { item: WalletActivity }) {
-  return <details className="border-t border-brand-border/15 bg-app-bg/45 px-5 py-3 text-sm">
-    <summary className="w-fit cursor-pointer text-brand-peach focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">Trade breakdown</summary>
-    <div className="mt-4 max-w-2xl"><TradeBreakdownDetails item={item} /></div>
-  </details>
-}
-
 export function TradeBreakdownDetails({ item }: { item: WalletActivity }) {
   const breakdown = deriveTradeBreakdown(item.execution, item.type)
   const amount = (value: bigint) => formatTradeUsdc(value, true, true)
