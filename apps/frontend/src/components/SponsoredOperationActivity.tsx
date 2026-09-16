@@ -532,7 +532,7 @@ function OperationHistoryItem({
       </div>
 
       {((operation.nativePreparation !== undefined && (!operation.preparationResolved || !isSponsoredOperationTerminal(operation.status))
-          && (!operation.userOperationHash || !isSponsoredOperationTerminal(operation.status)))
+          && (!operation.userOperationHash || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))
         || (!operation.userOperationHash && !operation.nativePreparation && operation.status === 'failed' && manifest && isPerpsAaManifestV2(manifest) && operation.manifestVersion === manifest.version)) && (
         <PreparedOperationRecovery operation={operation} fallbackManifest={manifest && isPerpsAaManifestV2(manifest) ? manifest : undefined} />
       )}

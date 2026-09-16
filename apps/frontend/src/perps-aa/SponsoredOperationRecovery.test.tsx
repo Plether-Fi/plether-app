@@ -229,6 +229,7 @@ describe('SponsoredOperationRecovery', () => {
     resetRecoveryCredentialsForTests()
     const id = 'd46ab597-544c-452e-a8c6-2920727f84b9'
     beginHashOperation({ id, operation: signedOperation() })
+    useSponsoredOperationStore.getState().exhaustAutomaticRecovery(id, Date.now())
     const paymaster = '0x3333333333333333333333333333333333333333' as Address
     const url = `${location.origin}/api/perps/v1/aa/rpc`
     const capability = `v1.${USER_OPERATION_HASH}.0x${'b'.repeat(64)}.${Math.floor(Date.now() / 1000) + 600}.${'c'.repeat(64)}`
