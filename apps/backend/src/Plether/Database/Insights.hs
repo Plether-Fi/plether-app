@@ -444,6 +444,7 @@ data InsightsActivityRow = InsightsActivityRow
   , iarBlockNumber :: Integer
   , iarTimestamp :: Integer
   , iarLogIndex :: Integer
+  , iarExecution :: Maybe Value
   , iarSessionDay :: Maybe Text
   }
   deriving stock (Show, Eq)
@@ -458,6 +459,7 @@ instance FromRow InsightsActivityRow where
     <*> numericIntegerField
     <*> numericIntegerField
     <*> numericIntegerField
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -2889,13 +2891,58 @@ walletActivityQuery =
   \ )\
   \ SELECT a.activity_type, a.side, a.price, a.size_delta, a.amount_usdc, a.pnl_usdc,\
   \ (a.data->>'executionFeeUsdc')::numeric, (a.data->>'vpiUsdc')::numeric,\
-  \ a.tx_hash, a.block_number, a.timestamp, a.log_index,\
+  \ a.tx_hash, a.block_number, a.timestamp, a.log_index, execution.payload,\
   \ CASE WHEN EXTRACT(ISODOW FROM ((to_timestamp(a.timestamp) AT TIME ZONE 'UTC')\
   \   + MOD(1440 - c.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')) BETWEEN 1 AND 5\
   \ THEN (((to_timestamp(a.timestamp) AT TIME ZONE 'UTC')\
   \   + MOD(1440 - c.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')::date)::text ELSE NULL END\
   \ FROM perps_account_activity a JOIN target c ON c.chain_id = a.chain_id AND c.release_router = a.release_router\
   \ CROSS JOIN current_batch b\
+  \ LEFT JOIN LATERAL (\
+  \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload\
+  \  FROM (\
+  \  SELECT jsonb_build_object(\
+  \    'orderId', o.order_id::text, 'protocolVersion', 'v1.2.3',\
+  \    'status', CASE WHEN o.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END,\
+  \    'receipt', o.receipt_economics,\
+  \    'settlements', COALESCE((\
+  \      SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index)\
+  \      FROM perps_events e\
+  \      WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router\
+  \        AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number\
+  \        AND e.account = a.account AND e.order_id = o.order_id\
+  \        AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
+  \    ), '[]'::jsonb)\
+  \  ) AS payload\
+  \  FROM perps_events terminal\
+  \  JOIN perps_orders o ON o.chain_id = terminal.chain_id AND o.order_router = terminal.release_router\
+  \    AND o.order_id = terminal.order_id AND o.terminal_status = 'Executed'\
+  \    AND o.account = a.account AND o.terminal_tx_hash = a.tx_hash AND o.terminal_block_number = a.block_number\
+  \    AND o.receipt_economics IS NOT NULL AND o.receipt_hash = terminal.data->>'receiptHash'\
+  \  WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router\
+  \    AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number\
+  \    AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized'\
+  \    AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed'\
+  \    AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close')\
+  \    AND NOT EXISTS (\
+  \      SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router\
+  \        AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash\
+  \        AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+  \    )\
+  \    AND 1 = (\
+  \      SELECT COUNT(*) FROM perps_account_activity sibling\
+  \      WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router\
+  \        AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account\
+  \        AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index\
+  \        AND sibling.log_index > COALESCE((\
+  \          SELECT MAX(prior.log_index) FROM perps_events prior\
+  \          WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router\
+  \            AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash\
+  \            AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+  \        ), -1)\
+  \    )\
+  \  ) candidate\
+  \ ) execution ON TRUE\
   \ WHERE a.account = ? AND a.timestamp >= c.start_timestamp AND a.timestamp < c.score_cutoff_timestamp\
   \ AND (c.start_block IS NULL OR a.block_number >= c.start_block) AND a.block_number <= b.block_number\
   \ ORDER BY a.block_number DESC, a.log_index DESC LIMIT ?")

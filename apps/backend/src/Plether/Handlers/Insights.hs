@@ -384,6 +384,7 @@ activityRowToJson InsightsActivityRow {..} =
       , Just $ "blockNumber" .= show iarBlockNumber
       , Just $ "timestamp" .= iarTimestamp
       , Just $ "occurredAt" .= isoTimestamp iarTimestamp
+      , ("execution" .=) <$> iarExecution
       , Just $ "logIndex" .= iarLogIndex
       , ("sessionDay" .=) <$> iarSessionDay
       ]
