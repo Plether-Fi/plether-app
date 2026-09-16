@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
+import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+import { useSponsoredOperationStore, type SponsoredOperationStatus } from '../../perps-aa'
+import { usePerpsUiStore } from '../../stores/perpsUiStore'
 import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
@@ -48,6 +51,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   executeOrder: vi.fn(),
   withdrawMargin: vi.fn(),
 }))
+const identityFixture = vi.hoisted(() => ({ isAaManifestConfigured: false }))
 
 vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
@@ -59,7 +63,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       ownerAddress: address,
       accountAddress: address,
       chainId: 421614,
-      isAaManifestConfigured: false,
+      isAaManifestConfigured: identityFixture.isAaManifestConfigured,
       sponsorshipEnabled: false,
       manifest: null,
       identity: null,
@@ -394,10 +398,61 @@ describe('perps ticket oracle regime matrix', () => {
   })
 
   beforeEach(() => {
+    identityFixture.isAaManifestConfigured = false
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    usePerpsUiStore.setState({ activityRequest: null })
     mockReadContractsData = [{
       status: 'success',
       result: closePreviewTuple(),
     }]
+  })
+
+  function seedActiveOperation(status: SponsoredOperationStatus) {
+    identityFixture.isAaManifestConfigured = true
+    const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    useSponsoredOperationStore.setState({
+      operations: [{
+        id: 'saved-trade', ownerAddress: address, accountAddress: address, chainId: 421614,
+        accountMode: 'simple', manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+        action: 'place-order', lane: 'default', status, sponsorshipAccepted: true,
+        retryCount: 0, createdAt: Date.now(), updatedAt: Date.now(), statusTimestamps: { [status]: Date.now() },
+      }],
+      activeLanes: { [`${address.toLowerCase()}:default`]: 'saved-trade' },
+    })
+  }
+
+  it.each(['signature-declined', 'preparation-pending', 'sponsorship-refused'] as const)(
+    'offers recovery instead of passive waiting for %s, even before entering an amount', async status => {
+      seedActiveOperation(status)
+      render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
+      expect(screen.getByText(/A saved transaction needs attention before you can trade again/)).toBeVisible()
+      expect(screen.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Open transaction activity' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Trading Account activity' })
+      expect(within(dialog).getByRole('heading', { name: 'Commit order' })).toBeVisible()
+      expect(useSponsoredOperationStore.getState().activeLanes).toHaveProperty(
+        '0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b:default', 'saved-trade'
+      )
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(usePerpsUiStore.getState().activityRequest).toBeNull()
+    }
+  )
+
+  it('closes the order review when opening recovery activity', async () => {
+    seedActiveOperation('signature-declined')
+    render(<><SponsoredOperationHistoryButton />{closeTicket({ marketPhase: 'open', oracleFrozen: false })}</>)
+    const review = screen.getByRole('dialog')
+    fireEvent.click(within(review).getByRole('button', { name: 'Open transaction activity' }))
+    expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  })
+
+  it('keeps the waiting message for an operation that is still confirming', () => {
+    seedActiveOperation('confirming')
+    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="500" oraclePriceRaw={100_000_000n} availableToTradeRaw={1_000_000_000n} />)
+    expect(screen.getByText('A Trading Account action is in progress. Wait for it to finish.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Open transaction activity' })).not.toBeInTheDocument()
   })
 
   it('shows order quantity instead of contract notional in the commit preview', () => {
