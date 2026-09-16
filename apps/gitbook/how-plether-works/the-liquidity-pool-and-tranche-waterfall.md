@@ -552,19 +552,17 @@ The visible **Deposit** and **Withdraw** actions on the Perps page still operate
 
 ![Current Vaults withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-vaults--withdrawal-preview.png)
 
-#### “Pool liquidity” is not total LP capital
+#### What free pool liquidity means for trading
 
-The current trader interface shows **Pool liquidity**.
+The current trader interface shows **Free pool liquidity**: USDC remaining after backing existing positions and protected reserves. It is not total pool assets, total tranche NAV or the amount every LP can withdraw.
 
-That value represents free USDC in the liquidity pool after protected reserves—not total pool assets, total tranche NAV or the amount every LP can withdraw.
+The expanded panel shows **Total pool assets**, **Reserved pool assets** and the **Share of pool assets reserved**. Reserved pool assets are calculated as total pool assets minus free liquidity and include backing for existing positions and other protocol obligations. A pool can hold substantial assets while very little remains free because existing positions and protected reserves already require that backing.
 
-The interface’s supporting detail also shows:
+New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation. Free liquidity alone does not determine whether a particular order can execute. The **Directional limit used** metric separately describes directional imbalance, not executable trading capacity.
 
-* estimated LONG USD and SHORT USD opening-capacity headroom based on pool assets, open interest and the skew limit;
-* minimum order size;
-* minimum new position.
+Use **Max** in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes and the current market state.
 
-These figures are not subdivisions of free USDC in the liquidity pool, and the capacity estimates do not guarantee that a particular order will pass every execution-time check.
+The panel also shows **LP capital and loss protection**. Junior and Senior tranche balances are accounting values, not available trading liquidity. Withdrawals depend on the liquidity available at each hourly processing time and the applicable tranche and account limits.
 
 ### Senior risks
 

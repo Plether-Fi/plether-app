@@ -163,21 +163,19 @@ export const PoolLiquidity: Story = {
                 limit: <TokenAmount amount="3.53M" />,
               },
             },
-            { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
+            { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
             { label: 'Cost of carry', value: '5.24%' },
           ]}
         />
         <DetailsPanel
           eyebrow="Market header · metric guide"
-          title="What Pool liquidity represents"
-          description="Pool liquidity is free HousePool USDC after protected reserves. It is not total HousePool assets, total tranche NAV, or a promise that every LP can withdraw."
-          footer="The capacities and minimums move with HousePool liquidity, open interest, risk limits, and the current market state."
+          title="What Free pool liquidity represents"
+          description="Free pool liquidity is USDC remaining after backing existing positions and protected reserves. New orders must satisfy both the directional limit and payout-backing requirements."
+          footer="Use Max in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes."
         >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard label="Long capacity" value={<TokenAmount amount="953.33" />} />
-            <MetricCard label="Short capacity" value={<TokenAmount amount="4 810.22" />} />
-            <MetricCard label="Minimum order size" value={<TokenAmount amount="103.18" />} />
-            <MetricCard label="Minimum new position" value={<TokenAmount amount="1 031.8" />} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MetricCard label="Total pool assets" value={<TokenAmount amount="10 000 000" />} />
+            <MetricCard label="Reserved pool assets" value={<TokenAmount amount="3 700 000" />} detail="37.0% of pool assets are reserved for existing positions and other protocol obligations." />
           </div>
         </DetailsPanel>
       </div>
