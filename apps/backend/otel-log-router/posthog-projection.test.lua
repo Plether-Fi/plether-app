@@ -1,4 +1,12 @@
 dofile('posthog-projection.lua')
+for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE'}) do
+  local _,_,safe=project_posthog('test',0,{event='aa_request_failed',reason_code=reason,error='private calldata'})
+  assert(safe.reason_code==reason and safe.error==nil)
+end
+local _,_,funding=project_posthog('test',0,{event='worker_funding_observation',diagnostic_code='JOURNAL_DECODE_FAILED',raw_transaction='private'})
+assert(funding.diagnostic_code=='JOURNAL_DECODE_FAILED' and funding.raw_transaction==nil)
+local _,_,unsafe=project_posthog('test',0,{event='worker_funding_observation',diagnostic_code='private credential'})
+assert(unsafe.diagnostic_code==nil)
 local _,_,pending = project_posthog('test',0,{event='aa_request_failed',reason_code='ACCOUNT_DEPLOYMENT_PENDING',
   outcome='rejected',sender='0xsecret',error='provider payload'})
 assert(pending.reason_code=='ACCOUNT_DEPLOYMENT_PENDING' and pending.outcome=='rejected')

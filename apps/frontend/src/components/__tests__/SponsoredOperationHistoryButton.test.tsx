@@ -579,6 +579,19 @@ describe('SponsoredOperationHistoryButton', () => {
       .not.toBeInTheDocument()
   })
 
+  it.each([
+    ['INSUFFICIENT_FREE_EQUITY', /Not enough available trading collateral/],
+    ['INVALID_ORDER_DEADLINE', /The order deadline is invalid/],
+    ['SIMULATION_FAILED', /The transaction was rejected during simulation/],
+  ] as const)('shows actionable %s guidance without a retry button for a refused preparation', (reason, message) => {
+    useSponsoredOperationStore.setState({ operations: [operation({id:'simulation-refused',action:'place-order',
+      status:'sponsorship-refused',reason,retryable:false,updatedAt:Date.now()})] })
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {name:/Open Trading Account activity/}))
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:/retry/i})).not.toBeInTheDocument()
+  })
+
   it('turns a retracted inclusion back into submission attention', () => {
     useSponsoredOperationStore.getState().beginOperation({
       id: 'reorged-inclusion',

@@ -412,6 +412,19 @@ describe('executeSponsoredPerpsAction', () => {
     expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
   })
 
+  it.each(['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED'])('persists %s as an explicit refusal without retrying, signing, sending, or releasing the durable lane', async reason => {
+    const prepare=vi.fn().mockRejectedValue(new SponsorRequestError({reason,retryable:false,message:'Simulation rejected'}))
+    const managed=runtime({prepareUserOperation:prepare})
+    await expect(executeSponsoredPerpsAction({manifest:{...v2Manifest(),preparationRpcVersion:1},ownerAddress:OWNER,action,runtime:managed})).rejects.toThrow('Simulation rejected')
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved=useSponsoredOperationStore.getState().operations[0]
+    expect(saved).toMatchObject({status:'sponsorship-refused',reason,retryable:false})
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(saved.id)
+  })
+
   it('preserves an account-confirmation rejection across reload and resumes the same attempt', async () => {
     const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(new SponsorRequestError({
       reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'Account awaiting safe confirmation',

@@ -1,6 +1,10 @@
-import { asSponsorRequestError } from './errors'
+import { asSponsorRequestError, isDefinitiveSponsorshipRefusal } from './errors'
 
 describe('asSponsorRequestError', () => {
+  it('distinguishes explicit simulation refusals from an ambiguous provider outage', () => {
+    for (const reason of ['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED']) expect(isDefinitiveSponsorshipRefusal(reason)).toBe(true)
+    expect(isDefinitiveSponsorshipRefusal('BUNDLER_UNAVAILABLE')).toBe(false)
+  })
   it('collects JSON-RPC policy metadata through viem error wrappers', () => {
     const rpcCause = Object.assign(new Error('rate limited'), {
       data: {

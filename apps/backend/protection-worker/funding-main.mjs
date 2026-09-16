@@ -7,15 +7,15 @@ import { parseMonitors, observeFunding } from './funding.mjs'
 
 // This process receives public signer addresses, never worker private keys.
 const incidents = new Map()
-function report(component, state, reason) {
-  const now = performance.now(), key = `${state}:${reason}`, prior = incidents.get(component)
+function report(component, state, reason, diagnostic) {
+  const now = performance.now(), key = `${state}:${reason}:${diagnostic ?? ''}`, prior = incidents.get(component)
   if (prior?.key === key) {
     prior.count++
-    if (now-prior.at < 60_000 || key === 'ready:READY') return
+    if (now-prior.at < 60_000 || state === 'ready' && reason === 'READY') return
   }
   console.log(JSON.stringify({ level: state === 'ready' && reason === 'READY' ? 'info' : 'warn',
     event: 'worker_funding_observation', component, outcome: state, reason_code: reason,
-    occurrence_count: prior?.key === key ? prior.count : 1 }))
+    occurrence_count: prior?.key === key ? prior.count : 1, ...(diagnostic ? { diagnostic_code: diagnostic } : {}) }))
   incidents.set(component, { key, at: now, count: 0 })
 }
 
@@ -45,7 +45,7 @@ async function main() {
       const started = performance.now(), observedAt = new Date()
       let snapshot
       try { snapshot = await observeFunding({ client, db: pool, release, monitors, previous }); previous = snapshot.block }
-      catch { snapshot = { results: monitors.map(m => ({ ...m, state: 'unknown', reason: 'FUNDING_UNVERIFIED' })) } }
+      catch { snapshot = { results: monitors.map(m => ({ ...m, state: 'unknown', reason: 'FUNDING_UNVERIFIED', diagnostic: 'SNAPSHOT_UNVERIFIED' })) } }
       // One transaction publishes the entire inventory; removed/changed signers
       // cannot linger as fresh evidence, and a partial write never means ready.
       const db = lease
@@ -54,7 +54,7 @@ async function main() {
         await db.query('DELETE FROM aa_funding_observations WHERE chain_id=$1 AND deployment=$2', [release.network.chainId,release.contracts.orderRouter.address.toLowerCase()])
         for (const m of snapshot.results) {
           // Network time cannot extend the observation's validity.
-          if (performance.now()-started > 10_000) { m.state = 'unknown'; m.reason = 'FUNDING_UNVERIFIED' }
+          if (performance.now()-started > 10_000) { m.state = 'unknown'; m.reason = 'FUNDING_UNVERIFIED'; m.diagnostic = 'OBSERVATION_EXPIRED' }
           await db.query(`INSERT INTO aa_funding_observations(chain_id,deployment,component,signer_address,state,reason,balance_wei,liability_wei,reserve_wei,observed_at,inventory_id)
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [release.network.chainId,release.contracts.orderRouter.address.toLowerCase(),m.component,m.address,m.state,m.reason,
             m.balance?.toString() ?? null,m.liability?.toString() ?? null,m.reserve?.toString() ?? null,observedAt,inventoryId])
@@ -68,7 +68,7 @@ async function main() {
         const worst = rows.every(m => m.state === 'blocked') ? rows[0]
           : rows.some(m => m.state === 'blocked') ? { state: 'unknown', reason: 'FUNDING_LOW' }
           : rows.find(m => m.state === 'unknown') ?? rows.find(m => m.reason === 'FUNDING_LOW') ?? rows[0]
-        report(component,worst.state,worst.reason)
+        report(component,worst.state,worst.reason,worst.diagnostic)
       }
       if (process.argv.includes('--once')) break
       await setTimeout(Math.max(0,10_000-(performance.now()-started)))

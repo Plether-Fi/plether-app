@@ -2,6 +2,15 @@
 import { parseTransaction, recoverTransactionAddress } from 'viem'
 
 export const components = ['alto', 'keeper', 'oracle', 'liquidation', 'protection', 'lp_settlement']
+class FundingEvidenceError extends Error {
+  constructor(diagnostic) { super(diagnostic); this.diagnostic = diagnostic }
+}
+function fundingDiagnostic(error) {
+  return error instanceof FundingEvidenceError ? error.diagnostic : 'DEPENDENCY_FAILED'
+}
+async function evidence(diagnostic, read) {
+  try { return await read() } catch { throw new FundingEvidenceError(diagnostic) }
+}
 const uint = value => {
   if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value) || value.length > 78) throw new Error('Invalid funding configuration')
   return BigInt(value)
@@ -47,6 +56,11 @@ export function classifyReserve({ balance, liability, reserve, timestamp, now })
 }
 
 export function transactionLiability(tx) {
+  // RPC evidence must contain explicit quantities; do not turn missing/null
+  // network fields into a made-up zero liability.
+  for (const value of [tx.nonce, tx.gas, tx.value, tx.maxFeePerGas ?? tx.gasPrice]) {
+    if (!(typeof value === 'bigint' || typeof value === 'number' && Number.isSafeInteger(value))) throw new Error('Invalid transaction evidence')
+  }
   const nonce = BigInt(tx.nonce), gas = BigInt(tx.gas), value = BigInt(tx.value)
   const fee = BigInt(tx.maxFeePerGas ?? tx.gasPrice)
   if (nonce < 0n || gas <= 0n || value < 0n || fee <= 0n) throw new Error('Invalid transaction evidence')
@@ -67,15 +81,17 @@ export async function journalLiabilities(db, chainId, release, monitor) {
       FROM perps_liquidation_candidates WHERE chain_id=$1 AND cfd_engine=$2 AND pending_sender=$3 AND pending_tx_hash IS NOT NULL LIMIT 4097`,
     [chainId, release.contracts.cfdEngine.address.toLowerCase(), address])).rows
   } else if (monitor.component === 'protection') {
-    const rawRows = (await db.query(`SELECT raw_transaction FROM perps_protection_transactions
+    const rawRows = (await evidence('JOURNAL_READ_FAILED', () => db.query(`SELECT raw_transaction FROM perps_protection_transactions
       WHERE chain_id=$1 AND book=$2 AND status IN ('pending','included') LIMIT 4097`,
-    [chainId, release.contracts.positionProtectionBook.address.toLowerCase()])).rows
-    if (rawRows.length > 4096) throw new Error('Journal bound exceeded')
+    [chainId, release.contracts.positionProtectionBook.address.toLowerCase()]))).rows
+    if (rawRows.length > 4096) throw new FundingEvidenceError('JOURNAL_BOUND_EXCEEDED')
     return Promise.all(rawRows.map(async row => {
-      const tx = parseTransaction(row.raw_transaction)
-      const sender = await recoverTransactionAddress({ serializedTransaction: row.raw_transaction })
-      if (sender.toLowerCase() !== address || tx.chainId !== chainId) throw new Error('Journal signer mismatch')
-      return transactionLiability(tx)
+      const tx = await evidence('JOURNAL_DECODE_FAILED', () => parseTransaction(row.raw_transaction))
+      const sender = await evidence('JOURNAL_DECODE_FAILED', () => recoverTransactionAddress({ serializedTransaction: row.raw_transaction }))
+      if (sender.toLowerCase() !== address || tx.chainId !== chainId) throw new FundingEvidenceError('JOURNAL_IDENTITY_MISMATCH')
+      // viem omits RLP-encoded zero quantities. Only normalize a verified signed
+      // journal transaction, never incomplete pending-block RPC evidence.
+      return evidence('JOURNAL_DECODE_FAILED', () => transactionLiability({ ...tx, nonce: tx.nonce ?? 0, value: tx.value ?? 0n }))
     }))
   } else return []
   if (rows.length > 4096) throw new Error('Journal bound exceeded')
@@ -111,8 +127,10 @@ export async function observeFunding({ client, db, release, monitors, previous, 
       const liability = pendingLiability(BigInt(confirmed), BigInt(pending), [...journal,...txs])
       const maxFee = (fee*(10000n+monitor.feeBufferBps)+9999n)/10000n
       const reserve = monitor.gasLimit*maxFee+monitor.valueWei
-      return { ...monitor, ...classifyReserve({ balance, liability, reserve, timestamp: block.timestamp, now: now() }), balance, liability, reserve }
-    } catch { return { ...monitor, state: 'unknown', reason: 'FUNDING_UNVERIFIED' } }
+      const classification = classifyReserve({ balance, liability, reserve, timestamp: block.timestamp, now: now() })
+      return { ...monitor, ...classification, balance, liability, reserve,
+        ...(classification.reason === 'FUNDING_UNVERIFIED' ? { diagnostic: liability === undefined ? 'PENDING_LIABILITY_UNKNOWN' : 'RESERVE_EVIDENCE_INVALID' } : {}) }
+    } catch (error) { return { ...monitor, state: 'unknown', reason: 'FUNDING_UNVERIFIED', diagnostic: fundingDiagnostic(error) } }
   }))
   const canonical = await client.getBlock({ blockNumber: block.number })
   if (canonical.hash !== block.hash || now()-block.timestamp > 15n || block.timestamp > now()+2n) throw new Error('Funding snapshot not canonical or fresh')
