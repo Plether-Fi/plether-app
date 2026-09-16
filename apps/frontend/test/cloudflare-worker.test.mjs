@@ -40,15 +40,17 @@ describe('Trading readiness and diagnostics proxy authentication', () => {
   it('passes recovery credentials only to AA and preserves the uncached response credential', async () => {
     const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store', 'X-Plether-AA-Recovery': 'scoped-response' } }), 1);
     const response = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/aa/rpc', {
-      method: 'POST', body: '{}', headers: { 'X-Plether-AA-Recovery': 'scoped-request' },
+      method: 'POST', body: '{}', headers: { 'X-Plether-AA-Recovery': 'scoped-request', 'X-Plether-AA-Preparation-Recovery': 'preparation-session' },
     }), { ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'trusted' });
     assert.equal(fetchMock.mock.calls[0].arguments[1].headers.get('X-Plether-AA-Recovery'), 'scoped-request');
     assert.equal(response.headers.get('X-Plether-AA-Recovery'), 'scoped-response');
+    assert.equal(fetchMock.mock.calls[0].arguments[1].headers.get('X-Plether-AA-Preparation-Recovery'), 'preparation-session');
     assert.equal(response.headers.get('Cache-Control'), 'no-store');
     await worker.fetch(new Request('https://app.plether.com/api/perps/v1/health', {
-      headers: { 'X-Plether-AA-Recovery': 'scoped-request' },
+      headers: { 'X-Plether-AA-Recovery': 'scoped-request', 'X-Plether-AA-Preparation-Recovery': 'preparation-session' },
     }), workerEnv());
     assert.equal(fetchMock.mock.calls[1].arguments[1].headers.has('X-Plether-AA-Recovery'), false);
+    assert.equal(fetchMock.mock.calls[1].arguments[1].headers.has('X-Plether-AA-Preparation-Recovery'), false);
   });
   for (const path of ['readiness', 'aa/diagnostics?attemptId=12345678-1234-4123-8123-123456789abc']) {
     it(`authenticates and never edge-caches ${path}`, async () => {

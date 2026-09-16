@@ -1,6 +1,7 @@
 module Plether.Database.AaPreparation
-  ( PreparationClaim (..), claimPreparation, claimPreparationCompatible, savePreparedOperation, releasePreparation, linkPreparation, linkPreparationDiagnostic, getPreparationStatus, bindPreparationDeployment ) where
+  ( PreparationClaim (..), claimPreparation, claimPreparationCompatible, claimPreparationCompatibleFenced, savePreparedOperation, releasePreparation, linkPreparation, linkPreparationDiagnostic, getPreparationStatus, bindPreparationDeployment ) where
 
+import qualified Plether.Database.AaPreparationRecovery as Recovery
 import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
@@ -8,7 +9,7 @@ import Data.Maybe (isJust)
 import qualified Data.Text.Encoding as TE
 import Database.PostgreSQL.Simple
 
-data PreparationClaim = PreparationBusy | PreparationConflict | PreparationExpired | PreparationDisabled | PreparationClaimed (Maybe Value)
+data PreparationClaim = PreparationFenceLost | PreparationBusy | PreparationConflict | PreparationExpired | PreparationDisabled | PreparationClaimed (Maybe Value)
   deriving stock (Eq, Show)
 
 -- A short transaction owns only the lease, never an upstream RPC or KMS call.
@@ -20,7 +21,17 @@ claimPreparation conn allowNew client sender identifier intent lease =
 -- Compatibility is only for an already-persisted operation from a reviewed
 -- prior gas policy. Empty work never acquires permission to use a retired policy.
 claimPreparationCompatible :: Connection -> Bool -> Text -> Text -> Text -> Text -> [Text] -> Text -> IO PreparationClaim
-claimPreparationCompatible conn allowNew client sender identifier intent priorIntents lease = withTransaction conn $ do
+claimPreparationCompatible conn allowNew client sender identifier intent priorIntents lease = withTransaction conn $
+  claimPreparationUnlocked conn allowNew client sender identifier intent priorIntents lease
+
+claimPreparationCompatibleFenced :: Connection -> Recovery.Fence -> Bool -> Text -> Text -> Text -> Text -> [Text] -> Text -> IO PreparationClaim
+claimPreparationCompatibleFenced conn fence allowNew client sender identifier intent priorIntents lease = withTransaction conn $ do
+  Recovery.recoveryLock conn
+  valid <- Recovery.fenceValid conn fence
+  if valid then claimPreparationUnlocked conn allowNew client sender identifier intent priorIntents lease else pure PreparationFenceLost
+
+claimPreparationUnlocked :: Connection -> Bool -> Text -> Text -> Text -> Text -> [Text] -> Text -> IO PreparationClaim
+claimPreparationUnlocked conn allowNew client sender identifier intent priorIntents lease = do
   if allowNew then do
     _ <- execute conn
       "INSERT INTO aa_preparations(client_key,sender,preparation_id,intent_hash) VALUES (?,?,?,?) ON CONFLICT DO NOTHING"

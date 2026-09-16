@@ -1,4 +1,5 @@
 import { createContext, use } from 'react'
+import type { WalletPreparationRecovery } from './walletRecovery'
 import type { ReviewedActionStateInput } from './reviewedActionState'
 import type { PreparationStatusV1 } from './preparedOperation'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
@@ -113,6 +114,7 @@ export interface RecoveryOperationContext {
 export interface PerpsAaSmartAccountRuntime {
   readReviewedActionState?(input: ReviewedActionStateInput): Promise<string>
   getPreparedOperationRuntime?(manifest: PerpsAaDeploymentManifestV2): Promise<PerpsAaSmartAccountRuntime>
+  preparationRecovery?: WalletPreparationRecovery
   deploymentConfirmation?: DeploymentConfirmationMonitor
   chainId: number
   ownerAddress: Address

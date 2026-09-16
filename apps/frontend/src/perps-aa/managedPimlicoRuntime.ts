@@ -1,5 +1,6 @@
 import { readReviewedActionState } from './reviewedActionState'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { createWalletPreparationRecovery, PreparationRecoveryError } from './walletRecovery'
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless'
@@ -354,6 +355,11 @@ export async function createManagedAaRuntime({
   })
   const bundlerRpcUrl = bundlerRpcUrlForManifest(manifest)
   const paymasterRpcUrl = paymasterRpcUrlForManifest(manifest)
+  const preparationRecovery = isNativePaymasterManifest(manifest) ? createWalletPreparationRecovery({
+    rpcUrl: paymasterRpcUrlForManifest(manifest), credentialScope: bundlerRpcUrl, chainId: manifest.chainId, paymaster: manifest.paymasterAddress,
+    sender: getAddress(smartAccount.address), owner: ownerAddress,
+    signMessage: message => owner.signMessage({ account: owner.account, message }),
+  }) : undefined
   let prepareUserOperation:
     PerpsAaSmartAccountRuntime['smartAccount']['prepareUserOperation']
   let sendUserOperation:
@@ -403,14 +409,20 @@ export async function createManagedAaRuntime({
         const binding = { sender: accountAddress, callData, ...factoryArgs }
         // No transport retries/fallback with a fresh ID after an ambiguous result.
         const response = await recoveryHttp(paymasterRpcUrl, { retryCount: 0,
-          fetchOptions: preparationId && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId)
-            ? { headers: { 'X-Plether-Attempt-Id': preparationId } } : undefined,
+          fetchOptions: preparationId ? { headers: {
+            ...preparationRecovery?.headers(preparationId),
+            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId) ? { 'X-Plether-Attempt-Id': preparationId } : {}),
+          } } : undefined,
         }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
           method: 'plether_prepareUserOperation',
           params: [{ version: 1, preparationId: preparationIdentifier(preparationId ?? crypto.randomUUID()),
             chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding, ...(preparedOperation ? { resumeOnly: true } : {}) }],
         })
-        return validateNativePreparation(response, binding, manifest)
+        const prepared = validateNativePreparation(response, binding, manifest)
+        if (preparationId) preparationRecovery?.bindOperation(preparationId, getUserOperationHash({
+          chainId: manifest.chainId, entryPointAddress: manifest.entryPoint, entryPointVersion: manifest.entryPointVersion, userOperation: prepared,
+        }))
+        return prepared
       }
       return await smartAccountClient.prepareUserOperation({
         account: smartAccount,
@@ -421,11 +433,14 @@ export async function createManagedAaRuntime({
         })),
       }) as ManagedUserOperation
     }
-    sendUserOperation = (operation) =>
-      bundlerClient.sendUserOperation({
-        ...operation,
-        entryPointAddress: manifest.entryPoint,
-      })
+    sendUserOperation = (operation) => {
+      const hash = getUserOperationHash({ chainId: manifest.chainId, entryPointAddress: manifest.entryPoint, entryPointVersion: manifest.entryPointVersion, userOperation: operation })
+      const headers = preparationRecovery?.operationHeaders(hash) ?? {}
+      const submissionClient = Object.keys(headers).length > 0
+        ? createBundlerClient({ chain: arbitrumSepolia, transport: recoveryHttp(bundlerRpcUrl, { fetchOptions: { headers } }) })
+        : bundlerClient
+      return submissionClient.sendUserOperation({ ...operation, entryPointAddress: manifest.entryPoint })
+    }
     getUserOperationStatus = async (userOperationHash) =>
       parseStatus(await requestAltoExtension(
         bundlerClient,
@@ -482,11 +497,14 @@ export async function createManagedAaRuntime({
     return code !== undefined && isHex(code) && size(code) > 0
   }, undefined, {
     scope: [manifest.chainId, manifest.smartAccountFactory, manifest.entryPoint,
+      manifest.version, accountAddress, isNativePaymasterManifest(manifest) ? manifest.paymasterAddress : 'managed'].join(':'),
+    legacyScope: [manifest.chainId, manifest.smartAccountFactory, manifest.entryPoint,
       manifest.version, accountAddress].join(':'),
   })
 
   return {
     readReviewedActionState: input => readReviewedActionState(publicClient, manifest, accountAddress, input),
+    preparationRecovery,
     deploymentConfirmation: isNativePaymasterManifest(manifest) ? deploymentGate : undefined,
     chainId: manifest.chainId,
     ownerAddress: getAddress(ownerAddress),
@@ -612,12 +630,17 @@ export async function createManagedAaRuntime({
       },
 
       ...(isNativePaymasterManifest(manifest) ? {
-        getPreparationStatus: async (locator: { preparationId: string } | { userOperationHash: Hex }) => parsePreparationStatus(
-          await recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
+        getPreparationStatus: async (locator: { preparationId: string } | { userOperationHash: Hex }) => {
+          if ('preparationId' in locator && preparationRecovery && Object.keys(preparationRecovery.headers(locator.preparationId)).length > 0) {
+            const recovered = await preparationRecovery.status(locator.preparationId)
+            if ('phase' in recovered) return recovered
+            throw new PreparationRecoveryError(recovered.reason)
+          }
+          return parsePreparationStatus(await recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
             method: 'plether_getPreparationStatus', params: [{ version: 1, chainId: '0x66eee', sender: accountAddress,
               ...('preparationId' in locator ? { preparationId: preparationIdentifier(locator.preparationId) } : locator) }],
-          })
-        ),
+          }))
+        },
       } : {}),
       signUserOperation: async (operation) => ({
         ...operation,

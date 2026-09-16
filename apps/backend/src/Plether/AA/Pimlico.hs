@@ -23,6 +23,7 @@ module Plether.AA.Pimlico
   , resolveOwnedTradingAccountAtBlock
   , verifyAccountIdentity
   , verifyAccountIdentityAtBlock
+  , readCodeAtBlock
   , entryPointAddress
   , dummySignature
   , readBoundedRequestBody
@@ -196,6 +197,10 @@ data PimlicoMethod
   | GetSupportedEntryPoints
   | PrepareUserOperation
   | GetPreparationStatus
+  | GetRecoveryChallenge
+  | VerifyRecoveryChallenge
+  | GetRecoveryStatus
+  | RetirePreparation
   deriving stock (Eq, Show)
 
 data RpcRequest = RpcRequest
@@ -509,6 +514,10 @@ parseMethod = \case
   "eth_getUserOperationByHash" -> Just GetUserOperationByHash
   "pimlico_getUserOperationStatus" -> Just GetUserOperationStatus
   "eth_supportedEntryPoints" -> Just GetSupportedEntryPoints
+  "plether_getRecoveryChallenge" -> Just GetRecoveryChallenge
+  "plether_verifyRecoveryChallenge" -> Just VerifyRecoveryChallenge
+  "plether_getRecoveryStatus" -> Just GetRecoveryStatus
+  "plether_retirePreparation" -> Just RetirePreparation
   "plether_getPreparationStatus" -> Just GetPreparationStatus
   "plether_prepareUserOperation" -> Just PrepareUserOperation
   _ -> Nothing
@@ -518,6 +527,10 @@ validateMethodParams request =
   case rrMethod request of
     GetGasPrice -> emptyParams >> pure Nothing
     GetSupportedEntryPoints -> emptyParams >> pure Nothing
+    GetRecoveryChallenge -> Left $ invalidParams "Native recovery requires the native gateway"
+    VerifyRecoveryChallenge -> Left $ invalidParams "Native recovery requires the native gateway"
+    GetRecoveryStatus -> Left $ invalidParams "Native recovery requires the native gateway"
+    RetirePreparation -> Left $ invalidParams "Native recovery requires the native gateway"
     GetPreparationStatus -> Left $ invalidParams "Native preparation status is not supported by the managed provider"
     PrepareUserOperation -> Left $ invalidParams "Native preparation is not supported by the managed provider"
     GetUserOperationReceipt -> hashParams >> pure Nothing
