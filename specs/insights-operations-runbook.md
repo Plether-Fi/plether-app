@@ -606,3 +606,77 @@ values are immutable after seeding. The release manifest has one explicit
 pending-to-bound transition before the start/baseline, then is immutable. A
 mismatch stops startup; create a new versioned competition slug instead of
 rewriting historical results.
+
+## Receipt-backed activity cost breakdowns
+
+Wallet activity now optionally includes `execution`:
+
+- `orderId`: decimal string; `protocolVersion`: `v1.2.3`.
+- `status`: `pending` or `complete` for settlement receipt enrichment.
+- `receipt`: existing `OrderFinalized` economics, with integer USDC values as decimal strings.
+- `settlements`: account/order-scoped `ActionChargeSettled`, `ActionRebateSettled`, and
+  `FrozenCloseSpreadSettled` evidence. Each includes `kind`, `assessedUsdc`,
+  `recoveredUsdc`, and `waivedUsdc`. For the spread event, `recoveredUsdc` is its
+  emitted `paidUsdc`; it must not be substituted for gross economic spread.
+
+The legacy activity `executionFeeUsdc` remains a preview-derived field for API
+compatibility. It is **not** the assessed fee. New consumers use
+`execution.receipt.executionFeeUsdc`. No receipt or ambiguous association means
+unavailable evidence, never a zero cost. Receipt matching includes canonical
+block hash and terminal log intervals; transaction hash alone is insufficient.
+
+On the pinned release, an action-charge event may also include
+`protocolFeeCollectedUsdc`, derived from a clearinghouse internal fee credit
+(`AssetSeized` without the corresponding physical USDC transfer). This attribution
+is omitted for other releases, liquidations, or ambiguous intervals. It describes
+cash collection, not a fee deducted from a rebate. The UI only calls a waiver a
+**Fee waived** when the fee-specific evidence and total adjustment agree.
+
+### Ordered rollout
+
+1. Release the additive backend/schema changes first. The perps indexer's existing
+   evidence loop automatically backfills receipts for executed orders in unfinalized
+   competitions. It processes at most 20 transactions per batch, persists completion
+   per order, retries failures after five minutes, and does not rewind history or
+   recompute scores. Complete receipts with no settlement event are valid (e.g. opens).
+2. Watch `perps_settlement_receipt_complete`, `perps_settlement_receipt_pending`, and
+   `perps_settlement_evidence_failed` logs. A persistent pending entry needs RPC or
+   canonical-receipt investigation; do not mark it complete manually.
+3. Run `node scripts/check-insights-trade-breakdown.mjs` to check the two historical
+   acceptance transactions against the public API. Set `INSIGHTS_API_ORIGIN` to
+   the backend origin to bypass the Insights edge cache. Both must be complete
+   before deploying the Insights frontend.
+4. Release Insights and repeat the smoke check. Verify desktop/mobile disclosure,
+   exact amounts, and `Protocol fee assessed` labels. No competition score repair
+   is required. Rollback can restore the previous frontend/backend; the additive
+   columns and evidence can remain.
+
+`settlement_evidence_version` and its retry timestamp are reset on canonical reorg
+rewinds together with receipt economics. The worker locks against indexer rewinds
+and verifies the terminal identities again before persisting enrichment.
+
+### Monitoring
+
+Use the existing read-only database access workflow for this query:
+
+```sql
+SELECT c.slug,
+       count(*) FILTER (WHERE o.receipt_economics IS NULL) AS missing_receipts,
+       count(*) FILTER (WHERE o.receipt_economics IS NOT NULL
+                        AND o.settlement_evidence_version IS DISTINCT FROM 1) AS pending_settlements,
+       min(o.settlement_evidence_last_attempt_at)
+         FILTER (WHERE o.settlement_evidence_version IS DISTINCT FROM 1) AS oldest_attempt
+FROM insights_competitions c
+JOIN perps_orders o ON o.chain_id = c.chain_id AND o.order_router = c.release_router
+WHERE NOT c.finalized AND o.terminal_status = 'Executed'
+  AND o.terminal_timestamp >= c.start_timestamp
+  AND o.terminal_timestamp < c.score_cutoff_timestamp
+GROUP BY c.slug;
+```
+
+For individual wallet rows, missing `execution` after the indexer catches up signals
+missing or ambiguous receipt association. `Other settlement adjustment` is a
+visible reconciliation difference, not evidence of fee waiver or bad debt. Inspect
+the scoped receipt and settlement events before assigning a cause. Gross VPI,
+assessed fee, and confirmed waived charges are additive effects; displayed net
+rebate and effective-fee subtotals must not be added again.

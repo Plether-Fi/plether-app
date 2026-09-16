@@ -3093,8 +3093,24 @@ export function PerpsTradeTicket({
   const preparedOrderExpiryMessage = isPreparedOrderExpiring
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
+  const needsPreparationRecovery = activeAccountOperation !== undefined &&
+    !activeAccountOperation.userOperationHash &&
+    ['signature-declined', 'preparation-pending', 'sponsorship-refused'].includes(activeAccountOperation.status)
+  const preparationRecoveryMessage = needsPreparationRecovery
+    ? 'A saved transaction needs attention before you can trade again. Open transaction activity to resume or discard it when available.'
+    : undefined
+  const openRecoveryActivity = () => {
+    if (!activeAccountOperation) return
+    if (isReviewOpen) closeReviewModal()
+    usePerpsUiStore.getState().requestActivity({
+      chainId: activeAccountOperation.chainId,
+      accountAddress: activeAccountOperation.accountAddress,
+      ownerAddress: activeAccountOperation.ownerAddress,
+      operationId: activeAccountOperation.id,
+    })
+  }
   const reviewValidationError = enableLiveTrading
-    ? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
+    ? preparationRecoveryMessage ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
     : orderQuantityValidationError
   const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
     ? undefined : reviewValidationError
@@ -4473,10 +4489,16 @@ export function PerpsTradeTicket({
         </div>
 
         {displayedValidationError &&
-        !isZeroSize &&
+        (!isZeroSize || needsPreparationRecovery) &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
             {displayedValidationError}
+            {enableLiveTrading && needsPreparationRecovery ? (
+              <Button type="button" className="mt-3 w-full" size="sm" variant="secondary"
+                analyticsId="open_preparation_recovery" onClick={openRecoveryActivity}>
+                Open transaction activity
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
@@ -4879,6 +4901,12 @@ export function PerpsTradeTicket({
               {reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
                   {reviewBodyValidationError}
+                  {needsPreparationRecovery ? (
+                    <Button type="button" className="mt-3 w-full" size="sm" variant="secondary"
+                      analyticsId="open_preparation_recovery" onClick={openRecoveryActivity}>
+                      Open transaction activity
+                    </Button>
+                  ) : null}
                   {!isCorrectChain ? (
                     <>
                       <Button

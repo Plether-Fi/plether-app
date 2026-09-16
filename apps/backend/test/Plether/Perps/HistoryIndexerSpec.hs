@@ -5,12 +5,13 @@ module Plether.Perps.HistoryIndexerSpec (spec) where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, (.=), eitherDecodeFileStrict', toJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
+import Data.Foldable (toList)
 import Data.Word (Word8)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
@@ -22,6 +23,7 @@ import Plether.Perps.HistoryIndexer
   , TradeCosts (..)
   , applyPerpsAddressEnvironment
   , canCertifyIndexedRange
+  , decodeSettlementReceipt
   , decodeCloseTradeCosts
   , decodeOpenTradeCosts
   , decodeReplayTradeCosts
@@ -50,6 +52,54 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "settlement receipt enrichment" $ do
+    it "verifies the real waived-fee close and its internal treasury credit" $ do
+      receipt <- fixtureReceipt "waiver"
+      let result = decodeFixtureReceipt receipt
+      case result of
+        Right (identities, [(_, kind, _, oid, Object payload)]) -> do
+          map fst identities `shouldBe` [1551]
+          oid `shouldBe` 1551
+          kind `shouldBe` "ActionChargeSettled"
+          KeyMap.lookup "waivedUsdc" payload `shouldBe` Just (String "882780318")
+          KeyMap.lookup "protocolFeeCollectedUsdc" payload `shouldBe` Just (String "222311115")
+        other -> expectationFailure $ show other
+    it "verifies the gross rebate was reduced before payment" $ do
+      receipt <- fixtureReceipt "rebate"
+      case decodeFixtureReceipt receipt of
+        Right (_, [(_, kind, _, _, Object payload)]) -> do
+          kind `shouldBe` "ActionRebateSettled"
+          KeyMap.lookup "recoveredUsdc" payload `shouldBe` Just (String "889031888")
+          KeyMap.lookup "waivedUsdc" payload `shouldBe` Just (String "0")
+        other -> expectationFailure $ show other
+    it "rejects a receipt from a different canonical block" $ do
+      receipt <- fixtureReceipt "waiver"
+      decodeSettlementReceipt defaultPerpsAddresses (receiptText "transactionHash" receipt) 309072000
+        ("0x" <> Text.replicate 64 "0") receipt `shouldSatisfy` isLeftResult
+    it "rejects malformed settlement logs and duplicate log identities" $ do
+      receipt <- fixtureReceipt "waiver"
+      let mapLogs f (Object r) = Object $ adjustKey (\case Array logs -> Array $ fmap f logs; v -> v) "logs" r
+          mapLogs _ v = v
+          corrupt (Object e) | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar defaultPerpsAddresses) =
+            Object $ KeyMap.insert "data" (String "0x00") e
+          corrupt v = v
+          duplicate (Object e) = Object $ KeyMap.insert "logIndex" (String "0x1") e
+          duplicate v = v
+      decodeFixtureReceipt (mapLogs corrupt receipt) `shouldSatisfy` isLeftResult
+      decodeFixtureReceipt (mapLogs duplicate receipt) `shouldSatisfy` isLeftResult
+    it "does not attribute an event belonging to a different account" $ do
+      receipt <- fixtureReceipt "waiver"
+      let corrupt (Object r) = Object $ adjustKey (\case
+            Array logs -> Array $ fmap (\case
+              Object e | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar defaultPerpsAddresses) ->
+                Object $ adjustKey (\case
+                  Array topics -> toJSON $ zipWith (\i value -> if i == (1 :: Int) then String ("0x" <> Text.replicate 64 "0") else value) [0..] (toList topics)
+                  value -> value) "topics" e
+              value -> value) logs
+            value -> value) "logs" r
+          corrupt value = value
+      decodeFixtureReceipt (corrupt receipt) `shouldSatisfy` isLeftResult
+
   describe "indexer iteration pacing" $ do
     it "waits for the configured interval after processed and caught-up polls" $ do
       indexerIterationDelayMicros 12_000_000 IndexerProcessed `shouldBe` 12_000_000
@@ -541,3 +591,31 @@ depositTopic = keccak256Text "Deposit(address,address,uint256)"
 
 withdrawTopic :: ByteString
 withdrawTopic = keccak256Text "Withdraw(address,address,uint256)"
+
+fixtureReceipt :: String -> IO Value
+fixtureReceipt name = do
+  decoded <- eitherDecodeFileStrict' ("../../scripts/fixtures/insights-close-" <> name <> ".json")
+  case decoded of
+    Right (Object fixture) | Just receipt <- KeyMap.lookup "receipt" fixture -> pure receipt
+    other -> fail $ "Invalid receipt fixture: " <> show other
+
+receiptText :: Key.Key -> Value -> Text
+receiptText key (Object value) = case KeyMap.lookup key value of
+  Just (String text) -> text
+  _ -> ""
+receiptText _ _ = ""
+
+decodeFixtureReceipt :: Value -> Either Text ([(Integer, Text)], [(RpcLog, Text, Text, Integer, Value)])
+decodeFixtureReceipt receipt = decodeSettlementReceipt defaultPerpsAddresses
+  (receiptText "transactionHash" receipt)
+  (if receiptText "transactionHash" receipt == "0xa583ee512122717defccf27f420f17ac10e1e887777132b67f31d5edbaac8bbd" then 309072000 else 309002622)
+  (receiptText "blockHash" receipt) receipt
+
+isLeftResult :: Either a b -> Bool
+isLeftResult (Left _) = True
+isLeftResult _ = False
+
+adjustKey :: (Value -> Value) -> Key.Key -> KeyMap.KeyMap Value -> KeyMap.KeyMap Value
+adjustKey f key value = case KeyMap.lookup key value of
+  Just old -> KeyMap.insert key (f old) value
+  Nothing -> value

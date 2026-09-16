@@ -7,13 +7,30 @@ interface PerpsMarginActionRequest {
   action: PerpsMarginAction
 }
 
+interface PerpsActivityTarget {
+  chainId: number
+  accountAddress: string
+  ownerAddress: string
+  operationId: string
+}
+
 interface PerpsUiState {
+  activityRequest: (PerpsActivityTarget & { id: number }) | null
+  requestActivity: (target: PerpsActivityTarget) => void
+  clearActivityRequest: (id: number) => void
   marginActionRequest: PerpsMarginActionRequest | null
   requestMarginAction: (action: PerpsMarginAction) => void
   clearMarginActionRequest: (id: number) => void
 }
 
 export const usePerpsUiStore = create<PerpsUiState>()((set) => ({
+  activityRequest: null,
+  requestActivity: target => {
+    set(state => ({ activityRequest: { ...target, id: (state.activityRequest?.id ?? 0) + 1 } }))
+  },
+  clearActivityRequest: id => {
+    set(state => state.activityRequest?.id === id ? { activityRequest: null } : state)
+  },
   marginActionRequest: null,
 
   requestMarginAction: (action) => {

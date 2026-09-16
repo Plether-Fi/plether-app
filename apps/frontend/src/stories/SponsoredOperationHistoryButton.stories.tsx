@@ -1,8 +1,15 @@
-import { useLayoutEffect } from 'react'
+import { useLayoutEffect, type ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createConfig, WagmiProvider } from 'wagmi'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { custom } from 'viem'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, waitFor, within } from 'storybook/test'
 import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
+import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { anvil } from '../config/wagmi'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
 import type { PreparationStatusV1 } from '../perps-aa/preparedOperation'
@@ -186,16 +193,20 @@ function WalletHeaderPreview({
   operations,
   confirmOperationId,
   runtime,
+  children,
 }: {
   operations: SponsoredOperation[]
   confirmOperationId?: string
   runtime?: PerpsAaSmartAccountRuntime
+  children?: ReactNode
 }) {
   useLayoutEffect(() => {
     const previousOperations =
       useSponsoredOperationStore.getState().operations
     const previousActiveLanes =
       useSponsoredOperationStore.getState().activeLanes
+    const previousActivityRequest = usePerpsUiStore.getState().activityRequest
+    usePerpsUiStore.setState({ activityRequest: null })
     const activeOperation = operations
       .filter((operation) => !isSponsoredOperationTerminal(operation.status))
       .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -227,6 +238,7 @@ function WalletHeaderPreview({
         operations: previousOperations,
         activeLanes: previousActiveLanes,
       })
+      usePerpsUiStore.setState({ activityRequest: previousActivityRequest })
     }
   }, [confirmOperationId, operations])
 
@@ -247,6 +259,7 @@ function WalletHeaderPreview({
             <span className="text-sm font-medium">0x1111...1111</span>
           </button>
         </div>
+        {children}
       </div>
     </PerpsIdentityContext.Provider>
     </PerpsAaRuntimeContext>
@@ -484,3 +497,66 @@ export const SponsorshipReservationWait: Story = recoveryStory('place-order', {
   ...RESUMABLE_STATUS, phase: 'expiry-awaiting-reconciliation', reason: 'SAFE_EXPIRY_WAIT',
   recoverable: false, freshReviewAllowed: false,
 })
+
+const recoveryPreviewTransport = custom({
+  request: async () => {
+    throw new Error('Live RPC calls are unavailable in this recovery preview.')
+  },
+}, { retryCount: 0 })
+const recoveryTradeConfig = createConfig({
+  chains: [mainnet, sepolia, arbitrumSepolia, anvil],
+  storage: null,
+  transports: {
+    [mainnet.id]: recoveryPreviewTransport,
+    [sepolia.id]: recoveryPreviewTransport,
+    [arbitrumSepolia.id]: recoveryPreviewTransport,
+    [anvil.id]: recoveryPreviewTransport,
+  },
+})
+recoveryTradeConfig.setState((state) => ({ ...state, chainId: arbitrumSepolia.id }))
+const recoveryTradeQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+})
+const recoveryTradeOperations = [recoveryFixture('deposit')]
+const recoveryTradeRuntime = previewRuntime(RESUMABLE_STATUS)
+
+export const RecoveryFromTradeForm: Story = {
+  parameters: {
+    docs: {
+      description: {
+        story: 'The real trade form with a saved, declined deposit. Open transaction activity leads to Resume and Discard. Status is mocked; wallet signing and live RPC calls are unavailable.',
+      },
+    },
+  },
+  render: () => (
+    <WagmiProvider config={recoveryTradeConfig}>
+      <QueryClientProvider client={recoveryTradeQueryClient}>
+        <WalletHeaderPreview operations={recoveryTradeOperations} runtime={recoveryTradeRuntime}>
+          <div className="mx-auto mt-6 max-w-md">
+            <PerpsTradeTicket
+              enableLiveTrading
+              availableToTradeRaw={1_000_000_000n}
+              oraclePriceRaw={98_300_000n}
+              oraclePriceDisplay="98.30"
+            />
+          </div>
+        </WalletHeaderPreview>
+      </QueryClientProvider>
+    </WagmiProvider>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const recoveryButton = await canvas.findByRole('button', { name: 'Open transaction activity' })
+    expect(await canvas.findByText(/A saved transaction needs attention before you can trade again/)).toBeVisible()
+    expect(canvas.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
+    await userEvent.click(recoveryButton)
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    await waitFor(() => {
+      expect(dialog.getByRole('button', { name: /^Resume / })).toBeEnabled()
+      expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled()
+    })
+    await userEvent.click(dialog.getByRole('button', { name: 'Close dialog' }))
+    await waitFor(() => expect(within(document.body).queryByRole('dialog')).not.toBeInTheDocument())
+    expect(recoveryButton).toBeVisible()
+  },
+}
