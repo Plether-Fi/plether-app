@@ -202,7 +202,8 @@ newNativeGatewayState manager cfg client = do
   let recoveryOrigin = maybe Nothing id origin
   retirement <- lookupEnv "PERPS_AA_RECOVERY_RETIREMENT_ENABLED"
   unless (retirement `elem` [Nothing, Just "false", Just "true"]) $ fail "Invalid recovery retirement flag"
-  unless (maybe True (\value -> "https://" `T.isPrefixOf` value && not (T.any (`elem` ['\n','\r',' ']) value) && not ("/" `T.isInfixOf` T.drop 8 value)) recoveryOrigin) $ fail "Recovery origin must be an exact HTTPS origin"
+  unless (maybe True (\value -> "https://" `T.isPrefixOf` value && not (T.null $ T.drop 8 value)
+    && T.all (`elem` (['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> ".-:")) (T.drop 8 value)) recoveryOrigin) $ fail "Recovery origin must be an exact HTTPS origin"
   when (retirement == Just "true" && recoveryOrigin == Nothing) $ fail "Retirement requires recovery origin"
   pure base { ngsCloseAssistance = assistance, ngsRecoveryOrigin = recoveryOrigin, ngsRetirementEnabled = retirement == Just "true" }
 
@@ -2297,7 +2298,9 @@ handlePreparationRecovery state cfg native pool client manager clientKey request
                       let canRetire = ngsRetirementEnabled state && reason == Nothing
                           hashes = [h | (_,Just h,_) <- take 20 matches]
                       case matches of
-                        [] -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
+                        [] -> case reason of
+                          Just why -> respondRecoveryState "unresolved" why False []
+                          Nothing -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
                         [(originalClient,_,True)] -> preparationStatusWithRecovery (Just canRetire) native pool client manager originalClient request
                         _ | any (\(_,_,bound) -> not bound) matches -> respondRecoveryState "unresolved" "RECOVERY_BINDING_UNRESOLVED" False hashes
                           | otherwise -> respondRecoveryState "ambiguous" "RECOVERY_MULTIPLE_PREPARATIONS" canRetire hashes

@@ -134,6 +134,7 @@ aaIntegrationSpec databaseUrl =
         authorization <- reserveSponsorship conn testConfig candidate >>= expectAuthorization
         storeSponsorshipSignature conn testConfig (saDigest authorization) (signatureOf '6') operationHash `shouldReturn` True
         Right fence <- Recovery.beginPreparation conn scope "worker"
+        _ <- claimPreparation conn True (sdClientKey candidate) (sdSender candidate) (hashOf '4') (hashOf '9') "preparation-worker"
         -- Delivery of an existing authorization must also acquire registry linkage.
         isSponsorshipDeliveryAllowedFenced conn testConfig (saDigest authorization) (Just fence) `shouldReturn` True
         Recovery.saveChallenge conn scope "challenge" (sdOwner candidate) "message"
@@ -144,6 +145,8 @@ aaIntegrationSpec databaseUrl =
         Recovery.saveChallenge conn (scope {Recovery.scopeId = hashOf '8'}) "wrong-attempt" (sdOwner candidate) "message"
         Recovery.consumeChallenge conn (scope {Recovery.scopeId = hashOf '8'}) "wrong-attempt" (sdOwner candidate) "other-token" `shouldReturn` True
         Recovery.sessionSubmissionClient conn paymasterAddress "other-token" operationHash `shouldReturn` Nothing
+        _ <- claimPreparation conn True (clientKeyOf '9') (sdSender candidate) (hashOf '4') (hashOf '9') "historical-worker"
+        Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
         void $ execute_ conn "UPDATE aa_preparation_recovery_sessions SET expires_at=clock_timestamp()-interval '1 second'"
         Recovery.sessionSubmissionClient conn paymasterAddress "token" operationHash `shouldReturn` Nothing
 

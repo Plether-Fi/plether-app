@@ -149,6 +149,6 @@ sessionOwner conn (Scope chain paymaster sender identifier) tokenHash = do
 sessionSubmissionClient :: Connection -> Text -> Text -> Text -> IO (Maybe Text)
 sessionSubmissionClient conn paymaster tokenHash operationHash = do
   rows <- query conn
-    "SELECT DISTINCT a.client_key FROM aa_preparation_recovery_sessions s JOIN aa_preparation_authorizations p USING(chain_id,paymaster,sender,preparation_id) JOIN aa_preparation_registry r USING(chain_id,paymaster,sender,preparation_id) JOIN aa_sponsorship_authorizations a ON a.digest=p.digest AND a.sender=s.sender AND a.owner=s.owner WHERE s.token_hash=? AND s.paymaster=? AND s.expires_at>clock_timestamp() AND NOT r.retired AND a.expected_user_operation_hash=? AND a.state IN ('signed','submitted') LIMIT 2"
+    "SELECT DISTINCT a.client_key FROM aa_preparation_recovery_sessions s JOIN aa_preparation_authorizations p USING(chain_id,paymaster,sender,preparation_id) JOIN aa_preparation_registry r USING(chain_id,paymaster,sender,preparation_id) JOIN aa_sponsorship_authorizations a ON a.digest=p.digest AND a.sender=s.sender AND a.owner=s.owner WHERE s.token_hash=? AND s.paymaster=? AND s.expires_at>clock_timestamp() AND NOT r.retired AND a.expected_user_operation_hash=? AND a.state IN ('signed','submitted') AND (SELECT count(*) FROM aa_preparations original WHERE original.sender=s.sender AND original.preparation_id=s.preparation_id)=1 LIMIT 2"
     (tokenHash,paymaster,operationHash)
   pure $ case rows of [Only client] -> Just client; _ -> Nothing

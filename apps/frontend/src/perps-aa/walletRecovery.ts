@@ -139,7 +139,11 @@ export function createWalletPreparationRecovery(input: {
       if (result.version !== 1 || typeof result.sessionToken !== 'string' || !/^[0-9a-f]{64}$/.test(result.sessionToken) || result.expiresIn !== 900) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
       sessions.set(id, { token: result.sessionToken, expiresAt: Date.now() + 895_000 })
     },
-    status: async id => parseWalletRecoveryResult(await rpc('plether_getRecoveryStatus', id)),
+    status: async id => {
+      const result = parseWalletRecoveryResult(await rpc('plether_getRecoveryStatus', id))
+      if ('phase' in result && result.userOperationHash) operationIds.set(result.userOperationHash.toLowerCase(), id)
+      return result
+    },
     retire: async id => parseWalletRecoveryResult(await rpc('plether_retirePreparation', id)),
   }
 }

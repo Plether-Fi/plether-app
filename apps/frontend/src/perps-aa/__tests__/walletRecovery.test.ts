@@ -11,11 +11,12 @@ const missing = { version: 1, recoveryState: 'missing', reason: 'PREPARATION_NOT
 function setup() {
   const calls: { method: string; headers: Headers; params: Record<string, unknown>[] }[] = []
   let alter = false
+  let statusResult: unknown = missing
   const sign = vi.fn(async () => `0x${'12'.repeat(65)}` as Hex)
   const fetcher = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown>[] }
     calls.push({ ...body, headers: new Headers(init?.headers) })
-    let result: unknown = missing
+    let result: unknown = statusResult
     if (body.method === 'plether_getRecoveryChallenge') {
       const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + 300
       result = { version: 1, challengeId: nonce, expiresAt,
@@ -27,7 +28,7 @@ function setup() {
     return new Response(JSON.stringify({ result }), { headers: { 'Content-Type': 'application/json' } })
   })
   const api = createWalletPreparationRecovery({ rpcUrl: '/api/perps/v1/aa/rpc', chainId: 421614, paymaster, sender, owner, signMessage: sign, fetcher })
-  return { api, sign, fetcher, calls, tamper: () => { alter = true } }
+  return { api, sign, fetcher, calls, setStatus: (value: unknown) => { statusResult = value }, tamper: () => { alter = true } }
 }
 afterEach(() => { vi.useRealTimers() })
 describe('wallet preparation recovery', () => {
@@ -46,6 +47,17 @@ describe('wallet preparation recovery', () => {
     expect(api.operationHeaders(hash)[PREPARATION_RECOVERY_HEADER]).toBe(token)
     expect(api.operationHeaders(`0x${'b'.repeat(64)}`)).toEqual({})
     await expect(api.retire(id)).resolves.toMatchObject({ recoveryState: 'retired' })
+    expect(sign).toHaveBeenCalledTimes(1)
+    expect(calls.every(call => !/sendUserOperation|prepareUserOperation/.test(call.method))).toBe(true)
+  })
+  it('binds a verified existing operation for an explicit retry without sending it', async () => {
+    const { api, sign, calls, setStatus } = setup()
+    const hash = `0x${'c'.repeat(64)}` as Hex
+    await api.verify(id)
+    setStatus({ version: 1, canRetire: false, recoveryVerified: true, phase: 'submitted', reason: 'PREPARATION_UNUSABLE',
+      serverTime: '1', recoverable: false, freshReviewAllowed: false, userOperationHash: hash })
+    await api.status(id)
+    expect(api.operationHeaders(hash)[PREPARATION_RECOVERY_HEADER]).toBe(token)
     expect(sign).toHaveBeenCalledTimes(1)
     expect(calls.every(call => !/sendUserOperation|prepareUserOperation/.test(call.method))).toBe(true)
   })

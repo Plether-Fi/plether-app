@@ -10,7 +10,7 @@ import { hasSponsoredOperationSignal, isSponsoredOperationTerminal, restoreSpons
 import { usePerpsAaRuntime, type PerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useConfirmationStatus, useDeploymentConfirmationDetails } from './useAccountDeploymentConfirmation'
 import { confirmationPending } from './deploymentConfirmation'
-import { recoveryMessage, recoveryReason, type WalletRecoveryResult } from './walletRecovery'
+import { PreparationRecoveryError, recoveryMessage, recoveryReason, type WalletRecoveryResult } from './walletRecovery'
 import type { PreparationStatusV1 } from './preparedOperation'
 import { sponsoredOperationActionLabel } from '../utils/sponsoredOperation'
 import { Button } from '../components/ui/Button'
@@ -213,7 +213,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
               const result = await runtime.preparationRecovery.retire(operation.id)
               setWalletStatus(result)
               if (!('recoveryState' in result) || result.recoveryState !== 'retired') {
-                throw new Error('Retirement is still pending')
+                throw new PreparationRecoveryError(result.reason)
               }
               const store = useSponsoredOperationStore.getState()
               store.markPreparationResolved(current.id)
