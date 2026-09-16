@@ -434,13 +434,17 @@ describe('executeSponsoredPerpsAction', () => {
     expect(useSponsoredOperationStore.getState().operations[0].reason).toBeUndefined()
   })
 
-  it('retries a dropped preparation response through its original ID without another journal entry', async () => {
-    const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(new Error('connection interrupted'))
+  it.each([
+    [new Error('connection interrupted'), 'UNKNOWN'],
+    [new DOMException('Request timed out', 'TimeoutError'), 'SPONSOR_REQUEST_TIMEOUT'],
+  ])('retries a dropped preparation response through its original ID without another journal entry (%s)', async (error, reason) => {
+    const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(error)
     const managed = runtime({ prepareUserOperation: prepare })
     await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
     const saved = useSponsoredOperationStore.getState().operations[0]
     expect(saved.nativePreparation).toBeDefined()
     expect(saved.preparedOperation).toBeUndefined()
+    expect(saved).toMatchObject({ status: 'preparation-pending', reason })
     await resumeSponsoredPerpsAction(saved, managed)
     expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: saved.id }))
     expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)

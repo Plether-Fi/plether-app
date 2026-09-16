@@ -28,9 +28,12 @@ export function recoveryReason(error: unknown): string | undefined {
   const seen = new Set<object>()
   for (let value = error; value && typeof value === 'object' && !seen.has(value);) {
     seen.add(value)
-    const row = value as { reason?: unknown; data?: { reason?: unknown }; cause?: unknown }
+    const row = value as { reason?: unknown; data?: { reason?: unknown }; cause?: unknown; code?: unknown; name?: unknown }
     const reason = row.reason ?? row.data?.reason
-    if (typeof reason === 'string') return reason
+    if (typeof reason === 'string' && /^[A-Z_]{1,64}$/.test(reason)) return reason
+    if (row.code === 4001) return 'WALLET_SIGNATURE_DECLINED'
+    if (row.code === -32002) return 'WALLET_REQUEST_PENDING'
+    if (row.name === 'TimeoutError') return 'RECOVERY_TIMEOUT'
     value = row.cause
   }
 }
@@ -47,7 +50,16 @@ export function recoveryMessage(reason?: string): string {
     case 'PREPARATION_RETIRED': return 'This saved attempt has been safely retired. Review current account activity before starting another transaction.'
     case 'ACCOUNT_DEPLOYMENT_PENDING': return 'Waiting for Trading Account confirmation. No transaction will be sent automatically.'
     case 'RATE_LIMITED': return 'Too many recovery requests. Wait a moment and try again.'
-    default: return 'Recovery could not be checked. Your saved attempt is retained; try again shortly.'
+    case 'WALLET_SIGNATURE_DECLINED': return 'The ownership signature was declined. Choose Verify wallet to recover and approve the gas-free message to continue.'
+    case 'WALLET_REQUEST_PENDING': return 'A wallet request is already open. Open your wallet and complete or dismiss it, then try verification again.'
+    case 'RECOVERY_TIMEOUT': return 'The recovery request timed out. Your saved attempt is retained; check recovery again.'
+    case 'RECOVERY_CHALLENGE_EXPIRED': return 'The ownership message expired. Verify your wallet again to request a fresh message.'
+    case 'RECOVERY_CLOCK_MISMATCH': return 'Your device clock does not match the recovery service. Enable automatic date and time, then verify your wallet again.'
+    case 'INVALID_RECOVERY_RESPONSE': return 'The recovery response could not be verified. Refresh the app and try again. If this continues, contact support with the support reference.'
+    case 'POLICY_DENIED': return 'The recovery request was rejected. Refresh the app and verify the original owner wallet. If this continues, contact support with the support reference.'
+    case 'PREPARATION_UNUSABLE': return 'The saved preparation can no longer be signed. Check recovery to discard it when available.'
+    case 'RECOVERY_UNAVAILABLE': return 'The recovery service could not be reached. Your saved attempt is retained; check recovery again.'
+    default: return 'This recovery step could not be completed. Your saved attempt is retained. Check recovery again; if this continues, contact support with the support reference.'
   }
 }
 function record(value: unknown): Record<string, unknown> {
@@ -109,11 +121,12 @@ export function createWalletPreparationRecovery(input: {
     let response: Response
     try {
       response = await request(endpoint, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+        signal: AbortSignal.timeout(30_000),
         headers: { 'Content-Type': 'application/json', ...headers(id), ...(/^[0-9a-f-]{36}$/i.test(id) ? { 'X-Plether-Attempt-Id': id } : {}) },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: [{ version: 1, chainId: `0x${input.chainId.toString(16)}`,
           sender: input.sender.toLowerCase(), preparationId: preparationIdentifier(id), ...extra }] }),
       })
-    } catch { throw new PreparationRecoveryError('RECOVERY_UNAVAILABLE') }
+    } catch (cause) { throw new PreparationRecoveryError(recoveryReason(cause) ?? 'RECOVERY_UNAVAILABLE') }
     let body: Record<string, unknown>
     try { body = record(await response.json()) } catch { throw new PreparationRecoveryError('RECOVERY_UNAVAILABLE') }
     if (!response.ok || body.error) {
@@ -130,8 +143,9 @@ export function createWalletPreparationRecovery(input: {
     async verify(id) {
       const challenge = record(await rpc('plether_getRecoveryChallenge', id, { owner: input.owner.toLowerCase(), origin }))
       if (challenge.version !== 1 || typeof challenge.challengeId !== 'string' || !/^[0-9a-f]{64}$/.test(challenge.challengeId)
-        || typeof challenge.expiresAt !== 'number' || !Number.isSafeInteger(challenge.expiresAt)
-        || challenge.expiresAt * 1000 <= Date.now() || challenge.expiresAt * 1000 > Date.now() + 305_000) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
+        || typeof challenge.expiresAt !== 'number' || !Number.isSafeInteger(challenge.expiresAt)) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
+      if (challenge.expiresAt * 1000 <= Date.now()) throw new PreparationRecoveryError('RECOVERY_CHALLENGE_EXPIRED')
+      if (challenge.expiresAt * 1000 > Date.now() + 305_000) throw new PreparationRecoveryError('RECOVERY_CLOCK_MISMATCH')
       const message = recoveryChallengeMessage({ ...input, origin, preparationId: preparationIdentifier(id), nonce: challenge.challengeId, expiresAt: challenge.expiresAt })
       if (challenge.message !== message) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
       const signature = await input.signMessage(message)

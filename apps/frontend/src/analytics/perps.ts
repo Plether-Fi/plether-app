@@ -223,6 +223,7 @@ export function perpsErrorCategory(error: unknown): string {
 export function trackPerpsPreparationRecovery(input: {
   attemptId: string
   outcome: 'waiting' | 'ready' | 'check-unavailable' | 'verified' | 'retired' | 'unresolved' | 'ambiguous' | 'missing'
+    | 'verification-failed' | 'status-failed' | 'resume-failed' | 'discard-failed'
   reason?: string
   durationMs?: number
 }): void {

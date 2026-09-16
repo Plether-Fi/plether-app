@@ -17,6 +17,12 @@ import { Button } from '../components/ui/Button'
 
 function normalizedAddress(value?: string) { return value?.toLowerCase() }
 
+function recoveryFailure(attemptId: string, outcome: 'verification-failed' | 'status-failed' | 'resume-failed' | 'discard-failed', cause: unknown) {
+  const reason = recoveryReason(cause) ?? 'RECOVERY_UNKNOWN'
+  trackPerpsPreparationRecovery({ attemptId, outcome, reason })
+  return recoveryMessage(reason)
+}
+
 /** Mounted only in the visible recovery view. Status changes never sign or submit. */
 export function PreparedOperationRecovery({ operation, fallbackManifest }: { operation: SponsoredOperation; fallbackManifest?: PerpsAaDeploymentManifestV2 }) {
   const base = usePerpsAaRuntime()
@@ -53,6 +59,8 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const [walletRequired, setWalletRequired] = useState(false)
   const [verified, setVerified] = useState(false)
   const [working, setWorking] = useState(false)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+  const [statusCheckRevision, setStatusCheckRevision] = useState(0)
   const request = operation.nativePreparation
   const recoveryManifest = request?.manifest ?? fallbackManifest
   const accountConfirmation = useConfirmationStatus(runtime.deploymentConfirmation)
@@ -63,7 +71,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   // advisory only: it never proves that a reservation can be discarded.
   const deferStatusCheck = !!request && !operation.preparedOperation && !operation.userOperationHash
     && (accountWaiting || (operation.status === 'preparation-pending' && operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING'))
-  const status = walletStatus && 'phase' in walletStatus ? walletStatus : deferStatusCheck ? undefined : checkedStatus
+  const status = walletStatus ? ('phase' in walletStatus ? walletStatus : undefined) : deferStatusCheck ? undefined : checkedStatus
   const visibleError = error ?? (deferStatusCheck ? undefined : statusError)
 
   useEffect(() => {
@@ -100,6 +108,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     const refresh = async () => {
       if (isStopped() || inFlight || document.visibilityState === 'hidden') return
       inFlight = true
+      setCheckingStatus(true)
       clearTimeout(timer)
       let delay = 15_000
       let resolved = false
@@ -120,13 +129,15 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
         delay = 60_000
         if (!isStopped()) {
           const reason = recoveryReason(cause)
-          setStatus(undefined); setStatusError(recoveryMessage(reason))
+          setStatus(undefined); setWalletStatus(undefined)
+          setStatusError(recoveryFailure(operation.id, 'status-failed', cause))
           if (reason === 'RECOVERY_VERIFICATION_REQUIRED' || reason === 'PREPARATION_NOT_AUTHORIZED') {
             setWalletRequired(true); setVerified(false); setWalletStatus(undefined)
           }
         }
       } finally {
         inFlight = false
+        if (!isStopped()) setCheckingStatus(false)
         if (!isStopped() && !resolved) timer = setTimeout(() => { void refresh() }, delay)
       }
     }
@@ -134,10 +145,16 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     void refresh()
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
-    return () => { lifecycle.stopped = true; clearTimeout(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus) }
-  }, [runtime, recoveryManifest, operation.id, operation.status, operation.userOperationHash, operation.preparedOperation?.expectedHash, deferStatusCheck, verified])
+    return () => {
+      lifecycle.stopped = true; setCheckingStatus(false); clearTimeout(timer)
+      window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [runtime, recoveryManifest, operation.id, operation.status, operation.userOperationHash, operation.preparedOperation?.expectedHash, deferStatusCheck, verified, statusCheckRevision])
 
   if (!recoveryManifest) return null
+  if (operation.preparationResolved && operation.status === 'cancelled') return <p>
+    Saved attempt discarded. Review your current position before preparing a new action.
+  </p>
   if (!request && !runtime.preparationRecovery) return <div className="text-sm text-content-secondary">
     <p>This older record has no recoverable transaction payload. Check account activity before reviewing a new transaction.</p>
     {status?.reason === 'SAFE_EXPIRY_WAIT' || status?.reason === 'ASSISTANCE_RESERVATION_PENDING'
@@ -157,6 +174,12 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const walletRecovery = runtime.preparationRecovery
   const freshAllowed = walletRecovery ? walletStatus?.canRetire === true : legacyFreshAllowed
   const resumeBlocked = isSponsoredOperationTerminal(operation.status) || walletRequired || (walletStatus && 'recoveryState' in walletStatus && walletStatus.recoveryState !== 'missing')
+  const safelyResolved = status?.phase === 'resolved'
+  // An unavailable status is not permission to retry a response-lost request.
+  // Account-confirmation retries are the explicit pre-preparation exception.
+  const canOfferResume = !resumeBlocked && (status?.recoverable === true
+    || (deferStatusCheck && accountConfirmation === 'ready')
+    || (walletStatus && 'recoveryState' in walletStatus && walletStatus.recoveryState === 'missing' && !operation.preparedOperation))
   return <div className="space-y-2 text-sm text-content-secondary" aria-live="polite">
     {accountWaiting && <AccountDeploymentConfirmation monitor={runtime.deploymentConfirmation} />}
     {deferStatusCheck && accountConfirmation === 'ready' && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
@@ -174,34 +197,43 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       <p>Verify ownership with a gas-free wallet message to check or discard this saved attempt.</p>
       <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => {
         setWorking(true); setError(undefined)
-        void walletRecovery.verify(operation.id).then(async () => {
-          const result = await walletRecovery.status(operation.id)
-          setWalletStatus(result); setVerified(true); setWalletRequired(false); setStatusError(undefined)
-        }).catch((cause: unknown) => { setError(recoveryMessage(recoveryReason(cause))) })
+        void walletRecovery.verify(operation.id).then(() => {
+          // Poll the verified session separately. A failed status read must not
+          // discard a successful proof or require another wallet signature.
+          setWalletStatus(undefined); setStatus(undefined)
+          setVerified(true); setWalletRequired(false); setStatusError(undefined)
+        }).catch((cause: unknown) => { setError(recoveryFailure(operation.id, 'verification-failed', cause)) })
           .finally(() => { setWorking(false) })
       }}>Verify wallet to recover</Button>
     </div>}
     {waiting && <><p>Waiting for sponsorship reservation to clear</p><p>Authorization expiry and safe reconciliation are separate. Clearance depends on verified chain progress.</p></>}
     {status?.phase === 'expiry-awaiting-reconciliation' && !waiting && <p>The authorization expired. Checking safe chain evidence before resolving the operation.</p>}
-    {status?.reason === 'PREPARATION_UNUSABLE' && <p>This preparation cannot be resumed. Review current account state before preparing another transaction.</p>}
+    {safelyResolved && <p>{status.authorizationState === 'expired'
+      ? 'The unused sponsorship has safely expired.' : 'The original sponsorship has been safely resolved.'} Discard this saved attempt to unlock a fresh action.
+      {operation.action === 'cancel-protection' && ' Discarding does not cancel TP/SL onchain.'}</p>}
+    {!safelyResolved && status?.reason === 'PREPARATION_UNUSABLE' && <p>This preparation cannot be resumed. Check recovery to discard it when available.</p>}
     {status?.reason === 'INTENT_ALREADY_COMMITTED' && <p>This intent was already committed. Check order activity before reviewing a new action.</p>}
     {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
     {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
     {visibleError && <p role="alert">{visibleError}</p>}
+    {!deferStatusCheck && <Button type="button" variant="secondary" size="sm" disabled={working || checkingStatus} onClick={() => {
+      setError(undefined)
+      setStatusCheckRevision(value => value + 1)
+    }}>{checkingStatus ? 'Checking recovery…' : 'Check recovery again'}</Button>}
     {status?.recoverable && <p>Resume asks your wallet to sign the saved transaction again.</p>}
     {!operation.userOperationHash && <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
-      <Button type="button" variant="primary" size="sm" disabled={!request || active || accountWaiting || !!resumeBlocked || (status ? !status.recoverable : !!operation.preparedOperation)} onClick={() => {
+      {canOfferResume && <Button type="button" variant="primary" size="sm" disabled={!request || active || checkingStatus || accountWaiting} onClick={() => {
         setWorking(true); setError(undefined)
         void resumeSponsoredPerpsAction(operation, runtime).catch((cause: unknown) => {
           const reason = recoveryReason(cause)
-          setError(recoveryMessage(reason))
+          setError(recoveryFailure(operation.id, 'resume-failed', cause))
           if (reason === 'RECOVERY_VERIFICATION_REQUIRED' || reason === 'PREPARATION_NOT_AUTHORIZED') {
             setWalletRequired(true); setVerified(false); setWalletStatus(undefined)
           }
         }).finally(() => { setWorking(false) })
-      }}>Resume {sponsoredOperationActionLabel(operation.action).toLowerCase() || 'transaction'}</Button>
-      <Button type="button" variant="secondary" size="sm" disabled={active || !(freshAllowed === true || (walletStatus !== undefined && 'recoveryState' in walletStatus && walletStatus.recoveryState === 'retired'))} onClick={() => {
-        setWorking(true)
+      }}>Resume {sponsoredOperationActionLabel(operation.action).toLowerCase() || 'transaction'}</Button>}
+      <Button type="button" variant={freshAllowed ? 'primary' : 'secondary'} size="sm" disabled={active || checkingStatus || !(freshAllowed === true || (walletStatus !== undefined && 'recoveryState' in walletStatus && walletStatus.recoveryState === 'retired'))} onClick={() => {
+        setWorking(true); setError(undefined)
         void (async () => {
           const release = await acquireSponsoredOperationBrowserLane({ chainId: operation.chainId, accountAddress: operation.accountAddress, lane: operation.lane })
           try {
@@ -245,7 +277,13 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
               } else store.failOperation({ id: current.id, status: 'execution-reverted', retryable: false })
             } else useSponsoredOperationStore.getState().transition(operation.id, 'cancelled')
           } finally { await release() }
-        })().catch((cause: unknown) => { setError(recoveryMessage(recoveryReason(cause))) }).finally(() => { setWorking(false) })
+        })().catch((cause: unknown) => {
+          setError(recoveryFailure(operation.id, 'discard-failed', cause))
+          const reason = recoveryReason(cause)
+          if (reason === 'RECOVERY_VERIFICATION_REQUIRED' || reason === 'PREPARATION_NOT_AUTHORIZED') {
+            setWalletRequired(true); setVerified(false); setWalletStatus(undefined)
+          }
+        }).finally(() => { setWorking(false) })
       }}>Discard saved transaction</Button>
     </div>}
   </div>

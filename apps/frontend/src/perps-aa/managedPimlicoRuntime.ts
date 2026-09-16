@@ -408,7 +408,9 @@ export async function createManagedAaRuntime({
         ])
         const binding = { sender: accountAddress, callData, ...factoryArgs }
         // No transport retries/fallback with a fresh ID after an ambiguous result.
-        const response = await recoveryHttp(paymasterRpcUrl, { retryCount: 0,
+        // Preparation includes database, chain and signing checks. Keep one
+        // bounded request; a timeout must never create a fresh preparation ID.
+        const response = await recoveryHttp(paymasterRpcUrl, { retryCount: 0, timeout: 30_000,
           fetchOptions: preparationId ? { headers: {
             ...preparationRecovery?.headers(preparationId),
             ...(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId) ? { 'X-Plether-Attempt-Id': preparationId } : {}),

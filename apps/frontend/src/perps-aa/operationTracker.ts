@@ -9,6 +9,7 @@ import {
   findBundlerRequestError,
   findSponsorRequestError,
   findSponsoredPreflightError,
+  isDefinitiveSponsorshipRefusal,
   type StablePreflightReason,
 } from './errors'
 import { SponsoredOperationCoordinationError } from './laneLock'
@@ -245,13 +246,14 @@ export function beginSponsoredOperationTracking(
         const declined = currentOperation.status === 'awaiting-signature' && isExplicitSignatureRejection(error)
         if (currentOperation.status === 'awaiting-signature') useSponsoredOperationStore.getState().recordWalletPreparationOutcome(id, declined ? 'declined' : 'unknown')
         const accountPending = sponsorError?.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
-        const status = declined ? 'signature-declined' : sponsorError && !accountPending ? 'sponsorship-refused' : 'preparation-pending'
+        const refused = isDefinitiveSponsorshipRefusal(sponsorError?.reason)
+        const status = declined ? 'signature-declined' : refused && !accountPending ? 'sponsorship-refused' : 'preparation-pending'
         useSponsoredOperationStore.getState().failOperation({
           id, status, reason: sponsorError?.reason, retryable: sponsorError?.retryable ?? false,
         })
         trackPerpsSponsoredOperation(status, analyticsProperties(metadata, {
           attempt_id: id, stage: 'preparation', reason_code: sponsorError?.reason,
-          preparation_outcome: declined ? 'wallet_rejected' : sponsorError && !accountPending ? 'sponsorship_refused' : 'unknown',
+          preparation_outcome: declined ? 'wallet_rejected' : refused && !accountPending ? 'sponsorship_refused' : 'unknown',
         }))
         return
       }

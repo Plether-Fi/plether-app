@@ -22,6 +22,7 @@ import {
 } from '../perps-aa'
 import {
   sponsoredOperationActionLabel,
+  sponsoredOperationDisplayStatus,
   sponsoredOperationStatusLabel,
 } from '../utils/sponsoredOperation'
 import { Badge, Modal } from './ui'
@@ -208,7 +209,7 @@ function operationStatusLabel(operation: SponsoredOperation): string {
       : 'Included onchain'
   }
   if (!isSubmissionUncertain(operation)) {
-    return sponsoredOperationStatusLabel(operation.status)
+    return sponsoredOperationStatusLabel(sponsoredOperationDisplayStatus(operation))
   }
 
   return operation.status === 'receipt-timeout'
@@ -224,10 +225,12 @@ function operationReasonMessage(
     return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
   }
 
-  switch (operation.status) {
+  switch (sponsoredOperationDisplayStatus(operation)) {
     case 'signature-declined': return 'Signature declined. Your transaction was not sent.'
     case 'preparation-pending': return operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
       ? 'Preparation paused for Trading Account confirmation. Resume this attempt once the account is confirmed.'
+      : operation.reason === 'PREPARATION_UNUSABLE'
+      ? 'This saved preparation can no longer be signed. Check recovery to discard it when available.'
       : 'The wallet or preparation response was interrupted. Check recovery before continuing.'
     case 'sponsorship-refused': return 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
     case 'execution-reverted':

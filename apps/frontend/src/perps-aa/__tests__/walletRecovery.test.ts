@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createWalletPreparationRecovery, PREPARATION_RECOVERY_HEADER, recoveryChallengeMessage, parseWalletRecoveryResult } from '../walletRecovery'
+import { createWalletPreparationRecovery, PREPARATION_RECOVERY_HEADER, recoveryChallengeMessage, parseWalletRecoveryResult, recoveryReason, recoveryMessage } from '../walletRecovery'
 import { preparationIdentifier } from '../nativePreparation'
 import type { Address, Hex } from 'viem'
 const owner = `0x${'1'.repeat(40)}` as Address
@@ -8,7 +8,7 @@ const paymaster = `0x${'3'.repeat(40)}` as Address
 const id = '12345678-1234-4123-8123-123456789abc'
 const token = 'b'.repeat(64)
 const missing = { version: 1, recoveryState: 'missing', reason: 'PREPARATION_NOT_CREATED', canRetire: true, operationHashes: [] }
-function setup() {
+function setup(challengeLifetime = 300) {
   const calls: { method: string; headers: Headers; params: Record<string, unknown>[] }[] = []
   let alter = false
   let statusResult: unknown = missing
@@ -18,7 +18,7 @@ function setup() {
     calls.push({ ...body, headers: new Headers(init?.headers) })
     let result: unknown = statusResult
     if (body.method === 'plether_getRecoveryChallenge') {
-      const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + 300
+      const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + challengeLifetime
       result = { version: 1, challengeId: nonce, expiresAt,
         message: recoveryChallengeMessage({ origin: location.origin, chainId: 421614, paymaster, sender,
           preparationId: preparationIdentifier(id), owner, nonce, expiresAt }) + (alter ? '\nextra instruction' : '') }
@@ -32,6 +32,18 @@ function setup() {
 }
 afterEach(() => { vi.useRealTimers() })
 describe('wallet preparation recovery', () => {
+  it.each([
+    [{ cause: { code: 4001 } }, 'WALLET_SIGNATURE_DECLINED', 'signature was declined'],
+    [{ code: -32002 }, 'WALLET_REQUEST_PENDING', 'request is already open'],
+    [new DOMException('private transport details', 'TimeoutError'), 'RECOVERY_TIMEOUT', 'timed out'],
+  ])('explains wallet and transport failures without exposing raw errors', (cause, reason, message) => {
+    expect(recoveryReason(cause)).toBe(reason)
+    expect(recoveryMessage(recoveryReason(cause))).toContain(message)
+    expect(recoveryMessage(recoveryReason(cause))).not.toContain('private transport details')
+  })
+  it('does not report an arbitrary error reason as a support code', () => {
+    expect(recoveryReason({ reason: 'secret wallet contents', cause: { code: 4001 } })).toBe('WALLET_SIGNATURE_DECLINED')
+  })
   it('only signs after explicit verification and sends the scoped session on recovery requests', async () => {
     const { api, sign, calls } = setup()
     expect(sign).not.toHaveBeenCalled()
@@ -66,6 +78,16 @@ describe('wallet preparation recovery', () => {
     tamper()
     await expect(api.verify(id)).rejects.toMatchObject({ reason: 'INVALID_RECOVERY_RESPONSE' })
     expect(sign).not.toHaveBeenCalled()
+  })
+  it.each([
+    [0, 'RECOVERY_CHALLENGE_EXPIRED'],
+    [360, 'RECOVERY_CLOCK_MISMATCH'],
+  ])('explains invalid challenge timing (%i seconds) without signing', async (lifetime, reason) => {
+    const { api, sign, calls } = setup(lifetime)
+    await expect(api.verify(id)).rejects.toMatchObject({ reason })
+    expect(sign).not.toHaveBeenCalled()
+    expect(calls.map(call => call.method)).toEqual(['plether_getRecoveryChallenge'])
+    expect(api.headers(id)).toEqual({})
   })
   it('expires sessions in memory and never restores them from another runtime', async () => {
     vi.useFakeTimers()
