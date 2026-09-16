@@ -28,12 +28,24 @@ export function recoveryReason(error: unknown): string | undefined {
   const seen = new Set<object>()
   for (let value = error; value && typeof value === 'object' && !seen.has(value);) {
     seen.add(value)
-    const row = value as { reason?: unknown; data?: { reason?: unknown }; cause?: unknown; code?: unknown; name?: unknown }
+    const row = value as { reason?: unknown; data?: { reason?: unknown }; cause?: unknown; code?: unknown; name?: unknown; details?: unknown }
     const reason = row.reason ?? row.data?.reason
     if (typeof reason === 'string' && /^[A-Z_]{1,64}$/.test(reason)) return reason
     if (row.code === 4001) return 'WALLET_SIGNATURE_DECLINED'
     if (row.code === -32002) return 'WALLET_REQUEST_PENDING'
     if (row.name === 'TimeoutError') return 'RECOVERY_TIMEOUT'
+    // viem stores non-2xx JSON-RPC errors in HttpRequestError.details instead
+    // of cause/data. Read only a bounded structured reason, never raw text.
+    if (row.name === 'HttpRequestError' && typeof row.details === 'string' && row.details.length <= 8_192) {
+      try {
+        const parsed: unknown = JSON.parse(row.details)
+        if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+          const data = parsed.data
+          if (data && typeof data === 'object' && 'reason' in data
+            && typeof data.reason === 'string' && /^[A-Z_]{1,64}$/.test(data.reason)) return data.reason
+        }
+      } catch { /* Unstructured transport details are not a recovery reason. */ }
+    }
     value = row.cause
   }
 }

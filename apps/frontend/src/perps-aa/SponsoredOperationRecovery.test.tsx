@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   concatHex,
   numberToHex,
@@ -28,6 +28,10 @@ import {
 } from './runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { SponsoredOperationRecovery } from './SponsoredOperationRecovery'
+import { PreparedOperationRecovery } from './PreparedOperationRecovery'
+import { createWalletPreparationRecovery, recoveryChallengeMessage } from './walletRecovery'
+import { recoveryFetch, resetRecoveryCredentialsForTests } from './recoveryTransport'
+import { preparationIdentifier } from './nativePreparation'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -214,6 +218,84 @@ describe('SponsoredOperationRecovery', () => {
     releaseSponsoredOperationSignal('live-operation')
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it.each([true, false])('restores signed-attempt receipt access after explicit owner verification; safe evidence available: %s', async safeEvidence => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let clock = 1000
+    const started = Date.now()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    vi.spyOn(Date, 'now').mockImplementation(() => started + clock)
+    resetRecoveryCredentialsForTests()
+    const id = 'd46ab597-544c-452e-a8c6-2920727f84b9'
+    beginHashOperation({ id, operation: signedOperation() })
+    const paymaster = '0x3333333333333333333333333333333333333333' as Address
+    const url = `${location.origin}/api/perps/v1/aa/rpc`
+    const capability = `v1.${USER_OPERATION_HASH}.0x${'b'.repeat(64)}.${Math.floor(Date.now() / 1000) + 600}.${'c'.repeat(64)}`
+    const session = 'd'.repeat(64)
+    const fetched: string[] = []
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { method: string }
+      fetched.push(body.method)
+      const headers = new Headers(init?.headers)
+      let result: unknown = null
+      const responseHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (body.method === 'plether_getRecoveryChallenge') {
+        const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + 300
+        result = { version: 1, challengeId: nonce, expiresAt, message: recoveryChallengeMessage({
+          origin: location.origin, chainId: 421614, paymaster, sender: ACCOUNT, owner: OWNER,
+          preparationId: preparationIdentifier(id), nonce, expiresAt,
+        }) }
+      } else if (body.method === 'plether_verifyRecoveryChallenge') {
+        result = { version: 1, sessionToken: session, expiresIn: 900 }
+      } else if (body.method === 'plether_getRecoveryStatus') {
+        expect(headers.get('X-Plether-AA-Preparation-Recovery')).toBe(session)
+        result = { version: 1, recoveryVerified: true, canRetire: true, phase: 'resolved',
+          authorizationState: 'expired', reason: 'PREPARATION_UNUSABLE', serverTime: '2000', safeBlockTimestamp: '2000',
+          recoverable: false, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
+        responseHeaders['X-Plether-AA-Recovery'] = capability
+      } else if (body.method === 'eth_getUserOperationReceipt') {
+        if (headers.get('X-Plether-AA-Recovery') !== capability) return new Response('{}', { status: 403 })
+      } else throw new Error('Unexpected recovery request')
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { headers: responseHeaders })
+    })
+    const signMessage = vi.fn(async () => `0x${'12'.repeat(65)}` as Hex)
+    const recovery = createWalletPreparationRecovery({ rpcUrl: url, chainId: 421614, paymaster,
+      sender: ACCOUNT, owner: OWNER, signMessage, fetcher })
+    const receiptAccess = recoveryFetch(url, fetcher)
+    const getRecoverySnapshot = vi.fn(async () => {
+      const response = await receiptAccess(url, { method: 'POST', body: JSON.stringify({
+        method: 'eth_getUserOperationReceipt', params: [USER_OPERATION_HASH],
+      }) })
+      return { blockNumber: 123n, blockTimestamp: 2000n, accountNonce: 7n,
+        userOperationEvidence: { kind: response.ok && safeEvidence ? 'not-located' as const : 'inconclusive' as const } }
+    })
+    const runtime = runtimeValue({ getRecoverySnapshot })
+    runtime.preparationRecovery = recovery
+    runtime.smartAccount.getPreparationStatus = vi.fn().mockRejectedValue(new Error('status unavailable'))
+    const operation = useSponsoredOperationStore.getState().operations[0]
+    const fallbackManifest = { version: MANIFEST_VERSION, chainId: 421614 } as PerpsAaDeploymentManifestV2
+    const view = render(<PerpsAaRuntimeContext value={runtime}>
+      <SponsoredOperationRecovery /><PreparedOperationRecovery operation={operation} fallbackManifest={fallbackManifest} />
+    </PerpsAaRuntimeContext>)
+    await waitFor(() => expect(getRecoverySnapshot).toHaveBeenCalledOnce())
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(id)
+    expect(signMessage).not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
+    expect(signMessage).toHaveBeenCalledOnce()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(id)
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    clock += 60_000
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    await waitFor(() => expect(getRecoverySnapshot).toHaveBeenCalledTimes(2))
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(safeEvidence ? undefined : id)
+    expect(useSponsoredOperationStore.getState().operations[0].status).toBe(safeEvidence ? 'expired' : 'receipt-timeout')
+    expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(fetched).not.toContain('plether_retirePreparation')
+    view.unmount()
+    resetRecoveryCredentialsForTests()
   })
 
   it('releases an interrupted pre-hash lane after reload', async () => {

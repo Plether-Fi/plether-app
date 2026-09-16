@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { recoveryFetch, recoveryHttp, resetRecoveryCredentialsForTests } from '../recoveryTransport'
 import { isRecoveryPending } from '../errors'
+import { recoveryReason } from '../walletRecovery'
 
 const url = 'https://app.sepolia.plether.com/api/perps/v1/aa/rpc'
 const hash = `0x${'a'.repeat(64)}`
@@ -72,6 +73,17 @@ describe('operation recovery transport', () => {
     }), { headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }))
     const result = await recoveryHttp(url)({}).request({ method: 'eth_getUserOperationReceipt', params: [hash] }).catch((error: unknown) => error)
     expect(isRecoveryPending(result)).toBe(true)
+    expect(fetcher).toHaveBeenCalledOnce()
+    vi.restoreAllMocks()
+  })
+  it('retains an HTTP 403 owner-verification reason through the real viem transport', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1, error: { code: -32001, message: 'Preparation is unavailable for this client', data: { reason: 'PREPARATION_NOT_AUTHORIZED' } },
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } }))
+    const error = await recoveryHttp(url, { retryCount: 0 })({}).request({
+      method: 'plether_getPreparationStatus', params: [{ userOperationHash: hash }],
+    }).catch((cause: unknown) => cause)
+    expect(recoveryReason(error)).toBe('PREPARATION_NOT_AUTHORIZED')
     expect(fetcher).toHaveBeenCalledOnce()
     vi.restoreAllMocks()
   })
