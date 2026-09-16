@@ -24,16 +24,19 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   </div>
 }
 
-export function ClosedPositionBreakdown({ item }: { item: WalletActivity }) {
+export function PositionBreakdown({ item }: { item: WalletActivity }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const [isOpen, setIsOpen] = useState(false)
+  const isClose = item.type.toLowerCase() === 'close'
   const validReceipt = deriveTradeBreakdown(item.execution, item.type) !== null
   const receipt = validReceipt ? item.execution?.receipt : undefined
   const remaining = unsigned(receipt?.postPositionSize)
   const margin = unsigned(receipt?.postPositionMarginUsdc)
   const notional = unsigned(receipt?.executionNotionalUsdc)
-  const status = remaining === null ? 'Unavailable' : remaining === 0n ? 'Fully closed' : 'Partially closed'
+  const status = remaining === null ? 'Unavailable'
+    : isClose ? (remaining === 0n ? 'Fully closed' : 'Partially closed')
+      : remaining > 0n ? 'Open' : 'Unavailable'
 
   return <>
     <button type="button" aria-haspopup="dialog" onClick={() => {
@@ -50,31 +53,32 @@ export function ClosedPositionBreakdown({ item }: { item: WalletActivity }) {
           className="min-h-10 cursor-pointer px-3 text-brand-peach focus-visible:outline focus-visible:outline-2">Close</button>
       </header>
       {isOpen && <div className="space-y-5 px-4 py-5 sm:px-6">
-        <p className="text-xs leading-5 text-content-secondary">This breakdown covers this close execution. Opening costs and earlier increases or partial closes are shown on their own activity rows.</p>
+        <p className="text-xs leading-5 text-content-secondary">This breakdown covers one execution. Other opens, increases, and closes are shown on their own activity rows.</p>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-content-secondary">Execution</h3>
           <dl className="text-sm">
+            <Detail label="Action">{isClose ? 'Close' : 'Open / increase'}</Detail>
             <Detail label="Market">{item.market ?? 'Unavailable'}</Detail>
             <Detail label="Position side">{item.side?.toUpperCase() ?? 'Unavailable'}</Detail>
-            <Detail label="Closed at">{formatUtc(item.occurredAt)}</Detail>
+            <Detail label="Executed at">{formatUtc(item.occurredAt)}</Detail>
             <Detail label="Order ID">{validReceipt ? item.execution?.orderId : 'Unavailable'}</Detail>
             <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
-            <Detail label="Quantity closed">{quantity(unsigned(item.sizeDelta))}</Detail>
+            <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
             <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeUsdc(notional, false, true)}</Detail>
             <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
           </dl>
         </section>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-content-secondary">Close result and account change</h3>
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-content-secondary">Execution result and account change</h3>
           <TradeBreakdownDetails item={item} />
         </section>
         <section className="border border-brand-border/20 bg-app-bg/45 p-4">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-content-secondary">Position after this close</h3>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-content-secondary">Position after execution</h3>
           <dl className="text-sm">
             <Detail label="Status">{status}</Detail>
             {remaining !== null && remaining > 0n && <>
-              <Detail label="Remaining quantity">{quantity(remaining)}</Detail>
-              <Detail label="Remaining margin">{margin === null ? 'Unavailable' : formatTradeUsdc(margin, false, true)}</Detail>
+              <Detail label="Position quantity">{quantity(remaining)}</Detail>
+              <Detail label="Position margin">{margin === null ? 'Unavailable' : formatTradeUsdc(margin, false, true)}</Detail>
             </>}
           </dl>
         </section>
