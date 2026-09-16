@@ -53,7 +53,6 @@ import {
   type VaultOverviewActivityItem,
   type VaultRedeemRequest,
 } from '../hooks'
-import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 type TrancheId = 'senior' | 'junior'
@@ -1063,12 +1062,6 @@ function formatCompactUsd(amount: bigint | undefined): ReactNode {
 function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): ReactNode {
   const formatted = formatFullUsdc(amount, maximumFractionDigits)
   return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
-}
-
-function formatPoolCapacity(amount: bigint | undefined, markPrice: bigint | undefined): ReactNode {
-  if (amount === undefined) return '--'
-  const formatted = formatPerpsUsdc(dxyExposureFromContractNotional(amount, markPrice) ?? amount)
-  return <TokenAmount amount={formatted} />
 }
 
 function formatVaultLimit(amount: bigint | undefined): ReactNode {
@@ -2383,13 +2376,13 @@ export function VaultsOverview({
             id="pool-liquidity-heading"
             className="mt-1 text-2xl font-semibold text-content-primary"
           >
-            Trading capacity and loss protection
+            Pool liquidity and loss protection
           </h2>
         </div>
         <div className="border border-brand-border/30 bg-surface-panel panel-padding">
           <PerpsPoolLiquidityDetails
-            longCapacity={formatPoolCapacity(pool.longOpenCapacityUsdc, pool.markPrice)}
-            shortCapacity={formatPoolCapacity(pool.shortOpenCapacityUsdc, pool.markPrice)}
+            poolAssetsUsdc={pool.totalAssetsUsdc}
+            freeUsdc={pool.freeUsdc}
             juniorPrincipal={formatCompactUsd(pool.juniorPrincipalUsdc)}
             seniorPrincipal={formatCompactUsd(pool.seniorPrincipalUsdc)}
             juniorSharePercent={poolCapital?.juniorSharePercent}

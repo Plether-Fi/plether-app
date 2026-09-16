@@ -51,7 +51,7 @@ function MarketHeader({ freshness = 'fresh' }: { freshness?: 'fresh' | 'market-c
             limit: <TokenAmount amount="3.53M" />,
           },
         },
-        { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
+        { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
       ]}
     />
   )

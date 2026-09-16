@@ -87,10 +87,10 @@ describe('PerpsInstrumentPanel price details', () => {
             },
           },
           {
-            label: 'Pool liquidity',
+            label: 'Free pool liquidity',
             value: '6.3M USDC',
             hoverDetailsType: 'pool-liquidity',
-            hoverDetailsLabel: 'Pool liquidity details',
+            hoverDetailsLabel: 'Free pool liquidity details',
             hoverDetails: <div>Capital waterfall</div>,
           },
         ]}
@@ -100,7 +100,7 @@ describe('PerpsInstrumentPanel price details', () => {
     const priceTrigger = screen.getByRole('button', { name: 'plDXY Perp price basket components' })
     const directionalTrigger = screen.getByRole('button', { name: 'Directional limit used details' })
     const directionalMetric = directionalTrigger.parentElement?.parentElement
-    const poolTrigger = screen.getByRole('button', { name: 'Pool liquidity details' })
+    const poolTrigger = screen.getByRole('button', { name: 'Free pool liquidity details' })
 
     fireEvent.mouseEnter(priceTrigger)
     expect(priceTrigger).toHaveAttribute('aria-expanded', 'true')
@@ -141,7 +141,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
               limit: '353.1M USDC',
             },
           },
-          { label: 'Pool liquidity', value: '6.3M USDC' },
+          { label: 'Free pool liquidity', value: '6.3M USDC' },
           { label: 'Cost of carry', value: '5.24%' },
         ]}
       />
@@ -151,7 +151,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     const details = screen.getByText('Directional limit').closest('[aria-hidden]')
     const overlay = details?.parentElement
     const metric = trigger.parentElement?.parentElement
-    const coveredStats = screen.getByText('Pool liquidity').closest('[aria-hidden]')
+    const coveredStats = screen.getByText('Free pool liquidity').closest('[aria-hidden]')
 
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(details).toHaveAttribute('aria-hidden', 'true')
@@ -167,7 +167,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
       'opacity-100',
       'shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)]'
     )
-    expect(screen.getByText('Pool liquidity')).toBeVisible()
+    expect(screen.getByText('Free pool liquidity')).toBeVisible()
     expect(screen.getByText('13% remaining')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: '87% used; 13% remaining' })).toBeVisible()
     expect(screen.getByText('Total LONG exposure')).toBeVisible()
@@ -193,7 +193,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     act(() => { vi.advanceTimersByTime(300) })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(overlay).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'shadow-none')
-    expect(screen.getByText('Pool liquidity').closest('[aria-hidden]')).toBeNull()
+    expect(screen.getByText('Free pool liquidity').closest('[aria-hidden]')).toBeNull()
 
     fireEvent.focus(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
