@@ -1,0 +1,4 @@
+@import '../../../insights/src/index.css';
+
+/* Include sibling app utilities so dialogs retain their production layout. */
+@source '../../../insights/src';
