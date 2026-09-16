@@ -62,8 +62,15 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       setPhase('waiting')
       if (funding.txHash) {
         if (!isHash(funding.txHash)) throw new Error('The faucet returned an invalid transaction hash.')
-        const receipt = await client.waitForTransactionReceipt({ hash: funding.txHash, timeout: 120_000 })
+        const hash = funding.txHash
+        const receiptResult = await Result.tryPromise(() =>
+          client.waitForTransactionReceipt({ hash, timeout: 120_000 }),
+        )
         if (isCancelled()) return
+        if (Result.isError(receiptResult)) {
+          throw new Error('Faucet confirmation is unavailable. Your claim is saved. Use Check confirmation to retry; no deposit has been sent.')
+        }
+        const receipt = receiptResult.value
         if (receipt.status !== 'success') throw new Error('The faucet transaction reverted. Try requesting mock USDC again.')
       } else if (funding.status === 'submitted') {
         throw new Error('The faucet has not returned a transaction yet. Try requesting mock USDC again.')

@@ -82,6 +82,8 @@ COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.se
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
+COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
+COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 
 WORKDIR /app
 EXPOSE 3001
