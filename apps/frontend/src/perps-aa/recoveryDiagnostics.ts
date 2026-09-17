@@ -2,7 +2,8 @@ import { captureFrontendLog } from '../analytics/client'
 
 type RecoveryStage = 'awaiting_recovery_evidence' | 'awaiting_safe_head' | 'receipt_check_failed' |
   'protocol_check_failed' | 'coordination_failed' | 'inclusion_persistence_failed' |
-  'canonical_receipt_recovered' | 'canonical_receipt_unverified'
+  'canonical_receipt_recovered' | 'canonical_receipt_unverified' |
+  'account_confirmation_waiting' | 'account_confirmation_ready' | 'account_confirmation_unavailable'
 
 const lastReported = new Map<string, number>()
 
@@ -13,6 +14,8 @@ export function reportRecoveryDiagnostic(input: {
   attemptId?: string
   safeBlockNumber?: bigint
   includedBlockNumber?: bigint
+  lastSuccessfulCheckAt?: number
+  safeBlockTimestamp?: number
 }): void {
   try {
     const key = `${input.attemptId ?? input.operationKey}:${input.stage}`
@@ -35,6 +38,8 @@ export function reportRecoveryDiagnostic(input: {
         recovery_source: input.stage.startsWith('canonical_receipt_') ? 'transaction_hint' : undefined,
         safe_block_number: input.safeBlockNumber?.toString(),
         included_block_number: input.includedBlockNumber?.toString(),
+        last_successful_check_at: input.lastSuccessfulCheckAt,
+        safe_block_timestamp: input.safeBlockTimestamp,
       }
     )
   } catch {

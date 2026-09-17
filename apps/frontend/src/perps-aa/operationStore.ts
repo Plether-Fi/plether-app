@@ -1,3 +1,4 @@
+import type { SavedOrderDraft } from './orderDraft'
 import type { NativePreparationRequestV1, PreparedOperationV1 } from './preparedOperation'
 import type {
   PerpsActionKind,
@@ -50,6 +51,7 @@ export interface SponsoredOperation {
   manifestVersion: string
   action: PerpsActionKind
   /** Immutable bounded-order intent, journaled before UserOperation signing. */
+  orderDraft?: SavedOrderDraft
   orderRequestV2?: PersistedPerpsOrderRequestV2
   protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
@@ -128,6 +130,7 @@ interface BeginSponsoredOperationInput {
   accountMode: string
   manifestVersion: string
   action: PerpsActionKind
+  orderDraft?: SavedOrderDraft
   orderRequestV2?: PersistedPerpsOrderRequestV2
   protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
@@ -744,6 +747,7 @@ function mergeOperationRecord(
       preferred.signedUserOperation ?? other.signedUserOperation,
     orderRequestV2:
       preferred.orderRequestV2 ?? other.orderRequestV2,
+    orderDraft: preferred.orderDraft ?? other.orderDraft,
     protectionIntent: preferred.protectionIntent ?? other.protectionIntent,
     submissionMetadataVersion:
       preferred.submissionMetadataVersion ??

@@ -2,13 +2,15 @@ import type { SponsoredOperation } from '../perps-aa/operationStore'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { sponsoredOperationActionLabel } from '../utils/sponsoredOperation'
 import { Button } from './ui/Button'
+import type { DeploymentConfirmationStatus } from '../perps-aa/deploymentConfirmation'
 
-export function AccountOperationNotice({ operation, now, onOpen }: {
+export function AccountOperationNotice({ operation, now, onOpen, confirmation }: {
   operation: SponsoredOperation
   now: number
   onOpen: () => void
+  confirmation?: DeploymentConfirmationStatus
 }) {
-  const guidance = accountOperationGuidance(operation, now)
+  const guidance = accountOperationGuidance(operation, now, confirmation)
   const started = new Date(operation.createdAt)
   const age = Math.max(0, Math.floor((now - operation.createdAt) / 60_000))
   const startedLabel = age < 1 ? 'Started just now'

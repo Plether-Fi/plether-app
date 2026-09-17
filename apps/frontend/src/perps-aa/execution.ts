@@ -1,3 +1,4 @@
+import type { SavedOrderDraft } from './orderDraft'
 import { reportAttemptStage } from './attemptDiagnostics'
 import { isExplicitSignatureRejection, isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
 import type { SponsoredOperation } from './operationStore'
@@ -53,7 +54,7 @@ import type {
 } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 import type { PersistedProtectionIntent } from '../contracts/positionProtection'
-import { requireDeadlineHeadroom } from './deadline'
+import { operationNeedsFreshOrderReview, orderDeadlineNeedsReview, requireDeadlineHeadroom } from './deadline'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from './readiness'
 
 export interface ExecuteSponsoredPerpsActionInput {
@@ -63,6 +64,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   runtime: PerpsAaSmartAccountRuntime
   authorizationTokenToClearOnConfirmation?: Address
   authorizationNonceToClearOnConfirmation?: Hex
+  orderDraft?: SavedOrderDraft
   orderRequestV2?: PersistedPerpsOrderRequestV2
   protectionIntent?: PersistedProtectionIntent
   resumeOperationId?: string
@@ -394,6 +396,7 @@ export async function executeSponsoredPerpsAction(
       authorizationToken: input.authorizationTokenToClearOnConfirmation,
       authorizationNonce: input.authorizationNonceToClearOnConfirmation,
       orderRequestV2: input.orderRequestV2,
+      orderDraft: input.orderDraft,
       protectionIntent: input.protectionIntent,
       lane,
       walletFamily: input.runtime.walletFamily,
@@ -415,6 +418,10 @@ export async function executeSponsoredPerpsAction(
       : undefined)
     if (preparationRequest && !resumed && !useSponsoredOperationStore.getState().recordPreparation(activeTracker.id, preparationRequest)) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The preparation request could not be saved' })
+    }
+    if (orderDeadlineNeedsReview(input.orderRequestV2?.validUntil) || (resumed && operationNeedsFreshOrderReview(resumed))) {
+      throw new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false,
+        message: 'This order has expired or is too close to expiry. Review the order again.' })
     }
     if (resumed?.preparedOperation) {
       const state = await input.runtime.smartAccount.getPreparationStatus?.({ preparationId: resumed.id })

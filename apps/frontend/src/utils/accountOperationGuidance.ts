@@ -1,6 +1,8 @@
 import type { SponsoredOperation } from '../perps-aa/operationStore'
+import type { DeploymentConfirmationStatus } from '../perps-aa/deploymentConfirmation'
+import { operationNeedsFreshOrderReview } from '../perps-aa/deadline'
 
-export function accountOperationGuidance(operation: SponsoredOperation, now: number) {
+export function accountOperationGuidance(operation: SponsoredOperation, now: number, confirmation: DeploymentConfirmationStatus = 'idle') {
   const elapsed = now - (operation.statusTimestamps[operation.status] ?? operation.createdAt)
   if (operation.status === 'receipt-timeout' || operation.status === 'outcome-unknown'
     || (operation.userOperationHash && elapsed >= 60_000)) {
@@ -11,7 +13,26 @@ export function accountOperationGuidance(operation: SponsoredOperation, now: num
       action: 'Check transaction status',
     }
   }
-  if (operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
+  if (operationNeedsFreshOrderReview(operation, now)) return {
+    attention: true,
+    title: 'Order expired—review again',
+    description: 'This saved order needs a fresh review. Check recovery to safely discard it and restore your trade inputs.',
+    action: 'Review order again',
+  }
+  if (operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING' && operation.status === 'preparation-pending'
+    && !operation.userOperationHash && !operation.preparedOperation) {
+    if (confirmation === 'ready') return {
+      attention: false,
+      title: 'Trading Account confirmed',
+      description: 'Your account is ready. Open this saved attempt to resume it. No transaction will be sent automatically.',
+      action: operation.orderRequestV2 ? 'Resume order' : 'View saved transaction',
+    }
+    if (confirmation === 'check-unavailable') return {
+      attention: true,
+      title: 'Unable to check account confirmation',
+      description: 'The latest confirmation check is unavailable. Your saved attempt is retained; open account setup to check again.',
+      action: 'View account setup',
+    }
     return {
       attention: false,
       title: 'Confirming your Trading Account',

@@ -1,7 +1,19 @@
 import { BundlerRequestError } from './errors'
+import type { SponsoredOperation } from './operationStore'
 
 export const SIGNING_HEADROOM_SECONDS = 20n
 export const SUBMISSION_HEADROOM_SECONDS = 10n
+
+export function orderDeadlineNeedsReview(deadline: string | undefined, nowMs = Date.now()): boolean {
+  if (deadline === undefined) return false
+  return !/^\d+$/.test(deadline) || BigInt(deadline) - BigInt(Math.ceil(nowMs / 1000)) < SIGNING_HEADROOM_SECONDS
+}
+
+export function operationNeedsFreshOrderReview(operation: SponsoredOperation, nowMs = Date.now()): boolean {
+  return !operation.userOperationHash && (operation.reason === 'INVALID_ORDER_DEADLINE'
+    || (operation.orderRequestV2 !== undefined && (operation.reason === 'DEADLINE_TOO_CLOSE'
+      || orderDeadlineNeedsReview(operation.orderRequestV2.validUntil, nowMs))))
+}
 
 export function requireDeadlineHeadroom(sponsorshipDeadline: bigint, orderDeadline: string | undefined, phase: 'signing' | 'submission', nowMs = Date.now()): void {
   const deadline = orderDeadline === undefined ? sponsorshipDeadline : BigInt(orderDeadline) < sponsorshipDeadline ? BigInt(orderDeadline) : sponsorshipDeadline

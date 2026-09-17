@@ -1,3 +1,6 @@
+import { useSavedOperationRuntime } from './useSavedOperationRuntime'
+import { operationNeedsFreshOrderReview } from './deadline'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { requestOperationRecovery } from './requestOperationRecovery'
 import { RecoverySupport } from './RecoverySupport'
@@ -9,15 +12,13 @@ import { reconcileUserOperation } from './operationReconciler'
 import { resumeSponsoredPerpsAction } from './execution'
 import { acquireSponsoredOperationBrowserLane } from './laneLock'
 import { hasSponsoredOperationSignal, isSponsoredOperationTerminal, restoreSponsoredOperationLane, useSponsoredOperationStore, type SponsoredOperation } from './operationStore'
-import { usePerpsAaRuntime, type PerpsAaSmartAccountRuntime } from './runtimeContext'
+import { type PerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useConfirmationStatus, useDeploymentConfirmationDetails } from './useAccountDeploymentConfirmation'
 import { confirmationPending } from './deploymentConfirmation'
 import { PreparationRecoveryError, recoveryMessage, recoveryReason, type WalletRecoveryResult } from './walletRecovery'
 import type { PreparationStatusV1 } from './preparedOperation'
 import { sponsoredOperationActionLabel } from '../utils/sponsoredOperation'
 import { Button } from '../components/ui/Button'
-
-function normalizedAddress(value?: string) { return value?.toLowerCase() }
 
 function recoveryFailure(attemptId: string, outcome: 'verification-failed' | 'status-failed' | 'resume-failed' | 'discard-failed', cause: unknown) {
   const reason = recoveryReason(cause) ?? 'RECOVERY_UNKNOWN'
@@ -27,26 +28,9 @@ function recoveryFailure(attemptId: string, outcome: 'verification-failed' | 'st
 
 /** Mounted only in the visible recovery view. Status changes never sign or submit. */
 export function PreparedOperationRecovery({ operation, fallbackManifest }: { operation: SponsoredOperation; fallbackManifest?: PerpsAaDeploymentManifestV2 }) {
-  const base = usePerpsAaRuntime()
   const manifest = operation.nativePreparation?.manifest ?? fallbackManifest
-  const [resolved, setResolved] = useState<{ base: PerpsAaSmartAccountRuntime; manifest: PerpsAaDeploymentManifestV2; runtime: PerpsAaSmartAccountRuntime }>()
-  const [unavailable, setUnavailable] = useState(false)
-  useEffect(() => {
-    if (!base?.getPreparedOperationRuntime || !manifest) return
-    let stopped = false
-    void base.getPreparedOperationRuntime(manifest).then(runtime => {
-      if (!stopped) { setResolved({ base, manifest, runtime }); setUnavailable(false) }
-    }).catch(() => { if (!stopped) setUnavailable(true) })
-    return () => { stopped = true }
-  }, [base, manifest])
-  const runtime = base?.getPreparedOperationRuntime
-    ? resolved?.base === base && resolved.manifest === manifest ? resolved.runtime : undefined
-    : base
-  if (!runtime) return <p>{unavailable ? 'The saved account or deployment could not be loaded. Your attempt is retained.' : 'Loading saved transaction recovery…'}</p>
-  if (runtime.chainId !== operation.chainId || normalizedAddress(runtime.ownerAddress) !== normalizedAddress(operation.ownerAddress)
-    || normalizedAddress(runtime.smartAccount.accountAddress) !== normalizedAddress(operation.accountAddress)) {
-    return <p>Connect the owner wallet for this saved Trading Account and network to recover it.</p>
-  }
+  const { runtime, unavailable } = useSavedOperationRuntime(operation, fallbackManifest)
+  if (!runtime) return <p>{unavailable ? 'The saved account or deployment could not be loaded. Connect the owner wallet and original network to recover it.' : 'Loading saved transaction recovery…'}</p>
   return <PreparedRecoveryView key={`${operation.id}:${String(runtime.chainId)}:${runtime.smartAccount.accountAddress}:${JSON.stringify(manifest)}`}
     runtime={runtime} operation={operation} fallbackManifest={fallbackManifest} />
 }
@@ -70,6 +54,15 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     finally { setOutcomeCheck('unresolved') }
   }, [operation.id])
   const [statusCheckRevision, setStatusCheckRevision] = useState(0)
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (!operation.orderRequestV2 || operation.userOperationHash) return
+    const refresh = () => { setNow(Date.now()) }
+    const timer = setInterval(refresh, 1_000)
+    window.addEventListener('focus', refresh)
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
+  }, [operation.orderRequestV2, operation.userOperationHash])
+  const needsFreshReview = operationNeedsFreshOrderReview(operation, now)
   const request = operation.nativePreparation
   const recoveryManifest = request?.manifest ?? fallbackManifest
   const accountConfirmation = useConfirmationStatus(runtime.deploymentConfirmation)
@@ -197,7 +190,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const displayedRecoveryError = needsSignedVerification ? error : visibleError
   // An unavailable status is not permission to retry a response-lost request.
   // Account-confirmation retries are the explicit pre-preparation exception.
-  const canOfferResume = !resumeBlocked && (status?.recoverable === true
+  const canOfferResume = !needsFreshReview && !resumeBlocked && (status?.recoverable === true
     || (deferStatusCheck && accountConfirmation === 'ready')
     || (walletStatus && 'recoveryState' in walletStatus && walletStatus.recoveryState === 'missing' && !operation.preparedOperation))
   return <div className="space-y-2 text-sm text-content-secondary" aria-live="polite">
@@ -206,7 +199,8 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       We’ll check when the saved authorization can no longer execute, then unlock a fresh review.
     </p>}
     {accountWaiting && <AccountDeploymentConfirmation monitor={runtime.deploymentConfirmation} />}
-    {deferStatusCheck && accountConfirmation === 'ready' && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
+    {deferStatusCheck && accountConfirmation === 'ready' && !needsFreshReview && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
+    {needsFreshReview && <p role="status">This order has expired or needs a new deadline. Verify recovery, then select “Review order again” to safely discard it and restore your trade inputs.</p>}
     {walletRecovery && (signedRecovery || (!verified && (!operation.userOperationHash || walletRequired
       || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))) && <div
         className={signedRecovery && verified ? 'border-l-2 border-brand-border/30 py-2 pl-3 text-content-secondary' : undefined}>
@@ -266,8 +260,10 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
       {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
     </>}
+    {walletStatus && !('recoveryState' in walletStatus) && !walletStatus.canRetire && walletStatus.retirementReason
+      && <p>{recoveryMessage(walletStatus.retirementReason)}</p>}
     {displayedRecoveryError && <p role="alert">{displayedRecoveryError}</p>}
-    {!deferStatusCheck && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus || outcomeCheck === 'checking'} onClick={() => {
+    {(!deferStatusCheck || verified) && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus || outcomeCheck === 'checking'} onClick={() => {
       setError(undefined)
       if (signedRecovery) { outcomeRequested.current = true; setOutcomeCheck('checking') }
       setStatusCheckRevision(value => value + 1)
@@ -303,6 +299,11 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
               const store = useSponsoredOperationStore.getState()
               store.markPreparationResolved(current.id)
               store.transition(current.id, 'cancelled')
+              if (needsFreshReview) {
+                const retired = useSponsoredOperationStore.getState().operations.find(item => item.id === current.id)
+                // The ticket rechecks the durable retirement before restoring editable inputs.
+                usePerpsUiStore.getState().requestOrderReview(retired ?? current)
+              }
               return
             }
             const native = runtime
@@ -337,7 +338,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
             setWalletRequired(true); setVerified(false); setWalletStatus(undefined)
           }
         }).finally(() => { setWorking(false) })
-      }}>Discard saved transaction</Button>
+      }}>{needsFreshReview && walletRecovery ? 'Review order again' : 'Discard saved transaction'}</Button>
     </div>}
   </div>
 }

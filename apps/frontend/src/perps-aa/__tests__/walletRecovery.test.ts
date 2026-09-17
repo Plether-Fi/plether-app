@@ -32,6 +32,13 @@ function setup(challengeLifetime = 300) {
 }
 afterEach(() => { vi.useRealTimers() })
 describe('wallet preparation recovery', () => {
+  it('preserves the backend retirement blocker without changing permission', () => {
+    const status = { version: 1, canRetire: false, recoveryVerified: true, phase: 'prepared', reason: 'PREPARATION_UNUSABLE',
+      serverTime: '1', recoverable: false, freshReviewAllowed: true, retirementReason: 'RECOVERY_LIABILITY_PENDING' }
+    expect(parseWalletRecoveryResult(status)).toMatchObject({ canRetire: false, retirementReason: 'RECOVERY_LIABILITY_PENDING' })
+    expect(() => parseWalletRecoveryResult({ ...status, retirementReason: 'untrusted raw error' })).toThrow('could not be verified')
+    expect(recoveryMessage('INVALID_ORDER_DEADLINE')).toContain('review the order again')
+  })
   it.each([
     [{ cause: { code: 4001 } }, 'WALLET_SIGNATURE_DECLINED', 'signature was declined'],
     [{ code: -32002 }, 'WALLET_REQUEST_PENDING', 'request is already open'],

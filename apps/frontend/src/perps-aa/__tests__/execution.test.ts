@@ -309,15 +309,17 @@ const action = {
 }
 
 describe('executeSponsoredPerpsAction', () => {
-  it('refuses signing when the reviewed order has fewer than twenty seconds left', async () => {
+  it('refuses sponsorship and signing when the reviewed order has fewer than twenty seconds left', async () => {
     const now = Date.now()
+    const prepareUserOperation = vi.fn(async () => operation())
     const signUserOperation = vi.fn(async () => operation())
     const sendUserOperation = vi.fn(async () => USER_OPERATION_HASH)
     await expect(executeSponsoredPerpsAction({
       manifest: manifest(), ownerAddress: OWNER, action,
       orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(now / 1000) + 19) },
-      runtime: runtime({ signUserOperation, sendUserOperation }),
-    })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE' })
+      runtime: runtime({ prepareUserOperation, signUserOperation, sendUserOperation }),
+    })).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
+    expect(prepareUserOperation).not.toHaveBeenCalled()
     expect(signUserOperation).not.toHaveBeenCalled()
     expect(sendUserOperation).not.toHaveBeenCalled()
   })
@@ -449,6 +451,19 @@ describe('executeSponsoredPerpsAction', () => {
     expect(managed.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
     expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
     expect(useSponsoredOperationStore.getState().operations[0].reason).toBeUndefined()
+  })
+
+  it('requires fresh review after a backend deadline rejection even when the local deadline looks valid', async () => {
+    const prepare = vi.fn().mockRejectedValue(new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false, message: 'Deadline rejected' }))
+    const managed = runtime({ prepareUserOperation: prepare })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER,
+      action, runtime: managed, orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(Date.now() / 1000) + 600) } })).rejects.toThrow('Deadline rejected')
+    const saved = useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)!
+    await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(saved.id)
   })
 
   it.each([

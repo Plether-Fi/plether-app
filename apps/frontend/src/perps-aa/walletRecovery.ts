@@ -4,7 +4,7 @@ import { preparationIdentifier } from './nativePreparation'
 import { parsePreparationStatus, type PreparationStatusV1 } from './preparedOperation'
 
 export const PREPARATION_RECOVERY_HEADER = 'X-Plether-AA-Preparation-Recovery'
-export type WalletRecoveryResult = (PreparationStatusV1 & { recoveryVerified: true; canRetire: boolean }) | {
+export type WalletRecoveryResult = (PreparationStatusV1 & { recoveryVerified: true; canRetire: boolean; retirementReason?: string | null }) | {
   version: 1
   recoveryState: 'missing' | 'ambiguous' | 'unresolved' | 'retired'
   reason: string
@@ -51,6 +51,8 @@ export function recoveryReason(error: unknown): string | undefined {
 }
 export function recoveryMessage(reason?: string): string {
   switch (reason) {
+    case 'INVALID_ORDER_DEADLINE':
+    case 'DEADLINE_TOO_CLOSE': return 'This order has expired or is too close to expiry. Verify recovery to safely discard it, then review the order again with a fresh deadline.'
     case 'RECOVERY_VERIFICATION_REQUIRED':
     case 'PREPARATION_NOT_AUTHORIZED': return 'Verify your owner wallet to recover this saved attempt.'
     case 'RECOVERY_DISABLED': return 'Wallet recovery is not enabled on this deployment yet. Your saved attempt is retained.'
@@ -98,8 +100,13 @@ export function parseWalletRecoveryResult(value: unknown): WalletRecoveryResult 
       }))) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
     return row as unknown as WalletRecoveryResult
   }
+  if (row.retirementReason !== undefined && row.retirementReason !== null
+    && (typeof row.retirementReason !== 'string' || !/^[A-Z_]{1,64}$/.test(row.retirementReason))) {
+    throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
+  }
   if (row.recoveryVerified !== true) throw new PreparationRecoveryError('INVALID_RECOVERY_RESPONSE')
-  return { ...parsePreparationStatus(row), recoveryVerified: true, canRetire: row.canRetire }
+  return { ...parsePreparationStatus(row), recoveryVerified: true, canRetire: row.canRetire,
+    ...(row.retirementReason !== undefined ? { retirementReason: row.retirementReason } : {}) }
 }
 export function recoveryChallengeMessage(input: {
   origin: string; chainId: number; paymaster: string; sender: string; preparationId: string; owner: string; nonce: string; expiresAt: number
