@@ -26,10 +26,10 @@ const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified v1.2.3 release tar.gz')
 if (release.release.version !== 'v1.2.3' || createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('Expected the pinned v1.2.3 ABI bundle')
 const loadAbi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
-const abis = { mockUsdc: loadAbi('MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
+const abis = { mockUsdc: loadAbi('MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), cfdEngineAccountLens: loadAbi('CfdEngineAccountLens'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
 const log = []
 const note = (action, tx) => { log.unshift({ action, tx, time: new Date().toISOString() }); log.splice(40); console.log(action, tx ?? '') }
-const read = (key, functionName, args = []) => client.readContract({ address: addresses[key], abi: abis[key], functionName, args })
+const read = (key, functionName, args = [], blockNumber) => client.readContract({ address: addresses[key], abi: abis[key], functionName, args, blockNumber })
 async function write(key, functionName, args = [], account = keeper) {
   // Historical execution requires a tick strictly after the commit timestamp.
   // Advance only this synthetic clock so a fast manual retry can execute too.
@@ -89,13 +89,30 @@ const serialize = task => { const next = queue.then(task); queue = next.catch(()
 const encode = data => JSON.stringify(data, (_, v) => typeof v === 'bigint' ? { $bigint: v.toString() } : v)
 const decode = text => JSON.parse(text, (_, v) => v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v)
 async function state() {
+  const block = await client.getBlock()
+  const readSnapshot = (key, functionName, args = []) => read(key, functionName, args, block.number)
   const [protocol, position, account, activeId, configuration, reservations] = await Promise.all([
-    read('perpsPublicLens', 'getProtocolStatus'), read('perpsPublicLens', 'getPosition', [trader]), read('perpsPublicLens', 'getTraderAccount', [trader]), read('positionProtectionBook', 'activePositionProtectionId', [trader]),
-    Promise.all(['positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'].map(n => read('orderRouter', n))), read('orderRouter', 'getAccountReservations', [trader]),
+    readSnapshot('perpsPublicLens', 'getProtocolStatus'), readSnapshot('perpsPublicLens', 'getPosition', [trader]), readSnapshot('perpsPublicLens', 'getTraderAccount', [trader]), readSnapshot('positionProtectionBook', 'activePositionProtectionId', [trader]),
+    Promise.all(['positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'].map(n => readSnapshot('orderRouter', n))), readSnapshot('orderRouter', 'getAccountReservations', [trader]),
   ])
+  const [ledger, carryState, unsettledCarryUsdc, riskParams, poolAssetsUsdc, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseUsdc] = await Promise.all([
+    readSnapshot('cfdEngineAccountLens', 'getAccountLedgerSnapshot', [trader]),
+    readSnapshot('cfdEngine', 'positionCarryState', [trader]), readSnapshot('cfdEngine', 'unsettledCarryUsdc', [trader]),
+    readSnapshot('cfdEngine', 'riskParams'), readSnapshot('housePool', 'totalAssets'),
+    ...['sideCarryIndex', 'sideCarryTimestamp', 'sideBorrowBaseUsdc'].map(name => readSnapshot('cfdEngine', name, [position.side])),
+  ])
+  const [{ calculatePendingCarryUsdc }, { projectCarry }] = await Promise.all([
+    vite.ssrLoadModule('/src/utils/perpsCarry.ts'), vite.ssrLoadModule('/src/utils/perpsRisk.ts'),
+  ])
+  const pendingCarryUsdc = calculatePendingCarryUsdc({
+    borrowBaseUsdc: carryState.borrowBaseUsdc ?? carryState[0], lastCarryIndex: carryState.lastCarryIndex ?? carryState[1],
+    unsettledCarryUsdc, baseCarryBps: riskParams.baseCarryBps ?? riskParams[5], poolAssetsUsdc,
+    blockTimestamp: block.timestamp, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseUsdc,
+  })
+  const availableFreeSettlementUsdc = pendingCarryUsdc === undefined ? undefined : projectCarry(position.marginUsdc, ledger.freeSettlementUsdc, pendingCarryUsdc).freeSettlementUsdc
   if (activeId) lastProtectionId = activeId
-  const protection = lastProtectionId ? await read('positionProtectionBook', 'getPositionProtection', [lastProtectionId]) : undefined
-  return { protocol, position: { ...position, direction: position.side === 0 ? 'long' : 'short' }, account, trader, protection, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: configuration[0], executionBountyUsdc: configuration[1] }, pendingOrders: Number(reservations.pendingOrderCount), autoExecute, log, startBlock }
+  const protection = lastProtectionId ? await readSnapshot('positionProtectionBook', 'getPositionProtection', [lastProtectionId]) : undefined
+  return { protocol, position: { ...position, direction: position.side === 0 ? 'long' : 'short' }, account, trader, protection, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: configuration[0], executionBountyUsdc: configuration[1] }, pendingOrders: Number(reservations.pendingOrderCount), availableFreeSettlementUsdc, autoExecute, log, startBlock }
 }
 async function tick() {
   await write('orderRouter', 'updateMarkPrice', [['0x00']])

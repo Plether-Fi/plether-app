@@ -22,6 +22,8 @@ interface ProtectionPanelProps {
   cap?: bigint
   configuration: ProtectionConfiguration
   pendingOrders: number
+  /** Free settlement remaining after pending carry, excluding position margin. */
+  availableFreeSettlementUsdc: bigint | undefined
   onRefresh: () => void
 }
 export interface ProtectionManagementRequest {
@@ -53,7 +55,7 @@ export function PerpsProtectionPanel(props: ProtectionPanelProps) {
 }
 
 /** The same stateful UI is used by the app and the transaction-free Storybook demo. */
-export function PositionProtectionManager({ protection, position, rawMark, cap, configuration, pendingOrders, accountAddress, onManage, history, executionReport, executionLoading, executionError, onRefreshExecution }: Omit<ProtectionPanelProps, 'onRefresh'> & {
+export function PositionProtectionManager({ protection, position, rawMark, cap, configuration, pendingOrders, availableFreeSettlementUsdc, accountAddress, onManage, history, executionReport, executionLoading, executionError, onRefreshExecution }: Omit<ProtectionPanelProps, 'onRefresh'> & {
   accountAddress?: string
   onManage: (request: ProtectionManagementRequest) => Promise<void>
   history?: ReactNode
@@ -84,6 +86,14 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
     catch (cause) { reviewPriceError = cause instanceof Error ? cause.message : 'Review your TP/SL prices again.' }
   }
   const reward = (configuration.triggerBountyUsdc ?? 0n) + (configuration.executionBountyUsdc ?? 0n)
+  const rewardKnown = configuration.triggerBountyUsdc !== undefined && configuration.executionBountyUsdc !== undefined
+  const fundingError = protection ? undefined : !rewardKnown
+    ? 'Waiting for the current TP/SL execution reserve. Please try again.'
+    : availableFreeSettlementUsdc === undefined
+      ? 'Waiting for your available free margin. Refresh your account if this continues.'
+      : availableFreeSettlementUsdc < reward
+        ? `Deposit at least ${formatUnits(reward - availableFreeSettlementUsdc, 6)} USDC into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
+        : undefined
   const reviewChanged = targetChanged || (review?.action === 'create' && (review.reward !== reward || pendingOrders > 0))
   const delayed = protection?.status === 8
   const closing = protection?.status === 3 || delayed
@@ -108,6 +118,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
     setError(undefined)
     try {
       if (targetChanged) throw new Error(STATE_CHANGED)
+      if (fundingError) throw new Error(fundingError)
       if (!rawMark || !cap) throw new Error('Waiting for a current market price. Please try again.')
       const params = protectionParamsFromInputs({ ...draft, ...priceContext, rawMark, cap })
       setReview({ action: protection ? 'replace' : 'create', protectionId: protection?.protectionId, params, rawMark, cap, reward, position: priceContext.position })
@@ -127,6 +138,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         request = { action: 'cancel', protectionId: protection.protectionId }
       } else {
         if (!review || !configuration.enabled) throw new Error('Review your TP/SL again before confirming.')
+        if (review.action === 'create' && fundingError) throw new Error(fundingError)
         if (reviewPriceError) throw new Error(reviewPriceError)
         request = { action: review.action, protectionId: review.protectionId, params: review.params }
       }
@@ -179,21 +191,21 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </div>
         </> : view === 'edit' ? <>
           <ProtectionInputs value={draft} onChange={setDraft} disabled={pending || targetChanged} {...priceContext} />
-          <p className="text-xs text-content-secondary">{protection ? 'Your current triggers stay in place until the update is confirmed.' : <><TokenAmount amount={formatPerpsUsdc(reward)} /> will be reserved from free margin to pay for triggering and executing the close.</>}</p>
+          <p className="text-xs text-content-secondary">{protection ? 'Your current triggers stay in place until the update is confirmed.' : 'The execution reserve pays for triggering and executing the close. It is reserved from free margin when you add TP/SL.'}</p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={ACTION_CLASS} disabled={pending || targetChanged || !configuration.enabled || (!draft.takeProfit && !draft.stopLoss)} onClick={reviewChanges}>Review TP/SL</Button>
+            <Button size="sm" className={ACTION_CLASS} disabled={pending || targetChanged || Boolean(fundingError) || !configuration.enabled || (!draft.takeProfit && !draft.stopLoss)} onClick={reviewChanges}>Review TP/SL</Button>
             <Button size="sm" variant="secondary" onClick={() => { setView('overview'); setError(undefined) }}>Back</Button>
           </div>
         </> : view === 'review' && review ? <>
           <ProtectionPriceSummary params={review.params} cap={review.cap} rawMark={review.rawMark} position={review.position} direction={direction} />
           <dl className="space-y-2 border-y border-brand-border/20 py-3 text-xs">
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Amount to close</dt><dd>100% of the position</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve</dt><dd><TokenAmount amount={formatPerpsUsdc(protection ? reserve : review.reward)} /> {protection ? '· already reserved' : '· from free margin'}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve</dt><dd><TokenAmount amount={formatUnits(protection ? reserve : review.reward, 6)} /> {protection ? '· already reserved' : '· from free margin'}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Active from</dt><dd>{protection?.status === 1 ? 'Opening order execution' : 'Update confirmation'}</dd></div>
           </dl>
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={reviewChanged || Boolean(reviewPriceError) || !configuration.enabled} onClick={() => void submit()}>Confirm TP/SL</Button>
+            <Button size="sm" className={ACTION_CLASS} isLoading={pending} disabled={reviewChanged || Boolean(reviewPriceError) || Boolean(fundingError) || !configuration.enabled} onClick={() => void submit()}>Confirm TP/SL</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('edit'); setError(undefined) }}>Back to edit</Button>
           </div>
         </> : view === 'remove' ? <>
@@ -204,6 +216,13 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
           </div>
         </> : null}
+        {!protection && (creatable || view === 'edit' || view === 'review') ? <div className="space-y-2 border-t border-brand-border/20 pt-3 text-xs">
+          <dl className="space-y-2">
+            {view !== 'review' ? <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve required</dt><dd><TokenAmount amount={rewardKnown ? formatUnits(reward, 6) : '—'} /></dd></div> : null}
+            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Available free margin</dt><dd><TokenAmount amount={availableFreeSettlementUsdc === undefined ? '—' : formatUnits(availableFreeSettlementUsdc, 6)} /></dd></div>
+          </dl>
+          {fundingError ? <p role="alert" className="leading-5 text-brand-orange">{fundingError}</p> : null}
+        </div> : null}
         {pending ? <p role="status" className="text-xs text-content-secondary">Confirm in your wallet, then wait for the update.</p> : null}
         {view !== 'overview' && (targetChanged || (view === 'review' && reviewChanged)) ? <p role="alert" className="text-xs text-brand-orange">{STATE_CHANGED}</p> : null}
         {error ? <p role="alert" className="break-words text-sm text-brand-orange">{error}</p> : null}

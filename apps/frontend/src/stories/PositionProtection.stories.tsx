@@ -26,6 +26,7 @@ interface PreviewProps {
   managementOutcome: 'success' | 'rejected' | 'pending'
   legs: 'both' | 'take-profit' | 'stop-loss'
   percentageExample: 'none' | '90-percent' | 'beyond-liquidation'
+  funding: 'available' | 'insufficient' | 'unavailable'
 }
 function protectionFixture(scenario: PreviewProps['scenario'], direction: PreviewProps['direction'], legs: PreviewProps['legs'] = 'both'): PositionProtection | undefined {
   if (scenario === 'empty') return undefined
@@ -72,7 +73,7 @@ function historyEvents(protection: PositionProtection, latestFailureReason = 2):
   if (protection.status === 6) events.unshift(event('PositionProtectionCancelled', 120))
   return events
 }
-function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosition, narrow, executionState, managementOutcome, legs, percentageExample }: PreviewProps) {
+function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosition, narrow, executionState, managementOutcome, legs, percentageExample, funding }: PreviewProps) {
   const fixture = protectionFixture(scenario, direction, legs)
   const terminal = [4, 5, 6, 7].includes(scenarioStatus[scenario])
   const [protection, setProtection] = useState(() => terminal ? undefined : fixture)
@@ -124,6 +125,7 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
   const content = <PositionProtectionManager
     protection={protection} position={position} accountAddress={account} rawMark={percentageExample !== 'none' ? 99_500_000n : 100_000_000n} cap={200_000_000n}
     configuration={{ enabled: commitsEnabled, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }}
+    availableFreeSettlementUsdc={funding === 'unavailable' ? undefined : funding === 'insufficient' ? 2_000n : 1_200_000_000n}
     pendingOrders={scenario === 'pending' ? 1 : 0} onManage={manage}
     executionReport={executionState === 'loading' ? undefined : executionReport} executionLoading={executionState === 'loading'} executionError={executionState === 'error'}
     onRefreshExecution={() => { setCheckedAt(Date.now()) }}
@@ -157,14 +159,17 @@ const meta = {
     managementOutcome: { control: 'select', options: ['success', 'rejected', 'pending'] },
     legs: { control: 'inline-radio', options: ['both', 'take-profit', 'stop-loss'] },
     percentageExample: { control: 'select', options: ['none', '90-percent', 'beyond-liquidation'] },
+    funding: { control: 'select', options: ['available', 'insufficient', 'unavailable'] },
   },
-  args: { scenario: 'active', direction: 'long', commitsEnabled: true, showPosition: false, narrow: false, executionState: 'automatic', managementOutcome: 'success', legs: 'both', percentageExample: 'none' },
+  args: { scenario: 'active', direction: 'long', commitsEnabled: true, showPosition: false, narrow: false, executionState: 'automatic', managementOutcome: 'success', legs: 'both', percentageExample: 'none', funding: 'available' },
 } satisfies Meta<typeof ProtectionPreview>
 export default meta
 type Story = StoryObj<typeof meta>
 export const Armed: Story = { name: 'Active TP/SL' }
 export const PositionOverview: Story = { args: { showPosition: true } }
 export const NoTriggers: Story = { args: { scenario: 'empty' } }
+export const InsufficientReserve: Story = { args: { scenario: 'empty', funding: 'insufficient' } }
+export const FundingUnavailable: Story = { args: { scenario: 'empty', funding: 'unavailable' } }
 export const PendingOpen: Story = { args: { scenario: 'pending' } }
 export const CloseQueued: Story = { args: { scenario: 'queued' } }
 export const Latched: Story = { name: 'Close delayed', args: { scenario: 'delayed', executionState: 'queue-congested' } }

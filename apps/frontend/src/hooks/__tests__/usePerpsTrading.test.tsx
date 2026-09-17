@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getAddress, type Address, type Hex } from 'viem'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { encodeFunctionData, getAddress, type Address, type Hex } from 'viem'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -11,7 +11,10 @@ import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import { usePerpsTrading } from '../usePerpsTrading'
 import * as orderV2 from '../../contracts/perpsOrderV2'
 import * as orderPreparation from '../../contracts/preparePerpsOrderV2'
+import * as deploymentBindings from '../../contracts/verifyPerpsV2Bindings'
+import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
+import { SponsorRequestError } from '../../perps-aa/errors'
 
 const OWNER = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as Address
 const ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc' as Address
@@ -285,6 +288,123 @@ describe('usePerpsTrading', () => {
         default:
           throw new Error(`Unexpected readContract call: ${functionName}`)
       }
+    })
+  })
+
+  describe('position protection management', () => {
+    const params = { takeProfitTriggerPrice: 98_500_000n, stopLossTriggerPrice: 0n }
+
+    beforeEach(() => {
+      mocks.identityReady = true
+      vi.spyOn(deploymentBindings, 'verifyPerpsV2DeploymentBindings').mockResolvedValue({
+        positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
+        blockNumber: 123n,
+        block: { number: 123n, timestamp: 1_700_000_000n, hash: REVIEWED_BLOCK_HASH },
+      })
+      vi.spyOn(deploymentBindings, 'verifyProtectionDeployment').mockResolvedValue()
+      mocks.parseEventLogs.mockReturnValue([{ args: { account: ACCOUNT, protectionId: 7n } }])
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it.each([
+      ['create', 'createPositionProtection', 'PositionProtectionCreated'],
+      ['replace', 'replacePositionProtection', 'PositionProtectionReplaced'],
+      ['cancel', 'cancelPositionProtection', 'PositionProtectionCancelled'],
+    ] as const)('simulates and sponsors %s from the Trading Account with the reviewed triggers', async (action, functionName, eventName) => {
+      const args = action === 'create' ? [params] : action === 'replace' ? [7n, params] : [7n]
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      const onStatus = vi.fn()
+
+      await expect(result.current.managePositionProtection({
+        action,
+        protectionId: action === 'create' ? undefined : 7n,
+        params: action === 'cancel' ? undefined : params,
+        onStatus,
+      })).resolves.toEqual({ protectionId: 7n, hash: TRANSACTION_HASH })
+
+      expect(mocks.simulateContract).toHaveBeenCalledExactlyOnceWith({
+        account: ACCOUNT,
+        address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
+        abi: PERPS_POSITION_PROTECTION_BOOK_ABI,
+        functionName,
+        args,
+      })
+      expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({
+        ownerAddress: OWNER,
+        onStatus,
+        action: expect.objectContaining({
+          kind: `${action}-protection`,
+          account: ACCOUNT,
+          calls: [{
+            to: getAddress(PERPS_ARBITRUM_SEPOLIA.positionProtectionBook),
+            value: 0n,
+            data: encodeFunctionData({ abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName, args }),
+          }],
+        }),
+        protectionIntent: expect.objectContaining({
+          takeProfitTriggerPrice: action === 'cancel' ? '0' : '98500000',
+          stopLossTriggerPrice: '0',
+          protectionId: action === 'create' ? undefined : '7',
+        }),
+      }))
+      expect(mocks.parseEventLogs).toHaveBeenCalledWith(expect.objectContaining({
+        eventName,
+        logs: [{ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook }],
+      }))
+      expect(mocks.invalidateQueries).toHaveBeenCalledOnce()
+      expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    })
+
+    it('decodes the reported settlement shortfall and stops before sponsorship', async () => {
+      const failure = new Error('Execution reverted for an unknown reason.', {
+        cause: { code: 3, message: 'execution reverted', data: '0x024ec6ee' },
+      })
+      mocks.simulateContract.mockRejectedValueOnce(failure)
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+      await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
+        message: 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.',
+        cause: failure,
+      })
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+      expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    })
+
+    it.each(['create', 'replace', 'cancel'] as const)('gives a TP/SL fallback when %s simulation has no revert data', async action => {
+      const failure = new Error('Execution reverted for an unknown reason. Raw Call Arguments: from: 0x123')
+      mocks.simulateContract.mockRejectedValueOnce(failure)
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+      await expect(result.current.managePositionProtection({ action, protectionId: 7n, params })).rejects.toMatchObject({
+        message: 'TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.',
+        cause: failure,
+      })
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    })
+
+    it('normalizes a sponsorship failure and preserves its cause', async () => {
+      const failure = new SponsorRequestError({ reason: 'PAYMASTER_PAUSED', message: 'provider details', retryable: true })
+      mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(failure)
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+      await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
+        message: 'Plether gas sponsorship is temporarily paused.',
+        cause: failure,
+      })
+    })
+
+    it.each([
+      [{ args: { account: OWNER, protectionId: 7n } }],
+      [{ args: { account: ACCOUNT, protectionId: 8n } }],
+    ])('rejects an included event for a different account or protection', event => {
+      mocks.parseEventLogs.mockReturnValue([event])
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+      return expect(result.current.managePositionProtection({ action: 'replace', protectionId: 7n, params }))
+        .rejects.toThrow('operation was included but its protection event could not be reconciled')
     })
   })
 

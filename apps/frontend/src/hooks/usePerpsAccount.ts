@@ -604,6 +604,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       positionEquityUsdc: position?.exists && riskReady ? positionEquityUsdc : undefined,
       settlementBalanceUsdc: snapshotCurrent ? settlementBalanceUsdc : undefined,
       freeSettlementUsdc: snapshotCurrent ? freeSettlementUsdc : undefined,
+      carryProjection: snapshotCurrent ? carryProjection : undefined,
       snapshotStatus: snapshotCurrent && accountView !== undefined && accountLedgerSnapshot !== undefined &&
         position !== undefined && (!position.exists || riskReady) ? 'ready' as const : 'unavailable' as const,
       freeBuyingPowerUsdc: snapshotCurrent ? freeBuyingPowerUsdc : undefined,

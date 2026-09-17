@@ -1,7 +1,7 @@
 import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
 import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
-type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute'
+type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute' | 'protection'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
@@ -172,6 +172,8 @@ function getNestedString(error: unknown, keys: string[], depth = 0): string | un
     const value = record[key]
     if (typeof value === 'string' && value) return value
   }
+  const causedString = getNestedString(record.cause, keys, depth + 1)
+  if (causedString) return causedString
   for (const value of Object.values(record)) {
     const nested = getNestedString(value, keys, depth + 1)
     if (nested) return nested
@@ -184,6 +186,8 @@ function getNestedArgs(error: unknown, depth = 0): readonly unknown[] | undefine
   const record = error as Record<string, unknown>
   const args = record.args
   if (Array.isArray(args)) return args as readonly unknown[]
+  const causedArgs = getNestedArgs(record.cause, depth + 1)
+  if (causedArgs) return causedArgs
   for (const value of Object.values(record)) {
     const nested = getNestedArgs(value, depth + 1)
     if (nested) return nested
@@ -197,6 +201,10 @@ function extractRevertData(error: unknown, depth = 0): string | undefined {
   if (typeof error !== 'object') return undefined
 
   const record = error as Record<string, unknown>
+  // Standard Error.cause is non-enumerable. Prefer the underlying RPC error
+  // over transaction calldata attached to an outer wrapper.
+  const causedData = extractRevertData(record.cause, depth + 1)
+  if (causedData) return causedData
   for (const key of ['data', 'raw']) {
     const value = record[key]
     if (typeof value === 'string' && value.startsWith('0x')) return value
@@ -249,8 +257,8 @@ export function getPerpsContractErrorCode(error: unknown): string | undefined {
 
 /** Only decoded ordering failures are eligible for read-only review recovery. */
 export function isPerpsOracleSyncError(error: unknown): boolean {
-  // Native Error.cause is non-enumerable; the generic decoder also supports
-  // provider-specific enumerable wrappers, but cannot walk this chain alone.
+  // Walk each cause explicitly so an outer decoded error cannot hide a
+  // nested ordering failure. Keep traversal bounded and cycle-safe.
   const seen = new Set<unknown>()
   try {
     for (let current = error, depth = 0; current && depth < 8 && !seen.has(current); depth++) {
@@ -334,7 +342,7 @@ function codeSuffix(code: number | undefined): string {
   return code === undefined ? '' : ` (${code.toString()})`
 }
 
-function messageForDecodedError(name: string | undefined, args: readonly unknown[] | undefined): string | undefined {
+function messageForDecodedError(name: string | undefined, args: readonly unknown[] | undefined, action: PerpsAction): string | undefined {
   switch (name) {
     case 'EnforcedPause':
       return 'The router is paused. Try again after the protocol is unpaused.'
@@ -343,7 +351,10 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'MarginClearinghouse__InsufficientBalance':
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
+      if (action === 'protection') return 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+      return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'OrderRouter__InsufficientFreeEquity':
+      if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'MarginClearinghouse__InsufficientUsdcForSettlement':
       return 'The margin account does not have enough USDC settlement balance.'
@@ -391,6 +402,7 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'CfdEngine__PartialCloseUnderwaterCarry':
       return CLOSE_REVERT_MESSAGES[4]
     case 'CfdEngine__NoOpenPosition':
+    case 'OrderRouter__NoOpenPosition':
       return 'There is no open position for this account.'
     case 'CfdEngine__WithdrawBlockedByOpenPosition':
       return 'Withdrawal is blocked while this account has an open position.'
@@ -447,6 +459,14 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The current execution bounty exceeds the reviewed order bounds. Review a fresh order.'
     case 'OrderRouter__ProtectionActive':
       return 'Active position protection blocks discretionary orders. Cancel or finalize the protection first.'
+    case 'OrderRouter__ProtectionAlreadyActive':
+      return 'Your position already has TP/SL. Refresh your position to edit its current triggers.'
+    case 'OrderRouter__PendingOrdersExist':
+      return 'Wait for your pending orders to finish before adding TP/SL.'
+    case 'OrderRouter__PositionChanged':
+      return 'Your position changed. Refresh and review your TP/SL again.'
+    case 'OrderRouter__ConditionalTriggerFrozen':
+      return 'TP/SL changes are unavailable while the market oracle is frozen. Wait for the market to reopen.'
     case 'OrderRouter__ProtectionDisabled':
       return 'New TP/SL protections are currently disabled.'
     case 'OrderRouter__InvalidProtectionPrices':
@@ -540,6 +560,8 @@ function fallbackMessage(action: PerpsAction): string {
       return 'Order review is unavailable. No order was submitted. Refresh and try again.'
     case 'execute':
       return 'Self-execute failed. Retry with fresh Pyth data; the previous update may have expired.'
+    case 'protection':
+      return 'TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.'
   }
 }
 
@@ -598,7 +620,7 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
       ? `Order review failed because the protocol hit ${reason}. No order was submitted. Refresh and try again.`
       : `The protocol hit ${reason}. Refresh account activity before retrying.`
   }
-  const decodedMessage = messageForDecodedError(decoded.name, decoded.args)
+  const decodedMessage = messageForDecodedError(decoded.name, decoded.args, action)
   if (decodedMessage) return decodedMessage
 
   const rawMessage = getNestedString(error, ['shortMessage', 'message']) ?? (typeof error === 'string' ? error : '')
