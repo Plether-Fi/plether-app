@@ -66,6 +66,7 @@ const ALLOWED_LOG_ATTRIBUTE_KEYS = new Set([
   'included_block_number',
   'operation',
   'outcome',
+  'support_reference',
 ])
 
 const FORBIDDEN_PROPERTY_PATTERNS = [
@@ -214,10 +215,12 @@ export function createAnalyticsConfig(
       if (event?.event !== '$exception') return event
       // Do not attach arbitrary SDK/browser context (URLs, referrers, etc.) to
       // sanitized exceptions. Retain only grouping, release and session fields.
-      const keys = new Set(['$exception_list', '$exception_level', '$exception_fingerprint',
+      // `token` is the SDK's public project ingestion key, not a wallet/RPC
+      // credential. Removing it makes the final exception payload unauthenticated.
+      const keys = new Set(['token', '$exception_list', '$exception_level', '$exception_fingerprint',
         '$exception_type', '$exception_message', '$exception_source', '$exception_handled',
         '$session_id', '$window_id', 'distinct_id', '$lib', '$lib_version',
-        'component_stack', 'error_category', 'build_commit', 'deployment_name'])
+        'component_stack', 'error_category', 'build_commit', 'deployment_name', 'support_reference'])
       return { ...event, properties: Object.fromEntries(Object.entries(event.properties).filter(([key]) => keys.has(key))) }
     },
     logs: {
@@ -359,12 +362,17 @@ export function captureFrontendLog(
   try { posthogClient.captureLog(record) } catch { /* Telemetry must not interrupt signing or recovery. */ }
 }
 
-export function captureReactException(error: unknown, info: { componentStack?: string | null }, category: 'caught' | 'uncaught' | 'recoverable'): void {
+export function captureReactException(error: unknown, info: { componentStack?: string | null }, category: 'caught' | 'uncaught' | 'recoverable', supportReference?: string): void {
   try {
     const safe = sanitizedReactException(error, info.componentStack)
     const properties = { component_stack: safe.componentStack, error_category: category,
-      build_commit: BUILD_COMMIT, deployment_name: envString('VITE_DEPLOYMENT_ENV') ?? DEFAULT_LOG_ENVIRONMENT }
-    if (!posthogClient) enqueueCapture({ kind: 'exception', error: safe.error, properties })
+      build_commit: BUILD_COMMIT, deployment_name: envString('VITE_DEPLOYMENT_ENV') ?? DEFAULT_LOG_ENVIRONMENT,
+      ...(supportReference && /^ui-[a-z0-9-]{1,60}$/.test(supportReference) ? { support_reference: supportReference } : {}) }
+    if (!posthogClient) {
+      // Startup crashes must not wait for the page load/idle scheduling path.
+      void initAnalytics()
+      enqueueCapture({ kind: 'exception', error: safe.error, properties })
+    }
     else posthogClient.captureException(safe.error, properties)
   } catch { /* Error reporting must never throw from a React error callback. */ }
 }

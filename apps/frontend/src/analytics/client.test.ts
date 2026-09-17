@@ -53,14 +53,25 @@ describe('analytics client', () => {
     const before = createAnalyticsConfig(0.05, 'sepolia').before_send
     if (typeof before !== 'function') throw new Error('missing exception privacy filter')
     const result = before({ uuid: 'test', event: '$exception', properties: {
+      token: 'phc_public_project_key', support_reference: 'ui-test-reference',
       $exception_list: [{ type: 'TypeError', value: 'Cannot read properties of undefined' }],
       $session_id: 'session', build_commit: 'release', component_stack: 'at Funding',
       $current_url: 'https://rpc.example/secret', $referrer: 'private', request: 'signed operation',
     } })
     expect(result?.properties).toEqual({
+      token: 'phc_public_project_key', support_reference: 'ui-test-reference',
       $exception_list: [{ type: 'TypeError', value: 'Cannot read properties of undefined' }],
       $session_id: 'session', build_commit: 'release', component_stack: 'at Funding',
     })
+  })
+  it('starts analytics immediately for a startup crash and preserves its support reference', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+    captureReactException(new TypeError('startup failed'), {}, 'caught', 'ui-test-reference')
+    await initAnalytics()
+    expect(posthogMock.captureException).toHaveBeenCalledOnce()
+    expect(posthogMock.captureException).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ support_reference: 'ui-test-reference' }))
+    expect(sanitizeFrontendLogAttributes({ support_reference: 'ui-test-reference', token: 'secret' }))
+      .toEqual({ support_reference: 'ui-test-reference' })
   })
   beforeEach(() => {
     vi.unstubAllEnvs()

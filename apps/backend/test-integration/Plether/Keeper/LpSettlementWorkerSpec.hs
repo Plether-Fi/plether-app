@@ -29,7 +29,6 @@ import Data.IORef
   , readIORef
   , writeIORef
   )
-import Data.Pool (destroyAllResources)
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -55,7 +54,7 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Schema
   ( LpSettlementBroadcastInput (..)
   , LpSettlementObservationInput (..)
@@ -994,7 +993,7 @@ hexBytes count digit =
 
 withWorkerDatabase :: Text -> (DbPool -> IO a) -> IO a
 withWorkerDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     withDb pool $ \conn -> do
       assertDedicatedDatabase conn
       ensurePerpsKeeperSchema conn

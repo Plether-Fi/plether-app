@@ -5,12 +5,11 @@ module Plether.Vaults.ActivityDatabaseSpec
 import Control.Exception (SomeException, finally, try)
 import Data.Either (isLeft)
 import Data.Maybe (isNothing)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, withTransaction)
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultAttributedHolderRow (..)
@@ -272,7 +271,7 @@ withVaultDatabase databaseUrl action = do
         withDb pool $ \conn -> do
           resetVaultActivityDeployment conn deploymentA
           resetVaultActivityDeployment conn deploymentB
-        destroyAllResources pool
+        destroyDbPool pool
   (do
       withDb pool ensureVaultActivitySchema
       withDb pool $ \conn -> do
