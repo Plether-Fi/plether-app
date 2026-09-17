@@ -42,7 +42,10 @@ module Plether.Database.Insights.Registration
   , reencryptRegistrationEmails
   ) where
 
-import Control.Exception (throwIO, try)
+import Control.Monad (void)
+import GHC.Clock (getMonotonicTimeNSec)
+import qualified Plether.Logging as Log
+import Control.Exception (finally, throwIO, try)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BSC
 import Data.Int (Int64)
@@ -64,10 +67,16 @@ import Plether.Insights.Registration.Crypto (EncryptedValue (..))
 
 -- Limits are transaction-local and never cover provider requests.
 withRegistrationTransaction :: Connection -> IO a -> IO a
-withRegistrationTransaction connection action = withTransaction connection $ do
-  _ <- execute_ connection "SET LOCAL lock_timeout = '1s'"
-  _ <- execute_ connection "SET LOCAL statement_timeout = '5s'"
-  action
+withRegistrationTransaction connection action = do
+  started <- getMonotonicTimeNSec
+  (withTransaction connection $ do
+    void $ execute_ connection "SET LOCAL lock_timeout = '1s'"
+    void $ execute_ connection "SET LOCAL statement_timeout = '5s'"
+    action) `finally` do
+      finished <- getMonotonicTimeNSec
+      Log.logInfo "registration_database_work" "Registration database operation finished"
+        [Log.field "duration_ms" (fromIntegral (finished-started) / 1_000_000 :: Double)]
+
 
 bytea :: ByteString -> Binary ByteString
 bytea = Binary

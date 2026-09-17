@@ -1,7 +1,10 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeException, SomeAsyncException, fromException, throwIO, try)
+import Database.PostgreSQL.Simple (SqlError (..))
+import qualified Data.Text.Encoding as TextEncoding
+import qualified Plether.Logging as Log
 import Control.Monad (forever)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
@@ -45,6 +48,7 @@ main = do
                 newClientWithOptions $
                   RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "insights-worker"
               pollSeconds <- loadPollSeconds
+              integrityEnabled <- (/= Just "false") <$> lookupEnv "INSIGHTS_INTEGRITY_REFRESH_ENABLED"
               putStrLn $
                 "Starting Insights snapshot worker every "
                   <> show pollSeconds
@@ -53,12 +57,14 @@ main = do
               forever $ do
                 result <-
                   try @SomeException $
-                    runInsightsSnapshotCycle client pool cfg multicallSize
+                    runInsightsSnapshotCycle client pool cfg multicallSize (2 * pollSeconds) integrityEnabled
                 case result of
-                  Left err ->
-                    putStrLn $
-                      "Insights snapshot cycle failed: "
-                        <> displayException err
+                  Left err -> case fromException err :: Maybe SomeAsyncException of
+                    Just _ -> throwIO err
+                    Nothing -> Log.logWarn "insights_snapshot_cycle_failed" "Insights snapshot cycle failed"
+                      [Log.field "sql_state" (case fromException err :: Maybe SqlError of
+                        Just sqlError -> TextEncoding.decodeUtf8 $ sqlState sqlError
+                        Nothing -> "not_database")]
                   Right () -> pure ()
                 threadDelay $ pollSeconds * 1_000_000
 

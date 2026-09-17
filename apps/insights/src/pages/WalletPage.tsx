@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
-import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl } from '../components/ui'
+import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl, IntegrityNotice } from '../components/ui'
 import { eligibilityPresentation } from '../utils/eligibility'
 import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
@@ -173,6 +173,7 @@ export function WalletPage() {
   const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
     <div className="space-y-6">
+      <IntegrityNotice competition={competition} />
       <div>
         <Link to="/" className="text-sm text-brand-peach hover:underline">← Back to leaderboard</Link>
         <div className="mt-5 flex flex-col items-start justify-between gap-4 sm:flex-row">

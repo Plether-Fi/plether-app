@@ -386,7 +386,8 @@ describe('RegistrationPage', () => {
       isError: false,
       isFetching: false,
     })
-    const refetch = vi.fn().mockResolvedValue({ data: registration })
+    let resolveRecovery!: (result: { data: typeof registration }) => void
+    const refetch = vi.fn().mockReturnValue(new Promise((resolve) => { resolveRecovery = resolve }))
     apiMocks.useRegistrationSession.mockReturnValue({ data: registration, isLoading: false, isError: false, refetch })
     const error = new apiMocks.MockInsightsApiError('REGISTRATION_TIMEOUT')
     error.status = 0
@@ -403,6 +404,10 @@ describe('RegistrationPage', () => {
     fireEvent.click(completeButton)
 
     await waitFor(() => { expect(refetch).toHaveBeenCalledTimes(1) })
+    expect(screen.getByRole('status')).toHaveTextContent('Checking registration status')
+    expect(screen.queryByRole('button', { name: 'Completing…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Complete registration' })).toBeDisabled()
+    resolveRecovery({ data: registration })
     await waitFor(() => { expect(completeButton).toBeEnabled() })
     expect(apiMocks.completeRegistration).toHaveBeenCalledTimes(1)
     expect(rulesConsent).toBeChecked()

@@ -228,6 +228,9 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , Just $ "scoringVersion" .= icrScoringVersion
       , Just $ "rulesVersion" .= icrRulesVersion
       , Just $ "participantCount" .= icrParticipantCount
+      , Just $ "integrityStatus" .= icrIntegrityStatus
+      , ("integrityCheckedAt" .=) . isoTimestamp <$> icrIntegrityCheckedAt
+      , ("integrityAsOfBlock" .=) . show <$> icrIntegrityAsOfBlock
       , Just $ "finalized" .= icrFinalized
       , Just $ "updatedAt" .= isoTimestamp icrUpdatedTimestamp
       , ("registration" .=) <$> registrationMetadata
@@ -305,6 +308,7 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       , Just $ "meetsActiveDaysRequirement" .= meetsDays
       , Just $ "mechanicallyQualified" .= mechanicallyQualified
       , Just $ "prizeEligible" .= prizeEligible
+      , Just $ "fundingIntegrityClear" .= ilrFundingIntegrityClear
       , Just $ "scoreAvailable" .= scoreAvailable
       ]
   where

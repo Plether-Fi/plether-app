@@ -31,6 +31,15 @@ export function ProvisionalNotice() {
   )
 }
 
+export function IntegrityNotice({ competition }: { competition: Pick<Competition, 'integrityStatus'> }) {
+  if (competition.integrityStatus !== 'pending' && competition.integrityStatus !== 'stale') return null
+  return (
+    <div className="border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow" role="status">
+      <strong>Integrity checks updating.</strong> P&amp;L and trading rank remain available. Provisional prize eligibility will update when checks finish.
+    </div>
+  )
+}
+
 export function Pnl({ value, className = '', usdcKind }: { value: string | null | undefined; className?: string; usdcKind?: 'real' | 'mock' }) {
   const positive = value != null && /^\+?[1-9]\d*$/.test(value)
   const negative = value?.startsWith('-') === true

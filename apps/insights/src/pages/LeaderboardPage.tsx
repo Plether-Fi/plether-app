@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useCurrentCompetition, useInsightsStatus, useLeaderboard } from '../api'
 import type { Competition } from '../api'
 import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, RulesSummary } from '../components/Competition'
-import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
+import { ErrorState, LoadingState, Panel, ProvisionalNotice, IntegrityNotice } from '../components/ui'
 import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
 
@@ -18,6 +18,7 @@ function LeaderboardContent({ slug, search, competitionStatus }: { slug: string;
   return (
     <div className="space-y-3">
       {provisional ? <ProvisionalNotice /> : null}
+      {query.data?.pages[0]?.competition ? <IntegrityNotice competition={query.data.pages[0].competition} /> : null}
       <div className="border border-brand-peach/30 bg-brand-peach/5 px-4 py-3 text-sm leading-6 text-content-secondary" role="note">
         <strong className="text-content-primary">Ranked by net P&amp;L.</strong> Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 mock USDC and rank above active accounts whose net return is negative.
       </div>

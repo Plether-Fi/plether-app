@@ -53,6 +53,16 @@ beforeEach(() => {
 })
 
 describe('LeaderboardPage', () => {
+  it.each(['pending', 'stale'])('shows %s integrity without hiding standings', (integrityStatus) => {
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ competition: { integrityStatus }, standings: [], provisional: true, nextCursor: null }] },
+      hasNextPage: false, isError: false, isLoading: false,
+    })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getByText('Integrity checks updating.')).toBeInTheDocument()
+    expect(screen.getByText(/Ranked by net P&L/)).toBeInTheDocument()
+  })
+
   it('labels unscored traders as updating instead of showing zero activity', () => {
     apiMocks.useLeaderboard.mockReturnValue({
       data: { pages: [{ standings: [{

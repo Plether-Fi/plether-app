@@ -2,14 +2,17 @@
 
 module Plether.Insights.RegistrationDatabaseSpec
   ( registrationDatabaseSpec
+  , prepareRegistrationBenchmark
+  , registrationBenchmarkRoundtrip
   ) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar
   ( newEmptyMVar
   , putMVar
   , readMVar
   , takeMVar
+  , tryReadMVar
   )
 import Control.Exception (SomeException, bracket, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, replicateM_, void)
@@ -20,10 +23,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, query, query_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, execute_, query, query_, withTransaction)
 import Database.PostgreSQL.Simple.Types (Binary (..))
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
-import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Database.Insights (ensureInsightsSchema, stageCompetitionIntegrity)
 import Plether.Database.Insights.Registration
   ( CompletionResult (..)
   , CreateSessionResult (..)
@@ -70,9 +73,82 @@ import Test.Hspec
 bytea :: BS.ByteString -> Binary BS.ByteString
 bytea = Binary
 
+-- Synthetic benchmark fixture; called only after the dedicated-database guard.
+prepareRegistrationBenchmark :: Connection -> Text -> Text -> IO Text
+prepareRegistrationBenchmark conn slug rulesVersion = do
+  void $ execute conn "UPDATE insights_competitions SET registration_open_timestamp=EXTRACT(EPOCH FROM NOW())::bigint-60,registration_close_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+3600,minimum_x_account_age_days=1,target_x_handle='plether',privacy_notice_version=? WHERE slug=?" (privacyVersion,slug)
+  provisionRegistrationCompetitionConfig conn slug digestA privacyVersion `shouldReturn` True
+  seedBareRegistration conn slug
+  seedVerifiedIdentity conn
+  completeRegistration conn sessionDigest privacyVersion rulesVersion privacyVersion False ownerWallet tradingAccount completionBlock completionHash `shouldReturn` CompletionSucceeded
+  pure tradingAccount
+
+registrationBenchmarkRoundtrip :: Connection -> Text -> Text -> Int -> IO ()
+registrationBenchmarkRoundtrip conn slug rulesVersion sequenceNumber = do
+  let suffix = T.pack $ show sequenceNumber
+      application = "90000000-0000-4000-8000-" <> T.justifyRight 12 '0' suffix
+      digest offset = BS.pack $ map (fromIntegral . fromEnum) $ T.unpack $ T.justifyRight 32 '0' (T.pack $ show $ sequenceNumber+offset)
+  createRegistrationSession conn slug application (digest 1000000) (digest 2000000) highCsrfDigest highEnvelope 3600 `shouldReturn` SessionCreated
+  completeRegistration conn sessionDigest privacyVersion rulesVersion privacyVersion False ownerWallet tradingAccount completionBlock completionHash `shouldReturn` CompletionAlreadySucceeded
+
 registrationDatabaseSpec :: Text -> Spec
 registrationDatabaseSpec databaseUrl =
   describe "Insights registration PostgreSQL completion" $ do
+    it "rolls back a statement timeout in rate limiting and reuses the connection" $
+      withRegistrationDatabase databaseUrl $ \pool -> do
+        _ <- prepareVerifiedFixture pool
+        withDb pool $ \conn -> do
+          void $ execute_ conn "CREATE FUNCTION test_registration_statement_timeout() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(6); RETURN NEW; END $$"
+          void $ execute_ conn "CREATE TRIGGER test_registration_statement_timeout BEFORE INSERT ON insights_registration_rate_limits FOR EACH ROW EXECUTE FUNCTION test_registration_statement_timeout()"
+          let cleanup = do
+                void $ execute_ conn "DROP TRIGGER test_registration_statement_timeout ON insights_registration_rate_limits"
+                void $ execute_ conn "DROP FUNCTION test_registration_statement_timeout()"
+          (do
+            result <- try @SqlError $ registrationRateLimitAllowed conn highRateScopeDigest 10
+            case result of
+              Left err -> sqlState err `shouldBe` "57014"
+              Right _ -> expectationFailure "rate-limit work must stop at the statement deadline"
+            query_ conn "SHOW statement_timeout" `shouldReturn` [Only ("0" :: Text)]
+            query conn "SELECT COUNT(*) FROM insights_registration_rate_limits WHERE scope_digest=?" (Only $ bytea highRateScopeDigest) `shouldReturn` [Only (0 :: Int)]
+            ) `finally` cleanup
+          registrationRateLimitAllowed conn highRateScopeDigest 10 `shouldReturn` True
+
+    it "creates a session and completes registration while the calculation transaction remains open" $
+      withRegistrationDatabase databaseUrl $ \pool -> do
+        rules <- prepareVerifiedFixture pool
+        -- A test-only DDL hook holds the actual staging CTAS open after its
+        -- calculation, with all of that statement's locks still retained.
+        withDb pool $ \conn -> do
+          void $ execute_ conn "CREATE OR REPLACE FUNCTION test_hold_integrity_stage() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='integrity-concurrency-test' THEN PERFORM pg_sleep(3); END IF; END $$"
+          void $ execute_ conn "CREATE EVENT TRIGGER test_hold_integrity_stage ON ddl_command_end WHEN TAG IN ('CREATE TABLE AS') EXECUTE FUNCTION test_hold_integrity_stage()"
+        let cleanup = withDb pool $ \conn -> do
+              void $ execute_ conn "DROP EVENT TRIGGER IF EXISTS test_hold_integrity_stage"
+              void $ execute_ conn "DROP FUNCTION IF EXISTS test_hold_integrity_stage()"
+        (do
+          finished <- newEmptyMVar
+          void $ forkIO $ do
+            outcome <- try $ withDb pool $ \conn -> do
+              void $ execute_ conn "SET application_name='integrity-concurrency-test'"
+              stageCompetitionIntegrity conn (crSlug rules)
+                `finally` void (execute_ conn "RESET application_name")
+            putMVar finished (outcome :: Either SomeException ())
+          let waitForCalculation = do
+                running <- withDb pool $ \conn -> query_ conn
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='integrity-concurrency-test' AND wait_event='PgSleep')" :: IO [Only Bool]
+                if running == [Only True] then pure () else threadDelay 10_000 >> waitForCalculation
+          timeout 2_000_000 waitForCalculation `shouldReturn` Just ()
+          outcome <- timeout 1_000_000 $ withDb pool $ \conn -> do
+            createRegistrationSession conn (crSlug rules) highApplicationId highTurnstileDigest
+              highSessionDigest highCsrfDigest highEnvelope 3_600 `shouldReturn` SessionCreated
+            completeWithRules conn rules `shouldReturn` CompletionSucceeded
+          outcome `shouldBe` Just ()
+          stillRunning <- tryReadMVar finished
+          case stillRunning of
+            Nothing -> pure ()
+            Just _ -> expectationFailure "registration must finish before calculation releases its transaction"
+          takeMVar finished >>= either throwIO pure
+          ) `finally` cleanup
+
     forM_ [("FOR NO KEY UPDATE", True), ("FOR UPDATE", False)] $ \(lockMode, permitsInsert) ->
       it ("bounds registration and restores connection settings under " <> lockMode) $
         withRegistrationDatabase databaseUrl $ \pool -> do

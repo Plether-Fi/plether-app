@@ -5,7 +5,7 @@ import Data.List (isInfixOf)
 import Database.PostgreSQL.Simple (Query)
 import Plether.Database.Insights
   ( InsightsActivityRow (..)
-  , fundingIntegrityRefreshSql
+  , integrityCalculationSql
   , hasCompleteAccountSnapshotBatchQuerySql
   , insightsDataStatusQuerySql
   , leaderboardQuerySql
@@ -119,28 +119,28 @@ spec = do
       queryContains walletActivityQuerySql "c.fx_session_boundary_utc_minutes"
 
     it "keeps funding-capacity review separate from cash-flow-adjusted scoring" $ do
-      queryContains fundingIntegrityRefreshSql "official_allocation_count_invalid"
-      queryContains fundingIntegrityRefreshSql "unverified_funding_flow"
-      queryContains fundingIntegrityRefreshSql "baseline_open_position"
-      queryContains fundingIntegrityRefreshSql "baseline_pending_orders"
-      queryContains fundingIntegrityRefreshSql "JOIN testnet_faucet_claims fc"
-      queryContains fundingIntegrityRefreshSql "fc.status = 'success'"
-      queryContains fundingIntegrityRefreshSql "fc.amount = p.starting_balance_usdc"
-      queryContains fundingIntegrityRefreshSql "JOIN perps_usdc_transfers x"
-      queryContains fundingIntegrityRefreshSql
-        "ROW(f.block_number, f.tx_index, f.log_index) > ROW(m.block_number, m.tx_index, m.log_index)"
-      queryContains fundingIntegrityRefreshSql "f.transfer_log_index = x.log_index"
-      queryContains fundingIntegrityRefreshSql "official_funds_left_before_allocation"
+      queryContains integrityCalculationSql "official_allocation_count_invalid"
+      queryContains integrityCalculationSql "unverified_funding_flow"
+      queryContains integrityCalculationSql "baseline_open_position"
+      queryContains integrityCalculationSql "baseline_pending_orders"
+      queryContains integrityCalculationSql "JOIN testnet_faucet_claims fc"
+      queryContains integrityCalculationSql "fc.status = 'success'"
+      queryContains integrityCalculationSql "fc.amount = p.starting_balance_usdc"
+      queryContains integrityCalculationSql "JOIN perps_usdc_transfers x"
+      queryContains integrityCalculationSql
+        "ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)"
+      queryContains integrityCalculationSql "d.transfer_log_index = x.log_index"
+      queryContains integrityCalculationSql "official_funds_left_before_allocation"
       queryContains leaderboardQuerySql "jsonb_array_length(integrity_flags) = 0"
       queryContains leaderboardQuerySql "AS funding_integrity_clear"
 
     it "binds verified registration and faucet provenance to canonical block evidence" $ do
-      queryContains fundingIntegrityRefreshSql "fc.mint_block_number IS NOT NULL"
-      queryContains fundingIntegrityRefreshSql "x.block_number = fc.mint_block_number"
-      queryContains fundingIntegrityRefreshSql "missing_verified_registration"
-      queryDoesNotContain fundingIntegrityRefreshSql "pre_registration_activity"
-      queryDoesNotContain fundingIntegrityRefreshSql "r.wallet_verification_block"
-      queryDoesNotContain fundingIntegrityRefreshSql
+      queryContains integrityCalculationSql "fc.mint_block_number IS NOT NULL"
+      queryContains integrityCalculationSql "x.block_number = fc.mint_block_number"
+      queryContains integrityCalculationSql "missing_verified_registration"
+      queryDoesNotContain integrityCalculationSql "pre_registration_activity"
+      queryDoesNotContain integrityCalculationSql "r.wallet_verification_block"
+      queryDoesNotContain integrityCalculationSql
         "e.timestamp <= FLOOR(EXTRACT(EPOCH FROM r.completed_at))"
 
     it "never reports a later integrity-flagged participant as prize eligible" $ do
@@ -148,7 +148,7 @@ spec = do
       prizeEligibleAfterIntegrityReview True True True `shouldBe` True
 
     it "never recomputes funding flags for finalized historical standings" $ do
-      queryContains fundingIntegrityRefreshSql "c.slug = ? AND c.finalized = FALSE"
+      queryContains integrityCalculationSql "c.slug = ? AND c.finalized = FALSE"
 
     it "disables legacy admin registration for verified-registration competitions" $ do
       manualRosterInsertionAllowed Nothing `shouldBe` True
