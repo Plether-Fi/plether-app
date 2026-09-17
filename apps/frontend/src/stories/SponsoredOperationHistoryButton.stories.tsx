@@ -1,4 +1,4 @@
-import { useLayoutEffect, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createConfig, WagmiProvider } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
@@ -13,6 +13,8 @@ import { anvil } from '../config/wagmi'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
 import type { PreparationStatusV1 } from '../perps-aa/preparedOperation'
+import { registerOperationRecoveryCheck } from '../perps-aa/requestOperationRecovery'
+import { PreparationRecoveryError } from '../perps-aa/walletRecovery'
 import {
   PerpsIdentityContext,
   isSponsoredOperationTerminal,
@@ -346,6 +348,7 @@ export const IncludedAwaitingSafeConfirmation: Story = {
     })).toBeVisible()
     expect(within(dialog).queryByRole('region', { name: 'In progress' }))
       .not.toBeInTheDocument()
+    await userEvent.click(within(dialog).getByText('Technical details', { exact: true }))
     expect(within(dialog).getByRole('link', {
       name: 'View included transaction on Blockscout',
     })).toBeVisible()
@@ -595,8 +598,122 @@ export const SignedRecoveryCheckingOutcome: Story = {
     const dialog = within(await within(document.body).findByRole('dialog'))
     await userEvent.click(dialog.getByRole('button', { name: 'Verify wallet to recover' }))
     expect(await dialog.findByText('2. Check transaction outcome')).toBeVisible()
-    expect(await dialog.findByText(/This alone does not confirm the transaction outcome or unlock trading/)).toBeVisible()
+    expect(dialog.getByText('1. Verify your wallet')).toBeVisible()
+    expect(dialog.getByText('Completed')).toBeVisible()
+    expect(dialog.getByRole('button', { name: 'Wallet verified' })).toBeDisabled()
+    expect(await dialog.findByText('We couldn’t confirm this transaction')).toBeVisible()
     expect(dialog.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
     expect(dialog.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
   },
 }
+
+
+type RecoveryPreviewResult = 'uncertain' | 'expired' | 'confirmed' | 'timeout' | 'verification-expired'
+
+function recoveryResultRuntime(result: RecoveryPreviewResult): PerpsAaSmartAccountRuntime {
+  let checksSinceVerification = 0
+  return {
+    ...signedRecoveryRuntime,
+    preparationRecovery: {
+      ...signedRecoveryRuntime.preparationRecovery,
+      retire: async () => { throw new Error('Signed attempts cannot be discarded in this preview') },
+      headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+      verify: async () => { checksSinceVerification = 0 },
+      status: async () => {
+        checksSinceVerification += 1
+        // The first read follows wallet verification. The next read shows
+        // the selected result when the visitor clicks Check recovery again.
+        if (checksSinceVerification === 2) {
+          if (result === 'timeout') throw new PreparationRecoveryError('RECOVERY_TIMEOUT')
+          if (result === 'verification-expired') throw new PreparationRecoveryError('RECOVERY_VERIFICATION_REQUIRED')
+
+        }
+        return expiredSignedStatus
+      },
+    },
+  }
+}
+
+function RecoveryResultPreview({ result }: { result: RecoveryPreviewResult }) {
+  const runtime = useMemo(() => recoveryResultRuntime(result), [result])
+  const client = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }), [])
+  useLayoutEffect(() => {
+    const originalFetch = window.fetch
+    const previewFetch: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin)
+      if (url.pathname.endsWith(`/perps/accounts/${ACCOUNT_ADDRESS}/orders`)) {
+        return new Response(JSON.stringify({ data: { orders: [{
+          orderId: '42', account: ACCOUNT_ADDRESS, clientOrderId: hash('e'),
+          commitTxHash: hash('d'), side: 0, commitTimestamp: Math.floor(NOW / 1000),
+        }] } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return originalFetch(input, init)
+    }
+    window.fetch = previewFetch
+    return () => { window.fetch = originalFetch; client.clear() }
+  }, [client])
+  useEffect(() => {
+    let checks = 0
+    return registerOperationRecoveryCheck(id => {
+      if (id !== signedRecoveryOperations[0].id) return undefined
+      checks += 1
+      // Simulate an authoritative chain check, separate from preparation status.
+      if (checks > 1) {
+        const store = useSponsoredOperationStore.getState()
+        if (result === 'confirmed') {
+          store.recordTransactionHash(id, hash('d'))
+          store.transition(id, 'confirmed')
+        } else if (result === 'expired') {
+          store.failOperation({ id, status: 'expired', reason: 'expired', retryable: false })
+        }
+      }
+      return Promise.resolve('checked')
+    })
+  }, [result])
+  return <QueryClientProvider client={client}><WalletHeaderPreview operations={signedRecoveryOperations} runtime={runtime} /></QueryClientProvider>
+}
+
+function recoveryResultStory(result: RecoveryPreviewResult, description: string): Story {
+  return {
+    parameters: { docs: { description: { story: `${description} Local simulation only: no wallet, RPC, or transaction is used. Reload the story to replay the flow.` } } },
+    render: () => <RecoveryResultPreview result={result} />,
+    play: async context => {
+      await SignedRecoveryCheckingOutcome.play?.(context)
+      const dialog = within(await within(document.body).findByRole('dialog'))
+      await userEvent.click(dialog.getByRole('button', { name: 'Check recovery again' }))
+      if (result === 'expired' || result === 'confirmed') {
+        const message = result === 'expired'
+          ? 'Transaction didn’t go through'
+          : 'Order submitted'
+        expect(await dialog.findByText(message)).toBeVisible()
+        if (result === 'confirmed') expect(await dialog.findByText('Awaiting execution')).toBeVisible()
+        expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+        expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)).toBeUndefined()
+      } else if (result === 'verification-expired') {
+        expect(await dialog.findByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+        expect(dialog.getByText('1. Verify your wallet')).toBeVisible()
+        expect(dialog.queryByText('Completed')).not.toBeInTheDocument()
+        expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+      } else {
+        if (result === 'timeout') expect(await dialog.findByRole('alert')).toHaveTextContent('timed out')
+        expect(dialog.getByRole('button', { name: 'Wallet verified' })).toBeDisabled()
+        expect(dialog.getByText('Completed')).toBeVisible()
+        expect(dialog.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
+      }
+      if (result !== 'expired' && result !== 'confirmed') {
+        expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)?.id).toBe(signedRecoveryOperations[0].id)
+      }
+    },
+  }
+}
+
+export const SignedRecoveryStillUncertain = recoveryResultStory('uncertain',
+  'The check cannot establish the transaction outcome. Wallet verification stays completed and the transaction remains blocked.')
+export const SignedRecoverySafelyExpired = recoveryResultStory('expired',
+  'A simulated chain check proves expiry without inclusion. The saved operation becomes Expired and its account lock clears.')
+export const SignedRecoveryCommitConfirmed = recoveryResultStory('confirmed',
+  'A simulated chain check confirms the order commitment. The account lock clears; order execution must still be checked separately.')
+export const SignedRecoveryTemporaryError = recoveryResultStory('timeout',
+  'The status request times out. Verification remains completed, the lock stays, and another check is available.')
+export const SignedRecoveryVerificationExpired = recoveryResultStory('verification-expired',
+  'The recovery session expires. Step 1 becomes active again and the lock remains until the transaction is resolved.')

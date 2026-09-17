@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { requestOperationRecovery } from './requestOperationRecovery'
+import { RecoverySupport } from './RecoverySupport'
 import { AccountDeploymentConfirmation } from './AccountDeploymentConfirmation'
 import { trackPerpsPreparationRecovery } from '../analytics/perps'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
@@ -60,6 +62,13 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const [verified, setVerified] = useState(false)
   const [working, setWorking] = useState(false)
   const [checkingStatus, setCheckingStatus] = useState(false)
+  const [outcomeCheck, setOutcomeCheck] = useState<'idle' | 'checking' | 'unresolved'>('idle')
+  const outcomeRequested = useRef(false)
+  const checkOutcome = useCallback(async () => {
+    setOutcomeCheck('checking')
+    try { await requestOperationRecovery(operation.id) }
+    finally { setOutcomeCheck('unresolved') }
+  }, [operation.id])
   const [statusCheckRevision, setStatusCheckRevision] = useState(0)
   const request = operation.nativePreparation
   const recoveryManifest = request?.manifest ?? fallbackManifest
@@ -115,7 +124,12 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       try {
         if (verified && runtime.preparationRecovery) {
           const result = await runtime.preparationRecovery.status(operation.id)
-          if (!isStopped()) { setWalletStatus(result); setStatusError(undefined); setWalletRequired(false) }
+          if (!isStopped()) {
+            setWalletStatus(result); setStatusError(undefined); setWalletRequired(false)
+            // The authenticated read restores hash-scoped receipt access before
+            // the coordinator checks the chain. Verification alone does not.
+            if (outcomeRequested.current) { outcomeRequested.current = false; void checkOutcome() }
+          }
           resolved = 'recoveryState' in result && result.recoveryState === 'retired'
           return
         }
@@ -131,6 +145,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
           const reason = recoveryReason(cause)
           setStatus(undefined); setWalletStatus(undefined)
           setStatusError(recoveryFailure(operation.id, 'status-failed', cause))
+          setOutcomeCheck('unresolved')
           if (reason === 'RECOVERY_VERIFICATION_REQUIRED' || reason === 'PREPARATION_NOT_AUTHORIZED') {
             setWalletRequired(true); setVerified(false); setWalletStatus(undefined)
           }
@@ -149,7 +164,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       lifecycle.stopped = true; setCheckingStatus(false); clearTimeout(timer)
       window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [runtime, recoveryManifest, operation.id, operation.status, operation.userOperationHash, operation.preparedOperation?.expectedHash, deferStatusCheck, verified, statusCheckRevision])
+  }, [runtime, recoveryManifest, operation.id, operation.status, operation.userOperationHash, operation.preparedOperation?.expectedHash, deferStatusCheck, verified, statusCheckRevision, checkOutcome])
 
   if (!recoveryManifest) return null
   if (operation.preparationResolved && operation.status === 'cancelled') return <p>
@@ -188,11 +203,41 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   return <div className="space-y-2 text-sm text-content-secondary" aria-live="polite">
     {accountWaiting && <AccountDeploymentConfirmation monitor={runtime.deploymentConfirmation} />}
     {deferStatusCheck && accountConfirmation === 'ready' && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
+    {walletRecovery && (signedRecovery || (!verified && (!operation.userOperationHash || walletRequired
+      || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))) && <div
+        className={signedRecovery && verified ? 'border-l-2 border-brand-border/30 py-2 pl-3 text-content-secondary' : undefined}>
+      {signedRecovery && <p className={`mb-2 flex flex-wrap items-center gap-2 font-semibold ${verified ? 'text-content-secondary' : 'text-content-primary'}`}>
+        <span>1. Verify your wallet</span>
+        {verified && <span className="inline-flex items-center gap-1 text-xs font-normal">
+          <span aria-hidden="true" className="material-symbols-outlined !text-sm">check</span>Completed
+        </span>}
+      </p>}
+      <p>{signedRecovery && verified
+        ? 'Ownership confirmed with a gas-free message. No new trade was submitted.'
+        : operation.userOperationHash
+        ? 'Approve a gas-free ownership message in your original wallet to check this transaction. This does not submit the trade again.'
+        : 'Verify ownership with a gas-free wallet message to check or discard this saved attempt.'}</p>
+      <Button type="button" className="mt-3 min-h-11" variant="secondary" size="sm" disabled={working || verified} onClick={() => {
+        setWorking(true); setError(undefined)
+        void walletRecovery.verify(operation.id).then(() => {
+          // Poll the verified session separately. A failed status read must not
+          // discard a successful proof or require another wallet signature.
+          setWalletStatus(undefined); setStatus(undefined)
+          setVerified(true); setWalletRequired(false); setStatusError(undefined)
+          if (operation.userOperationHash) { outcomeRequested.current = true; setOutcomeCheck('checking') }
+        }).catch((cause: unknown) => { setError(recoveryFailure(operation.id, 'verification-failed', cause)) })
+          .finally(() => { setWorking(false) })
+      }}>{verified ? 'Wallet verified' : working ? 'Waiting for wallet…' : 'Verify wallet to recover'}</Button>
+    </div>}
     {signedRecovery && verified && <div className="space-y-2">
       <p className="font-semibold text-content-primary">2. Check transaction outcome</p>
-      <p>Wallet verified. Keep this app open while we confirm whether the transaction went through. Trading stays paused until its outcome is safely resolved.</p>
+      {outcomeCheck === 'checking'
+        ? <p role="status">Checking whether your transaction went through…</p>
+        : <><p className="font-semibold text-content-primary">We couldn’t confirm this transaction</p>
+          <p>New transactions are paused to avoid submitting the same action twice. You can check again or get help with this saved attempt.</p>
+          </>}
     </div>}
-    {walletStatus && 'recoveryState' in walletStatus && <>
+    {walletStatus && 'recoveryState' in walletStatus && !signedRecovery && <>
       <p>{recoveryMessage(walletStatus.reason)}</p>
       {walletStatus.operationHashes.map(hash => {
         const outcome = walletStatus.operationOutcomes?.find(item => item.hash === hash)
@@ -202,24 +247,7 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
         return <p key={hash} className="break-all">{label}: <code>{hash}</code></p>
       })}
     </>}
-    {walletRecovery && !verified && (!operation.userOperationHash || walletRequired
-      || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown') && <div>
-      {needsSignedVerification && <p className="mb-2 font-semibold text-content-primary">1. Verify your wallet</p>}
-      <p>{operation.userOperationHash
-        ? 'Approve a gas-free ownership message in your original wallet to check this transaction. This does not submit the trade again.'
-        : 'Verify ownership with a gas-free wallet message to check or discard this saved attempt.'}</p>
-      <Button type="button" className="mt-3 min-h-11" variant="secondary" size="sm" disabled={working} onClick={() => {
-        setWorking(true); setError(undefined)
-        void walletRecovery.verify(operation.id).then(() => {
-          // Poll the verified session separately. A failed status read must not
-          // discard a successful proof or require another wallet signature.
-          setWalletStatus(undefined); setStatus(undefined)
-          setVerified(true); setWalletRequired(false); setStatusError(undefined)
-        }).catch((cause: unknown) => { setError(recoveryFailure(operation.id, 'verification-failed', cause)) })
-          .finally(() => { setWorking(false) })
-      }}>{working ? 'Waiting for wallet…' : 'Verify wallet to recover'}</Button>
-    </div>}
-    {!needsSignedVerification && <>
+    {!needsSignedVerification && !signedRecovery && <>
       {waiting && <><p>Waiting for sponsorship reservation to clear</p><p>Authorization expiry and safe reconciliation are separate. Clearance depends on verified chain progress.</p></>}
       {status?.phase === 'expiry-awaiting-reconciliation' && !waiting && <p>The authorization expired. Checking safe chain evidence before resolving the operation.</p>}
       {safelyResolved && (operation.userOperationHash ? <p>
@@ -235,10 +263,12 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
       {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
     </>}
     {displayedRecoveryError && <p role="alert">{displayedRecoveryError}</p>}
-    {!deferStatusCheck && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus} onClick={() => {
+    {!deferStatusCheck && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus || outcomeCheck === 'checking'} onClick={() => {
       setError(undefined)
+      if (signedRecovery) { outcomeRequested.current = true; setOutcomeCheck('checking') }
       setStatusCheckRevision(value => value + 1)
-    }}>{checkingStatus ? 'Checking recovery…' : 'Check recovery again'}</Button>}
+    }}>{checkingStatus || outcomeCheck === 'checking' ? 'Checking recovery…' : 'Check recovery again'}</Button>}
+    {signedRecovery && verified && outcomeCheck !== 'checking' && <RecoverySupport attemptId={operation.id} />}
     {status?.recoverable && !operation.userOperationHash && <p>Resume asks your wallet to sign the saved transaction again.</p>}
     {!operation.userOperationHash && <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
       {canOfferResume && <Button type="button" variant="primary" size="sm" disabled={!request || active || checkingStatus || accountWaiting} onClick={() => {
