@@ -2010,14 +2010,17 @@ accountSnapshotParameters AccountSnapshotInput {..} =
       , encode asiRawData
       )
 
-accountSnapshotUpsertQuery :: Query
-accountSnapshotUpsertQuery =
+accountSnapshotInsertQuery :: Query
+accountSnapshotInsertQuery =
   "INSERT INTO insights_account_snapshots (\
   \ competition_slug, wallet, snapshot_kind, chain_id, release_router, block_number,\
   \ block_hash, timestamp, has_open_position, signed_net_equity_usdc,\
   \ terminal_reachable_usdc, trader_claims_usdc, raw_data)\
-  \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
-  \ ON CONFLICT (competition_slug, wallet, snapshot_kind, block_number) DO UPDATE SET\
+  \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+
+accountSnapshotConflictQuery :: Query
+accountSnapshotConflictQuery =
+  " ON CONFLICT (competition_slug, wallet, snapshot_kind, block_number) DO UPDATE SET\
   \ chain_id = EXCLUDED.chain_id,\
   \ release_router = EXCLUDED.release_router, block_hash = EXCLUDED.block_hash,\
   \ timestamp = EXCLUDED.timestamp, has_open_position = EXCLUDED.has_open_position,\
@@ -2043,7 +2046,7 @@ publishAccountSnapshotBatchMeasured _ [] = pure 0
 publishAccountSnapshotBatchMeasured conn snapshots@(firstSnapshot : _) = do
   -- Encoding/escaping a complete batch can be substantial; do it before
   -- acquiring the competition lock. Only its database publication is atomic.
-  preparedRows <- formatMany conn accountSnapshotUpsertQuery $ map accountSnapshotParameters snapshots
+  preparedRows <- formatMany conn accountSnapshotInsertQuery $ map accountSnapshotParameters snapshots
   _ <- evaluate $ BS.length preparedRows
   (lockStarted,lockAcquired) <- withTransaction conn $ do
     void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
@@ -2106,7 +2109,10 @@ publishAccountSnapshotBatchMeasured conn snapshots@(firstSnapshot : _) = do
       \ WHERE p.competition_slug=s.competition_slug AND p.wallet=s.wallet)"
       (slug, snapshotKindText kind, blockNumber)
     deleted <- getMonotonicTimeNSec
-    void $ execute_ conn $ Query preparedRows
+    existing <- query conn
+      "SELECT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug=? AND snapshot_kind=? AND block_number=?)"
+      (slug,snapshotKindText kind,blockNumber) :: IO [Only Bool]
+    void $ execute_ conn $ Query preparedRows <> if existing == [Only True] then accountSnapshotConflictQuery else ""
     inserted <- getMonotonicTimeNSec
     _ <- execute conn
       "INSERT INTO insights_snapshot_batches\

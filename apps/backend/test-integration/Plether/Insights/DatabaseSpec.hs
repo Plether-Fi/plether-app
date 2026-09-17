@@ -974,7 +974,9 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
     void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
     plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
     LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
-    void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=1000 WHERE release_router=?" (Only fixtureRouter)
+    previousBlocks <- query conn "SELECT COALESCE(MAX(block_number),?) FROM insights_snapshot_batches WHERE competition_slug=? AND snapshot_kind='live'" (liveBlock,competitionSlug) :: IO [Only Integer]
+    let benchmarkBaseBlock = case previousBlocks of [Only block] -> block; _ -> liveBlock
+    void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=GREATEST(last_indexed_block,?) WHERE release_router=?" (benchmarkBaseBlock+20,fixtureRouter)
     registrationTimings <- newIORef ([] :: [Double])
     samples <- forM [1..20 :: Int] $ \cycleNumber -> do
       calculated <- newEmptyMVar
@@ -995,7 +997,7 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
       publicationStarted <- getMonotonicTimeNSec
       publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
       c <- getMonotonicTimeNSec
-      snapshotLockMs <- publishAccountSnapshotBatchMeasured conn [snapshot w SnapshotLive (liveBlock+fromIntegral cycleNumber) liveHash liveTimestamp bankroll | w <- allWallets]
+      snapshotLockMs <- publishAccountSnapshotBatchMeasured conn [snapshot w SnapshotLive (benchmarkBaseBlock+fromIntegral cycleNumber) liveHash liveTimestamp bankroll | w <- allWallets]
       let ms x y = fromIntegral (y-x) / 1_000_000 :: Double
           values = (ms a b,ms publicationStarted c,snapshotLockMs)
       putStrLn $ "integrity_benchmark " <> show cycleNumber <> " " <> show values
