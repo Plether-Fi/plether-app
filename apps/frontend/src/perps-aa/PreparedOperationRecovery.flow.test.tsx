@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import deployedManifest from '../../public/perps-aa-manifest.json'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
-import { executeSponsoredPerpsAction } from './execution'
+import { executeSponsoredPerpsAction, resumeSponsoredPerpsAction } from './execution'
+import { SponsorRequestError } from './errors'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
+import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 import { PreparedOperationRecovery } from './PreparedOperationRecovery'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useSponsoredOperationStore } from './operationStore'
@@ -69,9 +72,56 @@ describe('lost preparation response recovery with the durable trading lane', () 
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    localStorage.clear()
+    usePerpsUiStore.setState({ orderReviewRequest: null })
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
   })
   afterEach(() => { vi.useRealTimers() })
+
+  it('rejects an expired resume before sponsorship and restores inputs only after verified retirement', async () => {
+    const flow = await lostResponse()
+    flow.unmount()
+    // Resolve the unrelated setup fixture before creating the order under test.
+    useSponsoredOperationStore.getState().markPreparationResolved(flow.saved.id)
+    useSponsoredOperationStore.getState().transition(flow.saved.id, 'cancelled')
+    flow.prepare.mockRejectedValue(new SponsorRequestError({ reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'Account pending' }))
+    const draft = { version: 1 as const, direction: 'short' as const, orderQuantity: '125', leverage: 3, slippage: 0.5,
+      reduceOnly: false, fullClose: false, maxOpen: false, protectionEnabled: false,
+      protection: { mode: 'price' as const, takeProfit: '', stopLoss: '' } }
+    const order = { validUntil: String(Math.floor(Date.now() / 1000) + 120), sizeDelta: String(125n * 10n ** 18n), side: 1,
+      isClose: false } as PersistedPerpsOrderRequestV2
+    await expect(executeSponsoredPerpsAction({ ...flow.input, action: { ...flow.input.action, kind: 'place-order' },
+      orderRequestV2: order, orderDraft: draft })).rejects.toThrow('Account pending')
+    const pending = useSponsoredOperationStore.getState().getActiveOperation(account)!
+    await act(async () => { await vi.advanceTimersByTimeAsync(20 * 60_000) })
+    const prepareCount = flow.prepare.mock.calls.length
+    await expect(resumeSponsoredPerpsAction(pending, flow.runtime)).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
+    expect(flow.prepare).toHaveBeenCalledTimes(prepareCount)
+    expect(flow.sign).not.toHaveBeenCalled()
+    expect(flow.submit).not.toHaveBeenCalled()
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved = useSponsoredOperationStore.getState().getActiveOperation(account)!
+    expect(saved.orderDraft).toEqual(draft)
+    flow.check.mockResolvedValue({ version: 1, recoveryState: 'missing', reason: 'PREPARATION_NOT_CREATED', canRetire: true, operationHashes: [] })
+    const view = render(<PerpsAaRuntimeContext value={flow.runtime}><PreparedOperationRecovery operation={saved} /></PerpsAaRuntimeContext>)
+    await act(async () => {})
+    expect(screen.queryByRole('button', { name: /^Resume/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review order again' })).toBeDisabled()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
+    expect(screen.getByRole('button', { name: 'Review order again' })).toBeEnabled()
+    // A racing liability still prevents retirement despite the earlier advisory permission.
+    flow.retire.mockResolvedValueOnce({ version: 1, recoveryState: 'unresolved', reason: 'RECOVERY_LIABILITY_PENDING', canRetire: false, operationHashes: [] })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Review order again' })) })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(account)?.id).toBe(saved.id)
+    expect(usePerpsUiStore.getState().orderReviewRequest).toBeNull()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check recovery again' })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Review order again' })) })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(account)).toBeUndefined()
+    expect(usePerpsUiStore.getState().orderReviewRequest?.operation).toMatchObject({ id: saved.id, status: 'cancelled', preparationResolved: true, orderDraft: draft })
+    expect(flow.sign).not.toHaveBeenCalled()
+    expect(flow.submit).not.toHaveBeenCalled()
+    view.unmount()
+  })
 
   it('unlocks a fresh action only after owner verification and authoritative retirement of the expired attempt', async () => {
     const flow = await lostResponse()

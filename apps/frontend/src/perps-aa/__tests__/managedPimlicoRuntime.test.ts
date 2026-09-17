@@ -171,7 +171,7 @@ describe('createManagedPimlicoRuntime', () => {
       manifest: v2Manifest,
       ownerAddress: OWNER,
       walletClient: { chain: { id: 421614 }, account: { address: OWNER } } as never,
-      publicClient: { chain: { id: 421614 }, getCode } as never,
+      publicClient: { chain: { id: 421614 }, getCode, getBlock: vi.fn(async () => ({ number: 123n, timestamp: 1000n })) } as never,
     })
     const input = { calls: [{ to: ACCOUNT, value: 0n, data: '0x' as Hex }] }
     await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
@@ -180,7 +180,7 @@ describe('createManagedPimlicoRuntime', () => {
     expect(prepare).toHaveBeenCalledTimes(1)
     now = 15_000
     await expect(runtime.smartAccount.prepareUserOperation(input)).rejects.toMatchObject({ reason: 'ACCOUNT_DEPLOYMENT_PENDING' })
-    expect(getCode).toHaveBeenCalledWith({ address: ACCOUNT, blockTag: 'safe' })
+    expect(getCode).toHaveBeenCalledWith({ address: ACCOUNT, blockNumber: 123n })
     now = 30_000
     getCode.mockResolvedValue('0x6000')
     await expect(runtime.smartAccount.prepareUserOperation(input)).resolves.toEqual(operation)

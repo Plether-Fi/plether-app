@@ -1,3 +1,4 @@
+import type { SavedOrderDraft } from './orderDraft'
 import { isExplicitSignatureRejection } from './preparedOperation'
 import type {
   PerpsActionKind,
@@ -44,6 +45,7 @@ export interface SponsoredOperationMetadata
   manifestVersion: string
   authorizationToken?: Address
   authorizationNonce?: Hex
+  orderDraft?: SavedOrderDraft
   orderRequestV2?: PersistedPerpsOrderRequestV2
   protectionIntent?: PersistedProtectionIntent
   lane?: string
@@ -170,6 +172,7 @@ export function beginSponsoredOperationTracking(
     manifestVersion: metadata.manifestVersion,
     action: metadata.action,
     orderRequestV2: metadata.orderRequestV2,
+    orderDraft: metadata.orderDraft,
     protectionIntent: metadata.protectionIntent,
     authorizationToken: metadata.authorizationToken,
     authorizationNonce: metadata.authorizationNonce,

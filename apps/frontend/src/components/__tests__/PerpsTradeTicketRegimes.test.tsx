@@ -401,7 +401,7 @@ describe('perps ticket oracle regime matrix', () => {
   beforeEach(() => {
     identityFixture.isAaManifestConfigured = false
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
-    usePerpsUiStore.setState({ activityRequest: null })
+    usePerpsUiStore.setState({ activityRequest: null, orderReviewRequest: null })
     mockReadContractsData = [{
       status: 'success',
       result: closePreviewTuple(),
@@ -421,6 +421,40 @@ describe('perps ticket oracle regime matrix', () => {
       activeLanes: { [`${address.toLowerCase()}:default`]: 'saved-trade' },
     })
   }
+
+  it('restores retired trade inputs once, closes Activity, and requires another review', async () => {
+    seedActiveOperation('sponsorship-refused')
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    const retired = { ...saved, status: 'cancelled' as const, preparationResolved: true as const,
+      orderDraft: { version: 1 as const, direction: 'short' as const, orderQuantity: '125', leverage: 3, slippage: 0.5,
+        reduceOnly: false, fullClose: false, maxOpen: false, protectionEnabled: false,
+        protection: { mode: 'price' as const, takeProfit: '', stopLoss: '' } } }
+    render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
+    fireEvent.click(screen.getByRole('button', { name: 'Review saved transaction' }))
+    expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
+    await act(async () => {
+      useSponsoredOperationStore.setState({ operations: [retired], activeLanes: {} })
+      usePerpsUiStore.getState().requestOrderReview(retired)
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Order quantity')).toHaveValue('125')
+    expect(screen.getByRole('button', { name: 'Review Short' })).toBeInTheDocument()
+    expect(usePerpsUiStore.getState().orderReviewRequest).toBeNull()
+    fireEvent.change(screen.getByLabelText('Order quantity'), { target: { value: '130' } })
+    await act(async () => { useSponsoredOperationStore.setState({ operations: [retired] }) })
+    expect(screen.getByLabelText('Order quantity')).toHaveValue('130')
+  })
+
+  it('does not restore a draft before retirement or into a different account', async () => {
+    seedActiveOperation('sponsorship-refused')
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    render(<PerpsTradeTicket enableLiveTrading />)
+    const initial = (screen.getByLabelText('Order quantity') as HTMLInputElement).value
+    await act(async () => { usePerpsUiStore.getState().requestOrderReview(saved) })
+    expect(screen.getByLabelText('Order quantity')).toHaveValue(initial)
+    await act(async () => { usePerpsUiStore.getState().requestOrderReview({ ...saved, chainId: 1 }) })
+    expect(screen.getByLabelText('Order quantity')).toHaveValue(initial)
+  })
 
   it.each(['signature-declined', 'preparation-pending', 'sponsorship-refused'] as const)(
     'offers recovery instead of passive waiting for %s, even before entering an amount', async status => {

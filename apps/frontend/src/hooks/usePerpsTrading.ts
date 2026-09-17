@@ -1,3 +1,4 @@
+import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
 import { useCallback } from 'react'
@@ -84,6 +85,7 @@ interface PrepareOrderInput {
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
+  orderDraft?: SavedOrderDraft
   preparedOrder: PreparedPerpsOrderV2
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: CommitOrderResult) => void
@@ -851,6 +853,7 @@ export function usePerpsTrading() {
     oraclePrice,
     isClose,
     preparedOrder,
+    orderDraft,
     onStatus,
     onIncluded,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
@@ -1008,6 +1011,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: executionRuntime,
+        orderDraft,
         orderRequestV2: { ...persistPerpsOrderRequestV2(address, request),
           closeAssistance: assisted ? { amountUsdc: assisted.amountUsdc.toString(), lens: assisted.config.lens,
             lensCodeHash: assisted.config.lensCodeHash, paymasterAddress: assisted.config.paymasterAddress } : undefined },

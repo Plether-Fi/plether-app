@@ -42,3 +42,12 @@ export const Confirming: Story = {
 export const SavedTransaction: Story = {
   args: { operation: { ...operation, action: 'cancel-protection', status: 'preparation-pending', userOperationHash: undefined, createdAt: now - 15 * 60_000 } },
 }
+export const AccountConfirmed: Story = {
+  args: { confirmation: 'ready', operation: { ...operation, status: 'preparation-pending', reason: 'ACCOUNT_DEPLOYMENT_PENDING', userOperationHash: undefined } },
+}
+export const ConfirmationUnavailable: Story = {
+  args: { ...AccountConfirmed.args, confirmation: 'check-unavailable' },
+}
+export const ExpiredOrder: Story = {
+  args: { operation: { ...operation, status: 'sponsorship-refused', reason: 'INVALID_ORDER_DEADLINE', userOperationHash: undefined } },
+}

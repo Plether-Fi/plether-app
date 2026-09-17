@@ -1,3 +1,5 @@
+import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
+import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
@@ -1846,6 +1848,10 @@ export function PerpsTradeTicket({
   } = usePerpsTrading()
   const sponsoredOperations = useSponsoredOperationStore((state) => state.operations)
   const activeAccountOperation = useSponsoredOperationStore((state) => address ? state.getActiveOperation(address) : undefined)
+  const savedConfirmation = useSavedOperationConfirmation(activeAccountOperation)
+  const orderReviewRequest = usePerpsUiStore(state => state.orderReviewRequest)
+  const [reviewGeneration, setReviewGeneration] = useState(0)
+  const [restoredDraftNotice, setRestoredDraftNotice] = useState<string>()
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
   const slippageOptions = SLIPPAGE_OPTIONS
@@ -3032,7 +3038,7 @@ export function PerpsTradeTicket({
     pendingOrderCount, activePositionProtectionId, protectionConfiguration, oracleFrozen, marketPhase,
   ])
   const draftPreparationKey = orderPreparationKey([
-    preparationIdentityKey, draftSnapshot, oraclePublishTime, availableToTradeRaw,
+    preparationIdentityKey, reviewGeneration, draftSnapshot, oraclePublishTime, availableToTradeRaw,
     currentPosition, pendingOrders, pendingOrderCount, activePositionProtectionId,
     protectionConfiguration, marketPhase, activeAccountOperation?.id,
   ])
@@ -3096,7 +3102,7 @@ export function PerpsTradeTicket({
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
-    ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000) : undefined
+    ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
     ? pendingOperationGuidance.attention ? 'account_action_recovery' : 'account_action_pending'
     : undefined
@@ -3911,6 +3917,9 @@ export function PerpsTradeTicket({
         isClose: isReducingCurrentPosition,
         selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
         preparedOrder,
+        orderDraft: { version: 1, direction, orderQuantity, leverage: activeLeverage, slippage,
+          reduceOnly: isReduceOnly, fullClose: isFullCloseIntent, maxOpen: isMaxOpenIntent,
+          protectionEnabled: isProtectionEnabled, protection: { ...protectionDraft } },
         onIncluded: (includedResult) => {
           debugPerpsCommit('ticket:commit-included', {
             hash: includedResult.hash,
@@ -4093,6 +4102,34 @@ export function PerpsTradeTicket({
     setKeeperRevealDeadlineMs(undefined)
     setKeeperRevealNowMs(Date.now())
   }, [])
+
+  useEffect(() => {
+    if (!orderReviewRequest) return
+    const { operation } = orderReviewRequest
+    if (operation.chainId !== identity.chainId || operation.ownerAddress.toLowerCase() !== identity.ownerAddress?.toLowerCase()
+      || operation.accountAddress.toLowerCase() !== address?.toLowerCase()) return
+    // The handoff must refer to the durable, retired record, never an unresolved attempt.
+    const retired = useSponsoredOperationStore.getState().operations.find(item => item.id === operation.id)
+    if (retired?.status !== 'cancelled' || !retired.preparationResolved) return
+    const { draft, incomplete } = restoredOrderDraft(retired)
+    resetReviewLifecycle()
+    setIsReviewOpen(false)
+    setReviewGeneration(value => value + 1)
+    setDirection(draft.direction ?? 'long')
+    setOrderQuantity(draft.orderQuantity ?? '')
+    setIsReduceOnly(draft.reduceOnly ?? false)
+    setIsFullCloseIntent(draft.fullClose ?? false)
+    setIsMaxOpenIntent(draft.maxOpen ?? false)
+    setLeverage(draft.leverage ?? initialLeverage)
+    setLeverageInputValue(String(draft.leverage ?? initialLeverage))
+    setSlippage(draft.slippage ?? (oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE))
+    setIsProtectionEnabled(draft.protectionEnabled ?? false)
+    setProtectionDraft(draft.protection ?? EMPTY_PROTECTION_DRAFT)
+    setRestoredDraftNotice(incomplete
+      ? 'Saved size and direction restored where available. Review leverage, slippage and TP/SL before reviewing this order again.'
+      : 'Trade inputs restored. Review the updated prices and execution protections before signing again.')
+    usePerpsUiStore.getState().clearOrderReviewRequest(orderReviewRequest.id)
+  }, [orderReviewRequest, identity.chainId, identity.ownerAddress, address, resetReviewLifecycle, initialLeverage, oracleFrozen])
 
   function retryExecutionProtections() {
     preparation.retry()
@@ -4490,8 +4527,9 @@ export function PerpsTradeTicket({
           </button>
         </div>
 
+        {restoredDraftNotice && <p role="status" className="mb-3 text-sm text-content-secondary">{restoredDraftNotice}</p>}
         {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
-          <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+          <AccountOperationNotice confirmation={savedConfirmation} operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
         ) : displayedValidationError && !isZeroSize &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
@@ -4895,8 +4933,9 @@ export function PerpsTradeTicket({
                 </p>
               ) : null}
 
+              {restoredDraftNotice && <p role="status" className="mb-3 text-sm text-content-secondary">{restoredDraftNotice}</p>}
               {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
-                <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+                <AccountOperationNotice confirmation={savedConfirmation} operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
               ) : reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
                   {reviewBodyValidationError}

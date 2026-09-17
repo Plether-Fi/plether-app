@@ -7,6 +7,8 @@ export interface DeploymentConfirmationDetails {
   waitingSince?: number
   lastCheckedAt?: number
   lastSuccessfulCheckAt?: number
+  safeBlockNumber?: string
+  safeBlockTimestamp?: number
 }
 export interface DeploymentConfirmationMonitor {
   getSnapshot: () => DeploymentConfirmationStatus
@@ -26,7 +28,7 @@ interface Persistence {
 
 /** Advisory only. Every manual retry still passes backend verification. */
 export function createDeploymentConfirmationGate(
-  hasSafeCode: () => Promise<boolean>,
+  hasSafeCode: () => Promise<boolean | { confirmed: boolean; safeBlockNumber: string; safeBlockTimestamp: number }>,
   now: () => number = () => performance.now(),
   persistence?: Persistence,
 ) {
@@ -82,9 +84,12 @@ export function createDeploymentConfirmationGate(
       const checkedRevision = revision
       checking = (async () => {
         try {
-          const confirmed = await hasSafeCode()
+          const observation = await hasSafeCode()
+          const confirmed = typeof observation === 'boolean' ? observation : observation.confirmed
           if (revision !== checkedRevision) return
-          update({ ...details, status: confirmed ? 'ready' : 'waiting', lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now() })
+          update({ ...details,
+            ...(typeof observation === 'boolean' ? {} : { safeBlockNumber: observation.safeBlockNumber, safeBlockTimestamp: observation.safeBlockTimestamp }),
+            status: confirmed ? 'ready' : 'waiting', lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now() })
         } catch {
           if (revision === checkedRevision) update({ ...details, status: 'check-unavailable', lastCheckedAt: Date.now() })
         }
@@ -134,7 +139,7 @@ export function createDeploymentConfirmationGate(
         stopped = true
         observers -= 1
         if (observers === 0) {
-          clearInterval(timer); stopEvents?.()
+          clearInterval(timer); timer = undefined; stopEvents?.()
           revision += 1 // Ignore reads still running when the saved scope unmounts.
         }
       }

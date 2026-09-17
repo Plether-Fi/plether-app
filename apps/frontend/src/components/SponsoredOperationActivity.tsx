@@ -680,9 +680,11 @@ export function SponsoredOperationHistoryButton() {
   const identity = usePerpsIdentity()
   const operations = useSponsoredOperationStore((state) => state.operations)
   const activityRequest = usePerpsUiStore(state => state.activityRequest)
+  const activityDismissal = usePerpsUiStore(state => state.activityDismissal)
   const [locallyOpenedActivity, setOpenedActivity] = useState<{
     identityKey: string
     attentionOperationIds: string[]
+    dismissal: number
   } | null>(null)
   const closeActivity = () => {
     setOpenedActivity(null)
@@ -699,7 +701,7 @@ export function SponsoredOperationHistoryButton() {
     activityRequest.ownerAddress.toLowerCase() === ownerAddress
   const openedActivity = requestedIdentityMatches && identityKey
     ? { identityKey, attentionOperationIds: [activityRequest.operationId] }
-    : locallyOpenedActivity
+    : locallyOpenedActivity?.dismissal === activityDismissal ? locallyOpenedActivity : null
   useEffect(() => {
     if (!activityRequest) return
     if (!requestedIdentityMatches) {
@@ -987,6 +989,7 @@ export function SponsoredOperationHistoryButton() {
             }))
           )
           setOpenedActivity({
+            dismissal: activityDismissal,
             identityKey,
             attentionOperationIds: unreviewedAttentionOperations.map(
               (operation) => operation.id

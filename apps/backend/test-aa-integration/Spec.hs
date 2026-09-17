@@ -137,6 +137,28 @@ aaIntegrationSpec databaseUrl =
         (query_ conn "SELECT count(*)::bigint FROM aa_preparations" :: IO [Only Int64]) `shouldReturn` [Only 0]
         (query_ conn "SELECT count(*)::bigint FROM aa_sponsorship_authorizations" :: IO [Only Int64]) `shouldReturn` [Only 0]
 
+    it "retires a simulation-rejected preparation only after both work leases are released" $
+      withFixture databaseUrl $ \conn -> do
+        let sender = addressOf '1'; identifier = hashOf '2'; client = clientKeyOf '3'
+            router = addressOf '8'
+            scope = Recovery.Scope chainId paymasterAddress sender identifier
+        Right fence <- Recovery.beginPreparation conn scope "registry-worker"
+        claimPreparationCompatibleFenced conn fence True client sender identifier (hashOf '4') [] "worker"
+          `shouldReturn` PreparationClaimed Nothing
+        bindPreparationDeployment conn client sender identifier "worker" chainId router `shouldReturn` True
+        Recovery.bindDeployment conn fence client `shouldReturn` True
+        -- Gas simulation rejected the expired order before any authorization existed.
+        Recovery.retirePreparation conn scope router `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+        releasePreparation conn client sender identifier "worker"
+        Recovery.retirePreparation conn scope router `shouldReturn` Left "RECOVERY_LIABILITY_PENDING"
+        Recovery.releasePreparation conn fence
+        Recovery.matchingPreparations conn scope router `shouldReturn` [(client,Nothing,True)]
+        Recovery.retirementReason conn scope router `shouldReturn` Nothing
+        Recovery.retirePreparation conn scope router `shouldReturn` Right ()
+        Recovery.retirePreparation conn scope router `shouldReturn` Right ()
+        Recovery.beginPreparation conn scope "late-retry" `shouldReturn` Left "PREPARATION_RETIRED"
+        (query_ conn "SELECT count(*)::bigint FROM aa_sponsorship_authorizations" :: IO [Only Int64]) `shouldReturn` [Only 0]
+
     it "finds unlinked liabilities and rejects retirement until safe reconciliation" $
       withFixture databaseUrl $ \conn -> do
         readyDatabase conn

@@ -729,3 +729,49 @@ export const SignedRecoveryLateWalletApproval: Story = {
     await expect(within(document.body).getByText(/Wallet approval finished too late, so Plether did not send/)).toBeVisible()
   },
 }
+
+const expiredOrderFixture = recoveryFixture('place-order')
+const expiredOrderId = 'e152dbe4-6c9c-49b1-85d9-210d864858dc'
+const expiredOrderOperations: SponsoredOperation[] = [{
+  ...expiredOrderFixture, id: expiredOrderId,
+  nativePreparation: { ...expiredOrderFixture.nativePreparation!, preparationId: expiredOrderId }, status: 'sponsorship-refused', reason: 'INVALID_ORDER_DEADLINE',
+  preparedOperation: undefined,
+  orderDraft: { version: 1, direction: 'short', orderQuantity: '200', leverage: 3, slippage: 0.5,
+    reduceOnly: false, fullClose: false, maxOpen: false, protectionEnabled: false,
+    protection: { mode: 'price', takeProfit: '', stopLoss: '' } },
+}]
+const expiredOrderRuntime: PerpsAaSmartAccountRuntime = {
+  ...previewRuntime({ ...RESUMABLE_STATUS, recoverable: false, reason: 'PREPARATION_UNUSABLE' }),
+  preparationRecovery: {
+    verify: async () => {},
+    status: async () => ({ version: 1, recoveryState: 'missing', reason: 'PREPARATION_NOT_CREATED', canRetire: true, operationHashes: [] }),
+    retire: async () => ({ version: 1, recoveryState: 'retired', reason: 'PREPARATION_RETIRED', canRetire: false, operationHashes: [] }),
+    headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+  },
+}
+export const ExpiredOrderFreshReview: Story = {
+  parameters: { docs: { description: { story: 'Expired order recovery through verified retirement and restored editable inputs. Recovery is simulated locally; signing and submission are unavailable.' } } },
+  render: () => <WagmiProvider config={recoveryTradeConfig}>
+    <QueryClientProvider client={recoveryTradeQueryClient}>
+      <WalletHeaderPreview operations={expiredOrderOperations} runtime={expiredOrderRuntime}>
+        <div className="mx-auto mt-6 max-w-md"><PerpsTradeTicket enableLiveTrading availableToTradeRaw={1_000_000_000n}
+          oraclePriceRaw={98_300_000n} oraclePriceDisplay="98.30" /></div>
+      </WalletHeaderPreview>
+    </QueryClientProvider>
+  </WagmiProvider>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: 'Review order again' }))
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    expect(dialog.queryByRole('button', { name: /^Resume/ })).not.toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Review order again' })).toBeDisabled()
+    await userEvent.click(dialog.getByRole('button', { name: 'Verify wallet to recover' }))
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Review order again' })).toBeEnabled())
+    await userEvent.click(dialog.getByRole('button', { name: 'Review order again' }))
+    await waitFor(() => expect(within(document.body).queryByRole('dialog')).not.toBeInTheDocument())
+    expect(canvas.getByLabelText('Order quantity')).toHaveValue('200')
+    expect(canvas.getByRole('button', { name: 'Review Short' })).toBeVisible()
+    expect(canvas.getByText(/Trade inputs restored/)).toBeVisible()
+    expect(canvas.queryByRole('region', { name: 'Pending Trading Account action' })).not.toBeInTheDocument()
+  },
+}

@@ -2146,7 +2146,7 @@ validateCloseAssistanceDual _ _ _ _ = pure $ Left securityAttestationUnavailable
 preparationStatus :: NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
 preparationStatus = preparationStatusWithRecovery Nothing
 
-preparationStatusWithRecovery :: Maybe Bool -> NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+preparationStatusWithRecovery :: Maybe (Bool, Maybe Text) -> NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
 preparationStatusWithRecovery canRetire cfg pool client manager clientKey request = case Preparation.parsePreparationLocator $ Legacy.rrParams request of
   Left failure -> Legacy.respondFailure requestId failure
   Right locator -> do
@@ -2190,7 +2190,7 @@ preparationStatusWithRecovery canRetire cfg pool client manager clientKey reques
               Nothing -> fields
         let recoveryFields = case canRetire of
               Nothing -> withObservation
-              Just allowed -> KM.insert "recoveryVerified" (Bool True) $ KM.insert "canRetire" (Bool allowed) withObservation
+              Just (allowed, blockedReason) -> KM.insert "retirementReason" (maybe Null String blockedReason) $ KM.insert "recoveryVerified" (Bool True) $ KM.insert "canRetire" (Bool allowed) withObservation
         respondSuccess requestId $ Preparation.preparationStatusResponse now safeTimestamp requestedAssistance recoveryFields
       _ -> Legacy.respondFailure requestId databaseUnavailable
  where requestId = Legacy.rrId request
@@ -2344,13 +2344,14 @@ handlePreparationRecovery state cfg native pool client manager clientKey request
         Left _ -> Legacy.respondFailure requestId databaseUnavailable
         Right (True,_,_) -> respondRecoveryState "retired" "PREPARATION_RETIRED" False []
         Right (False,matches,reason) -> do
-          let canRetire = ngsRetirementEnabled state && reason == Nothing
+          let blockedReason = if ngsRetirementEnabled state then reason else Just "RECOVERY_RETIREMENT_DISABLED"
+              canRetire = blockedReason == Nothing
               hashes = [h | (_,Just h,_) <- take 20 matches]
           case matches of
             [] -> case reason of
               Just why -> respondRecoveryState "unresolved" why False []
-              Nothing -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
-            [(originalClient,_,True)] -> preparationStatusWithRecovery (Just canRetire) native pool client manager originalClient request
+              Nothing -> respondRecoveryState "missing" (maybe "PREPARATION_NOT_CREATED" id blockedReason) canRetire []
+            [(originalClient,_,True)] -> preparationStatusWithRecovery (Just (canRetire, blockedReason)) native pool client manager originalClient request
             _ | any (\(_,_,bound) -> not bound) matches -> respondRecoveryState "unresolved" "RECOVERY_BINDING_UNRESOLVED" False hashes
               | otherwise -> respondRecoveryState "ambiguous" "RECOVERY_MULTIPLE_PREPARATIONS" canRetire hashes
   requestId = Legacy.rrId request
