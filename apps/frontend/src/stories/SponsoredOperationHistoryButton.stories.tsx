@@ -479,10 +479,9 @@ function recoveryStory(action: SponsoredOperation['action'], status = RESUMABLE_
     play: async ({ canvasElement }) => {
       await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
       const dialog = within(await within(document.body).findByRole('dialog'))
-      const resume = await dialog.findByRole('button', { name: /^Resume / })
       await waitFor(() => {
-        if (status.recoverable) expect(resume).toBeEnabled()
-        else expect(resume).toBeDisabled()
+        if (status.recoverable) expect(dialog.getByRole('button', { name: /^Resume / })).toBeEnabled()
+        else expect(dialog.queryByRole('button', { name: /^Resume / })).not.toBeInTheDocument()
         if (status.freshReviewAllowed && !interrupted) expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled()
         else expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeDisabled()
       })
@@ -524,7 +523,7 @@ export const RecoveryFromTradeForm: Story = {
   parameters: {
     docs: {
       description: {
-        story: 'The real trade form with a saved, declined deposit. Open transaction activity leads to Resume and Discard. Status is mocked; wallet signing and live RPC calls are unavailable.',
+        story: 'The real trade form with a saved, declined deposit. Review saved transaction leads to Resume and Discard. Status is mocked; wallet signing and live RPC calls are unavailable.',
       },
     },
   },
@@ -546,8 +545,8 @@ export const RecoveryFromTradeForm: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    const recoveryButton = await canvas.findByRole('button', { name: 'Open transaction activity' })
-    expect(await canvas.findByText(/A saved transaction needs attention before you can trade again/)).toBeVisible()
+    const recoveryButton = await canvas.findByRole('button', { name: 'Review saved transaction' })
+    expect(await canvas.findByText(/A saved transaction needs attention/)).toBeVisible()
     expect(canvas.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
     await userEvent.click(recoveryButton)
     const dialog = within(await within(document.body).findByRole('dialog'))
