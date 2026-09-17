@@ -222,7 +222,7 @@ function operationReasonMessage(
 ): string | undefined {
   if (isAwaitingSafeConfirmation(operation)) return undefined
   if (isSubmissionUncertain(operation)) {
-    return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+    return 'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
   }
 
   switch (sponsoredOperationDisplayStatus(operation)) {

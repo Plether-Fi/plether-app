@@ -175,6 +175,11 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   const freshAllowed = walletRecovery ? walletStatus?.canRetire === true : legacyFreshAllowed
   const resumeBlocked = isSponsoredOperationTerminal(operation.status) || walletRequired || (walletStatus && 'recoveryState' in walletStatus && walletStatus.recoveryState !== 'missing')
   const safelyResolved = status?.phase === 'resolved'
+  const signedRecovery = Boolean(walletRecovery && operation.userOperationHash
+    && !operation.includedTransactionHash && !operation.laneReleasedAfterSuccessfulInclusion
+    && (!isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))
+  const needsSignedVerification = signedRecovery && !verified
+  const displayedRecoveryError = needsSignedVerification ? error : visibleError
   // An unavailable status is not permission to retry a response-lost request.
   // Account-confirmation retries are the explicit pre-preparation exception.
   const canOfferResume = !resumeBlocked && (status?.recoverable === true
@@ -183,6 +188,10 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
   return <div className="space-y-2 text-sm text-content-secondary" aria-live="polite">
     {accountWaiting && <AccountDeploymentConfirmation monitor={runtime.deploymentConfirmation} />}
     {deferStatusCheck && accountConfirmation === 'ready' && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
+    {signedRecovery && verified && <div className="space-y-2">
+      <p className="font-semibold text-content-primary">2. Check transaction outcome</p>
+      <p>Wallet verified. Keep this app open while we confirm whether the transaction went through. Trading stays paused until its outcome is safely resolved.</p>
+    </div>}
     {walletStatus && 'recoveryState' in walletStatus && <>
       <p>{recoveryMessage(walletStatus.reason)}</p>
       {walletStatus.operationHashes.map(hash => {
@@ -195,10 +204,11 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     </>}
     {walletRecovery && !verified && (!operation.userOperationHash || walletRequired
       || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown') && <div>
+      {needsSignedVerification && <p className="mb-2 font-semibold text-content-primary">1. Verify your wallet</p>}
       <p>{operation.userOperationHash
-        ? 'Verify ownership with a gas-free wallet message to restore status checks for this signed attempt. This does not submit it again.'
+        ? 'Approve a gas-free ownership message in your original wallet to check this transaction. This does not submit the trade again.'
         : 'Verify ownership with a gas-free wallet message to check or discard this saved attempt.'}</p>
-      <Button type="button" variant="secondary" size="sm" disabled={working} onClick={() => {
+      <Button type="button" className="mt-3 min-h-11" variant="secondary" size="sm" disabled={working} onClick={() => {
         setWorking(true); setError(undefined)
         void walletRecovery.verify(operation.id).then(() => {
           // Poll the verified session separately. A failed status read must not
@@ -207,25 +217,29 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
           setVerified(true); setWalletRequired(false); setStatusError(undefined)
         }).catch((cause: unknown) => { setError(recoveryFailure(operation.id, 'verification-failed', cause)) })
           .finally(() => { setWorking(false) })
-      }}>Verify wallet to recover</Button>
+      }}>{working ? 'Waiting for wallet…' : 'Verify wallet to recover'}</Button>
     </div>}
-    {waiting && <><p>Waiting for sponsorship reservation to clear</p><p>Authorization expiry and safe reconciliation are separate. Clearance depends on verified chain progress.</p></>}
-    {status?.phase === 'expiry-awaiting-reconciliation' && !waiting && <p>The authorization expired. Checking safe chain evidence before resolving the operation.</p>}
-    {safelyResolved && <p>{status.authorizationState === 'expired'
-      ? 'The unused sponsorship has safely expired.' : 'The original sponsorship has been safely resolved.'} {operation.userOperationHash
-        ? 'Checking the signed transaction against the chain before unlocking a fresh action.'
-        : 'Discard this saved attempt to unlock a fresh action.'}
-      {operation.action === 'cancel-protection' && ' Discarding does not cancel TP/SL onchain.'}</p>}
-    {!safelyResolved && status?.reason === 'PREPARATION_UNUSABLE' && <p>This preparation cannot be resumed. Check recovery to discard it when available.</p>}
-    {status?.reason === 'INTENT_ALREADY_COMMITTED' && <p>This intent was already committed. Check order activity before reviewing a new action.</p>}
-    {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
-    {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
-    {visibleError && <p role="alert">{visibleError}</p>}
-    {!deferStatusCheck && <Button type="button" variant="secondary" size="sm" disabled={working || checkingStatus} onClick={() => {
+    {!needsSignedVerification && <>
+      {waiting && <><p>Waiting for sponsorship reservation to clear</p><p>Authorization expiry and safe reconciliation are separate. Clearance depends on verified chain progress.</p></>}
+      {status?.phase === 'expiry-awaiting-reconciliation' && !waiting && <p>The authorization expired. Checking safe chain evidence before resolving the operation.</p>}
+      {safelyResolved && (operation.userOperationHash ? <p>
+        {status.authorizationState === 'expired' ? 'Gas sponsorship has expired.' : 'Gas sponsorship is resolved.'} This alone does not confirm the transaction outcome or unlock trading.
+      </p> : <p>{status.authorizationState === 'expired'
+        ? 'The unused sponsorship has safely expired.' : 'The original sponsorship has been safely resolved.'} Discard this saved attempt to unlock a fresh action.
+        {operation.action === 'cancel-protection' && ' Discarding does not cancel TP/SL onchain.'}</p>)}
+      {!safelyResolved && status?.reason === 'PREPARATION_UNUSABLE' && <p>{operation.userOperationHash
+        ? 'This signed transaction cannot be resumed. Its outcome must be checked before another trade.'
+        : 'This preparation cannot be resumed. Check recovery to discard it when available.'}</p>}
+      {status?.reason === 'INTENT_ALREADY_COMMITTED' && <p>This intent was already committed. Check order activity before reviewing a new action.</p>}
+      {status?.phase === 'included' && <p>Included onchain. Waiting for safe confirmation.</p>}
+      {status?.phase === 'submitted' && <p>This operation was submitted. Check its existing outcome before continuing.</p>}
+    </>}
+    {displayedRecoveryError && <p role="alert">{displayedRecoveryError}</p>}
+    {!deferStatusCheck && !needsSignedVerification && <Button type="button" className="min-h-11" variant="secondary" size="sm" disabled={working || checkingStatus} onClick={() => {
       setError(undefined)
       setStatusCheckRevision(value => value + 1)
     }}>{checkingStatus ? 'Checking recovery…' : 'Check recovery again'}</Button>}
-    {status?.recoverable && <p>Resume asks your wallet to sign the saved transaction again.</p>}
+    {status?.recoverable && !operation.userOperationHash && <p>Resume asks your wallet to sign the saved transaction again.</p>}
     {!operation.userOperationHash && <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
       {canOfferResume && <Button type="button" variant="primary" size="sm" disabled={!request || active || checkingStatus || accountWaiting} onClick={() => {
         setWorking(true); setError(undefined)
