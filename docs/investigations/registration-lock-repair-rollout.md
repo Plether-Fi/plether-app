@@ -1,0 +1,82 @@
+# Registration lock repair rollout
+
+## Release 1
+
+Rollback image/commit: `4bf48ef62cd4a52882cc6338c27ce460a60c35ff` (PR #312).
+Backend deployment: https://github.com/Plether-Fi/plether-app/actions/runs/35249374459
+Insights deployment: https://github.com/Plether-Fi/plether-app/actions/runs/35249343957
+Both workflows succeeded; public API status and Insights homepage smoke checks passed.
+Local verification: 1,226 backend unit tests, 161 PostgreSQL integration tests,
+114 Insights tests, frontend lint/build. GitHub checks also passed.
+
+Registration transactions use transaction-local 1-second lock and 5-second
+statement limits. SQLSTATE 55P03/57014 return 503 REGISTRATION_BUSY with
+Retry-After: 2. Snapshot publication alone uses FOR NO KEY UPDATE. Requests
+have a 30-second browser deadline including body reading. Ambiguous errors
+reconcile with GET session before another mutation; POST is never replayed.
+
+## Release 2 design
+
+Participant listing is read-only. Snapshot publication writes complete batches
+without calculating integrity. Each worker cycle calculates once with a
+nonblocking competition-specific advisory lock, a 15-second statement limit,
+and one CTAS SQL snapshot on its own connection-local temporary table.
+Publication validates the captured input epoch and baseline under a short
+FOR NO KEY UPDATE transaction (lock timeout 1 second, statement timeout 5 seconds).
+Flags update only when different, and freshness metadata commits atomically.
+Roster identity, baseline, release/boundary changes, and canonical history
+rewinds invalidate the epoch. Forward indexing permits one-cycle live lag.
+
+Approval/finalization also calculate before taking competition locks and reject
+changed epochs/history identities. Finalization RPC proof is collected outside
+the transaction and its exact target revalidated under history/competition locks.
+Finalized materialized standings remain immutable; archived July SQL is unchanged.
+
+`integrityStatus` is pending before any successful calculation, stale when its
+epoch differs or its age exceeds twice the configured poll interval, otherwise
+current. Finalized competitions are current. Optional checked time/block metadata
+is additive. Stale rows keep P&L/rank but cannot receive provisional prizes and
+report fundingIntegrityClear=false. Failed calculations preserve existing flags.
+
+## Migrations and rollback
+
+Apply `apps/backend/config/migrations/insights-integrity-epoch-v1.sql` in one
+transaction first. Acquire the required table locks NOWAIT and retry outside the
+transaction if old workers are still calculating; never kill the blocker.
+Apply `insights-integrity-indexes-v1.sql` using psql with ON_ERROR_STOP outside a
+transaction. Inspect pg_index.indisvalid for all three normalized indexes. If
+an interrupted concurrent build left an invalid index, drop only that invalid
+index concurrently before retrying. No concurrent index build runs at startup.
+
+The additive epoch migration and all three valid expression indexes were applied
+to Sepolia before Release 2, using the Release 1 image in a one-off migration task.
+The first bounded attempt rolled back on contention; a NOWAIT retry succeeded.
+
+Set `INSIGHTS_INTEGRITY_REFRESH_ENABLED=false` on the Insights worker to disable
+background integrity publication while leaving snapshots and registration limits
+running. Existing flags remain visible and become stale after the freshness window.
+The API must stay on Release 2 to expose stale status; retain the Release 1 image
+above for a full application rollback if necessary. Do not remove additive columns
+or indexes during rollback. Do not increase pools or change global planner settings.
+
+## Verification commands and measurements
+
+Use a dedicated local database with `critical_path` in its name. Run backend unit
+and integration suites with the built plether-candle-admin on PATH. Opt into the
+larger fixture using `INSIGHTS_INTEGRITY_BENCHMARK=1` and Hspec match
+`benchmarks isolated integrity`; never point this destructive test at live data.
+The fixture has 5,401 participants, 162,001 activities, 91,802 transfers, and
+2,030,776 retained snapshots. It emits twenty samples and an actual-row-count
+EXPLAIN ANALYZE plan at `/tmp/insights-integrity-benchmark-plan.json`.
+
+Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published),
+`insights_integrity_publication` and `insights_snapshot_publication`
+(lock_wait_ms, lock_held_ms), `insights_integrity_freshness` (age_seconds),
+`insights_integrity_skipped`, `insights_integrity_failed`,
+`registration_database_work` (duration_ms), and `registration_database_busy`
+(sql_state). Lock-held metrics end immediately before commit; full publication
+benchmarks include commit and conservatively bound the complete lock duration.
+No events contain tokens, wallet identities, or personal data.
+
+Release 2 deployment, benchmark acceptance, and ten consecutive observed worker
+cycles remain rollout gates; append their measured results before completion.

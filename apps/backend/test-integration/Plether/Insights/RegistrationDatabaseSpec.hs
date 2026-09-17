@@ -4,12 +4,13 @@ module Plether.Insights.RegistrationDatabaseSpec
   ( registrationDatabaseSpec
   ) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar
   ( newEmptyMVar
   , putMVar
   , readMVar
   , takeMVar
+  , tryReadMVar
   )
 import Control.Exception (SomeException, bracket, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, replicateM_, void)
@@ -20,10 +21,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, query, query_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, execute_, query, query_, withTransaction)
 import Database.PostgreSQL.Simple.Types (Binary (..))
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
-import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Database.Insights (ensureInsightsSchema, stageCompetitionIntegrity)
 import Plether.Database.Insights.Registration
   ( CompletionResult (..)
   , CreateSessionResult (..)
@@ -73,6 +74,42 @@ bytea = Binary
 registrationDatabaseSpec :: Text -> Spec
 registrationDatabaseSpec databaseUrl =
   describe "Insights registration PostgreSQL completion" $ do
+    it "creates a session and completes registration while the calculation transaction remains open" $
+      withRegistrationDatabase databaseUrl $ \pool -> do
+        rules <- prepareVerifiedFixture pool
+        -- A test-only DDL hook holds the actual staging CTAS open after its
+        -- calculation, with all of that statement's locks still retained.
+        withDb pool $ \conn -> do
+          void $ execute_ conn "CREATE OR REPLACE FUNCTION test_hold_integrity_stage() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='integrity-concurrency-test' THEN PERFORM pg_sleep(3); END IF; END $$"
+          void $ execute_ conn "CREATE EVENT TRIGGER test_hold_integrity_stage ON ddl_command_end WHEN TAG IN ('CREATE TABLE AS') EXECUTE FUNCTION test_hold_integrity_stage()"
+        let cleanup = withDb pool $ \conn -> do
+              void $ execute_ conn "DROP EVENT TRIGGER IF EXISTS test_hold_integrity_stage"
+              void $ execute_ conn "DROP FUNCTION IF EXISTS test_hold_integrity_stage()"
+        (do
+          finished <- newEmptyMVar
+          void $ forkIO $ do
+            outcome <- try $ withDb pool $ \conn -> do
+              void $ execute_ conn "SET application_name='integrity-concurrency-test'"
+              stageCompetitionIntegrity conn (crSlug rules)
+                `finally` void (execute_ conn "RESET application_name")
+            putMVar finished (outcome :: Either SomeException ())
+          let waitForCalculation = do
+                running <- withDb pool $ \conn -> query_ conn
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='integrity-concurrency-test' AND wait_event='PgSleep')" :: IO [Only Bool]
+                if running == [Only True] then pure () else threadDelay 10_000 >> waitForCalculation
+          timeout 2_000_000 waitForCalculation `shouldReturn` Just ()
+          outcome <- timeout 1_000_000 $ withDb pool $ \conn -> do
+            createRegistrationSession conn (crSlug rules) highApplicationId highTurnstileDigest
+              highSessionDigest highCsrfDigest highEnvelope 3_600 `shouldReturn` SessionCreated
+            completeWithRules conn rules `shouldReturn` CompletionSucceeded
+          outcome `shouldBe` Just ()
+          stillRunning <- tryReadMVar finished
+          case stillRunning of
+            Nothing -> pure ()
+            Just _ -> expectationFailure "registration must finish before calculation releases its transaction"
+          takeMVar finished >>= either throwIO pure
+          ) `finally` cleanup
+
     forM_ [("FOR NO KEY UPDATE", True), ("FOR UPDATE", False)] $ \(lockMode, permitsInsert) ->
       it ("bounds registration and restores connection settings under " <> lockMode) $
         withRegistrationDatabase databaseUrl $ \pool -> do

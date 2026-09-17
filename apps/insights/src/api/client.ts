@@ -49,6 +49,9 @@ interface WireCompetition {
   latestIndexedAt?: string | null
   participantCount?: number
   eligibleCount?: number
+  integrityStatus?: 'pending' | 'stale' | 'current'
+  integrityCheckedAt?: string
+  integrityAsOfBlock?: string
   releaseReady?: boolean
   registration?: {
     status: 'upcoming' | 'open' | 'closed'
@@ -446,6 +449,9 @@ function normalizeCompetition(raw: WireCompetition): Competition {
     participantCount: raw.participantCount,
     eligibleCount: raw.eligibleCount,
     releaseReady: raw.releaseReady,
+    integrityStatus: raw.integrityStatus,
+    integrityCheckedAt: raw.integrityCheckedAt,
+    integrityAsOfBlock: raw.integrityAsOfBlock,
     registration: raw.registration,
     fxSessionBoundaryUtc: raw.fxSessionBoundaryUtc,
   }

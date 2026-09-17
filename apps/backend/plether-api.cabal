@@ -9,6 +9,8 @@ maintainer:         dev@plether.io
 category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
+                    config/migrations/insights-integrity-epoch-v1.sql
+                    config/migrations/insights-integrity-indexes-v1.sql
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates

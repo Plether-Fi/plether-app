@@ -45,6 +45,7 @@ main = do
                 newClientWithOptions $
                   RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "insights-worker"
               pollSeconds <- loadPollSeconds
+              integrityEnabled <- (/= Just "false") <$> lookupEnv "INSIGHTS_INTEGRITY_REFRESH_ENABLED"
               putStrLn $
                 "Starting Insights snapshot worker every "
                   <> show pollSeconds
@@ -53,7 +54,7 @@ main = do
               forever $ do
                 result <-
                   try @SomeException $
-                    runInsightsSnapshotCycle client pool cfg multicallSize
+                    runInsightsSnapshotCycle client pool cfg multicallSize (2 * pollSeconds) integrityEnabled
                 case result of
                   Left err ->
                     putStrLn $

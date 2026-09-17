@@ -30,6 +30,7 @@ import Plether.Database.Insights
   , invalidateSnapshotBatchesAfter
   , listCompetitionParticipants
   , publishAccountSnapshotBatch
+  , refreshCompetitionIntegrityInBackground
   , setCompetitionBoundaryBlocks
   )
 import Plether.Ethereum.Client (EthClient, RpcError (..))
@@ -77,8 +78,8 @@ validateSnapshotMulticallSize value
 -- | Capture one internally consistent Insights update. The perps history
 -- indexer's cursor is already confirmation-delayed, so it is the canonical
 -- upper bound for both account state and event-derived statistics.
-runInsightsSnapshotCycle :: EthClient -> DbPool -> Config -> Int -> IO ()
-runInsightsSnapshotCycle client pool cfg multicallSize = do
+runInsightsSnapshotCycle :: EthClient -> DbPool -> Config -> Int -> Int -> Bool -> IO ()
+runInsightsSnapshotCycle client pool cfg multicallSize maxIntegrityAge integrityEnabled = do
   mCompetition <- withDb pool $ \conn ->
     getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
   case mCompetition of
@@ -116,6 +117,7 @@ runInsightsSnapshotCycle client pool cfg multicallSize = do
                       (rpcBlockNumber safeBlock)
                       (rpcBlockHash safeBlock)
                   updateCompetition client pool cfg multicallSize competition safeBlock
+                  when integrityEnabled $ withDb pool $ \conn -> refreshCompetitionIntegrityInBackground conn (icrSlug competition) maxIntegrityAge
 
 updateCompetition
   :: EthClient

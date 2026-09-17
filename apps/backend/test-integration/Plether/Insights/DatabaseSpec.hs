@@ -3,10 +3,16 @@ module Plether.Insights.DatabaseSpec
   ) where
 
 import Control.Exception (bracket, finally)
-import Control.Monad (void, forM_)
-import Data.Aeson (Value (..), encode, object, (.=), eitherDecodeFileStrict', decode)
+import Control.Monad (void, forM_, forM, when)
+import Data.Aeson (Value (..), encode, object, toJSON, (.=), eitherDecodeFileStrict', decode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as Base16
+import qualified Data.ByteString as BS
+import Database.PostgreSQL.Simple.Types (Query (..))
+import GHC.Clock (getMonotonicTimeNSec)
+import System.Environment (lookupEnv)
+import Data.String (fromString)
+import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (newIORef)
 import Data.Foldable (toList)
 import Network.HTTP.Client (newManager, defaultManagerSettings)
@@ -18,13 +24,14 @@ import Plether.Perps.HistoryIndexer
   ( enrichSettlementReceipts, defaultPerpsAddresses, PerpsAddresses (..), PerpsIndexerConfig (..), PerpsIndexerMode (..),
     parseReplayLogEntry, parsePerpsLog, RpcLog (..), ParsedPerpsLog (..) )
 import Data.List (find, sort)
+import Data.Char (isSpace)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query, query_)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.CloseAssistance
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
@@ -43,6 +50,10 @@ import Plether.Database.Insights
   , insertManualAdjustment
   , materializeFinalizedStandings
   , publishAccountSnapshotBatch
+  , integrityCalculationSql
+  , stageCompetitionIntegrity
+  , publishStagedCompetitionIntegrity
+  , setParticipantEligibility
   , refreshCompetitionIntegrityFlags
   , setCompetitionBoundaryBlocks
   , seedCompetition
@@ -63,6 +74,7 @@ import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , CompetitionRules (..)
   , EquitySnapshot (..)
+  , ParticipantEligibility (..)
   , july2026Competition
   , september2026Competition
   , september2026ReleaseManifest
@@ -72,6 +84,90 @@ import Test.Hspec
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    benchmark <- runIO $ lookupEnv "INSIGHTS_INTEGRITY_BENCHMARK"
+    when (benchmark == Just "1") $ it "benchmarks isolated integrity at twice the incident activity volume" $ runIntegrityBenchmark databaseUrl
+    it "requires a fresh authoritative calculation for eligibility approval" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertParticipant conn walletA "review-a"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        seedOfficialAllocation conn walletA 80 90 "review"
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        setParticipantEligibility conn competitionSlug walletA EligibilityEligible Nothing "test-reviewer" `shouldReturn` True
+        insertDeposit conn walletA 105 5 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "review-extra"
+        setParticipantEligibility conn competitionSlug walletA EligibilityEligible Nothing "test-reviewer" `shouldReturn` False
+        void $ execute conn "UPDATE insights_competition_participants SET eligibility_status='pending' WHERE competition_slug=?" (Only competitionSlug)
+        void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block_hash=NULL WHERE chain_id=? AND release_router=?" (fixtureChain,fixtureRouter)
+        setParticipantEligibility conn competitionSlug walletA EligibilityEligible Nothing "test-reviewer" `shouldThrow` anyException
+        query conn "SELECT eligibility_status FROM insights_competition_participants WHERE competition_slug=?" (Only competitionSlug) `shouldReturn` [Only ("pending" :: Text)]
+    it "matches original flags on generated duplicate, mixed-case, missing-baseline and identity cases" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        let cases = [(i,"0x" <> T.justifyRight 40 '0' (T.pack $ show i)) | i <- [1..40 :: Int]]
+        forM_ cases $ \(i,wallet) -> do
+          insertParticipant conn wallet ("generated-" <> T.pack (show i))
+          seedOfficialAllocation conn wallet 80 90 (T.pack $ show i)
+          when (i `mod` 3 == 0) $ insertDeposit conn wallet 105 5 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 ("extra-" <> T.pack (show i))
+          when (i `mod` 4 == 0) $ void $ execute conn
+            "UPDATE testnet_faucet_claims SET token_address=UPPER(token_address),address=UPPER(address),tx_hash=UPPER(tx_hash) WHERE address=?" (Only wallet)
+          when (i `mod` 5 == 0) $ void $ execute conn
+            "INSERT INTO perps_usdc_transfers SELECT r.* FROM perps_usdc_transfers x WHERE from_address=? AND block_number=90 CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(x)||jsonb_build_object('log_index',99)) r" (Only wallet)
+          when (i `mod` 7 == 0) $ void $ execute conn
+            "UPDATE perps_account_activity SET contract_address=UPPER(contract_address),data=jsonb_set(data,'{asset}',to_jsonb(UPPER(data->>'asset'))) WHERE account=?" (Only wallet)
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | (_,w) <- cases]
+        refreshAndCompareIntegrity conn competitionSlug
+        void $ execute conn "DELETE FROM insights_account_snapshots WHERE competition_slug=? AND wallet=?" (competitionSlug,snd $ head cases)
+        refreshAndCompareIntegrity conn competitionSlug
+        void $ execute conn "UPDATE insights_competitions SET registration_close_timestamp=score_cutoff_timestamp,minimum_x_account_age_days=1,target_x_handle='plether' WHERE slug=?" (Only competitionSlug)
+        refreshAndCompareIntegrity conn competitionSlug
+    it "publishes integrity separately and preserves P&L and rank while stale" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertParticipant conn walletA "trader-a"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        seedOfficialAllocation conn walletA 80 90 "fresh-a"
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll+gain)]
+        icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "pending"
+        before <- requireWallet walletA =<< getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear before `shouldBe` False
+        ilrFinalPnlUsdc before `shouldBe` Just gain
+        stageCompetitionIntegrity conn competitionSlug
+        publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
+        icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "current"
+        fresh <- requireWallet walletA =<< getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear fresh `shouldBe` True
+        times <- query conn "SELECT updated_at FROM insights_competition_participants WHERE competition_slug=?" (Only competitionSlug) :: IO [Only UTCTime]
+        stageCompetitionIntegrity conn competitionSlug
+        publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
+        query conn "SELECT updated_at FROM insights_competition_participants WHERE competition_slug=?" (Only competitionSlug) `shouldReturn` times
+        void $ execute conn "UPDATE insights_competitions SET integrity_checked_at=NOW()-INTERVAL '121 seconds' WHERE slug=?" (Only competitionSlug)
+        icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "stale"
+        stale <- requireWallet walletA =<< getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear stale `shouldBe` False
+        ilrFinalPnlUsdc stale `shouldBe` ilrFinalPnlUsdc fresh
+        ilrRank stale `shouldBe` ilrRank fresh
+
+    forM_ ["roster", "wallet", "baseline", "boundary", "rewind", "finalization"] $ \change ->
+      it ("rejects obsolete staged integrity after " <> change) $
+        withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+          insertParticipant conn walletA "trader-a"
+          setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+          seedOfficialAllocation conn walletA 80 90 "race-a"
+          publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+          void $ execute conn "UPDATE insights_competition_participants SET integrity_flags=?::jsonb WHERE competition_slug=?" (encode (["old_result"] :: [Text]),competitionSlug)
+          stageCompetitionIntegrity conn competitionSlug
+          case change of
+            "roster" -> insertParticipant conn walletB "trader-b"
+            "wallet" -> void $ execute conn "UPDATE insights_competition_participants SET wallet=? WHERE competition_slug=? AND wallet=?" (walletB,competitionSlug,walletA)
+            "baseline" -> publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp 0]
+            "boundary" -> setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,hashText "replacement")) Nothing
+            "rewind" -> deletePerpsHistoryFromBlock conn fixtureChain fixtureRouter 80
+            _ -> void $ execute conn "UPDATE insights_competitions SET finalized=TRUE WHERE slug=?" (Only competitionSlug)
+          publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` False
+          old <- query conn "SELECT integrity_flags FROM insights_competition_participants WHERE competition_slug=? AND trader_reference='trader-a'" (Only competitionSlug) :: IO [Only Value]
+          old `shouldBe` [Only $ toJSON (["old_result"] :: [Text])]
+          competition <- requireCompetition conn competitionSlug
+          icrIntegrityCheckedAt competition `shouldBe` Nothing
+
     it "backfills settlement receipts idempotently without changing activity or scores" $
       withInsightsDatabase databaseUrl $ \pool -> do
         decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/insights-close-waiver.json"
@@ -401,7 +497,7 @@ insightsDatabaseSpec databaseUrl =
           [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
         publishAccountSnapshotBatch conn
           [snapshot walletA SnapshotFinal finalBlock finalHash finalTimestamp (bankroll + gain)]
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         materializeFinalizedStandings conn competitionSlug `shouldReturn` Right 1
         void $ execute conn "UPDATE insights_competitions SET finalized = TRUE WHERE slug = ?" (Only competitionSlug)
         frozen <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
@@ -446,6 +542,7 @@ insightsDatabaseSpec databaseUrl =
         -- September ignores the legacy manual-adjustment mechanism entirely.
         adjustment <- insertManualAdjustment conn competitionSlug walletA (999 * usdcScale) "fixture" "integration"
         adjustment `shouldSatisfy` isJust
+        refreshAndCompareIntegrity conn competitionSlug
         initial <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         a <- requireWallet walletA initial
         b <- requireWallet walletB initial
@@ -468,18 +565,18 @@ insightsDatabaseSpec databaseUrl =
         void $ execute conn
           "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ? AND tx_hash = ?"
           (fixtureChain, fixtureRouter, hashText "faprefund-c")
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterStaleMint <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterStaleMint) `shouldBe` False
         insertMintTransfer conn walletC 81 "prefund-c"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterMintReplay <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterMintReplay) `shouldBe` True
 
         -- Positive third-party dust which remains outside the clearinghouse
         -- is non-blocking; it becomes blocking only when used by a Deposit.
         insertTransfer conn attacker walletC 1 106 6 "idle-dust"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterIdleDust <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterIdleDust) `shouldBe` True
 
@@ -487,7 +584,7 @@ insightsDatabaseSpec databaseUrl =
         -- Deposit pairing and proves dust/substitute capital was used.
         insertPerpsUsdcTransfer conn fixtureChain fixtureRouter fixtureUsdc walletC fixtureClearinghouse bankroll
           (hashText "txprefund-c") 91 (hashText "blprefund-c") 0 2 (eventTimestamp 91)
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterPiggyback <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterPiggyback) `shouldBe` False
 
@@ -495,7 +592,7 @@ insightsDatabaseSpec databaseUrl =
         -- cash flow and must independently block integrity eligibility.
         insertDeposit conn walletB 104 4 (Just fixtureClearinghouse) Nothing (7 * usdcScale) "missing-asset"
         insertDeposit conn walletB 105 5 (Just fixtureClearinghouse) (Just wrongAsset) (9 * usdcScale) "wrong-asset"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterMalformed <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         malformed <- requireWallet walletB afterMalformed
         ilrDepositsUsdc malformed `shouldBe` bankroll
@@ -506,7 +603,7 @@ insightsDatabaseSpec databaseUrl =
         -- cannot reuse the faucet entitlement to bless later capital.
         insertTransfer conn walletA attacker bankroll 85 6 "official-out"
         insertTransfer conn attacker walletA bankroll 86 7 "unofficial-in"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterSubstitution <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA afterSubstitution) `shouldBe` False
 
@@ -526,18 +623,18 @@ insightsDatabaseSpec databaseUrl =
         setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain + 198000)]
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         unverified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unverified) `shouldBe` False
         confirmCloseAssistance conn digest (hashText "txassisted") 105 (hashText "blassisted") 4 1 `shouldReturn` True
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         verified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         let row = requireWalletUnsafe walletA verified
         ilrFundingIntegrityClear row `shouldBe` True
         ilrDepositsUsdc row `shouldBe` 198000
         ilrFinalPnlUsdc row `shouldBe` Just gain
         insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "unrelated"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         unrelated <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
         void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
@@ -601,6 +698,7 @@ cleanupDatabase pool = withDb pool cleanupRows
 
 cleanupRows :: Connection -> IO ()
 cleanupRows conn = do
+  void $ execute conn "DELETE FROM aa_close_assistance WHERE chain_id=? AND router=?" (fixtureChain,fixtureRouter)
   void $ execute conn "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ?" (fixtureChain, fixtureRouter)
   void $ execute conn "DELETE FROM perps_orders WHERE chain_id = ? AND order_router = ?" (fixtureChain, fixtureRouter)
   void $ execute conn
@@ -613,8 +711,8 @@ cleanupRows conn = do
     "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ?"
     (fixtureChain, fixtureRouter)
   void $ execute conn
-    "DELETE FROM testnet_faucet_claims WHERE token_address = ? AND address IN (?, ?, ?)"
-    (fixtureUsdc, walletA, walletB, walletC)
+    "DELETE FROM testnet_faucet_claims WHERE LOWER(token_address)=LOWER(?)"
+    (Only fixtureUsdc)
   void $ execute conn
     "DELETE FROM perps_indexer_state WHERE chain_id = ? AND release_router = ?"
     (fixtureChain, fixtureRouter)
@@ -641,6 +739,16 @@ seedOfficialAllocation conn wallet mintBlock depositBlock suffix = do
   insertMintTransfer conn wallet mintBlock suffix
   insertDeposit
     conn wallet depositBlock 1 (Just fixtureClearinghouse) (Just fixtureUsdc) bankroll suffix
+
+-- Frozen pre-change SQL validates exact equivalence for all funding fixtures.
+refreshAndCompareIntegrity :: Connection -> Text -> IO ()
+refreshAndCompareIntegrity conn slug = do
+  baseline <- Query <$> BS.readFile "test/fixtures/insights-funding-integrity-baseline.sql"
+  refreshCompetitionIntegrityFlags conn slug
+  let readFlags = query conn "SELECT wallet,integrity_flags FROM insights_competition_participants WHERE competition_slug=? ORDER BY wallet" (Only slug) :: IO [(Text, Value)]
+  optimized <- readFlags
+  void $ execute conn baseline (Only slug)
+  readFlags `shouldReturn` optimized
 
 insertMintTransfer :: Connection -> Text -> Integer -> Text -> IO ()
 insertMintTransfer conn wallet mintBlock suffix =
@@ -817,3 +925,51 @@ hashText :: Text -> Text
 hashText seed =
   let encoded = TextEncoding.decodeUtf8 $ Base16.encode $ TextEncoding.encodeUtf8 seed
    in "0x" <> T.take 64 (encoded <> T.replicate 64 "0")
+
+-- Opt-in isolated benchmark: INSIGHTS_INTEGRITY_BENCHMARK=1, never a live URL.
+runIntegrityBenchmark :: Text -> IO ()
+runIntegrityBenchmark databaseUrl = withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+  insertParticipant conn walletA "benchmark-template"
+  setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+  seedOfficialAllocation conn walletA 80 90 "benchmark"
+  publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+  void $ execute_ conn "CREATE TEMP TABLE benchmark_wallets AS SELECT i,'0x'||lpad(to_hex(i),40,'0') AS wallet FROM generate_series(1,5400) i"
+  void $ execute conn "INSERT INTO insights_competition_participants (competition_slug,wallet,trader_reference) SELECT ?,wallet,'benchmark-'||i FROM benchmark_wallets" (Only competitionSlug)
+  void $ execute conn "INSERT INTO testnet_faucet_claims SELECT r.* FROM testnet_faucet_claims t CROSS JOIN benchmark_wallets p CROSS JOIN LATERAL jsonb_populate_record(NULL::testnet_faucet_claims,to_jsonb(t)||jsonb_build_object('address',p.wallet,'tx_hash','0x'||lpad(to_hex(p.i*100),64,'0'))) r WHERE t.address=? AND t.token_address=?" (walletA,fixtureUsdc)
+  void $ execute conn "INSERT INTO perps_usdc_transfers SELECT r.* FROM (SELECT * FROM perps_usdc_transfers WHERE release_router=? ORDER BY block_number LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(0,16) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(t)||jsonb_build_object('tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'from_address',CASE WHEN j=0 THEN ? ELSE p.wallet END,'to_address',CASE WHEN j=0 THEN p.wallet ELSE ? END,'block_number',CASE WHEN j=0 THEN 80 ELSE 90+j END,'log_index',0,'amount',CASE WHEN j<2 THEN ? ELSE 1 END)) r" (zeroAddress,fixtureClearinghouse,bankroll,fixtureRouter)
+  void $ execute conn "INSERT INTO perps_account_activity SELECT r.* FROM (SELECT * FROM perps_account_activity WHERE release_router=? LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(1,30) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_account_activity,to_jsonb(t)||jsonb_build_object('id',nextval('perps_account_activity_id_seq'),'event_key','benchmark-'||p.i||'-'||j,'account',p.wallet,'activity_type',CASE WHEN j%3=0 THEN 'Open' WHEN j%3=1 THEN 'Deposit' ELSE 'Withdraw' END,'tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'block_number',90+j,'log_index',1,'amount_usdc',CASE WHEN j=1 THEN ? ELSE 1 END,'size_delta',1)) r" (bankroll,fixtureRouter)
+  wallets <- query_ conn "SELECT wallet FROM benchmark_wallets ORDER BY wallet" :: IO [Only Text]
+  let allWallets = walletA : [w | Only w <- wallets]
+  publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | w <- allWallets]
+  -- Retained history has the production index shape and many batches per wallet.
+  void $ execute conn "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data) SELECT s.competition_slug,s.wallet,'live',s.chain_id,s.release_router,1000+j,s.block_hash,s.timestamp,s.has_open_position,s.signed_net_equity_usdc,s.terminal_reachable_usdc,s.trader_claims_usdc,s.raw_data FROM insights_account_snapshots s CROSS JOIN generate_series(1,375) j WHERE s.competition_slug=? AND s.snapshot_kind='start'" (Only competitionSlug)
+  indexes <- readFile "config/migrations/insights-integrity-indexes-v1.sql"
+  forM_ (filter (not . all isSpace) $ splitSqlStatements indexes) $ \statement -> void $ execute_ conn (fromString statement)
+  void $ execute_ conn "ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
+  plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
+  LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
+  samples <- forM [1..20 :: Int] $ \cycleNumber -> do
+    a <- getMonotonicTimeNSec
+    stageCompetitionIntegrity conn competitionSlug
+    b <- getMonotonicTimeNSec
+    publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
+    c <- getMonotonicTimeNSec
+    publishAccountSnapshotBatch conn [snapshot w SnapshotLive liveBlock liveHash liveTimestamp bankroll | w <- allWallets]
+    d <- getMonotonicTimeNSec
+    let ms x y = fromIntegral (y-x) / 1_000_000 :: Double
+        values = (ms a b,ms b c,ms c d)
+    putStrLn $ "integrity_benchmark " <> show cycleNumber <> " " <> show values
+    pure values
+  let percentile xs = sort xs !! 18
+      calc = [a | (a,_,_) <- samples]
+      publish = [b | (_,b,_) <- samples]
+      snapshots = [c | (_,_,c) <- samples]
+  putStrLn $ "integrity_benchmark_p95 " <> show (percentile calc,percentile publish,percentile snapshots)
+  percentile calc `shouldSatisfy` (<5000)
+  percentile publish `shouldSatisfy` (<250)
+  maximum publish `shouldSatisfy` (<1000)
+  percentile snapshots `shouldSatisfy` (<250)
+  maximum snapshots `shouldSatisfy` (<1000)
+  where
+    splitSqlStatements [] = []
+    splitSqlStatements value = let (statement,rest)=break (==';') value in statement : splitSqlStatements (drop 1 rest)

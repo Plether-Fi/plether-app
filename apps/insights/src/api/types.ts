@@ -35,6 +35,9 @@ export interface Competition {
   latestIndexedAt: string | null
   participantCount?: number
   eligibleCount?: number
+  integrityStatus?: 'pending' | 'stale' | 'current'
+  integrityCheckedAt?: string
+  integrityAsOfBlock?: string
   releaseReady?: boolean
   registration?: CompetitionRegistration
   fxSessionBoundaryUtc?: string

@@ -28,6 +28,7 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
+COPY apps/backend/config/migrations/ config/migrations/
 COPY config/perps/arbitrum-sepolia-v2.json config/perps/arbitrum-sepolia-v2.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
@@ -82,6 +83,8 @@ COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.se
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
+COPY apps/backend/config/migrations/insights-integrity-epoch-v1.sql /app/config/migrations/insights-integrity-epoch-v1.sql
+COPY apps/backend/config/migrations/insights-integrity-indexes-v1.sql /app/config/migrations/insights-integrity-indexes-v1.sql
 COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 
