@@ -11,6 +11,6 @@ export function requireDeadlineHeadroom(sponsorshipDeadline: bigint, orderDeadli
     throw new BundlerRequestError({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: phase === 'signing' ? 'expired' : 'receipt-timeout', retryable: false,
       message: phase === 'signing'
         ? 'The reviewed transaction is too close to expiry. Review a fresh order; this operation was not submitted.'
-        : 'Signing finished too close to expiry. The signed payload was saved but not submitted. Wait for safe recovery before reviewing a fresh order.' })
+        : 'Wallet approval finished too late, so Plether did not send this transaction. Check recovery to unlock a fresh review once the saved authorization has safely expired.' })
   }
 }

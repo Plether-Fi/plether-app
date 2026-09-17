@@ -3,6 +3,8 @@ export type StableSponsorReason =
   | 'RATE_LIMITED'
   | 'SPONSOR_BUDGET_EXCEEDED'
   | 'SIMULATION_FAILED'
+  | 'INSUFFICIENT_FREE_EQUITY'
+  | 'INVALID_ORDER_DEADLINE'
   | 'SPONSOR_UNAVAILABLE'
   | 'POLICY_DENIED'
   | 'PAYMASTER_PAUSED'
@@ -157,6 +159,10 @@ function sponsorMetadata(error: unknown): {
   }
 }
 
+export function isRecoveryPending(error: unknown): boolean {
+  return sponsorMetadata(error).reason === 'RECOVERY_PENDING'
+}
+
 function walkCauses<T>(
   error: unknown,
   predicate: (value: unknown) => value is T
@@ -177,9 +183,10 @@ function walkCauses<T>(
 export function asSponsorRequestError(error: unknown): SponsorRequestError {
   if (error instanceof SponsorRequestError) return error
   const metadata = sponsorMetadata(error)
+  const timedOut = walkCauses(error, (value): value is { name: 'TimeoutError' } => recordOf(value)?.name === 'TimeoutError')
 
   return new SponsorRequestError({
-    reason: metadata.reason ?? 'UNKNOWN',
+    reason: metadata.reason ?? (timedOut ? 'SPONSOR_REQUEST_TIMEOUT' : 'UNKNOWN'),
     message: error instanceof Error ? error.message : String(error),
     retryable: metadata.retryable ?? false,
     callIndex: metadata.callIndex,
@@ -193,6 +200,17 @@ export function findSponsorRequestError(error: unknown): SponsorRequestError | u
     error,
     (value): value is SponsorRequestError => value instanceof SponsorRequestError
   )
+}
+
+/** Only explicit denials prove that this request refused sponsorship. A lost
+ * response may still have produced an authorization on the backend. */
+export function isDefinitiveSponsorshipRefusal(reason?: string): boolean {
+  return reason !== undefined && [
+    'RESTART_ESTIMATION', 'RATE_LIMITED', 'SPONSOR_BUDGET_EXCEEDED',
+    'SIMULATION_FAILED', 'POLICY_DENIED', 'PAYMASTER_PAUSED',
+    'INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE',
+    'ACCOUNT_NOT_TRUSTED', 'EXECUTION_GAS_CAP_EXCEEDED',
+  ].includes(reason)
 }
 
 export function findSponsoredPreflightError(
@@ -214,6 +232,16 @@ export function findBundlerRequestError(error: unknown): BundlerRequestError | u
 
 export function sponsorReasonMessage(error: SponsorRequestError): string {
   switch (error.reason) {
+    case 'CLOSE_ASSISTANCE_UNRESOLVED_OR_ALREADY_COMMITTED':
+    case 'ASSISTANCE_RESERVATION_PENDING':
+    case 'SAFE_EXPIRY_WAIT':
+      return 'Waiting for sponsorship reservation to clear. Authorization expiry and safe reconciliation are separate; check Trading Account activity for updates.'
+    case 'INTENT_ALREADY_COMMITTED':
+      return 'This order intent was already committed. Check order activity before reviewing a new action.'
+    case 'PREPARATION_UNUSABLE':
+      return 'The original preparation can no longer be signed. Check recovery and review a new transaction when available.'
+    case 'SPONSOR_REQUEST_TIMEOUT':
+      return 'The sponsorship response timed out. Check saved transaction recovery before preparing another action.'
     case 'RESTART_ESTIMATION':
       return 'The gas estimate changed. Plether is preparing a fresh sponsored transaction.'
     case 'RATE_LIMITED':
@@ -221,7 +249,11 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
     case 'SPONSOR_BUDGET_EXCEEDED':
       return 'Sponsored gas capacity is temporarily unavailable. Retry later or contact support.'
     case 'SIMULATION_FAILED':
-      return 'The sponsored transaction did not pass simulation. Refresh account state and retry.'
+      return 'The transaction was rejected during simulation. Refresh account state and review the action before trying again.'
+    case 'INSUFFICIENT_FREE_EQUITY':
+      return 'Not enough available trading collateral. Reduce the order size or add collateral. Your action was not sent.'
+    case 'INVALID_ORDER_DEADLINE':
+      return 'The order deadline is invalid. Refresh the order and review it again. Your action was not sent.'
     case 'PAYMASTER_PAUSED':
       return 'Plether gas sponsorship is temporarily paused.'
     case 'POLICY_DENIED':

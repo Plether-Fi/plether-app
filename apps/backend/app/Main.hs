@@ -11,6 +11,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.Diagnostics (startDbDiagnostics)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Protection (ensureProtectionSchema)
@@ -95,6 +96,7 @@ main = do
               (cfgInsightsCompetitionReleaseManifest cfg)
           registrationInitialization <- initializeInsightsRegistration pool perpsClient cfg
           either (ioError . userError) pure registrationInitialization
+          _ <- startDbDiagnostics pool dbUrl
           case cfgRegistrationConfig cfg of
             Just _ -> do
               _ <- forkIO $ startRegistrationCleanup pool

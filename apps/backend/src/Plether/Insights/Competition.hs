@@ -14,6 +14,7 @@ module Plether.Insights.Competition
   , PrizeAllocation (..)
   , FinalizationReadiness (..)
   , FundingIntegrityInput (..)
+  , fundingCapacityContribution
   , july2026Competition
   , july2026CompetitionSlug
   , september2026Competition
@@ -617,3 +618,12 @@ utc year month day hour minute second =
   UTCTime
     (fromGregorian year month day)
     (secondsToDiffTime $ hour * 60 * 60 + minute * 60 + second)
+
+
+-- | Input to the chronological funding-cap prefix sum, not to scored PnL.
+-- The verified-assistance flag must come from matched safe-chain grant evidence.
+fundingCapacityContribution :: Bool -> Bool -> Integer -> Integer
+fundingCapacityContribution isDeposit verifiedCloseAssistance amount
+  | not isDeposit = negate amount
+  | verifiedCloseAssistance = 0
+  | otherwise = amount

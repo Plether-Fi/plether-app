@@ -1,0 +1,137 @@
+[
+  {
+    "id": "0xaa7726f7bc8a97f326247f9218d283aad6b4532da3dac6ffc1482cf66df5148d:24",
+    "type": "Open",
+    "occurredAt": "2026-09-15T14:07:04Z",
+    "market": "DXY",
+    "side": "long",
+    "size": "3120304211260",
+    "sizeDelta": "3161000000000000000000000",
+    "price": "1.01287434",
+    "pnl": null,
+    "execution": {
+      "orderId": "2602",
+      "protocolVersion": "v1.2.3",
+      "receipt": {
+        "actionChargeAssessedUsdc": "2202620320",
+        "actionChargeCollectedUsdc": "2202620320",
+        "carryUsdc": "0",
+        "executionBountyUsdc": "200000",
+        "executionFeeUsdc": "1248121684",
+        "executionNotionalUsdc": "3120304211260",
+        "frozenSpreadUsdc": "0",
+        "grossAccountDebitUsdc": "2202820320",
+        "postLeverageBps": "329993",
+        "postPositionEquityUsdc": "94556887752",
+        "postPositionMarginUsdc": "94556887752",
+        "postPositionSize": "3161000000000000000000000",
+        "postSettlementBalanceUsdc": "97689235368",
+        "postTraderClaimBalanceUsdc": "0",
+        "preSettlementBalanceUsdc": "99892055688",
+        "preTraderClaimBalanceUsdc": "0",
+        "realizedPnlUsdc": "0",
+        "vpiUsdc": "954498636"
+      },
+      "settlements": [],
+      "status": "complete"
+    },
+    "executionFee": "1248121684",
+    "vpi": "954498636",
+    "txHash": "0xaa7726f7bc8a97f326247f9218d283aad6b4532da3dac6ffc1482cf66df5148d"
+  },
+  {
+    "id": "0xa583ee512122717defccf27f420f17ac10e1e887777132b67f31d5edbaac8bbd:69",
+    "type": "Close",
+    "occurredAt": "2026-09-15T07:16:49Z",
+    "market": "DXY",
+    "side": "short",
+    "size": "2762728584000",
+    "sizeDelta": "2800000000000000000000000",
+    "price": "1.01331122",
+    "pnl": "-269360000",
+    "execution": {
+      "orderId": "1551",
+      "protocolVersion": "v1.2.3",
+      "receipt": {
+        "actionChargeAssessedUsdc": "7813427356",
+        "actionChargeCollectedUsdc": "6930647038",
+        "carryUsdc": "37341",
+        "executionBountyUsdc": "200000",
+        "executionFeeUsdc": "1105091433",
+        "executionNotionalUsdc": "2762728584000",
+        "frozenSpreadUsdc": "0",
+        "grossAccountDebitUsdc": "7200207038",
+        "postLeverageBps": "0",
+        "postPositionEquityUsdc": "0",
+        "postPositionMarginUsdc": "0",
+        "postPositionSize": "0",
+        "postSettlementBalanceUsdc": "101236464845",
+        "postTraderClaimBalanceUsdc": "0",
+        "preSettlementBalanceUsdc": "108436671883",
+        "preTraderClaimBalanceUsdc": "0",
+        "realizedPnlUsdc": "-269360000",
+        "vpiUsdc": "6708298582"
+      },
+      "settlements": [
+        {
+          "assessedUsdc": "7813390015",
+          "kind": "ActionChargeSettled",
+          "protocolFeeCollectedUsdc": "222311115",
+          "recoveredUsdc": "6930609697",
+          "waivedUsdc": "882780318"
+        }
+      ],
+      "status": "complete"
+    },
+    "executionFee": "222311115",
+    "vpi": "6708298582",
+    "txHash": "0xa583ee512122717defccf27f420f17ac10e1e887777132b67f31d5edbaac8bbd"
+  },
+  {
+    "id": "0x4d3a8cf4d63c62f84b2a1065dc8cb9bc1210da44bc7096a30be77acaeb95f99c:35",
+    "type": "Close",
+    "occurredAt": "2026-09-15T02:27:59Z",
+    "market": "DXY",
+    "side": "long",
+    "size": "2166132764800",
+    "sizeDelta": "2195000000000000000000000",
+    "price": "1.01315136",
+    "pnl": "4586170150",
+    "execution": {
+      "orderId": "846",
+      "protocolVersion": "v1.2.3",
+      "receipt": {
+        "actionChargeAssessedUsdc": "0",
+        "actionChargeCollectedUsdc": "25733",
+        "carryUsdc": "25733",
+        "executionBountyUsdc": "200000",
+        "executionFeeUsdc": "866453105",
+        "executionNotionalUsdc": "2166132764800",
+        "frozenSpreadUsdc": "0",
+        "grossAccountDebitUsdc": "225733",
+        "postLeverageBps": "0",
+        "postPositionEquityUsdc": "0",
+        "postPositionMarginUsdc": "0",
+        "postPositionSize": "0",
+        "postSettlementBalanceUsdc": "102870467888",
+        "postTraderClaimBalanceUsdc": "0",
+        "preSettlementBalanceUsdc": "97395491583",
+        "preTraderClaimBalanceUsdc": "0",
+        "realizedPnlUsdc": "4586170150",
+        "vpiUsdc": "-1755484993"
+      },
+      "settlements": [
+        {
+          "assessedUsdc": "889031888",
+          "kind": "ActionRebateSettled",
+          "recoveredUsdc": "889031888",
+          "waivedUsdc": "0"
+        }
+      ],
+      "status": "complete"
+    },
+    "executionFee": "0",
+    "vpi": "-1755484993",
+    "txHash": "0x4d3a8cf4d63c62f84b2a1065dc8cb9bc1210da44bc7096a30be77acaeb95f99c"
+  }
+]

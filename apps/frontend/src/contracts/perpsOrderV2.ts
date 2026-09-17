@@ -1,5 +1,6 @@
 import { bytesToHex, type Address, type Hex } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
+import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
 
 export const PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX =
   '0x504c455448455221' as const
@@ -128,6 +129,12 @@ export interface PerpsExecutionAssessment {
   postLeverageBps: bigint
 }
 
+export interface PerpsClosePreview {
+  commitmentCarryUsdc: bigint
+  executionBountyUsdc: bigint
+  assessment: PerpsExecutionAssessment
+}
+
 export interface PerpsExecutionProtectionSummary {
   validUntil: bigint
   executionMode: PerpsExecutionMode
@@ -135,6 +142,9 @@ export interface PerpsExecutionProtectionSummary {
 }
 
 export interface PerpsOrderReviewSummary {
+  sponsoredClose?: SponsoredCloseFunding
+  /** Close commitment debit, separate from execution economics. Absent in older summaries. */
+  commitmentCarryUsdc?: bigint
   requiredMarginUsdc: bigint
   executionBountyUsdc: bigint
   requiredFundingUsdc: bigint
@@ -161,6 +171,7 @@ export interface PerpsLifecycleOutcomeSnapshot {
 }
 
 export interface PreparedPerpsOrderV2 {
+  sponsoredClose?: SponsoredCloseFunding
   account: Address
   manifestVersion: string
   orderRouter: Address
@@ -178,6 +189,7 @@ export interface PreparedPerpsOrderV2 {
 
 /** JSON-safe immutable request persisted before any UserOperation signature. */
 export interface PersistedPerpsOrderRequestV2 {
+  closeAssistance?: { amountUsdc: string; lens: Address; lensCodeHash: Hex; paymasterAddress: Address }
   version: 2
   account: Address
   clientOrderId: Hex

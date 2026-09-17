@@ -323,6 +323,14 @@ spec = do
         `shouldBe` 0
 
   describe "calculateScore" $ do
+    it "keeps the close bounty as a cost when exact assistance funds it" $ do
+      let start = snapshot False 0 100_000_000_000 0
+          score value deposit = sbFinalPnlUsdc $ calculateScore $ ScoreInput start (snapshot False 0 value 0) deposit 0 0
+          selfFunded = score (100_000_000_000 - 200_000) 0
+          assisted = score (100_000_000_000 - 200_000 + 198_000) 198_000
+      assisted `shouldBe` selfFunded
+      assisted `shouldBe` (-200_000)
+
     it "neutralizes deposits and withdrawals and applies audited adjustments" $ do
       let score = calculateScore $
             ScoreInput
@@ -365,6 +373,12 @@ spec = do
               }
       sbCurrentAccountValueUsdc score `shouldBe` 0
       sbFinalPnlUsdc score `shouldBe` (-100_000_000_000)
+
+  describe "fundingCapacityContribution" $ do
+    it "excludes verified assistance from bankroll capacity, but retains other deposits and withdrawals" $ do
+      fundingCapacityContribution True True 198000 `shouldBe` 0
+      fundingCapacityContribution True False 198000 `shouldBe` 198000
+      fundingCapacityContribution False True 198000 `shouldBe` (-198000)
 
   describe "fundingIntegrityFlags" $ do
     it "accepts the two permitted 100,000 bankroll paths" $ do

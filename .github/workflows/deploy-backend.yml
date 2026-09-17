@@ -16,6 +16,16 @@ on:
         required: false
         default: false
         type: boolean
+      close_assistance_mode:
+        description: Sepolia close assistance issuance (preserve, disable, operator canary, or all traders)
+        required: false
+        default: preserve
+        type: choice
+        options:
+          - preserve
+          - disabled
+          - canary
+          - all
       deployment_scope:
         description: Deploy every backend service or only the API
         required: false
@@ -1427,6 +1437,23 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
+      - name: Check out reviewed public AA deployment policy
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            apps/backend/deployments
+          path: deployment-policy
+
+      - name: Configure exact Sepolia close assistance release
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
+        env:
+          CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
+        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/apps/backend/deployments/close-assistance-arbitrum-sepolia.json "$CLOSE_ASSISTANCE_MODE"
+
       - name: Patch liquidation worker cost controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
         env:
@@ -1562,15 +1589,6 @@ jobs:
                   end
               end
             ' task-def.json > /dev/null
-
-      - name: Check out reviewed public AA deployment policy
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          sparse-checkout: .github/scripts
-          path: deployment-policy
 
       - name: Require active Alto with reviewed validation policy for public native API
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'

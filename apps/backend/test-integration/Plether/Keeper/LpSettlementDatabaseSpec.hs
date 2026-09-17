@@ -7,7 +7,6 @@ import Control.Exception (SomeException, bracket, finally, try)
 import Control.Monad (void)
 import qualified Data.ByteString as BS
 import Data.Either (isLeft, isRight)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
@@ -19,7 +18,7 @@ import Database.PostgreSQL.Simple
   , query_
   , withTransaction
   )
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Schema
   ( LpSettlementBroadcastInput (..)
   , LpSettlementBroadcastRow (..)
@@ -671,7 +670,7 @@ lpSettlementDatabaseSpec databaseUrl =
 
 withLpSettlementDatabase :: Text -> (DbPool -> IO a) -> IO a
 withLpSettlementDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     withDb pool $ \conn -> do
       assertDedicatedDatabase conn
       ensurePerpsKeeperSchema conn

@@ -1,4 +1,12 @@
 dofile('posthog-projection.lua')
+for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE'}) do
+  local _,_,safe=project_posthog('test',0,{event='aa_request_failed',reason_code=reason,error='private calldata'})
+  assert(safe.reason_code==reason and safe.error==nil)
+end
+local _,_,funding=project_posthog('test',0,{event='worker_funding_observation',diagnostic_code='JOURNAL_DECODE_FAILED',raw_transaction='private'})
+assert(funding.diagnostic_code=='JOURNAL_DECODE_FAILED' and funding.raw_transaction==nil)
+local _,_,unsafe=project_posthog('test',0,{event='worker_funding_observation',diagnostic_code='private credential'})
+assert(unsafe.diagnostic_code==nil)
 local _,_,pending = project_posthog('test',0,{event='aa_request_failed',reason_code='ACCOUNT_DEPLOYMENT_PENDING',
   outcome='rejected',sender='0xsecret',error='provider payload'})
 assert(pending.reason_code=='ACCOUNT_DEPLOYMENT_PENDING' and pending.outcome=='rejected')
@@ -62,3 +70,19 @@ for _,component in ipairs({'alto','keeper','oracle','liquidation','protection','
   assert(exported.balance_wei==nil and exported.liability_wei==nil and exported.reserve_wei==nil and exported.signer_address==nil and exported.raw_transaction==nil)
   assert(operational.balance_wei=='12345' and operational.signer_address=='0xdead')
 end
+
+for _,event in ipairs({'oracle_sync_lag','oracle_sync_pending','oracle_update_mined','oracle_update_not_needed',
+  'oracle_update_payload_stale','oracle_update_dry_run','oracle_worker_started','oracle_worker_iteration_failed','oracle_worker_fatal'}) do
+  local original = {event=event, lag_seconds=5, previous_lag_seconds=10, poll_seconds=30, health_poll_seconds=5,
+    repair=true, synchronized=false, transaction_hash='0xsecret', update_fee_wei='123', error='raw provider secret',
+    updateData={'signed payload'}, updater_address='0xsecret'}
+  local _,_,projected = project_posthog('test',0,original)
+  assert(projected.event==event and projected.message==event)
+  assert(projected.lag_seconds==5 and projected.previous_lag_seconds==10)
+  assert(projected.poll_seconds==30 and projected.health_poll_seconds==5)
+  assert(projected.repair==true and projected.synchronized==false)
+  assert(projected.transaction_hash==nil and projected.error==nil and projected.updateData==nil and projected.updater_address==nil)
+  assert(original.error=='raw provider secret')
+end
+local _,_,badLag = project_posthog('test',0,{event='oracle_sync_lag',lag_seconds='secret',repair='secret',synchronized={private='secret'}})
+assert(badLag.lag_seconds==nil and badLag.repair==nil and badLag.synchronized==nil)

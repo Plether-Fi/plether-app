@@ -3,23 +3,36 @@ module Plether.Insights.DatabaseSpec
   ) where
 
 import Control.Exception (bracket, finally)
-import Control.Monad (void)
-import Data.Aeson (object, (.=))
+import Control.Monad (void, forM_)
+import Data.Aeson (Value (..), encode, object, (.=), eitherDecodeFileStrict', decode)
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as Base16
+import Data.IORef (newIORef)
+import Data.Foldable (toList)
+import Network.HTTP.Client (newManager, defaultManagerSettings)
+import Network.HTTP.Types (status200)
+import Network.Wai (strictRequestBody, responseLBS)
+import Network.Wai.Handler.Warp (testWithApplication)
+import Plether.Config (PerpsCandleWriteMode (..))
+import Plether.Perps.HistoryIndexer
+  ( enrichSettlementReceipts, defaultPerpsAddresses, PerpsAddresses (..), PerpsIndexerConfig (..), PerpsIndexerMode (..),
+    parseReplayLogEntry, parsePerpsLog, RpcLog (..), ParsedPerpsLog (..) )
 import Data.List (find, sort)
 import Data.Maybe (isJust)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
+import Plether.Database.CloseAssistance
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Insights
   ( AccountSnapshotInput (..)
   , CompetitionRow (..)
   , LeaderboardRow (..)
+  , InsightsActivityRow (..)
   , SnapshotKind (..)
   , ensureInsightsSchema
   , getCompetitionLeaderboard
@@ -40,6 +53,7 @@ import Plether.Database.Schema
   ( ensurePerpsHistorySchema
   , ensureTestnetFaucetSchema
   , deletePerpsHistoryFromBlock
+  , insertPerpsEvent
   , insertPerpsActivity
   , insertPerpsUsdcTransfer
   , setPerpsIndexerState
@@ -58,6 +72,107 @@ import Test.Hspec
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    it "backfills settlement receipts idempotently without changing activity or scores" $
+      withInsightsDatabase databaseUrl $ \pool -> do
+        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/insights-close-waiver.json"
+        fixture <- either fail pure decoded
+        receipt <- case fixture of
+          Object value | Just (Object receipt) <- KM.lookup "receipt" value -> pure receipt
+          _ -> fail "Invalid fixture"
+        let text key = case KM.lookup key receipt of Just (String value) -> value; _ -> ""
+            tx = text "transactionHash"
+            blockHash = text "blockHash"
+            blockNumber = 309072000
+            timestamp = 1789456609
+        logs <- case KM.lookup "logs" receipt of
+          Just (Array entries) -> either (fail . T.unpack) pure $ traverse parseReplayLogEntry (toList entries)
+          _ -> fail "Missing logs"
+        let finalized = [(entry, oid, account, receiptHash, economics, payload)
+              | entry <- logs, Just (ParsedOrderFinalized oid account _ receiptHash _ _ _ _ _ economics payload) <- [parsePerpsLog entry]]
+        withDb pool $ \conn -> forM_ finalized $ \(entry, oid, account, receiptHash, economics, payload) -> do
+          void $ execute conn
+            "INSERT INTO perps_orders (chain_id, order_router, order_id, account, terminal_tx_hash, terminal_block_number, \
+            \terminal_timestamp, terminal_status, receipt_hash, receipt_economics) VALUES (?, ?, ?, ?, ?, ?, ?, 'Executed', ?, ?::jsonb)"
+            (fixtureChain, fixtureRouter, oid, account, tx, blockNumber, timestamp, receiptHash, encode economics)
+          insertPerpsEvent conn fixtureChain fixtureRouter (rlAddress entry) "OrderFinalized" tx blockNumber blockHash
+            (rlTxIndex entry) (rlLogIndex entry) timestamp (Just account) (Just oid) Nothing payload
+        let app request respond = do
+              body <- strictRequestBody request
+              let method = case decode body of Just (Object o) -> KM.lookup "method" o; _ -> Nothing
+                  result = if method == Just (String "eth_getTransactionReceipt") then Object receipt else
+                    object ["number" .= ("0x126c1080" :: Text), "hash" .= blockHash, "timestamp" .= ("0x6aa00000" :: Text)]
+              respond $ responseLBS status200 [("Content-Type", "application/json")]
+                (encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= result])
+        testWithApplication (pure app) $ \port -> do
+          manager <- newManager defaultManagerSettings
+          req <- newIORef 1
+          let cfg = PerpsIndexerConfig
+                { picRpcUrls = ["http://127.0.0.1:" <> T.pack (show port)], picRpcAuthToken = Nothing,
+                  picChainId = fixtureChain, picAddresses = defaultPerpsAddresses {paOrderRouter = fixtureRouter},
+                  picStartBlock = 1, picConfirmations = 0, picBatchSize = 20, picPollIntervalMicros = 1000000,
+                  picIndexerName = indexerName BoundedV2, picMode = PerpsIndexerOnce,
+                  picCandleWriteMode = PerpsCandleWritesOff, picCandleLatenessSeconds = 0,
+                  picDeploymentEnvironment = Nothing }
+          enrichSettlementReceipts manager pool cfg req
+          enrichSettlementReceipts manager pool cfg req
+        withDb pool $ \conn -> do
+          markers <- query conn "SELECT settlement_evidence_version FROM perps_orders WHERE chain_id = ? AND order_router = ?"
+            (fixtureChain, fixtureRouter) :: IO [Only (Maybe Int)]
+          markers `shouldBe` [Only (Just 1)]
+          events <- query conn "SELECT data->>'protocolFeeCollectedUsdc' FROM perps_events WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
+            (fixtureChain, fixtureRouter) :: IO [Only Text]
+          events `shouldBe` [Only "222311115"]
+          counts <- query conn "SELECT COUNT(*) FROM perps_account_activity WHERE chain_id = ? AND release_router = ?"
+            (fixtureChain, fixtureRouter) :: IO [Only Int]
+          counts `shouldBe` [Only 0]
+
+    it "binds breakdowns to individual executions and invalidates receipt evidence on reorg" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertParticipant conn walletA "trader-a"
+        setCompetitionBoundaryBlocks conn competitionSlug
+          (Just (startBlock, startHash, baselineHash)) (Just (finalBlock, finalHash))
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp bankroll]
+        let tx = hashText "breakdown-tx"
+            receiptHash = hashText "breakdown-receipt"
+            receipt = object ["executionFeeUsdc" .= ("1000000" :: Text)]
+        forM_ [(1, 10, 20), (2, 30, 40)] $ \(oid, activityIndex, terminalIndex) -> do
+          insertPerpsActivity conn fixtureChain fixtureRouter fixtureRouter ("breakdown-" <> T.pack (show oid))
+            walletA "Close" Nothing Nothing (Just 1) (Just 100000000) (Just 1000000000000000000) Nothing (Just 0)
+            tx liveBlock liveHash 0 activityIndex liveTimestamp (object [])
+          void $ execute conn
+            "INSERT INTO perps_orders (chain_id, order_router, order_id, account, terminal_tx_hash, terminal_block_number, \
+            \terminal_timestamp, terminal_status, receipt_hash, receipt_economics, settlement_evidence_version) \
+            \VALUES (?, ?, ?, ?, ?, ?, ?, 'Executed', ?, ?::jsonb, 1)"
+            (fixtureChain, fixtureRouter, oid :: Integer, walletA, tx, liveBlock, liveTimestamp, receiptHash, encode receipt)
+          insertPerpsEvent conn fixtureChain fixtureRouter fixtureRouter "OrderFinalized" tx liveBlock liveHash 0 terminalIndex
+            liveTimestamp (Just walletA) (Just oid) Nothing
+            (object ["receiptHash" .= receiptHash, "status" .= (2 :: Int), "terminalReason" .= ("Executed" :: Text)])
+          insertPerpsEvent conn fixtureChain fixtureRouter fixtureRouter "ActionChargeSettled" tx liveBlock liveHash 0 (activityIndex - 1)
+            liveTimestamp (Just walletA) (Just oid) Nothing
+            (object ["assessedUsdc" .= ("1000000" :: Text), "recoveredUsdc" .= ("900000" :: Text), "waivedUsdc" .= ("100000" :: Text)])
+        rows <- getCompetitionWalletActivity conn competitionSlug walletA 20
+        let orderId row = case iarExecution row of
+              Just (Object execution) -> KM.lookup "orderId" execution
+              _ -> Nothing
+        map orderId rows `shouldBe` [Just (String "2"), Just (String "1")]
+        -- A second position event in one terminal interval makes the match ambiguous.
+        insertPerpsActivity conn fixtureChain fixtureRouter fixtureRouter "breakdown-ambiguous"
+          walletA "Open" Nothing Nothing (Just 1) (Just 100000000) (Just 1000000000000000000) Nothing Nothing
+          tx liveBlock liveHash 0 31 liveTimestamp (object [])
+        ambiguous <- getCompetitionWalletActivity conn competitionSlug walletA 20
+        map orderId ambiguous `shouldBe` [Nothing, Nothing, Just (String "1")]
+        -- Canonical block identity, not merely tx/account, is required.
+        void $ execute conn "UPDATE perps_events SET block_hash = ? WHERE chain_id = ? AND release_router = ? AND event_name = 'OrderFinalized'"
+          (hashText "other-fork", fixtureChain, fixtureRouter)
+        mismatched <- getCompetitionWalletActivity conn competitionSlug walletA 20
+        map iarExecution mismatched `shouldBe` replicate 3 Nothing
+        deletePerpsHistoryFromBlock conn fixtureChain fixtureRouter liveBlock
+        markers <- query conn "SELECT settlement_evidence_version, receipt_economics FROM perps_orders WHERE chain_id = ? AND order_router = ? ORDER BY order_id"
+          (fixtureChain, fixtureRouter) :: IO [(Maybe Int, Maybe Value)]
+        markers `shouldBe` [(Nothing, Nothing), (Nothing, Nothing)]
+        getCompetitionWalletActivity conn competitionSlug walletA 20 `shouldReturn` []
+
     it "binds pending v1.2.3 during trading without changing the roster or schedule" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
         insertParticipant conn walletA "existing-registration"
@@ -396,6 +511,38 @@ insightsDatabaseSpec databaseUrl =
         ilrFundingIntegrityClear (requireWalletUnsafe walletA afterSubstitution) `shouldBe` False
 
 
+    it "subtracts verified assistance from PnL without treating it as extra bankroll, including late registration" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        seedOfficialAllocation conn walletA 80 90 "prefund-a"
+        insertDeposit conn walletA 105 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 198000 "assisted"
+        let digest = "0x" <> T.replicate 64 "a"
+            grant = CloseAssistanceReservation fixtureRouter walletA ("0x" <> T.replicate 64 "b") ("0x" <> T.replicate 64 "c") fixtureLens 198000
+        void $ execute conn
+          "INSERT INTO aa_sponsorship_authorizations(request_key,digest,sender,owner,nonce,valid_after,valid_until,max_cost_wei,client_key,operation,state) VALUES(?,?,?,?,0,1,2,1,?,'{}','settled') ON CONFLICT DO NOTHING"
+          (digest,digest,walletA,walletA,digest)
+        insertCloseAssistanceReservation conn digest grant
+        -- Registration follows assistance: provenance is attached to the account and exact event.
+        insertParticipant conn walletA "assisted-trader"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain + 198000)]
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        unverified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear (requireWalletUnsafe walletA unverified) `shouldBe` False
+        confirmCloseAssistance conn digest (hashText "txassisted") 105 (hashText "blassisted") 4 1 `shouldReturn` True
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        verified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        let row = requireWalletUnsafe walletA verified
+        ilrFundingIntegrityClear row `shouldBe` True
+        ilrDepositsUsdc row `shouldBe` 198000
+        ilrFinalPnlUsdc row `shouldBe` Just gain
+        insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "unrelated"
+        refreshCompetitionIntegrityFlags conn competitionSlug
+        unrelated <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+        ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
+        void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
+        void $ execute conn "DELETE FROM aa_sponsorship_authorizations WHERE digest=?" (Only digest)
+
 seedRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
 seedRelease conn rules manifest =
   seedCompetition conn rules (crmChainId manifest) (crmOrderRouter manifest)
@@ -416,7 +563,7 @@ withPendingV123Competition databaseUrl action =
 
 withInsightsDatabase :: Text -> (DbPool -> IO a) -> IO a
 withInsightsDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     assertDedicatedDatabase pool
     prepareDatabase pool
     action pool `finally` cleanupDatabase pool
@@ -431,6 +578,7 @@ assertDedicatedDatabase pool = withDb pool $ \conn -> do
 
 prepareDatabase :: DbPool -> IO ()
 prepareDatabase pool = withDb pool $ \conn -> do
+  ensureAaSponsorshipSchema conn
   ensureTestnetFaucetSchema conn
   ensurePerpsHistorySchema conn
   -- Install all tables using the historical rule first, then add the new
@@ -453,6 +601,8 @@ cleanupDatabase pool = withDb pool cleanupRows
 
 cleanupRows :: Connection -> IO ()
 cleanupRows conn = do
+  void $ execute conn "DELETE FROM perps_events WHERE chain_id = ? AND release_router = ?" (fixtureChain, fixtureRouter)
+  void $ execute conn "DELETE FROM perps_orders WHERE chain_id = ? AND order_router = ?" (fixtureChain, fixtureRouter)
   void $ execute conn
     "DELETE FROM insights_competitions WHERE slug IN (?, ?)"
     (crSlug july2026Competition, competitionSlug)

@@ -309,3 +309,56 @@ run "reject_unconfigured_readiness_enforcement" {
   variables { enable_aa_readiness_enforcement = true }
   expect_failures = [terraform_data.deployment_target_guard]
 }
+
+run "reject_faucet_keeper_key" {
+  command = plan
+  variables {
+    faucet_private_key        = " 0X1111111111111111111111111111111111111111111111111111111111111111 "
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+  expect_failures = [aws_ssm_parameter.faucet_private_key]
+}
+
+run "reject_faucet_oracle_key" {
+  command = plan
+  variables {
+    faucet_private_key        = " 0X2222222222222222222222222222222222222222222222222222222222222222 "
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+  expect_failures = [aws_ssm_parameter.faucet_private_key]
+}
+
+run "reject_faucet_liquidation_key" {
+  command = plan
+  variables {
+    faucet_private_key        = " 0X3333333333333333333333333333333333333333333333333333333333333333 "
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+  expect_failures = [aws_ssm_parameter.faucet_private_key]
+}
+
+run "reject_faucet_zero_key" {
+  command = plan
+  variables {
+    faucet_private_key        = " 0X0000000000000000000000000000000000000000000000000000000000000000 "
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+  expect_failures = [aws_ssm_parameter.faucet_private_key]
+}
+
+run "accept_dedicated_faucet_key" {
+  command = plan
+  variables {
+    faucet_private_key        = "0x4444444444444444444444444444444444444444444444444444444444444444"
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+}
+run "reject_faucet_lp_settlement_key" {
+  command = plan
+  variables {
+    faucet_private_key        = "0x4444444444444444444444444444444444444444444444444444444444444444"
+    lp_settlement_private_key = "0x4444444444444444444444444444444444444444444444444444444444444444"
+    faucet_proxy_origin_token = "faucet-synthetic-token-not-shared-00000000"
+  }
+  expect_failures = [aws_ssm_parameter.faucet_private_key]
+}

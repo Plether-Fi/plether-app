@@ -626,12 +626,13 @@ describe('Vaults page', () => {
     expect(within(seniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
     expect(within(juniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
 
-    expect(screen.queryByRole('button', { name: 'Pool liquidity details' })).not.toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Trading capacity and loss protection' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Free pool liquidity details' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Pool liquidity and loss protection' })).toBeInTheDocument()
     expect(screen.getByText('Shared pool liquidity')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Trading capacity and loss protection' })).toBeInTheDocument()
-    expect(screen.getByText('Estimated LONG trading capacity')).toBeInTheDocument()
-    expect(screen.getByText('Estimated SHORT trading capacity')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pool liquidity and loss protection' })).toBeInTheDocument()
+    expect(screen.getByText('Total pool assets')).toBeInTheDocument()
+    expect(screen.getByText('Reserved pool assets')).toBeInTheDocument()
+    expect(screen.queryByText(/Estimated (LONG|SHORT) trading capacity/)).not.toBeInTheDocument()
     expect(screen.getByText('Junior · absorbs losses first')).toBeInTheDocument()
     expect(screen.getByText('Senior · protected by Junior')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'One pool, two economic claims' })).not.toBeInTheDocument()
@@ -1200,8 +1201,7 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
 
     expect(screen.getByText('Activated')).toBeInTheDocument()
-    expect(screen.getByText('Direct withdrawal')).toBeInTheDocument()
-    expect(screen.getByText('Available now')).toBeInTheDocument()
+    expect(screen.getByText('Withdrawal ready')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Queue direct withdrawal' }))
     expect(mocks.vaultRequestRedeemFromClaimableDeposit).not.toHaveBeenCalled()
 

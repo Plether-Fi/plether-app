@@ -55,6 +55,7 @@ vi.mock('../../contracts/positionProtection', async (importOriginal) => ({
 }))
 
 vi.mock('wagmi', () => ({
+  useWalletClient: () => ({ data: undefined }),
   usePublicClient: () => ({
     getBlock: mocks.getBlock,
     readContract: mocks.readContract,

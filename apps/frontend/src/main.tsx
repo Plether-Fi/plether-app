@@ -6,8 +6,9 @@ import { config, scheduleAppKitInitialization } from './config/wagmi'
 import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
-import { captureFrontendLog, scheduleAnalyticsInitialization } from './analytics/client'
+import { captureFrontendLog, captureReactException, scheduleAnalyticsInitialization } from './analytics/client'
 import { PerpsAaProvider } from './perps-aa'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 
 scheduleAnalyticsInitialization()
 scheduleAppKitInitialization()
@@ -32,15 +33,11 @@ if (!rootElement) {
 }
 
 createRoot(rootElement, {
-  onCaughtError: () => {
-    captureFrontendLog('error', 'react render error caught', {
-      component: 'react_root',
-      operation: 'render',
-      outcome: 'failure',
-      error_category: 'caught_error',
-    })
-  },
-  onUncaughtError: () => {
+  // AppErrorBoundary reports caught errors once, with its visible support ID.
+  // Suppress React's default raw-error console logging for these caught errors.
+  onCaughtError: () => { /* Reported by AppErrorBoundary with sanitized context. */ },
+  onUncaughtError: (error, info) => {
+    captureReactException(error, info, 'uncaught')
     captureFrontendLog('fatal', 'react render error uncaught', {
       component: 'react_root',
       operation: 'render',
@@ -48,7 +45,8 @@ createRoot(rootElement, {
       error_category: 'uncaught_error',
     })
   },
-  onRecoverableError: () => {
+  onRecoverableError: (error, info) => {
+    captureReactException(error, info, 'recoverable')
     captureFrontendLog('warn', 'react render error recovered', {
       component: 'react_root',
       operation: 'render',
@@ -58,12 +56,14 @@ createRoot(rootElement, {
   },
 }).render(
   <StrictMode>
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <PerpsAaProvider>
-          <App />
-        </PerpsAaProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <AppErrorBoundary>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <PerpsAaProvider>
+            <App />
+          </PerpsAaProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </AppErrorBoundary>
   </StrictMode>
 )

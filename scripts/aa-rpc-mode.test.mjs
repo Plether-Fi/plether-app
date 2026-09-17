@@ -96,9 +96,12 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
   const production = read('infra/terraform/rollout_guards.tf')
   const guards = [...production.matchAll(/    precondition \{[\s\S]*?\n    \}/g)]
     .map(match => match[0]).filter(block => block.includes('var.aa_rpc_mode'))
-  assert.equal(guards.length, 2)
+  assert.equal(guards.length, 3)
   const defaults = {
     aa_rpc_mode: 'dual-independent', environment: 'sepolia', perps_chain_id: '421614',
+    perps_close_assistance_enabled: false, perps_close_assistance_lens: owner,
+    perps_close_assistance_lens_code_hash: '0x' + '12'.repeat(32), configure_native_aa_backend: true,
+    enable_native_aa_sponsorship: true, enable_native_aa_submission: true,
     aa_native_global_rollout_enabled: false, aa_native_canary_owners: owner,
     aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/aa-reconciler-secondary-rpc-url',
     aa_reconciler_secondary_rpc_url_kms_key_arn: '',
@@ -116,7 +119,11 @@ test('Terraform mode preconditions reject unsafe plans before provisioning', t =
     const single = { aa_rpc_mode: 'single-provider-sepolia',
       aa_reconciler_secondary_rpc_url_ssm_parameter_name: '/plether/sepolia/perps-rpc-url' }
     for (const [overrides, accepted] of [
-      [{}, true], [single, true], [{ ...single, provision_self_hosted_aa: false }, true],
+      [{}, true], [{ perps_close_assistance_enabled: true }, true],
+      [{ ...single, perps_close_assistance_enabled: true }, false],
+      [{ perps_close_assistance_enabled: true, enable_native_aa_submission: false }, false],
+      [{ perps_close_assistance_enabled: true, perps_close_assistance_lens: 'wrong' }, false],
+      [single, true], [{ ...single, provision_self_hosted_aa: false }, true],
       [{ ...single, environment: 'mainnet', provision_self_hosted_aa: false }, false],
       [{ ...single, perps_chain_id: '42161' }, false],
       [{ ...single, aa_native_global_rollout_enabled: true, aa_native_canary_owners: '' }, true],

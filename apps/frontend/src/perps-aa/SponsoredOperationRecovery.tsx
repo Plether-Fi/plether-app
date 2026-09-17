@@ -24,7 +24,9 @@ import {
   acquireSponsoredOperationBrowserRecoveryLock,
   type ReleaseSponsoredOperationBrowserLock,
 } from './laneLock'
+import { registerOperationRecoveryCheck } from './requestOperationRecovery'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
+import { isRecoveryPending } from './errors'
 import { SponsoredOperationLockedError } from './operationLockError'
 import { reconcileUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
@@ -155,7 +157,9 @@ export function SponsoredOperationRecovery() {
     if (!runtime || !accountAddress) return
 
     const recovering = new Set<string>()
+    const requestedChecks = new Map<string, (result: 'checked' | 'unavailable') => void>()
     const nextProtocolCheckAt = new Map<string, number>()
+    const nextReceiptCheckAt = new Map<string, number>()
 
     const scan = () => {
       const store = useSponsoredOperationStore.getState()
@@ -170,6 +174,7 @@ export function SponsoredOperationRecovery() {
         if (
           !isSponsoredOperationTerminal(operation.status) &&
           operation.userOperationHash === undefined &&
+          !(operation.nativePreparation && ['signature-declined', 'sponsorship-refused', 'preparation-pending'].includes(operation.status)) &&
           !hasSponsoredOperationSignal(operation.id) &&
           !recovering.has(operation.id)
         ) {
@@ -210,7 +215,9 @@ export function SponsoredOperationRecovery() {
                   accountAddress
                 )
               ) {
-                useSponsoredOperationStore.getState().failOperation({
+                if (latestOperation.nativePreparation) {
+                  useSponsoredOperationStore.getState().transition(latestOperation.id, 'preparation-pending')
+                } else useSponsoredOperationStore.getState().failOperation({
                   id: latestOperation.id,
                   reason: 'UNKNOWN',
                   retryable: true,
@@ -247,7 +254,8 @@ export function SponsoredOperationRecovery() {
           operation,
           wallClockNow
         )
-        const protocolOnly = operation.status === 'outcome-unknown' || exhausted
+        const requested = requestedChecks.has(operation.id)
+        const protocolOnly = requested || operation.status === 'outcome-unknown' || exhausted
         if (exhausted && operation.status !== 'outcome-unknown') {
           store.exhaustAutomaticRecovery(operation.id, wallClockNow)
         }
@@ -258,6 +266,7 @@ export function SponsoredOperationRecovery() {
           continue
         }
         const now = globalThis.performance.now()
+        if ((nextReceiptCheckAt.get(operation.id) ?? 0) > now) continue
         if (protocolOnly && (nextProtocolCheckAt.get(operation.id) ?? 0) > now) {
           continue
         }
@@ -318,7 +327,7 @@ export function SponsoredOperationRecovery() {
 
             // Exhausting discovery retries must not stop safe-chain recovery
             // of an old, still-blocking submission after a reload.
-            const protocolOnly = latestOperation.status === 'outcome-unknown' ||
+            const protocolOnly = requested || latestOperation.status === 'outcome-unknown' ||
               sponsoredOperationAutomaticRecoveryIsExhausted(
                 latestOperation, Date.now()
               )
@@ -380,7 +389,12 @@ export function SponsoredOperationRecovery() {
                   userOperationHash,
                 })
               }
-            } catch {
+            } catch (error) {
+              if (isRecoveryPending(error)) {
+                nextReceiptCheckAt.set(latestOperation.id, globalThis.performance.now() + 60_000)
+                reportRecoveryDiagnostic({ operationKey: userOperationHash, stage: 'awaiting_recovery_evidence' })
+                return
+              }
               reportRecoveryDiagnostic({
                 operationKey: userOperationHash,
                 stage: 'receipt_check_failed',
@@ -645,17 +659,37 @@ export function SponsoredOperationRecovery() {
           // failure remains fail-closed.
         }).finally(() => {
           recovering.delete(operation.id)
+          requestedChecks.get(operation.id)?.('checked')
+          requestedChecks.delete(operation.id)
         })
       }
     }
 
+    const unregister = registerOperationRecoveryCheck(id => {
+      const operation = useSponsoredOperationStore.getState().operations.find(item => item.id === id)
+      if (!operation || !operationMatchesRuntime(operation, runtime, accountAddress)) return undefined
+      if (!operation.userOperationHash || hasSponsoredOperationSignal(id) || recovering.has(id)
+        || (isSponsoredOperationTerminal(operation.status) && operation.status !== 'outcome-unknown')) {
+        return Promise.resolve('unavailable')
+      }
+      return new Promise(resolve => {
+        requestedChecks.set(id, resolve)
+        nextProtocolCheckAt.delete(id)
+        nextReceiptCheckAt.delete(id)
+        scan()
+      })
+    })
     scan()
     const interval = globalThis.setInterval(scan, 5_000)
 
     return () => {
       globalThis.clearInterval(interval)
+      unregister()
+      for (const resolve of requestedChecks.values()) resolve('unavailable')
+      requestedChecks.clear()
       recovering.clear()
       nextProtocolCheckAt.clear()
+      nextReceiptCheckAt.clear()
     }
   }, [accountAddress, runtime])
 

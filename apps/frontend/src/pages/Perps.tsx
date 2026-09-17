@@ -10,7 +10,6 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
-import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
 import { usePerpsIdentity } from '../perps-aa'
 import { DOCS_LINKS } from '../config/docs'
@@ -26,11 +25,6 @@ function displayValue(value: string | undefined, isLoading: boolean): string {
 function usdcValue(value: string | undefined, isLoading: boolean): ReactNode {
   if (value) return <TokenAmount amount={value} />
   return isLoading ? '...' : '--'
-}
-
-function capacityTooltipValue(value: bigint | undefined, markPrice: bigint | undefined): string {
-  if (value === undefined) return '--'
-  return formatPerpsUsdc(dxyExposureFromContractNotional(value, markPrice) ?? value)
 }
 
 function formatMarkAge(ageSeconds: number): string {
@@ -166,24 +160,14 @@ export function Perps() {
           },
         },
         {
-          label: 'Pool liquidity',
+          label: 'Free pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           hoverDetailsType: 'pool-liquidity',
-          hoverDetailsLabel: 'Pool liquidity details',
+          hoverDetailsLabel: 'Free pool liquidity details',
           hoverDetails: (
             <PerpsPoolLiquidityDetails
-              longCapacity={(
-                <TokenAmount amount={capacityTooltipValue(
-                  perpsMarket.raw.longOpenCapacityUsdc,
-                  perpsMarket.raw.markPrice
-                )} />
-              )}
-              shortCapacity={(
-                <TokenAmount amount={capacityTooltipValue(
-                  perpsMarket.raw.shortOpenCapacityUsdc,
-                  perpsMarket.raw.markPrice
-                )} />
-              )}
+              poolAssetsUsdc={perpsMarket.raw.poolAssetsUsdc}
+              freeUsdc={perpsMarket.raw.freeUsdc}
               juniorPrincipal={usdcValue(perpsMarket.poolCapital?.juniorPrincipal, perpsMarket.isLoading)}
               seniorPrincipal={usdcValue(perpsMarket.poolCapital?.seniorPrincipal, perpsMarket.isLoading)}
               juniorSharePercent={perpsMarket.poolCapital?.juniorSharePercent}
@@ -223,9 +207,8 @@ export function Perps() {
       perpsMarket.poolCapital,
       perpsMarket.priceChange24h,
       perpsMarket.priceChange24hTone,
-      perpsMarket.raw.longOpenCapacityUsdc,
-      perpsMarket.raw.markPrice,
-      perpsMarket.raw.shortOpenCapacityUsdc,
+      perpsMarket.raw.poolAssetsUsdc,
+      perpsMarket.raw.freeUsdc,
       perpsMarket.volume24h,
       nowSeconds,
     ]

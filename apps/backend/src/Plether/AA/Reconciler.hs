@@ -9,6 +9,7 @@ module Plether.AA.Reconciler
   , validateTargetTimestamp
   , validateSafeHeadFreshness
   , boundariesRemainCanonical
+  , targetReachesSafeBoundary
   , validateDeploymentAnchor
   ) where
 
@@ -32,20 +33,17 @@ import qualified Data.Vector as V
 import Database.PostgreSQL.Simple (Connection, Only (..), query_)
 import Plether.Database (DbPool, withDb, withDbAdvisoryLock)
 import Plether.Config (aaSafeLagCeiling)
+import Plether.Database.CloseAssistance
+import Plether.AA.CloseAssistanceEvidence (verifyCloseAssistanceReceipt)
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
   , aaSponsorshipStateIsEmpty
-  , advanceAaReconcilerCursor
-  , cancelStaleUnsignedReservations
-  , expireSponsorshipsThrough
+  , publishAaReconcilerProgress
   , getAaReconcilerCursor
   , getSponsorshipByUserOperationHash
   , initializeAaReconcilerCursor
-  , recordAaReconcilerHeartbeat
   , pauseAaIssuance
-  , pruneAaRateWindows
-  , pruneExpiredRecoveryOperations
   , settleSponsorship
   )
 import Plether.Ethereum.Abi
@@ -118,7 +116,7 @@ data FatalFailure
   deriving stock (Eq, Show)
 
 data StepResult
-  = StepAdvanced BlockHeader Int
+  = StepAdvanced BlockHeader Int Bool
   | StepCaughtUp BlockHeader
   | StepRetry Text
   | StepFatal FatalFailure
@@ -262,35 +260,32 @@ reconcileOnAttestedChain pool primaryClient secondaryClient cfg = do
           -- A prior process may have committed the cursor and crashed before
           -- releasing expired liabilities.  Re-run idempotent housekeeping at
           -- the verified boundary before claiming a fresh healthy heartbeat.
-          _ <- withDb pool $ \conn ->
-            expireSponsorshipsThrough conn $ bhTimestamp safeHeader
-          _ <- withDb pool cancelStaleUnsignedReservations
-          _ <- withDb pool pruneAaRateWindows
-          _ <- withDb pool pruneExpiredRecoveryOperations
-          withDb pool $ \conn ->
-            recordAaReconcilerHeartbeat
-              conn
-              (arcChainId cfg)
-              (arcPaymaster cfg)
-              (bhNumber safeHeader)
-              (bhHash safeHeader)
-          logInfoEvery
-            60
-            "aa_reconciler_heartbeat"
-            "AA reconciler is caught up to the dual-provider safe boundary"
-            (healthFields health <> [field "safe_block" $ bhNumber safeHeader])
-          pure $ Right ()
-        StepAdvanced header eventCount -> do
-          -- Advancing one historical batch is progress, not proof that the
-          -- entire advertised safe range has been scanned. Only StepCaughtUp
-          -- may refresh the issuance-authorizing heartbeat.
+          let cursor = AaReconcilerCursor (bhNumber safeHeader) (bhHash safeHeader)
+          published <- withDb pool $ \conn ->
+            publishAaReconcilerProgress conn (arcChainId cfg) (arcPaymaster cfg)
+              cursor cursor (bhTimestamp safeHeader) True
+          if not published
+            then handleFatal pool $ CursorDiscontinuity "caught-up cursor compare-and-swap failed"
+            else do
+              logInfoEvery
+                60
+                "aa_reconciler_heartbeat"
+                "AA reconciler is caught up to the dual-provider safe boundary"
+                (healthFields health <> [field "safe_block" $ bhNumber safeHeader])
+              pure $ Right ()
+        StepAdvanced header eventCount caughtUp -> do
           logInfo
             "aa_reconciler_safe_block_advanced"
             "AA reconciler advanced its dual-provider verified safe cursor"
             [ field "safe_block" $ bhNumber header
             , field "safe_block_hash" $ bhHash header
             , field "event_count" eventCount
+            , field "caught_up" caughtUp
             ]
+          when caughtUp $
+            logInfoEvery 60 "aa_reconciler_heartbeat"
+              "AA reconciler is caught up to the dual-provider safe boundary"
+              (healthFields health <> [field "safe_block" $ bhNumber header])
           pure $ Right ()
         StepFatal failure -> handleFatal pool failure
 
@@ -415,31 +410,36 @@ reconcileFromCursor pool primaryClient secondaryClient cfg safeHeader cursor = d
                                 (_, ProviderMismatch err, _) -> pure $ StepFatal $ ProviderDisagreement err
                                 (_, _, ProviderMismatch err) -> pure $ StepFatal $ ProviderDisagreement err
                                 (ProviderAgreed secondSafe, ProviderAgreed secondCursor, ProviderAgreed secondHeader)
-                                  | bhNumber secondSafe < targetNumber ->
-                                      pure $ StepFatal $ ProviderDisagreement "a provider safe boundary moved behind the verified target"
+                                  | Left reason <- targetReachesSafeBoundary targetHeader secondSafe ->
+                                      pure $ StepFatal $ ProviderDisagreement reason
                                   | Left reason <- boundariesRemainCanonical canonicalCursor targetHeader secondCursor secondHeader ->
                                       pure $ StepFatal $ ProviderDisagreement reason
                                   | otherwise -> do
-                                      processed <- processEvents pool logs
+                                      processed <- processEvents pool primaryClient secondaryClient logs
                                       case processed of
                                         Left fatal -> pure $ StepFatal fatal
                                         Right eventCount -> do
+                                          let caughtUp = targetReachesSafeBoundary targetHeader secondSafe == Right True
                                           advanced <- withDb pool $ \conn ->
-                                            advanceAaReconcilerCursor
+                                            publishAaReconcilerProgress
                                               conn
                                               (arcChainId cfg)
                                               (arcPaymaster cfg)
                                               cursor
                                               (AaReconcilerCursor targetNumber $ bhHash targetHeader)
+                                              (bhTimestamp targetHeader)
+                                              caughtUp
                                           if not advanced
                                             then pure $ StepFatal $ CursorDiscontinuity "cursor compare-and-swap failed"
-                                            else do
-                                              _ <- withDb pool $ \conn ->
-                                                expireSponsorshipsThrough conn $ bhTimestamp targetHeader
-                                              _ <- withDb pool cancelStaleUnsignedReservations
-                                              _ <- withDb pool pruneAaRateWindows
-                                              _ <- withDb pool pruneExpiredRecoveryOperations
-                                              pure $ StepAdvanced targetHeader eventCount
+                                            else pure $ StepAdvanced targetHeader eventCount caughtUp
+
+-- | Use the second safe-boundary read, not the tip captured before scanning.
+-- A moving tip is partial progress; a conflicting/regressing tip is unsafe.
+targetReachesSafeBoundary :: BlockHeader -> BlockHeader -> Either Text Bool
+targetReachesSafeBoundary target safe
+  | bhNumber safe < bhNumber target = Left "a provider safe boundary moved behind the verified target"
+  | bhNumber safe == bhNumber target && safe /= target = Left "safe boundary conflicts with the verified target"
+  | otherwise = Right $ safe == target
 
 boundariesRemainCanonical
   :: BlockHeader
@@ -685,8 +685,8 @@ validateSafeHeadFreshness maxSafeLagSeconds wallClockSeconds safeHeader =
     unless (bhTimestamp safeHeader <= wallClockSeconds + maxFutureBlockSkewSeconds) $
       Left "safe boundary timestamp is implausibly ahead of the reconciler clock"
 
-processEvents :: DbPool -> [UserOperationEvent] -> IO (Either FatalFailure Int)
-processEvents pool = foldM processOne $ Right 0
+processEvents :: DbPool -> EthClient -> EthClient -> [UserOperationEvent] -> IO (Either FatalFailure Int)
+processEvents pool primaryClient secondaryClient = foldM processOne $ Right 0
  where
   processOne (Left failure) _ = pure $ Left failure
   processOne (Right count) event = do
@@ -706,20 +706,51 @@ processEvents pool = foldM processOne $ Right 0
                   (uoeActualGasCost event)
                   (saMaxCostWei expected)
         | otherwise -> do
-            settled <- withDb pool $ \conn ->
-              settleSponsorship
-                conn
-                (saDigest expected)
-                (uoeHash event)
-                (uoeTransactionHash event)
-                (uoeBlockNumber event)
-                (uoeBlockHash event)
-                (uoeSuccess event)
-                (uoeActualGasCost event)
-                (uoeRaw event)
-            pure $ case settled of
-              Left reason -> Left $ InvalidOwnPaymasterEvent reason
-              Right () -> Right $ count + 1
+            evidence <- verifyAssistance expected event
+            case evidence of
+              Left reason -> pure $ Left $ InvalidOwnPaymasterEvent reason
+              Right proof -> do
+                settled <- withDb pool $ \conn ->
+                  settleSponsorship
+                    conn
+                    (saDigest expected)
+                    (uoeHash event)
+                    (uoeTransactionHash event)
+                    (uoeBlockNumber event)
+                    (uoeBlockHash event)
+                    (uoeSuccess event)
+                    (uoeActualGasCost event)
+                    (uoeRaw event)
+                case settled of
+                  Left reason -> pure $ Left $ InvalidOwnPaymasterEvent reason
+                  Right () -> case proof of
+                    Nothing -> pure $ Right $ count + 1
+                    Just (depositIndex,orderId) -> do
+                      confirmed <- withDb pool $ \conn -> confirmCloseAssistance conn (saDigest expected)
+                        (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) depositIndex orderId
+                      pure $ if confirmed then Right $ count + 1 else Left $ InvalidOwnPaymasterEvent "Assistance evidence conflicts"
+
+  verifyAssistance expected event = do
+    grant <- withDb pool $ \conn -> getCloseAssistanceReservation conn (saDigest expected)
+    case grant of
+      Nothing -> pure $ Right Nothing
+      Just _ | not (uoeSuccess event) -> pure $ Right Nothing
+      Just reservation -> do
+        let params = toJSON [uoeTransactionHash event]
+        first <- rpcCall primaryClient "eth_getTransactionReceipt" params
+        second <- rpcCall secondaryClient "eth_getTransactionReceipt" params
+        pure $ case (first,second) of
+          (Right a,Right b) -> do
+            -- Providers may include different optional receipt metadata. Verify
+            -- the complete required provenance independently, then agree on
+            -- the exact deposit index and newly committed order.
+            let verify = verifyCloseAssistanceReceipt reservation
+                  (uoeHash event) (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) (uoeLogIndex event)
+            firstProof <- verify a
+            secondProof <- verify b
+            if firstProof == secondProof then Right $ Just firstProof
+              else Left "Assistance receipt proofs disagree"
+          _ -> Left "Assistance receipt providers disagree or are unavailable"
 
 handleFatal :: DbPool -> FatalFailure -> IO a
 handleFatal pool failure = do

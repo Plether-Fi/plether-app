@@ -1,4 +1,5 @@
-import { createPublicClient, createWalletClient, http } from 'viem'
+import { pathToFileURL } from 'node:url'
+import { createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
@@ -36,6 +37,7 @@ const PERPS_PUBLIC_LENS_ABI = [
 ]
 
 const PLETHER_ORACLE_ABI = [
+  ...parseAbi(['function pyth() view returns (address)', 'function pythFeedIds(uint256) view returns (bytes32)']),
   {
     type: 'function',
     name: 'getUpdateFee',
@@ -54,6 +56,37 @@ const ORDER_ROUTER_ABI = [
     outputs: [],
   },
 ]
+
+const PYTH_ABI = parseAbi([
+  'function getPriceUnsafe(bytes32 id) view returns ((int64 price,uint64 conf,int32 expo,uint256 publishTime))',
+])
+
+export async function loadOracleFeeds(publicClient) {
+  const block = await publicClient.getBlock({ blockTag: 'latest' })
+  const read = (functionName, args) => publicClient.readContract({
+    address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI, functionName, args, blockNumber: block.number,
+  })
+  const [pyth, ...feedIds] = await Promise.all([
+    read('pyth'), ...Array.from({ length: 6 }, (_, index) => read('pythFeedIds', [BigInt(index)])),
+  ])
+  if (!/^0x[0-9a-f]{40}$/i.test(pyth) || /^0x0{40}$/i.test(pyth) ||
+      new Set(feedIds).size !== 6 || feedIds.some(id => !/^0x[0-9a-f]{64}$/i.test(id))) {
+    throw new Error('Oracle did not return a valid Pyth address and six distinct feeds')
+  }
+  return { pyth, feedIds }
+}
+
+async function readHealth(publicClient, feeds) {
+  const block = await publicClient.getBlock({ blockTag: 'latest' })
+  const [status, ...prices] = await Promise.all([
+    publicClient.readContract({ address: ADDRESSES.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI,
+      functionName: 'getProtocolStatus', blockNumber: block.number }),
+    ...feeds.feedIds.map(id => publicClient.readContract({ address: feeds.pyth, abi: PYTH_ABI,
+      functionName: 'getPriceUnsafe', args: [id], blockNumber: block.number })),
+  ])
+  const oldest = prices.reduce((min, price) => price.publishTime < min ? price.publishTime : min, prices[0].publishTime)
+  return { status, block, oldest, lag: status.lastMarkTime > oldest ? status.lastMarkTime - oldest : 0n }
+}
 
 function requiredEnv(...names) {
   for (const name of names) {
@@ -83,8 +116,8 @@ function readFlag(name, fallback) {
 }
 
 function positiveInteger(value, label) {
-  const parsed = Number.parseInt(String(value), 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${label} must be a positive integer`)
   }
   return parsed
@@ -164,138 +197,109 @@ function errorAttributes(error) {
   return { error: sanitizeLogText(error) }
 }
 
-function formatStatus(status) {
+export function validatePythPayload(payload) {
+  const { updateData, publishTimes } = payload ?? {}
+  if (!Array.isArray(updateData) || updateData.length === 0 || updateData.some(item =>
+    typeof item !== 'string' || !/^(0x)?(?:[0-9a-f]{2})+$/i.test(item))) {
+    throw new Error('Cached Pyth payload did not include valid updateData')
+  }
+  if (!Array.isArray(publishTimes) || publishTimes.length !== 6) {
+    throw new Error('Cached Pyth payload must include six feed publish times')
+  }
   return {
-    phase: Number(status.phase),
-    lastMarkPrice: status.lastMarkPrice.toString(),
-    lastMarkTime: status.lastMarkTime.toString(),
-    oracleFrozen: status.oracleFrozen,
-    fadWindow: status.fadWindow,
-    tradingActive: status.tradingActive,
-    withdrawalLive: status.withdrawalLive,
-    lpEpochSettlementPaused: status.lpEpochSettlementPaused,
+    updateData: updateData.map(item => item.startsWith('0x') ? item : `0x${item}`),
+    publishTimes: publishTimes.map(value => positiveInteger(value, 'publishTime')),
+    source: String(payload.source ?? 'database'),
   }
 }
 
 async function fetchCachedPythUpdate(backendUrl) {
-  const url = new URL('/api/perps/pyth/cached-latest', backendUrl)
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Cached Pyth request failed with HTTP ${response.status}`)
-  }
-
-  const payload = await response.json()
-  const updateData = payload?.data?.updateData
-  const publishTimes = payload?.data?.publishTimes
-  if (!Array.isArray(updateData) || updateData.length === 0) {
-    throw new Error('Cached Pyth payload did not include updateData')
-  }
-  if (!Array.isArray(publishTimes) || publishTimes.length === 0) {
-    throw new Error('Cached Pyth payload did not include publishTimes')
-  }
-
-  return {
-    updateData: updateData.map((item) => item.startsWith('0x') ? item : `0x${item}`),
-    publishTimes: publishTimes.map((value) => positiveInteger(value, 'publishTime')),
-    fetchedAt: Number(payload.data.fetchedAt),
-    source: String(payload.data.source ?? 'database'),
-  }
+  const response = await fetch(new URL('/api/perps/pyth/cached-latest', backendUrl), {
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error(`Cached Pyth request failed with HTTP ${response.status}`)
+  return validatePythPayload((await response.json())?.data)
 }
 
-async function updateMarkFromCache({ account, backendUrl, dryRun, maxPayloadAgeSeconds, publicClient, walletClient }) {
-  const before = await publicClient.readContract({
-    address: ADDRESSES.perpsPublicLens,
-    abi: PERPS_PUBLIC_LENS_ABI,
-    functionName: 'getProtocolStatus',
-  })
-  const beforeStatus = formatStatus(before)
-
-  const pythPayload = await fetchCachedPythUpdate(backendUrl)
-  const maxPublishTime = Math.max(...pythPayload.publishTimes)
-  const minPublishTime = Math.min(...pythPayload.publishTimes)
-  const now = Math.floor(Date.now() / 1000)
-  const ageSeconds = now - maxPublishTime
-
-  if (BigInt(maxPublishTime) <= before.lastMarkTime) {
-    emitLogEvery(300, 'INFO', 'oracle_update_not_needed', 'Cached Pyth payload is not newer than the on-chain mark', {
-      payload_source: pythPayload.source,
-      min_publish_time: minPublishTime,
-      max_publish_time: maxPublishTime,
-      onchain_mark_time: before.lastMarkTime,
-      payload_age_seconds: ageSeconds,
+/** One serial worker instance retains an unresolved transaction across health ticks. */
+export function createOracleWorker({ account, backendUrl, dryRun = false, maxPayloadAgeSeconds = 50,
+  publicClient, walletClient, feeds, pollSeconds = 30, now = Date.now,
+  fetchPayload = () => fetchCachedPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
+}) {
+  let nextRefreshAt = 0
+  let pending
+  let running = false
+  const reconcile = async () => {
+    const tx = pending
+    // A timeout/RPC error retains the hash. Never send another transaction until resolved.
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: tx.hash, timeout: 10_000,
+      onReplaced: ({ transaction }) => { tx.hash = transaction.hash },
     })
-    return
-  }
-
-  if (ageSeconds > maxPayloadAgeSeconds) {
-    emitLogEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is too old to submit', {
-      payload_source: pythPayload.source,
-      max_publish_time: maxPublishTime,
-      payload_age_seconds: ageSeconds,
-      max_payload_age_seconds: maxPayloadAgeSeconds,
+    pending = undefined
+    if (receipt.status !== 'success') throw new Error(`updateMarkPrice tx failed: ${tx.hash}`)
+    const after = await readHealth(publicClient, feeds)
+    const recovered = after.lag === 0n
+    log('INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
+      transaction_hash: tx.hash, block_number: receipt.blockNumber, update_fee_wei: tx.fee,
+      previous_mark_time: tx.markTime, mark_time: after.status.lastMarkTime,
+      mark_price: after.status.lastMarkPrice, oracle_frozen: after.status.oracleFrozen,
+      trading_active: after.status.tradingActive, repair: tx.repair,
+      previous_lag_seconds: Number(tx.lag), lag_seconds: Number(after.lag), synchronized: recovered,
     })
-    return
-  }
-
-  const updateFee = await publicClient.readContract({
-    address: ADDRESSES.pletherOracle,
-    abi: PLETHER_ORACLE_ABI,
-    functionName: 'getUpdateFee',
-    args: [pythPayload.updateData],
-  })
-
-  if (dryRun) {
-    emitLogEvery(300, 'INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
-      payload_source: pythPayload.source,
-      min_publish_time: minPublishTime,
-      max_publish_time: maxPublishTime,
-      payload_age_seconds: ageSeconds,
-      update_fee_wei: updateFee,
+    if (!recovered) logEvery(60, 'WARN', 'oracle_sync_pending', 'Stored Pyth feeds remain behind the engine mark', {
+      lag_seconds: Number(after.lag), mark_time: after.status.lastMarkTime, oldest_publish_time: after.oldest,
     })
-    return
+    return { status: recovered ? 'synchronized' : 'lagging', hash: tx.hash, lag: after.lag }
   }
-
-  const balance = await publicClient.getBalance({ address: account.address })
-  if (balance < updateFee) {
-    throw new Error(`Updater balance ${formatEther(balance)} ETH is below update fee ${formatEther(updateFee)} ETH`)
+  return async function iterate() {
+    if (running) return { status: 'busy' }
+    running = true
+    try {
+      if (pending) return await reconcile()
+      const before = await readHealth(publicClient, feeds)
+      const repair = before.lag > 0n
+      if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Stored Pyth feeds are behind the engine mark', {
+        lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
+      })
+      if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
+      nextRefreshAt = now() + pollSeconds * 1000
+      const payload = validatePythPayload(await fetchPayload())
+      const minPublishTime = Math.min(...payload.publishTimes)
+      const maxPublishTime = Math.max(...payload.publishTimes)
+      const markTime = before.status.lastMarkTime
+      const ageSeconds = Number(before.block.timestamp) - minPublishTime
+      if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
+        logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
+          min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
+          lag_seconds: Number(before.lag),
+        })
+        return { status: 'waiting_for_payload' }
+      }
+      if (ageSeconds > maxPayloadAgeSeconds || BigInt(maxPublishTime) > before.block.timestamp) {
+        logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is outside the submission age window', {
+          min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
+          payload_age_seconds: ageSeconds, max_payload_age_seconds: maxPayloadAgeSeconds,
+        })
+        return { status: 'stale_payload' }
+      }
+      const fee = await publicClient.readContract({ address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI,
+        functionName: 'getUpdateFee', args: [payload.updateData] })
+      if (dryRun) {
+        log('INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
+          min_publish_time: minPublishTime, update_fee_wei: fee, repair, lag_seconds: Number(before.lag),
+        })
+        return { status: 'dry_run' }
+      }
+      const balance = await publicClient.getBalance({ address: account.address })
+      if (balance < fee) throw new Error(`Updater balance ${formatEther(balance)} ETH is below update fee ${formatEther(fee)} ETH`)
+      const { request } = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
+        abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+      const hash = await walletClient.writeContract(request)
+      pending = { hash, fee, repair, lag: before.lag, markTime }
+      return await reconcile()
+    } finally { running = false }
   }
-
-  const { request } = await publicClient.simulateContract({
-    account,
-    address: ADDRESSES.orderRouter,
-    abi: ORDER_ROUTER_ABI,
-    functionName: 'updateMarkPrice',
-    args: [pythPayload.updateData],
-    value: updateFee,
-  })
-
-  const hash = await walletClient.writeContract(request)
-
-  const receipt = await publicClient.waitForTransactionReceipt({ hash })
-  if (receipt.status !== 'success') {
-    throw new Error(`updateMarkPrice tx failed: ${hash}`)
-  }
-
-  const after = await publicClient.readContract({
-    address: ADDRESSES.perpsPublicLens,
-    abi: PERPS_PUBLIC_LENS_ABI,
-    functionName: 'getProtocolStatus',
-  })
-  const afterStatus = formatStatus(after)
-  emitLogEvery(300, 'INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
-    transaction_hash: hash,
-    block_number: receipt.blockNumber,
-    payload_source: pythPayload.source,
-    min_publish_time: minPublishTime,
-    max_publish_time: maxPublishTime,
-    payload_age_seconds: ageSeconds,
-    update_fee_wei: updateFee,
-    previous_mark_time: beforeStatus.lastMarkTime,
-    mark_time: afterStatus.lastMarkTime,
-    mark_price: afterStatus.lastMarkPrice,
-    oracle_frozen: afterStatus.oracleFrozen,
-    trading_active: afterStatus.tradingActive,
-  })
 }
 
 async function main() {
@@ -305,8 +309,12 @@ async function main() {
   const rpcUrl = requiredEnv('ARBITRUM_SEPOLIA_RPC_URL', 'RPC_URL')
   const backendUrl = process.env.PERPS_ORACLE_UPDATER_BACKEND_URL ?? 'http://127.0.0.1:3001'
   const pollSeconds = positiveInteger(
-    readFlag('--poll-seconds', process.env.PERPS_ORACLE_UPDATER_POLL_SECONDS ?? '300'),
+    readFlag('--poll-seconds', process.env.PERPS_ORACLE_UPDATER_POLL_SECONDS ?? '30'),
     'poll seconds'
+  )
+  const healthPollSeconds = positiveInteger(
+    readFlag('--health-poll-seconds', process.env.PERPS_ORACLE_UPDATER_HEALTH_POLL_SECONDS ?? '5'),
+    'health poll seconds'
   )
   const maxPayloadAgeSeconds = positiveInteger(
     readFlag('--max-payload-age-seconds', process.env.PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS ?? '50'),
@@ -336,16 +344,9 @@ async function main() {
     })
     : undefined
 
-  const run = async () => {
-    await updateMarkFromCache({
-      account,
-      backendUrl,
-      dryRun,
-      maxPayloadAgeSeconds,
-      publicClient,
-      walletClient,
-    })
-  }
+  const feeds = await loadOracleFeeds(publicClient)
+  const run = createOracleWorker({ account, backendUrl, dryRun, maxPayloadAgeSeconds,
+    publicClient, walletClient, feeds, pollSeconds })
 
   if (!loop) {
     await run()
@@ -355,6 +356,7 @@ async function main() {
   emitLog('INFO', 'oracle_worker_started', 'Cached Pyth oracle updater started', {
     chain_id: chainId,
     poll_seconds: pollSeconds,
+    health_poll_seconds: healthPollSeconds,
     max_payload_age_seconds: maxPayloadAgeSeconds,
     dry_run: dryRun,
     updater_address: account?.address,
@@ -366,11 +368,13 @@ async function main() {
     } catch (error) {
       emitLogEvery(60, 'ERROR', 'oracle_worker_iteration_failed', 'Oracle updater iteration failed', errorAttributes(error))
     }
-    await sleep(pollSeconds * 1000)
+    await sleep(Math.min(pollSeconds, healthPollSeconds) * 1000)
   }
 }
 
-main().catch((error) => {
-  emitLog('ERROR', 'oracle_worker_fatal', 'Oracle updater cannot start', errorAttributes(error))
-  process.exitCode = 1
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    emitLog('ERROR', 'oracle_worker_fatal', 'Oracle updater cannot start', errorAttributes(error))
+    process.exitCode = 1
+  })
+}

@@ -18,6 +18,10 @@ module Plether.AA.Gateway
   , buildPreparedOperation
   , revalidateSecuritySnapshot
   , agreeAccountIdentity
+  , forwardAlto
+  , classifyAltoResult
+  , closeAssistanceStatus
+  , observePreparationInclusion
   ) where
 
 import Control.Exception (SomeException, try)
@@ -28,6 +32,7 @@ import Control.Monad (forever, void)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Data.Foldable (toList)
 import Data.Aeson
   ( Value (..)
   , eitherDecode
@@ -67,7 +72,12 @@ import Network.HTTP.Types.Header (hRetryAfter)
 import Network.HTTP.Types.Status (status200, status400, status403, status413, statusCode)
 import qualified Plether.AA.Paymaster as Paymaster
 import qualified Plether.AA.Preparation as Preparation
+import qualified Plether.AA.PreparationRecovery as Recovery
+import qualified Plether.Database.AaPreparationRecovery as RecoveryDb
+import Plether.Insights.Registration.Wallet (recoverPersonalSignAddress)
+import qualified Plether.AA.Reconciler as Reconciler
 import qualified Plether.AA.RecoveryReceipt as RecoveryReceipt
+import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.Readiness (newReadiness)
 import qualified Plether.AA.Diagnostics as Diagnostics
 import qualified Plether.Database.AaPreparation as PreparationDb
@@ -88,16 +98,18 @@ import Plether.Database.AaSponsorship
   ( SponsorshipAuthorization (..)
   , SponsorshipDraft (..)
   , consumeAaRateLimit
+  , AaReconcilerCursor (..)
+  , getAaReconcilerCursor
   , getAaIssuancePause
   , getSponsorshipByDigest
   , getSponsorshipByRequestKey
   , getSponsorshipByUserOperationHash
   , getRecoveryReceiptLocator
   , isRecoveryOperationAuthorized
-  , isSponsorshipDeliveryAllowed
+  , isSponsorshipDeliveryAllowedFenced
   , markSponsorshipSubmitted
-  , reserveSponsorship
-  , storeSponsorshipSignature
+  , reserveSponsorshipFenced
+  , storeSponsorshipSignatureFenced
   )
 import Plether.Ethereum.Abi
   ( decodeAddress
@@ -125,6 +137,10 @@ import Web.Scotty
   )
 import qualified Web.Scotty as Scotty
 import System.Timeout (timeout)
+import System.Environment (lookupEnv)
+import Data.Maybe (isJust)
+import Plether.Database.CloseAssistance (CloseAssistanceReservation (..))
+import qualified Plether.Perps.Manifest as Manifest
 
 data NativeGatewayState = NativeGatewayState
   { ngsSigner :: Maybe PaymasterSigner
@@ -137,6 +153,10 @@ data NativeGatewayState = NativeGatewayState
   , ngsReadiness :: MVar (Maybe (IO Value))
   , ngsDiagnostics :: MVar (Maybe Diagnostics.DiagnosticSink)
   , ngsAttemptId :: Maybe Text
+  , ngsRecoveryOrigin :: Maybe Text
+  , ngsRetirementEnabled :: Bool
+  , ngsPreparationFence :: Maybe RecoveryDb.Fence
+  , ngsCloseAssistance :: Maybe CloseAssistanceConfig
   }
 
 data SecurityBlockHeader = SecurityBlockHeader
@@ -154,6 +174,7 @@ data NativeSecurityContext = NativeSecurityContext
   , nscMaxSafeLagSeconds :: Integer
   , nscRpcMode :: AaRpcMode
   , nscAccountEvidence :: Cache.EvidenceCache Legacy.ProxyFailure Text
+  , nscPreparationFence :: Maybe RecoveryDb.Fence
   , nscTiming :: Maybe Timing
   }
 
@@ -166,12 +187,35 @@ newNativeGatewayState
   -> EthClient
   -> IO NativeGatewayState
 newNativeGatewayState manager cfg client = do
+  base <- newNativeGatewayBaseState manager cfg client
+  enabled <- lookupEnv "PERPS_CLOSE_ASSISTANCE_ENABLED"
+  global <- lookupEnv "PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED"
+  lens <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS"
+  codeHash <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH"
+  unless (enabled `elem` [Nothing,Just "false",Just "true"] && global `elem` [Nothing,Just "false",Just "true"]) $
+    fail "Close assistance flags must be true or false"
+  assistance <- if lens `elem` [Nothing,Just ""] && codeHash `elem` [Nothing,Just ""] && enabled /= Just "true" then pure Nothing else case (lens,codeHash,cfgNativeAaConfig cfg) of
+    (Just address,Just hash,Just native)
+      | isFixedHex 20 address && isFixedHex 32 hash && (enabled /= Just "true" || naaRpcMode native == DualIndependent) ->
+          pure $ Just $ CloseAssistanceConfig (T.toLower address) (T.toLower hash) (global == Just "true") (enabled == Just "true")
+    _ -> fail "Enabled close assistance requires a lens, runtime hash, and independently verified native AA"
+  origin <- fmap (\value -> if null value then Nothing else Just $ T.pack value) <$> lookupEnv "PERPS_AA_RECOVERY_ORIGIN"
+  let recoveryOrigin = maybe Nothing id origin
+  retirement <- lookupEnv "PERPS_AA_RECOVERY_RETIREMENT_ENABLED"
+  unless (retirement `elem` [Nothing, Just "false", Just "true"]) $ fail "Invalid recovery retirement flag"
+  unless (maybe True (\value -> "https://" `T.isPrefixOf` value && not (T.null $ T.drop 8 value)
+    && T.all (`elem` (['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> ".-:")) (T.drop 8 value)) recoveryOrigin) $ fail "Recovery origin must be an exact HTTPS origin"
+  when (retirement == Just "true" && recoveryOrigin == Nothing) $ fail "Retirement requires recovery origin"
+  pure base { ngsCloseAssistance = assistance, ngsRecoveryOrigin = recoveryOrigin, ngsRetirementEnabled = retirement == Just "true" }
+
+newNativeGatewayBaseState :: Manager -> Config -> EthClient -> IO NativeGatewayState
+newNativeGatewayBaseState manager cfg client = do
   profiles <- Cache.newEvidenceCache 2
   accounts <- Cache.newEvidenceCache 1024
   snapshots <- newMVar []
   readiness <- newMVar Nothing
   diagnostics <- newMVar Nothing
-  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing
+  let make signer failure secondary = NativeGatewayState signer failure secondary profiles accounts snapshots Nothing readiness diagnostics Nothing Nothing False Nothing Nothing
       warm state nativeCfg = do
         when (naaPreparationEnabled nativeCfg && naaSponsorshipEnabled nativeCfg && ngsIssuanceError state == Nothing) $
           void $ forkIO $ forever $ do
@@ -221,6 +265,28 @@ initializeGatewayObservability state cfg pool client = case (cfgNativeAaConfig c
       Just _ -> pure current
       Nothing -> Just <$> Diagnostics.startDiagnostics cfg database client
   _ -> pure ()
+
+data CloseAssistanceConfig = CloseAssistanceConfig
+  { cacLens :: Text
+  , cacCodeHash :: Text
+  , cacGlobal :: Bool
+  , cacEnabled :: Bool
+  }
+
+closeAssistanceStatus :: NativeGatewayState -> Config -> Value
+closeAssistanceStatus state cfg = case (ngsCloseAssistance state,cfgNativeAaConfig cfg) of
+  (Just assistance,Just native)
+    | cacEnabled assistance && naaSponsorshipEnabled native && naaSubmissionEnabled native && isJust (ngsSigner state) ->
+        object ["enabled" .= True,"chainId" .= (421614 :: Integer),"lens" .= cacLens assistance,
+          "lensCodeHash" .= cacCodeHash assistance,"paymasterAddress" .= naaPaymasterAddress native,
+          "canaryOwners" .= (if cacGlobal assistance then [] else naaCanaryOwners native)]
+  _ -> object ["enabled" .= False]
+
+assistanceLens :: NativeGatewayState -> Maybe Text
+assistanceLens = fmap cacLens . ngsCloseAssistance
+
+assistanceGlobal :: NativeGatewayState -> Maybe Legacy.CloseAssistanceIntent -> Bool
+assistanceGlobal state intent = isJust intent && maybe False cacGlobal (ngsCloseAssistance state)
 
 handleNativeAaRpc
   :: NativeGatewayState
@@ -343,7 +409,32 @@ handleNativeAaRpcTimed gatewayState cfg mPool perpsClient manager =
 prepareNativeOperation
   :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
   -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
-prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey request = do
+prepareNativeOperation gatewayState cfg nativeCfg pool client manager currentClient request =
+  case Preparation.parsePreparationIntent $ Legacy.rrParams request of
+    Left failure -> Legacy.respondFailure requestId failure
+    Right intent -> do
+      let scope = RecoveryDb.Scope (cfgPerpsChainId cfg) (T.toLower $ naaPaymasterAddress nativeCfg) (Preparation.piSender intent) (Preparation.piIdentifier intent)
+      authorized <- preparationRecoveryClient cfg pool scope currentClient
+      case authorized of
+        Left failure -> Legacy.respondFailure requestId failure
+        Right clientKey -> do
+          token <- liftIO Recovery.randomToken
+          claimed <- liftDb $ withDb pool $ \conn -> RecoveryDb.beginPreparation conn scope token
+          case claimed of
+            Left _ -> Legacy.respondFailure requestId databaseUnavailable
+            Right (Left "PREPARATION_RETIRED") -> Legacy.respondFailure requestId $
+              Legacy.ProxyFailure status403 (-32001) "This preparation was retired and cannot be reused" "PREPARATION_RETIRED" False
+            Right (Left reason) -> Legacy.respondFailure requestId $ Legacy.unavailable reason "Preparation cannot currently be resumed"
+            Right (Right fence) -> do
+              prepareNativeOperationFenced (gatewayState { ngsPreparationFence = Just fence }) cfg nativeCfg pool client manager clientKey request
+              _ <- liftDb $ withDb pool $ \conn -> RecoveryDb.releasePreparation conn fence
+              pure ()
+ where requestId = Legacy.rrId request
+
+prepareNativeOperationFenced
+  :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
+  -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clientKey request = do
   timing <- maybe (liftIO newTiming) pure $ ngsTiming gatewayState
   let identifier = timingIdentifier timing
   if not (naaSponsorshipEnabled nativeCfg)
@@ -361,24 +452,48 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
           policy <- checked (Legacy.validateMethodParams policyRequest) >>= maybe
             (throwE $ Legacy.invalidParams "Missing preparation account") pure
           owner <- ioStage timing "identity" $ verifyAccountIdentityDual context policy
-          checked $ Legacy.validateActionSequence cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
-          unless (ownerAllowedForNativeCanary nativeCfg owner) $
+          assistance <- checked $ Legacy.validateNativeActionSequence (assistanceLens gatewayState) cfg (Preparation.piSender intent) owner (Legacy.puoCalls policy)
+          when (isJust assistance && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)) $ throwE paymasterPaused
+          _ <- ioStage timing "close_assistance" $ validateCloseAssistanceDual gatewayState (Just context) (Preparation.piSender intent) assistance
+          unless (case assistance of
+            Nothing -> ownerAllowedForNativeCanary nativeCfg owner
+            Just _ -> assistanceGlobal gatewayState assistance || T.toLower owner `elem` naaCanaryOwners nativeCfg) $
             throwE $ Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
           _ <- ioStage timing "runtime" $ verifyNativeAccountRuntimeDual nativeCfg context policy
           let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
               profile = preparationProfileFingerprint nativeCfg
               previous = T.replace Preparation.gasPolicyVersion "execution-headroom-v2-sepolia-cap2100000-150pct-min100000" profile
-          claim <- db $ \conn -> PreparationDb.claimPreparationCompatible conn (naaPreparationEnabled nativeCfg) clientKey
+          fence <- maybe (throwE databaseUnavailable) pure $ ngsPreparationFence gatewayState
+          claim <- db $ \conn -> PreparationDb.claimPreparationCompatibleFenced conn fence (naaPreparationEnabled nativeCfg && not (Preparation.piResumeOnly intent)) clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent)
             (boundIntent profile) [boundIntent previous] identifier
           stored <- case claim of
+            PreparationDb.PreparationFenceLost -> throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
             PreparationDb.PreparationConflict -> throwE $ Legacy.invalidParams "Preparation ID is bound to another intent"
-            PreparationDb.PreparationExpired -> throwE $ Legacy.policyDenied "Preparation expired; review a new intent"
+            PreparationDb.PreparationExpired -> throwE $ (Legacy.policyDenied "Preparation expired; review a new intent") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
             PreparationDb.PreparationDisabled -> throwE $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
             PreparationDb.PreparationBusy -> throwE $ Legacy.unavailable "PREPARATION_BUSY" "Retry the same preparation ID"
             PreparationDb.PreparationClaimed operation -> pure operation
+          bound <- db $ \conn -> PreparationDb.bindPreparationDeployment conn clientKey
+            (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
+          recoveryBound <- case ngsPreparationFence gatewayState of
+            Nothing -> pure False
+            Just fence -> db $ \conn -> RecoveryDb.bindDeployment conn fence clientKey
+          unless (bound && recoveryBound) $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
           operationObject <- case stored of
-            Just (Object operation) -> pure operation
+            Just (Object operation) -> do
+              estimate <- ioStage timing "resume_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
+              unless (KM.lookup "nonce" estimate == KM.lookup "nonce" operation) $
+                throwE $ (Legacy.policyDenied "The account nonce changed; review account activity") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
+              let quantityIn fields key = KM.lookup key fields >>= \case
+                    String value -> parseRpcQuantity value
+                    _ -> Nothing
+                  fits key = case (quantityIn estimate key, quantityIn operation key) of
+                    (Just needed, Just prepared) -> needed <= prepared
+                    _ -> False
+              unless (all fits ["callGasLimit","verificationGasLimit","preVerificationGas"]) $
+                throwE $ (Legacy.policyDenied "The batch now requires more gas than the prepared limits") {Legacy.pfReason = "PREPARATION_UNUSABLE"}
+              pure operation
             Just _ -> throwE databaseUnavailable
             Nothing -> do
               unless (naaPreparationEnabled nativeCfg) $ throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
@@ -389,18 +504,19 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager clientKey 
               pure built
           unless (Preparation.matchesIntent intent operationObject) $ throwE databaseUnavailable
           operation <- checked $ firstInvalidParams $ Paymaster.parsePackedUserOperation operationObject
+          when (isJust stored) $ ioStage timing "resume_fee_validation" $ validateLiveFeeCapDual context operation
           -- Validate the exact estimated payload again, not just the skeleton.
           finalPolicyRequest <- checked $ Preparation.internalRequest "eth_estimateUserOperationGas"
             [Object $ KM.insert "signature" (String Legacy.dummySignature) operationObject, String nativeEntryPoint]
           _ <- checked $ Legacy.validateMethodParams finalPolicyRequest
-          pure (context, owner, operation)
+          pure (context, owner, operation, assistance)
         case result of
           Left failure -> do
             _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
             Legacy.respondFailure requestId failure
-          Right (context, owner, operation) ->
-            deliverPreparation gatewayState nativeCfg pool context clientKey owner request operation $ \envelope -> do
+          Right (context, owner, operation, assistance) ->
+            deliverPreparation assistance gatewayState (if Preparation.piResumeOnly intent then nativeCfg { naaPreparationEnabled = False } else nativeCfg) pool context clientKey owner request operation $ \envelope -> do
               let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
               linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
@@ -450,11 +566,11 @@ emitTiming timing = do
 
 -- Rollback disables new reservations but permits delivery of an already signed
 -- authorization, subject to the same pause, expiry and canonical-state checks.
-deliverPreparation :: NativeGatewayState -> NativeAaConfig -> DbPool -> NativeSecurityContext
+deliverPreparation :: Maybe Legacy.CloseAssistanceIntent -> NativeGatewayState -> NativeAaConfig -> DbPool -> NativeSecurityContext
   -> Text -> Text -> Legacy.RpcRequest -> Paymaster.PackedUserOperation
   -> (Paymaster.SponsorshipEnvelope -> ActionM ()) -> ActionM ()
-deliverPreparation state cfg pool context clientKey owner request operation deliver
-  | naaPreparationEnabled cfg = issueSponsorship state cfg pool (Just context) clientKey owner request operation deliver
+deliverPreparation assistance state cfg pool context clientKey owner request operation deliver
+  | naaPreparationEnabled cfg = issueSponsorship assistance state cfg pool (Just context) clientKey owner request operation deliver
   | otherwise = do
       now <- liftEpochSeconds
       existing <- liftDb $ withDb pool $ \conn -> getSponsorshipByRequestKey conn (sponsorshipRequestKey cfg clientKey owner operation)
@@ -541,9 +657,35 @@ altoResult manager cfg method params = case Preparation.internalRequest method p
   Right request -> do
     response <- forwardAlto manager (naaAltoRpcUrl cfg) request
     pure $ case response of
-      Right (Object fields, _) | Just result <- KM.lookup "result" fields -> Right result
+      Right (value, _) -> classifyAltoResult method value
       Left failure -> Left failure
-      _ -> Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto preparation failed"
+
+-- Never forward arbitrary upstream messages/data (which may contain calldata).
+-- Only execution estimates interpret ERC-4337 rejection codes as deterministic;
+-- transport/protocol failures and errors on other methods remain unavailable.
+classifyAltoResult :: Text -> Value -> Either Legacy.ProxyFailure Value
+classifyAltoResult method (Object fields)
+  | Just result <- KM.lookup "result" fields = Right result
+  | method == "eth_estimateUserOperationGas"
+  , Just (Object err) <- KM.lookup "error" fields
+  , Just (Number code) <- KM.lookup "code" err
+  , code `elem` map fromIntegral (-32521 : [-32507 .. -32500] :: [Int]) =
+      let (reason, message) = case (code, KM.lookup "message" err) of
+            (-32521, Just (String "UserOperation reverted during simulation with reason: 0x024ec6ee")) ->
+              ("INSUFFICIENT_FREE_EQUITY", "Not enough available trading collateral. Reduce the order size or add collateral.")
+            (-32521, Just (String "UserOperation reverted during simulation with reason: 0xe37e62c6")) ->
+              ("INVALID_ORDER_DEADLINE", "The order deadline is invalid. Refresh the order and review it again.")
+            _ -> ("SIMULATION_FAILED", "The transaction was rejected during simulation. Refresh account state and review the action.")
+       in Left $ Legacy.ProxyFailure status200 (truncate code) message reason False
+classifyAltoResult _ _ = Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto is temporarily unavailable"
+
+-- The queue is bounded and independent of submission. Missing diagnostics never
+-- change authorization, RPC responses, or chain recovery.
+noteSubmission :: NativeGatewayState -> Text -> Text -> Text -> ActionM ()
+noteSubmission gatewayState clientKey operationHash stage = liftIO $ do
+  sink <- readMVar $ ngsDiagnostics gatewayState
+  mapM_ (\queue -> Diagnostics.enqueueDiagnostic queue $
+    Diagnostics.SubmissionDiagnostic clientKey operationHash stage) sink
 
 dispatchNative
   :: NativeGatewayState
@@ -557,14 +699,23 @@ dispatchNative
   -> Legacy.RpcRequest
   -> ActionM ()
 dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp clientKey request
+  | Legacy.rrMethod request `elem` [Legacy.GetRecoveryChallenge, Legacy.VerifyRecoveryChallenge, Legacy.GetRecoveryStatus, Legacy.RetirePreparation] =
+      handlePreparationRecovery gatewayState cfg nativeCfg pool perpsClient manager clientKey request
+  | Legacy.rrMethod request == Legacy.GetPreparationStatus =
+      preparationStatus nativeCfg pool perpsClient manager clientKey request
   | Legacy.rrMethod request == Legacy.PrepareUserOperation =
       prepareNativeOperation gatewayState cfg nativeCfg pool perpsClient manager clientKey request
   | otherwise =
   case validateNativeParams request of
     Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
     Right (mPolicyOperation, mPackedOperation) -> do
-      authorizedRead <- authorizeRecoveryRead pool clientKey request
-      if not authorizedRead
+      let observe stage = case mPackedOperation of
+            Just packed | Legacy.rrMethod request == Legacy.SendUserOperation ->
+              noteSubmission gatewayState clientKey (encodeHex $ Paymaster.userOperationHash packed) stage
+            _ -> pure ()
+      observe "submission_received"
+      recoveryClient <- authorizeRecoveryRead nativeCfg pool clientKey request
+      if recoveryClient == Nothing
         then
           Legacy.respondFailure (Legacy.rrId request) $
             Legacy.ProxyFailure status403 (-32001) "Forbidden" "RECOVERY_HASH_NOT_AUTHORIZED" False
@@ -584,15 +735,15 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                     accountKey
                     (naaAccountRateLimitPerMinute nativeCfg)
             case accountRate of
-              Left _ -> Legacy.respondFailure (Legacy.rrId request) databaseUnavailable
-              Right False -> Legacy.respondFailure (Legacy.rrId request) Legacy.rateLimited
+              Left _ -> observe "submission_journal_failed" >> Legacy.respondFailure (Legacy.rrId request) databaseUnavailable
+              Right False -> observe "rate_limited" >> Legacy.respondFailure (Legacy.rrId request) Legacy.rateLimited
               Right True -> do
                 securityContext <-
-                  if requiresDualSecurity request
+                  if requiresDualSecurity request || length (Legacy.puoCalls policyOperation) == 5
                     then timeGateway gatewayState "security" $ liftIO $ nativeSecurityContext nativeCfg gatewayState perpsClient
                     else pure $ Right Nothing
                 case securityContext of
-                  Left _ -> respondSecurityAttestationFailure (Legacy.rrId request) "initial security context"
+                  Left _ -> observe "security_rejected" >> respondSecurityAttestationFailure (Legacy.rrId request) "initial security context"
                   Right mSecurityContext -> do
                     identity <- timeGateway gatewayState "identity" $ liftIO $
                       maybe
@@ -601,19 +752,22 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                         mSecurityContext
                     case identity of
                       Left failure ->
-                        respondSecurityAwareFailure
+                        observe "identity_rejected" >> respondSecurityAwareFailure
                           (Legacy.rrId request)
                           mSecurityContext
                           failure
                       Right owner ->
-                        case Legacy.validateActionSequence
+                        case Legacy.validateNativeActionSequence (assistanceLens gatewayState)
                           cfg
                           (Legacy.puoSender policyOperation)
                           owner
                           (Legacy.puoCalls policyOperation) of
-                          Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
-                          Right ()
-                            | isCanaryGated nativeCfg request owner ->
+                          Left failure -> observe "policy_rejected" >> Legacy.respondFailure (Legacy.rrId request) failure
+                          Right assistance
+                            | (case assistance of
+                                Nothing -> isCanaryGated nativeCfg request owner
+                                Just _ -> Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
+                                  && not (assistanceGlobal gatewayState assistance || T.toLower owner `elem` naaCanaryOwners nativeCfg)) ->
                                 Legacy.respondFailure (Legacy.rrId request) $
                                   Legacy.policyDenied "Trading Account owner is not enabled for the native AA canary"
                             | otherwise -> do
@@ -624,12 +778,13 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                     mSecurityContext
                                 case runtimeTrusted of
                                   Left failure ->
-                                    respondSecurityAwareFailure
+                                    observe "runtime_rejected" >> respondSecurityAwareFailure
                                       (Legacy.rrId request)
                                       mSecurityContext
                                       failure
                                   Right () ->
                                     handleOperation
+                                      assistance
                                       gatewayState
                                       nativeCfg
                                       pool
@@ -639,10 +794,11 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                       owner
                                       request
                                       packedOperation
-          _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager clientKey request
+          _ -> handleOperationless gatewayState perpsClient nativeCfg pool manager (maybe clientKey id recoveryClient) request
 
 handleOperation
-  :: NativeGatewayState
+  :: Maybe Legacy.CloseAssistanceIntent
+  -> NativeGatewayState
   -> NativeAaConfig
   -> DbPool
   -> Manager
@@ -652,8 +808,21 @@ handleOperation
   -> Legacy.RpcRequest
   -> Paymaster.PackedUserOperation
   -> ActionM ()
-handleOperation gatewayState nativeCfg pool manager securityContext clientKey owner request operation =
-  case Legacy.rrMethod request of
+handleOperation assistance gatewayState nativeCfg pool manager securityContext clientKey owner request operation = do
+  -- Sending an already-authorized operation must remain recoverable after the
+  -- intent commits or issuance is disabled. Submission verifies its durable
+  -- authorization; the atomic lens guard enforces eligibility when it executes.
+  eligible <- if Legacy.rrMethod request == Legacy.SendUserOperation then pure $ Right ()
+    else if isJust assistance && Legacy.rrMethod request `elem` [Legacy.GetPaymasterStubData, Legacy.GetPaymasterData]
+    && not (maybe False cacEnabled $ ngsCloseAssistance gatewayState)
+    then pure $ Left paymasterPaused
+    else liftIO $ validateCloseAssistanceDual gatewayState securityContext (Paymaster.puoSender operation) assistance
+  case eligible of
+    Left failure -> Legacy.respondFailure requestId failure
+    Right () -> dispatch
+ where
+  requestId = Legacy.rrId request
+  dispatch = case Legacy.rrMethod request of
     Legacy.GetPaymasterStubData ->
       if not (naaSponsorshipEnabled nativeCfg)
         then Legacy.respondFailure requestId paymasterPaused
@@ -675,21 +844,20 @@ handleOperation gatewayState nativeCfg pool manager securityContext clientKey ow
                             Paymaster.makeSponsorshipEnvelope
                               nativeCfg
                               (max 0 $ now - 30)
-                              (now + naaValiditySeconds nativeCfg)
+                              (maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance)
                               (naaMaxCostWei nativeCfg)
                               Paymaster.dummyPaymasterSignature
                       respondSuccess requestId $ paymasterResponse False envelope
     Legacy.GetPaymasterData ->
-      issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation
+      issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation
         (respondSuccess requestId . paymasterResponse True)
     Legacy.SendUserOperation ->
-      submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
+      submitSponsoredOperation gatewayState nativeCfg pool manager securityContext clientKey request operation
     _ -> relayToAlto nativeCfg manager request Nothing
- where
-  requestId = Legacy.rrId request
 
 issueSponsorship
-  :: NativeGatewayState
+  :: Maybe Legacy.CloseAssistanceIntent
+  -> NativeGatewayState
   -> NativeAaConfig
   -> DbPool
   -> Maybe NativeSecurityContext
@@ -699,7 +867,7 @@ issueSponsorship
   -> Paymaster.PackedUserOperation
   -> (Paymaster.SponsorshipEnvelope -> ActionM ())
   -> ActionM ()
-issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner request operation deliver
+issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation deliver
   | not (naaSponsorshipEnabled nativeCfg) =
       Legacy.respondFailure requestId paymasterPaused
   | Just _ <- ngsIssuanceError gatewayState =
@@ -751,7 +919,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
   reserveNew signer context requestKey = do
         now <- liftEpochSeconds
         let validAfter = max 0 $ now - 30
-            validUntil = now + naaValiditySeconds nativeCfg
+            validUntil = maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance
             provisional =
               Paymaster.makeSponsorshipEnvelope
                 nativeCfg validAfter validUntil (naaMaxCostWei nativeCfg) BS.empty
@@ -782,7 +950,7 @@ issueSponsorship gatewayState nativeCfg pool securityContext clientKey owner req
             case snapshotReady of
               Left reason -> respondSecurityAttestationFailure requestId reason
               Right () -> do
-                reserved <- timeContext context "reservation_and_lock" $ liftDb $ withDb pool $ \conn -> reserveSponsorship conn nativeCfg draft
+                reserved <- timeContext context "reservation_and_lock" $ liftDb $ withDb pool $ \conn -> reserveSponsorshipFenced conn nativeCfg draft (fmap (assistanceReservation (Paymaster.puoSender operation)) assistance) (nscPreparationFence context)
                 case reserved of
                   Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "reservation"
                   Right (Left "PAYMASTER_PAUSED") -> Legacy.respondFailure requestId paymasterPaused
@@ -823,7 +991,7 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
       deliveryAllowed <-
         liftDb $
           withDb pool $ \conn ->
-            isSponsorshipDeliveryAllowed conn nativeCfg $ saDigest authorization
+            isSponsorshipDeliveryAllowedFenced conn nativeCfg (saDigest authorization) (nscPreparationFence securityContext)
       case deliveryAllowed of
         Left _ -> respondNativeDbFailure requestId Legacy.GetPaymasterData "delivery-authorization"
         Right False -> Legacy.respondFailure requestId paymasterPaused
@@ -847,7 +1015,9 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                         Paymaster.applyPaymasterEnvelope operation finalEnvelope
                 if saExpectedUserOperationHash authorization /= Just expectedHash
                   then Legacy.respondFailure requestId databaseUnavailable
-                  else deliver finalEnvelope
+                  else do
+                    issueRecoveryCapability nativeCfg expectedHash (saClientKey authorization)
+                    deliver finalEnvelope
           Nothing -> do
             signatureResult <- timeContext securityContext "kms_sign" $ liftIO $ psSignDigest signer $ Paymaster.sponsorshipDigest operation unsignedEnvelope
             case signatureResult of
@@ -871,12 +1041,13 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                     stored <-
                       timeContext securityContext "signature_store_and_lock" $ liftDb $
                         withDb pool $ \conn ->
-                          storeSponsorshipSignature
+                          storeSponsorshipSignatureFenced
                             conn
                             nativeCfg
                             (saDigest authorization)
                             signatureText
                             expectedHash
+                            (nscPreparationFence securityContext)
                     case stored of
                       Left _ -> respondNativeDbFailure requestId Legacy.GetPaymasterData "signature-store"
                       Right False -> respondNativeDbFailure requestId Legacy.GetPaymasterData "signature-store-rejected"
@@ -892,7 +1063,8 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                           _ -> respondNativeDbFailure requestId Legacy.GetPaymasterData "signature-readback"
 
 submitSponsoredOperation
-  :: NativeAaConfig
+  :: NativeGatewayState
+  -> NativeAaConfig
   -> DbPool
   -> Manager
   -> Maybe NativeSecurityContext
@@ -900,9 +1072,9 @@ submitSponsoredOperation
   -> Legacy.RpcRequest
   -> Paymaster.PackedUserOperation
   -> ActionM ()
-submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
+submitSponsoredOperation gatewayState nativeCfg pool manager securityContext clientKey request operation
   | not (naaSubmissionEnabled nativeCfg) =
-      Legacy.respondFailure requestId $
+      observeFailure "submission_paused" $
         Legacy.unavailable "SUBMISSION_PAUSED" "Native UserOperation submission is disabled"
   | BS.length (Paymaster.puoSignature operation) /= 65 =
       Legacy.respondFailure requestId $
@@ -924,35 +1096,44 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
                     revalidateSecurityContext
                     securityContext
               case securityVerified of
-                Left reason -> respondSecurityAttestationFailure requestId reason
+                Left reason -> observe "security_rejected" >> respondSecurityAttestationFailure requestId reason
                 Right () -> submitVerified envelope
  where
+  observeFailure stage failure = observe stage >> Legacy.respondFailure requestId failure
+  observe = noteSubmission gatewayState clientKey (encodeHex $ Paymaster.userOperationHash operation)
   submitVerified envelope = do
               let digest = encodeHex $ Paymaster.sponsorshipDigest operation envelope
                   operationHash = encodeHex $ Paymaster.userOperationHash operation
                   signatureText = encodeHex $ Paymaster.seSignature envelope
+              token <- header "X-Plether-AA-Preparation-Recovery"
+              recovered <- case TL.toStrict <$> token of
+                Just value | T.length value == 64 -> liftDb $ withDb pool $ \conn -> RecoveryDb.sessionSubmissionClient conn (T.toLower $ naaPaymasterAddress nativeCfg) (Recovery.tokenHash value) operationHash
+                _ -> pure $ Right Nothing
+              let recoveredClient = either (const Nothing) id recovered
               stored <- liftDb $ withDb pool $ \conn -> getSponsorshipByDigest conn digest
               case stored of
-                Left _ -> respondNativeDbFailure requestId Legacy.SendUserOperation "authorization-read"
+                Left _ -> observe "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "authorization-read"
                 Right Nothing ->
-                  Legacy.respondFailure requestId $
+                  observeFailure "authorization_rejected" $
                     Legacy.ProxyFailure status403 (-32001) "Forbidden" "SPONSORSHIP_NOT_AUTHORIZED" False
                 Right (Just authorization)
-                  | saClientKey authorization /= T.toLower clientKey
+                  | (saClientKey authorization /= T.toLower clientKey && Just (saClientKey authorization) /= recoveredClient)
                       || saExpectedUserOperationHash authorization /= Just operationHash
                       || saSignature authorization /= Just signatureText
                       || saState authorization `notElem` ["signed", "submitted"] ->
-                      Legacy.respondFailure requestId $
+                      observeFailure "authorization_rejected" $
                         Legacy.ProxyFailure status403 (-32001) "Forbidden" "SPONSORSHIP_NOT_AUTHORIZED" False
                   | otherwise -> do
+                      let observedAuthorized = noteSubmission gatewayState (saClientKey authorization) operationHash
                       marked <-
                         liftDb $
                           withDb pool $ \conn ->
-                            markSponsorshipSubmitted conn digest operationHash clientKey
+                            markSponsorshipSubmitted conn digest operationHash (saClientKey authorization)
                       case marked of
-                        Left _ -> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal"
-                        Right False -> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal-rejected"
+                        Left _ -> observedAuthorized "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal"
+                        Right False -> observedAuthorized "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal-rejected"
                         Right True -> do
+                          observedAuthorized "submission_journaled"
                           finalSecurityCheck <-
                             liftIO $
                               maybe
@@ -960,8 +1141,8 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
                                 revalidateSecurityContext
                                 securityContext
                           case finalSecurityCheck of
-                            Left reason -> respondSecurityAttestationFailure requestId reason
-                            Right () -> relayToAlto nativeCfg manager request $ Just operationHash
+                            Left reason -> observedAuthorized "security_rejected" >> respondSecurityAttestationFailure requestId reason
+                            Right () -> relayToAltoObserved nativeCfg manager request (Just operationHash) observedAuthorized
 
   requestId = Legacy.rrId request
 
@@ -994,8 +1175,7 @@ handleOperationless gatewayState primary nativeCfg pool manager clientKey reques
             case authorization of
               Left _ -> respondNativeDbFailure requestId (Legacy.rrMethod request) "recovery-receipt-authorization"
               Right (Just saved) | saClientKey saved == clientKey && saState saved /= "expired" ->
-                Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_EVIDENCE_UNAVAILABLE"
-                  "Operation reconciliation has not produced a verifiable receipt; retry recovery"
+                respondRecoveryPending requestId
               _ -> forward
           Right (Just locator) -> do
             let recover client = RecoveryReceipt.recoverReceipt client 421614
@@ -1093,7 +1273,7 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
               case (trustedSnapshot, profileResult, primaryPause, secondaryPause, finalHeader) of
                 (True, Right (), Right False, Right False, Right checkedHeader)
                   | checkedHeader == header ->
-                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header (naaMaxSafeLagSeconds nativeCfg) (naaRpcMode nativeCfg) (ngsAccountEvidence gatewayState) (ngsTiming gatewayState)
+                      pure $ Right $ Just $ NativeSecurityContext primaryClient secondaryClient header (naaMaxSafeLagSeconds nativeCfg) (naaRpcMode nativeCfg) (ngsAccountEvidence gatewayState) (ngsPreparationFence gatewayState) (ngsTiming gatewayState)
                 _ -> do
                   Cache.clearEvidence $ ngsProfileEvidence gatewayState
                   Cache.clearEvidence $ ngsAccountEvidence gatewayState
@@ -1209,8 +1389,26 @@ nativeStartupFailure =
     "SIGNER_UNAVAILABLE"
     "Native sponsorship startup attestation failed"
 
-authorizeRecoveryRead :: DbPool -> Text -> Legacy.RpcRequest -> ActionM Bool
-authorizeRecoveryRead pool clientKey request =
+issueRecoveryCapability :: NativeAaConfig -> Text -> Text -> ActionM ()
+issueRecoveryCapability cfg operation client = do
+  now <- liftEpochSeconds
+  setHeader "X-Plether-AA-Recovery" $ TL.fromStrict $
+    RecoveryCapability.issue (naaProxyOriginToken cfg) (naaPaymasterAddress cfg) now operation client
+
+-- Pending is deliberately NOT a null receipt: clients must not interpret lack
+-- of finalized evidence as permission to release the lane or resubmit.
+respondRecoveryPending :: Value -> ActionM ()
+respondRecoveryPending requestId = do
+  liftIO $ logInfo "aa_recovery_pending" "Awaiting verified recovery evidence" []
+  setHeader "Cache-Control" "no-store"
+  setHeader "Retry-After" "60"
+  status status200
+  json $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= requestId,
+    "error" .= object ["code" .= (-32001 :: Int), "message" .= ("Recovery is awaiting verified evidence" :: Text),
+      "data" .= object ["reason" .= ("RECOVERY_PENDING" :: Text), "retryable" .= True, "retryAfter" .= (60 :: Int)]]]
+
+authorizeRecoveryRead :: NativeAaConfig -> DbPool -> Text -> Legacy.RpcRequest -> ActionM (Maybe Text)
+authorizeRecoveryRead cfg pool clientKey request =
   case Legacy.rrMethod request of
     method
       | method `elem`
@@ -1220,13 +1418,22 @@ authorizeRecoveryRead pool clientKey request =
           ] ->
           case Legacy.rrParams request of
             [String operationHash] -> do
+              credential <- header "X-Plether-AA-Recovery"
+              now <- liftEpochSeconds
+              let capabilityClient = credential >>= RecoveryCapability.verify (naaProxyOriginToken cfg)
+                    (naaPaymasterAddress cfg) now operationHash . TL.toStrict
+                  authorizedClient = maybe clientKey id capabilityClient
               result <-
                 liftDb $
                   withDb pool $ \conn ->
-                    isRecoveryOperationAuthorized conn operationHash clientKey "alto"
-              pure $ either (const False) id result
-            _ -> pure False
-    _ -> pure True
+                    isRecoveryOperationAuthorized conn operationHash authorizedClient "alto"
+              case result of
+                Right True -> do
+                  issueRecoveryCapability cfg operationHash authorizedClient
+                  pure $ Just authorizedClient
+                _ -> pure Nothing
+            _ -> pure Nothing
+    _ -> pure $ Just clientKey
 
 validateNativeParams
   :: Legacy.RpcRequest
@@ -1285,20 +1492,26 @@ relayToAlto
   -> Legacy.RpcRequest
   -> Maybe Text
   -> ActionM ()
-relayToAlto nativeCfg manager request expectedHash = do
+relayToAlto nativeCfg manager request expectedHash =
+  relayToAltoObserved nativeCfg manager request expectedHash (const $ pure ())
+
+relayToAltoObserved :: NativeAaConfig -> Manager -> Legacy.RpcRequest -> Maybe Text -> (Text -> ActionM ()) -> ActionM ()
+relayToAltoObserved nativeCfg manager request expectedHash observe = do
+  observe "bundler_forwarded"
   upstream <- liftIO $ forwardAlto manager (naaAltoRpcUrl nativeCfg) request
   case upstream of
-    Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
+    Left failure -> observe "bundler_unavailable" >> Legacy.respondFailure (Legacy.rrId request) failure
     Right (upstreamValue, retryAfter) ->
       case expectedHash of
         Nothing -> forwardResponse upstreamValue retryAfter
         Just localHash ->
           case responseOperationHash upstreamValue of
             Just upstreamHash | upstreamHash == localHash ->
-              forwardResponse upstreamValue retryAfter
+              observe "bundler_acknowledged" >> forwardResponse upstreamValue retryAfter
             Nothing | isRpcErrorResponse upstreamValue ->
-              forwardResponse upstreamValue retryAfter
+              observe "bundler_rejected" >> forwardResponse upstreamValue retryAfter
             returnedHash -> do
+              observe "bundler_hash_mismatch"
               liftIO $
                 logError
                   "aa_native_bundler_hash_mismatch"
@@ -1323,6 +1536,10 @@ forwardAlto
   -> Legacy.RpcRequest
   -> IO (Either Legacy.ProxyFailure (Value, Maybe Text))
 forwardAlto manager rpcUrl request = do
+  -- Alto 1.2.7 only accepts numeric IDs. Each HTTP call has one response, so
+  -- a local numeric ID is sufficient; validate it BEFORE restoring caller ID.
+  let upstreamRpc = request {Legacy.rrId = Number 1,
+        Legacy.rrObject = KM.insert "id" (Number 1) $ Legacy.rrObject request}
   result <- try @HttpException $ timeout 20_000_000 $ do
     base <- parseRequest $ T.unpack rpcUrl
     let upstreamRequest =
@@ -1332,7 +1549,7 @@ forwardAlto manager rpcUrl request = do
                 [ ("Content-Type", "application/json")
                 , ("Accept", "application/json")
                 ]
-            , requestBody = RequestBodyLBS $ encode $ Object $ Legacy.rrObject request
+            , requestBody = RequestBodyLBS $ encode $ Object $ Legacy.rrObject upstreamRpc
             , responseTimeout = responseTimeoutMicro 20_000_000
             , redirectCount = 0
             , checkResponse = \_ _ -> pure ()
@@ -1356,10 +1573,10 @@ forwardAlto manager rpcUrl request = do
       case eitherDecodeStrict' body of
         Left _ ->
           Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned an invalid response"
-        Right value@(Object responseObject)
-          | validAltoResponse request responseObject ->
+        Right (Object responseObject)
+          | validAltoResponse upstreamRpc responseObject ->
               Right
-                ( value
+                ( Object $ KM.insert "id" (Legacy.rrId request) responseObject
                 , TE.decodeUtf8' <$> retryAfterBytes >>= either (const Nothing) Just
                 )
         Right _ ->
@@ -1883,3 +2100,272 @@ sponsorshipRequestKey cfg clientKey owner operation =
               , T.pack $ show $ naaValiditySeconds cfg
               ]
           )
+
+
+assistanceReservation :: Text -> Legacy.CloseAssistanceIntent -> CloseAssistanceReservation
+assistanceReservation sender intent = CloseAssistanceReservation
+  Manifest.orderRouterAddress sender (encodeHex $ Legacy.caiClientOrderId intent)
+  (encodeHex $ keccak256 $ Legacy.caiRequest intent) (Legacy.caiLens intent) (Legacy.caiAmountUsdc intent)
+
+validateCloseAssistanceDual
+  :: NativeGatewayState -> Maybe NativeSecurityContext -> Text -> Maybe Legacy.CloseAssistanceIntent
+  -> IO (Either Legacy.ProxyFailure ())
+validateCloseAssistanceDual _ _ _ Nothing = pure $ Right ()
+validateCloseAssistanceDual state (Just context) sender (Just intent)
+  | Just config <- ngsCloseAssistance state, nscRpcMode context == DualIndependent = do
+      -- Eligibility is current state. The safe snapshot may predate this position or
+      -- make a fresh order deadline appear too far in the future. Pin both live reads
+      -- to the same explicit block and bracket them with independent header agreement.
+      let primary = nscPrimaryClient context
+          secondary = nscSecondaryClient context
+      heads <- concurrently (readSecurityHeader primary "latest") (readSecurityHeader secondary "latest")
+      case heads of
+        (Right first, Right second) -> do
+          let blockNumber = min (sbhNumber first) (sbhNumber second)
+          before <- readAgreedSecurityHeaderAt DualIndependent primary secondary blockNumber
+          now <- floor <$> getPOSIXTime
+          case before of
+            Right header | validateSecurityHeaderTime 30 now header == Right () -> do
+              let call client = do
+                    hash <- readCodeHashAt client blockNumber (cacLens config)
+                    result <- rpcCall client "eth_call" $ toJSON
+                      [object ["from" .= sender,"to" .= cacLens config,"data" .= encodeHex (Legacy.caiGuardData intent)],
+                       String $ Paymaster.canonicalQuantity blockNumber]
+                    pure $ hash == Right (cacCodeHash config) && result == Right (String "0x")
+              (firstValid,secondValid) <- concurrently (call primary) (call secondary)
+              after <- readAgreedSecurityHeaderAt DualIndependent primary secondary blockNumber
+              canonical <- revalidateSecurityContext context
+              pure $ if firstValid && secondValid && before == after && canonical == Right () then Right ()
+                else Left $ Legacy.policyDenied "Close assistance eligibility or deployment changed; review again"
+            _ -> pure $ Left securityAttestationUnavailable
+        _ -> pure $ Left securityAttestationUnavailable
+validateCloseAssistanceDual _ _ _ _ = pure $ Left securityAttestationUnavailable
+
+-- Status remains available with issuance disabled. No security/signing/bundler
+-- mutation is reachable from this handler; the reconciler alone releases liability.
+preparationStatus :: NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+preparationStatus = preparationStatusWithRecovery Nothing
+
+preparationStatusWithRecovery :: Maybe Bool -> NativeAaConfig -> DbPool -> EthClient -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+preparationStatusWithRecovery canRetire cfg pool client manager clientKey request = case Preparation.parsePreparationLocator $ Legacy.rrParams request of
+  Left failure -> Legacy.respondFailure requestId failure
+  Right locator -> do
+    credential <- header "X-Plether-AA-Recovery"
+    now <- liftEpochSeconds
+    let hash = Preparation.plHash locator
+        capabilityClient = hash >>= \h -> credential >>= RecoveryCapability.verify
+          (naaProxyOriginToken cfg) (naaPaymasterAddress cfg) now h . TL.toStrict
+        authorizedClient = maybe clientKey id capabilityClient
+    status <- liftDb $ withDb pool $ \conn -> PreparationDb.getPreparationStatus conn
+      authorizedClient (Preparation.plSender locator) (Preparation.plIdentifier locator) hash
+    case status of
+      Left _ -> Legacy.respondFailure requestId databaseUnavailable
+      Right Nothing -> Legacy.respondFailure requestId $
+        Legacy.ProxyFailure status403 (-32001) "Preparation is unavailable for this client" "PREPARATION_NOT_AUTHORIZED" False
+      Right (Just (Object fields, storedOperation)) -> do
+        cursor <- liftDb $ withDb pool $ \conn -> getAaReconcilerCursor conn 421614 (naaPaymasterAddress cfg)
+        safeTimestamp <- case cursor of
+          Right (Just position) -> do
+            block <- liftIO $ readSecurityHeader client (Paymaster.canonicalQuantity $ arcSafeBlock position)
+            pure $ case block of
+              Right value | sbhHash value == arcSafeBlockHash position -> Just $ sbhTimestamp value
+              _ -> Nothing
+          _ -> pure Nothing
+        let requestedAssistance = case storedOperation of
+              Just (Object payload) -> case Preparation.internalRequest "eth_estimateUserOperationGas"
+                [Object $ KM.insert "signature" (String Legacy.dummySignature) payload, String nativeEntryPoint]
+                >>= Legacy.validateMethodParams of
+                  Right (Just policy) -> length (Legacy.puoCalls policy) == 5
+                  _ -> False
+              _ -> False
+        case KM.lookup "userOperationHash" fields of
+          Just (String h) -> issueRecoveryCapability cfg h authorizedClient
+          _ -> pure ()
+        observed <- case (KM.lookup "authorizationState" fields, KM.lookup "userOperationHash" fields, storedOperation) of
+          (Just (String state), Just (String h), Just (Object payload)) | state `elem` ["signed","submitted"] ->
+            liftIO $ observePreparationInclusion cfg client manager h payload
+          _ -> pure Nothing
+        let withObservation = case observed of
+              Just (tx, success) -> KM.insert "transactionHash" (String tx) $ KM.insert "executionSuccess" (Bool success) fields
+              Nothing -> fields
+        let recoveryFields = case canRetire of
+              Nothing -> withObservation
+              Just allowed -> KM.insert "recoveryVerified" (Bool True) $ KM.insert "canRetire" (Bool allowed) withObservation
+        respondSuccess requestId $ Preparation.preparationStatusResponse now safeTimestamp requestedAssistance recoveryFields
+      _ -> Legacy.respondFailure requestId databaseUnavailable
+ where requestId = Legacy.rrId request
+
+-- Alto supplies a locator only. Direct receipt/event and block-hash checks must
+-- agree before reporting an observed (still unsafe) inclusion. No evidence is
+-- retained across reads, so a reorg retracts this observation on the next poll.
+observePreparationInclusion :: NativeAaConfig -> EthClient -> Manager -> Text -> KM.KeyMap Value -> IO (Maybe (Text, Bool))
+observePreparationInclusion cfg client manager expectedHash payload = do
+  locator <- altoResult manager cfg "eth_getUserOperationReceipt" [String expectedHash]
+  case locator of
+    Right (Object fields) | Just (Object receipt) <- KM.lookup "receipt" fields,
+      Just (String tx) <- KM.lookup "transactionHash" receipt, isFixedHex 32 tx -> do
+        direct <- rpcCall client "eth_getTransactionReceipt" $ toJSON [String tx]
+        case direct of
+          Right (Object canonicalReceipt) | Just (String numberText) <- KM.lookup "blockNumber" canonicalReceipt,
+            Just number <- parseRpcQuantity numberText,
+            Just (String blockHash) <- KM.lookup "blockHash" canonicalReceipt,
+            KM.lookup "status" canonicalReceipt == Just (String "0x1"),
+            KM.lookup "transactionHash" canonicalReceipt == Just (String tx),
+            Just (Array logs) <- KM.lookup "logs" canonicalReceipt,
+            Right operation <- Paymaster.parsePackedUserOperation payload -> do
+              headerResult <- readSecurityHeader client numberText
+              let events = [event | raw <- toList logs,
+                    Right event <- [Reconciler.parseUserOperationEvent (naaPaymasterAddress cfg) number number raw],
+                    Reconciler.uoeHash event == expectedHash,
+                    Reconciler.uoeSender event == Paymaster.puoSender operation,
+                    Reconciler.uoeNonce event == Paymaster.puoNonce operation,
+                    Reconciler.uoeTransactionHash event == T.toLower tx,
+                    Reconciler.uoeBlockHash event == T.toLower blockHash]
+              pure $ case (headerResult, events) of
+                (Right block, [event]) | sbhHash block == T.toLower blockHash -> Just (T.toLower tx, Reconciler.uoeSuccess event)
+                _ -> Nothing
+          _ -> pure Nothing
+    _ -> pure Nothing
+
+recoveryDenied :: Legacy.ProxyFailure
+recoveryDenied = Legacy.ProxyFailure status403 (-32001) "Verify the owner wallet to recover this saved attempt" "RECOVERY_VERIFICATION_REQUIRED" False
+
+recoverySessionOwner :: DbPool -> RecoveryDb.Scope -> ActionM (Either Legacy.ProxyFailure Text)
+recoverySessionOwner pool scope = do
+  supplied <- header "X-Plether-AA-Preparation-Recovery"
+  case TL.toStrict <$> supplied of
+    Just token | T.length token == 64 -> do
+      found <- liftDb $ withDb pool $ \conn -> RecoveryDb.sessionOwner conn scope (Recovery.tokenHash token)
+      pure $ case found of
+        Right (Just owner) -> Right owner
+        Left _ -> Left databaseUnavailable
+        _ -> Left recoveryDenied
+    _ -> pure $ Left recoveryDenied
+
+preparationRecoveryClient :: Config -> DbPool -> RecoveryDb.Scope -> Text -> ActionM (Either Legacy.ProxyFailure Text)
+preparationRecoveryClient cfg pool scope current = do
+  matches <- liftDb $ withDb pool $ \conn -> RecoveryDb.matchingPreparations conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+  supplied <- header "X-Plether-AA-Preparation-Recovery"
+  case matches of
+    Left _ -> pure $ Left databaseUnavailable
+    Right records -> case Recovery.selectPreparationClient current (supplied /= Nothing) records of
+      Recovery.ClientAllowed client -> pure $ Right client
+      Recovery.ClientProofRequired client -> do
+        verified <- recoverySessionOwner pool scope
+        pure $ client <$ verified
+      Recovery.ClientAmbiguous -> pure $ Left recoveryDenied
+
+handlePreparationRecovery
+  :: NativeGatewayState -> Config -> NativeAaConfig -> DbPool -> EthClient
+  -> Manager -> Text -> Legacy.RpcRequest -> ActionM ()
+handlePreparationRecovery state cfg native pool client manager clientKey request = case ngsRecoveryOrigin state of
+  Nothing -> Legacy.respondFailure requestId $ Legacy.unavailable "RECOVERY_DISABLED" "Wallet recovery is not enabled on this deployment"
+  Just origin -> case Recovery.parseRecoveryRequest (naaPaymasterAddress native) extra (Legacy.rrParams request) of
+    Left failure -> Legacy.respondFailure requestId failure
+    Right (scope,fields) -> do
+      rate <- liftDb $ withDb pool $ \conn -> consumeAaRateLimit conn "preparation-recovery" clientKey
+        (pseudonymousAccountKey (naaProxyOriginToken native) $ RecoveryDb.scopeSender scope) 20
+      case rate of
+        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+        Right False -> Legacy.respondFailure requestId Legacy.rateLimited
+        Right True -> case method of
+          Legacy.GetRecoveryChallenge -> case (Recovery.requiredText "owner" 42 fields, Recovery.requiredText "origin" 256 fields) of
+            (Right owner,Right requestedOrigin) | isFixedHex 20 owner && owner == T.toLower owner && requestedOrigin == origin -> do
+              nonce <- liftIO Recovery.randomToken
+              now <- liftEpochSeconds
+              let expires = now+300
+                  message = Recovery.renderChallenge origin scope owner nonce expires
+              saved <- liftDb $ withDb pool $ \conn -> RecoveryDb.saveChallengeAt conn scope nonce owner message expires
+              case saved of
+                Left _ -> Legacy.respondFailure requestId databaseUnavailable
+                Right () -> respondSuccess requestId $ object ["version" .= (1::Int),"challengeId" .= nonce,"message" .= message,"expiresAt" .= expires]
+            _ -> Legacy.respondFailure requestId $ Legacy.invalidParams "Invalid recovery owner or origin"
+          Legacy.VerifyRecoveryChallenge -> case (Recovery.requiredText "challengeId" 64 fields, Recovery.requiredText "signature" 132 fields) of
+            (Right challenge,Right signature) -> do
+              saved <- liftDb $ withDb pool $ \conn -> RecoveryDb.readChallenge conn scope challenge
+              case saved of
+                Right (Just (owner,message)) -> do
+                  signer <- liftIO $ recoverPersonalSignAddress message signature
+                  -- Recovery proves ownership only. It never substitutes latest
+                  -- state for the safe-state checks required by preparation.
+                  latest <- liftIO $ readSecurityHeader client "latest"
+                  owned <- case latest of
+                    Right block -> liftIO $ do
+                      derived <- Legacy.resolveOwnedTradingAccountAtBlock client owner (sbhNumber block)
+                      code <- Legacy.readCodeAtBlock client (RecoveryDb.scopeSender scope) (sbhNumber block)
+                      case code of
+                        Left _ -> pure $ Left Legacy.OwnedTradingAccountProofUnavailable
+                        Right bytes -> do
+                          identity <- Legacy.verifyAccountIdentityAtBlock client (sbhNumber block) $
+                            Legacy.ParsedUserOperation (RecoveryDb.scopeSender scope) (if BS.null bytes then Just owner else Nothing) []
+                          pure $ if identity == Right owner then derived else Left Legacy.OwnedTradingAccountProofUnavailable
+                    _ -> pure $ Left Legacy.OwnedTradingAccountProofUnavailable
+                  if signer /= Right owner || owned /= Right (RecoveryDb.scopeSender scope)
+                    then Legacy.respondFailure requestId recoveryDenied
+                    else do
+                      token <- liftIO Recovery.randomToken
+                      consumed <- liftDb $ withDb pool $ \conn -> RecoveryDb.consumeChallenge conn scope challenge owner (Recovery.tokenHash token)
+                      case consumed of
+                        Right True -> do
+                          liftIO $ logInfo "aa_preparation_recovery_verified" "Owner verified preparation recovery" [field "stage" ("recovery"::Text),field "attempt_id" (ngsAttemptId state)]
+                          respondSuccess requestId $ object ["version" .= (1::Int),"sessionToken" .= token,"expiresIn" .= (900::Int)]
+                        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+                        _ -> Legacy.respondFailure requestId recoveryDenied
+                Left _ -> Legacy.respondFailure requestId databaseUnavailable
+                _ -> Legacy.respondFailure requestId recoveryDenied
+            _ -> Legacy.respondFailure requestId $ Legacy.invalidParams "Invalid recovery proof"
+          _ -> do
+            authorized <- recoverySessionOwner pool scope
+            case authorized of
+              Left failure -> Legacy.respondFailure requestId failure
+              Right _ -> do
+                historical <- liftDb $ withDb pool $ \conn -> RecoveryDb.bindHistoricalAuthorizations conn native scope (T.toLower $ cfgPerpsOrderRouter cfg)
+                case historical of
+                  Left _ -> Legacy.respondFailure requestId databaseUnavailable
+                  Right () -> handleVerified scope
+ where
+  handleVerified scope = case method of
+    Legacy.RetirePreparation | ngsRetirementEnabled state -> do
+      result <- liftDb $ withDb pool $ \conn -> RecoveryDb.retirePreparation conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+      case result of
+        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+        Right (Left reason) -> respondRecoveryState "unresolved" reason False []
+        Right (Right ()) -> do
+          liftIO $ logInfo "aa_preparation_retired" "Saved preparation safely retired" [field "stage" ("recovery"::Text),field "attempt_id" (ngsAttemptId state)]
+          respondRecoveryState "retired" "PREPARATION_RETIRED" False []
+    Legacy.RetirePreparation -> respondRecoveryState "unresolved" "RECOVERY_RETIREMENT_DISABLED" False []
+    _ -> do
+      result <- liftDb $ withDb pool $ \conn -> do
+        retired <- RecoveryDb.registryRetired conn scope
+        matches <- RecoveryDb.matchingPreparations conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+        reason <- RecoveryDb.retirementReason conn scope (T.toLower $ cfgPerpsOrderRouter cfg)
+        pure (retired,matches,reason)
+      case result of
+        Left _ -> Legacy.respondFailure requestId databaseUnavailable
+        Right (True,_,_) -> respondRecoveryState "retired" "PREPARATION_RETIRED" False []
+        Right (False,matches,reason) -> do
+          let canRetire = ngsRetirementEnabled state && reason == Nothing
+              hashes = [h | (_,Just h,_) <- take 20 matches]
+          case matches of
+            [] -> case reason of
+              Just why -> respondRecoveryState "unresolved" why False []
+              Nothing -> respondRecoveryState "missing" "PREPARATION_NOT_CREATED" canRetire []
+            [(originalClient,_,True)] -> preparationStatusWithRecovery (Just canRetire) native pool client manager originalClient request
+            _ | any (\(_,_,bound) -> not bound) matches -> respondRecoveryState "unresolved" "RECOVERY_BINDING_UNRESOLVED" False hashes
+              | otherwise -> respondRecoveryState "ambiguous" "RECOVERY_MULTIPLE_PREPARATIONS" canRetire hashes
+  requestId = Legacy.rrId request
+  method = Legacy.rrMethod request
+  extra | method == Legacy.GetRecoveryChallenge = ["owner","origin"]
+        | method == Legacy.VerifyRecoveryChallenge = ["challengeId","signature"]
+        | otherwise = []
+  respondRecoveryState :: Text -> Text -> Bool -> [Text] -> ActionM ()
+  respondRecoveryState recoveryState reason canRetire hashes = do
+    outcomes <- case Recovery.parseRecoveryRequest (naaPaymasterAddress native) extra (Legacy.rrParams request) of
+      Right (scope,_) | not (null hashes) -> liftDb $ withDb pool $ \conn -> RecoveryDb.operationOutcomes conn scope
+      _ -> pure $ Right []
+    liftIO $ logInfo "aa_preparation_recovery_result" "Preparation recovery result"
+      [field "attempt_id" (ngsAttemptId state),field "reason" reason,field "outcome" recoveryState]
+    case outcomes of
+      Left _ -> Legacy.respondFailure requestId databaseUnavailable
+      Right values -> respondSuccess requestId $ object
+        ["version" .= (1::Int),"recoveryState" .= recoveryState,"reason" .= reason,"canRetire" .= canRetire,"operationHashes" .= hashes,"operationOutcomes" .= values]

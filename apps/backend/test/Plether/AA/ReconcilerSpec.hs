@@ -15,6 +15,7 @@ import Plether.AA.Reconciler
   , UserOperationEvent (..)
   , agreeUserOperationLogs
   , boundariesRemainCanonical
+  , targetReachesSafeBoundary
   , parseUserOperationEvent
   , validateSafeHeadFreshness
   , validateTargetTimestamp
@@ -27,6 +28,14 @@ import Test.Hspec
 spec :: Spec
 spec =
   describe "safe UserOperationEvent validation" $ do
+    it "publishes health only at the exact reverified safe tip" $ do
+      let target = BlockHeader 101 blockHash 1000
+      targetReachesSafeBoundary target target `shouldBe` Right True
+      targetReachesSafeBoundary target (BlockHeader 102 blockHash 1001) `shouldBe` Right False
+      targetReachesSafeBoundary target (BlockHeader 100 blockHash 999) `shouldSatisfy` isLeft
+      targetReachesSafeBoundary target (BlockHeader 101 operationHash 1000) `shouldSatisfy` isLeft
+      targetReachesSafeBoundary target (BlockHeader 101 blockHash 1001) `shouldSatisfy` isLeft
+
     it "applies matching 10/30 minute gateway and reconciler boundaries" $ do
       let check limit age = do
             let timestamp = 10000 - age

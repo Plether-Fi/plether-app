@@ -1,8 +1,20 @@
-import { useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useMemo, type ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createConfig, WagmiProvider } from 'wagmi'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { custom } from 'viem'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, waitFor, within } from 'storybook/test'
 import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
+import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { anvil } from '../config/wagmi'
+import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../perps-aa/runtimeContext'
+import type { PerpsAaDeploymentManifestV2 } from '../perps-aa/manifest'
+import type { PreparationStatusV1 } from '../perps-aa/preparedOperation'
+import { registerOperationRecoveryCheck } from '../perps-aa/requestOperationRecovery'
+import { PreparationRecoveryError } from '../perps-aa/walletRecovery'
 import {
   PerpsIdentityContext,
   isSponsoredOperationTerminal,
@@ -182,15 +194,21 @@ const mixedOperations = [
 function WalletHeaderPreview({
   operations,
   confirmOperationId,
+  runtime,
+  children,
 }: {
   operations: SponsoredOperation[]
   confirmOperationId?: string
+  runtime?: PerpsAaSmartAccountRuntime
+  children?: ReactNode
 }) {
   useLayoutEffect(() => {
     const previousOperations =
       useSponsoredOperationStore.getState().operations
     const previousActiveLanes =
       useSponsoredOperationStore.getState().activeLanes
+    const previousActivityRequest = usePerpsUiStore.getState().activityRequest
+    usePerpsUiStore.setState({ activityRequest: null })
     const activeOperation = operations
       .filter((operation) => !isSponsoredOperationTerminal(operation.status))
       .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -222,10 +240,12 @@ function WalletHeaderPreview({
         operations: previousOperations,
         activeLanes: previousActiveLanes,
       })
+      usePerpsUiStore.setState({ activityRequest: previousActivityRequest })
     }
   }, [confirmOperationId, operations])
 
   return (
+    <PerpsAaRuntimeContext value={runtime}>
     <PerpsIdentityContext.Provider value={IDENTITY}>
       <div className="min-h-40 bg-app-bg p-8">
         <div className="ml-auto flex w-fit items-center gap-4 border border-brand-border/30 bg-surface-panel p-4">
@@ -241,8 +261,10 @@ function WalletHeaderPreview({
             <span className="text-sm font-medium">0x1111...1111</span>
           </button>
         </div>
+        {children}
       </div>
     </PerpsIdentityContext.Provider>
+    </PerpsAaRuntimeContext>
   )
 }
 
@@ -326,6 +348,7 @@ export const IncludedAwaitingSafeConfirmation: Story = {
     })).toBeVisible()
     expect(within(dialog).queryByRole('region', { name: 'In progress' }))
       .not.toBeInTheDocument()
+    await userEvent.click(within(dialog).getByText('Technical details', { exact: true }))
     expect(within(dialog).getByRole('link', {
       name: 'View included transaction on Blockscout',
     })).toBeVisible()
@@ -389,5 +412,320 @@ export const ModalOpen: Story = {
     expect(
       await within(document.body).findByRole('dialog')
     ).toBeVisible()
+  },
+}
+
+const NATIVE_MANIFEST: PerpsAaDeploymentManifestV2 = {
+  ...MANIFEST,
+  version: 'perps-aa-arbitrum-sepolia-v2',
+  bundlerRpcUrl: '/storybook/aa/rpc',
+  paymasterRpcUrl: '/storybook/aa/rpc',
+  paymasterAddress: '0x3333333333333333333333333333333333333333',
+  paymasterVersion: 'plether-verifying-v1',
+  preparationRpcVersion: 1,
+}
+
+function recoveryFixture(action: SponsoredOperation['action'], interrupted = false): SponsoredOperation {
+  const id = hash(action === 'deposit' ? 'a' : 'b')
+  return {
+    ...operation({ id, action, status: interrupted ? 'preparation-pending' : 'signature-declined', minutesAgo: 1 }),
+    walletPreparationOutcome: interrupted ? 'unknown' : 'declined',
+    walletPreparationRevision: 1,
+    nativePreparation: {
+      version: 1, preparationId: id, manifest: NATIVE_MANIFEST,
+      action: { kind: action, account: ACCOUNT_ADDRESS, calls: [] },
+    },
+    preparedOperation: {
+      version: 1, expectedHash: hash('c'), validUntil: '2000000000',
+      operation: {
+        sender: ACCOUNT_ADDRESS, nonce: '0', callData: '0x', callGasLimit: '100000',
+        verificationGasLimit: '100000', preVerificationGas: '50000',
+        maxFeePerGas: '10000000', maxPriorityFeePerGas: '1000000',
+      },
+    },
+  }
+}
+
+const RESUMABLE_STATUS: PreparationStatusV1 = {
+  version: 1, authorizationState: 'signed', phase: 'prepared', reason: 'RESUMABLE',
+  recoverable: true, freshReviewAllowed: true, validUntil: '2000000000',
+  serverTime: String(NOW / 1000), safeBlockTimestamp: String(NOW / 1000 - 60),
+  userOperationHash: hash('c'), transactionHash: null,
+}
+
+function previewRuntime(status: PreparationStatusV1): PerpsAaSmartAccountRuntime {
+  // Status is local fixture data. Signing/submission are deliberately unavailable
+  // in these visual examples; never connect a Storybook fixture to a real wallet.
+  const unavailable = async (): Promise<never> => {
+    throw new Error('This Storybook example previews recovery controls. Wallet signing is available in the app.')
+  }
+  return {
+    chainId: MANIFEST.chainId, ownerAddress: OWNER_ADDRESS,
+    factoryAddress: MANIFEST.smartAccountFactory,
+    accountVersion: MANIFEST.smartAccountVersion, accountIndex: MANIFEST.smartAccountIndex,
+    smartAccount: {
+      accountAddress: ACCOUNT_ADDRESS, entryPoint: MANIFEST.entryPoint,
+      getPreparationStatus: async () => status,
+      prepareUserOperation: unavailable, signUserOperation: unavailable,
+      sendUserOperation: unavailable, getUserOperationReceipt: unavailable,
+      getUserOperationStatus: unavailable, getUserOperationHash: () => hash('c'),
+    },
+  }
+}
+
+function recoveryStory(action: SponsoredOperation['action'], status = RESUMABLE_STATUS, interrupted = false): Story {
+  const operations = [recoveryFixture(action, interrupted)]
+  const runtime = previewRuntime(status)
+  return {
+    parameters: { docs: { description: { story: 'Real activity UI with a mocked preparation-status response. Wallet signing and submission are unavailable in this visual preview.' } } },
+    render: () => <WalletHeaderPreview operations={operations} runtime={runtime} />,
+    play: async ({ canvasElement }) => {
+      await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
+      const dialog = within(await within(document.body).findByRole('dialog'))
+      await waitFor(() => {
+        if (status.recoverable) expect(dialog.getByRole('button', { name: /^Resume / })).toBeEnabled()
+        else expect(dialog.queryByRole('button', { name: /^Resume / })).not.toBeInTheDocument()
+        if (status.freshReviewAllowed && !interrupted) expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled()
+        else expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeDisabled()
+      })
+    },
+  }
+}
+
+export const SignatureDeclinedDeposit: Story = recoveryStory('deposit')
+export const SignatureDeclinedOrder: Story = recoveryStory('place-order')
+export const InterruptedWalletRecovery: Story = recoveryStory('deposit', RESUMABLE_STATUS, true)
+export const SponsorshipReservationWait: Story = recoveryStory('place-order', {
+  ...RESUMABLE_STATUS, phase: 'expiry-awaiting-reconciliation', reason: 'SAFE_EXPIRY_WAIT',
+  recoverable: false, freshReviewAllowed: false,
+})
+
+const recoveryPreviewTransport = custom({
+  request: async () => {
+    throw new Error('Live RPC calls are unavailable in this recovery preview.')
+  },
+}, { retryCount: 0 })
+const recoveryTradeConfig = createConfig({
+  chains: [mainnet, sepolia, arbitrumSepolia, anvil],
+  storage: null,
+  transports: {
+    [mainnet.id]: recoveryPreviewTransport,
+    [sepolia.id]: recoveryPreviewTransport,
+    [arbitrumSepolia.id]: recoveryPreviewTransport,
+    [anvil.id]: recoveryPreviewTransport,
+  },
+})
+recoveryTradeConfig.setState((state) => ({ ...state, chainId: arbitrumSepolia.id }))
+const recoveryTradeQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+})
+const recoveryTradeOperations = [recoveryFixture('deposit')]
+const recoveryTradeRuntime = previewRuntime(RESUMABLE_STATUS)
+
+export const RecoveryFromTradeForm: Story = {
+  parameters: {
+    docs: {
+      description: {
+        story: 'The real trade form with a saved, declined deposit. Review saved transaction leads to Resume and Discard. Status is mocked; wallet signing and live RPC calls are unavailable.',
+      },
+    },
+  },
+  render: () => (
+    <WagmiProvider config={recoveryTradeConfig}>
+      <QueryClientProvider client={recoveryTradeQueryClient}>
+        <WalletHeaderPreview operations={recoveryTradeOperations} runtime={recoveryTradeRuntime}>
+          <div className="mx-auto mt-6 max-w-md">
+            <PerpsTradeTicket
+              enableLiveTrading
+              availableToTradeRaw={1_000_000_000n}
+              oraclePriceRaw={98_300_000n}
+              oraclePriceDisplay="98.30"
+            />
+          </div>
+        </WalletHeaderPreview>
+      </QueryClientProvider>
+    </WagmiProvider>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const recoveryButton = await canvas.findByRole('button', { name: 'Review saved transaction' })
+    expect(await canvas.findByText(/A saved transaction needs attention/)).toBeVisible()
+    expect(canvas.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
+    await userEvent.click(recoveryButton)
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    await waitFor(() => {
+      expect(dialog.getByRole('button', { name: /^Resume / })).toBeEnabled()
+      expect(dialog.getByRole('button', { name: 'Discard saved transaction' })).toBeEnabled()
+    })
+    await userEvent.click(dialog.getByRole('button', { name: 'Close dialog' }))
+    await waitFor(() => expect(within(document.body).queryByRole('dialog')).not.toBeInTheDocument())
+    expect(recoveryButton).toBeVisible()
+  },
+}
+
+const expiredSignedStatus: PreparationStatusV1 & { recoveryVerified: true; canRetire: boolean } = {
+  ...RESUMABLE_STATUS, phase: 'resolved', authorizationState: 'expired',
+  recoverable: false, reason: 'PREPARATION_UNUSABLE', recoveryVerified: true as const, canRetire: true,
+}
+const signedRecoveryOperations: SponsoredOperation[] = [{
+  ...recoveryFixture('place-order'), status: 'receipt-timeout', userOperationHash: hash('c'),
+}]
+const signedRecoveryRuntime: PerpsAaSmartAccountRuntime = {
+  ...previewRuntime(expiredSignedStatus),
+  preparationRecovery: {
+    // Local UI simulation only: no wallet, signing, or submission is connected.
+    verify: async () => {},
+    status: async () => expiredSignedStatus,
+    retire: async () => { throw new Error('Signed attempts cannot be discarded in this preview') },
+    headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+  },
+}
+export const SignedRecoveryVerifyFirst: Story = {
+  parameters: { docs: { description: { story: 'An expired sponsorship with an unconfirmed signed transaction. Verification is simulated locally; no wallet request or transaction is sent.' } } },
+  render: () => <WalletHeaderPreview operations={signedRecoveryOperations} runtime={signedRecoveryRuntime} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    expect(await dialog.findByText('1. Verify your wallet')).toBeVisible()
+    expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+    expect(dialog.queryByText(/sponsorship has.*expired/)).not.toBeInTheDocument()
+  },
+}
+export const SignedRecoveryCheckingOutcome: Story = {
+  ...SignedRecoveryVerifyFirst,
+  play: async context => {
+    await SignedRecoveryVerifyFirst.play?.(context)
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    await userEvent.click(dialog.getByRole('button', { name: 'Verify wallet to recover' }))
+    expect(await dialog.findByText('2. Check transaction outcome')).toBeVisible()
+    expect(dialog.getByText('1. Verify your wallet')).toBeVisible()
+    expect(dialog.getByText('Completed')).toBeVisible()
+    expect(dialog.getByRole('button', { name: 'Wallet verified' })).toBeDisabled()
+    expect(await dialog.findByText('We couldn’t confirm this transaction')).toBeVisible()
+    expect(dialog.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
+  },
+}
+
+
+type RecoveryPreviewResult = 'uncertain' | 'expired' | 'confirmed' | 'timeout' | 'verification-expired'
+
+function recoveryResultRuntime(result: RecoveryPreviewResult): PerpsAaSmartAccountRuntime {
+  let checksSinceVerification = 0
+  return {
+    ...signedRecoveryRuntime,
+    preparationRecovery: {
+      ...signedRecoveryRuntime.preparationRecovery,
+      retire: async () => { throw new Error('Signed attempts cannot be discarded in this preview') },
+      headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+      verify: async () => { checksSinceVerification = 0 },
+      status: async () => {
+        checksSinceVerification += 1
+        // The first read follows wallet verification. The next read shows
+        // the selected result when the visitor clicks Check recovery again.
+        if (checksSinceVerification === 2) {
+          if (result === 'timeout') throw new PreparationRecoveryError('RECOVERY_TIMEOUT')
+          if (result === 'verification-expired') throw new PreparationRecoveryError('RECOVERY_VERIFICATION_REQUIRED')
+
+        }
+        return expiredSignedStatus
+      },
+    },
+  }
+}
+
+function RecoveryResultPreview({ result }: { result: RecoveryPreviewResult }) {
+  const runtime = useMemo(() => recoveryResultRuntime(result), [result])
+  const client = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }), [])
+  useLayoutEffect(() => {
+    const originalFetch = window.fetch
+    const previewFetch: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin)
+      if (url.pathname.endsWith(`/perps/accounts/${ACCOUNT_ADDRESS}/orders`)) {
+        return new Response(JSON.stringify({ data: { orders: [{
+          orderId: '42', account: ACCOUNT_ADDRESS, clientOrderId: hash('e'),
+          commitTxHash: hash('d'), side: 0, commitTimestamp: Math.floor(NOW / 1000),
+        }] } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return originalFetch(input, init)
+    }
+    window.fetch = previewFetch
+    return () => { window.fetch = originalFetch; client.clear() }
+  }, [client])
+  useEffect(() => {
+    let checks = 0
+    return registerOperationRecoveryCheck(id => {
+      if (id !== signedRecoveryOperations[0].id) return undefined
+      checks += 1
+      // Simulate an authoritative chain check, separate from preparation status.
+      if (checks > 1) {
+        const store = useSponsoredOperationStore.getState()
+        if (result === 'confirmed') {
+          store.recordTransactionHash(id, hash('d'))
+          store.transition(id, 'confirmed')
+        } else if (result === 'expired') {
+          store.failOperation({ id, status: 'expired', reason: 'expired', retryable: false })
+        }
+      }
+      return Promise.resolve('checked')
+    })
+  }, [result])
+  return <QueryClientProvider client={client}><WalletHeaderPreview operations={signedRecoveryOperations} runtime={runtime} /></QueryClientProvider>
+}
+
+function recoveryResultStory(result: RecoveryPreviewResult, description: string): Story {
+  return {
+    parameters: { docs: { description: { story: `${description} Local simulation only: no wallet, RPC, or transaction is used. Reload the story to replay the flow.` } } },
+    render: () => <RecoveryResultPreview result={result} />,
+    play: async context => {
+      await SignedRecoveryCheckingOutcome.play?.(context)
+      const dialog = within(await within(document.body).findByRole('dialog'))
+      await userEvent.click(dialog.getByRole('button', { name: 'Check recovery again' }))
+      if (result === 'expired' || result === 'confirmed') {
+        const message = result === 'expired'
+          ? 'Transaction didn’t go through'
+          : 'Order submitted'
+        expect(await dialog.findByText(message)).toBeVisible()
+        if (result === 'confirmed') expect(await dialog.findByText('Awaiting execution')).toBeVisible()
+        expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+        expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)).toBeUndefined()
+      } else if (result === 'verification-expired') {
+        expect(await dialog.findByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+        expect(dialog.getByText('1. Verify your wallet')).toBeVisible()
+        expect(dialog.queryByText('Completed')).not.toBeInTheDocument()
+        expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+      } else {
+        if (result === 'timeout') expect(await dialog.findByRole('alert')).toHaveTextContent('timed out')
+        expect(dialog.getByRole('button', { name: 'Wallet verified' })).toBeDisabled()
+        expect(dialog.getByText('Completed')).toBeVisible()
+        expect(dialog.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
+      }
+      if (result !== 'expired' && result !== 'confirmed') {
+        expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT_ADDRESS)?.id).toBe(signedRecoveryOperations[0].id)
+      }
+    },
+  }
+}
+
+export const SignedRecoveryStillUncertain = recoveryResultStory('uncertain',
+  'The check cannot establish the transaction outcome. Wallet verification stays completed and the transaction remains blocked.')
+export const SignedRecoverySafelyExpired = recoveryResultStory('expired',
+  'A simulated chain check proves expiry without inclusion. The saved operation becomes Expired and its account lock clears.')
+export const SignedRecoveryCommitConfirmed = recoveryResultStory('confirmed',
+  'A simulated chain check confirms the order commitment. The account lock clears; order execution must still be checked separately.')
+export const SignedRecoveryTemporaryError = recoveryResultStory('timeout',
+  'The status request times out. Verification remains completed, the lock stays, and another check is available.')
+export const SignedRecoveryVerificationExpired = recoveryResultStory('verification-expired',
+  'The recovery session expires. Step 1 becomes active again and the lock remains until the transaction is resolved.')
+
+export const SignedRecoveryLateWalletApproval: Story = {
+  ...SignedRecoveryVerifyFirst,
+  parameters: { docs: { description: { story: 'Wallet approval arrived too late to submit. The signed attempt stays protected until safe chain evidence permits a fresh review.' } } },
+  render: () => <WalletHeaderPreview operations={signedRecoveryOperations.map(operation => ({
+    ...operation, reason: 'DEADLINE_TOO_CLOSE',
+  }))} runtime={signedRecoveryRuntime} />,
+  play: async context => {
+    await SignedRecoveryVerifyFirst.play?.(context)
+    await expect(within(document.body).getByText(/Wallet approval finished too late, so Plether did not send/)).toBeVisible()
   },
 }

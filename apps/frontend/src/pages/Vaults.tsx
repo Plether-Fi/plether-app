@@ -53,7 +53,6 @@ import {
   type VaultOverviewActivityItem,
   type VaultRedeemRequest,
 } from '../hooks'
-import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 type TrancheId = 'senior' | 'junior'
@@ -1063,12 +1062,6 @@ function formatCompactUsd(amount: bigint | undefined): ReactNode {
 function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): ReactNode {
   const formatted = formatFullUsdc(amount, maximumFractionDigits)
   return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
-}
-
-function formatPoolCapacity(amount: bigint | undefined, markPrice: bigint | undefined): ReactNode {
-  if (amount === undefined) return '--'
-  const formatted = formatPerpsUsdc(dxyExposureFromContractNotional(amount, markPrice) ?? amount)
-  return <TokenAmount amount={formatted} />
 }
 
 function formatVaultLimit(amount: bigint | undefined): ReactNode {
@@ -2383,13 +2376,13 @@ export function VaultsOverview({
             id="pool-liquidity-heading"
             className="mt-1 text-2xl font-semibold text-content-primary"
           >
-            Trading capacity and loss protection
+            Pool liquidity and loss protection
           </h2>
         </div>
         <div className="border border-brand-border/30 bg-surface-panel panel-padding">
           <PerpsPoolLiquidityDetails
-            longCapacity={formatPoolCapacity(pool.longOpenCapacityUsdc, pool.markPrice)}
-            shortCapacity={formatPoolCapacity(pool.shortOpenCapacityUsdc, pool.markPrice)}
+            poolAssetsUsdc={pool.totalAssetsUsdc}
+            freeUsdc={pool.freeUsdc}
             juniorPrincipal={formatCompactUsd(pool.juniorPrincipalUsdc)}
             seniorPrincipal={formatCompactUsd(pool.seniorPrincipalUsdc)}
             juniorSharePercent={poolCapital?.juniorSharePercent}
@@ -2452,11 +2445,11 @@ function RequestMetric({
       : 'text-content-primary'
 
   return (
-    <div className="min-w-0 bg-app-bg p-4">
+    <div className="min-w-0 flex-[1_1_12rem] bg-app-bg p-4">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
         {label}
       </dt>
-      <dd className={`mt-1 truncate text-base font-semibold ${valueClassName}`} title={typeof value === 'string' ? value : undefined}>
+      <dd className={`mt-1 break-words text-base font-semibold ${valueClassName}`}>
         {value}
       </dd>
     </div>
@@ -3524,10 +3517,13 @@ export function ActivityTab({
           <div className="divide-y divide-brand-border/25">
             {depositRequests.map((request) => {
               const directRedeemableShares = request.directRedeemableShares
+              const isWithdrawalReady = request.refundableAssets === 0n
+                && request.claimableShares > 0n
+                && directRedeemableShares > 0n
               const statusLabel = request.refundableAssets > 0n
                 ? 'Refund available'
                 : request.claimableShares > 0n
-                  ? 'Shares ready'
+                  ? isWithdrawalReady ? 'Withdrawal ready' : 'Shares ready'
                   : request.matured
                     ? 'Waiting for processing'
                     : 'Pending'
@@ -3547,7 +3543,7 @@ export function ActivityTab({
 
               return (
                 <article key={String(request.requestId)} className="space-y-4 panel-padding">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
                         Deposit reference #{String(request.requestId)}
@@ -3559,7 +3555,7 @@ export function ActivityTab({
                     <Badge variant={statusVariant}>{statusLabel}</Badge>
                   </div>
 
-                  <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
+                  <dl className="flex flex-wrap gap-px border border-brand-border/20 bg-brand-border/20">
                     <RequestMetric
                       label={request.activationTimestamp !== undefined
                         ? 'Activated'
@@ -3581,17 +3577,6 @@ export function ActivityTab({
                         tone="positive"
                       />
                     ) : null}
-                    {request.claimableShares > 0n ? (
-                      <RequestMetric
-                        label="Direct withdrawal"
-                        value={directRedeemableShares > 0n
-                          ? 'Available now'
-                          : request.cooldownEndsAt !== undefined
-                            ? `Available after ${settlementLabel(Number(request.cooldownEndsAt))}`
-                            : 'Waiting for activation'}
-                        tone={directRedeemableShares > 0n ? 'positive' : 'default'}
-                      />
-                    ) : null}
                     {request.refundableAssets > 0n ? (
                       <RequestMetric
                         label="USDC ready to return"
@@ -3601,25 +3586,34 @@ export function ActivityTab({
                     ) : null}
                   </dl>
 
-                  <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-4 border-t border-brand-border/20 pt-4">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.refundableAssets > 0n
                         ? 'This deposit could not be completed. Return the held USDC to your wallet.'
                         : request.claimableShares > 0n
                           ? directRedeemableShares > 0n
-                            ? 'This deposit is active and its settlement-aged cooldown has elapsed. Queue the shares directly for withdrawal, or move them to your wallet without restarting that elapsed cooldown.'
-                            : 'This deposit is active and already participates in vault performance. Its one-hour withdrawal cooldown began when processing activated it; moving the shares to your wallet preserves that timestamp.'
+                            ? 'Your deposit is active and the withdrawal cooldown is complete. Queue a withdrawal or move shares to your wallet without restarting the cooldown.'
+                            : (
+                              <>
+                                Your deposit is active and participates in vault performance. Moving shares to your wallet won’t restart the one-hour withdrawal cooldown.
+                                <span className="mt-1 block text-xs">
+                                  {request.cooldownEndsAt !== undefined
+                                    ? `Direct withdrawal available after ${settlementLabel(Number(request.cooldownEndsAt))}.`
+                                    : 'Direct withdrawal is waiting for activation.'}
+                                </span>
+                              </>
+                            )
                           : request.matured
                             ? 'The expected time has passed, but this deposit has not been processed yet.'
                             : 'You can cancel before processing. The final number of shares is set when the deposit is processed.'}
                     </p>
 
                     {isWrongNetwork ? (
-                      <Button type="button" variant="secondary" className="shrink-0" onClick={onSwitchNetwork}>
+                      <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onSwitchNetwork}>
                         Switch to Arbitrum Sepolia
                       </Button>
                     ) : (
-                      <div className="flex shrink-0 flex-wrap gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
                       {request.claimableShares > 0n ? (
                         <Button
                           type="button"

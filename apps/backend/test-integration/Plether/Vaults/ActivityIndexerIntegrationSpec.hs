@@ -15,7 +15,6 @@ import Data.Either (isLeft)
 import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
-import Data.Pool (destroyAllResources)
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query)
 import Database.PostgreSQL.Simple.Types (Query)
 import Data.Text (Text)
@@ -24,7 +23,7 @@ import qualified Data.Text.Encoding as TE
 import Network.HTTP.Types (methodPost, status200)
 import Network.Wai (Application, pathInfo, requestMethod, responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.VaultActivity
   ( VaultActivityDeployment (..)
   , VaultActivityIndexerStateRow (..)
@@ -348,7 +347,7 @@ withVaultIndexerDatabase databaseUrl action = do
   pool <- newDbPool databaseUrl
   let cleanup = do
         withDb pool $ \conn -> resetVaultActivityDeployment conn deployment
-        destroyAllResources pool
+        destroyDbPool pool
   (do
       withDb pool ensureVaultActivitySchema
       withDb pool $ \conn -> resetVaultActivityDeployment conn deployment

@@ -14,6 +14,10 @@ import Network.Wai (strictRequestBody, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Types.Status (status200)
 import Plether.AA.RecoveryReceipt
+import Plether.AA.Gateway (observePreparationInclusion)
+import Plether.AA.PaymasterSpec (fixtureConfig)
+import Plether.Config (NativeAaConfig(..))
+import Network.HTTP.Client (newManager, defaultManagerSettings)
 import Plether.AA.Paymaster (canonicalQuantity)
 import Plether.Database.AaSponsorship (ReceiptLocator(..))
 import Plether.Ethereum.Abi (encodeUint256, keccak256)
@@ -22,6 +26,28 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "durable canonical UserOperation receipts" $ do
+  mapM_ (\reorged -> it ("reports only canonical observed inclusion, reorged=" <> show reorged) $ do
+    let (_,receipt) = fixture True
+        app request respond = do
+          bytes <- strictRequestBody request
+          case eitherDecode bytes of
+            Right (Object input) -> do
+              let value = case KM.lookup "method" input of
+                    Just (String "eth_getUserOperationReceipt") -> object ["receipt" .= receipt]
+                    Just (String "eth_getTransactionReceipt") -> receipt
+                    Just (String "eth_getBlockByNumber") -> object ["number" .= ("0x64" :: Text),
+                      "hash" .= (if reorged then hash "9" else blockHash),"timestamp" .= ("0x100" :: Text),"baseFeePerGas" .= ("0x1" :: Text)]
+                    _ -> Null
+              respond $ responseLBS status200 [] $ encode $ object ["jsonrpc" .= ("2.0" :: Text),"id" .= KM.lookup "id" input,"result" .= value]
+            _ -> respond $ responseLBS status200 [] "{}"
+    testWithApplication (pure app) $ \port -> do
+      let url = "http://127.0.0.1:" <> T.pack (show port)
+      client <- newClient url
+      manager <- newManager defaultManagerSettings
+      case operation of
+        Object payload -> observePreparationInclusion (fixtureConfig {naaPaymasterAddress=paymaster,naaAltoRpcUrl=url}) client manager opHash payload
+          `shouldReturn` (if reorged then Nothing else Just (txHash,True))
+        _ -> expectationFailure "missing operation") [False,True]
   it "uses the fallback after Alto eviction, restart errors or network failures, but not for a located receipt" $ do
     needsReceiptFallback (Left () :: Either () (Value, ())) `shouldBe` True
     needsReceiptFallback (Right (object ["result" .= Null], ())) `shouldBe` True

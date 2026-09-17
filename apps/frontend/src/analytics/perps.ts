@@ -29,6 +29,10 @@ export type PerpsMarginLifecycleEvent =
   | 'withdraw_succeeded'
   | 'withdraw_failed'
 export type PerpsSponsoredOperationStatus =
+  | 'resume-started'
+  | 'signature-declined'
+  | 'preparation-pending'
+  | 'sponsorship-refused'
   | 'preflight_failed'
   | 'building'
   | 'requesting-stub'
@@ -205,6 +209,7 @@ export function perpsSizeBucket(value: number): AnalyticsPropertyValue {
 export function perpsErrorCategory(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const normalized = message.toLowerCase()
+  if (normalized.startsWith('signature declined.')) return 'user_rejected'
   if (normalized.includes('user rejected') || normalized.includes('rejected')) return 'user_rejected'
   if (normalized.includes('network') || normalized.includes('chain')) return 'network_or_chain'
   if (normalized.includes('allowance') || normalized.includes('approve')) return 'allowance'
@@ -212,4 +217,21 @@ export function perpsErrorCategory(error: unknown): string {
   if (normalized.includes('pyth') || normalized.includes('hermes') || normalized.includes('price')) return 'oracle'
   if (normalized.includes('timeout') || normalized.includes('expired')) return 'timeout_or_expired'
   return 'unknown'
+}
+
+/** Recovery telemetry is deliberately bounded and excludes wallet proofs/tokens. */
+export function trackPerpsPreparationRecovery(input: {
+  attemptId: string
+  outcome: 'waiting' | 'ready' | 'check-unavailable' | 'verified' | 'retired' | 'unresolved' | 'ambiguous' | 'missing'
+    | 'verification-failed' | 'status-failed' | 'resume-failed' | 'discard-failed'
+  reason?: string
+  durationMs?: number
+}): void {
+  captureAnalyticsEvent('perps preparation recovery', compactProperties({
+    attempt_id: /^[0-9a-f-]{36}$/i.test(input.attemptId) ? input.attemptId : undefined,
+    outcome: input.outcome,
+    reason_code: input.reason && /^[A-Z_]{1,64}$/.test(input.reason) ? input.reason : undefined,
+    confirmation_duration_ms: typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)
+      ? Math.min(604_800_000, Math.max(0, Math.floor(input.durationMs))) : undefined,
+  }))
 }

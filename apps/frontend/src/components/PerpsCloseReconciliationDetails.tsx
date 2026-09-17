@@ -3,7 +3,7 @@ import { formatPerpsUsdc, formatSignedPerpsUsdc } from '../utils/perps'
 import type { PerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { TokenAmount } from './ui'
 
-type AmountTone = 'default' | 'positive' | 'negative' | 'warning' | 'muted'
+type AmountTone = 'default' | 'positive' | 'negative' | 'muted'
 
 interface ReconciliationRowProps {
   label: string
@@ -16,7 +16,6 @@ interface ReconciliationRowProps {
 function amountToneClass(tone: AmountTone): string {
   if (tone === 'positive') return 'text-positive'
   if (tone === 'negative') return 'text-brand-peach'
-  if (tone === 'warning') return 'text-warning'
   if (tone === 'muted') return 'text-content-secondary'
   return 'text-content-primary'
 }
@@ -114,7 +113,7 @@ export function PerpsCloseReconciliationDetails({
           </>
         ) : null}
         <ReconciliationRow
-          label="Net close result"
+          label="Close result before settlement adjustments"
           amount={reconciliation.netCloseResultUsdc}
           emphasized
         />
@@ -126,6 +125,21 @@ export function PerpsCloseReconciliationDetails({
         </p>
       ) : null}
 
+      {reconciliation.settlementAdjustmentUsdc !== 0n ? (
+        <>
+          <ReconciliationSection title="Settlement">
+            <ReconciliationRow
+              label="Settlement adjustment"
+              amount={reconciliation.settlementAdjustmentUsdc}
+              tone="default"
+            />
+          </ReconciliationSection>
+          <p className="text-xs leading-5 text-content-secondary">
+            The difference between the calculated close result and the recorded change in your account balance and trader claims. This amount is not classified as bad debt.
+          </p>
+        </>
+      ) : null}
+
       <ReconciliationSection title="Account outcome">
         <ReconciliationRow
           label="Margin Account balance change"
@@ -135,33 +149,39 @@ export function PerpsCloseReconciliationDetails({
           label={traderClaimLabel}
           amount={reconciliation.traderClaimChangeUsdc}
         />
-        {reconciliation.releasedPositionMarginUsdc !== undefined ? (
-          <ReconciliationRow
-            label="Position margin released"
-            amount={reconciliation.releasedPositionMarginUsdc}
-            signed={false}
-          />
-        ) : null}
-        {reconciliation.postPositionSize > 0n ? (
-          <ReconciliationRow
-            label="Remaining position margin"
-            amount={reconciliation.postPositionMarginUsdc}
-            signed={false}
-          />
-        ) : null}
-        {reconciliation.uncoveredLossUsdc > 0n ? (
-          <ReconciliationRow
-            label="Uncovered loss (bad debt)"
-            amount={reconciliation.uncoveredLossUsdc}
-            signed={false}
-            tone="warning"
-          />
-        ) : null}
+        <ReconciliationRow
+          label="Actual account change"
+          amount={reconciliation.actualAccountChangeUsdc}
+          emphasized
+        />
       </ReconciliationSection>
+
+      <p className="text-xs leading-5 text-content-secondary">
+        Actual account change includes changes to your Margin Account balance and trader claims.
+      </p>
+
+      {reconciliation.releasedPositionMarginUsdc !== undefined || reconciliation.postPositionSize > 0n ? (
+        <ReconciliationSection title="Position margin">
+          {reconciliation.releasedPositionMarginUsdc !== undefined ? (
+            <ReconciliationRow
+              label="Position margin released"
+              amount={reconciliation.releasedPositionMarginUsdc}
+              signed={false}
+            />
+          ) : null}
+          {reconciliation.postPositionSize > 0n ? (
+            <ReconciliationRow
+              label="Remaining position margin"
+              amount={reconciliation.postPositionMarginUsdc}
+              signed={false}
+            />
+          ) : null}
+        </ReconciliationSection>
+      ) : null}
 
       {reconciliation.releasedPositionMarginUsdc !== undefined ? (
         <p className="text-xs leading-5 text-content-secondary">
-          Released margin is existing collateral becoming unlocked; it is not PnL and is not added to the net close result.
+          Released margin is existing collateral becoming unlocked; it is not PnL and is not added to the actual account change.
         </p>
       ) : null}
     </div>
@@ -177,7 +197,7 @@ export function PerpsCloseReconciliationDisclosure({
 }) {
   const [isExpanded, setIsExpanded] = useState(initiallyExpanded)
   const detailsId = useId()
-  const netTone = signedTone(reconciliation.netCloseResultUsdc)
+  const actualTone = signedTone(reconciliation.actualAccountChangeUsdc)
 
   return (
     <div data-testid="close-reconciliation-disclosure">
@@ -185,7 +205,7 @@ export function PerpsCloseReconciliationDisclosure({
         type="button"
         aria-expanded={isExpanded}
         aria-controls={detailsId}
-        className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-4 border border-brand-border/20 bg-surface-panel px-4 py-3 text-left transition-colors hover:border-brand-border/40 hover:bg-[#3B212D] focus-visible:border-brand-border/50"
+        className="flex min-h-12 w-full cursor-pointer flex-wrap items-center justify-between gap-4 border border-brand-border/20 bg-surface-panel px-4 py-3 text-left transition-colors hover:border-brand-border/40 hover:bg-[#3B212D] focus-visible:border-brand-border/50"
         onClick={() => {
           setIsExpanded((expanded) => !expanded)
         }}
@@ -194,9 +214,9 @@ export function PerpsCloseReconciliationDisclosure({
           Detailed close accounting
         </span>
         <span className="flex shrink-0 items-center gap-2 text-sm">
-          <span className="text-xs text-content-secondary">Net</span>
-          <span className={amountToneClass(netTone)}>
-            <TokenAmount amount={formatSignedPerpsUsdc(reconciliation.netCloseResultUsdc)} />
+          <span className="text-xs text-content-secondary">Actual account change</span>
+          <span className={amountToneClass(actualTone)}>
+            <TokenAmount amount={formatSignedPerpsUsdc(reconciliation.actualAccountChangeUsdc)} />
           </span>
           <span aria-hidden="true" className="w-3 text-center text-content-secondary">
             {isExpanded ? '−' : '+'}

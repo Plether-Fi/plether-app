@@ -78,7 +78,7 @@ const DEFAULT_STATS: PerpsInstrumentStat[] = [
       limit: <TokenAmount amount="3.53M" />,
     },
   },
-  { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
+  { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
   { label: 'Cost of carry', value: '5.24%' },
 ]
 

@@ -1,9 +1,14 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
+import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+import { useSponsoredOperationStore, type SponsoredOperationStatus } from '../../perps-aa'
+import { usePerpsUiStore } from '../../stores/perpsUiStore'
+import * as perpsAnalytics from '../../analytics/perps'
 import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
+import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
@@ -14,6 +19,32 @@ let mockReadContractsData: readonly {
   result?: unknown
 }[] | undefined
 
+// These presentation tests supply a completed commitment-aware review. The
+// engine-lens tuple remains a separate source for instantaneous risk fields.
+vi.mock('../../hooks/usePerpsOrderPreparation', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../hooks/usePerpsOrderPreparation')>()
+  const { prepared } = await import('../../test/fixtures/preparedOrder')
+  return { ...actual, usePerpsOrderPreparation: () => {
+    const tuple = mockReadContractsData?.[0]?.result as readonly unknown[] | undefined
+    const result = prepared()
+    result.reviewSummary = {
+      requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
+      commitmentCarryUsdc: 10_000n, requiredFundingUsdc: 200_000n, availableFundingUsdc: 1_000_000n,
+      worstPostLeverageBps: 50_000n, reviewedBlockNumber: 1n, reviewedBlockHash: '0x12', reviewedPrice: 100_000_000n,
+      currentAssessment: {
+        mode: 1, executionNotionalUsdc: 500_000_000n, grossAccountDebitUsdc: 200_000n,
+        actionChargeAssessedUsdc: 0n, actionChargeCollectedUsdc: 0n, explicitFeesUsdc: 0n,
+        preSettlementBalanceUsdc: 500_000_000n, postSettlementBalanceUsdc: 499_800_000n,
+        realizedPnlUsdc: 0n, vpiUsdc: tuple?.[5] as bigint ?? 0n, carryUsdc: 0n,
+        executionFeeUsdc: 0n, frozenSpreadUsdc: tuple?.[21] as bigint ?? 0n,
+        preTraderClaimUsdc: 0n, postTraderClaimUsdc: 0n, postPositionSize: 500n * 10n ** 18n,
+        postPositionMarginUsdc: 250_000_000n, postPositionEquityUsdc: 250_000_000n, postLeverageBps: 50_000n,
+      },
+    }
+    return { matches: true, status: 'ready', result, retry: vi.fn() }
+  } }
+})
+
 const perpsTradingMocks = vi.hoisted(() => ({
   cleanupExpiredOrder: vi.fn(),
   commitOrder: vi.fn(),
@@ -21,6 +52,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   executeOrder: vi.fn(),
   withdrawMargin: vi.fn(),
 }))
+const identityFixture = vi.hoisted(() => ({ isAaManifestConfigured: false }))
 
 vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
@@ -32,7 +64,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       ownerAddress: address,
       accountAddress: address,
       chainId: 421614,
-      isAaManifestConfigured: false,
+      isAaManifestConfigured: identityFixture.isAaManifestConfigured,
       sponsorshipEnabled: false,
       manifest: null,
       identity: null,
@@ -367,10 +399,99 @@ describe('perps ticket oracle regime matrix', () => {
   })
 
   beforeEach(() => {
+    identityFixture.isAaManifestConfigured = false
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    usePerpsUiStore.setState({ activityRequest: null })
     mockReadContractsData = [{
       status: 'success',
       result: closePreviewTuple(),
     }]
+  })
+
+  function seedActiveOperation(status: SponsoredOperationStatus) {
+    identityFixture.isAaManifestConfigured = true
+    const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+    useSponsoredOperationStore.setState({
+      operations: [{
+        id: 'saved-trade', ownerAddress: address, accountAddress: address, chainId: 421614,
+        accountMode: 'simple', manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+        action: 'place-order', lane: 'default', status, sponsorshipAccepted: true,
+        retryCount: 0, createdAt: Date.now(), updatedAt: Date.now(), statusTimestamps: { [status]: Date.now() },
+      }],
+      activeLanes: { [`${address.toLowerCase()}:default`]: 'saved-trade' },
+    })
+  }
+
+  it.each(['signature-declined', 'preparation-pending', 'sponsorship-refused'] as const)(
+    'offers recovery instead of passive waiting for %s, even before entering an amount', async status => {
+      seedActiveOperation(status)
+      render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
+      expect(screen.getByText(/A saved transaction needs attention/)).toBeVisible()
+      expect(screen.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Review saved transaction' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Trading Account activity' })
+      expect(within(dialog).getByRole('heading', { name: 'Commit order' })).toBeVisible()
+      expect(useSponsoredOperationStore.getState().activeLanes).toHaveProperty(
+        '0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b:default', 'saved-trade'
+      )
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(usePerpsUiStore.getState().activityRequest).toBeNull()
+    }
+  )
+
+  it('closes the order review when opening recovery activity', async () => {
+    seedActiveOperation('signature-declined')
+    render(<><SponsoredOperationHistoryButton />{closeTicket({ marketPhase: 'open', oracleFrozen: false })}</>)
+    const review = screen.getByRole('dialog')
+    fireEvent.click(within(review).getByRole('button', { name: 'Review saved transaction' }))
+    expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  })
+
+  it.each([
+    ['confirming', 'Waiting for transaction confirmation', 'View transaction progress'],
+    ['awaiting-signature', 'Finish the request in your wallet', 'View pending transaction'],
+    ['receipt-timeout', 'Check your previous transaction', 'Check transaction status'],
+    ['outcome-unknown', 'Check your previous transaction', 'Check transaction status'],
+  ] as const)('makes %s actionable even with an empty trade amount', async (status, title, action) => {
+    seedActiveOperation(status)
+    render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
+    const notice = screen.getByRole('region', { name: 'Pending Trading Account action' })
+    expect(within(notice).getByText(title)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+    expect(within(notice).getByText('Started just now')).toBeVisible()
+    fireEvent.click(within(notice).getByRole('button', { name: action }))
+    expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
+    expect(usePerpsUiStore.getState().activityRequest?.operationId).toBe('saved-trade')
+    expect(useSponsoredOperationStore.getState().activeLanes).toHaveProperty(
+      '0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b:default', 'saved-trade'
+    )
+  })
+
+  it('records recovery as the blocker and removes its notice after resolution', () => {
+    const trackBlocked = vi.spyOn(perpsAnalytics, 'trackPerpsValidationBlocked')
+    seedActiveOperation('outcome-unknown')
+    render(<PerpsTradeTicket enableLiveTrading />)
+    expect(trackBlocked).toHaveBeenLastCalledWith('account_action_recovery', expect.any(Object))
+    act(() => useSponsoredOperationStore.setState({ operations: [], activeLanes: {} }))
+    expect(screen.queryByRole('region', { name: 'Pending Trading Account action' })).not.toBeInTheDocument()
+    trackBlocked.mockRestore()
+  })
+
+  it('directs an old submitted transaction to a status check instead of indefinite waiting', () => {
+    seedActiveOperation('confirming')
+    useSponsoredOperationStore.setState(state => ({
+      operations: state.operations.map(operation => ({ ...operation,
+        userOperationHash: `0x${'ab'.repeat(32)}` as `0x${string}`,
+        createdAt: Math.floor(Date.now() / 1000) * 1000 - 4 * 60 * 60_000,
+        statusTimestamps: { confirming: Math.floor(Date.now() / 1000) * 1000 - 4 * 60 * 60_000 },
+      })),
+    }))
+    render(<PerpsTradeTicket enableLiveTrading />)
+    expect(screen.getByText('Started 4h ago')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Check transaction status' })).toBeVisible()
+    expect(screen.queryByText('Waiting for transaction confirmation')).not.toBeInTheDocument()
   })
 
   it('shows order quantity instead of contract notional in the commit preview', () => {
@@ -675,7 +796,7 @@ describe('perps ticket oracle regime matrix', () => {
       name: /Detailed close accounting/,
     })
     expect(accountingTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(accountingTrigger).toHaveTextContent('Net')
+    expect(accountingTrigger).toHaveTextContent('Actual account change')
     fireEvent.click(accountingTrigger)
     expect(accountingTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
@@ -689,6 +810,29 @@ describe('perps ticket oracle regime matrix', () => {
     ).toHaveTextContent('-10')
     expect(within(finalResult!).getByText('Frozen spread assessed')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Frozen spread waived')).toBeInTheDocument()
+  })
+
+  it('shows the actual account change and a neutral adjustment in the final result', () => {
+    renderCloseTicket({
+      lifecycleState: 'executed',
+      marketPhase: 'open',
+      oracleFrozen: false,
+      includeMarginSnapshot: false,
+      receiptEconomics: closeSettlementAdjustmentReceipt,
+    })
+    const disclosure = screen.getByRole('button', { name: /Detailed close accounting/ })
+    expect(disclosure).toHaveTextContent('Actual account change')
+    expect(disclosure).toHaveTextContent('-7 271.14')
+    expect(disclosure).not.toHaveTextContent('-13 228.1')
+    fireEvent.click(disclosure)
+    const details = within(screen.getByTestId('close-reconciliation'))
+    const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
+    expect(amount('Close result before settlement adjustments')).toHaveTextContent('-13 228.1')
+    expect(amount('Settlement adjustment')).toHaveTextContent('+5 956.96')
+    expect(amount('Settlement adjustment')).toHaveClass('text-content-primary')
+    expect(amount('Actual account change')).toHaveTextContent('-7 271.14')
+    expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
+    expect(screen.queryByText('Detailed close accounting unavailable')).not.toBeInTheDocument()
   })
 
   it('shows order 14 accounting instead of the unavailable fallback', () => {
@@ -708,8 +852,10 @@ describe('perps ticket oracle regime matrix', () => {
     const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
     expect(amount('VPI rebate')).toHaveTextContent('+1.35')
     expect(amount('Frozen spread charged')).toHaveTextContent('-5.46')
-    expect(amount('Net close result')).toHaveTextContent('-4.73')
+    expect(amount('Close result before settlement adjustments')).toHaveTextContent('-4.73')
     expect(amount('Margin Account balance change')).toHaveTextContent('-4.73')
+    expect(amount('Actual account change')).toHaveTextContent('-4.73')
+    expect(details.queryByText('Settlement adjustment')).not.toBeInTheDocument()
     expect(details.queryByText('Frozen spread waived')).not.toBeInTheDocument()
     expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
   })
@@ -740,7 +886,7 @@ describe('perps ticket oracle regime matrix', () => {
     }))
     const vpiRow = within(finalResult!).getByText(label).closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
-    expect(within(finalResult!).getByText('Net close result')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Close result before settlement adjustments')).toBeInTheDocument()
   })
 
   it('shows released and remaining margin only when the execution-bound snapshot exists', () => {
