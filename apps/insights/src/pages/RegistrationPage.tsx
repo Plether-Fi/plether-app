@@ -240,6 +240,11 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
     setTurnstileToken(token)
   }, [])
 
+  async function reloadSessionAfterFailure() {
+    setPendingAction('recovery')
+    await sessionQuery.refetch()
+  }
+
   async function startRegistration() {
     if (!turnstileToken) return
     setPendingAction('session')
@@ -248,7 +253,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       updateRegistration(await createRegistrationSession(slug, turnstileToken))
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
-      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
+      if (registrationNeedsRecovery(caught)) await reloadSessionAfterFailure()
       setTurnstileToken(null)
       setTurnstileReset((value) => value + 1)
     } finally {
@@ -268,7 +273,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       )
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
-      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
+      if (registrationNeedsRecovery(caught)) await reloadSessionAfterFailure()
       setPendingAction(null)
     }
   }
@@ -283,7 +288,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       setActionError(registrationErrorMessage(caught))
       // Refresh the lease-backed server state: a retryable provider failure
       // may stay on this step, while an expired credential returns to X auth.
-      await sessionQuery.refetch()
+      await reloadSessionAfterFailure()
     } finally {
       setPendingAction(null)
     }
@@ -309,7 +314,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       ])
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
-      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
+      if (registrationNeedsRecovery(caught)) await reloadSessionAfterFailure()
     } finally {
       setPendingAction(null)
     }
@@ -335,7 +340,10 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
 
       {visibleActionError ? <p className="border border-brand-orange/40 bg-brand-orange/10 p-3 text-sm text-brand-peach" role="alert">{visibleActionError}</p> : null}
 
+      {pendingAction === 'recovery' ? <p role="status" className="text-sm text-content-secondary">Checking registration status…</p> : null}
+
       <Panel className="p-5 sm:p-7">
+        <fieldset disabled={pendingAction === 'recovery'} className="m-0 min-w-0 border-0 p-0">
         {!registration ? (
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-peach">Step 1 of 5</p>
@@ -413,6 +421,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
             onComplete={() => { void finishRegistration() }}
           />
         )}
+        </fieldset>
       </Panel>
 
       <p className="text-xs leading-5 text-content-tertiary">Your secure registration session expires {registration ? formatUtc(registration.expiresAt) : 'after you begin'}. You can safely return in this browser before then to continue.</p>

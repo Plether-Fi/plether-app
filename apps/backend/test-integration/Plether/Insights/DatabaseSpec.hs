@@ -978,9 +978,9 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
     LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
     previousBlocks <- query conn "SELECT COALESCE(MAX(block_number),?) FROM insights_snapshot_batches WHERE competition_slug=? AND snapshot_kind='live'" (liveBlock,competitionSlug) :: IO [Only Integer]
     let benchmarkBaseBlock = case previousBlocks of [Only block] -> block; _ -> liveBlock
-    void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=GREATEST(last_indexed_block,?) WHERE release_router=?" (benchmarkBaseBlock+20,fixtureRouter)
+    void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=GREATEST(last_indexed_block,?) WHERE release_router=?" (benchmarkBaseBlock+60,fixtureRouter)
     registrationTimings <- newIORef ([] :: [Double])
-    samples <- forM [1..20 :: Int] $ \cycleNumber -> do
+    samples <- forM [1..60 :: Int] $ \cycleNumber -> do
       calculated <- newEmptyMVar
       void $ forkIO $ do
         outcome <- try @SomeException $ do
@@ -1009,10 +1009,10 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
       putStrLn $ "integrity_benchmark " <> show cycleNumber <> " " <> show values
       pure values
     registrationSamples <- readIORef registrationTimings
-    let registrationP95 = sort registrationSamples !! 379
+    let registrationP95 = sort registrationSamples !! (ceiling (0.95 * fromIntegral (length registrationSamples) :: Double)-1)
     putStrLn $ "registration_benchmark_p95 " <> show registrationP95
     registrationP95 `shouldSatisfy` (<250)
-    let percentile xs = sort xs !! 18
+    let percentile xs = sort xs !! (ceiling (0.95 * fromIntegral (length xs) :: Double)-1)
         calc = [a | (a,_,_) <- samples]
         publish = [b | (_,b,_) <- samples]
         snapshots = [c | (_,_,c) <- samples]
