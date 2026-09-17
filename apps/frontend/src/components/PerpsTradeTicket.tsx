@@ -17,6 +17,8 @@ import {
 } from '../contracts/perpsOrderV2'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
+import { AccountOperationNotice } from './AccountOperationNotice'
+import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
@@ -2016,7 +2018,7 @@ export function PerpsTradeTicket({
   }, [onAccountRefresh])
 
   useEffect(() => {
-    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
+    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined && !activeAccountOperation) return undefined
     const interval = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000))
     }, 1_000)
@@ -2024,7 +2026,7 @@ export function PerpsTradeTicket({
     return () => {
       window.clearInterval(interval)
     }
-  }, [firstPendingOrderExpiryTime, oraclePublishTime])
+  }, [firstPendingOrderExpiryTime, oraclePublishTime, activeAccountOperation])
 
   useEffect(() => {
     if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending') return
@@ -3093,11 +3095,10 @@ export function PerpsTradeTicket({
   const preparedOrderExpiryMessage = isPreparedOrderExpiring
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
-  const needsPreparationRecovery = activeAccountOperation !== undefined &&
-    !activeAccountOperation.userOperationHash &&
-    ['signature-declined', 'preparation-pending', 'sponsorship-refused'].includes(activeAccountOperation.status)
-  const preparationRecoveryMessage = needsPreparationRecovery
-    ? 'A saved transaction needs attention before you can trade again. Open transaction activity to resume or discard it when available.'
+  const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
+    ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000) : undefined
+  const accountBlockReason = pendingOperationGuidance
+    ? pendingOperationGuidance.attention ? 'account_action_recovery' : 'account_action_pending'
     : undefined
   const openRecoveryActivity = () => {
     if (!activeAccountOperation) return
@@ -3110,7 +3111,7 @@ export function PerpsTradeTicket({
     })
   }
   const reviewValidationError = enableLiveTrading
-    ? preparationRecoveryMessage ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
+    ? pendingOperationGuidance?.title ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? liveValidationError
     : orderQuantityValidationError
   const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
     ? undefined : reviewValidationError
@@ -3551,7 +3552,7 @@ export function PerpsTradeTicket({
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
+    (Boolean(activeAccountOperation) || Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
   ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -3642,10 +3643,11 @@ export function PerpsTradeTicket({
   ])
 
   useEffect(() => {
-    if (!liveValidationError || isZeroSize) return
+    if (!accountBlockReason && (!liveValidationError || isZeroSize)) return
 
-    trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
+    trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(liveValidationError ?? ''), commonAnalyticsProperties)
   }, [
+    accountBlockReason,
     commonAnalyticsProperties,
     isZeroSize,
     liveValidationError,
@@ -3800,7 +3802,7 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:blocked-by-validation', {
         reviewValidationError,
       })
-      trackPerpsValidationBlocked(validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
+      trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
       setFlowError(reviewValidationError)
       return
     }
@@ -4488,17 +4490,12 @@ export function PerpsTradeTicket({
           </button>
         </div>
 
-        {displayedValidationError &&
-        (!isZeroSize || needsPreparationRecovery) &&
+        {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
+          <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+        ) : displayedValidationError && !isZeroSize &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
             {displayedValidationError}
-            {enableLiveTrading && needsPreparationRecovery ? (
-              <Button type="button" className="mt-3 w-full" size="sm" variant="secondary"
-                analyticsId="open_preparation_recovery" onClick={openRecoveryActivity}>
-                Open transaction activity
-              </Button>
-            ) : null}
           </div>
         ) : null}
 
@@ -4526,7 +4523,7 @@ export function PerpsTradeTicket({
               return
             }
             if (displayedValidationError) {
-              trackPerpsValidationBlocked(validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
+              trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
               setFlowError(displayedValidationError)
               return
             }
@@ -4898,15 +4895,11 @@ export function PerpsTradeTicket({
                 </p>
               ) : null}
 
-              {reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
+              {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
+                <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+              ) : reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
                   {reviewBodyValidationError}
-                  {needsPreparationRecovery ? (
-                    <Button type="button" className="mt-3 w-full" size="sm" variant="secondary"
-                      analyticsId="open_preparation_recovery" onClick={openRecoveryActivity}>
-                      Open transaction activity
-                    </Button>
-                  ) : null}
                   {!isCorrectChain ? (
                     <>
                       <Button

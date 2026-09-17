@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
 import { useSponsoredOperationStore, type SponsoredOperationStatus } from '../../perps-aa'
 import { usePerpsUiStore } from '../../stores/perpsUiStore'
+import * as perpsAnalytics from '../../analytics/perps'
 import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
@@ -425,9 +426,9 @@ describe('perps ticket oracle regime matrix', () => {
     'offers recovery instead of passive waiting for %s, even before entering an amount', async status => {
       seedActiveOperation(status)
       render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
-      expect(screen.getByText(/A saved transaction needs attention before you can trade again/)).toBeVisible()
+      expect(screen.getByText(/A saved transaction needs attention/)).toBeVisible()
       expect(screen.queryByText('A Trading Account action is in progress. Wait for it to finish.')).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Open transaction activity' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Review saved transaction' }))
       const dialog = await screen.findByRole('dialog', { name: 'Trading Account activity' })
       expect(within(dialog).getByRole('heading', { name: 'Commit order' })).toBeVisible()
       expect(useSponsoredOperationStore.getState().activeLanes).toHaveProperty(
@@ -443,16 +444,54 @@ describe('perps ticket oracle regime matrix', () => {
     seedActiveOperation('signature-declined')
     render(<><SponsoredOperationHistoryButton />{closeTicket({ marketPhase: 'open', oracleFrozen: false })}</>)
     const review = screen.getByRole('dialog')
-    fireEvent.click(within(review).getByRole('button', { name: 'Open transaction activity' }))
+    fireEvent.click(within(review).getByRole('button', { name: 'Review saved transaction' }))
     expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
   })
 
-  it('keeps the waiting message for an operation that is still confirming', () => {
+  it.each([
+    ['confirming', 'Waiting for transaction confirmation', 'View transaction progress'],
+    ['awaiting-signature', 'Finish the request in your wallet', 'View pending transaction'],
+    ['receipt-timeout', 'Check your previous transaction', 'Check transaction status'],
+    ['outcome-unknown', 'Check your previous transaction', 'Check transaction status'],
+  ] as const)('makes %s actionable even with an empty trade amount', async (status, title, action) => {
+    seedActiveOperation(status)
+    render(<><SponsoredOperationHistoryButton /><PerpsTradeTicket enableLiveTrading /></>)
+    const notice = screen.getByRole('region', { name: 'Pending Trading Account action' })
+    expect(within(notice).getByText(title)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+    expect(within(notice).getByText('Started just now')).toBeVisible()
+    fireEvent.click(within(notice).getByRole('button', { name: action }))
+    expect(await screen.findByRole('dialog', { name: 'Trading Account activity' })).toBeVisible()
+    expect(usePerpsUiStore.getState().activityRequest?.operationId).toBe('saved-trade')
+    expect(useSponsoredOperationStore.getState().activeLanes).toHaveProperty(
+      '0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b:default', 'saved-trade'
+    )
+  })
+
+  it('records recovery as the blocker and removes its notice after resolution', () => {
+    const trackBlocked = vi.spyOn(perpsAnalytics, 'trackPerpsValidationBlocked')
+    seedActiveOperation('outcome-unknown')
+    render(<PerpsTradeTicket enableLiveTrading />)
+    expect(trackBlocked).toHaveBeenLastCalledWith('account_action_recovery', expect.any(Object))
+    act(() => useSponsoredOperationStore.setState({ operations: [], activeLanes: {} }))
+    expect(screen.queryByRole('region', { name: 'Pending Trading Account action' })).not.toBeInTheDocument()
+    trackBlocked.mockRestore()
+  })
+
+  it('directs an old submitted transaction to a status check instead of indefinite waiting', () => {
     seedActiveOperation('confirming')
-    render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="500" oraclePriceRaw={100_000_000n} availableToTradeRaw={1_000_000_000n} />)
-    expect(screen.getByText('A Trading Account action is in progress. Wait for it to finish.')).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Open transaction activity' })).not.toBeInTheDocument()
+    useSponsoredOperationStore.setState(state => ({
+      operations: state.operations.map(operation => ({ ...operation,
+        userOperationHash: `0x${'ab'.repeat(32)}` as `0x${string}`,
+        createdAt: Math.floor(Date.now() / 1000) * 1000 - 4 * 60 * 60_000,
+        statusTimestamps: { confirming: Math.floor(Date.now() / 1000) * 1000 - 4 * 60 * 60_000 },
+      })),
+    }))
+    render(<PerpsTradeTicket enableLiveTrading />)
+    expect(screen.getByText('Started 4h ago')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Check transaction status' })).toBeVisible()
+    expect(screen.queryByText('Waiting for transaction confirmation')).not.toBeInTheDocument()
   })
 
   it('shows order quantity instead of contract notional in the commit preview', () => {
