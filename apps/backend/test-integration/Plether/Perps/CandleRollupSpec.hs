@@ -18,7 +18,6 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isLeft, isRight)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple
@@ -54,7 +53,7 @@ import Plether.Config
   , PerpsCandleReadMode (PerpsCandleReadsRollup)
   , PerpsCandleWriteMode (PerpsCandleWritesDual)
   )
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , july2026Competition
@@ -2944,7 +2943,7 @@ instance FromRow StoredVolume where
 
 withCandleDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCandleDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     assertDedicatedDatabase pool
     prepareCandleDatabase pool
     cleanupCandleRows pool

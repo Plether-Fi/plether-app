@@ -10,7 +10,6 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Foldable (toList)
 import Data.IORef (newIORef)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -44,7 +43,7 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Schema
   ( deletePerpsHistoryFromBlock
   , ensurePerpsHistorySchema
@@ -226,7 +225,7 @@ makeApiApplication manager pool config rpcUrl = do
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     prepareDatabase pool
     action pool `finally` cleanupDatabase pool
 

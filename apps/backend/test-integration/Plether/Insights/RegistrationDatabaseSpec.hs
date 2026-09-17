@@ -14,14 +14,13 @@ import Control.Concurrent.MVar
 import Control.Exception (SomeException, bracket, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, replicateM_, void)
 import qualified Data.ByteString as BS
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_, withTransaction)
 import Database.PostgreSQL.Simple.Types (Binary (..))
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Insights.Registration
   ( CompletionResult (..)
@@ -479,7 +478,7 @@ assertTerminalFixture pool rules = withDb pool $ \conn -> do
 
 withRegistrationDatabase :: Text -> (DbPool -> IO a) -> IO a
 withRegistrationDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     assertDedicatedDatabase pool
     cleanupFixture pool
     action pool `finally` cleanupFixture pool

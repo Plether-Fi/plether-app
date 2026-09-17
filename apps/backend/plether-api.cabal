@@ -80,6 +80,8 @@ library
         Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
+        Plether.Database.Observation
+        Plether.Database.Diagnostics
         Plether.Database.VaultPerformance
         Plether.Database.VaultActivity
         Plether.Database.AaSponsorship
@@ -400,6 +402,7 @@ test-suite plether-api-test
         Plether.Perps.IndexerOptionsSpec
         Plether.Perps.ReleaseSpec
         Plether.Database.CandleHistorySpec
+        Plether.Database.ObservationSpec
         Plether.Database.VaultPerformanceSpec
         Plether.Database.AaSponsorshipSpec
         Plether.Database.InsightsSpec
@@ -448,6 +451,7 @@ test-suite plether-api-integration-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.DatabaseDiagnosticsSpec
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
@@ -471,6 +475,7 @@ test-suite plether-api-integration-test
         http-types >= 0.12,
         postgresql-simple >= 0.7,
         process >= 1.6,
+        async >= 2.2,
         resource-pool >= 0.4,
         scotty >= 0.22,
         wai >= 3.2,

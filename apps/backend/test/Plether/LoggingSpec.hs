@@ -1,18 +1,23 @@
 module Plether.LoggingSpec (spec) where
 
+import Control.Concurrent.Async (mapConcurrently_)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
 import Control.Exception (bracket, finally)
-import Data.Aeson (Value (..), eitherDecodeStrict')
+import Control.Monad (forM_, replicateM_)
+import Data.Aeson (Value (..), eitherDecodeStrict', toJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
+import Data.List (sort)
+import qualified Data.Text as Text
 import GHC.IO.Handle (hDuplicate, hDuplicateTo)
 import Plether.LiquidationWorker
   ( LiquidationWorkerConfig (..)
   , LiquidationWorkerMode (LiquidationWorkerOnce)
   , runLiquidationWorker
   )
-import Plether.Logging (field, logError, logInfo, logWarnEvery)
+import Plether.Logging (field, logDebug, logError, logInfo, logWarn, logWarnEvery)
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO
   ( Handle
@@ -27,6 +32,44 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "structured logging" $ do
+    forM_ [("stdout", stdout, logInfo, logDebug), ("stderr", stderr, logWarn, logError)] $
+      \(name, target, firstLevel, secondLevel) ->
+        it ("keeps concurrent small and multi-chunk records intact on " <> name) $ do
+          ready <- newEmptyMVar
+          start <- newEmptyMVar
+          let workers = 16
+              perWorker = 32
+              emitWorker worker = do
+                putMVar ready ()
+                readMVar start
+                forM_ [1 .. perWorker] $ \sequenceNumber -> do
+                  let identifier = worker * perWorker + sequenceNumber
+                      emitLog = if even identifier then firstLevel else secondLevel
+                      -- Exceed a lazy bytestring chunk and the handle buffer.
+                      payload = if sequenceNumber `mod` 8 == 0
+                        then replicate 20 (Text.replicate 2048 "x") else ["small"]
+                  emitLog "concurrent_record" "Concurrent log test"
+                    [field "identifier" identifier, field "payload" payload]
+          output <- captureHandle target $ mapConcurrently_ id
+            [ mapConcurrently_ emitWorker [0 .. workers - 1 :: Int]
+            , replicateM_ workers (takeMVar ready) >> putMVar start ()
+            ]
+          let linesFound = Char8.lines output
+          length linesFound `shouldBe` workers * perWorker
+          case traverse eitherDecodeStrict' linesFound of
+            Left err -> expectationFailure err
+            Right records -> do
+              sort (map (lookupField "identifier") records) `shouldBe`
+                [Just (Number $ fromIntegral n) | n <- [1 .. workers * perWorker]]
+              forM_ records $ \record -> do
+                lookupField "event" record `shouldBe` Just (String "concurrent_record")
+                lookupField "message" record `shouldBe` Just (String "Concurrent log test")
+                case lookupField "identifier" record of
+                  Just (Number n) -> lookupField "payload" record `shouldBe` Just (toJSON $
+                    if (floor n :: Int) `mod` 8 == 0
+                      then replicate 20 (Text.replicate 2048 "x") else ["small"])
+                  _ -> expectationFailure "Missing record identifier"
+
     it "emits one JSON line with reserved fields and redacted URL paths" $ do
       output <- captureHandle stdout $
         logInfo

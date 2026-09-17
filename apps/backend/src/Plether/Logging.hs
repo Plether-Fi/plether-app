@@ -10,10 +10,13 @@ module Plether.Logging
   , logErrorEvery
   ) where
 
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
+import Control.Exception (evaluate)
 import Data.Aeson (ToJSON, Value (..), encode, toJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.ByteString.Lazy.Char8 as LazyByteString
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -95,8 +98,15 @@ emit level eventName message fields = do
       extraFields = [(key, value) | LogField key value <- fields]
       -- Reserved envelope fields win if a call site accidentally reuses one.
       payload = Object $ KeyMap.fromList baseFields <> KeyMap.fromList extraFields
-  LazyByteString.hPutStrLn target $ encode payload
-  hFlush target
+      -- Materialize the entire record, including its newline, before taking the
+      -- output lock. Lazy hPutStrLn writes chunks and the newline separately;
+      -- concurrent requests can otherwise concatenate JSON objects on one line.
+      record = LazyByteString.toStrict $ encode payload <> "\n"
+      outputLock = if level < Warn then stdoutLock else stderrLock
+  _ <- evaluate $ ByteString.length record
+  withMVar outputLock $ \_ -> do
+    ByteString.hPut target record
+    hFlush target
 
 levelMetadata :: LogLevel -> (Text, Int, Handle)
 levelMetadata = \case
@@ -138,3 +148,13 @@ sanitizeText limit = Text.take limit . Text.unwords . map redactWord . Text.word
 {-# NOINLINE rateStates #-}
 rateStates :: IORef (Map.Map (LogLevel, Text) RateState)
 rateStates = unsafePerformIO $ newIORef Map.empty
+
+-- Separate locks avoid coupling stderr to stdout backpressure. withMVar releases
+-- its lock on exceptions; do not use uninterruptible masking around blocking IO.
+{-# NOINLINE stdoutLock #-}
+stdoutLock :: MVar ()
+stdoutLock = unsafePerformIO $ newMVar ()
+
+{-# NOINLINE stderrLock #-}
+stderrLock :: MVar ()
+stderrLock = unsafePerformIO $ newMVar ()

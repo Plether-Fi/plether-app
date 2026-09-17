@@ -8,14 +8,13 @@ import Data.Aeson (object, (.=))
 import qualified Data.ByteString.Base16 as Base16
 import Data.List (find, sort)
 import Data.Maybe (isJust)
-import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
-import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Insights
   ( AccountSnapshotInput (..)
   , CompetitionRow (..)
@@ -416,7 +415,7 @@ withPendingV123Competition databaseUrl action =
 
 withInsightsDatabase :: Text -> (DbPool -> IO a) -> IO a
 withInsightsDatabase databaseUrl action =
-  bracket (newDbPool databaseUrl) destroyAllResources $ \pool -> do
+  bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
     assertDedicatedDatabase pool
     prepareDatabase pool
     action pool `finally` cleanupDatabase pool
