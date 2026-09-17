@@ -19,6 +19,7 @@ module Plether.AA.Gateway
   , revalidateSecuritySnapshot
   , agreeAccountIdentity
   , forwardAlto
+  , classifyAltoResult
   , closeAssistanceStatus
   , observePreparationInclusion
   ) where
@@ -656,9 +657,27 @@ altoResult manager cfg method params = case Preparation.internalRequest method p
   Right request -> do
     response <- forwardAlto manager (naaAltoRpcUrl cfg) request
     pure $ case response of
-      Right (Object fields, _) | Just result <- KM.lookup "result" fields -> Right result
+      Right (value, _) -> classifyAltoResult method value
       Left failure -> Left failure
-      _ -> Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto preparation failed"
+
+-- Never forward arbitrary upstream messages/data (which may contain calldata).
+-- Only execution estimates interpret ERC-4337 rejection codes as deterministic;
+-- transport/protocol failures and errors on other methods remain unavailable.
+classifyAltoResult :: Text -> Value -> Either Legacy.ProxyFailure Value
+classifyAltoResult method (Object fields)
+  | Just result <- KM.lookup "result" fields = Right result
+  | method == "eth_estimateUserOperationGas"
+  , Just (Object err) <- KM.lookup "error" fields
+  , Just (Number code) <- KM.lookup "code" err
+  , code `elem` map fromIntegral (-32521 : [-32507 .. -32500] :: [Int]) =
+      let (reason, message) = case (code, KM.lookup "message" err) of
+            (-32521, Just (String "UserOperation reverted during simulation with reason: 0x024ec6ee")) ->
+              ("INSUFFICIENT_FREE_EQUITY", "Not enough available trading collateral. Reduce the order size or add collateral.")
+            (-32521, Just (String "UserOperation reverted during simulation with reason: 0xe37e62c6")) ->
+              ("INVALID_ORDER_DEADLINE", "The order deadline is invalid. Refresh the order and review it again.")
+            _ -> ("SIMULATION_FAILED", "The transaction was rejected during simulation. Refresh account state and review the action.")
+       in Left $ Legacy.ProxyFailure status200 (truncate code) message reason False
+classifyAltoResult _ _ = Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto is temporarily unavailable"
 
 dispatchNative
   :: NativeGatewayState

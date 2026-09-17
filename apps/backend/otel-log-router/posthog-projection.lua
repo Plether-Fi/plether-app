@@ -4,7 +4,7 @@ local categories = {
   event=true, component=true, stage=true, reason_code=true, outcome=true,
   action_kind=true, sponsorship_status=true, terminal_outcome=true,
   deployment_name=true, rpc_role=true, wallet_family=true,
-  recovery_source=true,
+  recovery_source=true, diagnostic_code=true,
 }
 local function set(words)
   local values = {}
@@ -46,6 +46,7 @@ oracle_worker_iteration_failed oracle_worker_fatal
 api_started rpc_request_failed rpc_request_completed
 ]])
 local values = {
+  diagnostic_code=set('DEPENDENCY_FAILED JOURNAL_READ_FAILED JOURNAL_BOUND_EXCEEDED JOURNAL_DECODE_FAILED JOURNAL_IDENTITY_MISMATCH PENDING_LIABILITY_UNKNOWN RESERVE_EVIDENCE_INVALID SNAPSHOT_UNVERIFIED OBSERVATION_EXPIRED'),
   recovery_source=set('finalized_record transaction_hint'),
   component=set('keeper funding oracle readiness sponsorship reconciliation bundler paymaster liquidation protection lp_settlement alto'),
   stage=set('prepared preparation authorization estimation signing persistence gateway submitted submitting included committed execution execution_attempt_failed user_operation_confirmed user_operation_reverted authorization_expired recovery'),
@@ -70,6 +71,7 @@ SPONSOR_BUDGET_EXCEEDED PER_OPERATION_BUDGET_EXCEEDED OUTSTANDING_BUDGET_EXCEEDE
 ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
+INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE
 AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
 USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
 RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE

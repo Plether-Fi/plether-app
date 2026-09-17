@@ -47,6 +47,7 @@ vi.mock('viem/account-abstraction', async (importOriginal) => ({
 }))
 
 import { createManagedPimlicoRuntime } from '../managedPimlicoRuntime'
+import { asSponsorRequestError, sponsorReasonMessage } from '../errors'
 
 const manifest: PerpsAaDeploymentManifestV1 = {
   version: 'perps-aa-arbitrum-sepolia-v2',
@@ -345,6 +346,32 @@ describe('createManagedPimlicoRuntime', () => {
     expect(mocks.createSmartAccountClient.mock.results[0].value.prepareUserOperation).not.toHaveBeenCalled()
     expect(mocks.createPaymasterClient.mock.results[0].value.getPaymasterData).not.toHaveBeenCalled()
     expect(sign).not.toHaveBeenCalled()
+  })
+
+  it.each(['INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE', 'SIMULATION_FAILED'])('preserves non-retryable %s through the real preparation transport without signing or fallback', async reason => {
+    const sign = vi.fn()
+    mocks.toSimpleSmartAccount.mockResolvedValue({ address: ACCOUNT, signUserOperation: sign,
+      encodeCalls: vi.fn(async () => '0x1234'), getFactoryArgs: vi.fn(async () => ({})) })
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id,
+        error: { code: -32521, message: 'Simulation rejected', data: { reason, retryable: false } } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: { ...v2Manifest, preparationRpcVersion: 1, paymasterRpcUrl: 'http://localhost:5173/api/perps/v1/aa/rpc' },
+      ownerAddress: OWNER, walletClient: { chain: { id: 421614 }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: 421614 } } as never,
+    })
+    const error = await runtime.smartAccount.prepareUserOperation({ calls: [{ to: ACCOUNT, value: 0n, data: '0x1234' }],
+      action: 'place-order', preparationId: 'rejected-attempt' }).then(() => { throw Error('Unexpected success') }, asSponsorRequestError)
+    expect(error).toMatchObject({ reason, retryable: false, rpcCode: -32521 })
+    expect(sponsorReasonMessage(error)).toMatch(reason === 'INSUFFICIENT_FREE_EQUITY' ? /collateral/ : reason === 'INVALID_ORDER_DEADLINE' ? /deadline/ : /simulation/)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(sign).not.toHaveBeenCalled()
+    expect(mocks.createSmartAccountClient.mock.results[0].value.prepareUserOperation).not.toHaveBeenCalled()
+    expect(mocks.createPaymasterClient.mock.results[0].value.getPaymasterData).not.toHaveBeenCalled()
   })
 
   it('strips signatures and prior paymaster data from v2 ERC-7677 calls', async () => {

@@ -35,12 +35,12 @@ it('publishes scoped evidence atomically and rejects invalid database categories
 it('accounts for actual signed protection recovery bytes without replacing or removing them', {skip:!url}, async () => {
   // Public test scalar, never used outside this disposable local database.
   const account=privateKeyToAccount(`0x${'1'.repeat(64)}`)
-  const raw=await account.signTransaction({chainId:421614,type:'eip1559',nonce:7,gas:100000n,maxFeePerGas:5n,maxPriorityFeePerGas:1n,to:account.address,value:100n})
+  const raw=await account.signTransaction({chainId:421614,type:'eip1559',nonce:0,gas:100000n,maxFeePerGas:5n,maxPriorityFeePerGas:1n,to:account.address,value:0n})
   const release={contracts:{positionProtectionBook:{address:account.address}}}
   await db.query("INSERT INTO perps_protection_transactions(chain_id,book,transaction_hash,raw_transaction,protection_id,action,status) VALUES(421614,$1,'hash',$2,1,'retry','pending')",[account.address.toLowerCase(),raw])
   const rows=await journalLiabilities(db,421614,release,{component:'protection',address:account.address.toLowerCase()})
-  assert.deepEqual(rows,[{nonce:7n,cost:500100n}])
-  assert.equal(pendingLiability(7n,8n,rows),500100n)
-  assert.equal(pendingLiability(8n,8n,rows),0n) // canonical balance already includes it
+  assert.deepEqual(rows,[{nonce:0n,cost:500000n}])
+  assert.equal(pendingLiability(0n,1n,rows),500000n)
+  assert.equal(pendingLiability(1n,1n,rows),0n) // canonical balance already includes it
   assert.equal((await db.query('SELECT raw_transaction FROM perps_protection_transactions')).rows[0].raw_transaction,raw)
 })

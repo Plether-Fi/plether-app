@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { parseTransaction } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { components, parseMonitors, pendingLiability, classifyReserve, observeFunding, journalLiabilities, transactionLiability } from '../funding.mjs'
 
 const address = '0x1111111111111111111111111111111111111111'
@@ -47,6 +49,31 @@ describe('funding inventory and liabilities', () => {
 })
 
 describe('fixed-block funding observer', () => {
+  for (const type of ['legacy','eip1559']) for (const nonce of [0,7]) for (const value of [0n,100n]) {
+    it(`reads verified ${type} journal bytes with nonce=${nonce} value=${value} without modifying the journal`, async () => {
+      const signer=privateKeyToAccount(`0x${'1'.repeat(64)}`) // disposable public test key
+      const raw=await signer.signTransaction({chainId:421614,type,nonce,gas:100000n,
+        ...(type==='legacy'?{gasPrice:5n}:{maxFeePerGas:5n,maxPriorityFeePerGas:1n}),to:signer.address,value})
+      if (value===0n) assert.equal(parseTransaction(raw).value,undefined)
+      const monitor={...monitors[0],component:'protection',address:signer.address.toLowerCase()}
+      const db={query:async sql=>{assert.match(sql,/^SELECT raw_transaction/);return {rows:[{raw_transaction:raw}]}}}
+      const rows=await journalLiabilities(db,421614,release,monitor)
+      assert.deepEqual(rows,[{nonce:BigInt(nonce),cost:500000n+value}])
+      const result=await run(client({getTransactionCount:async r=>r.blockTag==='pending'?nonce+1:nonce}),{monitors:[monitor],db})
+      assert.equal(result.results[0].reason,'READY')
+      assert.equal(result.results[0].liability,500000n+value)
+      assert.equal(pendingLiability(BigInt(nonce+1),BigInt(nonce+1),rows),0n)
+      for (const changes of [{address},{chainId:1}]) {
+        await assert.rejects(journalLiabilities(db,changes.chainId??421614,release,{...monitor,...changes}),/JOURNAL_IDENTITY_MISMATCH/)
+      }
+    })
+  }
+  it('never invents zero values for incomplete or invalid RPC transaction evidence', () => {
+    const tx={nonce:0,gas:100n,value:0n,maxFeePerGas:5n}
+    for (const key of ['nonce','gas','value','maxFeePerGas']) for (const value of [undefined,null,false,'',NaN,-1n]) {
+      assert.throws(()=>transactionLiability({...tx,[key]:value}))
+    }
+  })
   it('observes every configured role without needing a first trade or a private key', async () => {
     const inventory = parseMonitors(JSON.stringify(components.map((component,i)=>({...spec,component,address:`0x${String(i+1).repeat(40)}`}))))
     const result = await run(client(),{monitors:inventory})
@@ -70,6 +97,7 @@ describe('fixed-block funding observer', () => {
   it('unknown mempool liabilities stay unknown even if the wallet has plenty of ETH', async () => {
     const result=await run(client({getTransactionCount:async r=>r.blockTag==='pending'?1:0}))
     assert.equal(result.results[0].reason,'FUNDING_UNVERIFIED')
+    assert.equal(result.results[0].diagnostic,'PENDING_LIABILITY_UNKNOWN')
     const hidden=await run(client({getTransactionCount:async r=>r.blockTag==='pending'?1:0,getBlock:async r=>r.blockTag==='pending'?{parentHash:'other',transactions:[]}:block}))
     assert.equal(hidden.results[0].reason,'FUNDING_UNVERIFIED')
   })
@@ -105,6 +133,12 @@ describe('fixed-block funding observer', () => {
   it('rejects malformed protection journal payloads without publishing signed data', async () => {
     const result=await run(client(),{monitors:[{...monitors[0],component:'protection'}],db:{query:async()=>({rows:[{raw_transaction:'0xsecret'}]})}})
     assert.equal(result.results[0].reason,'FUNDING_UNVERIFIED')
+    assert.equal(result.results[0].diagnostic,'JOURNAL_DECODE_FAILED')
     assert.ok(!JSON.stringify(result.results[0],(_,v)=>typeof v==='bigint'?v.toString():v).includes('secret'))
+  })
+  it('reports a bounded journal read failure without leaking database exceptions', async () => {
+    const result=await run(client(),{monitors:[{...monitors[0],component:'protection'}],db:{query:async()=>{throw Error('postgres://private-credential')}}})
+    assert.equal(result.results[0].diagnostic,'JOURNAL_READ_FAILED')
+    assert.ok(!JSON.stringify(result.results,(_,v)=>typeof v==='bigint'?v.toString():v).includes('private-credential'))
   })
 })

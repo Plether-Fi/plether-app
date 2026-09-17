@@ -3,6 +3,8 @@ export type StableSponsorReason =
   | 'RATE_LIMITED'
   | 'SPONSOR_BUDGET_EXCEEDED'
   | 'SIMULATION_FAILED'
+  | 'INSUFFICIENT_FREE_EQUITY'
+  | 'INVALID_ORDER_DEADLINE'
   | 'SPONSOR_UNAVAILABLE'
   | 'POLICY_DENIED'
   | 'PAYMASTER_PAUSED'
@@ -206,6 +208,7 @@ export function isDefinitiveSponsorshipRefusal(reason?: string): boolean {
   return reason !== undefined && [
     'RESTART_ESTIMATION', 'RATE_LIMITED', 'SPONSOR_BUDGET_EXCEEDED',
     'SIMULATION_FAILED', 'POLICY_DENIED', 'PAYMASTER_PAUSED',
+    'INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE',
     'ACCOUNT_NOT_TRUSTED', 'EXECUTION_GAS_CAP_EXCEEDED',
   ].includes(reason)
 }
@@ -246,7 +249,11 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
     case 'SPONSOR_BUDGET_EXCEEDED':
       return 'Sponsored gas capacity is temporarily unavailable. Retry later or contact support.'
     case 'SIMULATION_FAILED':
-      return 'The sponsored transaction did not pass simulation. Refresh account state and retry.'
+      return 'The transaction was rejected during simulation. Refresh account state and review the action before trying again.'
+    case 'INSUFFICIENT_FREE_EQUITY':
+      return 'Not enough available trading collateral. Reduce the order size or add collateral. Your action was not sent.'
+    case 'INVALID_ORDER_DEADLINE':
+      return 'The order deadline is invalid. Refresh the order and review it again. Your action was not sent.'
     case 'PAYMASTER_PAUSED':
       return 'Plether gas sponsorship is temporarily paused.'
     case 'POLICY_DENIED':

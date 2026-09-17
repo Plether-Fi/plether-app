@@ -34,6 +34,8 @@ const SPONSORSHIP_FAILURE_REASONS = new Set([
   'RATE_LIMITED',
   'SPONSOR_BUDGET_EXCEEDED',
   'SIMULATION_FAILED',
+  'INSUFFICIENT_FREE_EQUITY',
+  'INVALID_ORDER_DEADLINE',
   'SPONSOR_UNAVAILABLE',
   'POLICY_DENIED',
   'PAYMASTER_PAUSED',
@@ -232,7 +234,9 @@ function operationReasonMessage(
       : operation.reason === 'PREPARATION_UNUSABLE'
       ? 'This saved preparation can no longer be signed. Check recovery to discard it when available.'
       : 'The wallet or preparation response was interrupted. Check recovery before continuing.'
-    case 'sponsorship-refused': return 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
+    case 'sponsorship-refused': return operation.reason && SPONSORSHIP_FAILURE_REASONS.has(operation.reason)
+      ? sponsorReasonMessage(new SponsorRequestError({ reason: operation.reason, message: operation.reason, retryable: false }))
+      : 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
     case 'execution-reverted':
       return 'The transaction was included but failed during onchain execution.'
     case 'dropped':

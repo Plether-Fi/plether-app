@@ -69,6 +69,17 @@ show uncertainty while a transaction is in flight. This is not a complete view
 of private/provider-hidden mempools or Alto's not-yet-signed UserOperation queue;
 paymaster UserOperation reservations remain solely in the existing AA ledger.
 
+Signed protection journal transactions can legitimately encode zero ETH value
+or nonce as empty RLP quantities. After decoding and verifying the signer and
+chain, the observer normalizes those omitted decoded fields to zero. It does
+not default missing pending-block RPC fields, gas limits or fees to zero.
+Malformed bytes, mismatched identities and incomplete liability evidence still
+produce `FUNDING_UNVERIFIED`. The public readiness reasons are unchanged;
+`worker_funding_observation.diagnostic_code` adds bounded internal categories
+such as `JOURNAL_DECODE_FAILED`, `JOURNAL_READ_FAILED` and
+`PENDING_LIABILITY_UNKNOWN` to CloudWatch and the allowlisted PostHog projection.
+No raw transaction, exception text or credentials are included.
+
 Warn below ten reserves. Below one conservative upper-bound reserve means
 uncertain affordability, not proof an actual transaction cannot execute. A fresh
 verified empty signer can be blocked. A mixed funded/empty executor pool is a
@@ -83,6 +94,24 @@ expire after 15 seconds, including when the observer exits or cannot persist.
 No network calls happen inside its publishing database transaction. The keeper's
 existing row continues to prove worker liveness; when configured, the shared
 observer owns the funding assessment rather than the legacy pending-nonce rule.
+
+## Simulation refusals versus bundler outages
+
+Native preparation classifies Alto's deterministic ERC-4337 estimation errors
+separately from transport/protocol failures. The observed insufficient-free-equity
+and invalid-deadline reverts return `INSUFFICIENT_FREE_EQUITY` and
+`INVALID_ORDER_DEADLINE`; other recognized validation/simulation rejections return
+`SIMULATION_FAILED`. These are JSON-RPC errors with `data.retryable=false`, not
+`BUNDLER_UNAVAILABLE`. Only reviewed exact selector messages receive specific
+classifications; arbitrary provider messages and data are never forwarded.
+
+The frontend preserves those reasons, displays corrective guidance, and makes
+only one preparation request (no automatic retry, signing or provider fallback
+after rejection). A user must review a corrected action rather than repeatedly
+retry the same rejected intent. Existing durable preparation recovery/retirement
+and signed-operation lane protections remain authoritative and unchanged.
+Real connectivity/protocol failures and receipt lookup errors remain retryable
+unavailability, not proof that an operation was rejected or never submitted.
 
 ## Singapore activation (separate approval required)
 
