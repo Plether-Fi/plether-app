@@ -1,3 +1,4 @@
+import { reportAttemptStage } from './attemptDiagnostics'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { isAddressEqual, type Hex } from 'viem'
 import type { SponsoredOperation } from './operationStore'
@@ -37,6 +38,8 @@ function verifiedPersistedUserOperation(
   )
   if (
     !signedOperation ||
+    runtime.chainId !== operation.chainId ||
+    !isAddressEqual(runtime.smartAccount.accountAddress, operation.accountAddress) ||
     !isAddressEqual(
       signedOperation.sender,
       operation.accountAddress
@@ -110,7 +113,10 @@ export async function resolveProtocolOperation(input: {
     if (snapshot.userOperationEvidence.kind === 'not-safe-yet') {
       return undefined
     }
-    if (snapshot.userOperationEvidence.kind === 'inconclusive') {
+    if (snapshot.userOperationEvidence.kind === 'inconclusive' ||
+      (snapshot.userOperationEvidence.kind === 'receipt-unavailable' &&
+        (input.operation.transactionHash || input.operation.includedTransactionHash ||
+          input.operation.laneReleasedAfterSuccessfulInclusion))) {
       return undefined
     }
 
@@ -119,6 +125,7 @@ export async function resolveProtocolOperation(input: {
       // inclusion from another operation consuming the nonce. Expiry must not
       // turn that ambiguity into a retry-safe result.
       if (snapshot.accountNonce > operationNonce) {
+        if (snapshot.userOperationEvidence.kind === 'receipt-unavailable') return undefined
         return {
           status: 'outcome-unknown',
           protocolNonceAdvanced: true,
@@ -128,10 +135,13 @@ export async function resolveProtocolOperation(input: {
       // sponsorship has elapsed cannot land even if an earlier nonce gap has
       // kept the account nonce below this operation's nonce.
       if (
+        snapshot.accountNonce >= 0n &&
+        (snapshot.accountNonce >> 64n) === (operationNonce >> 64n) &&
         validUntil !== undefined &&
         snapshot.blockTimestamp > validUntil &&
         snapshot.accountNonce <= operationNonce
       ) {
+        reportAttemptStage(input.operation.id, 'safe_expiry_verified')
         return { status: 'expired' }
       }
     }

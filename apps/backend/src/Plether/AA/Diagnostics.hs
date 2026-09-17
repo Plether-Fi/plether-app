@@ -1,4 +1,4 @@
-module Plether.AA.Diagnostics (Diagnostic(..), DiagnosticSink, startDiagnostics, enqueueDiagnostic, validAttemptId, readDiagnostic) where
+module Plether.AA.Diagnostics (Diagnostic(..), DiagnosticSink, startDiagnostics, enqueueDiagnostic, validAttemptId, readDiagnostic, parseBrowserStage, recordBrowserStage, persistAttemptStage) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
@@ -9,9 +9,11 @@ import Data.Text (Text)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (Value(..), object, (.=))
+import qualified Data.Aeson.KeyMap as KM
+import Data.Int (Int64)
 import qualified Data.Text as T
-import Database.PostgreSQL.Simple (execute, query, query_, Only(..))
+import Database.PostgreSQL.Simple (Connection, execute, query, query_, Only(..))
 import Plether.Database (DbPool, withDb)
 import Plether.Config (Config)
 import Plether.Ethereum.Client (EthClient)
@@ -28,6 +30,8 @@ data Diagnostic = Diagnostic
   }
   | RecoveryDiagnostic
     { diagnosticClient :: Text, diagnosticHash :: Text, diagnosticRecovered :: Bool }
+  | SubmissionDiagnostic Text Text Text
+    -- Client, exact operation hash, allowlisted backend stage.
 type DiagnosticSink = TBQueue Diagnostic
 
 validAttemptId :: Text -> Bool
@@ -82,6 +86,8 @@ startDiagnostics cfg pool client = do
   void $ forkIO $ forever $ do
     diagnostic <- atomically $ readTBQueue queue
     result <- try $ timeout 2_000_000 $ withDb pool $ \conn -> case diagnostic of
+      SubmissionDiagnostic clientKey operationHash stage ->
+        persistAttemptStage conn clientKey operationHash "backend" stage
       RecoveryDiagnostic clientKey operationHash recovered -> do
         -- This lookup and export run off the recovery request's critical path.
         refs <- query conn "SELECT attempt_id::text FROM aa_attempt_diagnostics WHERE client_key=? AND operation_hash=? LIMIT 1"
@@ -109,6 +115,7 @@ startDiagnostics cfg pool client = do
         Nothing -> dropped
       Right Nothing -> dropped
       Right (Just 0) -> pure ()
+      Right (Just _) | SubmissionDiagnostic {} <- diagnostic -> pure ()
       Right (Just _) -> logInfo "aa_attempt_prepared" "Sponsored operation prepared"
         [field "attempt_id" $ diagnosticAttempt diagnostic, field "stage" ("prepared" :: Text)]
   pure queue
@@ -138,3 +145,47 @@ readDiagnostic pool client attempt = do
     [(stage :: Text,reason :: Maybe Text,observed :: Integer)] -> object ["version" .= (1 :: Int), "stage" .= stage, "reason" .= reason,
       "observedAt" .= observed, "provenance" .= ("backend_observation" :: Text)]
     _ -> object ["version" .= (1 :: Int), "stage" .= ("unavailable" :: Text)]
+
+-- Advisory reports cannot authorize recovery or overwrite canonical outcomes.
+-- A browser can only name a stage; provenance is selected by the server.
+parseBrowserStage :: Value -> Maybe (Text, Text)
+parseBrowserStage (Object fields)
+  | KM.size fields == 2
+  , Just (String attempt) <- KM.lookup "attemptId" fields
+  , Just (String stage) <- KM.lookup "stage" fields
+  , validAttemptId attempt, stage `elem` browserStages = Just (T.toLower attempt, stage)
+parseBrowserStage _ = Nothing
+
+browserStages :: [Text]
+browserStages = ["wallet_requested", "wallet_approved", "wallet_declined", "wallet_interrupted",
+  "signed_operation_saved", "submission_requested", "submission_acknowledged", "submission_failed",
+  "deadline_elapsed", "execution_interrupted", "safe_expiry_verified"]
+
+backendStages :: [Text]
+backendStages = ["submission_received", "rate_limited", "security_rejected", "identity_rejected",
+  "policy_rejected", "runtime_rejected", "submission_paused", "authorization_rejected",
+  "submission_journal_failed", "submission_journaled", "bundler_forwarded",
+  "bundler_unavailable", "bundler_rejected", "bundler_acknowledged", "bundler_hash_mismatch"]
+
+persistAttemptStage :: Connection -> Text -> Text -> Text -> Text -> IO Int64
+persistAttemptStage conn client reference source stage
+  | source == "browser" && stage `elem` browserStages && validAttemptId reference = execute conn
+      "INSERT INTO aa_attempt_events(attempt_id,source,stage) SELECT diagnostic_attempt_id,?,? FROM aa_preparations WHERE diagnostic_attempt_id=?::uuid AND client_key=? ON CONFLICT DO NOTHING"
+      (source, stage, reference, client)
+  | source == "backend" && stage `elem` backendStages = execute conn
+      "INSERT INTO aa_attempt_events(attempt_id,source,stage) SELECT p.diagnostic_attempt_id,?,? FROM aa_preparations p JOIN aa_sponsorship_authorizations a ON a.digest=p.authorization_digest WHERE a.expected_user_operation_hash=? AND a.client_key=? AND p.diagnostic_attempt_id IS NOT NULL ON CONFLICT DO NOTHING"
+      (source, stage, reference, client)
+  | otherwise = pure 0
+
+recordBrowserStage :: DbPool -> Text -> Text -> Text -> IO ()
+recordBrowserStage pool client attempt stage = do
+  result <- try $ timeout 500_000 $ withDb pool $ \conn -> do
+    allowed <- consumeAaRateLimit conn "attempt-events" client client 120
+    when allowed $ void $ persistAttemptStage conn client attempt "browser" stage
+  case result of
+    Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
+      Just _ -> throwIO err
+      Nothing -> dropped
+    Right Nothing -> dropped
+    Right (Just ()) -> pure ()
+ where dropped = logWarnEvery 60 "aa_attempt_event_dropped" "Attempt timeline unavailable; trading unaffected" []

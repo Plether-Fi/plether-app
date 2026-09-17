@@ -354,6 +354,53 @@ describe('resolveProtocolOperation', () => {
     })).resolves.toBeUndefined()
   })
 
+  it('resolves safe expiry even when the receipt service is unavailable', async () => {
+    const managedRuntime = runtime({ ...notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }),
+      userOperationEvidence: { kind: 'receipt-unavailable' } })
+    await expect(resolveProtocolOperation({ operation: operation(), runtime: managedRuntime,
+      userOperationHash: HASH })).resolves.toEqual({ status: 'expired' })
+    expect(managedRuntime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { label: 'advanced nonce', nonce: 8n, time: 1_001n },
+    { label: 'deadline boundary', nonce: 7n, time: 1_000n },
+    { label: 'unexpired authorization', nonce: 7n, time: 999n },
+  ])('keeps $label unresolved during a receipt outage', async ({ nonce, time }) => {
+    await expect(resolveProtocolOperation({ operation: operation(), userOperationHash: HASH,
+      runtime: runtime({ ...notLocatedSnapshot({ accountNonce: nonce, blockTimestamp: time }),
+        userOperationEvidence: { kind: 'receipt-unavailable' } }) })).resolves.toBeUndefined()
+  })
+
+  it.each(['transactionHash', 'includedTransactionHash'] as const)(
+    'preserves %s inclusion evidence during a receipt outage', async key => {
+      await expect(resolveProtocolOperation({ operation: { ...operation(), [key]: TRANSACTION_HASH },
+        userOperationHash: HASH, runtime: runtime({ ...notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }),
+          userOperationEvidence: { kind: 'receipt-unavailable' } }) })).resolves.toBeUndefined()
+    })
+
+  it('does not treat conflicting or malformed receipt evidence as a service outage', async () => {
+    await expect(resolveProtocolOperation({ operation: operation(), userOperationHash: HASH,
+      runtime: runtime({ ...notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }),
+        userOperationEvidence: { kind: 'inconclusive' } }) })).resolves.toBeUndefined()
+  })
+
+  it.each(['chain', 'account', 'nonce-key'] as const)('rejects mismatched %s evidence', async mismatch => {
+    const managedRuntime = runtime({ ...notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }),
+      userOperationEvidence: { kind: 'receipt-unavailable' } })
+    if (mismatch === 'chain') managedRuntime.chainId = 1
+    if (mismatch === 'account') managedRuntime.smartAccount.accountAddress = OWNER
+    const stored = mismatch === 'nonce-key' ? operation(signedOperation({ nonce: (9n << 64n) | 7n })) : operation()
+    await expect(resolveProtocolOperation({ operation: stored, userOperationHash: HASH,
+      runtime: managedRuntime })).resolves.toBeUndefined()
+  })
+
+  it('does not resolve an unverified signed payload during a receipt outage', async () => {
+    await expect(resolveProtocolOperation({ operation: operation(), userOperationHash: HASH,
+      runtime: runtime({ ...notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }),
+        userOperationEvidence: { kind: 'receipt-unavailable' } }, OTHER_HASH) })).resolves.toBeUndefined()
+  })
+
   it('uses the verified operation nonce key for the atomic snapshot', async () => {
     const nonceKey = 9n
     const nonce = (nonceKey << 64n) | 8n

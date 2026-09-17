@@ -25,6 +25,7 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
+import Plether.AA.Diagnostics (persistAttemptStage)
 import Plether.AA.OrderDiagnostics (claimOrderDiagnostics, completeOrderDiagnostic)
 import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.ExecutionDiagnostics (claimExecutionDiagnostics, completeExecutionDiagnostic)
@@ -88,6 +89,32 @@ main = do
 aaIntegrationSpec :: Text -> Spec
 aaIntegrationSpec databaseUrl =
   describe "native AA PostgreSQL authorization lifecycle" $ do
+    it "persists a bounded, client-scoped timeline without changing authorization" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- reserveSponsorship conn testConfig (draft '1' '2' '3' 7 1_000 now) >>= expectAuthorization
+        let digest = saDigest authorization
+            client = saClientKey authorization
+            operationHash = hashOf 'b'
+            attempt = "12345678-1234-4123-8123-123456789abc" :: Text
+        storeSponsorshipSignature conn testConfig digest (signatureOf 'a') operationHash `shouldReturn` True
+        void $ execute conn
+          "INSERT INTO aa_preparations(client_key,sender,preparation_id,intent_hash,authorization_digest,diagnostic_attempt_id) VALUES (?,?,?,?,?,?::uuid)"
+          (client, saSender authorization, hashOf 'c', hashOf 'd', digest, attempt)
+        persistAttemptStage conn client attempt "browser" "wallet_approved" `shouldReturn` 1
+        persistAttemptStage conn client attempt "browser" "wallet_approved" `shouldReturn` 0
+        persistAttemptStage conn (clientKeyOf 'f') attempt "browser" "wallet_requested" `shouldReturn` 0
+        persistAttemptStage conn client "12345678-1234-4123-8123-123456789abd" "browser" "wallet_requested" `shouldReturn` 0
+        persistAttemptStage conn client attempt "browser" "submission_received" `shouldReturn` 0
+        persistAttemptStage conn client operationHash "backend" "submission_received" `shouldReturn` 1
+        persistAttemptStage conn client operationHash "backend" "security_rejected" `shouldReturn` 1
+        persistAttemptStage conn client operationHash "backend" "arbitrary error payload" `shouldReturn` 0
+        rows <- query_ conn "SELECT source,stage FROM aa_attempt_events ORDER BY source,stage" :: IO [(Text,Text)]
+        rows `shouldBe` [("backend","security_rejected"),("backend","submission_received"),("browser","wallet_approved")]
+        stored <- getSponsorshipByDigest conn digest
+        fmap saState stored `shouldBe` Just "signed"
+
     it "retires a missing attempt durably and rejects every delayed claim" $
       withFixture databaseUrl $ \conn -> do
         let scope = Recovery.Scope chainId paymasterAddress (addressOf '1') (hashOf '2')
@@ -792,6 +819,8 @@ resetSchema conn = do
   void $ execute_ conn migration
   observability <- fromString <$> readFile "config/migrations/aa-observability-v1.sql"
   void $ execute_ conn observability
+  timeline <- fromString <$> readFile "config/migrations/aa-attempt-events-v1.sql"
+  void $ execute_ conn timeline
   correlation <- fromString <$> readFile "config/migrations/aa-observability-v2.sql"
   void $ execute_ conn correlation
   recovery <- fromString <$> readFile "config/migrations/aa-preparation-recovery-v1.sql"

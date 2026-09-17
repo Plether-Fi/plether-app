@@ -1,0 +1,18 @@
+module Plether.AA.DiagnosticsSpec (spec) where
+import Data.Aeson (Value(String), object, (.=))
+import Plether.AA.Diagnostics (parseBrowserStage)
+import Test.Hspec
+
+spec :: Spec
+spec = describe "Attempt timeline input" $ do
+  let attempt = "12345678-1234-4123-8123-123456789abc" :: String
+  it "accepts a bounded advisory browser stage" $
+    parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "wallet_approved"])
+      `shouldBe` Just ("12345678-1234-4123-8123-123456789abc", "wallet_approved")
+  it "rejects backend provenance spoofing and arbitrary error payloads" $ do
+    parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "submission_received"]) `shouldBe` Nothing
+    parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "wallet_approved", "source" .= String "backend"]) `shouldBe` Nothing
+    parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "wallet_approved", "signature" .= String "secret"]) `shouldBe` Nothing
+    parseBrowserStage (object ["attemptId" .= attempt, "stage" .= String "raw wallet error"]) `shouldBe` Nothing
+  it "rejects invalid identifiers" $
+    parseBrowserStage (object ["attemptId" .= String "not-an-attempt", "stage" .= String "wallet_approved"]) `shouldBe` Nothing

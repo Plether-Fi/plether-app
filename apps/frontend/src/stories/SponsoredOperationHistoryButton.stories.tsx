@@ -717,3 +717,15 @@ export const SignedRecoveryTemporaryError = recoveryResultStory('timeout',
   'The status request times out. Verification remains completed, the lock stays, and another check is available.')
 export const SignedRecoveryVerificationExpired = recoveryResultStory('verification-expired',
   'The recovery session expires. Step 1 becomes active again and the lock remains until the transaction is resolved.')
+
+export const SignedRecoveryLateWalletApproval: Story = {
+  ...SignedRecoveryVerifyFirst,
+  parameters: { docs: { description: { story: 'Wallet approval arrived too late to submit. The signed attempt stays protected until safe chain evidence permits a fresh review.' } } },
+  render: () => <WalletHeaderPreview operations={signedRecoveryOperations.map(operation => ({
+    ...operation, reason: 'DEADLINE_TOO_CLOSE',
+  }))} runtime={signedRecoveryRuntime} />,
+  play: async context => {
+    await SignedRecoveryVerifyFirst.play?.(context)
+    await expect(within(document.body).getByText(/Wallet approval finished too late, so Plether did not send/)).toBeVisible()
+  },
+}

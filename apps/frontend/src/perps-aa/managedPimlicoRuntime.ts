@@ -571,13 +571,13 @@ export async function createManagedAaRuntime({
           .catch((error: unknown) => (
             isReceiptNotFoundError(error)
               ? { kind: 'not-located' as const }
-              : { kind: 'inconclusive' as const }
+              : { kind: 'receipt-unavailable' as const }
           )),
       ])
       let userOperationEvidence:
         SponsoredOperationRecoverySnapshot['userOperationEvidence'] =
-          receiptEvidence.kind === 'inconclusive'
-            ? { kind: 'inconclusive' }
+          receiptEvidence.kind === 'receipt-unavailable'
+            ? { kind: 'receipt-unavailable' }
             : { kind: 'not-located' }
       if (receiptEvidence.kind === 'located') {
         try {

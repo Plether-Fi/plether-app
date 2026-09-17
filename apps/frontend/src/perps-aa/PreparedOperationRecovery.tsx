@@ -201,6 +201,10 @@ function PreparedRecoveryView({ runtime, operation, fallbackManifest }: {
     || (deferStatusCheck && accountConfirmation === 'ready')
     || (walletStatus && 'recoveryState' in walletStatus && walletStatus.recoveryState === 'missing' && !operation.preparedOperation))
   return <div className="space-y-2 text-sm text-content-secondary" aria-live="polite">
+    {operation.reason === 'DEADLINE_TOO_CLOSE' && operation.userOperationHash && <p role="status">
+      Wallet approval finished too late, so Plether did not send this transaction.
+      We’ll check when the saved authorization can no longer execute, then unlock a fresh review.
+    </p>}
     {accountWaiting && <AccountDeploymentConfirmation monitor={runtime.deploymentConfirmation} />}
     {deferStatusCheck && accountConfirmation === 'ready' && <p>Trading Account confirmed. Resume this saved attempt to continue.</p>}
     {walletRecovery && (signedRecovery || (!verified && (!operation.userOperationHash || walletRequired

@@ -1,4 +1,5 @@
-import { isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
+import { reportAttemptStage } from './attemptDiagnostics'
+import { isExplicitSignatureRejection, isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
 import type { SponsoredOperation } from './operationStore'
 import type {
   PerpsActionPlan,
@@ -493,8 +494,12 @@ export async function executeSponsoredPerpsAction(
       persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), sponsorshipValidUntil))) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The prepared recovery record changed before signing' })
     }
-    const signedOperation =
-      await input.runtime.smartAccount.signUserOperation(operation)
+    reportAttemptStage(activeTracker.id, 'wallet_requested')
+    const signedOperation = await input.runtime.smartAccount.signUserOperation(operation).catch((error: unknown) => {
+      reportAttemptStage(activeTracker.id, isExplicitSignatureRejection(error) ? 'wallet_declined' : 'wallet_interrupted')
+      throw error
+    })
+    reportAttemptStage(activeTracker.id, 'wallet_approved')
     if (preparationRequest && input.runtime.smartAccount.getUserOperationHash(signedOperation) !== input.runtime.smartAccount.getUserOperationHash(operation)) {
       throw new Error('The wallet changed the prepared transaction')
     }
@@ -530,6 +535,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    reportAttemptStage(activeTracker.id, 'signed_operation_saved')
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
     status('submitting')
     // No user callback runs after this point. Reconcile any storage event that
@@ -555,10 +561,12 @@ export async function executeSponsoredPerpsAction(
     }
     let returnedUserOperationHash: Hex
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
+    reportAttemptStage(activeTracker.id, 'submission_requested')
     try {
       returnedUserOperationHash =
         await input.runtime.smartAccount.sendUserOperation(signedOperation)
     } catch (error) {
+      reportAttemptStage(activeTracker.id, 'submission_failed')
       throw asBundlerError(error)
     }
     if (
@@ -573,6 +581,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    reportAttemptStage(activeTracker.id, 'submission_acknowledged')
     status('confirming')
     const outcome = await waitForUserOperationOutcome({
       runtime: input.runtime,
@@ -660,8 +669,11 @@ export async function executeSponsoredPerpsAction(
     }
   } catch (error) {
     if (tracker) {
+      reportAttemptStage(tracker.id, error instanceof BundlerRequestError && error.reason === 'DEADLINE_TOO_CLOSE'
+        ? 'deadline_elapsed' : 'execution_interrupted')
       try { tracker.fail(error) } catch { /* Preserve the original error when recovery storage is unavailable. */ }
       if (useSponsoredOperationStore.getState().operations.find(item => item.id === tracker?.id)?.status === 'signature-declined') {
+        reportAttemptStage(tracker.id, 'wallet_declined')
         throw new Error('Signature declined. Your transaction was not sent.', { cause: error })
       }
     } else {
