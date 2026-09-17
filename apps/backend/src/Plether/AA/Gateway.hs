@@ -679,6 +679,14 @@ classifyAltoResult method (Object fields)
        in Left $ Legacy.ProxyFailure status200 (truncate code) message reason False
 classifyAltoResult _ _ = Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto is temporarily unavailable"
 
+-- The queue is bounded and independent of submission. Missing diagnostics never
+-- change authorization, RPC responses, or chain recovery.
+noteSubmission :: NativeGatewayState -> Text -> Text -> Text -> ActionM ()
+noteSubmission gatewayState clientKey operationHash stage = liftIO $ do
+  sink <- readMVar $ ngsDiagnostics gatewayState
+  mapM_ (\queue -> Diagnostics.enqueueDiagnostic queue $
+    Diagnostics.SubmissionDiagnostic clientKey operationHash stage) sink
+
 dispatchNative
   :: NativeGatewayState
   -> Config
@@ -701,6 +709,11 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
   case validateNativeParams request of
     Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
     Right (mPolicyOperation, mPackedOperation) -> do
+      let observe stage = case mPackedOperation of
+            Just packed | Legacy.rrMethod request == Legacy.SendUserOperation ->
+              noteSubmission gatewayState clientKey (encodeHex $ Paymaster.userOperationHash packed) stage
+            _ -> pure ()
+      observe "submission_received"
       recoveryClient <- authorizeRecoveryRead nativeCfg pool clientKey request
       if recoveryClient == Nothing
         then
@@ -722,15 +735,15 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                     accountKey
                     (naaAccountRateLimitPerMinute nativeCfg)
             case accountRate of
-              Left _ -> Legacy.respondFailure (Legacy.rrId request) databaseUnavailable
-              Right False -> Legacy.respondFailure (Legacy.rrId request) Legacy.rateLimited
+              Left _ -> observe "submission_journal_failed" >> Legacy.respondFailure (Legacy.rrId request) databaseUnavailable
+              Right False -> observe "rate_limited" >> Legacy.respondFailure (Legacy.rrId request) Legacy.rateLimited
               Right True -> do
                 securityContext <-
                   if requiresDualSecurity request || length (Legacy.puoCalls policyOperation) == 5
                     then timeGateway gatewayState "security" $ liftIO $ nativeSecurityContext nativeCfg gatewayState perpsClient
                     else pure $ Right Nothing
                 case securityContext of
-                  Left _ -> respondSecurityAttestationFailure (Legacy.rrId request) "initial security context"
+                  Left _ -> observe "security_rejected" >> respondSecurityAttestationFailure (Legacy.rrId request) "initial security context"
                   Right mSecurityContext -> do
                     identity <- timeGateway gatewayState "identity" $ liftIO $
                       maybe
@@ -739,7 +752,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                         mSecurityContext
                     case identity of
                       Left failure ->
-                        respondSecurityAwareFailure
+                        observe "identity_rejected" >> respondSecurityAwareFailure
                           (Legacy.rrId request)
                           mSecurityContext
                           failure
@@ -749,7 +762,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                           (Legacy.puoSender policyOperation)
                           owner
                           (Legacy.puoCalls policyOperation) of
-                          Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
+                          Left failure -> observe "policy_rejected" >> Legacy.respondFailure (Legacy.rrId request) failure
                           Right assistance
                             | (case assistance of
                                 Nothing -> isCanaryGated nativeCfg request owner
@@ -765,7 +778,7 @@ dispatchNative gatewayState cfg nativeCfg pool perpsClient manager _trustedIp cl
                                     mSecurityContext
                                 case runtimeTrusted of
                                   Left failure ->
-                                    respondSecurityAwareFailure
+                                    observe "runtime_rejected" >> respondSecurityAwareFailure
                                       (Legacy.rrId request)
                                       mSecurityContext
                                       failure
@@ -839,7 +852,7 @@ handleOperation assistance gatewayState nativeCfg pool manager securityContext c
       issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation
         (respondSuccess requestId . paymasterResponse True)
     Legacy.SendUserOperation ->
-      submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
+      submitSponsoredOperation gatewayState nativeCfg pool manager securityContext clientKey request operation
     _ -> relayToAlto nativeCfg manager request Nothing
 
 issueSponsorship
@@ -1050,7 +1063,8 @@ finishSponsorship signer nativeCfg pool securityContext requestId operation auth
                           _ -> respondNativeDbFailure requestId Legacy.GetPaymasterData "signature-readback"
 
 submitSponsoredOperation
-  :: NativeAaConfig
+  :: NativeGatewayState
+  -> NativeAaConfig
   -> DbPool
   -> Manager
   -> Maybe NativeSecurityContext
@@ -1058,9 +1072,9 @@ submitSponsoredOperation
   -> Legacy.RpcRequest
   -> Paymaster.PackedUserOperation
   -> ActionM ()
-submitSponsoredOperation nativeCfg pool manager securityContext clientKey request operation
+submitSponsoredOperation gatewayState nativeCfg pool manager securityContext clientKey request operation
   | not (naaSubmissionEnabled nativeCfg) =
-      Legacy.respondFailure requestId $
+      observeFailure "submission_paused" $
         Legacy.unavailable "SUBMISSION_PAUSED" "Native UserOperation submission is disabled"
   | BS.length (Paymaster.puoSignature operation) /= 65 =
       Legacy.respondFailure requestId $
@@ -1082,9 +1096,11 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
                     revalidateSecurityContext
                     securityContext
               case securityVerified of
-                Left reason -> respondSecurityAttestationFailure requestId reason
+                Left reason -> observe "security_rejected" >> respondSecurityAttestationFailure requestId reason
                 Right () -> submitVerified envelope
  where
+  observeFailure stage failure = observe stage >> Legacy.respondFailure requestId failure
+  observe = noteSubmission gatewayState clientKey (encodeHex $ Paymaster.userOperationHash operation)
   submitVerified envelope = do
               let digest = encodeHex $ Paymaster.sponsorshipDigest operation envelope
                   operationHash = encodeHex $ Paymaster.userOperationHash operation
@@ -1096,26 +1112,28 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
               let recoveredClient = either (const Nothing) id recovered
               stored <- liftDb $ withDb pool $ \conn -> getSponsorshipByDigest conn digest
               case stored of
-                Left _ -> respondNativeDbFailure requestId Legacy.SendUserOperation "authorization-read"
+                Left _ -> observe "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "authorization-read"
                 Right Nothing ->
-                  Legacy.respondFailure requestId $
+                  observeFailure "authorization_rejected" $
                     Legacy.ProxyFailure status403 (-32001) "Forbidden" "SPONSORSHIP_NOT_AUTHORIZED" False
                 Right (Just authorization)
                   | (saClientKey authorization /= T.toLower clientKey && Just (saClientKey authorization) /= recoveredClient)
                       || saExpectedUserOperationHash authorization /= Just operationHash
                       || saSignature authorization /= Just signatureText
                       || saState authorization `notElem` ["signed", "submitted"] ->
-                      Legacy.respondFailure requestId $
+                      observeFailure "authorization_rejected" $
                         Legacy.ProxyFailure status403 (-32001) "Forbidden" "SPONSORSHIP_NOT_AUTHORIZED" False
                   | otherwise -> do
+                      let observedAuthorized = noteSubmission gatewayState (saClientKey authorization) operationHash
                       marked <-
                         liftDb $
                           withDb pool $ \conn ->
                             markSponsorshipSubmitted conn digest operationHash (saClientKey authorization)
                       case marked of
-                        Left _ -> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal"
-                        Right False -> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal-rejected"
+                        Left _ -> observedAuthorized "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal"
+                        Right False -> observedAuthorized "submission_journal_failed" >> respondNativeDbFailure requestId Legacy.SendUserOperation "submission-journal-rejected"
                         Right True -> do
+                          observedAuthorized "submission_journaled"
                           finalSecurityCheck <-
                             liftIO $
                               maybe
@@ -1123,8 +1141,8 @@ submitSponsoredOperation nativeCfg pool manager securityContext clientKey reques
                                 revalidateSecurityContext
                                 securityContext
                           case finalSecurityCheck of
-                            Left reason -> respondSecurityAttestationFailure requestId reason
-                            Right () -> relayToAlto nativeCfg manager request $ Just operationHash
+                            Left reason -> observedAuthorized "security_rejected" >> respondSecurityAttestationFailure requestId reason
+                            Right () -> relayToAltoObserved nativeCfg manager request (Just operationHash) observedAuthorized
 
   requestId = Legacy.rrId request
 
@@ -1474,20 +1492,26 @@ relayToAlto
   -> Legacy.RpcRequest
   -> Maybe Text
   -> ActionM ()
-relayToAlto nativeCfg manager request expectedHash = do
+relayToAlto nativeCfg manager request expectedHash =
+  relayToAltoObserved nativeCfg manager request expectedHash (const $ pure ())
+
+relayToAltoObserved :: NativeAaConfig -> Manager -> Legacy.RpcRequest -> Maybe Text -> (Text -> ActionM ()) -> ActionM ()
+relayToAltoObserved nativeCfg manager request expectedHash observe = do
+  observe "bundler_forwarded"
   upstream <- liftIO $ forwardAlto manager (naaAltoRpcUrl nativeCfg) request
   case upstream of
-    Left failure -> Legacy.respondFailure (Legacy.rrId request) failure
+    Left failure -> observe "bundler_unavailable" >> Legacy.respondFailure (Legacy.rrId request) failure
     Right (upstreamValue, retryAfter) ->
       case expectedHash of
         Nothing -> forwardResponse upstreamValue retryAfter
         Just localHash ->
           case responseOperationHash upstreamValue of
             Just upstreamHash | upstreamHash == localHash ->
-              forwardResponse upstreamValue retryAfter
+              observe "bundler_acknowledged" >> forwardResponse upstreamValue retryAfter
             Nothing | isRpcErrorResponse upstreamValue ->
-              forwardResponse upstreamValue retryAfter
+              observe "bundler_rejected" >> forwardResponse upstreamValue retryAfter
             returnedHash -> do
+              observe "bundler_hash_mismatch"
               liftIO $
                 logError
                   "aa_native_bundler_hash_mismatch"

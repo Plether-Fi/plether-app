@@ -1018,7 +1018,7 @@ describe('SponsoredOperationRecovery', () => {
       blockNumber: 123n,
       blockTimestamp: 1_001n,
       accountNonce: 7n,
-      userOperationEvidence: { kind: 'not-located' as const },
+      userOperationEvidence: { kind: 'receipt-unavailable' as const },
     }))
     beginHashOperation({
       id: 'expired-during-pimlico-outage',

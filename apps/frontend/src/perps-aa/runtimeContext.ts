@@ -90,6 +90,10 @@ export interface SponsoredOperationRecoverySnapshot {
     | {
         kind: 'inconclusive'
       }
+    | {
+        // Receipt lookup failed before any inclusion evidence was returned.
+        kind: 'receipt-unavailable'
+      }
 }
 
 export interface ObservedUserOperationInclusion {

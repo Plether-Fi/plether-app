@@ -1,3 +1,4 @@
+import { reportAttemptStage } from '../attemptDiagnostics'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   concatHex,
@@ -34,6 +35,8 @@ import {
   PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
   PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
 } from '../paymasterValidity'
+
+vi.mock('../attemptDiagnostics', () => ({ reportAttemptStage: vi.fn() }))
 
 const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
@@ -333,6 +336,7 @@ describe('executeSponsoredPerpsAction', () => {
         }) }),
       })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'receipt-timeout' })
       expect(sendUserOperation).not.toHaveBeenCalled()
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed')
       const record = useSponsoredOperationStore.getState().operations[0]
       expect(record).toMatchObject({ status: 'receipt-timeout', userOperationHash: USER_OPERATION_HASH })
       expect(record.signedUserOperation).toBeDefined()

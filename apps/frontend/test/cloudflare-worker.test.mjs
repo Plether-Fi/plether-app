@@ -52,6 +52,18 @@ describe('Trading readiness and diagnostics proxy authentication', () => {
     assert.equal(fetchMock.mock.calls[1].arguments[1].headers.has('X-Plether-AA-Recovery'), false);
     assert.equal(fetchMock.mock.calls[1].arguments[1].headers.has('X-Plether-AA-Preparation-Recovery'), false);
   });
+  it('forwards bounded diagnostic POSTs through the authenticated, uncached proxy', async () => {
+    const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store' } }), 1);
+    const body = JSON.stringify({ attemptId: '12345678-1234-4123-8123-123456789abc', stage: 'wallet_approved' });
+    const response = await worker.fetch(new Request('https://app.plether.com/api/perps/v1/aa/diagnostics', {
+      method: 'POST', body, headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.1' },
+    }), { ...workerEnv(), AA_PROXY_ORIGIN_TOKEN: 'trusted' });
+    const options = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.get('X-Plether-AA-Proxy-Token'), 'trusted');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal(options.cf, undefined);
+  });
   for (const path of ['readiness', 'aa/diagnostics?attemptId=12345678-1234-4123-8123-123456789abc']) {
     it(`authenticates and never edge-caches ${path}`, async () => {
       const fetchMock = mockOriginFetch(new Response('{}', { headers: { 'Cache-Control': 'no-store' } }), 1);

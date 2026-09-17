@@ -860,7 +860,7 @@ describe('createManagedPimlicoRuntime', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('treats an Alchemy receipt failure as inconclusive, not chain absence', async () => {
+  it('distinguishes a receipt service outage from contradictory chain evidence', async () => {
     mocks.createPimlicoClient.mockReturnValue({
       getUserOperationGasPrice: vi.fn(async () => ({
         fast: { maxFeePerGas: 2n, maxPriorityFeePerGas: 1n },
@@ -893,7 +893,7 @@ describe('createManagedPimlicoRuntime', () => {
       blockNumber: 555n,
       blockTimestamp: 1_000n,
       accountNonce: 7n,
-      userOperationEvidence: { kind: 'inconclusive' },
+      userOperationEvidence: { kind: 'receipt-unavailable' },
     })
     expect(fetch).not.toHaveBeenCalled()
   })

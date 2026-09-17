@@ -364,6 +364,7 @@ test-suite plether-api-test
         Plether.AA.OracleReadinessSpec
         Plether.Keeper.FundingSpec
         Plether.AA.OrderDiagnosticsSpec
+        Plether.AA.DiagnosticsSpec
         Plether.AA.ExecutionDiagnosticsSpec
         Plether.AA.ReconcilerSpec
         Plether.AA.RecoveryReceiptSpec
