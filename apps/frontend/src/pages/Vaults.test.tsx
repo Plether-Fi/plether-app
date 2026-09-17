@@ -1201,8 +1201,7 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Your position' }))
 
     expect(screen.getByText('Activated')).toBeInTheDocument()
-    expect(screen.getByText('Direct withdrawal')).toBeInTheDocument()
-    expect(screen.getByText('Available now')).toBeInTheDocument()
+    expect(screen.getByText('Withdrawal ready')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Queue direct withdrawal' }))
     expect(mocks.vaultRequestRedeemFromClaimableDeposit).not.toHaveBeenCalled()
 
