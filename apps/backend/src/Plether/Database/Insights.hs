@@ -52,7 +52,6 @@ module Plether.Database.Insights
   , snapshotBatchAccessIndexSql
   , hasCompleteAccountSnapshotBatchQuerySql
   , walletActivityQuerySql
-  , fundingIntegrityRefreshSql
   , manualRosterInsertionAllowed
   , snapshotKindText
   ) where
