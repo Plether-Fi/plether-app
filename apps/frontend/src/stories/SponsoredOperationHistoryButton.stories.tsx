@@ -559,3 +559,44 @@ export const RecoveryFromTradeForm: Story = {
     expect(recoveryButton).toBeVisible()
   },
 }
+
+const expiredSignedStatus: PreparationStatusV1 & { recoveryVerified: true; canRetire: boolean } = {
+  ...RESUMABLE_STATUS, phase: 'resolved', authorizationState: 'expired',
+  recoverable: false, reason: 'PREPARATION_UNUSABLE', recoveryVerified: true as const, canRetire: true,
+}
+const signedRecoveryOperations: SponsoredOperation[] = [{
+  ...recoveryFixture('place-order'), status: 'receipt-timeout', userOperationHash: hash('c'),
+}]
+const signedRecoveryRuntime: PerpsAaSmartAccountRuntime = {
+  ...previewRuntime(expiredSignedStatus),
+  preparationRecovery: {
+    // Local UI simulation only: no wallet, signing, or submission is connected.
+    verify: async () => {},
+    status: async () => expiredSignedStatus,
+    retire: async () => { throw new Error('Signed attempts cannot be discarded in this preview') },
+    headers: () => ({}), bindOperation: () => {}, operationHeaders: () => ({}),
+  },
+}
+export const SignedRecoveryVerifyFirst: Story = {
+  parameters: { docs: { description: { story: 'An expired sponsorship with an unconfirmed signed transaction. Verification is simulated locally; no wallet request or transaction is sent.' } } },
+  render: () => <WalletHeaderPreview operations={signedRecoveryOperations} runtime={signedRecoveryRuntime} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.click(await within(canvasElement).findByRole('button', { name: /Open Trading Account activity/ }))
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    expect(await dialog.findByText('1. Verify your wallet')).toBeVisible()
+    expect(dialog.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+    expect(dialog.queryByText(/sponsorship has.*expired/)).not.toBeInTheDocument()
+  },
+}
+export const SignedRecoveryCheckingOutcome: Story = {
+  ...SignedRecoveryVerifyFirst,
+  play: async context => {
+    await SignedRecoveryVerifyFirst.play?.(context)
+    const dialog = within(await within(document.body).findByRole('dialog'))
+    await userEvent.click(dialog.getByRole('button', { name: 'Verify wallet to recover' }))
+    expect(await dialog.findByText('2. Check transaction outcome')).toBeVisible()
+    expect(await dialog.findByText(/This alone does not confirm the transaction outcome or unlock trading/)).toBeVisible()
+    expect(dialog.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
+  },
+}

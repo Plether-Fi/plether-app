@@ -240,7 +240,7 @@ describe('SponsoredOperationHistoryButton', () => {
       'Gas sponsorship approved · Submission unconfirmed'
     )).toBeInTheDocument()
     expect(screen.getByText(
-      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+      'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/your action was not sent/i))
@@ -280,7 +280,7 @@ describe('SponsoredOperationHistoryButton', () => {
       'Gas sponsorship approved · Submission unconfirmed'
     )).toBeInTheDocument()
     expect(screen.getByText(
-      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+      'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/your action was not sent/i))

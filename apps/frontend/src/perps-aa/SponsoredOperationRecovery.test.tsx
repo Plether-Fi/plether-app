@@ -279,7 +279,10 @@ describe('SponsoredOperationRecovery', () => {
     const view = render(<PerpsAaRuntimeContext value={runtime}>
       <SponsoredOperationRecovery /><PreparedOperationRecovery operation={operation} fallbackManifest={fallbackManifest} />
     </PerpsAaRuntimeContext>)
-    await waitFor(() => expect(getRecoverySnapshot).toHaveBeenCalledOnce())
+    // Flush recovery promises directly: this background check does not need
+    // to change visible text, and this test fakes waitFor's interval.
+    await act(async () => {})
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
     expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(id)
     expect(signMessage).not.toHaveBeenCalled()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })

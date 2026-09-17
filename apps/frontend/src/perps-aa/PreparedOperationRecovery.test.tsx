@@ -6,7 +6,7 @@ import { useSponsoredOperationStore, type SponsoredOperation } from './operation
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { AccountDeploymentConfirmation } from './AccountDeploymentConfirmation'
 import { SponsorRequestError } from './errors'
-import type { WalletPreparationRecovery } from './walletRecovery'
+import { PreparationRecoveryError, type WalletPreparationRecovery } from './walletRecovery'
 vi.mock('./laneLock', () => ({ acquireSponsoredOperationBrowserLane: vi.fn(async () => async () => {}) }))
 vi.mock('./operationStore', async importOriginal => ({ ...await importOriginal<typeof import('./operationStore')>(), restoreSponsoredOperationLane: vi.fn() }))
 const resume = vi.hoisted(() => vi.fn(async () => {}))
@@ -167,11 +167,49 @@ describe('visible preparation recovery', () => {
     expect(verify).not.toHaveBeenCalled()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
     expect(check).toHaveBeenCalledWith(operation.id)
-    expect(screen.getByText(/Checking the signed transaction against the chain/)).toBeInTheDocument()
+    expect(screen.getByText('2. Check transaction outcome')).toBeInTheDocument()
+    expect(screen.getByText(/This alone does not confirm the transaction outcome or unlock trading/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
     expect(resume).not.toHaveBeenCalled()
     view.unmount()
   })
+  it('guides an expired signed attempt through verification before offering status checks', async () => {
+    let finishVerification!: () => void
+    const verify = vi.fn(() => new Promise<void>(resolve => { finishVerification = resolve }))
+    const expired = { ...status, phase: 'resolved', authorizationState: 'expired', recoverable: false, canRetire: true }
+    const check = vi.fn(async () => expired)
+    const runtime = { smartAccount: { getPreparationStatus: vi.fn(async () => expired) },
+      preparationRecovery: { verify, status: check } } as unknown as PerpsAaSmartAccountRuntime
+    const view = render(<PerpsAaRuntimeContext value={runtime}><PreparedOperationRecovery operation={{
+      ...operation, userOperationHash: `0x${'a'.repeat(64)}`, status: 'receipt-timeout',
+    }} /></PerpsAaRuntimeContext>)
+    await act(async () => {})
+    expect(screen.getByText('1. Verify your wallet')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/sponsorship has.*expired/)).not.toBeInTheDocument()
+    expect(screen.queryByText('2. Check transaction outcome')).not.toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
+    expect(screen.getByRole('button', { name: 'Waiting for wallet…' })).toBeDisabled()
+    expect(check).not.toHaveBeenCalled()
+    await act(async () => { finishVerification() })
+    expect(screen.getByText('2. Check transaction outcome')).toBeVisible()
+    expect(screen.getByText(/This alone does not confirm the transaction outcome or unlock trading/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check recovery again' })).toBeEnabled()
+    check.mockRejectedValueOnce(new PreparationRecoveryError('RECOVERY_TIMEOUT'))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check recovery again' })) })
+    expect(screen.getByRole('alert')).toHaveTextContent('timed out')
+    expect(screen.getByText('2. Check transaction outcome')).toBeVisible()
+    expect(verify).toHaveBeenCalledTimes(1)
+    check.mockRejectedValueOnce(new PreparationRecoveryError('RECOVERY_VERIFICATION_REQUIRED'))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check recovery again' })) })
+    expect(screen.getByText('1. Verify your wallet')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Check recovery again' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    expect(resume).not.toHaveBeenCalled()
+    view.unmount()
+  })
+
   it('tracks ambiguous outcomes and never offers to resume an arbitrary match', async () => {
     const hash = `0x${'1'.repeat(64)}`
     const recovery = { verify: vi.fn(async () => {}), status: vi.fn(async () => ({ version: 1, recoveryState: 'ambiguous',
