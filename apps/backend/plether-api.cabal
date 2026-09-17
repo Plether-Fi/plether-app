@@ -11,6 +11,7 @@ build-type:         Simple
 extra-source-files: schema.sql
                     config/migrations/insights-integrity-epoch-v1.sql
                     config/migrations/insights-integrity-indexes-v1.sql
+                    test/fixtures/insights-funding-integrity-baseline.sql
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -310,7 +311,9 @@ executable plether-insights-worker
     main-is:          InsightsWorker.hs
     build-depends:
         base >= 4.17 && < 5,
-        plether-api
+        plether-api,
+        postgresql-simple >= 0.6,
+        text >= 2.0
     hs-source-dirs:   app
     default-language: GHC2021
     default-extensions:

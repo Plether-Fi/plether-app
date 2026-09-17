@@ -32,6 +32,7 @@ module Plether.Database.Insights
   , integrityCalculationSql
   , publishStagedCompetitionIntegrity
   , publishAccountSnapshotBatch
+  , publishAccountSnapshotBatchMeasured
   , hasCompleteAccountSnapshotBatch
   , invalidateSnapshotBatchesAfter
   , invalidateCompetitionSnapshotsForReleaseRebuild
@@ -57,12 +58,13 @@ module Plether.Database.Insights
   ) where
 
 import Control.Monad (forM_, unless, when, void)
-import Control.Exception (finally, onException)
+import Control.Exception (finally, onException, evaluate)
 import GHC.Clock (getMonotonicTimeNSec)
 import qualified Plether.Logging as Log
 import Language.Haskell.TH.Syntax (qAddDependentFile, runIO, lift)
 import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import Data.String (fromString)
 import Data.List (nub, sort)
@@ -74,14 +76,14 @@ import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime, utcTimeToPOSI
 import Database.PostgreSQL.Simple
   ( Connection
   , Only (..)
-  , Query
   , execute
-  , executeMany
+  , formatMany
   , execute_
   , query
   , query_
   , withTransaction
   )
+import Database.PostgreSQL.Simple.Types (Query (..))
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import Database.PostgreSQL.Simple.Internal (RowParser)
 import Database.PostgreSQL.Simple.ToField (toField)
@@ -1902,7 +1904,7 @@ integrityCalculationSql = fundingIntegrityCtes <>
   " SELECT t.slug, t.integrity_input_epoch AS input_epoch, t.start_block, t.start_snapshot_block_hash,\
   \ t.last_indexed_block AS as_of_block, t.last_indexed_block_hash AS as_of_hash,\
   \ statement_timestamp() AS calculated_at, c.wallet, p.trader_reference, c.flags\
-  \ FROM target t LEFT JOIN computed c ON TRUE LEFT JOIN participants p ON p.wallet=c.wallet"
+  \ FROM target t LEFT JOIN computed c ON TRUE LEFT JOIN roster p ON p.wallet=c.wallet"
 
 publishStagedCompetitionIntegrity :: Connection -> Text -> Int -> IO Bool
 publishStagedCompetitionIntegrity conn slug maxAgeSeconds =
@@ -2022,18 +2024,28 @@ accountSnapshotUpsertQuery =
   \ signed_net_equity_usdc = EXCLUDED.signed_net_equity_usdc,\
   \ terminal_reachable_usdc = EXCLUDED.terminal_reachable_usdc,\
   \ trader_claims_usdc = EXCLUDED.trader_claims_usdc, raw_data = EXCLUDED.raw_data,\
-  \ updated_at = NOW()"
-
-upsertAccountSnapshotsUnchecked :: Connection -> [AccountSnapshotInput] -> IO ()
-upsertAccountSnapshotsUnchecked _ [] = pure ()
-upsertAccountSnapshotsUnchecked conn snapshots = do
-  _ <- executeMany conn accountSnapshotUpsertQuery $ map accountSnapshotParameters snapshots
-  pure ()
+  \ updated_at = NOW()\
+  \ WHERE ROW(insights_account_snapshots.chain_id,insights_account_snapshots.release_router,\
+  \ insights_account_snapshots.block_hash,insights_account_snapshots.timestamp,insights_account_snapshots.has_open_position,\
+  \ insights_account_snapshots.signed_net_equity_usdc,insights_account_snapshots.terminal_reachable_usdc,\
+  \ insights_account_snapshots.trader_claims_usdc,insights_account_snapshots.raw_data)\
+  \ IS DISTINCT FROM ROW(EXCLUDED.chain_id,EXCLUDED.release_router,EXCLUDED.block_hash,EXCLUDED.timestamp,\
+  \ EXCLUDED.has_open_position,EXCLUDED.signed_net_equity_usdc,EXCLUDED.terminal_reachable_usdc,\
+  \ EXCLUDED.trader_claims_usdc,EXCLUDED.raw_data)"
 
 publishAccountSnapshotBatch :: Connection -> [AccountSnapshotInput] -> IO ()
-publishAccountSnapshotBatch _ [] = pure ()
-publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
-  withTransaction conn $ do
+publishAccountSnapshotBatch conn snapshots = void $ publishAccountSnapshotBatchMeasured conn snapshots
+
+-- Returns the actual competition-lock duration including commit, excluding
+-- batch encoding. Shared by production instrumentation and the isolated benchmark.
+publishAccountSnapshotBatchMeasured :: Connection -> [AccountSnapshotInput] -> IO Double
+publishAccountSnapshotBatchMeasured _ [] = pure 0
+publishAccountSnapshotBatchMeasured conn snapshots@(firstSnapshot : _) = do
+  -- Encoding/escaping a complete batch can be substantial; do it before
+  -- acquiring the competition lock. Only its database publication is atomic.
+  preparedRows <- formatMany conn accountSnapshotUpsertQuery $ map accountSnapshotParameters snapshots
+  _ <- evaluate $ BS.length preparedRows
+  (lockStarted,lockAcquired) <- withTransaction conn $ do
     void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
     let slug = asiCompetitionSlug firstSnapshot
         kind = asiKind firstSnapshot
@@ -2086,11 +2098,16 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
     let registeredWallets = [wallet | Only wallet <- registered]
     unless (inputWallets == registeredWallets) $
       fail "Cannot publish an incomplete Insights snapshot batch: registered participant set changed"
+    writeStarted <- getMonotonicTimeNSec
     _ <- execute conn
-      "DELETE FROM insights_account_snapshots\
-      \ WHERE competition_slug = ? AND snapshot_kind = ? AND block_number = ?"
+      "DELETE FROM insights_account_snapshots s\
+      \ WHERE competition_slug = ? AND snapshot_kind = ? AND block_number = ?\
+      \ AND NOT EXISTS (SELECT 1 FROM insights_competition_participants p\
+      \ WHERE p.competition_slug=s.competition_slug AND p.wallet=s.wallet)"
       (slug, snapshotKindText kind, blockNumber)
-    upsertAccountSnapshotsUnchecked conn snapshots
+    deleted <- getMonotonicTimeNSec
+    void $ execute_ conn $ Query preparedRows
+    inserted <- getMonotonicTimeNSec
     _ <- execute conn
       "INSERT INTO insights_snapshot_batches\
       \ (competition_slug, snapshot_kind, chain_id, release_router, account_lens_address, block_number, block_hash, timestamp, participant_count, account_state_count)\
@@ -2112,12 +2129,17 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
       , length snapshots
       , accountStateCount
       )
-    finished <- getMonotonicTimeNSec
-    Log.logInfo "insights_snapshot_publication" "Snapshot batch publication completed"
-      [ Log.field "lock_wait_ms" (fromIntegral (lockAcquired-lockStarted) / 1_000_000 :: Double)
-      , Log.field "lock_held_ms" (fromIntegral (finished-lockAcquired) / 1_000_000 :: Double)
-      , Log.field "participant_count" (length snapshots)
-      ]
+    Log.logInfo "insights_snapshot_write" "Snapshot write phases"
+      [Log.field "delete_ms" (fromIntegral (deleted-writeStarted)/1_000_000 :: Double),Log.field "insert_ms" (fromIntegral (inserted-deleted)/1_000_000 :: Double),Log.field "validation_ms" (fromIntegral (writeStarted-lockAcquired)/1_000_000 :: Double)]
+    pure (lockStarted,lockAcquired)
+  finished <- getMonotonicTimeNSec
+  let heldMs = fromIntegral (finished-lockAcquired) / 1_000_000 :: Double
+  Log.logInfo "insights_snapshot_publication" "Snapshot batch publication completed"
+    [ Log.field "lock_wait_ms" (fromIntegral (lockAcquired-lockStarted) / 1_000_000 :: Double)
+    , Log.field "lock_held_ms" heldMs
+    , Log.field "participant_count" (length snapshots)
+    ]
+  pure heldMs
 
 equityHasAccountState :: EquitySnapshot -> Bool
 equityHasAccountState EquitySnapshot {..} =
@@ -2483,14 +2505,18 @@ fundingIntegrityCtes =
   \ CROSS JOIN LATERAL (SELECT snapshot.* FROM insights_account_snapshots snapshot\
   \ WHERE snapshot.competition_slug=b.competition_slug AND snapshot.snapshot_kind=b.snapshot_kind\
   \ AND snapshot.block_number=b.block_number AND LOWER(snapshot.block_hash)=LOWER(b.block_hash) OFFSET 0) s\
+  \ ), roster AS MATERIALIZED (\
+  \ SELECT p.wallet, p.trader_reference, t.slug, t.chain_id, t.release_router, t.configured_start_block,\
+  \ t.usdc_address, t.margin_clearinghouse_address, t.starting_balance_usdc, t.start_timestamp,\
+  \ t.score_cutoff_timestamp, t.registration_close_timestamp\
+  \ FROM insights_competition_participants p JOIN target t ON t.slug=p.competition_slug\
   \ ), participants AS NOT MATERIALIZED (\
-  \ SELECT p.wallet, p.trader_reference, b.value_usdc, COALESCE(b.has_open_position, FALSE) AS has_open_position,\
-  \ COALESCE(b.pending_order_count, 0) AS pending_order_count, b.baseline_block, t.*\
-  \ FROM insights_competition_participants p JOIN target t ON t.slug = p.competition_slug\
-  \ LEFT JOIN baseline b ON b.wallet = p.wallet\
+  \ SELECT r.*, b.value_usdc, COALESCE(b.has_open_position,FALSE) AS has_open_position,\
+  \ COALESCE(b.pending_order_count,0) AS pending_order_count,b.baseline_block\
+  \ FROM roster r LEFT JOIN baseline b ON b.wallet=r.wallet\
   \ ), canonical_mints AS (\
   \ SELECT p.wallet, x.tx_hash, x.block_number, x.block_hash, x.tx_index, x.log_index\
-  \ FROM participants p JOIN testnet_faucet_claims fc\
+  \ FROM roster p JOIN testnet_faucet_claims fc\
   \  ON LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(p.usdc_address)\
   \ JOIN perps_usdc_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
   \  AND LOWER(x.token_address) = LOWER(p.usdc_address) AND LOWER(x.tx_hash) = LOWER(fc.tx_hash)\
@@ -2500,46 +2526,48 @@ fundingIntegrityCtes =
   \  AND NULLIF(BTRIM(fc.tx_hash), '') IS NOT NULL AND fc.mint_block_number IS NOT NULL\
   \  AND x.block_number >= p.configured_start_block AND x.timestamp < p.score_cutoff_timestamp\
   \ ), mint_counts AS (\
-  \ SELECT p.wallet, COUNT(m.wallet) AS mint_count FROM participants p\
-  \ LEFT JOIN canonical_mints m ON m.wallet = p.wallet GROUP BY p.wallet\
+  \ SELECT p.wallet COLLATE \"C\" AS wallet, COUNT(m.wallet) AS mint_count, MIN(ARRAY[m.block_number,m.tx_index,m.log_index]) FILTER (WHERE m.wallet IS NOT NULL) AS first_event FROM roster p\
+  \ LEFT JOIN canonical_mints m ON m.wallet = p.wallet GROUP BY p.wallet COLLATE \"C\"\
   \ ), first_mint AS (\
-  \ SELECT DISTINCT ON (wallet) wallet, block_number, tx_index, log_index FROM canonical_mints\
-  \ ORDER BY wallet, block_number, tx_index, log_index\
+  \ SELECT wallet,first_event[1] AS block_number,first_event[2] AS tx_index,first_event[3] AS log_index\
+  \ FROM mint_counts WHERE mint_count>0\
   \ ), transfer_matches AS MATERIALIZED (\
-  \ SELECT x.chain_id, x.release_router, LOWER(x.token_address) AS token_address, x.tx_hash, x.block_number, x.block_hash,\
-  \ x.amount, LOWER(x.from_address) AS from_address, LOWER(x.to_address) AS to_address, MIN(x.log_index) AS transfer_log_index, COUNT(*) AS transfer_count\
+  \ SELECT x.tx_hash COLLATE \"C\" AS tx_hash, x.block_number, x.block_hash COLLATE \"C\" AS block_hash,\
+  \ x.amount, LOWER(x.from_address) COLLATE \"C\" AS from_address, LOWER(x.to_address) COLLATE \"C\" AS to_address, MIN(x.log_index) AS transfer_log_index, COUNT(*) AS transfer_count\
   \ FROM perps_usdc_transfers x JOIN target t ON t.chain_id=x.chain_id AND t.release_router=x.release_router\
   \ AND LOWER(x.token_address)=LOWER(t.usdc_address)\
-  \ GROUP BY x.chain_id,x.release_router,LOWER(x.token_address),x.tx_hash,x.block_number,x.block_hash,x.amount,LOWER(x.from_address),LOWER(x.to_address)\
+  \ GROUP BY x.tx_hash COLLATE \"C\",x.block_number,x.block_hash COLLATE \"C\",x.amount,LOWER(x.from_address) COLLATE \"C\",LOWER(x.to_address) COLLATE \"C\"\
   \ ), flow_peers AS MATERIALIZED (\
-  \ SELECT peer.chain_id,peer.release_router,peer.account,peer.activity_type,peer.tx_hash,peer.block_number,\
-  \ peer.block_hash,peer.amount_usdc,COUNT(*) FILTER (WHERE\
+  \ SELECT peer.account COLLATE \"C\" AS account,peer.activity_type COLLATE \"C\" AS activity_type,peer.tx_hash COLLATE \"C\" AS tx_hash,peer.block_number,\
+  \ peer.block_hash COLLATE \"C\" AS block_hash,peer.amount_usdc,COUNT(*) FILTER (WHERE\
   \ LOWER(COALESCE(peer.contract_address,''))=LOWER(t.margin_clearinghouse_address)\
   \ AND LOWER(COALESCE(peer.data->>'asset',''))=LOWER(t.usdc_address)) AS peer_count\
   \ FROM perps_account_activity peer JOIN target t ON t.chain_id=peer.chain_id AND t.release_router=peer.release_router\
   \ WHERE peer.activity_type IN ('Deposit','Withdraw')\
-  \ GROUP BY peer.chain_id,peer.release_router,peer.account,peer.activity_type,peer.tx_hash,peer.block_number,peer.block_hash,peer.amount_usdc\
+  \ GROUP BY peer.account COLLATE \"C\",peer.activity_type COLLATE \"C\",peer.tx_hash COLLATE \"C\",peer.block_number,peer.block_hash COLLATE \"C\",peer.amount_usdc\
+  \ ), funding_activity AS MATERIALIZED (\
+  \ SELECT a.chain_id,a.release_router,a.account,a.activity_type,a.amount_usdc,a.tx_hash,a.block_number,\
+  \ a.block_hash,a.tx_index,a.log_index,a.timestamp,a.contract_address,a.data->>'asset' AS asset\
+  \ FROM perps_account_activity a JOIN target t ON a.chain_id=t.chain_id AND a.release_router=t.release_router\
+  \ WHERE a.activity_type IN ('Deposit','Withdraw') AND a.block_number>=t.configured_start_block\
+  \ AND a.timestamp<t.score_cutoff_timestamp\
   \ ), flow_rows AS (\
   \ SELECT p.wallet, a.activity_type, a.amount_usdc, a.tx_hash, a.block_number, a.block_hash, EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AS close_assistance,\
-  \ a.tx_index, a.log_index, a.timestamp, matches.transfer_log_index,\
+  \ a.tx_index, a.log_index, a.timestamp, matches.transfer_log_index, p.starting_balance_usdc, mc.mint_count, mc.first_event,\
   \ (LOWER(COALESCE(a.contract_address, '')) = LOWER(p.margin_clearinghouse_address)\
-  \  AND LOWER(COALESCE(a.data->>'asset', '')) = LOWER(p.usdc_address) AND a.amount_usdc > 0\
+  \  AND LOWER(COALESCE(a.asset, '')) = LOWER(p.usdc_address) AND a.amount_usdc > 0\
   \  AND COALESCE(matches.transfer_count, 0) = 1\
   \  AND COALESCE(peers.peer_count, 0) = 1 OR EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit')) AS verified\
-  \ FROM participants p JOIN perps_account_activity a ON a.chain_id = p.chain_id\
-  \  AND a.release_router = p.release_router AND a.account = p.wallet\
-  \ LEFT JOIN transfer_matches matches ON matches.chain_id=p.chain_id AND matches.release_router=p.release_router\
-  \ AND matches.token_address=LOWER(p.usdc_address) AND matches.tx_hash=LOWER(a.tx_hash)\
+  \ FROM roster p JOIN funding_activity a ON a.account = p.wallet\
+  \ LEFT JOIN mint_counts mc ON mc.wallet=p.wallet\
+  \ LEFT JOIN transfer_matches matches ON matches.tx_hash=LOWER(a.tx_hash)\
   \ AND matches.block_number=a.block_number AND matches.block_hash=LOWER(a.block_hash) AND matches.amount=a.amount_usdc\
   \ AND matches.from_address=LOWER(CASE WHEN a.activity_type='Deposit' THEN p.wallet ELSE p.margin_clearinghouse_address END)\
   \ AND matches.to_address=LOWER(CASE WHEN a.activity_type='Deposit' THEN p.margin_clearinghouse_address ELSE p.wallet END)\
-  \ LEFT JOIN flow_peers peers ON peers.chain_id=p.chain_id AND peers.release_router=p.release_router\
-  \ AND peers.account=p.wallet AND peers.activity_type=a.activity_type AND peers.tx_hash=a.tx_hash\
+  \ LEFT JOIN flow_peers peers ON peers.account=p.wallet AND peers.activity_type=a.activity_type AND peers.tx_hash=a.tx_hash\
   \ AND peers.block_number=a.block_number AND peers.block_hash=a.block_hash AND peers.amount_usdc=a.amount_usdc\
-  \ WHERE a.activity_type IN ('Deposit', 'Withdraw') AND a.block_number >= p.configured_start_block\
-  \  AND a.timestamp < p.score_cutoff_timestamp\
   \ ), flow_summary AS (\
-  \ SELECT p.wallet,\
+  \ SELECT p.wallet COLLATE \"C\" AS wallet,\
   \ COUNT(*) FILTER (WHERE f.block_number <= p.baseline_block) AS baseline_flow_count,\
   \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance) AS deposit_count,\
   \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance AND f.block_number <= p.baseline_block) AS baseline_deposit_count,\
@@ -2564,7 +2592,7 @@ fundingIntegrityCtes =
   \  AND ROW(f.block_number, f.tx_index, f.log_index) <= ROW(m.block_number, m.tx_index, m.log_index)) AS pre_mint_deposit_count\
   \ FROM participants p LEFT JOIN flow_rows f ON f.wallet = p.wallet\
   \ LEFT JOIN mint_counts mc ON mc.wallet = p.wallet LEFT JOIN first_mint m ON m.wallet = p.wallet\
-  \ GROUP BY p.wallet, p.baseline_block, p.starting_balance_usdc, mc.mint_count,\
+  \ GROUP BY p.wallet COLLATE \"C\", p.baseline_block, p.starting_balance_usdc, mc.mint_count,\
   \  m.block_number, m.tx_index, m.log_index\
   \ ), running_funding AS (\
   \ SELECT wallet, SUM(CASE WHEN close_assistance THEN 0 WHEN activity_type = 'Deposit' THEN amount_usdc ELSE -amount_usdc END)\
@@ -2572,27 +2600,26 @@ fundingIntegrityCtes =
   \ FROM flow_rows WHERE verified\
   \ ), funding_cap AS (SELECT wallet, COALESCE(MAX(running_net), 0) AS max_net_amount\
   \ FROM running_funding GROUP BY wallet), allocation AS (\
-  \ SELECT DISTINCT ON (f.wallet) f.wallet, f.block_number, f.tx_index, f.log_index\
-  \ FROM flow_rows f JOIN participants p ON p.wallet = f.wallet JOIN mint_counts mc ON mc.wallet = f.wallet\
-  \ JOIN first_mint m ON m.wallet = f.wallet WHERE f.verified AND f.activity_type = 'Deposit'\
-  \  AND f.amount_usdc = p.starting_balance_usdc AND mc.mint_count = 1\
-  \  AND ROW(f.block_number, f.tx_index, f.log_index) > ROW(m.block_number, m.tx_index, m.log_index)\
-  \ ORDER BY f.wallet, f.block_number, f.tx_index, f.log_index\
+  \ SELECT DISTINCT ON (f.wallet COLLATE \"C\") f.wallet, f.block_number, f.tx_index, f.log_index\
+  \ FROM flow_rows f WHERE f.verified AND f.activity_type = 'Deposit'\
+  \  AND f.amount_usdc = f.starting_balance_usdc AND f.mint_count = 1\
+  \  AND ARRAY[f.block_number, f.tx_index, f.log_index] > f.first_event\
+  \ ORDER BY f.wallet COLLATE \"C\", f.block_number, f.tx_index, f.log_index\
   \ ), first_trade AS (\
   \ SELECT DISTINCT ON (p.wallet COLLATE \"C\") p.wallet, a.block_number, a.tx_index, a.log_index\
-  \ FROM participants p JOIN perps_account_activity a ON a.chain_id = p.chain_id AND a.release_router = p.release_router\
+  \ FROM roster p JOIN perps_account_activity a ON a.chain_id = p.chain_id AND a.release_router = p.release_router\
   \  AND a.account = p.wallet AND a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0\
   \ WHERE a.timestamp >= p.start_timestamp AND a.timestamp < p.score_cutoff_timestamp\
   \ ORDER BY p.wallet COLLATE \"C\", a.block_number, a.tx_index, a.log_index\
   \ ), registration_audit AS (\
   \ SELECT p.wallet, (p.registration_close_timestamp IS NULL OR r.registration_id IS NOT NULL) AS verified_registration\
-  \ FROM participants p LEFT JOIN insights_registration_applications r ON r.competition_slug = p.slug\
+  \ FROM roster p LEFT JOIN insights_registration_applications r ON r.competition_slug = p.slug\
   \  AND r.registration_id::text = p.trader_reference AND r.status = 'completed' AND r.trading_account = p.wallet\
   \ ), verified_deposits AS MATERIALIZED (\
   \ SELECT DISTINCT wallet, tx_hash, block_number, block_hash, amount_usdc, transfer_log_index\
   \ FROM flow_rows WHERE verified AND activity_type = 'Deposit'\
   \ ), premature_outbound AS (\
-  \ SELECT p.wallet, COUNT(*) AS invalid_count FROM participants p JOIN allocation al ON al.wallet = p.wallet\
+  \ SELECT p.wallet COLLATE \"C\" AS wallet, COUNT(*) AS invalid_count FROM roster p JOIN allocation al ON al.wallet = p.wallet\
   \ JOIN first_mint m ON m.wallet = p.wallet\
   \ JOIN perps_usdc_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
   \ AND LOWER(x.token_address) = LOWER(p.usdc_address) AND LOWER(x.from_address) = LOWER(p.wallet)\
@@ -2601,7 +2628,7 @@ fundingIntegrityCtes =
   \ LEFT JOIN verified_deposits d ON d.wallet = p.wallet AND d.tx_hash = x.tx_hash\
   \ AND d.block_number = x.block_number AND d.block_hash = x.block_hash AND d.amount_usdc = x.amount\
   \ AND d.transfer_log_index = x.log_index AND LOWER(x.to_address) = LOWER(p.margin_clearinghouse_address)\
-  \ WHERE x.amount > 0 AND d.wallet IS NULL GROUP BY p.wallet\
+  \ WHERE x.amount > 0 AND d.wallet IS NULL GROUP BY p.wallet COLLATE \"C\"\
   \ ), facts AS (\
   \ SELECT p.wallet, p.value_usdc, p.has_open_position, p.pending_order_count, p.starting_balance_usdc,\
   \ COALESCE(mc.mint_count, 0) AS mint_count, COALESCE(fs.baseline_flow_count, 0) AS baseline_flow_count,\

@@ -2,6 +2,8 @@
 
 module Plether.Insights.RegistrationDatabaseSpec
   ( registrationDatabaseSpec
+  , prepareRegistrationBenchmark
+  , registrationBenchmarkRoundtrip
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -71,9 +73,46 @@ import Test.Hspec
 bytea :: BS.ByteString -> Binary BS.ByteString
 bytea = Binary
 
+-- Synthetic benchmark fixture; called only after the dedicated-database guard.
+prepareRegistrationBenchmark :: Connection -> Text -> Text -> IO Text
+prepareRegistrationBenchmark conn slug rulesVersion = do
+  void $ execute conn "UPDATE insights_competitions SET registration_open_timestamp=EXTRACT(EPOCH FROM NOW())::bigint-60,registration_close_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+3600,minimum_x_account_age_days=1,target_x_handle='plether',privacy_notice_version=? WHERE slug=?" (privacyVersion,slug)
+  provisionRegistrationCompetitionConfig conn slug digestA privacyVersion `shouldReturn` True
+  seedBareRegistration conn slug
+  seedVerifiedIdentity conn
+  completeRegistration conn sessionDigest privacyVersion rulesVersion privacyVersion False ownerWallet tradingAccount completionBlock completionHash `shouldReturn` CompletionSucceeded
+  pure tradingAccount
+
+registrationBenchmarkRoundtrip :: Connection -> Text -> Text -> Int -> IO ()
+registrationBenchmarkRoundtrip conn slug rulesVersion sequenceNumber = do
+  let suffix = T.pack $ show sequenceNumber
+      application = "90000000-0000-4000-8000-" <> T.justifyRight 12 '0' suffix
+      digest offset = BS.pack $ map (fromIntegral . fromEnum) $ T.unpack $ T.justifyRight 32 '0' (T.pack $ show $ sequenceNumber+offset)
+  createRegistrationSession conn slug application (digest 1000000) (digest 2000000) highCsrfDigest highEnvelope 3600 `shouldReturn` SessionCreated
+  completeRegistration conn sessionDigest privacyVersion rulesVersion privacyVersion False ownerWallet tradingAccount completionBlock completionHash `shouldReturn` CompletionAlreadySucceeded
+
 registrationDatabaseSpec :: Text -> Spec
 registrationDatabaseSpec databaseUrl =
   describe "Insights registration PostgreSQL completion" $ do
+    it "rolls back a statement timeout in rate limiting and reuses the connection" $
+      withRegistrationDatabase databaseUrl $ \pool -> do
+        _ <- prepareVerifiedFixture pool
+        withDb pool $ \conn -> do
+          void $ execute_ conn "CREATE FUNCTION test_registration_statement_timeout() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(6); RETURN NEW; END $$"
+          void $ execute_ conn "CREATE TRIGGER test_registration_statement_timeout BEFORE INSERT ON insights_registration_rate_limits FOR EACH ROW EXECUTE FUNCTION test_registration_statement_timeout()"
+          let cleanup = do
+                void $ execute_ conn "DROP TRIGGER test_registration_statement_timeout ON insights_registration_rate_limits"
+                void $ execute_ conn "DROP FUNCTION test_registration_statement_timeout()"
+          (do
+            result <- try @SqlError $ registrationRateLimitAllowed conn highRateScopeDigest 10
+            case result of
+              Left err -> sqlState err `shouldBe` "57014"
+              Right _ -> expectationFailure "rate-limit work must stop at the statement deadline"
+            query_ conn "SHOW statement_timeout" `shouldReturn` [Only ("0" :: Text)]
+            query conn "SELECT COUNT(*) FROM insights_registration_rate_limits WHERE scope_digest=?" (Only $ bytea highRateScopeDigest) `shouldReturn` [Only (0 :: Int)]
+            ) `finally` cleanup
+          registrationRateLimitAllowed conn highRateScopeDigest 10 `shouldReturn` True
+
     it "creates a session and completes registration while the calculation transaction remains open" $
       withRegistrationDatabase databaseUrl $ \pool -> do
         rules <- prepareVerifiedFixture pool

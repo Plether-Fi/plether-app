@@ -2,8 +2,11 @@ module Plether.Insights.DatabaseSpec
   ( insightsDatabaseSpec
   ) where
 
-import Control.Exception (bracket, finally)
-import Control.Monad (void, forM_, forM, when)
+import Control.Exception (SomeException, bracket, finally, try, throwIO)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import qualified Plether.Insights.RegistrationDatabaseSpec as RegistrationBenchmark
+import Control.Monad (void, forM_, forM, when, unless)
 import Data.Aeson (Value (..), encode, object, toJSON, (.=), eitherDecodeFileStrict', decode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as Base16
@@ -13,7 +16,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import System.Environment (lookupEnv)
 import Data.String (fromString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (newIORef)
+import Data.IORef (newIORef, modifyIORef', readIORef)
 import Data.Foldable (toList)
 import Network.HTTP.Client (newManager, defaultManagerSettings)
 import Network.HTTP.Types (status200)
@@ -50,6 +53,7 @@ import Plether.Database.Insights
   , insertManualAdjustment
   , materializeFinalizedStandings
   , publishAccountSnapshotBatch
+  , publishAccountSnapshotBatchMeasured
   , integrityCalculationSql
   , stageCompetitionIntegrity
   , publishStagedCompetitionIntegrity
@@ -109,7 +113,7 @@ insightsDatabaseSpec databaseUrl =
           when (i `mod` 4 == 0) $ void $ execute conn
             "UPDATE testnet_faucet_claims SET token_address=UPPER(token_address),address=UPPER(address),tx_hash=UPPER(tx_hash) WHERE address=?" (Only wallet)
           when (i `mod` 5 == 0) $ void $ execute conn
-            "INSERT INTO perps_usdc_transfers SELECT r.* FROM perps_usdc_transfers x WHERE from_address=? AND block_number=90 CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(x)||jsonb_build_object('log_index',99)) r" (Only wallet)
+            "INSERT INTO perps_usdc_transfers SELECT r.* FROM perps_usdc_transfers x CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(x)||jsonb_build_object('log_index',99)) r WHERE x.from_address=? AND x.block_number=90" (Only wallet)
           when (i `mod` 7 == 0) $ void $ execute conn
             "UPDATE perps_account_activity SET contract_address=UPPER(contract_address),data=jsonb_set(data,'{asset}',to_jsonb(UPPER(data->>'asset'))) WHERE account=?" (Only wallet)
         setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
@@ -146,7 +150,7 @@ insightsDatabaseSpec databaseUrl =
         ilrFinalPnlUsdc stale `shouldBe` ilrFinalPnlUsdc fresh
         ilrRank stale `shouldBe` ilrRank fresh
 
-    forM_ ["roster", "wallet", "baseline", "boundary", "rewind", "finalization"] $ \change ->
+    forM_ ["roster", "wallet", "baseline", "boundary", "release", "rewind", "finalization"] $ \change ->
       it ("rejects obsolete staged integrity after " <> change) $
         withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
           insertParticipant conn walletA "trader-a"
@@ -160,6 +164,7 @@ insightsDatabaseSpec databaseUrl =
             "wallet" -> void $ execute conn "UPDATE insights_competition_participants SET wallet=? WHERE competition_slug=? AND wallet=?" (walletB,competitionSlug,walletA)
             "baseline" -> publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp 0]
             "boundary" -> setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,hashText "replacement")) Nothing
+            "release" -> void $ execute conn "UPDATE insights_competitions SET account_lens_address=? WHERE slug=?" (wrongEmitter,competitionSlug)
             "rewind" -> deletePerpsHistoryFromBlock conn fixtureChain fixtureRouter 80
             _ -> void $ execute conn "UPDATE insights_competitions SET finalized=TRUE WHERE slug=?" (Only competitionSlug)
           publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` False
@@ -928,48 +933,87 @@ hashText seed =
 
 -- Opt-in isolated benchmark: INSIGHTS_INTEGRITY_BENCHMARK=1, never a live URL.
 runIntegrityBenchmark :: Text -> IO ()
-runIntegrityBenchmark databaseUrl = withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
-  insertParticipant conn walletA "benchmark-template"
-  setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
-  seedOfficialAllocation conn walletA 80 90 "benchmark"
-  publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
-  void $ execute_ conn "CREATE TEMP TABLE benchmark_wallets AS SELECT i,'0x'||lpad(to_hex(i),40,'0') AS wallet FROM generate_series(1,5400) i"
-  void $ execute conn "INSERT INTO insights_competition_participants (competition_slug,wallet,trader_reference) SELECT ?,wallet,'benchmark-'||i FROM benchmark_wallets" (Only competitionSlug)
-  void $ execute conn "INSERT INTO testnet_faucet_claims SELECT r.* FROM testnet_faucet_claims t CROSS JOIN benchmark_wallets p CROSS JOIN LATERAL jsonb_populate_record(NULL::testnet_faucet_claims,to_jsonb(t)||jsonb_build_object('address',p.wallet,'tx_hash','0x'||lpad(to_hex(p.i*100),64,'0'))) r WHERE t.address=? AND t.token_address=?" (walletA,fixtureUsdc)
-  void $ execute conn "INSERT INTO perps_usdc_transfers SELECT r.* FROM (SELECT * FROM perps_usdc_transfers WHERE release_router=? ORDER BY block_number LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(0,16) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(t)||jsonb_build_object('tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'from_address',CASE WHEN j=0 THEN ? ELSE p.wallet END,'to_address',CASE WHEN j=0 THEN p.wallet ELSE ? END,'block_number',CASE WHEN j=0 THEN 80 ELSE 90+j END,'log_index',0,'amount',CASE WHEN j<2 THEN ? ELSE 1 END)) r" (zeroAddress,fixtureClearinghouse,bankroll,fixtureRouter)
-  void $ execute conn "INSERT INTO perps_account_activity SELECT r.* FROM (SELECT * FROM perps_account_activity WHERE release_router=? LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(1,30) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_account_activity,to_jsonb(t)||jsonb_build_object('id',nextval('perps_account_activity_id_seq'),'event_key','benchmark-'||p.i||'-'||j,'account',p.wallet,'activity_type',CASE WHEN j%3=0 THEN 'Open' WHEN j%3=1 THEN 'Deposit' ELSE 'Withdraw' END,'tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'block_number',90+j,'log_index',1,'amount_usdc',CASE WHEN j=1 THEN ? ELSE 1 END,'size_delta',1)) r" (bankroll,fixtureRouter)
-  wallets <- query_ conn "SELECT wallet FROM benchmark_wallets ORDER BY wallet" :: IO [Only Text]
-  let allWallets = walletA : [w | Only w <- wallets]
-  publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | w <- allWallets]
-  -- Retained history has the production index shape and many batches per wallet.
-  void $ execute conn "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data) SELECT s.competition_slug,s.wallet,'live',s.chain_id,s.release_router,1000+j,s.block_hash,s.timestamp,s.has_open_position,s.signed_net_equity_usdc,s.terminal_reachable_usdc,s.trader_claims_usdc,s.raw_data FROM insights_account_snapshots s CROSS JOIN generate_series(1,375) j WHERE s.competition_slug=? AND s.snapshot_kind='start'" (Only competitionSlug)
-  indexes <- readFile "config/migrations/insights-integrity-indexes-v1.sql"
-  forM_ (filter (not . all isSpace) $ splitSqlStatements indexes) $ \statement -> void $ execute_ conn (fromString statement)
-  void $ execute_ conn "ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
-  plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
-  LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
-  samples <- forM [1..20 :: Int] $ \cycleNumber -> do
-    a <- getMonotonicTimeNSec
-    stageCompetitionIntegrity conn competitionSlug
-    b <- getMonotonicTimeNSec
-    publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
-    c <- getMonotonicTimeNSec
-    publishAccountSnapshotBatch conn [snapshot w SnapshotLive liveBlock liveHash liveTimestamp bankroll | w <- allWallets]
-    d <- getMonotonicTimeNSec
-    let ms x y = fromIntegral (y-x) / 1_000_000 :: Double
-        values = (ms a b,ms b c,ms c d)
-    putStrLn $ "integrity_benchmark " <> show cycleNumber <> " " <> show values
-    pure values
-  let percentile xs = sort xs !! 18
-      calc = [a | (a,_,_) <- samples]
-      publish = [b | (_,b,_) <- samples]
-      snapshots = [c | (_,_,c) <- samples]
-  putStrLn $ "integrity_benchmark_p95 " <> show (percentile calc,percentile publish,percentile snapshots)
-  percentile calc `shouldSatisfy` (<5000)
-  percentile publish `shouldSatisfy` (<250)
-  maximum publish `shouldSatisfy` (<1000)
-  percentile snapshots `shouldSatisfy` (<250)
-  maximum snapshots `shouldSatisfy` (<1000)
+runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPool $ \pool -> do
+  assertDedicatedDatabase pool
+  -- Retain this explicitly isolated fixture for repeatable plan/timing analysis.
+  -- A failed timing assertion must not force another multi-million-row reload.
+  reuse <- withDb pool $ \conn -> do
+    tables <- query_ conn "SELECT to_regclass('insights_account_snapshots') IS NOT NULL" :: IO [Only Bool]
+    if tables /= [Only True] then pure False else do
+      rows <- query conn "SELECT COUNT(*)>2000000 AND (SELECT COUNT(*) FROM insights_competition_participants)=2702 FROM insights_account_snapshots WHERE competition_slug=?" (Only competitionSlug) :: IO [Only Bool]
+      pure $ rows == [Only True]
+  unless reuse $ prepareDatabase pool
+  withDb pool $ \conn -> do
+    indexRows <- query_ conn "SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname IN ('idx_insights_transfers_normalized_inbound','idx_insights_transfers_normalized_outbound','idx_insights_transfers_normalized_transaction') AND i.indisvalid" :: IO [Only Int]
+    unless (indexRows == [Only 3]) $ do
+      indexes <- readFile "config/migrations/insights-integrity-indexes-v1.sql"
+      forM_ (filter (not . all isSpace) $ splitSqlStatements indexes) $ \statement -> void $ execute_ conn (fromString statement)
+    unless reuse $ do
+      insertParticipant conn walletA "benchmark-template"
+      setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+      seedOfficialAllocation conn walletA 80 90 "benchmark"
+      publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+      void $ execute_ conn "CREATE TEMP TABLE benchmark_wallets AS SELECT i,'0x'||lpad(to_hex(i),40,'0') AS wallet FROM generate_series(1,2700) i"
+      void $ execute conn "INSERT INTO insights_competition_participants (competition_slug,wallet,trader_reference) SELECT ?,wallet,'benchmark-'||i FROM benchmark_wallets" (Only competitionSlug)
+      void $ execute conn "INSERT INTO testnet_faucet_claims SELECT r.* FROM testnet_faucet_claims t CROSS JOIN benchmark_wallets p CROSS JOIN LATERAL jsonb_populate_record(NULL::testnet_faucet_claims,to_jsonb(t)||jsonb_build_object('address',p.wallet,'tx_hash','0x'||lpad(to_hex(p.i*100),64,'0'))) r WHERE t.address=? AND t.token_address=?" (walletA,fixtureUsdc)
+      void $ execute conn "INSERT INTO perps_usdc_transfers SELECT r.* FROM (SELECT * FROM perps_usdc_transfers WHERE release_router=? ORDER BY block_number LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(0,33) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(t)||jsonb_build_object('tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'from_address',CASE WHEN j=0 THEN ? ELSE p.wallet END,'to_address',CASE WHEN j=0 THEN p.wallet ELSE ? END,'block_number',CASE WHEN j=0 THEN 80 ELSE 90+j END,'log_index',0,'amount',CASE WHEN j<2 THEN ? ELSE 1 END)) r" (fixtureRouter,zeroAddress,fixtureClearinghouse,bankroll)
+      void $ execute conn "INSERT INTO perps_account_activity SELECT r.* FROM (SELECT * FROM perps_account_activity WHERE release_router=? LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(1,60) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_account_activity,to_jsonb(t)||jsonb_build_object('id',nextval('perps_account_activity_id_seq'),'event_key','benchmark-'||p.i||'-'||j,'account',p.wallet,'activity_type',CASE WHEN j%3=0 THEN 'Open' WHEN j%3=1 THEN 'Deposit' ELSE 'Withdraw' END,'tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'block_number',90+j,'log_index',1,'amount_usdc',CASE WHEN j=1 THEN ? ELSE 1 END,'size_delta',1)) r" (fixtureRouter,bankroll)
+      wallets <- query_ conn "SELECT wallet FROM benchmark_wallets ORDER BY wallet" :: IO [Only Text]
+      registrationWallet <- RegistrationBenchmark.prepareRegistrationBenchmark conn competitionSlug (crRulesVersion testSeptemberRules)
+      let allWallets = walletA : registrationWallet : [w | Only w <- wallets]
+      publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | w <- allWallets]
+      -- Retained history has the production index shape and many batches per wallet.
+      void $ execute conn "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data) SELECT s.competition_slug,s.wallet,'live',s.chain_id,s.release_router,1000+j,s.block_hash,s.timestamp,s.has_open_position,s.signed_net_equity_usdc,s.terminal_reachable_usdc,s.trader_claims_usdc,s.raw_data FROM insights_account_snapshots s CROSS JOIN generate_series(1,750) j WHERE s.competition_slug=? AND s.snapshot_kind='start'" (Only competitionSlug)
+    -- Match canonical transfer provenance for the generated deposits/withdrawals,
+    -- so the benchmark exercises allocation and funding windows for every wallet.
+    void $ execute conn "UPDATE perps_usdc_transfers SET block_hash=?,from_address=CASE WHEN (block_number-90)%3=2 THEN ? ELSE CASE WHEN from_address=? THEN to_address ELSE from_address END END,to_address=CASE WHEN (block_number-90)%3=2 THEN CASE WHEN from_address=? THEN to_address ELSE from_address END ELSE ? END WHERE release_router=? AND block_number BETWEEN 91 AND 123" (hashText "blbenchmark",fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureRouter)
+    wallets <- query conn "SELECT wallet FROM insights_competition_participants WHERE competition_slug=? ORDER BY wallet" (Only competitionSlug) :: IO [Only Text]
+    let allWallets = [w | Only w <- wallets]
+    void $ execute conn "DELETE FROM insights_registration_applications WHERE competition_slug=? AND status='in_progress'" (Only competitionSlug)
+    void $ execute conn "UPDATE insights_competition_participants SET integrity_flags='[\"benchmark_pending\"]' WHERE competition_slug=?" (Only competitionSlug)
+    void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
+    plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
+    LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
+    void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=1000 WHERE release_router=?" (Only fixtureRouter)
+    registrationTimings <- newIORef ([] :: [Double])
+    samples <- forM [1..20 :: Int] $ \cycleNumber -> do
+      calculated <- newEmptyMVar
+      void $ forkIO $ do
+        outcome <- try @SomeException $ do
+          a <- getMonotonicTimeNSec
+          stageCompetitionIntegrity conn competitionSlug
+          b <- getMonotonicTimeNSec
+          pure (a,b)
+        putMVar calculated outcome
+      forM_ [1..20 :: Int] $ \attempt -> withDb pool $ \registrationConn -> do
+        began <- getMonotonicTimeNSec
+        RegistrationBenchmark.registrationBenchmarkRoundtrip registrationConn competitionSlug (crRulesVersion testSeptemberRules) (cycleNumber*100+attempt)
+        ended <- getMonotonicTimeNSec
+        modifyIORef' registrationTimings (fromIntegral (ended-began)/1_000_000 :)
+        threadDelay 5000
+      (a,b) <- takeMVar calculated >>= either throwIO pure
+      publicationStarted <- getMonotonicTimeNSec
+      publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
+      c <- getMonotonicTimeNSec
+      snapshotLockMs <- publishAccountSnapshotBatchMeasured conn [snapshot w SnapshotLive (liveBlock+fromIntegral cycleNumber) liveHash liveTimestamp bankroll | w <- allWallets]
+      let ms x y = fromIntegral (y-x) / 1_000_000 :: Double
+          values = (ms a b,ms publicationStarted c,snapshotLockMs)
+      putStrLn $ "integrity_benchmark " <> show cycleNumber <> " " <> show values
+      pure values
+    registrationSamples <- readIORef registrationTimings
+    let registrationP95 = sort registrationSamples !! 379
+    putStrLn $ "registration_benchmark_p95 " <> show registrationP95
+    registrationP95 `shouldSatisfy` (<250)
+    let percentile xs = sort xs !! 18
+        calc = [a | (a,_,_) <- samples]
+        publish = [b | (_,b,_) <- samples]
+        snapshots = [c | (_,_,c) <- samples]
+    putStrLn $ "integrity_benchmark_p95 " <> show (percentile calc,percentile publish,percentile snapshots)
+    percentile calc `shouldSatisfy` (<5000)
+    percentile publish `shouldSatisfy` (<250)
+    maximum publish `shouldSatisfy` (<1000)
+    percentile snapshots `shouldSatisfy` (<250)
+    maximum snapshots `shouldSatisfy` (<1000)
   where
     splitSqlStatements [] = []
     splitSqlStatements value = let (statement,rest)=break (==';') value in statement : splitSqlStatements (drop 1 rest)

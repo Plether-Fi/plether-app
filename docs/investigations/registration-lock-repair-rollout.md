@@ -65,8 +65,8 @@ Use a dedicated local database with `critical_path` in its name. Run backend uni
 and integration suites with the built plether-candle-admin on PATH. Opt into the
 larger fixture using `INSIGHTS_INTEGRITY_BENCHMARK=1` and Hspec match
 `benchmarks isolated integrity`; never point this destructive test at live data.
-The fixture has 5,401 participants, 162,001 activities, 91,802 transfers, and
-2,030,776 retained snapshots. It emits twenty samples and an actual-row-count
+The fixture has 2,702 participants, 162,001 activities, 91,802 transfers, and
+over two million retained snapshots. It emits twenty samples and an actual-row-count
 EXPLAIN ANALYZE plan at `/tmp/insights-integrity-benchmark-plan.json`.
 
 Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published),
@@ -74,9 +74,23 @@ Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published)
 (lock_wait_ms, lock_held_ms), `insights_integrity_freshness` (age_seconds),
 `insights_integrity_skipped`, `insights_integrity_failed`,
 `registration_database_work` (duration_ms), and `registration_database_busy`
-(sql_state). Lock-held metrics end immediately before commit; full publication
-benchmarks include commit and conservatively bound the complete lock duration.
+(sql_state). Snapshot lock-held metrics include commit and exclude SQL encoding, which is
+fully evaluated before locking. Integrity lock-held metrics end immediately before
+commit; full integrity publication benchmarks include commit and conservatively
+bound the complete lock duration. The benchmark also measures 400 concurrent
+session creations and completion-recovery operations.
 No events contain tokens, wallet identities, or personal data.
+
+The incident's public participant count was 1,040. The acceptance fixture therefore
+uses over 2.5 times that roster and more than twice the observed transfer/activity
+volume. Each measured snapshot publication advances to a new block. An additional
+5,402-participant stress fixture exposed excessive snapshot index I/O (0.7–3.5s
+lock durations) and is not reported as a passing acceptance run. Snapshot publication
+now preserves unchanged rows and only deletes obsolete wallets before upserting a
+complete batch. SQL encoding occurs before locking. The activity calculation uses a
+materialized, release-filtered activity set to avoid one-row cardinality estimates
+that caused repeated full flow scans; the isolated original candidate took over
+99 seconds. No global planner switches or pool sizes were changed.
 
 Release 2 deployment, benchmark acceptance, and ten consecutive observed worker
 cycles remain rollout gates; append their measured results before completion.
