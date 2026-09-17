@@ -32,6 +32,24 @@ const competition: Competition = {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Insights API client', () => {
+  it.each(['headers', 'body'])('bounds stalled registration %s without replaying a POST', async (stage) => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockImplementation(() => stage === 'headers'
+      ? new Promise(() => {})
+      : Promise.resolve({ ok: true, json: () => new Promise(() => {}) }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const result = createRegistrationSession(competition.slug, 'token')
+      const rejected = expect(result).rejects.toMatchObject({ code: 'REGISTRATION_TIMEOUT' })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await rejected
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not present an unreviewed registration as an eligibility problem', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       competition,

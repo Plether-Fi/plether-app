@@ -65,6 +65,7 @@ data RegistrationErrorCode
   | RegistrationIncomplete
   | ConsentMismatch
   | RateLimited
+  | RegistrationBusy
   | ProviderUnavailable
   | RegistrationNotFound
   | RegistrationInternalError
@@ -91,6 +92,7 @@ registrationErrorCodeText = \case
   RegistrationIncomplete -> "REGISTRATION_INCOMPLETE"
   ConsentMismatch -> "CONSENT_MISMATCH"
   RateLimited -> "RATE_LIMITED"
+  RegistrationBusy -> "REGISTRATION_BUSY"
   ProviderUnavailable -> "PROVIDER_UNAVAILABLE"
   RegistrationNotFound -> "REGISTRATION_NOT_FOUND"
   RegistrationInternalError -> "INTERNAL_ERROR"
@@ -113,6 +115,7 @@ registrationErrorCodeFromText = \case
   "REGISTRATION_INCOMPLETE" -> Just RegistrationIncomplete
   "CONSENT_MISMATCH" -> Just ConsentMismatch
   "RATE_LIMITED" -> Just RateLimited
+  "REGISTRATION_BUSY" -> Just RegistrationBusy
   "PROVIDER_UNAVAILABLE" -> Just ProviderUnavailable
   "REGISTRATION_NOT_FOUND" -> Just RegistrationNotFound
   "INTERNAL_ERROR" -> Just RegistrationInternalError
@@ -158,6 +161,7 @@ registrationErrorStatus err = case reCode err of
   RegistrationIncomplete -> status409
   ConsentMismatch -> status400
   RateLimited -> status429
+  RegistrationBusy -> status503
   ProviderUnavailable -> status503
   RegistrationNotFound -> status404
   RegistrationInternalError -> status500

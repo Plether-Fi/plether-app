@@ -367,6 +367,49 @@ describe('RegistrationPage', () => {
     })
   })
 
+  it('reconciles an ambiguous completion without replaying it or losing consent', async () => {
+    const registration = {
+      status: 'in_progress' as const,
+      csrfToken: 'csrf',
+      expiresAt: '2026-08-28T12:00:00Z',
+      steps: { xIdentity: 'verified' as const, xFollow: 'verified' as const, wallet: 'verified' as const, completed: false },
+      identity: { xHandle: 'alice', maskedEmail: 'a***@example.com' },
+      wallet: {
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        tradingAccount: '0x2222222222222222222222222222222222222222',
+      },
+      requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+    }
+    apiMocks.useRegistrationSession.mockReturnValue({
+      data: registration,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+    const refetch = vi.fn().mockResolvedValue({ data: registration })
+    apiMocks.useRegistrationSession.mockReturnValue({ data: registration, isLoading: false, isError: false, refetch })
+    const error = new apiMocks.MockInsightsApiError('REGISTRATION_TIMEOUT')
+    error.status = 0
+    apiMocks.completeRegistration.mockRejectedValue(error)
+
+    renderPage()
+    const completeButton = screen.getByRole('button', { name: 'Complete registration' })
+    const [rulesConsent, privacyConsent] = screen.getAllByRole('checkbox')
+    fireEvent.click(rulesConsent)
+    fireEvent.click(privacyConsent)
+    expect(completeButton).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Plether Labs newsletters/i }))
+    fireEvent.click(completeButton)
+
+    await waitFor(() => { expect(refetch).toHaveBeenCalledTimes(1) })
+    await waitFor(() => { expect(completeButton).toBeEnabled() })
+    expect(apiMocks.completeRegistration).toHaveBeenCalledTimes(1)
+    expect(rulesConsent).toBeChecked()
+    expect(privacyConsent).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /Plether Labs newsletters/i })).toBeChecked()
+  })
+
   it('does not discard wallet ownership when a legacy backend returns the retired account-state error', async () => {
     const refetch = vi.fn().mockResolvedValue(undefined)
     apiMocks.useRegistrationSession.mockReturnValue({

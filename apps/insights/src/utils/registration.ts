@@ -1,6 +1,8 @@
 import { InsightsApiError } from '../api'
 
 const ERROR_MESSAGES: Record<string, string> = {
+  REGISTRATION_BUSY: 'Registration is busy. Please try again shortly.',
+  REGISTRATION_TIMEOUT: 'Registration took too long. We are checking your session before you retry.',
   CLOSED_REGISTRATION: 'Registration is closed for this competition.',
   EXPIRED_SESSION: 'Your registration session expired. Complete the spam check again to restart.',
   EXPIRED_CHALLENGE: 'This verification challenge expired. Restart the current step and try again.',
@@ -79,4 +81,8 @@ export function registrationErrorMessage(error: unknown): string {
   }
 
   return 'Something went wrong. Please try again.'
+}
+
+export function registrationNeedsRecovery(error: unknown): boolean {
+  return error instanceof InsightsApiError && (error.status === 0 || error.status >= 500)
 }

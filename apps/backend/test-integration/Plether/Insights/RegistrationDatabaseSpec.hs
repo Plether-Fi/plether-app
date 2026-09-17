@@ -14,11 +14,13 @@ import Control.Concurrent.MVar
 import Control.Exception (SomeException, bracket, finally, throwIO, try)
 import Control.Monad (forM_, replicateM, replicateM_, void)
 import qualified Data.ByteString as BS
+import Data.String (fromString)
+import System.Timeout (timeout)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, query, query_, withTransaction)
 import Database.PostgreSQL.Simple.Types (Binary (..))
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
 import Plether.Database.Insights (ensureInsightsSchema)
@@ -71,6 +73,39 @@ bytea = Binary
 registrationDatabaseSpec :: Text -> Spec
 registrationDatabaseSpec databaseUrl =
   describe "Insights registration PostgreSQL completion" $ do
+    forM_ [("FOR NO KEY UPDATE", True), ("FOR UPDATE", False)] $ \(lockMode, permitsInsert) ->
+      it ("bounds registration and restores connection settings under " <> lockMode) $
+        withRegistrationDatabase databaseUrl $ \pool -> do
+          rules <- prepareCompetitionFixture pool highTargetXUserIdDigest
+          locked <- newEmptyMVar
+          release <- newEmptyMVar
+          finished <- newEmptyMVar
+          void $ forkIO $ do
+            outcome <- try $ withDb pool $ \conn -> withTransaction conn $ do
+              _ <- query conn
+                (fromString $ "SELECT slug FROM insights_competitions WHERE slug=? " <> lockMode)
+                (Only $ crSlug rules) :: IO [Only Text]
+              putMVar locked ()
+              takeMVar release
+            putMVar finished (outcome :: Either SomeException ())
+          takeMVar locked
+          (withDb pool $ \conn -> do
+            result <- timeout 3_000_000 $ try @SqlError $
+              createRegistrationSession conn (crSlug rules) highApplicationId highTurnstileDigest
+                highSessionDigest highCsrfDigest highEnvelope 3_600
+            if permitsInsert
+              then result `shouldBe` Just (Right SessionCreated)
+              else case result of
+                Just (Left err) -> sqlState err `shouldBe` "55P03"
+                _ -> expectationFailure "registration should roll back at the lock deadline"
+            query_ conn "SHOW lock_timeout" `shouldReturn` [Only ("0" :: Text)]
+            query_ conn "SHOW statement_timeout" `shouldReturn` [Only ("0" :: Text)]
+            rows <- query conn "SELECT COUNT(*) FROM insights_registration_applications WHERE registration_id=?::uuid"
+              (Only highApplicationId) :: IO [Only Int]
+            rows `shouldBe` [Only $ if permitsInsert then 1 else 0]
+            ) `finally` putMVar release ()
+          takeMVar finished >>= either throwIO pure
+
     it "keeps the current session authoritative after a lost completion response" $
       withRegistrationDatabase databaseUrl $ \pool -> do
         rules <- prepareVerifiedFixture pool
