@@ -1383,6 +1383,11 @@ variable "insights_snapshot_multicall_size" {
   }
 }
 
+variable "perps_oracle_updater_health_poll_seconds" {
+  type    = string
+  default = "5"
+}
+
 variable "perps_oracle_updater_poll_seconds" {
   type    = string
   default = "30"
@@ -1857,5 +1862,46 @@ variable "rds_database_connections_alarm_threshold" {
       && var.rds_database_connections_alarm_threshold > 0
     )
     error_message = "rds_database_connections_alarm_threshold must be a positive whole number."
+  }
+}
+
+variable "perps_close_assistance_enabled" {
+  type        = bool
+  default     = false
+  description = "Issue exact close-bounty shortfalls on Arbitrum Sepolia. Manual kill switch; no automatic expiry. Keep lens bindings when disabling so existing operations recover."
+}
+variable "perps_close_assistance_global_enabled" {
+  type        = bool
+  default     = false
+  description = "Allow sponsored close assistance beyond the existing operator canary cohort."
+}
+variable "perps_close_assistance_lens" {
+  type        = string
+  default     = ""
+  description = "Verified CfdClosePreview deployment supporting the exact five-call sponsored close batch."
+}
+variable "perps_close_assistance_lens_code_hash" {
+  type        = string
+  default     = ""
+  description = "Keccak256 of the reviewed deployed close-assistance lens runtime."
+}
+
+variable "aa_preparation_recovery_origin" {
+  type        = string
+  default     = ""
+  description = "Exact HTTPS frontend origin for wallet recovery; empty disables recovery until migration and fenced backend rollout."
+  validation {
+    condition     = var.aa_preparation_recovery_origin == "" || can(regex("^https://[a-zA-Z0-9.-]+(:[0-9]+)?$", var.aa_preparation_recovery_origin))
+    error_message = "Recovery origin must be an exact HTTPS origin without a path."
+  }
+}
+
+variable "aa_preparation_retirement_enabled" {
+  type        = bool
+  default     = false
+  description = "Enable only after every API instance enforces the preparation registry fence. Retain fences or disable issuance on rollback."
+  validation {
+    condition     = !var.aa_preparation_retirement_enabled || var.aa_preparation_recovery_origin != ""
+    error_message = "Preparation retirement requires a configured recovery origin."
   }
 }

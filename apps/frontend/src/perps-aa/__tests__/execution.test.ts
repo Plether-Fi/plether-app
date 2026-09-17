@@ -1,3 +1,4 @@
+import { reportAttemptStage } from '../attemptDiagnostics'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   concatHex,
@@ -5,7 +6,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { executeSponsoredPerpsAction } from '../execution'
+import { resumeSponsoredPerpsAction, executeSponsoredPerpsAction } from '../execution'
 import type {
   PerpsAaDeploymentManifestV1,
   PerpsAaDeploymentManifestV2,
@@ -27,12 +28,15 @@ import type {
   PerpsAaSmartAccountRuntime,
 } from '../runtimeContext'
 import { UserOperationReceiptNotSafeError } from '../runtimeContext'
+import { SponsorRequestError } from '../errors'
 import {
   PLETHER_PAYMASTER_POLICY_ID,
   PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
   PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT,
   PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
 } from '../paymasterValidity'
+
+vi.mock('../attemptDiagnostics', () => ({ reportAttemptStage: vi.fn() }))
 
 const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
@@ -332,6 +336,7 @@ describe('executeSponsoredPerpsAction', () => {
         }) }),
       })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'receipt-timeout' })
       expect(sendUserOperation).not.toHaveBeenCalled()
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed')
       const record = useSponsoredOperationStore.getState().operations[0]
       expect(record).toMatchObject({ status: 'receipt-timeout', userOperationHash: USER_OPERATION_HASH })
       expect(record.signedUserOperation).toBeDefined()
@@ -361,6 +366,195 @@ describe('executeSponsoredPerpsAction', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  const resumableStatus = { version: 1 as const, authorizationState: 'signed', validUntil: SPONSORSHIP_VALID_UNTIL.toString(),
+    serverTime: String(Math.floor(Date.now() / 1000)), safeBlockTimestamp: null, phase: 'prepared' as const, reason: 'RESUMABLE',
+    recoverable: true, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
+
+  it.each(['deposit', 'withdraw', 'withdraw-to-owner', 'place-order', 'place-protected-order', 'cancel-order',
+    'create-protection', 'replace-protection', 'cancel-protection', 'add-margin', 'settle-claim'] as const)(
+    'resumes a rejected native %s with the original preparation after reload', async kind => {
+      const prepare = vi.fn(async () => pletherOperation())
+      const sign = vi.fn(async (value: ManagedUserOperation) => value)
+      sign.mockRejectedValueOnce({ code: 4001 })
+      const managed = runtime({ prepareUserOperation: prepare, signUserOperation: sign })
+      managed.smartAccount.getPreparationStatus = vi.fn(async () => resumableStatus)
+      const input = { manifest: { ...v2Manifest(), preparationRpcVersion: 1 as const }, ownerAddress: OWNER,
+        action: { ...action, kind }, runtime: managed, authorizationTokenToClearOnConfirmation: TARGET,
+        authorizationNonceToClearOnConfirmation: AUTHORIZATION_NONCE }
+      await expect(executeSponsoredPerpsAction(input)).rejects.toThrow('Signature declined. Your transaction was not sent.')
+      const declined = useSponsoredOperationStore.getState().operations[0]
+      expect(declined.status).toBe('signature-declined')
+      expect(declined.preparedOperation?.operation).not.toHaveProperty('signature')
+      expect(declined.signedUserOperation).toBeUndefined()
+      expect(declined.userOperationHash).toBeUndefined()
+      expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+      expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
+      await useSponsoredOperationStore.persist.rehydrate()
+      const saved = useSponsoredOperationStore.getState().operations[0]
+      await resumeSponsoredPerpsAction(saved, managed)
+      expect(prepare.mock.calls).toHaveLength(2)
+      expect(prepare).toHaveBeenNthCalledWith(1, expect.objectContaining({ preparationId: declined.id }))
+      expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: declined.id }))
+      expect(sign.mock.calls[0][0]).toEqual(sign.mock.calls[1][0])
+      expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+      expect(managed.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
+      expect(useSponsoredOperationStore.getState().operations[0].userOperationHash).toBe(USER_OPERATION_HASH)
+    })
+
+  it.each(['nonce', 'callGasLimit', 'maxFeePerGas', 'callData'] as const)('refuses changed prepared %s before another wallet prompt', async field => {
+    const prepare = vi.fn(async () => pletherOperation())
+    const sign = vi.fn(async () => { throw { code: 4001 } })
+    const managed = runtime({ prepareUserOperation: prepare, signUserOperation: sign })
+    managed.smartAccount.getPreparationStatus = vi.fn(async () => resumableStatus)
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    prepare.mockResolvedValueOnce({ ...pletherOperation(), [field]: field === 'callData' ? '0x123456' : 999n })
+    await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toThrow('payload changed')
+    expect(sign).toHaveBeenCalledTimes(1)
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it.each(['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED'])('persists %s as an explicit refusal without retrying, signing, sending, or releasing the durable lane', async reason => {
+    const prepare=vi.fn().mockRejectedValue(new SponsorRequestError({reason,retryable:false,message:'Simulation rejected'}))
+    const managed=runtime({prepareUserOperation:prepare})
+    await expect(executeSponsoredPerpsAction({manifest:{...v2Manifest(),preparationRpcVersion:1},ownerAddress:OWNER,action,runtime:managed})).rejects.toThrow('Simulation rejected')
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved=useSponsoredOperationStore.getState().operations[0]
+    expect(saved).toMatchObject({status:'sponsorship-refused',reason,retryable:false})
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(saved.id)
+  })
+
+  it('preserves an account-confirmation rejection across reload and resumes the same attempt', async () => {
+    const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(new SponsorRequestError({
+      reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true, message: 'Account awaiting safe confirmation',
+    }))
+    const managed = runtime({ prepareUserOperation: prepare })
+    managed.smartAccount.getPreparationStatus = vi.fn().mockRejectedValue(new Error('PREPARATION_NOT_AUTHORIZED'))
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    await useSponsoredOperationStore.persist.rehydrate()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    expect(saved).toMatchObject({ status: 'preparation-pending', reason: 'ACCOUNT_DEPLOYMENT_PENDING', retryable: true })
+    expect(saved.preparedOperation).toBeUndefined()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(saved.id)
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    await resumeSponsoredPerpsAction(saved, managed)
+    expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: saved.id }))
+    expect(managed.smartAccount.getPreparationStatus).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+    expect(useSponsoredOperationStore.getState().operations[0].reason).toBeUndefined()
+  })
+
+  it.each([
+    [new Error('connection interrupted'), 'UNKNOWN'],
+    [new DOMException('Request timed out', 'TimeoutError'), 'SPONSOR_REQUEST_TIMEOUT'],
+  ])('retries a dropped preparation response through its original ID without another journal entry (%s)', async (error, reason) => {
+    const prepare = vi.fn(async () => pletherOperation()).mockRejectedValueOnce(error)
+    const managed = runtime({ prepareUserOperation: prepare })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    expect(saved.nativePreparation).toBeDefined()
+    expect(saved.preparedOperation).toBeUndefined()
+    expect(saved).toMatchObject({ status: 'preparation-pending', reason })
+    await resumeSponsoredPerpsAction(saved, managed)
+    expect(prepare).toHaveBeenNthCalledWith(2, expect.objectContaining({ preparationId: saved.id }))
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+  })
+
+  it('keeps ambiguous wallet errors separate from confirmed rejection', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()), signUserOperation: vi.fn(async () => { throw new Error('wallet disconnected') }) })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow('wallet disconnected')
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({ status: 'preparation-pending', walletPreparationOutcome: 'unknown' })
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it('does not open a wallet when the unsigned recovery journal cannot be saved', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()) })
+    const setItem = localStorage.setItem
+    vi.spyOn(localStorage, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key.startsWith(SPONSORED_OPERATION_JOURNAL_PREFIX) && value.includes('expectedHash')) throw new Error('quota exceeded')
+      setItem.call(this, key, value)
+    })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow('could not be saved')
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it('refuses another signature when server status reports expiry or settlement', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()), signUserOperation: vi.fn(async () => { throw { code: 4001 } }) })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    managed.smartAccount.getPreparationStatus = vi.fn(async () => ({ ...resumableStatus, recoverable: false }))
+    await expect(resumeSponsoredPerpsAction(useSponsoredOperationStore.getState().operations[0], managed)).rejects.toThrow('cannot currently be resumed')
+    expect(managed.smartAccount.signUserOperation).toHaveBeenCalledTimes(1)
+    expect(managed.smartAccount.prepareUserOperation).toHaveBeenCalledTimes(1)
+  })
+
+  it('serializes concurrent resume clicks with the existing browser lane lock', async () => {
+    const browserLocks = statefulLockManager()
+    vi.stubGlobal('navigator', { locks: browserLocks.lockManager })
+    let completeSignature!: (operation: ManagedUserOperation) => void
+    const pendingSignature = new Promise<ManagedUserOperation>(resolve => { completeSignature = resolve })
+    const sign = vi.fn(async () => pendingSignature).mockRejectedValueOnce({ code: 4001 })
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()), signUserOperation: sign })
+    managed.smartAccount.getPreparationStatus = vi.fn(async () => resumableStatus)
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    const first = resumeSponsoredPerpsAction(saved, managed)
+    await vi.waitFor(() => { expect(sign).toHaveBeenCalledTimes(2) })
+    await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toThrow()
+    expect(sign).toHaveBeenCalledTimes(2)
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    completeSignature(pletherOperation())
+    await first
+    expect(managed.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['Deposit authorization expired', 'Deposit authorization consumed', 'Order deadline expired', 'Protection changed', 'Simulation failed', 'Prepared gas insufficient'])(
+    'keeps the preparation and blocks signing after revalidation reports %s', async message => {
+      const prepare = vi.fn(async () => pletherOperation())
+      const sign = vi.fn(async () => { throw { code: 4001 } })
+      const managed = runtime({ prepareUserOperation: prepare, signUserOperation: sign })
+      managed.smartAccount.getPreparationStatus = vi.fn(async () => resumableStatus)
+      await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+      const saved = useSponsoredOperationStore.getState().operations[0]
+      prepare.mockRejectedValueOnce(new Error(message))
+      await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toThrow()
+      expect(sign).toHaveBeenCalledTimes(1)
+      expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+      expect(useSponsoredOperationStore.getState().operations[0].preparedOperation).toEqual(saved.preparedOperation)
+      expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
+    })
+
+  it('retains an abandoned preparation past history cleanup until its reservation is resolved', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()), signUserOperation: vi.fn(async () => { throw { code: 4001 } }) })
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    useSponsoredOperationStore.getState().transition(saved.id, 'cancelled')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 25 * 60 * 60 * 1000)
+    useSponsoredOperationStore.getState().cleanupOperations()
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+    useSponsoredOperationStore.getState().markPreparationResolved(saved.id)
+    useSponsoredOperationStore.getState().cleanupOperations()
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(0)
+  })
+
+  it('does not restore an older rejection after a later wallet attempt becomes uncertain', async () => {
+    const sign = vi.fn(async () => { throw new Error('wallet disconnected') }).mockRejectedValueOnce({ code: 4001 })
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()), signUserOperation: sign })
+    managed.smartAccount.getPreparationStatus = vi.fn(async () => resumableStatus)
+    await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed })).rejects.toThrow()
+    const saved = useSponsoredOperationStore.getState().operations[0]
+    const stale = localStorage.getItem(SPONSORED_OPERATION_STORAGE_NAME)!
+    await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toThrow()
+    localStorage.setItem(SPONSORED_OPERATION_STORAGE_NAME, stale)
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().operations[0].walletPreparationOutcome).toBe('unknown')
   })
 
   it('fails closed when the remote manifest kill switch is off', async () => {

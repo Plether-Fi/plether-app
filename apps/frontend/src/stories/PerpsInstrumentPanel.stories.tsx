@@ -39,8 +39,8 @@ const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
 }
 
 const HEALTHY_POOL_CAPITAL: PerpsPoolLiquidityDetailsProps = {
-  longCapacity: <TokenAmount amount="2.8M" />,
-  shortCapacity: <TokenAmount amount="1.1M" />,
+  poolAssetsUsdc: 10_000_000n * 1_000_000n,
+  freeUsdc: 6_300_000n * 1_000_000n,
   juniorPrincipal: <TokenAmount amount="3.2M" />,
   seniorPrincipal: <TokenAmount amount="6.8M" />,
   juniorSharePercent: 32,
@@ -196,10 +196,10 @@ function instrumentStats({
     { label: '24h volume', value: <TokenAmount amount={volume} /> },
     directionalLimitStat(directionalLimit),
     {
-      label: 'Pool liquidity',
+      label: 'Free pool liquidity',
       value: <TokenAmount amount={liquidity} />,
       hoverDetailsType: 'pool-liquidity',
-      hoverDetailsLabel: 'Pool liquidity details',
+      hoverDetailsLabel: 'Free pool liquidity details',
       hoverDetails: <PerpsPoolLiquidityDetails {...poolCapital} />,
     },
     {
@@ -641,6 +641,35 @@ export const PoolLiquidityDetailsVisible: Story = {
   render: Default.render,
 }
 
+export const PoolLiquidityNearlyReserved: Story = {
+  args: {
+    stats: instrumentStats({
+      liquidity: '1.1K',
+      poolCapital: {
+        ...HEALTHY_POOL_CAPITAL,
+        poolAssetsUsdc: 590_100_000n * 1_000_000n,
+        freeUsdc: 1_100n * 1_000_000n,
+        juniorPrincipal: <TokenAmount amount="585.1M" />,
+        seniorPrincipal: <TokenAmount amount="5M" />,
+        juniorSharePercent: 99.2,
+        seniorSharePercent: 0.8,
+      },
+    }),
+  },
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const trigger = canvas.getByRole('button', { name: 'Free pool liquidity details' })
+    trigger.focus()
+    await userEvent.keyboard('{Enter}')
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(canvas.getByText('>99.9%')).toBeVisible())
+    await expect(canvas.getByText('Total pool assets')).toBeVisible()
+    await expect(canvas.getByText('What this means for trading')).toBeVisible()
+    await expect(canvas.queryByText(/trading capacity/i)).not.toBeInTheDocument()
+  },
+}
+
 export const PoolLiquidityJuniorExhausted: Story = {
   args: {
     poolLiquidityDetailsExpanded: true,
@@ -648,6 +677,8 @@ export const PoolLiquidityJuniorExhausted: Story = {
       liquidity: '2.2M',
       poolCapital: {
         ...HEALTHY_POOL_CAPITAL,
+        poolAssetsUsdc: 6_800_000n * 1_000_000n,
+        freeUsdc: 2_200_000n * 1_000_000n,
         juniorPrincipal: <TokenAmount amount="0" />,
         juniorSharePercent: 0,
         seniorSharePercent: 100,
@@ -665,6 +696,8 @@ export const PoolLiquiditySeniorImpaired: Story = {
       liquidity: '1.7M',
       poolCapital: {
         ...HEALTHY_POOL_CAPITAL,
+        poolAssetsUsdc: 5_900_000n * 1_000_000n,
+        freeUsdc: 1_700_000n * 1_000_000n,
         juniorPrincipal: <TokenAmount amount="0" />,
         seniorPrincipal: <TokenAmount amount="5.9M" />,
         juniorSharePercent: 0,

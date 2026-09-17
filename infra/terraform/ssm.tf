@@ -51,6 +51,7 @@ locals {
   zero_private_key = "0000000000000000000000000000000000000000000000000000000000000000"
 
   normalized_transaction_private_keys = {
+    faucet        = trimprefix(lower(trimspace(var.faucet_private_key)), "0x")
     keeper        = trimprefix(lower(trimspace(var.keeper_private_key)), "0x")
     lp_settlement = trimprefix(lower(trimspace(var.lp_settlement_private_key)), "0x")
     oracle        = trimprefix(lower(trimspace(var.oracle_updater_private_key)), "0x")
@@ -127,6 +128,20 @@ resource "aws_ssm_parameter" "faucet_private_key" {
   name  = "/plether/${local.deployment_name}/faucet-private-key"
   type  = "SecureString"
   value = var.faucet_private_key
+
+  lifecycle {
+    precondition {
+      condition = (
+        can(regex("^[0-9a-f]{64}$", local.normalized_transaction_private_keys.faucet))
+        && local.normalized_transaction_private_keys.faucet != local.zero_private_key
+        && alltrue([
+          for role, key in local.normalized_transaction_private_keys :
+          key != local.normalized_transaction_private_keys.faucet if role != "faucet"
+        ])
+      )
+      error_message = "faucet_private_key must be a non-zero 32-byte key dedicated to the faucet; it must differ from keeper, LP settlement, oracle, and liquidation signer keys."
+    }
+  }
 }
 
 resource "aws_ssm_parameter" "faucet_proxy_origin_token" {

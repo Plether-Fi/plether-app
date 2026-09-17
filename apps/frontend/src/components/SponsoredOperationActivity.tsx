@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { PreparedOperationRecovery } from '../perps-aa/PreparedOperationRecovery'
+import { RecoveredOrderStatus } from './RecoveredOrderStatus'
 import { TradingStatus } from './TradingStatus'
 import { OperationDiagnostic } from './OperationDiagnostic'
 import { isPerpsAaManifestV2 } from '../perps-aa/manifest'
@@ -20,9 +23,10 @@ import {
 } from '../perps-aa'
 import {
   sponsoredOperationActionLabel,
+  sponsoredOperationDisplayStatus,
   sponsoredOperationStatusLabel,
 } from '../utils/sponsoredOperation'
-import { Badge, Modal } from './ui'
+import { Badge, Button, Modal } from './ui'
 
 const SUCCESS_FEEDBACK_DURATION_MS = 5_000
 const SUCCESS_EXIT_ANIMATION_MS = 240
@@ -31,6 +35,8 @@ const SPONSORSHIP_FAILURE_REASONS = new Set([
   'RATE_LIMITED',
   'SPONSOR_BUDGET_EXCEEDED',
   'SIMULATION_FAILED',
+  'INSUFFICIENT_FREE_EQUITY',
+  'INVALID_ORDER_DEADLINE',
   'SPONSOR_UNAVAILABLE',
   'POLICY_DENIED',
   'PAYMASTER_PAUSED',
@@ -156,7 +162,7 @@ function isForegroundInProgressOperation(
 ): boolean {
   return !isAwaitingSafeConfirmation(operation) &&
     !isSponsoredOperationTerminal(operation.status) &&
-    operation.status !== 'receipt-timeout'
+    !isSponsoredOperationAttentionStatus(operation.status)
 }
 
 function isAttentionOperation(operation: SponsoredOperation): boolean {
@@ -197,13 +203,16 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
 }
 
 function operationStatusLabel(operation: SponsoredOperation): string {
+  if (operation.status === 'preparation-pending' && operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING') {
+    return 'Account confirmation required'
+  }
   if (isAwaitingSafeConfirmation(operation)) {
     return operation.includedSuccess === false
       ? 'Failed onchain · Awaiting confirmation'
       : 'Included onchain'
   }
   if (!isSubmissionUncertain(operation)) {
-    return sponsoredOperationStatusLabel(operation.status)
+    return sponsoredOperationStatusLabel(sponsoredOperationDisplayStatus(operation))
   }
 
   return operation.status === 'receipt-timeout'
@@ -216,10 +225,19 @@ function operationReasonMessage(
 ): string | undefined {
   if (isAwaitingSafeConfirmation(operation)) return undefined
   if (isSubmissionUncertain(operation)) {
-    return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+    return 'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
   }
 
-  switch (operation.status) {
+  switch (sponsoredOperationDisplayStatus(operation)) {
+    case 'signature-declined': return 'Signature declined. Your transaction was not sent.'
+    case 'preparation-pending': return operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
+      ? 'Preparation paused for Trading Account confirmation. Resume this attempt once the account is confirmed.'
+      : operation.reason === 'PREPARATION_UNUSABLE'
+      ? 'This saved preparation can no longer be signed. Check recovery to discard it when available.'
+      : 'The wallet or preparation response was interrupted. Check recovery before continuing.'
+    case 'sponsorship-refused': return operation.reason && SPONSORSHIP_FAILURE_REASONS.has(operation.reason)
+      ? sponsorReasonMessage(new SponsorRequestError({ reason: operation.reason, message: operation.reason, retryable: false }))
+      : 'Sponsorship was not delivered. Check the preparation before reviewing another transaction.'
     case 'execution-reverted':
       return 'The transaction was included but failed during onchain execution.'
     case 'dropped':
@@ -346,9 +364,11 @@ function AddressRow({
 function OperationHistoryItem({
   operation,
   manifest,
+  onReturn,
 }: {
   operation: SponsoredOperation
   manifest: ReturnType<typeof usePerpsIdentity>['manifest']
+  onReturn: () => void
 }) {
   const [legacyUnlockState, setLegacyUnlockState] = useState<
     'idle' | 'working' | 'blocked'
@@ -398,12 +418,11 @@ function OperationHistoryItem({
   const canCancelLocally = canCancelSponsoredOperationLocally(operation)
   const canForceUnlockLegacy =
     canForceUnlockLegacySponsoredOperation(operation)
-  const hasTechnicalDetails = Boolean(
-    operation.userOperationHash ??
+  const hasTechnicalDetails = Boolean(manifest && isPerpsAaManifestV2(manifest)) ||
+    Boolean(operation.userOperationHash ??
     operation.includedTransactionHash ??
     operation.transactionHash ??
-    operation.replacementUserOperationHash
-  )
+    operation.replacementUserOperationHash)
   const wasSafelyConfirmed =
     operation.transactionHash !== undefined &&
     operation.transactionHashVerified === true
@@ -484,14 +503,12 @@ function OperationHistoryItem({
           >
             {operationStatusLabel(operation)}
           </Badge>
-          {sponsorshipSummary ? (
+          {sponsorshipSummary && !submissionUncertain ? (
             <span className={`text-xs ${sponsorshipSummaryTone}`}>
               {sponsorshipSummary}
             </span>
           ) : null}
         </div>
-        {manifest && isPerpsAaManifestV2(manifest) && <OperationDiagnostic attemptId={operation.id} />}
-        {operation.action === 'place-order' && operation.status === 'confirmed' && <p className="mt-2 text-xs text-content-secondary">Order commit confirmed. Trade execution is a separate outcome; check the order activity.</p>}
         {includedAt !== undefined || safelyConfirmedAt !== undefined ? (
           <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary">
             {includedAt !== undefined ? (
@@ -518,10 +535,13 @@ function OperationHistoryItem({
         ) : null}
       </div>
 
+      {((operation.nativePreparation !== undefined && (!operation.preparationResolved || !isSponsoredOperationTerminal(operation.status))
+          && (!operation.userOperationHash || !isSponsoredOperationTerminal(operation.status) || operation.status === 'outcome-unknown'))
+        || (!operation.userOperationHash && !operation.nativePreparation && operation.status === 'failed' && manifest && isPerpsAaManifestV2(manifest) && operation.manifestVersion === manifest.version)) && (
+        <PreparedOperationRecovery operation={operation} fallbackManifest={manifest && isPerpsAaManifestV2(manifest) ? manifest : undefined} />
+      )}
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (
-        <p className="text-xs leading-5 text-content-secondary">
-          The sponsored order commit is confirmed. Keeper execution is tracked separately in order history.
-        </p>
+        <RecoveredOrderStatus operation={operation} />
       ) : null}
 
       {awaitingFailedConfirmation ? (
@@ -534,7 +554,12 @@ function OperationHistoryItem({
         </p>
       ) : null}
 
-      {reasonMessage ? (
+      {operation.status === 'expired' && <div className="space-y-1 border border-positive/30 bg-positive/5 p-3 text-sm">
+        <p className="font-semibold text-content-primary">Transaction didn’t go through</p>
+        <p>This attempt has expired and can no longer execute. You can prepare a new transaction.</p>
+        <Button type="button" size="sm" className="mt-2" onClick={onReturn}>Done</Button>
+      </div>}
+      {reasonMessage && operation.status !== 'expired' && !(submissionUncertain && operation.nativePreparation) ? (
         <p className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-xs leading-5 text-content-secondary">
           {reasonMessage}
           {operation.status === 'failed' && operation.retryable
@@ -543,21 +568,8 @@ function OperationHistoryItem({
         </p>
       ) : null}
 
-      {primaryExplorerUrl || canCancelLocally || canForceUnlockLegacy ? (
+      {canCancelLocally || canForceUnlockLegacy ? (
         <div className="flex flex-wrap items-center gap-3">
-          {primaryExplorerUrl ? (
-            <a
-              href={primaryExplorerUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#FFAB96] hover:underline hover:underline-offset-4"
-            >
-              {primaryExplorerLabel}
-              <span aria-hidden="true" className="material-symbols-outlined !text-[14px] !leading-none">
-                open_in_new
-              </span>
-            </a>
-          ) : null}
           {canCancelLocally ? (
             <button
               type="button"
@@ -612,6 +624,22 @@ function OperationHistoryItem({
             Technical details
           </summary>
           <div className="mt-3 space-y-2">
+            {manifest && isPerpsAaManifestV2(manifest) && <OperationDiagnostic attemptId={operation.id} />}
+            {submissionUncertain && sponsorshipSummary && <p className="text-xs">{sponsorshipSummary}</p>}
+          {primaryExplorerUrl ? (
+            <a
+              href={primaryExplorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#FFAB96] hover:underline hover:underline-offset-4"
+            >
+              {primaryExplorerLabel}
+              <span aria-hidden="true" className="material-symbols-outlined !text-[14px] !leading-none">
+                open_in_new
+              </span>
+            </a>
+          ) : null}
+
             {operation.userOperationHash ? (
               <HashActions
                 hash={operation.userOperationHash}
@@ -651,15 +679,39 @@ function OperationHistoryItem({
 export function SponsoredOperationHistoryButton() {
   const identity = usePerpsIdentity()
   const operations = useSponsoredOperationStore((state) => state.operations)
-  const [openedActivity, setOpenedActivity] = useState<{
+  const activityRequest = usePerpsUiStore(state => state.activityRequest)
+  const [locallyOpenedActivity, setOpenedActivity] = useState<{
     identityKey: string
     attentionOperationIds: string[]
   } | null>(null)
+  const closeActivity = () => {
+    setOpenedActivity(null)
+    if (activityRequest) usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
+  }
   const identityKey = identity.accountAddress && identity.chainId !== undefined
     ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
     : null
   const accountAddress = identity.accountAddress?.toLowerCase()
   const ownerAddress = identity.ownerAddress?.toLowerCase()
+  const requestedIdentityMatches = activityRequest !== null &&
+    activityRequest.chainId === identity.chainId &&
+    activityRequest.accountAddress.toLowerCase() === accountAddress &&
+    activityRequest.ownerAddress.toLowerCase() === ownerAddress
+  const openedActivity = requestedIdentityMatches && identityKey
+    ? { identityKey, attentionOperationIds: [activityRequest.operationId] }
+    : locallyOpenedActivity
+  useEffect(() => {
+    if (!activityRequest) return
+    if (!requestedIdentityMatches) {
+      usePerpsUiStore.getState().clearActivityRequest(activityRequest.id)
+      return
+    }
+    const store = useSponsoredOperationStore.getState()
+    const operation = store.operations.find(item => item.id === activityRequest.operationId)
+    if (operation && isUnreviewedAttentionOperation(operation)) {
+      store.acknowledgeOperations([{ id: operation.id, attentionRevision: getSponsoredOperationAttentionRevision(operation) }])
+    }
+  }, [activityRequest, requestedIdentityMatches])
   const accountOperations = accountAddress && identity.chainId !== undefined
     ? operations
         .filter((operation) =>
@@ -982,9 +1034,7 @@ export function SponsoredOperationHistoryButton() {
 
       <Modal
         isOpen={openedActivity?.identityKey === identityKey}
-        onClose={() => {
-          setOpenedActivity(null)
-        }}
+        onClose={closeActivity}
         title="Trading Account activity"
         size="xl"
         analyticsId="sponsored_operation_history"
@@ -1012,6 +1062,7 @@ export function SponsoredOperationHistoryButton() {
                   key={operation.id}
                   operation={operation}
                   manifest={identity.manifest}
+                  onReturn={closeActivity}
                 />
               ))}
             </section>
@@ -1027,6 +1078,7 @@ export function SponsoredOperationHistoryButton() {
                   key={operation.id}
                   operation={operation}
                   manifest={identity.manifest}
+                  onReturn={closeActivity}
                 />
               ))}
             </section>
@@ -1042,6 +1094,7 @@ export function SponsoredOperationHistoryButton() {
                   key={operation.id}
                   operation={operation}
                   manifest={identity.manifest}
+                  onReturn={closeActivity}
                 />
               ))}
             </section>
@@ -1057,6 +1110,7 @@ export function SponsoredOperationHistoryButton() {
                   key={operation.id}
                   operation={operation}
                   manifest={identity.manifest}
+                  onReturn={closeActivity}
                 />
               ))}
             </section>

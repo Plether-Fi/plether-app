@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { recoveryFetch, recoveryHttp, resetRecoveryCredentialsForTests } from '../recoveryTransport'
 import { isRecoveryPending } from '../errors'
+import { recoveryReason } from '../walletRecovery'
 
 const url = 'https://app.sepolia.plether.com/api/perps/v1/aa/rpc'
 const hash = `0x${'a'.repeat(64)}`
@@ -11,12 +12,23 @@ const request = (method = 'eth_getUserOperationReceipt', op = hash) => ({
 
 describe('operation recovery transport', () => {
   beforeEach(() => { localStorage.clear(); resetRecoveryCredentialsForTests() })
+  it('sends recovery capabilities only for hash-scoped preparation status reads', async () => {
+    const credential = token()
+    await recoveryFetch(url, vi.fn(async () => new Response('{}', { headers: { 'X-Plether-AA-Recovery': credential } })))(url, request('plether_prepareUserOperation'))
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'))
+    const read = recoveryFetch(url, fetcher)
+    const body = (locator: object) => ({ method: 'POST', body: JSON.stringify({ method: 'plether_getPreparationStatus', params: [locator] }) })
+    await read(url, body({ version: 1, userOperationHash: hash }))
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('X-Plether-AA-Recovery')).toBe(credential)
+    await read(url, body({ version: 1, preparationId: hash }))
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).has('X-Plether-AA-Recovery')).toBe(false)
+  })
   it('persists the preparation credential before submission and restores it after reload/IP change', async () => {
     const credential = token()
     const prepare = recoveryFetch(url, vi.fn(async () => new Response('{}', { headers: { 'X-Plether-AA-Recovery': credential } })))
     await prepare(url, request('plether_prepareUserOperation'))
     resetRecoveryCredentialsForTests()
-    const fetcher = vi.fn(async () => new Response('{}'))
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{}'))
     await recoveryFetch(url, fetcher)(url, request())
     expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('X-Plether-AA-Recovery')).toBe(credential)
   })
@@ -61,6 +73,17 @@ describe('operation recovery transport', () => {
     }), { headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }))
     const result = await recoveryHttp(url)({}).request({ method: 'eth_getUserOperationReceipt', params: [hash] }).catch((error: unknown) => error)
     expect(isRecoveryPending(result)).toBe(true)
+    expect(fetcher).toHaveBeenCalledOnce()
+    vi.restoreAllMocks()
+  })
+  it('retains an HTTP 403 owner-verification reason through the real viem transport', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1, error: { code: -32001, message: 'Preparation is unavailable for this client', data: { reason: 'PREPARATION_NOT_AUTHORIZED' } },
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } }))
+    const error = await recoveryHttp(url, { retryCount: 0 })({}).request({
+      method: 'plether_getPreparationStatus', params: [{ userOperationHash: hash }],
+    }).catch((cause: unknown) => cause)
+    expect(recoveryReason(error)).toBe('PREPARATION_NOT_AUTHORIZED')
     expect(fetcher).toHaveBeenCalledOnce()
     vi.restoreAllMocks()
   })

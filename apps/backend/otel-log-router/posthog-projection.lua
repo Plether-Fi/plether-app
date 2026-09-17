@@ -4,7 +4,7 @@ local categories = {
   event=true, component=true, stage=true, reason_code=true, outcome=true,
   action_kind=true, sponsorship_status=true, terminal_outcome=true,
   deployment_name=true, rpc_role=true, wallet_family=true,
-  recovery_source=true,
+  recovery_source=true, diagnostic_code=true,
 }
 local function set(words)
   local values = {}
@@ -40,9 +40,13 @@ lp_settlement_confirmed lp_settlement_broadcast lp_settlement_worker_restarting 
 protection_signer_low_balance protection_worker_heartbeat protection_worker_failed
 protection_worker_startup_failed protection_reorg liquidation_worker_heartbeat
 liquidation_worker_failed liquidation_worker_startup_failed oracle_worker_failed
+oracle_sync_lag oracle_sync_pending oracle_update_mined oracle_update_not_needed
+oracle_update_payload_stale oracle_update_dry_run oracle_worker_started
+oracle_worker_iteration_failed oracle_worker_fatal
 api_started rpc_request_failed rpc_request_completed
 ]])
 local values = {
+  diagnostic_code=set('DEPENDENCY_FAILED JOURNAL_READ_FAILED JOURNAL_BOUND_EXCEEDED JOURNAL_DECODE_FAILED JOURNAL_IDENTITY_MISMATCH PENDING_LIABILITY_UNKNOWN RESERVE_EVIDENCE_INVALID SNAPSHOT_UNVERIFIED OBSERVATION_EXPIRED'),
   recovery_source=set('finalized_record transaction_hint'),
   component=set('keeper funding oracle readiness sponsorship reconciliation bundler paymaster liquidation protection lp_settlement alto'),
   stage=set('prepared preparation authorization estimation signing persistence gateway submitted submitting included committed execution execution_attempt_failed user_operation_confirmed user_operation_reverted authorization_expired recovery'),
@@ -67,6 +71,7 @@ SPONSOR_BUDGET_EXCEEDED PER_OPERATION_BUDGET_EXCEEDED OUTSTANDING_BUDGET_EXCEEDE
 ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
+INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE
 AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
 USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
 RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
@@ -77,6 +82,7 @@ local numbers = {
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
   remaining_deadline_seconds=true,
+  lag_seconds=true, previous_lag_seconds=true, poll_seconds=true, health_poll_seconds=true,
 }
 local resources = {
   ["service.name"]=true, ["service.version"]=true,
@@ -111,6 +117,11 @@ local function projection(record)
   for key,_ in pairs(numbers) do
     local value = record[key]
     if type(value) == "number" and value == value and value >= 0 and value < 1e12 then output[key] = value end
+  end
+  if event:match('^oracle_') then
+    for _,key in ipairs({'repair','synchronized'}) do
+      if type(record[key]) == 'boolean' then output[key] = record[key] end
+    end
   end
   if uuid(record.attempt_id) then output.attempt_id = record.attempt_id end
   local attrs = type(record.resource) == "table" and record.resource.attributes or nil

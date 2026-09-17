@@ -2,6 +2,14 @@ import type {
   SponsoredOperation,
   SponsoredOperationStatus,
 } from '../perps-aa'
+import { isDefinitiveSponsorshipRefusal } from '../perps-aa/errors'
+
+/** Older journals classified lost responses and unusable retries as refusals. */
+export function sponsoredOperationDisplayStatus(operation: SponsoredOperation): SponsoredOperationStatus {
+  return operation.nativePreparation && operation.status === 'sponsorship-refused'
+    && !isDefinitiveSponsorshipRefusal(operation.reason)
+    ? 'preparation-pending' : operation.status
+}
 
 export function sponsoredOperationActionLabel(
   action: SponsoredOperation['action']
@@ -25,6 +33,9 @@ export function sponsoredOperationStatusLabel(
   status: SponsoredOperationStatus
 ): string {
   switch (status) {
+    case 'signature-declined': return 'Signature declined'
+    case 'preparation-pending': return 'Preparation recovery'
+    case 'sponsorship-refused': return 'Sponsorship unavailable'
     case 'building':
     case 'requesting-stub':
     case 'estimating':

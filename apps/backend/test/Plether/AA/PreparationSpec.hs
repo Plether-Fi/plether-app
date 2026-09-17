@@ -32,6 +32,62 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "read-only preparation locators" $ do
+    let locator = KM.fromList [("version",Number 1),("chainId",String "0x66eee"),
+          ("sender",String "0x2222222222222222222222222222222222222222"),
+          ("preparationId",String $ "0x" <> T.replicate 64 "a")]
+    it "requires a versioned account locator and exactly one original identifier" $ do
+      parsePreparationLocator [Object locator] `shouldSatisfy` isRight
+      forM_ [KM.delete "preparationId" locator, KM.insert "userOperationHash" (String $ "0x" <> T.replicate 64 "b") locator,
+        KM.insert "version" (Number 2) locator, KM.insert "chainId" (String "0x1") locator,
+        KM.insert "signature" (String "0x") locator] $ \invalid ->
+          parsePreparationLocator [Object invalid] `shouldSatisfy` isLeft
+    it "keeps the original intent hash for resume-only delivery and rejects malformed switches" $ do
+      case (parsePreparationIntent [Object fields], parsePreparationIntent [Object $ KM.insert "resumeOnly" (Bool True) fields]) of
+        (Right initial, Right resumed) -> do
+          intentHash resumed `shouldBe` intentHash initial
+          piResumeOnly resumed `shouldBe` True
+        _ -> expectationFailure "valid preparation was rejected"
+      parsePreparationIntent [Object $ KM.insert "resumeOnly" (String "true") fields] `shouldSatisfy` isLeft
+    it "denies status on the legacy route" $ do
+      case internalRequest "plether_getPreparationStatus" [Object locator] of
+        Left failure -> expectationFailure $ show failure
+        Right request -> Legacy.validateMethodParams request `shouldSatisfy` isLeft
+  describe "preparation status recovery guidance" $ do
+    let fields' = KM.fromList [("authorizationState",String "signed"),("validUntil",String "1000"),
+          ("preparationAvailable",Bool True),("assisted",Bool True),("assistanceBlocked",Bool True)]
+        fieldAt key value = case value of Object row -> KM.lookup key row; _ -> Nothing
+    it "allows exact resume of an assisted close while its own reservation remains held" $ do
+      let result = preparationStatusResponse 900 (Just 850) True fields'
+      fieldAt "recoverable" result `shouldBe` Just (Bool True)
+      fieldAt "freshReviewAllowed" result `shouldBe` Just (Bool False)
+    it "waits through wall expiry and a lagging safe cursor until reconciler resolution" $ do
+      let waiting = preparationStatusResponse 1100 (Just 900) True fields'
+      fieldAt "reason" waiting `shouldBe` Just (String "SAFE_EXPIRY_WAIT")
+      fieldAt "recoverable" waiting `shouldBe` Just (Bool False)
+      fieldAt "freshReviewAllowed" waiting `shouldBe` Just (Bool False)
+      -- A newer timestamp alone is still insufficient without released liability.
+      fieldAt "freshReviewAllowed" (preparationStatusResponse 1200 (Just 1100) True fields') `shouldBe` Just (Bool False)
+      let cleared = preparationStatusResponse 1200 (Just 1100) True $
+            KM.insert "authorizationState" (String "expired") $ KM.insert "assistanceBlocked" (Bool False) fields'
+      fieldAt "freshReviewAllowed" cleared `shouldBe` Just (Bool True)
+    it "does not impose an assistance wait on ordinary preparations" $ do
+      let ordinary = preparationStatusResponse 1100 Nothing False $ KM.insert "assisted" (Bool False) fields'
+      fieldAt "freshReviewAllowed" ordinary `shouldBe` Just (Bool True)
+      fieldAt "reason" ordinary `shouldBe` Just (String "PREPARATION_UNUSABLE")
+    it "keeps unmatched assistance evidence pending after settlement" $ do
+      let unsettledGrant = KM.insert "authorizationState" (String "settled") $
+            KM.insert "executionSuccess" (Bool True) $ KM.insert "assistanceVerified" (Bool False) fields'
+          waiting = preparationStatusResponse 1100 (Just 1050) True unsettledGrant
+      fieldAt "reason" waiting `shouldBe` Just (String "ASSISTANCE_RESERVATION_PENDING")
+      fieldAt "freshReviewAllowed" waiting `shouldBe` Just (Bool False)
+      let verified = preparationStatusResponse 1100 (Just 1050) True $
+            KM.insert "assistanceVerified" (Bool True) $ KM.insert "assistanceBlocked" (Bool False) unsettledGrant
+      fieldAt "reason" verified `shouldBe` Just (String "INTENT_ALREADY_COMMITTED")
+    it "does not offer another signature for submitted or included work" $ do
+      forM_ ["submitted","settled","expired"] $ \state ->
+        fieldAt "recoverable" (preparationStatusResponse 900 Nothing True $ KM.insert "authorizationState" (String state) fields')
+          `shouldBe` Just (Bool False)
   describe "fresh authorization-boundary reads" $ do
     mapM_ (\(mode, expectedCalls) ->
       it ("runs independent header reads concurrently in " <> show mode) $ do
@@ -134,7 +190,7 @@ spec = do
         client <- newClient url
         manager <- newManager defaultManagerSettings
         timing <- newTiming
-        let intent = PreparationIntent "id" address (hex callData) Nothing Nothing
+        let intent = PreparationIntent "id" address (hex callData) Nothing Nothing False
         result <- buildPreparedOperation timing cfg client manager intent
         case result of
           Left err -> expectationFailure $ show err

@@ -2921,3 +2921,54 @@ SELECT 'pause', 'uninitialized or control row recreated',
        'automatic fail-closed control row bootstrap'
 FROM inserted;
 -- END NATIVE AA SPONSORSHIP
+
+-- Exact close-bounty assistance attempts. Only safely reconciled deposit evidence is approved competition funding.
+CREATE TABLE IF NOT EXISTS aa_close_assistance (
+    digest VARCHAR(66) PRIMARY KEY REFERENCES aa_sponsorship_authorizations(digest),
+    chain_id BIGINT NOT NULL DEFAULT 421614 CHECK (chain_id = 421614),
+    router VARCHAR(42) NOT NULL, account VARCHAR(42) NOT NULL, client_order_id VARCHAR(66) NOT NULL,
+    request_hash VARCHAR(66) NOT NULL, lens VARCHAR(42) NOT NULL,
+    amount_usdc BIGINT NOT NULL CHECK (amount_usdc BETWEEN 1 AND 200000),
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    transaction_hash VARCHAR(66), block_number BIGINT, block_hash VARCHAR(66), deposit_log_index BIGINT, order_id BIGINT,
+    CHECK (NOT verified OR (transaction_hash IS NOT NULL AND block_number IS NOT NULL
+        AND block_hash IS NOT NULL AND deposit_log_index IS NOT NULL AND order_id > 0))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS aa_close_assistance_verified_intent
+    ON aa_close_assistance(chain_id, router, account, client_order_id) WHERE verified;
+CREATE UNIQUE INDEX IF NOT EXISTS aa_close_assistance_verified_deposit
+    ON aa_close_assistance(chain_id, transaction_hash, deposit_log_index) WHERE verified;
+CREATE INDEX IF NOT EXISTS aa_close_assistance_account ON aa_close_assistance(chain_id, router, account);
+
+-- Additive audit only. No claim is released by this migration.
+CREATE TABLE IF NOT EXISTS testnet_faucet_nonce_recoveries (
+    original_tx_hash VARCHAR(66) PRIMARY KEY,
+    address VARCHAR(42) NOT NULL,
+    token_address VARCHAR(42) NOT NULL,
+    amount BIGINT NOT NULL,
+    original_raw_tx TEXT NOT NULL,
+    chain_id BIGINT NOT NULL CHECK (chain_id = 421614),
+    sender VARCHAR(42) NOT NULL,
+    nonce BIGINT NOT NULL CHECK (nonce >= 0),
+    replacement_tx_hash VARCHAR(66) NOT NULL,
+    replacement_block_number BIGINT NOT NULL,
+    replacement_block_hash VARCHAR(66) NOT NULL,
+    verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (original_tx_hash <> replacement_tx_hash)
+);
+
+-- Advisory only. Apply before the backend rollout. Missing table drops telemetry,
+-- never blocks sponsorship/submission. Do not use browser reports as chain proof.
+CREATE INDEX IF NOT EXISTS aa_preparations_diagnostic_attempt
+  ON aa_preparations(diagnostic_attempt_id) WHERE diagnostic_attempt_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS aa_attempt_events (
+  attempt_id UUID NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('browser','backend')),
+  stage TEXT NOT NULL CHECK (length(stage) BETWEEN 1 AND 64),
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (attempt_id, source, stage)
+);
+-- At most one row per allowlisted stage and source per attempt. No signatures,
+-- operation payloads, provider URLs, error bodies or wallet addresses are stored.
+-- Grant SELECT/INSERT to the API role; maintenance alone deletes terminal attempt
+-- events after the same seven-day retention as aa_attempt_diagnostics.

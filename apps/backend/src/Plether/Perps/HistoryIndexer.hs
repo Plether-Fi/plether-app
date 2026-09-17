@@ -14,6 +14,8 @@ module Plether.Perps.HistoryIndexer
   , indexerIterationDelayMicros
   , perpsEventTopics
   , parsePerpsLog
+  , enrichSettlementReceipts
+  , decodeSettlementReceipt
   , parseUsdcTransfer
   , transferTopic
   , RpcLog (..)
@@ -61,7 +63,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Word (Word64)
-import Database.PostgreSQL.Simple (Connection, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, withTransaction)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Client
   ( Manager
@@ -479,6 +481,11 @@ runPerpsIndexer manager pool cfg =
 
     runEvidenceBatch = do
       reqIdRef <- newIORef 1
+      settlementResult <- try @SomeException $ enrichSettlementReceipts manager pool cfg reqIdRef
+      case settlementResult of
+        Left _ -> logErrorEvery 60 "perps_settlement_evidence_failed"
+          "Settlement receipt enrichment failed; pending rows will retry" []
+        Right () -> pure ()
       result <-
         try @SomeException $
           enrichPendingExecutionEvidence manager pool cfg reqIdRef
@@ -1117,6 +1124,163 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
           (picCandleLatenessSeconds cfg)
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
           (picStartBlock cfg) newCursor Nothing
+
+-- Receipt enrichment is separate from the canonical range/replay writer. It
+-- indexes settlement events for old and new executions without rewinding any
+-- cursor or touching score/volume projections. Per-order markers survive restarts
+-- and are cleared by the same reorg rewind as the corresponding terminal receipt.
+enrichSettlementReceipts :: Manager -> DbPool -> PerpsIndexerConfig -> IORef Integer -> IO ()
+enrichSettlementReceipts manager pool cfg reqIdRef = do
+  let chain = picChainId cfg
+      router = paOrderRouter $ picAddresses cfg
+  candidates <- withDb pool $ \conn -> query conn
+    "SELECT DISTINCT o.terminal_tx_hash, o.terminal_block_number, e.block_hash, o.terminal_timestamp \
+    \FROM perps_orders o JOIN perps_events e ON e.chain_id = o.chain_id AND e.release_router = o.order_router \
+    \AND e.order_id = o.order_id AND e.tx_hash = o.terminal_tx_hash AND e.block_number = o.terminal_block_number \
+    \AND e.event_name = 'OrderFinalized' \
+    \WHERE o.chain_id = ? AND o.order_router = ? AND o.terminal_status = 'Executed' \
+    \AND o.receipt_economics IS NOT NULL AND COALESCE(o.settlement_evidence_version, 0) < 1 \
+    \AND (o.settlement_evidence_last_attempt_at IS NULL OR o.settlement_evidence_last_attempt_at < NOW() - INTERVAL '5 minutes') \
+    \AND EXISTS (SELECT 1 FROM insights_competitions c WHERE c.chain_id = o.chain_id AND c.release_router = o.order_router \
+    \AND NOT c.finalized AND o.terminal_timestamp >= c.start_timestamp AND o.terminal_timestamp < c.score_cutoff_timestamp) \
+    \ORDER BY o.terminal_block_number, o.terminal_tx_hash LIMIT 20"
+    (chain, router)
+  forM_ candidates $ \(txHash, blockNumber, blockHash, timestamp) -> do
+    withDb pool $ \conn -> do
+      _ <- execute conn
+        "UPDATE perps_orders SET settlement_evidence_last_attempt_at = NOW() WHERE chain_id = ? AND order_router = ? AND terminal_tx_hash = ?"
+        (chain, router, txHash :: Text)
+      pure ()
+    result <- try @SomeException $ do
+      receipt <- requireRpc "eth_getTransactionReceipt" $
+        rpcCallAny manager (indexerRpcEndpoints cfg) reqIdRef "eth_getTransactionReceipt" [String txHash]
+      evidence <- either (fail . T.unpack) pure $
+        decodeSettlementReceipt (picAddresses cfg) txHash blockNumber blockHash receipt
+      -- A receipt's blockHash is not by itself proof that the block is still canonical.
+      block <- requireRpc "eth_getBlockByNumber" $
+        getBlockByNumber manager (indexerRpcEndpoints cfg) reqIdRef blockNumber
+      unless (biHash block == blockHash) $ fail "Settlement receipt is no longer canonical"
+      withDb pool $ \conn -> withTransaction conn $ do
+        lockPerpsIndexerTransaction conn chain (picIndexerName cfg) router
+        -- The indexer may have rewound while the RPC requests were in flight.
+        canonical <- query conn
+          "SELECT COUNT(*) FROM perps_events WHERE chain_id = ? AND release_router = ? AND tx_hash = ? \
+          \AND block_number = ? AND block_hash = ? AND event_name = 'OrderFinalized'"
+          (chain, router, txHash, blockNumber, blockHash) :: IO [Only Integer]
+        unless (canonical == [Only $ toInteger $ length $ fst evidence]) $
+          fail "Settlement receipt no longer matches indexed terminal events"
+        forM_ (fst evidence) $ \(oid, receiptHash) -> do
+          matches <- query conn
+            "SELECT COUNT(*) FROM perps_orders WHERE chain_id = ? AND order_router = ? AND order_id = ? \
+            \AND terminal_tx_hash = ? AND terminal_block_number = ? AND receipt_hash = ?"
+            (chain, router, oid, txHash, blockNumber, receiptHash) :: IO [Only Integer]
+          unless (matches == [Only 1]) $ fail "Settlement receipt identity changed"
+        forM_ (snd evidence) $ \(entry, kind, account, oid, payload) ->
+          insertPerpsEvent conn chain router (rlAddress entry) kind txHash blockNumber blockHash
+            (rlTxIndex entry) (rlLogIndex entry) timestamp (Just account) (Just oid) Nothing payload
+        _ <- execute conn
+          "UPDATE perps_orders SET settlement_evidence_version = 1 WHERE chain_id = ? AND order_router = ? AND terminal_tx_hash = ? AND terminal_block_number = ?"
+          (chain, router, txHash, blockNumber)
+        pure ()
+    case result of
+      Left _ -> logWarnEvery 60 "perps_settlement_receipt_pending"
+        "Settlement receipt could not be verified; will retry" [field "tx_hash" txHash]
+      Right () -> logInfo "perps_settlement_receipt_complete"
+        "Indexed settlement evidence" [field "tx_hash" txHash]
+
+-- Returns finalized receipt identities and account-scoped settlement events.
+-- Event intervals end at each configured lifecycle-book OrderFinalized, including
+-- failed orders, so batched executions cannot borrow a neighbour's evidence.
+decodeSettlementReceipt
+  :: PerpsAddresses -> Text -> Integer -> Text -> Value
+  -> Either Text ([(Integer, Text)], [(RpcLog, Text, Text, Integer, Value)])
+decodeSettlementReceipt addresses txHash blockNumber blockHash = \case
+  Object receipt -> do
+    tx <- requiredString "transactionHash" receipt
+    bh <- requiredString "blockHash" receipt
+    bn <- requiredHexQuantity "blockNumber" receipt
+    status <- requiredString "status" receipt
+    unless (tx == txHash && bh == blockHash && bn == blockNumber && status == "0x1") $
+      Left "Settlement receipt identity/status mismatch"
+    entries <- case KM.lookup "logs" receipt of
+      Just (Array logs) -> traverse parseReplayLogEntry $ toList logs
+      _ -> Left "Settlement receipt logs missing"
+    unless (all (\e -> rlTxHash e == txHash && rlBlockHash e == blockHash && rlBlockNumber e == blockNumber) entries) $
+      Left "Settlement receipt contains inconsistent log identities"
+    let ordered = sortOn rlLogIndex entries
+        indices = map rlLogIndex ordered
+    unless (Set.size (Set.fromList indices) == length indices) $ Left "Duplicate receipt log index"
+    finals <- forM [e | e <- ordered, Just (rlAddress e) == paOrderLifecycleBook addresses,
+                       take 1 (rlTopics e) == [orderFinalizedTopic]] $ \e -> do
+      validateReplayLogAbi e
+      case parseOrderFinalized e of
+        Just (ParsedOrderFinalized oid account _ receiptHash terminalStatus' _ _ _ _ _ _) ->
+          Right (e, oid, account, receiptHash, terminalStatus')
+        _ -> Left "Invalid finalized receipt"
+    unless (not $ null finals) $ Left "No configured finalized receipt"
+    settlements <- forM [e | e <- ordered, rlAddress e == paCfdEngineSettlementSidecar addresses,
+                             take 1 (rlTopics e) `elem` map (pure . fst) settlementTopics] $ \e -> do
+      unless (length (rlTopics e) == 2 && all ((== 32) . BS.length) (rlTopics e) && BS.length (rlData e) == 96) $
+        Left "Malformed settlement event"
+      account <- maybe (Left "Settlement account missing") Right $ indexedAddress (rlTopics e) 1
+      (oid, owner) <- case [(oid, owner) | (final, oid, owner, _, status') <- finals,
+                            rlLogIndex final > rlLogIndex e, status' == "Executed"] of
+        first : _ -> Right first
+        [] -> Left "Settlement event has no executed receipt"
+      -- Also reject a failed terminal boundary between the event and its match.
+      case [(id', status') | (final, id', _, _, status') <- finals, rlLogIndex final > rlLogIndex e] of
+        (id', "Executed") : _ | id' == oid && owner == account -> pure ()
+        _ -> Left "Ambiguous settlement execution interval"
+      kind <- maybe (Left "Unknown settlement topic") Right $ lookup (head $ rlTopics e) settlementTopics
+      let assessed = wordAt (rlData e) 0
+          recovered = wordAt (rlData e) 1
+          waived = wordAt (rlData e) 2
+      unless (recovered <= assessed && waived <= assessed &&
+              (kind == "FrozenCloseSpreadSettled" || recovered + waived == assessed)) $
+        Left "Inconsistent settlement amounts"
+      let previousBoundary = maximum (-1 : [rlLogIndex final | (final, _, _, _, _) <- finals, rlLogIndex final < rlLogIndex e])
+          interval = [entry | entry <- ordered, rlLogIndex entry > previousBoundary, rlLogIndex entry < rlLogIndex e]
+          feeEvidence = if kind == "ActionChargeSettled" then internalFeeCredit addresses account interval else Nothing
+      pure (e, kind, account, oid, object $
+        [ "assessedUsdc" .= show assessed, "recoveredUsdc" .= show recovered, "waivedUsdc" .= show waived ]
+        <> maybe [] (\fee -> ["protocolFeeCollectedUsdc" .= show fee]) feeEvidence)
+    unless (Set.size (Set.fromList [(oid, kind) | (_, kind, _, oid, _) <- settlements]) == length settlements) $
+      Left "Duplicate settlement event in execution interval"
+    pure ([(oid, receiptHash) | (_, oid, _, receiptHash, _) <- finals], settlements)
+  _ -> Left "Settlement receipt unavailable"
+ where
+  settlementTopics =
+    [ (keccak256Text "ActionChargeSettled(address,uint256,uint256,uint256)", "ActionChargeSettled")
+    , (keccak256Text "ActionRebateSettled(address,uint256,uint256,uint256)", "ActionRebateSettled")
+    , (keccak256Text "FrozenCloseSpreadSettled(address,uint256,uint256,uint256)", "FrozenCloseSpreadSettled")
+    ]
+
+-- In pinned v1.2.3, AssetSeized without a matching token transfer is an
+-- internal protocol-fee credit. Other seized amounts physically transfer USDC.
+-- Do not apply this attribution to another release, a liquidation, or an
+-- ambiguous interval. This is collection evidence, not the trader's assessed fee.
+internalFeeCredit :: PerpsAddresses -> Text -> [RpcLog] -> Maybe Integer
+internalFeeCredit addresses account entries
+  | paCfdEngine addresses /= Manifest.cfdEngineAddress = Nothing
+  | paMarginClearinghouse addresses /= Manifest.marginClearinghouseAddress = Nothing
+  | any (\e -> take 1 (rlTopics e) == [positionLiquidatedTopic]) entries = Nothing
+  | otherwise = case credits of
+      [amount] -> Just amount
+      _ -> Nothing
+ where
+  seizures =
+    [ (entry, wordAt (rlData entry) 0, "0x" <> T.takeEnd 40 (hexWordAt (rlData entry) 1))
+    | entry <- entries, rlAddress entry == paMarginClearinghouse addresses
+    , take 1 (rlTopics entry) == [keccak256Text "AssetSeized(address,address,uint256,address)"]
+    , length (rlTopics entry) == 3, BS.length (rlData entry) == 64
+    , indexedAddress (rlTopics entry) 1 == Just account
+    , indexedAddress (rlTopics entry) 2 == Just (paUsdc addresses)
+    ]
+  credits = [amount | (seizure, amount, recipient) <- seizures, amount > 0,
+    not $ any (\entry -> rlAddress entry == paUsdc addresses && rlLogIndex entry < rlLogIndex seizure
+      && take 1 (rlTopics entry) == [transferTopic] && length (rlTopics entry) == 3 && BS.length (rlData entry) == 32
+      && indexedAddress (rlTopics entry) 1 == Just (paMarginClearinghouse addresses)
+      && indexedAddress (rlTopics entry) 2 == Just recipient && wordAt (rlData entry) 0 == amount) entries]
 
 enrichPendingExecutionEvidence
   :: Manager

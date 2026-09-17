@@ -33,7 +33,7 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness)
+import Plether.AA.Gateway (NativeGatewayState, handleNativeAaRpc, gatewayReadiness, closeAssistanceStatus)
 import qualified Plether.AA.Pimlico as AaProxy
 import qualified Plether.AA.Diagnostics as AaDiagnostics
 import Plether.AA.ClientKey (pseudonymousClientKey)
@@ -192,6 +192,22 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
             result <- liftIO $ AaDiagnostics.readDiagnostic pool (pseudonymousClientKey (naaProxyOriginToken native) ip) identifier
             json result
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
+  post "/api/aa/diagnostics" $ do
+    supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
+    clientIp <- fmap LT.toStrict <$> header "CF-Connecting-IP"
+    setHeader "Cache-Control" "no-store"
+    case (cfgNativeAaConfig cfg, mPool, clientIp >>= AaProxy.validateClientIp) of
+      (Just native, Just pool, Just ip)
+        | maybe False (AaProxy.constantTimeTextEq $ naaProxyOriginToken native) supplied -> do
+            req <- request
+            bounded <- liftIO $ AaProxy.readBoundedRequestBody 512 req
+            case either (const Nothing) (either (const Nothing) Just . Aeson.eitherDecode) bounded of
+              Just value | Just (attempt, stage) <- AaDiagnostics.parseBrowserStage value -> do
+                liftIO $ AaDiagnostics.recordBrowserStage pool (pseudonymousClientKey (naaProxyOriginToken native) ip) attempt stage
+                -- Never disclose whether an attempt belongs to this client.
+                json $ Aeson.object ["accepted" .= True]
+              _ -> status status400 >> json (Aeson.object ["error" .= ("Invalid diagnostic" :: Text)])
+      _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
   case mPool of
@@ -201,6 +217,10 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   get "/api/health" $ do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
+
+  get "/api/aa/close-assistance" $ do
+    setHeader "Cache-Control" "no-store"
+    json $ closeAssistanceStatus nativeGatewayState cfg
 
   get "/api/aa/status" $ do
     let releaseConfigured =

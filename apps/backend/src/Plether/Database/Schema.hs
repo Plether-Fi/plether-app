@@ -4290,6 +4290,11 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS receipt_economics JSONB"
   _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS settlement_evidence_version INTEGER"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS settlement_evidence_last_attempt_at TIMESTAMPTZ"
+
+  _ <- execute_ conn
     "UPDATE perps_orders SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
     "DO $$ \
@@ -5330,7 +5335,9 @@ deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
     \execution_frozen_close_spread_usdc = NULL, execution_economics_version = NULL, execution_oracle_price = NULL, \
     \execution_oracle_frozen = NULL, \
     \oracle_min_publish_time = NULL, oracle_max_publish_time = NULL, oracle_derivation_version = NULL, \
-    \execution_evidence_last_attempt_at = NULL, cleanup_actor = NULL, updated_at = NOW() \
+    \execution_evidence_last_attempt_at = NULL, settlement_evidence_version = NULL, \
+    \settlement_evidence_last_attempt_at = NULL, receipt_economics = NULL, receipt_hash = NULL, \
+    \cleanup_actor = NULL, updated_at = NOW() \
     \WHERE chain_id = ? AND order_router = ? AND terminal_block_number >= ?"
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn

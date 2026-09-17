@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
-import { zeroAddress } from 'viem'
+import { formatUnits, zeroAddress } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
@@ -17,6 +17,8 @@ import {
 } from '../contracts/perpsOrderV2'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
+import { AccountOperationNotice } from './AccountOperationNotice'
+import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
 import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
@@ -1824,7 +1826,7 @@ export function PerpsTradeTicket({
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
   const deploymentConfirmation = useAccountDeploymentConfirmation()
-  const isAwaitingAccountConfirmation = enableLiveTrading && deploymentConfirmation === 'waiting'
+  const isAwaitingAccountConfirmation = enableLiveTrading && (deploymentConfirmation === 'waiting' || deploymentConfirmation === 'check-unavailable')
   const identity = usePerpsIdentity()
   const address = identity.accountAddress
   const isConnected = identity.ownerAddress !== undefined
@@ -2016,7 +2018,7 @@ export function PerpsTradeTicket({
   }, [onAccountRefresh])
 
   useEffect(() => {
-    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
+    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined && !activeAccountOperation) return undefined
     const interval = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000))
     }, 1_000)
@@ -2024,7 +2026,7 @@ export function PerpsTradeTicket({
     return () => {
       window.clearInterval(interval)
     }
-  }, [firstPendingOrderExpiryTime, oraclePublishTime])
+  }, [firstPendingOrderExpiryTime, oraclePublishTime, activeAccountOperation])
 
   useEffect(() => {
     if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending') return
@@ -3022,6 +3024,7 @@ export function PerpsTradeTicket({
   }), [effectiveOrderDirection, contractNotionalUsdc, orderSizeDelta, marginUsdc, oraclePriceRaw,
     slippageNumber, isReducingCurrentPosition, activeLeverage, protectionInput.params, isMaxOpenIntent])
   const preparationAccountContextKey = orderPreparationKey([
+    oraclePriceRaw, oraclePublishTime,
     availableToTradeRaw,
     currentPosition && [currentPosition.exists, currentPosition.side, currentPosition.size,
       currentPosition.entryPrice, currentPosition.marginUsdc, currentPosition.vpiAccrued],
@@ -3036,7 +3039,8 @@ export function PerpsTradeTicket({
   const candidateSnapshot = useMemo(() => isReviewOpen && reviewSnapshot
     ? { ...reviewSnapshot, slippagePercent: slippageNumber } : draftSnapshot,
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
-  const candidateKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
+  const frozenPreparationKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
+  const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber])
   const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
     (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation &&
     typeof prepareOrder === 'function'
@@ -3052,9 +3056,9 @@ export function PerpsTradeTicket({
   // Initial-open stories and the account panel's close action also freeze inputs.
   useEffect(() => {
     if (canPrepare && isReviewOpen && !reviewSnapshot && !liveValidationError) {
-      setReviewSnapshot({ ...candidateSnapshot, preparationKey: candidateKey, identityKey: preparationIdentityKey })
+      setReviewSnapshot({ ...candidateSnapshot, preparationKey: frozenPreparationKey, identityKey: preparationIdentityKey })
     }
-  }, [canPrepare, isReviewOpen, reviewSnapshot, liveValidationError, candidateSnapshot, candidateKey, preparationIdentityKey])
+  }, [canPrepare, isReviewOpen, reviewSnapshot, liveValidationError, candidateSnapshot, frozenPreparationKey, preparationIdentityKey])
   const preparedOrder = isReviewOpen && preparation.matches ? preparation.result : undefined
   useEffect(() => {
     if (reviewSnapshot?.maxSize && preparedOrder) {
@@ -3079,7 +3083,10 @@ export function PerpsTradeTicket({
   const committedExecutionLimit = committedTargetPrice === undefined
     ? executionLimit
     : committedTargetPrice
-  const activeReviewSummary = orderReviewSummary ?? preparedOrder?.reviewSummary
+  const requiresCloseReview = enableLiveTrading && isReviewOpen && isReducingCurrentPosition
+  const activeReviewSummary = requiresCloseReview && (preparation.status !== 'ready' || preparationError)
+    ? undefined : orderReviewSummary ?? preparedOrder?.reviewSummary
+  const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
   const isPreparedOrderExpiring = preparedOrder !== undefined &&
     Number(preparedOrder.protection.validUntil) - nowSeconds <= REVIEW_REFRESH_SECONDS
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
@@ -3088,8 +3095,23 @@ export function PerpsTradeTicket({
   const preparedOrderExpiryMessage = isPreparedOrderExpiring
     ? 'This review has expired or is about to expire. Refresh the review before committing.'
     : undefined
+  const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
+    ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000) : undefined
+  const accountBlockReason = pendingOperationGuidance
+    ? pendingOperationGuidance.attention ? 'account_action_recovery' : 'account_action_pending'
+    : undefined
+  const openRecoveryActivity = () => {
+    if (!activeAccountOperation) return
+    if (isReviewOpen) closeReviewModal()
+    usePerpsUiStore.getState().requestActivity({
+      chainId: activeAccountOperation.chainId,
+      accountAddress: activeAccountOperation.accountAddress,
+      ownerAddress: activeAccountOperation.ownerAddress,
+      operationId: activeAccountOperation.id,
+    })
+  }
   const reviewValidationError = enableLiveTrading
-    ? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? (activeAccountOperation ? 'A Trading Account action is in progress. Wait for it to finish.' : liveValidationError)
+    ? pendingOperationGuidance?.title ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? liveValidationError
     : orderQuantityValidationError
   const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
     ? undefined : reviewValidationError
@@ -3109,10 +3131,10 @@ export function PerpsTradeTicket({
     : openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
   const previewExecutionFeeUsdc = isReducingCurrentPosition
-    ? activeReviewSummary?.currentAssessment.executionFeeUsdc ?? closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
+    ? requiresCloseReview ? closeReviewAssessment?.executionFeeUsdc : closePreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
     : activeReviewSummary?.currentAssessment.executionFeeUsdc ?? openPreview?.executionFeeUsdc ?? protocolExecutionFeeRaw
   const previewVpiUsdc = isReducingCurrentPosition
-    ? activeReviewSummary?.currentAssessment.vpiUsdc ?? closePreview?.vpiDeltaUsdc
+    ? requiresCloseReview ? closeReviewAssessment?.vpiUsdc : closePreview?.vpiDeltaUsdc
     : activeReviewSummary?.currentAssessment.vpiUsdc ?? openPreview?.vpiUsdc
   const previewLensFallbackValue = isTradePreviewPending ? PREVIEW_LOADING_VALUE : PREVIEW_UNAVAILABLE_VALUE
   const previewLensFallbackTone = isTradePreviewPending ? 'muted' : undefined
@@ -3146,9 +3168,9 @@ export function PerpsTradeTicket({
     previewLensFallbackTone,
     previewLensFallbackValue,
   ])
-  const previewFrozenCloseSpreadValue = closePreview === undefined
-    ? previewLensFallbackValue
-    : formatUsdcRaw(closePreview.frozenSpreadUsdc)
+  const previewFrozenCloseSpreadValue = requiresCloseReview
+    ? formatUsdcRaw(closeReviewAssessment?.frozenSpreadUsdc)
+    : closePreview === undefined ? previewLensFallbackValue : formatUsdcRaw(closePreview.frozenSpreadUsdc)
   const previewMaintenanceMarginValue = previewMaintenanceMarginUsdc === undefined
     ? previewLensFallbackValue
     : formatUsdcRaw(previewMaintenanceMarginUsdc)
@@ -3164,6 +3186,7 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading) return isReducingCurrentPosition
       ? isFullCloseOrder ? 'Position closed' : PREVIEW_UNAVAILABLE_VALUE
       : formatLeverage(activeLeverage)
+    if (requiresCloseReview && !activeReviewSummary) return isExecutionProtectionsLoading ? PREVIEW_LOADING_VALUE : PREVIEW_UNAVAILABLE_VALUE
     if (isReviewOpen && isExecutionProtectionsLoading && !preparedOrder) return PREVIEW_LOADING_VALUE
     if (isReviewOpen && activeReviewSummary !== undefined) {
       if (isReducingCurrentPosition && activeReviewSummary.currentAssessment.postPositionSize === 0n) return 'Position closed'
@@ -3290,6 +3313,26 @@ export function PerpsTradeTicket({
           },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
+      ...(requiresCloseReview ? [
+        {
+          label: 'Commitment carry',
+          value: <TokenAmount amount={activeReviewSummary?.commitmentCarryUsdc === undefined ? '--' : formatUnits(activeReviewSummary.commitmentCarryUsdc, 6)} />,
+          tooltip: 'Carry paid when committing the close, from position margin first and then free settlement. Separate from execution costs.',
+          tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+        },
+        {
+          label: 'Settlement after execution',
+          value: formatUsdcRaw(closeReviewAssessment?.postSettlementBalanceUsdc),
+          tooltip: 'Total internal USDC after commitment and execution, including locked funds. This is not the amount available to withdraw.',
+          tooltipDocsLink: DOCS_LINKS.withdrawable,
+        },
+        {
+          label: 'Trader claim after execution',
+          value: formatUsdcRaw(closeReviewAssessment?.postTraderClaimUsdc),
+          tooltip: 'Remaining or deferred trader claim. Claims are not immediately available USDC.',
+          tooltipDocsLink: DOCS_LINKS.withdrawable,
+        },
+      ] : []),
       ...(isOpeningFromZero ? [] : [positionVpiBalanceRow]),
       {
         label: 'VPI',
@@ -3300,7 +3343,7 @@ export function PerpsTradeTicket({
       },
       {
         label: 'Estimated execution reward',
-        value: formatUsdc(keeperBounty),
+        value: requiresCloseReview ? formatUsdcRaw(activeReviewSummary?.executionBountyUsdc) : formatUsdc(keeperBounty),
         tooltip: EXECUTION_REWARD_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.executionReward,
       },
@@ -3313,6 +3356,8 @@ export function PerpsTradeTicket({
       },
     ],
     [
+      requiresCloseReview,
+      closeReviewAssessment,
       activeReviewSummary,
       enableLiveTrading,
       executionLimit,
@@ -3507,7 +3552,7 @@ export function PerpsTradeTicket({
     enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
+    (Boolean(activeAccountOperation) || Boolean(liveValidationError) || (isTradePreviewPending && !isMaxOpenIntent))
   ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -3598,10 +3643,11 @@ export function PerpsTradeTicket({
   ])
 
   useEffect(() => {
-    if (!liveValidationError || isZeroSize) return
+    if (!accountBlockReason && (!liveValidationError || isZeroSize)) return
 
-    trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
+    trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(liveValidationError ?? ''), commonAnalyticsProperties)
   }, [
+    accountBlockReason,
     commonAnalyticsProperties,
     isZeroSize,
     liveValidationError,
@@ -3756,7 +3802,7 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:blocked-by-validation', {
         reviewValidationError,
       })
-      trackPerpsValidationBlocked(validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
+      trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
       setFlowError(reviewValidationError)
       return
     }
@@ -4444,8 +4490,9 @@ export function PerpsTradeTicket({
           </button>
         </div>
 
-        {displayedValidationError &&
-        !isZeroSize &&
+        {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
+          <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+        ) : displayedValidationError && !isZeroSize &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
             {displayedValidationError}
@@ -4476,7 +4523,7 @@ export function PerpsTradeTicket({
               return
             }
             if (displayedValidationError) {
-              trackPerpsValidationBlocked(validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
+              trackPerpsValidationBlocked(accountBlockReason ?? validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
               setFlowError(displayedValidationError)
               return
             }
@@ -4568,7 +4615,11 @@ export function PerpsTradeTicket({
         footer={
           lifecycleState === 'preview' ? (
             <PerpsReviewFooter
+              sponsoredCloseUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.amountUsdc, 6) : undefined}
+              depositCarryUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.depositCarryUsdc, 6) : undefined}
+              commitmentCarryUsdc={displayedExecutionProtections?.reviewSummary?.commitmentCarryUsdc ? formatPerpsUsdc(displayedExecutionProtections.reviewSummary.commitmentCarryUsdc, 6) : undefined}
               preparing={isExecutionProtectionsLoading}
+              recoveringOracle={preparation.recoveringOracle}
               refreshing={preparation.refreshing}
               slow={preparation.slow}
               error={executionProtectionsError}
@@ -4844,7 +4895,9 @@ export function PerpsTradeTicket({
                 </p>
               ) : null}
 
-              {reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
+              {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
+                <AccountOperationNotice operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
+              ) : reviewValidationError && (reviewBodyValidationError || !isCorrectChain || canCleanupOldestPendingOrder || cleanupError) ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
                   {reviewBodyValidationError}
                   {!isCorrectChain ? (
@@ -5502,7 +5555,7 @@ export function PerpsTradeTicket({
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
               <p>{marginActionError}</p>
-              {marginAction === 'deposit' && usesOwnerDepositAuthorization ? (
+              {marginAction === 'deposit' && usesOwnerDepositAuthorization && !activeAccountOperation?.nativePreparation ? (
                 <button
                   type="button"
                   className="mt-2 font-semibold underline underline-offset-2"

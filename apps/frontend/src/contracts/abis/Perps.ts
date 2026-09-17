@@ -1,3 +1,5 @@
+export { PERPS_CFD_CLOSE_PREVIEW_ABI } from './CfdClosePreview'
+
 const PENDING_ORDER_COMPONENTS = [
   { name: 'orderId', type: 'uint64' },
   { name: 'side', type: 'uint8' },

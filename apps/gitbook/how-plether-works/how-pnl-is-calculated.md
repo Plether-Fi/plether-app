@@ -518,13 +518,17 @@ It becomes settleable once aggregate trader claims are fully covered by physical
 
 ### Reading the close reconciliation
 
-For a supported executed reduction or close, **Final Result** shows three groups:
+For a supported executed reduction or close, **Final Result** and historical close breakdowns show:
 
 * **Execution** — final price, Order quantity, execution exposure, Order ID and transactions.
-* **Close result** — realized PnL, carry, execution fee, execution reward, signed VPI charge or rebate, frozen spread paid and **Net close result**. If any frozen spread was waived, assessed and waived amounts also appear.
-* **Account outcome** — Margin Account balance change, trader claim created or consumed, any uncovered terminal loss, remaining margin after a partial reduction and released margin when an execution-bound snapshot is available.
+* **Close result** — realized PnL, carry, execution fee, execution reward, signed VPI charge or rebate, frozen spread charged and **Close result before settlement adjustments**. If any frozen spread was waived, assessed and waived amounts also appear.
+* **Settlement** — a **Settlement adjustment** when the calculated result differs from the recorded account outcome. The difference is not classified as bad debt or an uncollected fee.
+* **Account outcome** — Margin Account balance change, trader claim created or consumed, and **Actual account change**, the sum of the balance and claim changes. The collapsed accounting summary shows this actual total.
+* **Position margin** — remaining margin after a partial reduction and released margin when an execution-bound snapshot is available.
 
-Released margin is existing collateral becoming unlocked. It is shown separately for context and is not added to **Net close result**. If the receipt is legacy, incomplete, malformed or internally inconsistent, the execution details remain visible with **Detailed close accounting unavailable**; the interface does not substitute preview values or zeroes.
+**Close result before settlement adjustments + Settlement adjustment = Actual account change.** A positive adjustment is a reconciliation difference; it is not shown as trading profit.
+
+Released margin is existing collateral becoming unlocked. It is shown separately for context and is not added to **Actual account change**. If the receipt is legacy, incomplete, malformed or internally inconsistent, the execution details remain visible with **Detailed close accounting unavailable**; the interface does not substitute preview values or zeroes.
 
 **Transaction History → Result** still shows gross realized price PnL before close VPI, execution fee, execution reward and carry. Select **View breakdown** on a matched executed close to open the same receipt-backed close and account outcome. Historical breakdowns omit released margin because they do not have the ticket’s execution-bound pre-close snapshot.
 

@@ -73,6 +73,7 @@ spec = do
           , iarBlockNumber = 290_862_399
           , iarTimestamp = 1_784_901_245
           , iarLogIndex = 16
+          , iarExecution = Nothing
           , iarSessionDay = Just "2026-07-24"
           }
         `shouldBe` object

@@ -1,0 +1,427 @@
+// Generated from config/perps/close-preview/CfdClosePreview.abi.json.
+// Run node scripts/generate-close-preview-abi.mjs from apps/frontend to regenerate.
+export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
+  {
+    "type": "function",
+    "name": "previewClose",
+    "inputs": [
+      {
+        "name": "engineAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct CfdTypes.Order",
+        "components": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sizeDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "marginDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "targetPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "commitTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "commitBlock",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "orderId",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "enum CfdTypes.Side"
+          },
+          {
+            "name": "isClose",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "executor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "executionPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "publishTime",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "bounds",
+        "type": "tuple",
+        "internalType": "struct OrderV2Types.ExecutionBounds",
+        "components": [
+          {
+            "name": "validUntil",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "allowedExecutionModes",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "expectedConfigHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "maxExecutionBountyUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxExecutionNotionalUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxGrossAccountDebitUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxActionChargeUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxExplicitFeesUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxPostPositionSize",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minPostSettlementBalanceUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minPostPositionEquityUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxPostLeverageBps",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "preview",
+        "type": "tuple",
+        "internalType": "struct CfdClosePreview.ClosePreview",
+        "components": [
+          {
+            "name": "commitmentCarryUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "executionBountyUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assessment",
+            "type": "tuple",
+            "internalType": "struct OrderV2Types.ExecutionAssessment",
+            "components": [
+              {
+                "name": "mode",
+                "type": "uint8",
+                "internalType": "enum OrderV2Types.ExecutionMode"
+              },
+              {
+                "name": "executionNotionalUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "grossAccountDebitUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "actionChargeAssessedUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "actionChargeCollectedUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "explicitFeesUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "preSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "realizedPnlUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "vpiUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "carryUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "executionFeeUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "frozenSpreadUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "preTraderClaimUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postTraderClaimUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionSize",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionMarginUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionEquityUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "postLeverageBps",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__NotCloseOrder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__CloseSizeExceedsPosition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__InsufficientCloseOrderBountyBacking",
+    "inputs": [
+      {
+        "name": "requiredBountyUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "availableFreeSettlementUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unpaidCarryUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__InvalidCloseSizeQuantum",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__MarkPriceStale",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__NoOpenPosition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__PartialCloseUnhealthy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__TypedOrderFailure",
+    "inputs": [
+      {
+        "name": "failureCategory",
+        "type": "uint8",
+        "internalType": "enum CfdEnginePlanTypes.ExecutionFailurePolicyCategory"
+      },
+      {
+        "name": "failureCode",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "isClose",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdMath__InvalidSizeQuantum",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdOrderPolicyEvaluator__ConstraintViolation",
+    "inputs": [
+      {
+        "name": "constraint",
+        "type": "uint8",
+        "internalType": "enum OrderV2Types.ConstraintKind"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdOrderPolicyEvaluator__ExecutionModeDisallowed",
+    "inputs": [
+      {
+        "name": "mode",
+        "type": "uint8",
+        "internalType": "enum OrderV2Types.ExecutionMode"
+      },
+      {
+        "name": "allowedExecutionModes",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdOrderPolicyEvaluator__InsufficientBountyBacking",
+    "inputs": [
+      {
+        "name": "settlementUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bountyUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdOrderPolicyEvaluator__InvalidPlannerResult",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrderRouter__CommitValidation",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OrderRouter__SideMismatch",
+    "inputs": []
+  }
+] as const

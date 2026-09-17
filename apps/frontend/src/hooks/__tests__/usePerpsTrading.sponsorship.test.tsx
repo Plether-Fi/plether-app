@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('wagmi', () => ({
+  useWalletClient: () => ({ data: undefined }),
   usePublicClient: () => ({
     waitForTransactionReceipt: mocks.waitForTransactionReceipt,
   }),

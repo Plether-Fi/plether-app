@@ -11,9 +11,10 @@ export interface PerpsCloseReconciliation {
   frozenSpreadChargedUsdc: bigint
   frozenSpreadWaivedUsdc: bigint
   netCloseResultUsdc: bigint
+  actualAccountChangeUsdc: bigint
   marginAccountChangeUsdc: bigint
   traderClaimChangeUsdc: bigint
-  uncoveredLossUsdc: bigint
+  settlementAdjustmentUsdc: bigint
   postPositionSize: bigint
   postPositionMarginUsdc: bigint
   releasedPositionMarginUsdc?: bigint
@@ -150,12 +151,12 @@ export function derivePerpsCloseReconciliation(
     - executionBountyUsdc
   const marginAccountChangeUsdc = postSettlementBalanceUsdc - preSettlementBalanceUsdc
   const traderClaimChangeUsdc = postTraderClaimBalanceUsdc - preTraderClaimBalanceUsdc
-  const observedValueChangeUsdc = marginAccountChangeUsdc + traderClaimChangeUsdc
-  const uncoveredLossUsdc = observedValueChangeUsdc - netCloseResultUsdc
+  const actualAccountChangeUsdc = marginAccountChangeUsdc + traderClaimChangeUsdc
+  const settlementAdjustmentUsdc = actualAccountChangeUsdc - netCloseResultUsdc
 
   if (netCloseResultUsdc >= 0n) {
     if (
-      observedValueChangeUsdc !== netCloseResultUsdc ||
+      actualAccountChangeUsdc !== netCloseResultUsdc ||
       marginAccountChangeUsdc < 0n ||
       traderClaimChangeUsdc < 0n ||
       (marginAccountChangeUsdc > 0n && traderClaimChangeUsdc > 0n)
@@ -164,10 +165,10 @@ export function derivePerpsCloseReconciliation(
     }
   } else {
     if (
-      uncoveredLossUsdc < 0n ||
+      settlementAdjustmentUsdc < 0n ||
       marginAccountChangeUsdc > 0n ||
       traderClaimChangeUsdc > 0n ||
-      (uncoveredLossUsdc > 0n && postPositionSize !== 0n)
+      (settlementAdjustmentUsdc > 0n && postPositionSize !== 0n)
     ) {
       return undefined
     }
@@ -192,9 +193,10 @@ export function derivePerpsCloseReconciliation(
     frozenSpreadChargedUsdc,
     frozenSpreadWaivedUsdc,
     netCloseResultUsdc,
+    actualAccountChangeUsdc,
     marginAccountChangeUsdc,
     traderClaimChangeUsdc,
-    uncoveredLossUsdc,
+    settlementAdjustmentUsdc,
     postPositionSize,
     postPositionMarginUsdc,
     releasedPositionMarginUsdc,

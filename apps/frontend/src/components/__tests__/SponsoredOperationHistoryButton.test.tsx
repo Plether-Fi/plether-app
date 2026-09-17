@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
+import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
+import deployedManifest from '../../../public/perps-aa-manifest.json'
+
+vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => ({ orderHistory: [], refetch: vi.fn() }) }))
 
 const identityMocks = vi.hoisted(() => ({
   ownerAddress: '0x1111111111111111111111111111111111111111',
@@ -37,6 +41,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
 })
 
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+import { usePerpsUiStore } from '../../stores/perpsUiStore'
 import {
   createSponsoredOperationSignal,
   useSponsoredOperationStore,
@@ -122,6 +127,7 @@ function timestampForLabel(
 
 describe('SponsoredOperationHistoryButton', () => {
   beforeEach(() => {
+    usePerpsUiStore.setState({ activityRequest: null })
     globalThis.localStorage.clear()
     vi.stubGlobal('navigator', {
       locks: {
@@ -142,6 +148,38 @@ describe('SponsoredOperationHistoryButton', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('keeps owner recovery visible after signed-attempt discovery retries are exhausted', async () => {
+    const saved = { ...operation({ id: 'signed-recovery', action: 'place-order', status: 'outcome-unknown',
+      updatedAt: Date.now(), userOperationHash: USER_OPERATION_HASH }),
+      nativePreparation: { version: 1, manifest: deployedManifest, preparationId: 'signed-recovery', action: { kind: 'place-order', calls: [] } },
+    } as unknown as SponsoredOperation
+    useSponsoredOperationStore.setState({ operations: [saved] })
+    const verify = vi.fn()
+    const runtime = { chainId: identityMocks.chainId, ownerAddress: identityMocks.ownerAddress,
+      smartAccount: { accountAddress: identityMocks.accountAddress, getPreparationStatus: vi.fn().mockRejectedValue(new Error('unavailable')) },
+      preparationRecovery: { verify },
+    } as unknown as PerpsAaSmartAccountRuntime
+    render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationHistoryButton /></PerpsAaRuntimeContext>)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Trading Account activity. 1 action needs attention.' }))
+    await act(async () => {})
+    expect(screen.getByRole('button', { name: 'Verify wallet to recover' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    expect(verify).not.toHaveBeenCalled()
+    act(() => { useSponsoredOperationStore.setState({ operations: [{ ...saved, status: 'expired' }] }) })
+    expect(screen.queryByRole('button', { name: 'Verify wallet to recover' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { chainId: 1 },
+    { accountAddress: OTHER_ACCOUNT },
+    { ownerAddress: OTHER_ACCOUNT },
+  ])('ignores an activity shortcut for another identity: %j', changedIdentity => {
+    usePerpsUiStore.getState().requestActivity({ ...identityMocks, operationId: 'other-wallet', ...changedIdentity })
+    render(<SponsoredOperationHistoryButton />)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(usePerpsUiStore.getState().activityRequest).toBeNull()
   })
 
   it('does not claim sponsorship for a failure before submission', () => {
@@ -204,7 +242,7 @@ describe('SponsoredOperationHistoryButton', () => {
       'Gas sponsorship approved · Submission unconfirmed'
     )).toBeInTheDocument()
     expect(screen.getByText(
-      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+      'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/your action was not sent/i))
@@ -244,7 +282,7 @@ describe('SponsoredOperationHistoryButton', () => {
       'Gas sponsorship approved · Submission unconfirmed'
     )).toBeInTheDocument()
     expect(screen.getByText(
-      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+      'The transaction outcome is still unverified. Resolve this saved transaction before submitting another action.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/your action was not sent/i))
@@ -543,6 +581,19 @@ describe('SponsoredOperationHistoryButton', () => {
       .not.toBeInTheDocument()
   })
 
+  it.each([
+    ['INSUFFICIENT_FREE_EQUITY', /Not enough available trading collateral/],
+    ['INVALID_ORDER_DEADLINE', /The order deadline is invalid/],
+    ['SIMULATION_FAILED', /The transaction was rejected during simulation/],
+  ] as const)('shows actionable %s guidance without a retry button for a refused preparation', (reason, message) => {
+    useSponsoredOperationStore.setState({ operations: [operation({id:'simulation-refused',action:'place-order',
+      status:'sponsorship-refused',reason,retryable:false,updatedAt:Date.now()})] })
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {name:/Open Trading Account activity/}))
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:/retry/i})).not.toBeInTheDocument()
+  })
+
   it('turns a retracted inclusion back into submission attention', () => {
     useSponsoredOperationStore.getState().beginOperation({
       id: 'reorged-inclusion',
@@ -631,7 +682,7 @@ describe('SponsoredOperationHistoryButton', () => {
 
     expect(screen.getByText('Expired')).toBeInTheDocument()
     expect(screen.getByText(
-      'This operation expired before it was included onchain. It is safe to retry the action.'
+      'Transaction didn’t go through'
     )).toBeInTheDocument()
     expect(screen.getByText('Not included · No network gas used'))
       .toBeInTheDocument()

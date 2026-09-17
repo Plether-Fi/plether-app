@@ -679,7 +679,7 @@ For VPI:
 
 Positive values are displayed without a `+` sign. Small non-zero costs may appear as `0.0 USDC` because preview values are rounded.
 
-After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, **Execution reward**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread paid** and **Net close result**. Opening trades keep the existing execution summary.
+After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, **Execution reward**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread charged** and **Close result before settlement adjustments**. **Actual account change** is the recorded Margin Account balance change plus the trader claim change. When it differs from the calculated result, a neutral **Settlement adjustment** explains the difference without classifying it as bad debt or an uncollected fee. Opening trades keep the existing execution summary.
 
 At contract level, close previews expose frozen-market settlement separately:
 
@@ -687,7 +687,7 @@ At contract level, close previews expose frozen-market settlement separately:
 * `frozenSpreadPaidUsdc` — amount retained or collected for LPs
 * `frozenSpreadWaivedUsdc` — waived
 
-A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record. **Final Result** always shows **Frozen spread paid**. When the waived amount is nonzero, it also shows **Frozen spread assessed** and **Frozen spread waived**. Only the paid amount reduces **Net close result**.
+A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record. **Final Result** shows **Frozen spread charged**, the assessed spread minus the waived amount, with VPI shown separately. When the waived amount is nonzero, it also shows **Frozen spread assessed** and **Frozen spread waived**. Only the charged amount reduces **Close result before settlement adjustments**; the VPI rebate remains a separate offset.
 
 #### Two meanings of “Cost of carry”
 

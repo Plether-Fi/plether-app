@@ -3,6 +3,10 @@ import type { PerpsReviewChange } from '../utils/perpsReviewChanges'
 import { Button } from './ui'
 
 interface PerpsReviewFooterProps {
+  sponsoredCloseUsdc?: string
+  depositCarryUsdc?: string
+  commitmentCarryUsdc?: string
+  recoveringOracle?: boolean
   preparing: boolean
   refreshing: boolean
   slow: boolean
@@ -16,13 +20,13 @@ interface PerpsReviewFooterProps {
   analyticsProperties?: PerpsAnalyticsProperties
 }
 
-export function PerpsReviewFooter({ preparing, refreshing, slow, error, changes, canConfirm, direction,
+export function PerpsReviewFooter({ sponsoredCloseUsdc, depositCarryUsdc, commitmentCarryUsdc, recoveringOracle = false, preparing, refreshing, slow, error, changes, canConfirm, direction,
   onConfirm, onCancel, onRetry, analyticsProperties }: PerpsReviewFooterProps) {
   return (
     <div className="space-y-3">
       <div role="status" aria-live="polite" aria-atomic="true" className="text-sm text-content-secondary">
         {preparing ? (
-          <p>{slow ? 'Network is taking longer than usual.' : refreshing
+          <p>{recoveringOracle ? 'Updating market price…' : slow ? 'Network is taking longer than usual.' : refreshing
             ? 'Updating review. Previous values remain visible until checks finish.'
             : 'Checking your order before confirmation.'}</p>
         ) : error ? <p className="text-brand-orange">{error}</p> : changes.length > 0 ? (
@@ -34,6 +38,9 @@ export function PerpsReviewFooter({ preparing, refreshing, slow, error, changes,
           </>
         ) : null}
       </div>
+      {sponsoredCloseUsdc && <p className="text-sm text-content-secondary">Plether covers {sponsoredCloseUsdc} USDC of your keeper bounty and transaction gas. The bounty remains a trading cost in competition PnL.</p>}
+      {depositCarryUsdc && <p className="text-sm text-content-secondary">Carry collected with assistance funding: {depositCarryUsdc} USDC.</p>}
+      {commitmentCarryUsdc && <p className="text-sm text-content-secondary">Carry collected when the order is committed: {commitmentCarryUsdc} USDC.</p>}
       {!preparing && error && onRetry ? <Button size="sm" variant="secondary" onClick={onRetry}>Retry review</Button> : null}
       <div className="flex gap-3">
         <Button className="flex-1 !border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D]"
@@ -41,7 +48,7 @@ export function PerpsReviewFooter({ preparing, refreshing, slow, error, changes,
         <Button className="flex-1" variant={direction === 'short' ? 'danger' : 'primary'}
           isLoading={preparing} aria-busy={preparing} disabled={!canConfirm || !!error}
           analyticsId="confirm_commit" analyticsProperties={analyticsProperties} onClick={onConfirm}>
-          {preparing ? refreshing ? 'Updating review…' : 'Checking order…' : changes.length > 0 ? 'Confirm updated order' : 'Confirm Commit'}
+          {preparing ? recoveringOracle ? 'Updating market price…' : refreshing ? 'Updating review…' : 'Checking order…' : changes.length > 0 ? 'Confirm updated order' : sponsoredCloseUsdc ? 'Close — sponsored' : 'Confirm Commit'}
         </Button>
       </div>
     </div>

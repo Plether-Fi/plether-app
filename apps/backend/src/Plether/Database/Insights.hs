@@ -444,6 +444,7 @@ data InsightsActivityRow = InsightsActivityRow
   , iarBlockNumber :: Integer
   , iarTimestamp :: Integer
   , iarLogIndex :: Integer
+  , iarExecution :: Maybe Value
   , iarSessionDay :: Maybe Text
   }
   deriving stock (Show, Eq)
@@ -458,6 +459,7 @@ instance FromRow InsightsActivityRow where
     <*> numericIntegerField
     <*> numericIntegerField
     <*> numericIntegerField
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -2344,7 +2346,7 @@ fundingIntegrityRefreshSql =
   \ SELECT DISTINCT ON (wallet) wallet, block_number, tx_index, log_index FROM canonical_mints\
   \ ORDER BY wallet, block_number, tx_index, log_index\
   \ ), flow_rows AS (\
-  \ SELECT p.wallet, a.activity_type, a.amount_usdc, a.tx_hash, a.block_number, a.block_hash,\
+  \ SELECT p.wallet, a.activity_type, a.amount_usdc, a.tx_hash, a.block_number, a.block_hash, EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AS close_assistance,\
   \ a.tx_index, a.log_index, a.timestamp, (SELECT MIN(x.log_index) FROM perps_usdc_transfers x\
   \  WHERE x.chain_id = p.chain_id AND x.release_router = p.release_router\
   \   AND LOWER(x.token_address) = LOWER(p.usdc_address) AND x.tx_hash = LOWER(a.tx_hash)\
@@ -2365,7 +2367,7 @@ fundingIntegrityRefreshSql =
   \    AND peer.release_router = p.release_router AND peer.account = p.wallet AND peer.activity_type = a.activity_type\
   \    AND peer.tx_hash = a.tx_hash AND peer.block_number = a.block_number AND peer.block_hash = a.block_hash\
   \    AND peer.amount_usdc = a.amount_usdc AND LOWER(COALESCE(peer.contract_address, '')) = LOWER(p.margin_clearinghouse_address)\
-  \    AND LOWER(COALESCE(peer.data->>'asset', '')) = LOWER(p.usdc_address)) = 1) AS verified\
+  \    AND LOWER(COALESCE(peer.data->>'asset', '')) = LOWER(p.usdc_address)) = 1 OR EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit')) AS verified\
   \ FROM participants p JOIN perps_account_activity a ON a.chain_id = p.chain_id\
   \  AND a.release_router = p.release_router AND a.account = p.wallet\
   \ WHERE a.activity_type IN ('Deposit', 'Withdraw') AND a.block_number >= p.configured_start_block\
@@ -2373,9 +2375,9 @@ fundingIntegrityRefreshSql =
   \ ), flow_summary AS (\
   \ SELECT p.wallet,\
   \ COUNT(*) FILTER (WHERE f.block_number <= p.baseline_block) AS baseline_flow_count,\
-  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit') AS deposit_count,\
-  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND f.block_number <= p.baseline_block) AS baseline_deposit_count,\
-  \ COALESCE(SUM(CASE WHEN f.activity_type = 'Deposit' THEN f.amount_usdc ELSE -f.amount_usdc END)\
+  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance) AS deposit_count,\
+  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance AND f.block_number <= p.baseline_block) AS baseline_deposit_count,\
+  \ COALESCE(SUM(CASE WHEN f.close_assistance THEN 0 WHEN f.activity_type = 'Deposit' THEN f.amount_usdc ELSE -f.amount_usdc END)\
   \  FILTER (WHERE f.verified AND f.block_number <= p.baseline_block), 0) AS baseline_flow_net,\
   \ COUNT(*) FILTER (WHERE NOT f.verified) AS unverified_flow_count,\
   \ COUNT(*) FILTER (WHERE f.verified AND f.activity_type = 'Deposit' AND f.amount_usdc = p.starting_balance_usdc\
@@ -2392,14 +2394,14 @@ fundingIntegrityRefreshSql =
   \  AND f.amount_usdc = p.starting_balance_usdc AND mc.mint_count = 1\
   \  AND ROW(f.block_number, f.tx_index, f.log_index) > ROW(m.block_number, m.tx_index, m.log_index)\
   \  AND f.block_number > p.baseline_block), 0) AS post_official_amount,\
-  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND mc.mint_count = 1\
+  \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance AND mc.mint_count = 1\
   \  AND ROW(f.block_number, f.tx_index, f.log_index) <= ROW(m.block_number, m.tx_index, m.log_index)) AS pre_mint_deposit_count\
   \ FROM participants p LEFT JOIN flow_rows f ON f.wallet = p.wallet\
   \ LEFT JOIN mint_counts mc ON mc.wallet = p.wallet LEFT JOIN first_mint m ON m.wallet = p.wallet\
   \ GROUP BY p.wallet, p.baseline_block, p.starting_balance_usdc, mc.mint_count,\
   \  m.block_number, m.tx_index, m.log_index\
   \ ), running_funding AS (\
-  \ SELECT wallet, SUM(CASE WHEN activity_type = 'Deposit' THEN amount_usdc ELSE -amount_usdc END)\
+  \ SELECT wallet, SUM(CASE WHEN close_assistance THEN 0 WHEN activity_type = 'Deposit' THEN amount_usdc ELSE -amount_usdc END)\
   \  OVER (PARTITION BY wallet ORDER BY block_number, tx_index, log_index) AS running_net\
   \ FROM flow_rows WHERE verified\
   \ ), funding_cap AS (SELECT wallet, COALESCE(MAX(running_net), 0) AS max_net_amount\
@@ -2533,12 +2535,12 @@ fundingIntegrityRefreshSqlLegacy =
   \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
   \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)), 0) AS official_amount,\
-  \   COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND NOT (a.amount_usdc = t.starting_balance_usdc\
+  \   COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT (a.amount_usdc = t.starting_balance_usdc\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
   \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
   \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number))) AS unverified_count,\
-  \   COALESCE(SUM(CASE WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END), 0) AS net_amount\
+  \   COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END), 0) AS net_amount\
   \   FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
   \   AND a.account = p.wallet AND a.activity_type IN ('Deposit', 'Withdraw')\
   \   AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
@@ -2556,7 +2558,7 @@ fundingIntegrityRefreshSqlLegacy =
   \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
   \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)), 0) AS official_amount,\
-  \   COUNT(*) FILTER (WHERE NOT (a.amount_usdc = t.starting_balance_usdc\
+  \   COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT (a.amount_usdc = t.starting_balance_usdc\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
   \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
   \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
@@ -2586,7 +2588,7 @@ fundingIntegrityRefreshSqlLegacy =
   \   SELECT COUNT(*) AS unverified_count FROM perps_account_activity a\
   \   WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router AND a.account = p.wallet\
   \   AND a.activity_type = 'Deposit' AND a.timestamp < t.score_cutoff_timestamp\
-  \   AND NOT COALESCE((LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
+  \   AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT COALESCE((LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
   \     AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
   \     AND a.amount_usdc = t.starting_balance_usdc\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc WHERE LOWER(fc.address) = LOWER(p.wallet)\
@@ -2603,7 +2605,7 @@ fundingIntegrityRefreshSqlLegacy =
   \ ) tr ON TRUE\
   \ LEFT JOIN LATERAL (\
   \   SELECT COALESCE(MAX(running_net), 0) AS max_net_amount FROM (\
-  \     SELECT SUM(CASE WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END)\
+  \     SELECT SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END)\
   \       OVER (ORDER BY a.block_number, a.tx_index, a.log_index) AS running_net\
   \     FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
   \     AND a.account = p.wallet AND a.activity_type IN ('Deposit', 'Withdraw')\
@@ -2889,13 +2891,58 @@ walletActivityQuery =
   \ )\
   \ SELECT a.activity_type, a.side, a.price, a.size_delta, a.amount_usdc, a.pnl_usdc,\
   \ (a.data->>'executionFeeUsdc')::numeric, (a.data->>'vpiUsdc')::numeric,\
-  \ a.tx_hash, a.block_number, a.timestamp, a.log_index,\
+  \ a.tx_hash, a.block_number, a.timestamp, a.log_index, execution.payload,\
   \ CASE WHEN EXTRACT(ISODOW FROM ((to_timestamp(a.timestamp) AT TIME ZONE 'UTC')\
   \   + MOD(1440 - c.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')) BETWEEN 1 AND 5\
   \ THEN (((to_timestamp(a.timestamp) AT TIME ZONE 'UTC')\
   \   + MOD(1440 - c.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')::date)::text ELSE NULL END\
   \ FROM perps_account_activity a JOIN target c ON c.chain_id = a.chain_id AND c.release_router = a.release_router\
   \ CROSS JOIN current_batch b\
+  \ LEFT JOIN LATERAL (\
+  \  SELECT CASE WHEN COUNT(*) = 1 THEN (jsonb_agg(candidate.payload))->0 ELSE NULL END AS payload\
+  \  FROM (\
+  \  SELECT jsonb_build_object(\
+  \    'orderId', o.order_id::text, 'protocolVersion', 'v1.2.3',\
+  \    'status', CASE WHEN o.settlement_evidence_version = 1 THEN 'complete' ELSE 'pending' END,\
+  \    'receipt', o.receipt_economics,\
+  \    'settlements', COALESCE((\
+  \      SELECT jsonb_agg(e.data || jsonb_build_object('kind', e.event_name) ORDER BY e.log_index)\
+  \      FROM perps_events e\
+  \      WHERE e.chain_id = a.chain_id AND e.release_router = a.release_router\
+  \        AND e.tx_hash = a.tx_hash AND e.block_hash = a.block_hash AND e.block_number = a.block_number\
+  \        AND e.account = a.account AND e.order_id = o.order_id\
+  \        AND e.event_name IN ('ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled')\
+  \    ), '[]'::jsonb)\
+  \  ) AS payload\
+  \  FROM perps_events terminal\
+  \  JOIN perps_orders o ON o.chain_id = terminal.chain_id AND o.order_router = terminal.release_router\
+  \    AND o.order_id = terminal.order_id AND o.terminal_status = 'Executed'\
+  \    AND o.account = a.account AND o.terminal_tx_hash = a.tx_hash AND o.terminal_block_number = a.block_number\
+  \    AND o.receipt_economics IS NOT NULL AND o.receipt_hash = terminal.data->>'receiptHash'\
+  \  WHERE terminal.chain_id = a.chain_id AND terminal.release_router = a.release_router\
+  \    AND terminal.tx_hash = a.tx_hash AND terminal.block_hash = a.block_hash AND terminal.block_number = a.block_number\
+  \    AND terminal.account = a.account AND terminal.event_name = 'OrderFinalized'\
+  \    AND terminal.data->>'status' = '2' AND terminal.data->>'terminalReason' = 'Executed'\
+  \    AND terminal.log_index > a.log_index AND a.activity_type IN ('Open', 'Close')\
+  \    AND NOT EXISTS (\
+  \      SELECT 1 FROM perps_events prior WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router\
+  \        AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash\
+  \        AND prior.event_name = 'OrderFinalized' AND prior.log_index > a.log_index AND prior.log_index < terminal.log_index\
+  \    )\
+  \    AND 1 = (\
+  \      SELECT COUNT(*) FROM perps_account_activity sibling\
+  \      WHERE sibling.chain_id = a.chain_id AND sibling.release_router = a.release_router\
+  \        AND sibling.tx_hash = a.tx_hash AND sibling.block_hash = a.block_hash AND sibling.account = a.account\
+  \        AND sibling.activity_type IN ('Open', 'Close') AND sibling.log_index < terminal.log_index\
+  \        AND sibling.log_index > COALESCE((\
+  \          SELECT MAX(prior.log_index) FROM perps_events prior\
+  \          WHERE prior.chain_id = a.chain_id AND prior.release_router = a.release_router\
+  \            AND prior.tx_hash = a.tx_hash AND prior.block_hash = a.block_hash\
+  \            AND prior.event_name = 'OrderFinalized' AND prior.log_index < terminal.log_index\
+  \        ), -1)\
+  \    )\
+  \  ) candidate\
+  \ ) execution ON TRUE\
   \ WHERE a.account = ? AND a.timestamp >= c.start_timestamp AND a.timestamp < c.score_cutoff_timestamp\
   \ AND (c.start_block IS NULL OR a.block_number >= c.start_block) AND a.block_number <= b.block_number\
   \ ORDER BY a.block_number DESC, a.log_index DESC LIMIT ?")

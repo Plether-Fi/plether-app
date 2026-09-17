@@ -1,3 +1,6 @@
+import { reportAttemptStage } from './attemptDiagnostics'
+import { isExplicitSignatureRejection, isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
+import type { SponsoredOperation } from './operationStore'
 import type {
   PerpsActionPlan,
   SponsoredExecutionStatus,
@@ -36,6 +39,7 @@ import {
 } from './paymasterValidity'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
+  hasDurableNativePreparation,
   hasDurableSponsoredOperationOrderIntent,
   hasDurableSponsoredProtectionIntent,
   hasDurableSponsoredOperationSubmission,
@@ -61,6 +65,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   authorizationNonceToClearOnConfirmation?: Hex
   orderRequestV2?: PersistedPerpsOrderRequestV2
   protectionIntent?: PersistedProtectionIntent
+  resumeOperationId?: string
   lane?: string
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
@@ -370,7 +375,16 @@ export async function executeSponsoredPerpsAction(
         cause: error,
       })
     }
+    const resumed = input.resumeOperationId ? useSponsoredOperationStore.getState().operations.find(item => item.id === input.resumeOperationId) : undefined
+    if (input.resumeOperationId && (!resumed?.nativePreparation || resumed.userOperationHash
+      || resumed.ownerAddress.toLowerCase() !== input.ownerAddress.toLowerCase()
+      || resumed.chainId !== input.manifest.chainId
+      || JSON.stringify(resumed.nativePreparation.action) !== JSON.stringify(persistReviewedAction(input.action))
+      || useSponsoredOperationStore.getState().getActiveOperation(resumed.accountAddress, lane)?.id !== resumed.id)) {
+      throw new Error('The original preparation is no longer available for resume')
+    }
     const activeTracker = beginSponsoredOperationTracking({
+      ...(resumed ? { id: resumed.id, resume: true } : {}),
       ownerAddress: input.ownerAddress,
       accountAddress: input.runtime.smartAccount.accountAddress,
       chainId: input.manifest.chainId,
@@ -393,6 +407,19 @@ export async function executeSponsoredPerpsAction(
     }
 
     activeTracker.signal.throwIfAborted()
+    const nativePreparationEnabled = isPerpsAaManifestV2(input.manifest) && input.manifest.preparationRpcVersion === 1
+    const reviewedStateInput = { action: input.action.kind, clientOrderId: input.orderRequestV2?.clientOrderId }
+    const reviewedState = nativePreparationEnabled && !resumed ? await input.runtime.readReviewedActionState?.(reviewedStateInput) : undefined
+    const preparationRequest = resumed?.nativePreparation ?? (isPerpsAaManifestV2(input.manifest) && input.manifest.preparationRpcVersion === 1
+      ? { version: 1 as const, preparationId: activeTracker.id, manifest: input.manifest, action: persistReviewedAction(input.action), ...(reviewedState ? { reviewedState } : {}) }
+      : undefined)
+    if (preparationRequest && !resumed && !useSponsoredOperationStore.getState().recordPreparation(activeTracker.id, preparationRequest)) {
+      throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The preparation request could not be saved' })
+    }
+    if (resumed?.preparedOperation) {
+      const state = await input.runtime.smartAccount.getPreparationStatus?.({ preparationId: resumed.id })
+      if (!state?.recoverable) throw new Error('This preparation cannot currently be resumed. Check its recovery status.')
+    }
     status('requesting-sponsorship')
     // Readiness is deliberately advisory and concurrent, never an authorization cache.
     if (isPerpsAaManifestV2(input.manifest)) void refreshReadiness()
@@ -402,9 +429,13 @@ export async function executeSponsoredPerpsAction(
         calls: input.action.calls,
         action: input.action.kind,
         preparationId: activeTracker.id,
+        ...(resumed?.preparedOperation ? { preparedOperation: restorePreparedOperation(resumed.preparedOperation) } : {}),
       })
     } catch (error) {
       throw asSponsorRequestError(error)
+    }
+    if (resumed?.preparedOperation && JSON.stringify(persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), BigInt(resumed.preparedOperation.validUntil))) !== JSON.stringify(resumed.preparedOperation)) {
+      throw new Error("The recovered payload changed; a fresh review is required")
     }
     const sponsorshipValidUntil = manifestSponsorshipValidUntil(
       input.manifest,
@@ -442,16 +473,36 @@ export async function executeSponsoredPerpsAction(
     if (input.protectionIntent && !hasDurableSponsoredProtectionIntent(activeTracker.id, input.protectionIntent)) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The immutable protection intent could not be journaled before signing' })
     }
+    if (preparationRequest && !useSponsoredOperationStore.getState().recordPreparation(activeTracker.id, preparationRequest,
+      persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), sponsorshipValidUntil), sponsorshipAuthority)) {
+      throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The exact preparation could not be saved before signing' })
+    }
     activeTracker.signal.throwIfAborted()
     if (isPerpsAaManifestV2(input.manifest)) {
       const action = input.orderRequestV2 ? input.orderRequestV2.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
       const blocker = readinessBlocker(currentReadiness(), action)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
     }
+    if (preparationRequest && input.runtime.readReviewedActionState) {
+      const currentState = await input.runtime.readReviewedActionState(reviewedStateInput)
+      if (preparationRequest.reviewedState !== currentState) throw new Error('The reviewed position or protection state changed. Review a new transaction.')
+    }
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'signing')
+    if (preparationRequest) useSponsoredOperationStore.getState().recordWalletPreparationOutcome(activeTracker.id, 'unknown')
     status('awaiting-signature')
-    const signedOperation =
-      await input.runtime.smartAccount.signUserOperation(operation)
+    if (preparationRequest && !hasDurableNativePreparation(activeTracker.id, preparationRequest,
+      persistPreparedOperation(operation, input.runtime.smartAccount.getUserOperationHash(operation), sponsorshipValidUntil))) {
+      throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The prepared recovery record changed before signing' })
+    }
+    reportAttemptStage(activeTracker.id, 'wallet_requested')
+    const signedOperation = await input.runtime.smartAccount.signUserOperation(operation).catch((error: unknown) => {
+      reportAttemptStage(activeTracker.id, isExplicitSignatureRejection(error) ? 'wallet_declined' : 'wallet_interrupted')
+      throw error
+    })
+    reportAttemptStage(activeTracker.id, 'wallet_approved')
+    if (preparationRequest && input.runtime.smartAccount.getUserOperationHash(signedOperation) !== input.runtime.smartAccount.getUserOperationHash(operation)) {
+      throw new Error('The wallet changed the prepared transaction')
+    }
     activeTracker.signal.throwIfAborted()
     status('journaling')
 
@@ -484,6 +535,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    reportAttemptStage(activeTracker.id, 'signed_operation_saved')
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
     status('submitting')
     // No user callback runs after this point. Reconcile any storage event that
@@ -509,10 +561,12 @@ export async function executeSponsoredPerpsAction(
     }
     let returnedUserOperationHash: Hex
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
+    reportAttemptStage(activeTracker.id, 'submission_requested')
     try {
       returnedUserOperationHash =
         await input.runtime.smartAccount.sendUserOperation(signedOperation)
     } catch (error) {
+      reportAttemptStage(activeTracker.id, 'submission_failed')
       throw asBundlerError(error)
     }
     if (
@@ -527,6 +581,7 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    reportAttemptStage(activeTracker.id, 'submission_acknowledged')
     status('confirming')
     const outcome = await waitForUserOperationOutcome({
       runtime: input.runtime,
@@ -614,7 +669,13 @@ export async function executeSponsoredPerpsAction(
     }
   } catch (error) {
     if (tracker) {
-      tracker.fail(error)
+      reportAttemptStage(tracker.id, error instanceof BundlerRequestError && error.reason === 'DEADLINE_TOO_CLOSE'
+        ? 'deadline_elapsed' : 'execution_interrupted')
+      try { tracker.fail(error) } catch { /* Preserve the original error when recovery storage is unavailable. */ }
+      if (useSponsoredOperationStore.getState().operations.find(item => item.id === tracker?.id)?.status === 'signature-declined') {
+        reportAttemptStage(tracker.id, 'wallet_declined')
+        throw new Error('Signature declined. Your transaction was not sent.', { cause: error })
+      }
     } else {
       trackSponsoredOperationPreflightFailure(analyticsMetadata, error)
     }
@@ -623,4 +684,20 @@ export async function executeSponsoredPerpsAction(
     tracker?.release()
     await releaseBrowserLane?.()
   }
+}
+
+/** Explicit user action only. Never invoked by polling or automatic recovery. */
+export async function resumeSponsoredPerpsAction(operation: SponsoredOperation, runtime: PerpsAaSmartAccountRuntime) {
+  const request = operation.nativePreparation
+  if (!request || !isPreparationVersionSupported(request.version)) throw new Error('This older preparation has no recoverable payload. Review a new transaction.')
+  const nativeRuntime = runtime.getPreparedOperationRuntime
+    ? await runtime.getPreparedOperationRuntime(request.manifest) : runtime
+  return executeSponsoredPerpsAction({
+    manifest: request.manifest, ownerAddress: operation.ownerAddress,
+    action: restoreReviewedAction(request.action), runtime: nativeRuntime,
+    resumeOperationId: operation.id, lane: operation.lane,
+    orderRequestV2: operation.orderRequestV2, protectionIntent: operation.protectionIntent,
+    authorizationTokenToClearOnConfirmation: operation.authorizationToken,
+    authorizationNonceToClearOnConfirmation: operation.authorizationNonce,
+  })
 }

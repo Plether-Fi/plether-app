@@ -33,6 +33,8 @@ import qualified Data.Vector as V
 import Database.PostgreSQL.Simple (Connection, Only (..), query_)
 import Plether.Database (DbPool, withDb, withDbAdvisoryLock)
 import Plether.Config (aaSafeLagCeiling)
+import Plether.Database.CloseAssistance
+import Plether.AA.CloseAssistanceEvidence (verifyCloseAssistanceReceipt)
 import Plether.Database.AaSponsorship
   ( AaReconcilerCursor (..)
   , SponsorshipAuthorization (..)
@@ -413,7 +415,7 @@ reconcileFromCursor pool primaryClient secondaryClient cfg safeHeader cursor = d
                                   | Left reason <- boundariesRemainCanonical canonicalCursor targetHeader secondCursor secondHeader ->
                                       pure $ StepFatal $ ProviderDisagreement reason
                                   | otherwise -> do
-                                      processed <- processEvents pool logs
+                                      processed <- processEvents pool primaryClient secondaryClient logs
                                       case processed of
                                         Left fatal -> pure $ StepFatal fatal
                                         Right eventCount -> do
@@ -683,8 +685,8 @@ validateSafeHeadFreshness maxSafeLagSeconds wallClockSeconds safeHeader =
     unless (bhTimestamp safeHeader <= wallClockSeconds + maxFutureBlockSkewSeconds) $
       Left "safe boundary timestamp is implausibly ahead of the reconciler clock"
 
-processEvents :: DbPool -> [UserOperationEvent] -> IO (Either FatalFailure Int)
-processEvents pool = foldM processOne $ Right 0
+processEvents :: DbPool -> EthClient -> EthClient -> [UserOperationEvent] -> IO (Either FatalFailure Int)
+processEvents pool primaryClient secondaryClient = foldM processOne $ Right 0
  where
   processOne (Left failure) _ = pure $ Left failure
   processOne (Right count) event = do
@@ -704,20 +706,51 @@ processEvents pool = foldM processOne $ Right 0
                   (uoeActualGasCost event)
                   (saMaxCostWei expected)
         | otherwise -> do
-            settled <- withDb pool $ \conn ->
-              settleSponsorship
-                conn
-                (saDigest expected)
-                (uoeHash event)
-                (uoeTransactionHash event)
-                (uoeBlockNumber event)
-                (uoeBlockHash event)
-                (uoeSuccess event)
-                (uoeActualGasCost event)
-                (uoeRaw event)
-            pure $ case settled of
-              Left reason -> Left $ InvalidOwnPaymasterEvent reason
-              Right () -> Right $ count + 1
+            evidence <- verifyAssistance expected event
+            case evidence of
+              Left reason -> pure $ Left $ InvalidOwnPaymasterEvent reason
+              Right proof -> do
+                settled <- withDb pool $ \conn ->
+                  settleSponsorship
+                    conn
+                    (saDigest expected)
+                    (uoeHash event)
+                    (uoeTransactionHash event)
+                    (uoeBlockNumber event)
+                    (uoeBlockHash event)
+                    (uoeSuccess event)
+                    (uoeActualGasCost event)
+                    (uoeRaw event)
+                case settled of
+                  Left reason -> pure $ Left $ InvalidOwnPaymasterEvent reason
+                  Right () -> case proof of
+                    Nothing -> pure $ Right $ count + 1
+                    Just (depositIndex,orderId) -> do
+                      confirmed <- withDb pool $ \conn -> confirmCloseAssistance conn (saDigest expected)
+                        (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) depositIndex orderId
+                      pure $ if confirmed then Right $ count + 1 else Left $ InvalidOwnPaymasterEvent "Assistance evidence conflicts"
+
+  verifyAssistance expected event = do
+    grant <- withDb pool $ \conn -> getCloseAssistanceReservation conn (saDigest expected)
+    case grant of
+      Nothing -> pure $ Right Nothing
+      Just _ | not (uoeSuccess event) -> pure $ Right Nothing
+      Just reservation -> do
+        let params = toJSON [uoeTransactionHash event]
+        first <- rpcCall primaryClient "eth_getTransactionReceipt" params
+        second <- rpcCall secondaryClient "eth_getTransactionReceipt" params
+        pure $ case (first,second) of
+          (Right a,Right b) -> do
+            -- Providers may include different optional receipt metadata. Verify
+            -- the complete required provenance independently, then agree on
+            -- the exact deposit index and newly committed order.
+            let verify = verifyCloseAssistanceReceipt reservation
+                  (uoeHash event) (uoeTransactionHash event) (uoeBlockNumber event) (uoeBlockHash event) (uoeLogIndex event)
+            firstProof <- verify a
+            secondProof <- verify b
+            if firstProof == secondProof then Right $ Just firstProof
+              else Left "Assistance receipt proofs disagree"
+          _ -> Left "Assistance receipt providers disagree or are unavailable"
 
 handleFatal :: DbPool -> FatalFailure -> IO a
 handleFatal pool failure = do

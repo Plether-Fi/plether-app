@@ -71,7 +71,7 @@ async function reset() {
   assert.equal(await rpc('evm_revert',[baseline]),true)
   baseline = await rpc('evm_snapshot')
 }
-async function makeOperation(callGas, callData, sender, initCode, nonce) {
+async function makeOperation(callGas, callData, sender, initCode, nonce, signOwner = true) {
   const policy = await client.readContract({address:paymaster,abi:pmAbi,functionName:'policyId'})
   const block = await client.getBlock()
   const envelope = concatHex([paymaster,toHex(100000n,{size:16}),toHex(0n,{size:16}),toHex(block.timestamp+120n,{size:6}),toHex(block.timestamp-30n,{size:6}),toHex(parseEther('0.01'),{size:16}),policy,fixture.accounts[fixture.sender.toLowerCase()].codeHash])
@@ -79,7 +79,7 @@ async function makeOperation(callGas, callData, sender, initCode, nonce) {
   const digest = await client.readContract({address:paymaster,abi:pmAbi,functionName:'getSponsorshipHash',args:[op]})
   op.paymasterAndData = concatHex([envelope,await signer.sign({hash:digest})])
   const hash = await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getUserOpHash',args:[op]})
-  op.signature = await owner.sign({hash})
+  if (signOwner) op.signature = await owner.sign({hash})
   return {op,hash}
 }
 async function execute(callGas, callData = fixture.callData, {sender=fixture.sender,initCode='0x',precedingCallData,beforeSubmit,measure=false} = {}) {
@@ -292,3 +292,36 @@ for (const scenario of fixture.scenarios ?? []) {
     }
   })
 }
+
+
+test('rejected preparation resumes the exact sponsor-authorized payload on the deployed account bytecode', async () => {
+  await reset()
+  const sender = fixture.sender
+  const nonce = await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[sender,0n]})
+  const {op,hash} = await makeOperation(gasPolicy(1_000_000n),fixture.callData,sender,'0x',nonce,false)
+  const journal = structuredClone(op)
+  const depositBefore = await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'balanceOf',args:[paymaster]})
+  // Owner rejection leaves only the sponsor authorization. No handleOps is sent.
+  assert.equal(op.signature,'0x')
+  assert.equal(await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[sender,0n]}),nonce)
+  assert.equal(await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'balanceOf',args:[paymaster]}),depositBefore)
+  op.signature = await owner.sign({hash})
+  assert.deepEqual({...op,signature:'0x'},journal)
+  assert.equal(await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getUserOpHash',args:[op]}),hash)
+  const tx = await wallet.sendTransaction({chain:null,to:fixture.entryPoint,data:encodeFunctionData({abi:entryPoint08Abi,functionName:'handleOps',args:[[op],owner.address]}),gas:5000000n,maxFeePerGas:1000000000n,maxPriorityFeePerGas:1n})
+  const receipt = await client.waitForTransactionReceipt({hash:tx})
+  const event = receipt.logs.flatMap(log => { try { return [decodeEventLog({abi:entryPoint08Abi,data:log.data,topics:log.topics})] } catch { return [] } }).find(e=>e.eventName==='UserOperationEvent'&&e.args.userOpHash===hash)
+  assert.equal(event?.args.success,true)
+  assert.equal(await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[sender,0n]}),nonce+1n)
+})
+
+test('expired original sponsorship cannot be resumed on the deployed account bytecode', async () => {
+  await reset()
+  const nonce = await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[fixture.sender,0n]})
+  const {op,hash} = await makeOperation(gasPolicy(1_000_000n),fixture.callData,fixture.sender,'0x',nonce,false)
+  await rpc('evm_increaseTime',[121])
+  await rpc('evm_mine')
+  op.signature = await owner.sign({hash})
+  await assert.rejects(client.call({account:owner.address,to:fixture.entryPoint,data:encodeFunctionData({abi:entryPoint08Abi,functionName:'handleOps',args:[[op],owner.address]}),gas:5000000n}), /expired|AA32|revert/i)
+  assert.equal(await client.readContract({address:fixture.entryPoint,abi:entryPoint08Abi,functionName:'getNonce',args:[fixture.sender,0n]}),nonce)
+})

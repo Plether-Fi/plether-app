@@ -34,7 +34,7 @@ test('backend public AA gate loads policy without cleaning generated task files'
   assert.match(step, /uses: actions\/checkout@[0-9a-f]{40}/)
   assert.match(step, /ref: \$\{\{ github.sha \}\}/)
   assert.match(step, /persist-credentials: false/)
-  assert.match(step, /sparse-checkout: \.github\/scripts/)
+  assert.match(step, /sparse-checkout: \|\n\s+\.github\/scripts\n\s+apps\/backend\/deployments/)
   assert.match(step, /path: deployment-policy/)
   assert.match(step, /matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'/)
   assert.match(deploy.slice(gate), /jq -e -f deployment-policy\/\.github\/scripts\/validate-aa-public-alto\.jq public-alto-task.json/)

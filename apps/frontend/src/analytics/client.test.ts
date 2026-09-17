@@ -98,6 +98,13 @@ describe('analytics client', () => {
     })
   })
 
+  it('retains bounded preparation diagnostics while dropping raw error context', () => {
+    expect(sanitizeAnalyticsProperties({ error_code: 'undecoded_revert', stage: 'commit_simulation',
+      contract_function: 'commitOrder', error_message: 'user@example.com', revert_data: '0x12345678',
+      wallet_address: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B', rpc_payload: 'signed payload',
+    })).toEqual({ error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder' })
+  })
+
   it('redacts address-like, tx-hash-like, and email-like values', () => {
     expect(sanitizeAnalyticsProperties({
       surface: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',

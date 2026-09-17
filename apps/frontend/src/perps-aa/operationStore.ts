@@ -1,3 +1,4 @@
+import type { NativePreparationRequestV1, PreparedOperationV1 } from './preparedOperation'
 import type {
   PerpsActionKind,
   SponsoredExecutionStatus,
@@ -32,6 +33,9 @@ export { SponsoredOperationLockedError } from './operationLockError'
 
 export type SponsoredOperationStatus =
   | SponsoredExecutionStatus
+  | 'signature-declined'
+  | 'preparation-pending'
+  | 'sponsorship-refused'
   | 'failed'
   | 'cancelled'
   | 'outcome-unknown'
@@ -55,6 +59,11 @@ export interface SponsoredOperation {
   status: SponsoredOperationStatus
   sponsorshipAccepted: boolean
   userOperationHash?: Hex
+  walletPreparationOutcome?: 'declined' | 'unknown'
+  walletPreparationRevision?: number
+  preparationResolved?: true
+  nativePreparation?: NativePreparationRequestV1
+  preparedOperation?: PreparedOperationV1
   signedUserOperation?: PersistedManagedUserOperationV1
   submissionMetadataVersion?: 1
   /**
@@ -100,6 +109,8 @@ export interface SponsoredOperation {
   transactionHashVerified?: boolean
   reason?: StableSponsorReason
   retryable?: boolean
+  confirmationWaitingSince?: number
+  confirmationLastSuccessfulCheckAt?: number
   replacementUserOperationHash?: Hex
   retryCount: number
   createdAt: number
@@ -144,6 +155,10 @@ interface SponsoredOperationState {
   activeLanes: Record<string, string>
 
   beginOperation: (input: BeginSponsoredOperationInput) => void
+  recordConfirmationTiming: (id: string, waitingSince?: number, lastSuccessfulCheckAt?: number) => void
+  markPreparationResolved: (id: string) => void
+  recordWalletPreparationOutcome: (id: string, outcome: 'declined' | 'unknown') => void
+  recordPreparation: (id: string, request: NativePreparationRequestV1, prepared?: PreparedOperationV1, authority?: PersistedSponsorshipAuthorityV1) => boolean
   transition: (id: string, status: SponsoredOperationStatus) => void
   recordUserOperationHash: (
     id: string,
@@ -173,7 +188,7 @@ interface SponsoredOperationState {
   }[]) => void
   failOperation: (input: {
     id: string
-    status?: 'failed' | 'outcome-unknown' | UserOperationTerminalStatus
+    status?: 'failed' | 'outcome-unknown' | 'signature-declined' | 'preparation-pending' | 'sponsorship-refused' | UserOperationTerminalStatus
     reason?: StableSponsorReason
     retryable: boolean
     replacementUserOperationHash?: Hex
@@ -198,7 +213,7 @@ export const SPONSORED_OPERATION_LANE_RELEASE_PREFIX =
 export const DEFAULT_SPONSORED_OPERATION_LANE = 'default'
 export const LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION =
   'perps-aa-arbitrum-sepolia-20260717-v1'
-export const SPONSORED_OPERATION_STORAGE_VERSION = 1
+export const SPONSORED_OPERATION_STORAGE_VERSION = 2
 export const SPONSORED_OPERATION_AUTOMATIC_RECOVERY_INITIAL_DELAY_MS = 5_000
 export const SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS =
   5 * 60 * 1000
@@ -327,6 +342,9 @@ export function isSponsoredOperationAttentionStatus(
   status: SponsoredOperationStatus
 ): boolean {
   return [
+    'signature-declined',
+    'preparation-pending',
+    'sponsorship-refused',
     'receipt-timeout',
     'failed',
     'execution-reverted',
@@ -419,7 +437,7 @@ function failureAttentionRevision(
 export function canCancelSponsoredOperationLocally(
   operation: SponsoredOperation
 ): boolean {
-  return operationAbortControllers.has(operation.id) &&
+  return operation.nativePreparation === undefined && operationAbortControllers.has(operation.id) &&
     operation.userOperationHash === undefined &&
     ![
       'journaling',
@@ -494,7 +512,7 @@ export function migrateSponsoredOperationState(
       'The sponsored-operation store was written by a newer app version'
     )
   }
-  if (persistedVersion === SPONSORED_OPERATION_STORAGE_VERSION) {
+  if (persistedVersion >= 1) {
     return {
       operations: persisted.operations,
       activeLanes: activeLanesForOperations(persisted.operations),
@@ -659,6 +677,11 @@ function mergeOperationRecord(
   persisted: SponsoredOperation
 ): SponsoredOperation {
   assertCompatibleSponsorshipAuthorities(current, persisted)
+  for (const field of ['nativePreparation', 'preparedOperation'] as const) {
+    if (current[field] && persisted[field] && JSON.stringify(current[field]) !== JSON.stringify(persisted[field])) {
+      throw new Error('The immutable native preparation changed')
+    }
+  }
   const preferLiveCurrent =
     operationAbortControllers.has(current.id) &&
     !isSponsoredOperationTerminal(current.status)
@@ -708,6 +731,15 @@ function mergeOperationRecord(
     // stale whole-store snapshot must not erase them.
     userOperationHash:
       preferred.userOperationHash ?? other.userOperationHash,
+    preparationResolved: preferred.preparationResolved ?? other.preparationResolved,
+    walletPreparationRevision: Math.max(preferred.walletPreparationRevision ?? 0, other.walletPreparationRevision ?? 0) || undefined,
+    walletPreparationOutcome: (other.walletPreparationRevision ?? 0) > (preferred.walletPreparationRevision ?? 0)
+      ? other.walletPreparationOutcome
+      : (other.walletPreparationRevision ?? 0) === (preferred.walletPreparationRevision ?? 0)
+        && (other.walletPreparationOutcome === 'unknown' || preferred.walletPreparationOutcome === 'unknown')
+        ? 'unknown' : preferred.walletPreparationOutcome,
+    nativePreparation: preferred.nativePreparation ?? other.nativePreparation,
+    preparedOperation: preferred.preparedOperation ?? other.preparedOperation,
     signedUserOperation:
       preferred.signedUserOperation ?? other.signedUserOperation,
     orderRequestV2:
@@ -1487,7 +1519,7 @@ function mergeExactOperationJournals(
       preSignJournal.userOperationHash === undefined
     ) {
       if (
-        (operation.orderRequestV2 === undefined && operation.protectionIntent === undefined) ||
+        (operation.orderRequestV2 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined) ||
         JSON.stringify(operation.orderRequestV2) !==
           JSON.stringify(preSignJournal.orderRequestV2) ||
         JSON.stringify(operation.protectionIntent) !== JSON.stringify(preSignJournal.protectionIntent) ||
@@ -1752,7 +1784,7 @@ function writeExactOperationJournal(
   if (
     operation.userOperationHash === undefined &&
     existing === undefined &&
-    operation.orderRequestV2 === undefined && operation.protectionIntent === undefined
+    operation.orderRequestV2 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined
   ) {
     return undefined
   }
@@ -1802,6 +1834,7 @@ function writeOperationJournals(
     if (
       !retainedIds.has(journal.operation.id) &&
       isSponsoredOperationTerminal(journal.operation.status) &&
+      !(journal.operation.nativePreparation && !journal.operation.userOperationHash && !journal.operation.preparationResolved) &&
       journal.operation.updatedAt <=
         Date.now() - 24 * 60 * 60 * 1000 &&
       journal.operation.legacyInboxIdentity !== true &&
@@ -2427,6 +2460,42 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                 : {}),
             }
           })
+        },
+
+        recordConfirmationTiming: (id, waitingSince, lastSuccessfulCheckAt) => {
+          const current = get().operations.find(operation => operation.id === id)
+          const valid = (value?: number) => typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= Date.now() ? value : undefined
+          const start = valid(current?.confirmationWaitingSince) ?? valid(waitingSince)
+          const last = valid(lastSuccessfulCheckAt) ?? valid(current?.confirmationLastSuccessfulCheckAt)
+          if (!current || (current.confirmationWaitingSince === start && current.confirmationLastSuccessfulCheckAt === last)) return
+          set(state => ({ operations: updateOperation(state.operations, id, operation => ({
+            ...operation, confirmationWaitingSince: start, confirmationLastSuccessfulCheckAt: last,
+          })) }))
+        },
+        markPreparationResolved: id => {
+          const current = get().operations.find(operation => operation.id === id)
+          if (!current || current.preparationResolved) return
+          set(state => ({ operations: updateOperation(state.operations, id, operation => ({ ...operation, preparationResolved: true })) }))
+        },
+        recordWalletPreparationOutcome: (id, outcome) => {
+          set(state => ({ operations: updateOperation(state.operations, id, operation => ({
+            ...operation, walletPreparationOutcome: outcome, walletPreparationRevision: (operation.walletPreparationRevision ?? 0) + 1, updatedAt: Date.now(),
+          })) }))
+        },
+        recordPreparation: (id, request, prepared, authority) => {
+          try {
+            const current = get().operations.find(operation => operation.id === id)
+            if (!current || current.userOperationHash || isSponsoredOperationTerminal(current.status)) return false
+            if (current.nativePreparation && JSON.stringify(current.nativePreparation) !== JSON.stringify(request)) return false
+            if (current.preparedOperation && JSON.stringify(current.preparedOperation) !== JSON.stringify(prepared)) return false
+            set(state => ({ operations: updateOperation(state.operations, id, operation => ({
+              ...operation, nativePreparation: request, ...(prepared ? { preparedOperation: prepared } : {}),
+              ...(authority ? { sponsorshipAuthority: authority } : {}), updatedAt: Date.now(),
+            })) }))
+            const saved = readExactOperationJournal(id)
+            return JSON.stringify(saved?.nativePreparation) === JSON.stringify(request)
+              && (!prepared || JSON.stringify(saved?.preparedOperation) === JSON.stringify(prepared))
+          } catch { return false }
         },
 
         recordUserOperationHash: (id, hash, metadata) => {
@@ -3168,6 +3237,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             }
           })
           const operations = migratedOperations.filter((operation) => {
+            if (operation.nativePreparation && !operation.userOperationHash && !operation.preparationResolved) return true
             if (isSponsoredOperationTerminal(operation.status)) {
               return operation.updatedAt > terminalCutoff
             }
@@ -3403,6 +3473,19 @@ export function hasDurableSponsoredOperationSubmission(
   } finally {
     sponsoredOperationSubmissionRevisions.delete(operationId)
   }
+}
+
+export function hasDurableNativePreparation(id: string, request: NativePreparationRequestV1, prepared: PreparedOperationV1): boolean {
+  try {
+    const current = useSponsoredOperationStore.getState().operations.find(operation => operation.id === id)
+    const journal = readExactOperationJournal(id)
+    return current !== undefined && journal !== undefined && !current.userOperationHash && !journal.userOperationHash
+      && !isSponsoredOperationTerminal(current.status) && !isSponsoredOperationTerminal(journal.status)
+      && JSON.stringify(current.nativePreparation) === JSON.stringify(request)
+      && JSON.stringify(journal.nativePreparation) === JSON.stringify(request)
+      && JSON.stringify(current.preparedOperation) === JSON.stringify(prepared)
+      && JSON.stringify(journal.preparedOperation) === JSON.stringify(prepared)
+  } catch { return false }
 }
 
 export function hasDurableSponsoredOperationOrderIntent(

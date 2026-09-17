@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   concatHex,
   numberToHex,
@@ -26,7 +26,13 @@ import {
   type SponsoredOperationRecoverySnapshot,
   UserOperationReceiptNotSafeError,
 } from './runtimeContext'
+import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { SponsoredOperationRecovery } from './SponsoredOperationRecovery'
+import { PreparedOperationRecovery } from './PreparedOperationRecovery'
+import { createWalletPreparationRecovery, recoveryChallengeMessage } from './walletRecovery'
+import { recoveryFetch, resetRecoveryCredentialsForTests } from './recoveryTransport'
+import { preparationIdentifier } from './nativePreparation'
+import { requestOperationRecovery } from './requestOperationRecovery'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -164,6 +170,28 @@ function beginHashOperation(input: {
 }
 
 describe('SponsoredOperationRecovery', () => {
+  it('deduplicates explicit checks and preserves a live submission lock', async () => {
+    beginHashOperation({ id: 'manual-check', operation: signedOperation() })
+    useSponsoredOperationStore.getState().exhaustAutomaticRecovery('manual-check', Date.now())
+    let complete!: (snapshot: SponsoredOperationRecoverySnapshot) => void
+    const getRecoverySnapshot = vi.fn(() => new Promise<SponsoredOperationRecoverySnapshot>(resolve => { complete = resolve }))
+    const runtime = runtimeValue({ getRecoverySnapshot })
+    const view = render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await act(async () => {})
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+    expect(await requestOperationRecovery('manual-check')).toBe('unavailable')
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+    await act(async () => { complete({ blockNumber: 123n, blockTimestamp: 2000n, accountNonce: 7n,
+      userOperationEvidence: { kind: 'inconclusive' } }) })
+    createSponsoredOperationSignal('manual-check')
+    try {
+      expect(await requestOperationRecovery('manual-check')).toBe('unavailable')
+      expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+      expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('manual-check')
+      expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+      expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    } finally { releaseSponsoredOperationSignal('manual-check'); view.unmount() }
+  })
   it('keeps the lane blocked and backs off pending evidence without interpreting it as a missing receipt', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let clock = 1000
@@ -215,6 +243,91 @@ describe('SponsoredOperationRecovery', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([true, false])('restores signed-attempt receipt access after explicit owner verification; safe evidence available: %s', async safeEvidence => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const clock = 1000
+    const started = Date.now()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    vi.spyOn(Date, 'now').mockImplementation(() => started + clock)
+    resetRecoveryCredentialsForTests()
+    const id = 'd46ab597-544c-452e-a8c6-2920727f84b9'
+    beginHashOperation({ id, operation: signedOperation() })
+    useSponsoredOperationStore.getState().exhaustAutomaticRecovery(id, Date.now())
+    const paymaster = '0x3333333333333333333333333333333333333333' as Address
+    const url = `${location.origin}/api/perps/v1/aa/rpc`
+    const capability = `v1.${USER_OPERATION_HASH}.0x${'b'.repeat(64)}.${Math.floor(Date.now() / 1000) + 600}.${'c'.repeat(64)}`
+    const session = 'd'.repeat(64)
+    const fetched: string[] = []
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { method: string }
+      fetched.push(body.method)
+      const headers = new Headers(init?.headers)
+      let result: unknown = null
+      const responseHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (body.method === 'plether_getRecoveryChallenge') {
+        const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + 300
+        result = { version: 1, challengeId: nonce, expiresAt, message: recoveryChallengeMessage({
+          origin: location.origin, chainId: 421614, paymaster, sender: ACCOUNT, owner: OWNER,
+          preparationId: preparationIdentifier(id), nonce, expiresAt,
+        }) }
+      } else if (body.method === 'plether_verifyRecoveryChallenge') {
+        result = { version: 1, sessionToken: session, expiresIn: 900 }
+      } else if (body.method === 'plether_getRecoveryStatus') {
+        expect(headers.get('X-Plether-AA-Preparation-Recovery')).toBe(session)
+        result = { version: 1, recoveryVerified: true, canRetire: true, phase: 'resolved',
+          authorizationState: 'expired', reason: 'PREPARATION_UNUSABLE', serverTime: '2000', safeBlockTimestamp: '2000',
+          recoverable: false, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
+        responseHeaders['X-Plether-AA-Recovery'] = capability
+      } else if (body.method === 'eth_getUserOperationReceipt') {
+        if (headers.get('X-Plether-AA-Recovery') !== capability) return new Response('{}', { status: 403 })
+      } else throw new Error('Unexpected recovery request')
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { headers: responseHeaders })
+    })
+    const signMessage = vi.fn(async () => `0x${'12'.repeat(65)}` as Hex)
+    const recovery = createWalletPreparationRecovery({ rpcUrl: url, chainId: 421614, paymaster,
+      sender: ACCOUNT, owner: OWNER, signMessage, fetcher })
+    const receiptAccess = recoveryFetch(url, fetcher)
+    const getRecoverySnapshot = vi.fn(async () => {
+      const response = await receiptAccess(url, { method: 'POST', body: JSON.stringify({
+        method: 'eth_getUserOperationReceipt', params: [USER_OPERATION_HASH],
+      }) })
+      return { blockNumber: 123n, blockTimestamp: 2000n, accountNonce: 7n,
+        userOperationEvidence: { kind: response.ok && safeEvidence ? 'not-located' as const : 'inconclusive' as const } }
+    })
+    const runtime = runtimeValue({ getRecoverySnapshot })
+    runtime.preparationRecovery = recovery
+    runtime.smartAccount.getPreparationStatus = vi.fn().mockRejectedValue(new Error('status unavailable'))
+    const operation = useSponsoredOperationStore.getState().operations[0]
+    const fallbackManifest = { version: MANIFEST_VERSION, chainId: 421614 } as PerpsAaDeploymentManifestV2
+    const view = render(<PerpsAaRuntimeContext value={runtime}>
+      <SponsoredOperationRecovery /><PreparedOperationRecovery operation={operation} fallbackManifest={fallbackManifest} />
+    </PerpsAaRuntimeContext>)
+    // Flush recovery promises directly: this background check does not need
+    // to change visible text, and this test fakes waitFor's interval.
+    await act(async () => {})
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(id)
+    expect(signMessage).not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
+    expect(signMessage).toHaveBeenCalledOnce()
+    // Verification restores the receipt capability, then immediately requests
+    // canonical recovery without waiting for the 60-second background interval.
+    expect(getRecoverySnapshot).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
+    if (!safeEvidence) {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check recovery again' })) })
+      expect(getRecoverySnapshot).toHaveBeenCalledTimes(3)
+    }
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(safeEvidence ? undefined : id)
+    expect(useSponsoredOperationStore.getState().operations[0].status).toBe(safeEvidence ? 'expired' : 'receipt-timeout')
+    expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(fetched).not.toContain('plether_retirePreparation')
+    view.unmount()
+    resetRecoveryCredentialsForTests()
+  })
+
   it('releases an interrupted pre-hash lane after reload', async () => {
     useSponsoredOperationStore.getState().beginOperation({
       id: 'interrupted-operation',
@@ -260,6 +373,22 @@ describe('SponsoredOperationRecovery', () => {
     expect(
       useSponsoredOperationStore.getState().operations.at(-1)?.id
     ).toBe('next-operation')
+  })
+
+  it('moves an interrupted native preparation into recovery without releasing its lane or opening a wallet', async () => {
+    const store = useSponsoredOperationStore.getState()
+    store.beginOperation({ id: 'native-interrupted', ownerAddress: OWNER, accountAddress: ACCOUNT, chainId: 421614,
+      accountMode: 'simple', manifestVersion: MANIFEST_VERSION, action: 'deposit' })
+    store.recordPreparation('native-interrupted', { version: 1, preparationId: 'native-interrupted',
+      manifest: { version: MANIFEST_VERSION, chainId: 421614 } as PerpsAaDeploymentManifestV2,
+      action: { kind: 'deposit', account: ACCOUNT, calls: [] } })
+    store.transition('native-interrupted', 'awaiting-signature')
+    const runtime = runtimeValue()
+    render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await waitFor(() => { expect(useSponsoredOperationStore.getState().operations[0].status).toBe('preparation-pending') })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('native-interrupted')
+    expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
   })
 
   it('does not release a live pre-hash operation owned by another tab', async () => {
@@ -889,7 +1018,7 @@ describe('SponsoredOperationRecovery', () => {
       blockNumber: 123n,
       blockTimestamp: 1_001n,
       accountNonce: 7n,
-      userOperationEvidence: { kind: 'not-located' as const },
+      userOperationEvidence: { kind: 'receipt-unavailable' as const },
     }))
     beginHashOperation({
       id: 'expired-during-pimlico-outage',

@@ -242,10 +242,16 @@ locals {
   )
 
   native_aa_environment = local.native_aa_backend_configured ? [
+    { name = "PERPS_CLOSE_ASSISTANCE_ENABLED", value = tostring(var.perps_close_assistance_enabled) },
+    { name = "PERPS_CLOSE_ASSISTANCE_GLOBAL_ENABLED", value = tostring(var.perps_close_assistance_global_enabled) },
+    { name = "PERPS_CLOSE_ASSISTANCE_LENS", value = var.perps_close_assistance_lens },
+    { name = "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH", value = var.perps_close_assistance_lens_code_hash },
     { name = "AA_RPC_MODE", value = var.aa_rpc_mode },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "AA_NATIVE_SPONSORSHIP_ENABLED", value = tostring(var.enable_native_aa_sponsorship) },
     { name = "AA_NATIVE_PREPARATION_ENABLED", value = tostring(var.enable_native_aa_preparation) },
+    { name = "PERPS_AA_RECOVERY_ORIGIN", value = var.aa_preparation_recovery_origin },
+    { name = "PERPS_AA_RECOVERY_RETIREMENT_ENABLED", value = tostring(var.aa_preparation_retirement_enabled) },
     { name = "AA_READINESS_ENFORCEMENT_ENABLED", value = tostring(var.enable_aa_readiness_enforcement) },
     { name = "AA_FUNDING_COMPONENTS", value = join(",", local.aa_funding_components) },
     { name = "AA_FUNDING_INVENTORY_ID", value = sha256(jsonencode(var.aa_funding_monitors)) },
@@ -1116,6 +1122,7 @@ resource "aws_ecs_task_definition" "workers" {
           name  = "PERPS_ORACLE_UPDATER_BACKEND_URL"
           value = var.api_hostname != "" ? "https://${var.api_hostname}" : "http://${aws_lb.api.dns_name}"
         },
+        { name = "PERPS_ORACLE_UPDATER_HEALTH_POLL_SECONDS", value = var.perps_oracle_updater_health_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
       ]
