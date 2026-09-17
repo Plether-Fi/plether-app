@@ -1,38 +1,61 @@
 module Plether.Database
   ( DbPool
   , newDbPool
+  , newApiDbPool
+  , newRegistrationDbPool
+  , newOracleDbPool
+  , dbPoolName
+  , DbDeadline (..)
   , destroyDbPool
   , dbPoolObservation
   , withDb
   , withDbAdvisoryLock
   ) where
 
-import Control.Exception (bracket_, bracketOnError)
+import Control.Exception (Exception, bracket_, bracketOnError, mask, onException, throwIO)
 import Control.Monad (void)
-import Data.Pool (Pool, newPool, defaultPoolConfig, withResource, destroyAllResources)
+import Data.Pool (Pool, newPool, defaultPoolConfig, withResource, destroyAllResources, takeResource, putResource, destroyResource)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BS
-import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, query)
+import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, query, execute_)
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stack (HasCallStack, callStack, getCallStack, SrcLoc (..))
 import Plether.Database.Observation (Observation, newObservation, observeResource)
+import System.Timeout (timeout)
 
-data DbPool = DbPool (Pool (Connection, Int)) Observation
+data DbPool = DbPool (Pool (Connection, Int)) Observation Text Bool
+
+data DbDeadline = DbAcquireDeadline | DbOperationDeadline deriving stock (Show, Eq)
+instance Exception DbDeadline
+
+dbPoolName :: DbPool -> Text
+dbPoolName (DbPool _ _ name _) = name
 
 dbPoolObservation :: DbPool -> Observation
-dbPoolObservation (DbPool _ observation) = observation
+dbPoolObservation (DbPool _ observation _ _) = observation
 
 destroyDbPool :: DbPool -> IO ()
-destroyDbPool (DbPool pool _) = destroyAllResources pool
+destroyDbPool (DbPool pool _ _ _) = destroyAllResources pool
 
 newDbPool :: Text -> IO DbPool
-newDbPool connStr = DbPool <$> newPool poolConfig <*> newObservation getMonotonicTimeNSec
+newDbPool = newNamedDbPool "worker" 10 False
+
+newApiDbPool, newRegistrationDbPool, newOracleDbPool :: Text -> IO DbPool
+newApiDbPool = newNamedDbPool "api-general" 7 False
+newRegistrationDbPool = newNamedDbPool "api-registration" 2 True
+newOracleDbPool = newNamedDbPool "api-oracle" 1 True
+
+newNamedDbPool :: Text -> Int -> Bool -> Text -> IO DbPool
+newNamedDbPool name size bounded connStr =
+  DbPool <$> newPool poolConfig <*> newObservation getMonotonicTimeNSec <*> pure name <*> pure bounded
   where
     connect = bracketOnError
       (connectPostgreSQL $ BS.pack $ T.unpack connStr)
       close
       $ \conn -> do
+        -- These dedicated pools never perform schema work or external RPC calls.
+        if bounded then void $ execute_ conn "SET statement_timeout='1000ms'; SET lock_timeout='250ms'" else pure ()
         rows <- query conn "SELECT pg_backend_pid()" () :: IO [Only Int]
         case rows of
           [Only pid] -> pure (conn, pid)
@@ -41,12 +64,21 @@ newDbPool connStr = DbPool <$> newPool poolConfig <*> newObservation getMonotoni
       connect
       (close . fst)
       60.0   -- idle timeout (seconds)
-      10     -- max connections
+      size
 
 withDb :: HasCallStack => DbPool -> (Connection -> IO a) -> IO a
-withDb (DbPool pool observation) action =
-  observeResource observation source (withResource pool) snd (action . fst)
+withDb (DbPool pool observation _ bounded) action =
+  observeResource observation source allocate snd (action . fst)
   where
+    allocate callback
+      | not bounded = withResource pool callback
+      | otherwise = mask $ \restore -> do
+          acquired <- timeout 250_000 $ takeResource pool
+          (resource, local) <- maybe (throwIO DbAcquireDeadline) pure acquired
+          value <- (restore (timeout 2_000_000 $ callback resource) >>= maybe (throwIO DbOperationDeadline) pure)
+            `onException` destroyResource pool local resource
+          putResource local resource
+          pure value
     -- Compiler-supplied location only, never a caller-controlled request label.
     source = case getCallStack callStack of
       (_, location) : _ -> T.pack (srcLocModule location <> ":" <> show (srcLocStartLine location))

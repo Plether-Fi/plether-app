@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Monad (forever)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
@@ -12,6 +12,7 @@ import Plether.Insights.SnapshotWorker
   ( parseSnapshotMulticallSize
   , runInsightsSnapshotCycle
   )
+import qualified Plether.Logging as Log
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -55,10 +56,11 @@ main = do
                   try @SomeException $
                     runInsightsSnapshotCycle client pool cfg multicallSize
                 case result of
-                  Left err ->
-                    putStrLn $
-                      "Insights snapshot cycle failed: "
-                        <> displayException err
+                  Left err -> case fromException err :: Maybe SomeAsyncException of
+                    Just _ -> throwIO err
+                    Nothing -> Log.logWarn "insights_snapshot_cycle_skipped"
+                      "Insights snapshot cycle failed; retaining the last committed snapshot until the next cycle"
+                      []
                   Right () -> pure ()
                 threadDelay $ pollSeconds * 1_000_000
 

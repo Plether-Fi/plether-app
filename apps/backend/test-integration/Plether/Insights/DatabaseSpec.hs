@@ -3,7 +3,12 @@ module Plether.Insights.DatabaseSpec
   ) where
 
 import Control.Exception (bracket, finally)
-import Control.Monad (void, forM_)
+import qualified Data.ByteString as BS
+import Database.PostgreSQL.Simple.Types (Query (..))
+import Control.Monad (void, forM, forM_, when)
+import GHC.Clock (getMonotonicTimeNSec)
+import System.Environment (lookupEnv)
+import Numeric (showHex)
 import Data.Aeson (Value (..), encode, object, (.=), eitherDecodeFileStrict', decode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Base16 as Base16
@@ -24,7 +29,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, execute_, query, query_)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.CloseAssistance
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
@@ -44,6 +49,7 @@ import Plether.Database.Insights
   , materializeFinalizedStandings
   , publishAccountSnapshotBatch
   , refreshCompetitionIntegrityFlags
+  , fundingIntegrityRefreshSql
   , setCompetitionBoundaryBlocks
   , seedCompetition
   , stageCompetitionParticipantWalletRemap
@@ -72,6 +78,67 @@ import Test.Hspec
 insightsDatabaseSpec :: Text -> Spec
 insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
+    performance <- runIO $ (== Just "1") <$> lookupEnv "INSIGHTS_PERFORMANCE_TEST"
+    when performance $ it "publishes at 2700 participants and a week of 10k daily transaction records" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        let wallet i = "0x" <> T.justifyRight 40 '0' (T.pack $ showHex (i :: Int) "")
+            wallets = map wallet [1..2700]
+        void $ execute conn "INSERT INTO insights_competition_participants (competition_slug,wallet,trader_reference) SELECT ?, '0x'||lpad(to_hex(i),40,'0'), 'bulk:'||i FROM generate_series(1,2700) i" (Only competitionSlug)
+        void $ execute_ conn "ANALYZE insights_competition_participants"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
+        publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp 0 | w <- wallets]
+        -- Keep unrelated history in the table so a full snapshot-table scan
+        -- cannot hide behind a fixture containing only the current baseline.
+        void $ execute conn
+          "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data) SELECT competition_slug,wallet,'live',chain_id,release_router,1000+i,block_hash,timestamp+i,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data FROM insights_account_snapshots CROSS JOIN generate_series(1,100) i WHERE competition_slug=? AND snapshot_kind='start'"
+          (Only competitionSlug)
+        void $ execute conn "INSERT INTO perps_account_activity (chain_id,release_router,contract_address,event_key,account,activity_type,amount_usdc,tx_hash,block_number,block_hash,tx_index,log_index,timestamp,data) SELECT ?,?,?,'bulk:'||i,'0x'||lpad(to_hex(1+(i%2700)),40,'0'),CASE WHEN i%2=0 THEN 'Deposit' ELSE 'Withdraw' END,1,'0x'||lpad(to_hex(i),64,'0'),105,?,0,1,?,jsonb_build_object('asset',?::text) FROM generate_series(1,70000) i" (fixtureChain,fixtureRouter,fixtureClearinghouse,liveHash,liveTimestamp,fixtureUsdc)
+        void $ execute conn "INSERT INTO perps_usdc_transfers (chain_id,release_router,token_address,from_address,to_address,amount,tx_hash,block_number,block_hash,tx_index,log_index,timestamp) SELECT ?,?,?,CASE WHEN i%2=0 THEN '0x'||lpad(to_hex(1+(i%2700)),40,'0') ELSE ? END,CASE WHEN i%2=0 THEN ? ELSE '0x'||lpad(to_hex(1+(i%2700)),40,'0') END,1,'0x'||lpad(to_hex(i),64,'0'),105,?,0,0,? FROM generate_series(1,43000) i" (fixtureChain,fixtureRouter,fixtureUsdc,fixtureClearinghouse,fixtureClearinghouse,liveHash,liveTimestamp)
+        fundingStress <- lookupEnv "INSIGHTS_PERFORMANCE_ALL_FUNDING"
+        when (fundingStress /= Just "1") $ void $ execute conn
+          "UPDATE perps_account_activity SET activity_type=CASE WHEN split_part(event_key,':',2)::integer%2=0 THEN 'Open' ELSE 'Close' END, size_delta=1 WHERE chain_id=? AND release_router=? AND split_part(event_key,':',2)::integer>5400"
+          (fixtureChain, fixtureRouter)
+        void $ execute_ conn "ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE insights_account_snapshots"
+        explain <- lookupEnv "INSIGHTS_PERFORMANCE_EXPLAIN"
+        when (explain == Just "1") $ do
+          void $ execute_ conn "BEGIN; SET LOCAL statement_timeout='30s'; SET LOCAL enable_mergejoin=off; SET LOCAL enable_nestloop=off; SET LOCAL jit=off"
+          (do
+            plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS) " <> fundingIntegrityRefreshSql) (Only competitionSlug) :: IO [Only Text]
+            mapM_ (putStrLn . T.unpack . fromOnly) plan
+            ) `finally` void (execute_ conn "ROLLBACK")
+        durations <- forM [1..20 :: Integer] $ \iteration -> do
+          started <- getMonotonicTimeNSec
+          let block = liveBlock + iteration
+              blockHash = hashText $ "benchmark" <> T.pack (show iteration)
+          publishAccountSnapshotBatch conn [snapshot w SnapshotLive block blockHash (liveTimestamp + iteration) 0 | w <- wallets]
+          ended <- getMonotonicTimeNSec
+          let elapsed = fromIntegral (ended-started)/1_000_000 :: Double
+          putStrLn $ "Snapshot benchmark milliseconds: " <> show elapsed
+          elapsed `shouldSatisfy` (< 2000)
+          hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive block blockHash `shouldReturn` True
+          pure elapsed
+        putStrLn $ "Snapshot benchmark p95 milliseconds: " <> show (sort durations !! 18)
+    it "rolls back an entire snapshot publication when integrity SQL exceeds its deadline" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        insertParticipant conn walletA "trader-a"
+        setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock, startHash, baselineHash)) Nothing
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp bankroll]
+        -- Force the integrity UPDATE to execute; the local trigger simulates
+        -- expensive SQL without changing the application's funding rules.
+        void $ execute conn "UPDATE insights_competition_participants SET integrity_flags='[]' WHERE competition_slug=?" (Only competitionSlug)
+        void $ execute_ conn "CREATE FUNCTION lockfix_slow_integrity() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$"
+        void $ execute_ conn "CREATE TRIGGER lockfix_slow_integrity BEFORE UPDATE ON insights_competition_participants FOR EACH ROW EXECUTE FUNCTION lockfix_slow_integrity()"
+        (do
+          publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)]
+            `shouldThrow` (\err -> sqlState err == "57014")
+          rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+          original <- requireWallet walletA rows
+          ilrCurrentAccountValueUsdc original `shouldBe` Just bankroll
+          settings <- query_ conn "SELECT current_setting('lock_timeout'),current_setting('statement_timeout'),current_setting('enable_nestloop'),current_setting('enable_mergejoin')" :: IO [(Text, Text, Text, Text)]
+          settings `shouldBe` [("0", "0", "on", "on")]) `finally` do
+            void $ execute_ conn "DROP TRIGGER lockfix_slow_integrity ON insights_competition_participants"
+            void $ execute_ conn "DROP FUNCTION lockfix_slow_integrity()"
     it "backfills settlement receipts idempotently without changing activity or scores" $
       withInsightsDatabase databaseUrl $ \pool -> do
         decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/insights-close-waiver.json"
@@ -401,7 +468,7 @@ insightsDatabaseSpec databaseUrl =
           [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
         publishAccountSnapshotBatch conn
           [snapshot walletA SnapshotFinal finalBlock finalHash finalTimestamp (bankroll + gain)]
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         materializeFinalizedStandings conn competitionSlug `shouldReturn` Right 1
         void $ execute conn "UPDATE insights_competitions SET finalized = TRUE WHERE slug = ?" (Only competitionSlug)
         frozen <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
@@ -468,18 +535,18 @@ insightsDatabaseSpec databaseUrl =
         void $ execute conn
           "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ? AND tx_hash = ?"
           (fixtureChain, fixtureRouter, hashText "faprefund-c")
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterStaleMint <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterStaleMint) `shouldBe` False
         insertMintTransfer conn walletC 81 "prefund-c"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterMintReplay <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterMintReplay) `shouldBe` True
 
         -- Positive third-party dust which remains outside the clearinghouse
         -- is non-blocking; it becomes blocking only when used by a Deposit.
         insertTransfer conn attacker walletC 1 106 6 "idle-dust"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterIdleDust <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterIdleDust) `shouldBe` True
 
@@ -487,7 +554,7 @@ insightsDatabaseSpec databaseUrl =
         -- Deposit pairing and proves dust/substitute capital was used.
         insertPerpsUsdcTransfer conn fixtureChain fixtureRouter fixtureUsdc walletC fixtureClearinghouse bankroll
           (hashText "txprefund-c") 91 (hashText "blprefund-c") 0 2 (eventTimestamp 91)
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterPiggyback <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletC afterPiggyback) `shouldBe` False
 
@@ -495,7 +562,7 @@ insightsDatabaseSpec databaseUrl =
         -- cash flow and must independently block integrity eligibility.
         insertDeposit conn walletB 104 4 (Just fixtureClearinghouse) Nothing (7 * usdcScale) "missing-asset"
         insertDeposit conn walletB 105 5 (Just fixtureClearinghouse) (Just wrongAsset) (9 * usdcScale) "wrong-asset"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterMalformed <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         malformed <- requireWallet walletB afterMalformed
         ilrDepositsUsdc malformed `shouldBe` bankroll
@@ -506,7 +573,7 @@ insightsDatabaseSpec databaseUrl =
         -- cannot reuse the faucet entitlement to bless later capital.
         insertTransfer conn walletA attacker bankroll 85 6 "official-out"
         insertTransfer conn attacker walletA bankroll 86 7 "unofficial-in"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         afterSubstitution <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA afterSubstitution) `shouldBe` False
 
@@ -526,18 +593,18 @@ insightsDatabaseSpec databaseUrl =
         setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain + 198000)]
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         unverified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unverified) `shouldBe` False
         confirmCloseAssistance conn digest (hashText "txassisted") 105 (hashText "blassisted") 4 1 `shouldReturn` True
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         verified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         let row = requireWalletUnsafe walletA verified
         ilrFundingIntegrityClear row `shouldBe` True
         ilrDepositsUsdc row `shouldBe` 198000
         ilrFinalPnlUsdc row `shouldBe` Just gain
         insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "unrelated"
-        refreshCompetitionIntegrityFlags conn competitionSlug
+        refreshAndCompareIntegrity conn competitionSlug
         unrelated <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
         void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
@@ -641,6 +708,17 @@ seedOfficialAllocation conn wallet mintBlock depositBlock suffix = do
   insertMintTransfer conn wallet mintBlock suffix
   insertDeposit
     conn wallet depositBlock 1 (Just fixtureClearinghouse) (Just fixtureUsdc) bankroll suffix
+
+-- Frozen pre-change SQL is a differential oracle, including all historical
+-- duplicate-transfer, dust, missing-provenance and close-assistance cases.
+refreshAndCompareIntegrity :: Connection -> Text -> IO ()
+refreshAndCompareIntegrity conn slug = do
+  baseline <- Query <$> BS.readFile "test/fixtures/insights-funding-integrity-baseline.sql"
+  refreshCompetitionIntegrityFlags conn slug
+  let readFlags = query conn "SELECT wallet,integrity_flags FROM insights_competition_participants WHERE competition_slug=? ORDER BY wallet" (Only slug) :: IO [(Text, Value)]
+  optimized <- readFlags
+  void $ execute conn baseline (Only slug)
+  readFlags `shouldReturn` optimized
 
 insertMintTransfer :: Connection -> Text -> Integer -> Text -> IO ()
 insertMintTransfer conn wallet mintBlock suffix =

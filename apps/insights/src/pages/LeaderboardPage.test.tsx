@@ -11,6 +11,10 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('../api', () => apiMocks)
 
+vi.mock('../hooks/useUtcNow', () => ({
+  useUtcNow: () => Date.parse('2026-09-17T12:00:00Z'),
+}))
+
 beforeEach(() => {
   apiMocks.useCurrentCompetition.mockReturnValue({
     data: {
@@ -53,6 +57,42 @@ beforeEach(() => {
 })
 
 describe('LeaderboardPage', () => {
+  it.each([
+    ['2026-09-17T11:56:59Z', true],
+    ['2026-09-17T11:57:00Z', false],
+    ['2026-09-17T11:59:30Z', false],
+  ])('uses actual snapshot time %s to mark delayed Insights without hiding standings', (snapshotAt, delayed) => {
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ standings: [{
+        address: '0x1111111111111111111111111111111111111111',
+        displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
+        trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
+        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [], snapshotAt,
+      }], provisional: true, nextCursor: null }] },
+      hasNextPage: false, isError: false, isLoading: false,
+    })
+    const { container } = render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(container.querySelector('time')).toHaveAttribute('dateTime', new Date(snapshotAt).toISOString())
+    expect(screen.getAllByRole('row')).toHaveLength(2)
+    expect(Boolean(screen.queryByText(/Insights update delayed/))).toBe(delayed)
+  })
+
+  it('retains cached standings when a background refresh fails', () => {
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ standings: [{
+        address: '0x1111111111111111111111111111111111111111',
+        displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
+        trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
+        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+        snapshotAt: '2026-09-17T11:59:30Z',
+      }], provisional: true, nextCursor: null }] },
+      hasNextPage: false, isError: true, error: new Error('Unavailable'), isLoading: false,
+    })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getAllByRole('row')).toHaveLength(2)
+    expect(screen.getByText(/Could not refresh Insights/)).toBeInTheDocument()
+  })
+
   it('labels unscored traders as updating instead of showing zero activity', () => {
     apiMocks.useLeaderboard.mockReturnValue({
       data: { pages: [{ standings: [{

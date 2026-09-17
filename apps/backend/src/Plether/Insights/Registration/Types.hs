@@ -66,6 +66,7 @@ data RegistrationErrorCode
   | ConsentMismatch
   | RateLimited
   | ProviderUnavailable
+  | RegistrationBusy
   | RegistrationNotFound
   | RegistrationInternalError
   deriving stock (Show, Eq, Generic)
@@ -92,6 +93,7 @@ registrationErrorCodeText = \case
   ConsentMismatch -> "CONSENT_MISMATCH"
   RateLimited -> "RATE_LIMITED"
   ProviderUnavailable -> "PROVIDER_UNAVAILABLE"
+  RegistrationBusy -> "REGISTRATION_BUSY"
   RegistrationNotFound -> "REGISTRATION_NOT_FOUND"
   RegistrationInternalError -> "INTERNAL_ERROR"
 
@@ -114,6 +116,7 @@ registrationErrorCodeFromText = \case
   "CONSENT_MISMATCH" -> Just ConsentMismatch
   "RATE_LIMITED" -> Just RateLimited
   "PROVIDER_UNAVAILABLE" -> Just ProviderUnavailable
+  "REGISTRATION_BUSY" -> Just RegistrationBusy
   "REGISTRATION_NOT_FOUND" -> Just RegistrationNotFound
   "INTERNAL_ERROR" -> Just RegistrationInternalError
   _ -> Nothing
@@ -159,6 +162,7 @@ registrationErrorStatus err = case reCode err of
   ConsentMismatch -> status400
   RateLimited -> status429
   ProviderUnavailable -> status503
+  RegistrationBusy -> status503
   RegistrationNotFound -> status404
   RegistrationInternalError -> status500
 

@@ -58,7 +58,8 @@ import Plether.AA.Pimlico
   , resolveOwnedTradingAccountAtBlock
   )
 import Plether.Config (Config (..))
-import Plether.Database (DbPool, withDb)
+import Plether.Database (DbPool, DbDeadline, withDb)
+import Database.PostgreSQL.Simple (SqlError (..))
 import qualified Plether.Database.Insights.Registration as Db
 import Plether.Ethereum.Client
   ( EthClient
@@ -1325,6 +1326,7 @@ respondError :: RegistrationError -> ActionM ()
 respondError err = do
   registrationHeaders
   status $ registrationErrorStatus err
+  if reCode err == RegistrationBusy then setHeader "Retry-After" "2" else pure ()
   if registrationErrorStatus err == registrationErrorStatus rateLimitedError
     then setHeader "Retry-After" "60"
     else pure ()
@@ -1339,8 +1341,15 @@ safeRegistrationIO operation = do
     Left exception ->
       case fromException exception :: Maybe SomeAsyncException of
         Just _ -> liftIO $ throwIO exception
-        Nothing -> pure $ Left internalError
+        Nothing -> pure $ Left $
+          case (fromException exception :: Maybe DbDeadline, fromException exception :: Maybe SqlError) of
+            (Just _, _) -> busyError
+            (_, Just sqlError) | sqlState sqlError `elem` ["55P03", "57014"] -> busyError
+            _ -> internalError
     Right outcome -> pure outcome
+
+busyError :: RegistrationError
+busyError = registrationError RegistrationBusy "Registration is temporarily busy; your saved progress is unchanged"
 
 registrationUiRedirect :: RegistrationConfig -> Text -> Text
 registrationUiRedirect config slug =

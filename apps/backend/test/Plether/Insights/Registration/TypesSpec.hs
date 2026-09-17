@@ -265,6 +265,7 @@ errorCodeVectors =
   , (ConsentMismatch, "CONSENT_MISMATCH")
   , (RateLimited, "RATE_LIMITED")
   , (ProviderUnavailable, "PROVIDER_UNAVAILABLE")
+  , (RegistrationBusy, "REGISTRATION_BUSY")
   , (RegistrationNotFound, "REGISTRATION_NOT_FOUND")
   , (RegistrationInternalError, "INTERNAL_ERROR")
   ]
@@ -288,6 +289,7 @@ errorStatusVectors =
   , (ConsentMismatch, 400)
   , (RateLimited, 429)
   , (ProviderUnavailable, 503)
+  , (RegistrationBusy, 503)
   , (RegistrationNotFound, 404)
   , (RegistrationInternalError, 500)
   ]

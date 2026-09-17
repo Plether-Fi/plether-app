@@ -1,5 +1,6 @@
 module Plether.Database.Diagnostics
   ( startDbDiagnostics
+  , startDbDiagnosticsForPools
   , diagnosticConnectionString
   , readBlockingSnapshot
   , withDiagnosticConnection
@@ -8,14 +9,14 @@ module Plether.Database.Diagnostics
 
 import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, bracket, fromException, throwIO, try)
-import Control.Monad (void, when)
+import Control.Monad (forM, void, when)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.ByteString.Char8 as BS
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, execute_, query, query_)
 import Database.PostgreSQL.Simple.Types (PGArray (..))
-import Plether.Database (DbPool, dbPoolObservation)
+import Plether.Database (DbPool, dbPoolObservation, dbPoolName)
 import Plether.Database.Observation
 import Plether.Logging (field, logInfo, logWarn, logWarnEvery)
 import System.Timeout (timeout)
@@ -100,36 +101,42 @@ withDiagnosticConnection connectionString action = timeout 3_000_000 $
 -- never changes that pool's session settings, and never kills blocking queries.
 -- Normally it emits once per minute; under pressure it emits every five seconds.
 startDbDiagnostics :: DbPool -> Text -> IO ThreadId
-startDbDiagnostics pool connectionString = forkIO $ loop (0 :: Int)
+startDbDiagnostics pool = startDbDiagnosticsForPools [pool]
+
+-- Serialize captures across the pools: at most one extra connection, even
+-- when registration and general traffic are under pressure simultaneously.
+startDbDiagnosticsForPools :: [DbPool] -> Text -> IO ThreadId
+startDbDiagnosticsForPools pools connectionString = forkIO $ loop (0 :: Int)
   where
-    observation = dbPoolObservation pool
     loop ticks = do
       threadDelay 5_000_000
       result <- try @SomeException $ do
-        snapshot <- readPoolSnapshot observation
-        let pressure = poolUnderPressure snapshot
-            emitNow = pressure || ticks >= 11
-        when emitNow $ do
-          drained <- drainPoolSnapshot observation
-          (if pressure then logWarn else logInfo)
-            "db_pool_observation" "Database connection pool observation"
-            [field "pool" ("api" :: Text), field "pressure" pressure, field "observation" $ snapshotValue drained]
-          capture drained
-        pure emitNow
+        forM pools $ \pool -> do
+          let observation = dbPoolObservation pool
+          snapshot <- readPoolSnapshot observation
+          let pressure = poolUnderPressure snapshot
+              emitNow = pressure || ticks >= 11
+          when emitNow $ do
+            drained <- drainPoolSnapshot observation
+            (if pressure then logWarn else logInfo)
+              "db_pool_observation" "Database connection pool observation"
+              [field "pool" (dbPoolName pool), field "pressure" pressure, field "observation" $ snapshotValue drained]
+            capture pool drained
+          pure emitNow
       case result of
-        Right emitted -> loop $ if emitted then 0 else ticks + 1
+        Right _ -> loop $ if ticks >= 11 then 0 else ticks + 1
         Left exception -> do
           rethrowAsync exception
           -- Exception text can include the database URL or SQL. Never emit it.
           logWarnEvery 60 "db_diagnostics_failed" "Database diagnostics unavailable" []
           loop 0
-    capture snapshot = do
+    capture pool snapshot = do
       result <- withDiagnosticConnection connectionString $ \conn ->
         readBlockingSnapshot conn $ map acBackendPid $ psActive snapshot
       case result of
         Nothing -> logWarnEvery 60 "db_diagnostics_timeout" "Database diagnostics reached their deadline" []
         Just blocking -> logInfo "db_blocking_snapshot" "Database blocking and wait snapshot"
-          [field "pool" ("api" :: Text), field "snapshot" blocking]
+          [field "pool" (dbPoolName pool), field "snapshot" blocking]
 
 rethrowAsync :: SomeException -> IO ()
 rethrowAsync exception = case fromException exception :: Maybe SomeAsyncException of

@@ -5,6 +5,7 @@ module Plether.Insights.RegistrationDatabaseSpec
   ) where
 
 import Control.Concurrent (forkIO)
+import Control.Concurrent.Async (withAsync, wait)
 import Control.Concurrent.MVar
   ( newEmptyMVar
   , putMVar
@@ -18,9 +19,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, query, query_, withTransaction)
+import Database.PostgreSQL.Simple (Connection, Only (..), SqlError (..), execute, query, query_, withTransaction)
 import Database.PostgreSQL.Simple.Types (Binary (..))
-import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
+import Plether.Database (DbPool, newDbPool, newRegistrationDbPool, newOracleDbPool, withDb, destroyDbPool)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Insights.Registration
   ( CompletionResult (..)
@@ -71,6 +72,30 @@ bytea = Binary
 registrationDatabaseSpec :: Text -> Spec
 registrationDatabaseSpec databaseUrl =
   describe "Insights registration PostgreSQL completion" $ do
+    it "bounds a competition row lock without losing progress or blocking oracle reads" $
+      withRegistrationDatabase databaseUrl $ \general -> do
+        rules <- prepareVerifiedFixture general
+        bracket (newRegistrationDbPool databaseUrl) destroyDbPool $ \registration ->
+          bracket (newOracleDbPool databaseUrl) destroyDbPool $ \oracle -> do
+            ready <- newEmptyMVar
+            release <- newEmptyMVar
+            let holdLock = withDb general $ \conn -> withTransaction conn $ do
+                  void (query conn "SELECT slug FROM insights_competitions WHERE slug=? FOR UPDATE" (Only $ crSlug rules) :: IO [Only Text])
+                  putMVar ready ()
+                  takeMVar release
+            withAsync holdLock $ \holder -> do
+              takeMVar ready
+              (do
+                withDb registration (\conn -> completeWithRules conn rules)
+                  `shouldThrow` (\err -> sqlState err == "55P03")
+                withDb oracle (\conn -> query_ conn "SELECT 1" :: IO [Only Int]) `shouldReturn` [Only 1]
+                withDb registration (\conn -> getRegistrationSession conn sessionDigest)
+                  >>= (\session -> fmap rsrStatus session `shouldBe` Just "in_progress")
+                ) `finally` putMVar release ()
+              wait holder
+            withDb registration (\conn -> completeWithRules conn rules) `shouldReturn` CompletionSucceeded
+            assertTerminalFixture general rules
+
     it "keeps the current session authoritative after a lost completion response" $
       withRegistrationDatabase databaseUrl $ \pool -> do
         rules <- prepareVerifiedFixture pool

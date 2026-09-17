@@ -15,7 +15,7 @@ const apiMocks = vi.hoisted(() => {
   class MockInsightsApiError extends Error {
     status = 409
     code: string
-    retryAfterSeconds = null
+    retryAfterSeconds: number | null = null
 
     constructor(code = 'INVALID_REQUEST') {
       super(code)
@@ -407,6 +407,41 @@ describe('RegistrationPage', () => {
     })
     expect(refetch).not.toHaveBeenCalled()
     expect(screen.getByRole('heading', { name: 'Review your entry' })).toBeInTheDocument()
+  })
+
+  it('preserves consent and wallet progress, refetches on busy, and never replays the POST', async () => {
+    const refetch = vi.fn().mockResolvedValue(undefined)
+    apiMocks.useRegistrationSession.mockReturnValue({
+      data: {
+        status: 'in_progress', csrfToken: 'csrf', expiresAt: '2026-09-11T12:00:00Z',
+        steps: { xIdentity: 'verified', xFollow: 'verified', wallet: 'verified', completed: false },
+        identity: { xHandle: 'alice', maskedEmail: 'a***@example.com' },
+        wallet: {
+          ownerAddress: '0x1111111111111111111111111111111111111111',
+          tradingAccount: '0x2222222222222222222222222222222222222222',
+        },
+        requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+      },
+      isLoading: false, isError: false, isFetching: false, refetch,
+    })
+    const error = new apiMocks.MockInsightsApiError('REGISTRATION_BUSY')
+    error.status = 503
+    error.retryAfterSeconds = 2
+    apiMocks.completeRegistration.mockRejectedValue(error)
+
+    renderPage()
+    const [rules, privacy] = screen.getAllByRole('checkbox')
+    fireEvent.click(rules)
+    fireEvent.click(privacy)
+    fireEvent.click(screen.getByRole('button', { name: 'Complete registration' }))
+
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('alert')).toHaveTextContent('Registration is temporarily busy.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Try again in 2 seconds.')
+    expect(rules).toBeChecked()
+    expect(privacy).toBeChecked()
+    expect(screen.getByRole('heading', { name: 'Review your entry' })).toBeInTheDocument()
+    expect(apiMocks.completeRegistration).toHaveBeenCalledTimes(1)
   })
 
   it('fails closed when registration metadata is closed', () => {

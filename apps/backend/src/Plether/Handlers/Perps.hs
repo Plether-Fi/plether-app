@@ -37,7 +37,8 @@ module Plether.Handlers.Perps
   , decodePythUpdateForAdmission
   ) where
 
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, try, throwIO)
+import Database.PostgreSQL.Simple (SqlError (..))
 import Control.Concurrent.STM
   ( atomically
   , readTVar
@@ -83,7 +84,7 @@ import Plether.Config
   ( Config (..)
   , perpsCandleRollupReadEnabled
   )
-import Plether.Database (DbPool, withDb)
+import Plether.Database (DbPool, DbDeadline, withDb)
 import Database.PostgreSQL.Simple (Connection)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
@@ -1536,13 +1537,16 @@ getCachedLatestPythUpdate
   -> Config
   -> IO (Either ApiError (ApiResponse PythUpdateResponse))
 getCachedLatestPythUpdate cache pool perpsClient cfg = do
-  mRow <- withDb pool getLatestPythUpdatePayload
-  case mRow of
-    Nothing ->
+  loaded <- try @SqlError $ try @DbDeadline $ withDb pool getLatestPythUpdatePayload
+  case loaded of
+    Left err | sqlState err `elem` ["57014", "55P03"] -> unavailable
+    Left err -> throwIO err
+    Right (Left _) -> unavailable
+    Right (Right Nothing) ->
       pure $ Left $
         E.networkError
           "No cached Pyth update payload is available yet. Keep plether-basket-worker --latest-loop running."
-    Just row -> do
+    Right (Right (Just row)) -> do
       (_, validation) <-
         runSingleFlightCache
           (cacheStoredPythValidations cache)
@@ -1550,6 +1554,8 @@ getCachedLatestPythUpdate cache pool perpsClient cfg = do
           isRight
           (fmap (fmap puaPayload) $ validateStoredPythUpdate perpsClient cfg Nothing row)
       pure $ fmap (mkResponse 0 $ cfgChainId cfg) validation
+  where
+    unavailable = pure $ Left $ E.networkError "Cached Pyth updates are temporarily busy"
 
 validateStoredPythUpdate
   :: EthClient

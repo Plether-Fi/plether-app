@@ -9,6 +9,7 @@ maintainer:         dev@plether.io
 category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
+                    test/fixtures/insights-funding-integrity-baseline.sql
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates

@@ -307,13 +307,16 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       ])
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
+      // A response can be lost after commit. Read saved state before the user
+      // retries; never automatically replay a completion mutation.
+      if (!(caught instanceof InsightsApiError) || caught.status >= 500) await sessionQuery.refetch()
     } finally {
       setPendingAction(null)
     }
   }
 
   if (sessionQuery.isLoading) return <Panel><LoadingState rows={5} /></Panel>
-  if (sessionQuery.isError && !isSessionMissing(sessionQuery.error)) {
+  if (sessionQuery.isError && !registration && !isSessionMissing(sessionQuery.error)) {
     return <ErrorState title="Registration could not be loaded" message={registrationErrorMessage(sessionQuery.error)} onRetry={() => { void sessionQuery.refetch() }} />
   }
   if (registration?.status === 'completed' || registration?.steps.completed) {

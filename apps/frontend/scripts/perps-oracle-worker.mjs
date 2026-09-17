@@ -227,6 +227,8 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
   fetchPayload = () => fetchCachedPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
 }) {
   let nextRefreshAt = 0
+  let retryAt = 0
+  let failures = 0
   let pending
   let running = false
   const reconcile = async () => {
@@ -257,19 +259,24 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     running = true
     try {
       if (pending) return await reconcile()
-      const before = await readHealth(publicClient, feeds)
-      const repair = before.lag > 0n
+      if (now() < retryAt) return { status: 'backoff' }
+      let before = await readHealth(publicClient, feeds)
+      let repair = before.lag > 0n
       if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Stored Pyth feeds are behind the engine mark', {
         lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
       })
       if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
-      nextRefreshAt = now() + pollSeconds * 1000
       const payload = validatePythPayload(await fetchPayload())
+      // The payload may have advanced while the backend request was in flight.
+      // Compare it with a block read AFTER that request, not an obsolete head.
+      before = await readHealth(publicClient, feeds)
+      repair = before.lag > 0n
       const minPublishTime = Math.min(...payload.publishTimes)
       const maxPublishTime = Math.max(...payload.publishTimes)
       const markTime = before.status.lastMarkTime
       const ageSeconds = Number(before.block.timestamp) - minPublishTime
       if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
+        nextRefreshAt = now() + pollSeconds * 1000
         logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
           min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
           lag_seconds: Number(before.lag),
@@ -277,6 +284,7 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
         return { status: 'waiting_for_payload' }
       }
       if (ageSeconds > maxPayloadAgeSeconds || BigInt(maxPublishTime) > before.block.timestamp) {
+        retryAt = now() + Math.min(30_000, 5_000 * 2 ** Math.min(failures++, 3))
         logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is outside the submission age window', {
           min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
           payload_age_seconds: ageSeconds, max_payload_age_seconds: maxPayloadAgeSeconds,
@@ -293,11 +301,25 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       }
       const balance = await publicClient.getBalance({ address: account.address })
       if (balance < fee) throw new Error(`Updater balance ${formatEther(balance)} ETH is below update fee ${formatEther(fee)} ETH`)
+      const submissionHealth = await readHealth(publicClient, feeds)
+      const submissionAge = Number(submissionHealth.block.timestamp) - minPublishTime
+      if (submissionAge > maxPayloadAgeSeconds || BigInt(maxPublishTime) > submissionHealth.block.timestamp
+        || BigInt(minPublishTime) < submissionHealth.status.lastMarkTime
+        || (submissionHealth.lag === 0n && BigInt(minPublishTime) === submissionHealth.status.lastMarkTime)) {
+        retryAt = now() + Math.min(30_000, 5_000 * 2 ** Math.min(failures++, 3))
+        return { status: 'stale_payload' }
+      }
       const { request } = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
         abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
       const hash = await walletClient.writeContract(request)
+      nextRefreshAt = now() + pollSeconds * 1000
+      retryAt = 0
+      failures = 0
       pending = { hash, fee, repair, lag: before.lag, markTime }
       return await reconcile()
+    } catch (error) {
+      if (!pending) retryAt = now() + Math.min(30_000, 5_000 * 2 ** Math.min(failures++, 3))
+      throw error
     } finally { running = false }
   }
 }

@@ -23,6 +23,43 @@ import Test.Hspec hiding (after, pending)
 
 databaseDiagnosticsSpec :: Text -> Spec
 databaseDiagnosticsSpec url = before_ assertDedicatedDatabase $ describe "database diagnostics integration" $ do
+  it "isolates registration exhaustion from oracle and general capacity" $
+    bracket (newRegistrationDbPool url) destroyDbPool $ \registration ->
+    bracket (newOracleDbPool url) destroyDbPool $ \oracle ->
+    bracket (newApiDbPool url) destroyDbPool $ \general -> do
+      entered <- newEmptyMVar
+      gate <- newEmptyMVar
+      let occupy = withDb registration $ \_ -> putMVar entered () >> readMVar gate
+      withAsync occupy $ \first -> withAsync occupy $ \second -> do
+        takeMVar entered
+        takeMVar entered
+        withDb registration (const $ pure ()) `shouldThrow` (== DbAcquireDeadline)
+        withDb oracle (\conn -> query_ conn "SELECT 1" :: IO [Only Int]) `shouldReturn` [Only 1]
+        withDb general (\conn -> query_ conn "SELECT 1" :: IO [Only Int]) `shouldReturn` [Only 1]
+        putMVar gate ()
+        wait first
+        wait second
+      snapshot <- readPoolSnapshot $ dbPoolObservation registration
+      psWaiting snapshot `shouldBe` 0
+      psActive snapshot `shouldBe` []
+
+  it "discards a bounded connection after a SQL deadline" $
+    bracket (newRegistrationDbPool url) destroyDbPool $ \pool -> do
+      pidRef <- newIORef Nothing
+      withDb pool (\conn -> do
+        [Only pid] <- query_ conn "SELECT pg_backend_pid()" :: IO [Only Int]
+        writeIORef pidRef $ Just pid
+        query_ conn "SELECT 1 FROM pg_sleep(3)" :: IO [Only Int])
+        `shouldThrow` (\err -> sqlState err == "57014")
+      readIORef pidRef >>= assertDisconnected
+      withDb pool (\conn -> query_ conn "SELECT 1" :: IO [Only Int]) `shouldReturn` [Only 1]
+
+  it "bounds connection ownership even when no SQL is running" $
+    bracket (newRegistrationDbPool url) destroyDbPool $ \pool -> do
+      withDb pool (const $ threadDelay 3_000_000) `shouldThrow` (== DbOperationDeadline)
+      snapshot <- readPoolSnapshot $ dbPoolObservation pool
+      psActive snapshot `shouldBe` []
+
   it "isolates read-only settings and deadlines from application connections" $
     withConnection $ \application -> do
       let settings conn = query_ conn

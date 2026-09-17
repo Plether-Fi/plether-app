@@ -6,18 +6,30 @@ import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, Rules
 import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
 import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
+import { useUtcNow } from '../hooks/useUtcNow'
 
 function LeaderboardContent({ slug, search, competitionStatus }: { slug: string; search: string; competitionStatus: Competition['status'] }) {
+  const now = useUtcNow(10_000)
   const query = useLeaderboard(slug, search)
   const standings = query.data?.pages.flatMap((page) => page.standings) ?? []
   const provisional = query.data?.pages[0]?.provisional ?? true
+  const snapshotTimes = standings.flatMap(row => row.snapshotAt && Number.isFinite(Date.parse(row.snapshotAt)) ? [Date.parse(row.snapshotAt)] : [])
+  const snapshotTime = snapshotTimes.length ? Math.min(...snapshotTimes) : null
+  const delayed = competitionStatus === 'live' && snapshotTime !== null && now - snapshotTime > 180_000
 
   if (query.isLoading) return <Panel><LoadingState rows={7} /></Panel>
-  if (query.isError) return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} />
+  if (query.isError && !query.data) return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} />
 
   return (
     <div className="space-y-3">
       {provisional ? <ProvisionalNotice /> : null}
+      {snapshotTime !== null ? (
+        <p role="status" className="text-sm text-content-secondary">
+          Snapshot: <time dateTime={new Date(snapshotTime).toISOString()}>{new Date(snapshotTime).toLocaleString()}</time>
+          {delayed ? ' — Insights update delayed. Showing the previous snapshot.' : ''}
+        </p>
+      ) : null}
+      {query.isError ? <p role="status" className="text-sm text-content-secondary">Could not refresh Insights. Showing the last available snapshot.</p> : null}
       <div className="border border-brand-peach/30 bg-brand-peach/5 px-4 py-3 text-sm leading-6 text-content-secondary" role="note">
         <strong className="text-content-primary">Ranked by net P&amp;L.</strong> Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 mock USDC and rank above active accounts whose net return is negative.
       </div>

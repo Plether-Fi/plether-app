@@ -171,8 +171,8 @@ instance FromJSON TestnetFaucetRequest where
         acceptsAsync = confirmationMode == Just (Aeson.String "async")
     pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Maybe DbPool -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
+app cache client perpsClient cfg mPool mRegistrationPool mOraclePool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -210,7 +210,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
-  case mPool of
+  case mRegistrationPool of
     Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager
     Nothing -> pure ()
 
@@ -761,7 +761,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
         handleError $ E.invalidAmount "publishTime must be a positive integer"
 
   get "/api/perps/pyth/cached-latest" $ do
-    case mPool of
+    case mOraclePool of
       Just pool -> do
         result <- liftIO $ getCachedLatestPythUpdate cache pool perpsClient cfg
         handleResult result

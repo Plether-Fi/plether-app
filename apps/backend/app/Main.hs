@@ -10,8 +10,8 @@ import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
-import Plether.Database (newDbPool, withDb)
-import Plether.Database.Diagnostics (startDbDiagnostics)
+import Plether.Database (newApiDbPool, newRegistrationDbPool, newOracleDbPool, withDb)
+import Plether.Database.Diagnostics (startDbDiagnosticsForPools)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Protection (ensureProtectionSchema)
@@ -76,7 +76,7 @@ main = do
         _ -> pure ()
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
-          pool <- newDbPool dbUrl
+          pool <- newApiDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureProtectionSchema
@@ -96,7 +96,6 @@ main = do
               (cfgInsightsCompetitionReleaseManifest cfg)
           registrationInitialization <- initializeInsightsRegistration pool perpsClient cfg
           either (ioError . userError) pure registrationInitialization
-          _ <- startDbDiagnostics pool dbUrl
           case cfgRegistrationConfig cfg of
             Just _ -> do
               _ <- forkIO $ startRegistrationCleanup pool
@@ -180,6 +179,13 @@ main = do
         newClientWithOptions $
           RpcClientOptions (cfgRpcUrl cfg) (cfgRpcAuthToken cfg) "api-core"
       cache <- newAppCache
+      mRegistrationPool <- traverse newRegistrationDbPool $ cfgDatabaseUrl cfg
+      mOraclePool <- traverse newOracleDbPool $ cfgDatabaseUrl cfg
+      case cfgDatabaseUrl cfg of
+        Just dbUrl -> do
+          _ <- startDbDiagnosticsForPools (maybe [] pure mPool <> maybe [] pure mRegistrationPool <> maybe [] pure mOraclePool) dbUrl
+          pure ()
+        Nothing -> pure ()
       pimlicoProxyState <- newPimlicoProxyState
       faucetGuardState <- newFaucetGuardState
       nativeGatewayState <- newNativeGatewayState manager cfg perpsClient
@@ -202,4 +208,4 @@ main = do
         ]
       scotty (cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState
+        app cache client perpsClient cfg mPool mRegistrationPool mOraclePool manager pimlicoProxyState faucetGuardState nativeGatewayState

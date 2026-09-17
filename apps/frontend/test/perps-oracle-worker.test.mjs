@@ -72,6 +72,7 @@ test('oldest component age and future publication prevent submission', async () 
   const f = fixture(); f.state.mark = 940n; f.state.stored = 930n; f.state.publishes = [940, 980, 980, 980, 980, 980]
   assert.equal((await f.iterate()).status, 'stale_payload')
   f.state.publishes.fill(1001)
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'stale_payload')
   assert.equal(f.state.writes, 0)
 })
@@ -86,6 +87,7 @@ test('simulation failure sends nothing and a concurrent mark advancement is re-e
   await assert.rejects(f.iterate(), /PriceOutOfOrder/)
   assert.equal(f.state.writes, 0)
   f.state.mark = 995n; f.state.simulationError = undefined
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'waiting_for_payload')
   f.state.publishes.fill(995)
   assert.equal((await f.iterate()).status, 'synchronized')
@@ -112,6 +114,7 @@ test('reverted receipt is reported and may be retried on a later health check', 
   await assert.rejects(f.iterate(), /tx failed/)
   assert.equal(f.state.stored, 980n)
   f.state.reverted = false
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'synchronized')
   assert.equal(f.state.writes, 2)
 })
@@ -125,4 +128,49 @@ test('dry run does not send a transaction', async () => {
   const f = fixture()
   assert.equal((await createOracleWorker({ ...f.options, dryRun: true })()).status, 'dry_run')
   assert.equal(f.state.writes, 0)
+})
+
+test('refreshes block health after a slow payload request', async () => {
+  const f = fixture(); let blockTime = 1000n
+  f.publicClient.getBlock = async () => ({ number: 42n, timestamp: blockTime })
+  const iterate = createOracleWorker({ ...f.options, fetchPayload: async () => {
+    blockTime = 1010n; f.state.publishes.fill(1008)
+    return { updateData: ['0xabcd'], publishTimes: f.state.publishes }
+  } })
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
+})
+
+test('does not submit payloads that expire during fee or balance lookup', async () => {
+  for (const stage of ['getUpdateFee', 'balance']) {
+    const f = fixture(); let blockTime = 1000n
+    f.publicClient.getBlock = async () => ({ number: 42n, timestamp: blockTime })
+    const read = f.publicClient.readContract
+    f.publicClient.readContract = async input => {
+      if (stage === 'getUpdateFee' && input.functionName === stage) blockTime = 1100n
+      return read(input)
+    }
+    f.publicClient.getBalance = async () => { if (stage === 'balance') blockTime = 1100n; return 1000n }
+    assert.equal((await f.iterate()).status, 'stale_payload')
+    assert.equal(f.state.writes, 0)
+  }
+})
+
+test('pre-broadcast failures back off at 5/10/20/30 seconds and recover', async () => {
+  const f = fixture(); let requests = 0; let broken = true
+  const iterate = createOracleWorker({ ...f.options, fetchPayload: async () => {
+    requests++; if (broken) throw new Error('backend unavailable')
+    return { updateData: ['0xabcd'], publishTimes: f.state.publishes }
+  } })
+  for (const delay of [5000, 10000, 20000, 30000, 30000]) {
+    await assert.rejects(iterate(), /backend unavailable/)
+    const previous = requests
+    f.state.now += delay - 1
+    assert.equal((await iterate()).status, 'backoff')
+    assert.equal(requests, previous)
+    f.state.now++
+  }
+  broken = false
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
 })

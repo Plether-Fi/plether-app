@@ -129,7 +129,9 @@ spec = do
       queryContains fundingIntegrityRefreshSql "JOIN perps_usdc_transfers x"
       queryContains fundingIntegrityRefreshSql
         "ROW(f.block_number, f.tx_index, f.log_index) > ROW(m.block_number, m.tx_index, m.log_index)"
-      queryContains fundingIntegrityRefreshSql "f.transfer_log_index = x.log_index"
+      queryContains fundingIntegrityRefreshSql "w.transfer_log_index = x.log_index"
+      queryContains fundingIntegrityRefreshSql "d.transfer_log_index = x.log_index"
+      queryContains fundingIntegrityRefreshSql "COALESCE(w.matches, 0) <> 1"
       queryContains fundingIntegrityRefreshSql "official_funds_left_before_allocation"
       queryContains leaderboardQuerySql "jsonb_array_length(integrity_flags) = 0"
       queryContains leaderboardQuerySql "AS funding_integrity_clear"

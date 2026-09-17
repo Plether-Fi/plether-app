@@ -12,6 +12,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_SIGNATURE: 'The wallet signature could not be verified. Try signing a fresh challenge.',
   RATE_LIMITED: 'Too many attempts. Wait a moment before trying again.',
   PROVIDER_UNAVAILABLE: 'A verification provider is temporarily unavailable. Please try again shortly.',
+  REGISTRATION_BUSY: 'Registration is temporarily busy. Your saved progress is unchanged.',
   INVALID_REQUEST: 'This registration request is no longer valid. Refresh the page and try again.',
 }
 
