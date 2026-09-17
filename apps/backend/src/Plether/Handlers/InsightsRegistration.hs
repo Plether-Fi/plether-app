@@ -50,6 +50,8 @@ import Data.Time.Clock.POSIX
   )
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word8)
+import Database.PostgreSQL.Simple (SqlError (..))
+import Plether.Logging (logWarn)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Types.Status (status303)
 import qualified Network.Wai as Wai
@@ -1325,9 +1327,10 @@ respondError :: RegistrationError -> ActionM ()
 respondError err = do
   registrationHeaders
   status $ registrationErrorStatus err
-  if registrationErrorStatus err == registrationErrorStatus rateLimitedError
-    then setHeader "Retry-After" "60"
-    else pure ()
+  case reCode err of
+    RateLimited -> setHeader "Retry-After" "60"
+    RegistrationBusy -> setHeader "Retry-After" "2"
+    _ -> pure ()
   json err
 
 safeRegistrationIO
@@ -1339,7 +1342,11 @@ safeRegistrationIO operation = do
     Left exception ->
       case fromException exception :: Maybe SomeAsyncException of
         Just _ -> liftIO $ throwIO exception
-        Nothing -> pure $ Left internalError
+        Nothing -> case fromException exception :: Maybe SqlError of
+          Just sqlError | sqlState sqlError `elem` ["55P03", "57014"] -> do
+            liftIO $ logWarn "registration_database_busy" "Registration database deadline reached" []
+            pure $ Left $ registrationError RegistrationBusy "Registration is busy. Please try again shortly."
+          _ -> pure $ Left internalError
     Right outcome -> pure outcome
 
 registrationUiRedirect :: RegistrationConfig -> Text -> Text

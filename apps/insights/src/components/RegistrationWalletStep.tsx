@@ -4,12 +4,13 @@ import { useConnection, useSignMessage, useSwitchChain } from 'wagmi'
 import { arbitrumSepolia } from 'wagmi/chains'
 import {
   createWalletChallenge,
+  getRegistrationSession,
   verifyRegistrationWallet,
   type RegistrationSession,
 } from '../api'
 import { walletConnectionConfigured } from '../config/wagmi'
 import { shortAddress } from '../utils/format'
-import { registrationErrorMessage } from '../utils/registration'
+import { registrationErrorMessage, registrationNeedsRecovery } from '../utils/registration'
 
 const BUTTON_CLASS = 'border border-brand-orange bg-brand-orange px-4 py-2.5 text-sm font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg disabled:cursor-not-allowed disabled:opacity-50'
 
@@ -34,6 +35,20 @@ export function RegistrationWalletStep({
   const { mutateAsync: signMessage } = useSignMessage()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [needsRecovery, setNeedsRecovery] = useState(false)
+
+  async function recoverSession() {
+    setPending(true)
+    try {
+      onVerified(await getRegistrationSession(slug))
+      setNeedsRecovery(false)
+    } catch {
+      setNeedsRecovery(true)
+      setError('Your session could not be checked. Check it again before retrying wallet verification.')
+    } finally {
+      setPending(false)
+    }
+  }
   const walletContext = useRef({ address, chainId })
 
   useEffect(() => {
@@ -67,6 +82,7 @@ export function RegistrationWalletStep({
       onVerified(nextRegistration)
     } catch (caught) {
       setError(registrationErrorMessage(caught))
+      if (registrationNeedsRecovery(caught)) await recoverSession()
     } finally {
       setPending(false)
     }
@@ -95,7 +111,7 @@ export function RegistrationWalletStep({
               {chainId === arbitrumSepolia.id ? 'Arbitrum Sepolia' : 'Network switch required'}
             </p>
           </div>
-          <button type="button" className={BUTTON_CLASS} disabled={pending} onClick={() => { void verifyWallet() }}>
+          <button type="button" className={BUTTON_CLASS} disabled={pending || needsRecovery} onClick={() => { void verifyWallet() }}>
             {pending ? 'Check your wallet…' : chainId === arbitrumSepolia.id ? 'Sign and verify wallet' : 'Switch to Arbitrum Sepolia'}
           </button>
         </div>
@@ -105,6 +121,7 @@ export function RegistrationWalletStep({
         </button>
       )}
 
+      {needsRecovery ? <button type="button" className={BUTTON_CLASS} disabled={pending} onClick={() => { void recoverSession() }}>Check registration session</button> : null}
       {error ? <p className="border border-brand-orange/40 bg-brand-orange/10 p-3 text-sm text-brand-peach" role="alert">{error}</p> : null}
     </div>
   )

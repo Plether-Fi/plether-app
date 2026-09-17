@@ -62,6 +62,13 @@ import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import Database.PostgreSQL.Simple.Types (Binary (..))
 import Plether.Insights.Registration.Crypto (EncryptedValue (..))
 
+-- Limits are transaction-local and never cover provider requests.
+withRegistrationTransaction :: Connection -> IO a -> IO a
+withRegistrationTransaction connection action = withTransaction connection $ do
+  _ <- execute_ connection "SET LOCAL lock_timeout = '1s'"
+  _ <- execute_ connection "SET LOCAL statement_timeout = '5s'"
+  action
+
 bytea :: ByteString -> Binary ByteString
 bytea = Binary
 
@@ -516,7 +523,7 @@ provisionRegistrationCompetitionConfig
   -> Text
   -> IO Bool
 provisionRegistrationCompetitionConfig connection competitionSlug targetXUserIdDigest privacyVersion =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     _ <- execute connection
       "INSERT INTO insights_registration_competition_config\
       \ (competition_slug, target_x_user_id_digest, privacy_version)\
@@ -531,7 +538,7 @@ provisionRegistrationCompetitionConfig connection competitionSlug targetXUserIdD
 
 openRegistrationIfConfigured :: Connection -> Text -> Text -> IO Bool
 openRegistrationIfConfigured connection competitionSlug privacyVersion =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     affected <- execute connection
       "UPDATE insights_competitions\
       \ SET registration_open_timestamp = FLOOR(EXTRACT(EPOCH FROM NOW()))::BIGINT,\
@@ -550,7 +557,7 @@ openRegistrationIfConfigured connection competitionSlug privacyVersion =
     pure $ affected == (1 :: Int64) || rows == [Only True]
 
 getRegistrationCompetition :: Connection -> Text -> IO (Maybe RegistrationCompetition)
-getRegistrationCompetition connection competitionSlug = do
+getRegistrationCompetition connection competitionSlug = withRegistrationTransaction connection $ do
   rows <- query connection
     "SELECT slug, chain_id, start_timestamp, registration_open_timestamp, registration_close_timestamp,\
     \ minimum_x_account_age_days, target_x_handle, rules_version, privacy_notice_version, finalized\
@@ -572,7 +579,7 @@ createRegistrationSession
   -> Integer
   -> IO CreateSessionResult
 createRegistrationSession connection competitionSlug applicationId turnstileDigest sessionDigest csrfDigest csrfEncrypted ttlSeconds = do
-  result <- try @SqlError $ withTransaction connection $ do
+  result <- try @SqlError $ withRegistrationTransaction connection $ do
     applications <- query connection
       "INSERT INTO insights_registration_applications\
       \ (registration_id, competition_slug, turnstile_token_digest)\
@@ -611,7 +618,7 @@ createRegistrationSession connection competitionSlug applicationId turnstileDige
       | otherwise -> throwIO sqlError
 
 getRegistrationSession :: Connection -> ByteString -> IO (Maybe RegistrationSessionRow)
-getRegistrationSession connection sessionDigest = do
+getRegistrationSession connection sessionDigest = withRegistrationTransaction connection $ do
   rows <- query connection (registrationSessionSelect <> " WHERE s.session_digest = ? AND s.expires_at > NOW() LIMIT 1") (Only $ bytea sessionDigest)
   pure $ case rows of
     [row] -> Just row
@@ -622,7 +629,7 @@ getRegistrationSession connection sessionDigest = do
 -- so this is an availability/error-code guard rather than an authorization
 -- substitute.
 registrationCompletionState :: Connection -> ByteString -> IO RegistrationCompletionState
-registrationCompletionState connection sessionDigest = do
+registrationCompletionState connection sessionDigest = withRegistrationTransaction connection $ do
   rows <- query connection
     "SELECT a.status, c.registration_open_timestamp IS NOT NULL\
     \ AND NOW() >= TO_TIMESTAMP(c.registration_open_timestamp)\
@@ -645,7 +652,7 @@ storeOAuthChallenge
   -> EncryptedValue
   -> Integer
   -> IO RegistrationMutationResult
-storeOAuthChallenge connection sessionDigest stateDigest verifier sessionTtlSeconds = do
+storeOAuthChallenge connection sessionDigest stateDigest verifier sessionTtlSeconds = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_sessions s SET oauth_error_code = NULL, oauth_state_digest = ?, oauth_expires_at = NOW() + INTERVAL '10 minutes', pkce_key_version = ?,\
     \ pkce_nonce = ?, pkce_ciphertext = ?, pkce_tag = ?, expires_at = NOW() + (? * INTERVAL '1 second'), updated_at = NOW()\
@@ -670,7 +677,7 @@ storeOAuthChallenge connection sessionDigest stateDigest verifier sessionTtlSeco
 
 consumeOAuthChallenge :: Connection -> ByteString -> ByteString -> IO OAuthChallengeConsumeResult
 consumeOAuthChallenge connection sessionDigest stateDigest =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug, s.pkce_key_version, s.pkce_nonce, s.pkce_ciphertext, s.pkce_tag,\
       \ c.registration_open_timestamp IS NOT NULL\
@@ -699,7 +706,7 @@ consumeOAuthChallenge connection sessionDigest stateDigest =
 -- provider response, OAuth code, state, and identity details are never stored
 -- or reflected to the browser.
 recordOAuthCallbackError :: Connection -> ByteString -> Text -> IO Bool
-recordOAuthCallbackError connection sessionDigest errorCode = do
+recordOAuthCallbackError connection sessionDigest errorCode = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_sessions s SET oauth_error_code=?, updated_at=NOW()\
     \ FROM insights_registration_applications a\
@@ -729,7 +736,7 @@ storeXIdentityAndRefreshSession
   -> EncryptedValue
   -> IO RegistrationMutationResult
 storeXIdentityAndRefreshSession connection sessionDigest nextCsrfDigest nextCsrfEncrypted ttlSeconds applicationId xUserDigest encryptedXUser emailDigest emailMasked xCreatedTimestamp xUsername encryptedEmail encryptedAccessToken =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     affected <- execute connection
       "UPDATE insights_registration_applications a SET\
       \ x_user_id_digest = ?, x_user_id_key_version = ?, x_user_id_nonce = ?, x_user_id_ciphertext = ?, x_user_id_tag = ?,\
@@ -789,7 +796,7 @@ claimXFollowMaterial
   -> Text
   -> IO XFollowClaimResult
 claimXFollowMaterial connection sessionDigest targetXUserIdDigest attemptId =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug,\
       \ a.x_user_id_key_version, a.x_user_id_nonce, a.x_user_id_ciphertext, a.x_user_id_tag,\
@@ -837,7 +844,7 @@ claimXFollowMaterial connection sessionDigest targetXUserIdDigest attemptId =
         _ -> XFollowClaimUnavailable
 
 eraseXProviderSecrets :: Connection -> Text -> IO ()
-eraseXProviderSecrets connection applicationId = do
+eraseXProviderSecrets connection applicationId = withRegistrationTransaction connection $ do
   _ <- execute connection
     "UPDATE insights_registration_applications SET\
     \ x_user_id_key_version = NULL, x_user_id_nonce = NULL, x_user_id_ciphertext = NULL, x_user_id_tag = NULL,\
@@ -850,7 +857,7 @@ eraseXProviderSecrets connection applicationId = do
 -- short-lived OAuth material available for another read-only follow check.
 -- This is used when X confirms that the user has not followed the target yet.
 releaseXFollowAttempt :: Connection -> Text -> Text -> IO ()
-releaseXFollowAttempt connection applicationId attemptId = do
+releaseXFollowAttempt connection applicationId attemptId = withRegistrationTransaction connection $ do
   _ <- execute connection
     "UPDATE insights_registration_applications SET\
     \ x_follow_attempt_id=NULL, x_follow_attempt_started_at=NULL, updated_at=NOW()\
@@ -864,7 +871,7 @@ releaseXFollowAttempt connection applicationId attemptId = do
 -- authorization instead of entering a tokenless dead end. A clean
 -- "not-following" response uses 'releaseXFollowAttempt' instead.
 resetXIdentityAfterFollowFailure :: Connection -> Text -> Text -> IO ()
-resetXIdentityAfterFollowFailure connection applicationId attemptId = do
+resetXIdentityAfterFollowFailure connection applicationId attemptId = withRegistrationTransaction connection $ do
   _ <- execute connection
     "UPDATE insights_registration_applications SET\
     \ email_key_version=NULL, email_nonce=NULL, email_ciphertext=NULL, email_tag=NULL, email_digest=NULL, email_masked=NULL,\
@@ -878,7 +885,7 @@ resetXIdentityAfterFollowFailure connection applicationId attemptId = do
   pure ()
 
 confirmXFollow :: Connection -> Text -> Text -> IO Bool
-confirmXFollow connection applicationId attemptId = do
+confirmXFollow connection applicationId attemptId = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_applications a SET x_follow_attempt_id=NULL, x_follow_attempt_started_at=NULL, x_follow_verified_at = NOW(),\
     \ x_user_id_key_version = NULL, x_user_id_nonce = NULL, x_user_id_ciphertext = NULL, x_user_id_tag = NULL,\
@@ -900,7 +907,7 @@ storeWalletChallenge
   -> Integer
   -> EncryptedValue
   -> IO RegistrationMutationResult
-storeWalletChallenge connection sessionDigest nonceDigest ownerWallet expiresTimestamp encryptedMessage = do
+storeWalletChallenge connection sessionDigest nonceDigest ownerWallet expiresTimestamp encryptedMessage = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_sessions s SET wallet_nonce_digest = ?, wallet_owner = ?,\
     \ wallet_expires_at = TO_TIMESTAMP(?), wallet_message_key_version = ?, wallet_message_nonce = ?,\
@@ -926,7 +933,7 @@ storeWalletChallenge connection sessionDigest nonceDigest ownerWallet expiresTim
 
 consumeWalletChallenge :: Connection -> ByteString -> Text -> IO (Maybe WalletChallengeRow)
 consumeWalletChallenge connection sessionDigest ownerWallet =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug, s.wallet_owner,\
       \ EXTRACT(EPOCH FROM s.wallet_expires_at)::BIGINT, s.wallet_message_key_version,\
@@ -952,7 +959,7 @@ consumeWalletChallenge connection sessionDigest ownerWallet =
       _ -> Nothing
 
 storeVerifiedWallet :: Connection -> Text -> Text -> Text -> Integer -> Text -> IO RegistrationMutationResult
-storeVerifiedWallet connection applicationId ownerWallet tradingAccount verificationBlock verificationBlockHash = do
+storeVerifiedWallet connection applicationId ownerWallet tradingAccount verificationBlock verificationBlockHash = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_applications a SET owner_wallet = ?, trading_account = ?,\
     \ wallet_verification_block = ?, wallet_verification_block_hash = ?, wallet_verified_at = NOW(), updated_at = NOW()\
@@ -973,7 +980,7 @@ storeVerifiedWallet connection applicationId ownerWallet tradingAccount verifica
     else classifyApplicationMutation connection applicationId
 
 clearVerifiedWallet :: Connection -> Text -> IO Bool
-clearVerifiedWallet connection applicationId = do
+clearVerifiedWallet connection applicationId = withRegistrationTransaction connection $ do
   affected <- execute connection
     "UPDATE insights_registration_applications a SET owner_wallet=NULL, trading_account=NULL,\
     \ wallet_verification_block=NULL, wallet_verification_block_hash=NULL, wallet_verified_at=NULL, updated_at=NOW()\
@@ -1021,7 +1028,7 @@ registrationRateLimitAllowed
   -> ByteString
   -> Int
   -> IO Bool
-registrationRateLimitAllowed connection scopeDigest maximumRequests = do
+registrationRateLimitAllowed connection scopeDigest maximumRequests = withRegistrationTransaction connection $ do
   rows <- query connection
     "INSERT INTO insights_registration_rate_limits(scope_digest, window_epoch_minute, request_count)\
     \ VALUES (?, FLOOR(EXTRACT(EPOCH FROM NOW()) / 60)::BIGINT, 1)\
@@ -1103,7 +1110,7 @@ completeRegistration
   -> Text
   -> IO CompletionResult
 completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRulesVersion acceptedPrivacyVersion acceptPromotionalEmail expectedOwner expectedAccount completionProofBlock completionProofHash = do
-  result <- try @SqlError $ withTransaction connection $ do
+  result <- try @SqlError $ withRegistrationTransaction connection $ do
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug, a.status, a.x_username, a.owner_wallet, a.trading_account,\
       \ a.x_identity_verified_at IS NOT NULL, a.x_follow_verified_at IS NOT NULL, a.wallet_verified_at IS NOT NULL,\
@@ -1238,7 +1245,7 @@ reencryptRegistrationEmails
   -> [(Text, EncryptedValue)]
   -> IO Int64
 reencryptRegistrationEmails connection oldVersion rows =
-  withTransaction connection $ do
+  withRegistrationTransaction connection $ do
     counts <- mapM updateOne rows
     pure $ sum counts
   where

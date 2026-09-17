@@ -20,7 +20,7 @@ import { TurnstileWidget } from '../components/TurnstileWidget'
 import { ErrorState, LoadingState, Panel } from '../components/ui'
 import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCountdown, formatUtc, shortAddress, xProfileUrl } from '../utils/format'
-import { registrationErrorCodeMessage, registrationErrorMessage, safeXAuthorizationUrl } from '../utils/registration'
+import { registrationErrorCodeMessage, registrationErrorMessage, registrationNeedsRecovery, safeXAuthorizationUrl } from '../utils/registration'
 
 const configuredTurnstileSiteKey = typeof import.meta.env.VITE_TURNSTILE_SITE_KEY === 'string'
   ? import.meta.env.VITE_TURNSTILE_SITE_KEY.trim()
@@ -248,6 +248,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       updateRegistration(await createRegistrationSession(slug, turnstileToken))
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
+      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
       setTurnstileToken(null)
       setTurnstileReset((value) => value + 1)
     } finally {
@@ -267,6 +268,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       )
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
+      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
       setPendingAction(null)
     }
   }
@@ -307,6 +309,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       ])
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
+      if (registrationNeedsRecovery(caught)) await sessionQuery.refetch()
     } finally {
       setPendingAction(null)
     }

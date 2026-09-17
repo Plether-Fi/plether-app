@@ -230,14 +230,39 @@ async function registrationRequest<T>(
   if (options.body) headers.set('Content-Type', 'application/json')
   if (options.csrfToken) headers.set('X-Registration-CSRF', options.csrfToken)
 
-  const response = await fetch(`${API_ROOT}${path}`, {
-    method: options.method ?? 'GET',
-    credentials: 'include',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: options.signal,
+  const controller = new AbortController()
+  const abort = () => { controller.abort(options.signal?.reason) }
+  options.signal?.addEventListener('abort', abort, { once: true })
+  if (options.signal?.aborted) abort()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new InsightsApiError('Registration took too long. Check your session and try again.', 0, 'REGISTRATION_TIMEOUT'))
+      controller.abort()
+    }, 30_000)
   })
-  return parseResponse<T>(response)
+  try {
+    // The deadline covers both headers and body consumption.
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(`${API_ROOT}${path}`, {
+          method: options.method ?? 'GET',
+          credentials: 'include',
+          headers,
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal,
+        })
+        return await parseResponse<T>(response)
+      })(),
+      deadline,
+    ])
+  } catch (error) {
+    if (error instanceof InsightsApiError || options.signal?.aborted) throw error
+    throw new InsightsApiError('The registration connection was interrupted. Check your session before retrying.', 0, 'REGISTRATION_NETWORK_ERROR')
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abort)
+  }
 }
 
 function registrationBase(slug: string): string {

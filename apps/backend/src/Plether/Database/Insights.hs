@@ -1911,7 +1911,10 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
       fail "Cannot publish a mixed-block or mixed-competition Insights snapshot batch"
     unless (length inputWallets == length (nub inputWallets)) $
       fail "Cannot publish an Insights snapshot batch with duplicate wallets"
-    mutable <- competitionIsMutableForUpdate conn slug
+    mutableRows <- query conn
+      "SELECT NOT finalized FROM insights_competitions WHERE slug = ? FOR NO KEY UPDATE"
+      (Only slug)
+    let mutable = mutableRows == [Only True]
     unless mutable $
       fail "Cannot publish an account snapshot batch: the competition is missing or finalized"
     cursorReady <- query conn
