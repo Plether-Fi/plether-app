@@ -74,8 +74,8 @@ Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published)
 (lock_wait_ms, lock_held_ms), `insights_integrity_freshness` (age_seconds),
 `insights_integrity_skipped`, `insights_integrity_failed`,
 `registration_database_work` (duration_ms), and `registration_database_busy`
-(sql_state). Snapshot lock-held metrics include commit and exclude SQL encoding, which is
-fully evaluated before locking. Integrity lock-held metrics end immediately before
+(sql_state). Snapshot lock-held metrics include commit and exclude loading/parsing the private
+input staging table, which completes before locking. Integrity lock-held metrics end immediately before
 commit; full integrity publication benchmarks include commit and conservatively
 bound the complete lock duration. The benchmark also measures 400 concurrent
 session creations and completion-recovery operations.
@@ -87,10 +87,23 @@ volume. Each measured snapshot publication advances to a new block. An additiona
 5,402-participant stress fixture exposed excessive snapshot index I/O (0.7–3.5s
 lock durations) and is not reported as a passing acceptance run. Snapshot publication
 now preserves unchanged rows and only deletes obsolete wallets before upserting a
-complete batch. SQL encoding occurs before locking. The activity calculation uses a
+complete batch. Loading/parsing its private input table occurs before locking. New blocks use plain INSERT; replacement blocks use a changed-row UPSERT.
+The activity calculation uses a
 materialized, release-filtered activity set to avoid one-row cardinality estimates
 that caused repeated full flow scans; the isolated original candidate took over
-99 seconds. No global planner switches or pool sizes were changed.
+99 seconds. No global planner switches or pool sizes were changed. The bounded integrity
+calculation disables JIT only transaction-locally: the isolated Linux plan showed
+about five seconds of LLVM compilation on every refresh. Assistance evidence is
+also grouped once and joined, preserving EXISTS/duplicate semantics. The archived
+July calculation remains unchanged.
+
+The first native benchmark used PostgreSQL 16 with its default 128 MB shared cache.
+Its 2,702-participant run passed calculation (p95 3.92s), integrity publication
+(36.5ms), and registration (3.3ms), but failed snapshot lock time (p95 639ms).
+The final acceptance environment is a separate localhost-only PostgreSQL 16 ARM64
+container limited to 2 CPUs and 4 GB RAM, matching Sepolia's db.t4g.medium class,
+with a 1 GB shared cache. No live or existing local-server settings were modified.
+No benchmark writes target Sepolia.
 
 Release 2 deployment, benchmark acceptance, and ten consecutive observed worker
 cycles remain rollout gates; append their measured results before completion.

@@ -970,8 +970,10 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
     wallets <- query conn "SELECT wallet FROM insights_competition_participants WHERE competition_slug=? ORDER BY wallet" (Only competitionSlug) :: IO [Only Text]
     let allWallets = [w | Only w <- wallets]
     void $ execute conn "DELETE FROM insights_registration_applications WHERE competition_slug=? AND status='in_progress'" (Only competitionSlug)
+    void $ execute conn "UPDATE insights_competitions SET registration_close_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+3600 WHERE slug=?" (Only competitionSlug)
+    void $ execute conn "UPDATE insights_registration_sessions s SET expires_at=NOW()+INTERVAL '1 hour' FROM insights_registration_applications a WHERE a.registration_id=s.application_id AND a.competition_slug=?" (Only competitionSlug)
     void $ execute conn "UPDATE insights_competition_participants SET integrity_flags='[\"benchmark_pending\"]' WHERE competition_slug=?" (Only competitionSlug)
-    void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
+    void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; SET jit=off; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
     plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
     LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
     previousBlocks <- query conn "SELECT COALESCE(MAX(block_number),?) FROM insights_snapshot_batches WHERE competition_slug=? AND snapshot_kind='live'" (liveBlock,competitionSlug) :: IO [Only Integer]
@@ -987,13 +989,17 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
           b <- getMonotonicTimeNSec
           pure (a,b)
         putMVar calculated outcome
-      forM_ [1..20 :: Int] $ \attempt -> withDb pool $ \registrationConn -> do
+      registrationOutcome <- try @SomeException $ forM_ [1..20 :: Int] $ \attempt -> withDb pool $ \registrationConn -> do
         began <- getMonotonicTimeNSec
         RegistrationBenchmark.registrationBenchmarkRoundtrip registrationConn competitionSlug (crRulesVersion testSeptemberRules) (cycleNumber*100+attempt)
         ended <- getMonotonicTimeNSec
         modifyIORef' registrationTimings (fromIntegral (ended-began)/1_000_000 :)
         threadDelay 5000
-      (a,b) <- takeMVar calculated >>= either throwIO pure
+      -- Always join the calculation before returning its leased connection,
+      -- including a failing registration assertion.
+      calculationOutcome <- takeMVar calculated
+      either throwIO pure registrationOutcome
+      (a,b) <- either throwIO pure calculationOutcome
       publicationStarted <- getMonotonicTimeNSec
       publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
       c <- getMonotonicTimeNSec
