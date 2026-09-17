@@ -84,6 +84,7 @@ COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/add
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
 COPY apps/backend/config/migrations/insights-integrity-epoch-v1.sql /app/config/migrations/insights-integrity-epoch-v1.sql
+COPY apps/backend/config/migrations/insights-snapshot-deferred-fk-v1.sql /app/config/migrations/insights-snapshot-deferred-fk-v1.sql
 COPY apps/backend/config/migrations/insights-integrity-indexes-v1.sql /app/config/migrations/insights-integrity-indexes-v1.sql
 COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql

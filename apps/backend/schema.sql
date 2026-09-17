@@ -3069,3 +3069,9 @@ BEGIN
 END $$;
 CREATE OR REPLACE TRIGGER insights_integrity_cursor_epoch AFTER UPDATE ON perps_indexer_state
 FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
+
+-- Backward compatible: existing writers still check immediately. Only the new
+-- atomic publisher explicitly defers this FK until its short publication phase.
+ALTER TABLE insights_account_snapshots
+  ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey
+  DEFERRABLE INITIALLY IMMEDIATE;

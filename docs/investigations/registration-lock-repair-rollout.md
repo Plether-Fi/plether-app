@@ -21,7 +21,14 @@ Participant listing is read-only. Snapshot publication writes complete batches
 without calculating integrity. Each worker cycle calculates once with a
 nonblocking competition-specific advisory lock, a 15-second statement limit,
 and one CTAS SQL snapshot on its own connection-local temporary table.
-Publication validates the captured input epoch and baseline under a short
+Snapshot input parsing and indexed row writes happen before the competition lock.
+The snapshot FK remains INITIALLY IMMEDIATE for existing writers; only the new
+publisher explicitly defers its checks until commit. The final lock validates the
+captured epoch, complete roster, lens, canonical cursor and mutable state, then
+publishes the batch marker atomically with all rows. A changed roster rolls the
+entire write back.
+
+Integrity publication validates the captured input epoch and baseline under a short
 FOR NO KEY UPDATE transaction (lock timeout 1 second, statement timeout 5 seconds).
 Flags update only when different, and freshness metadata commits atomically.
 Roster identity, baseline, release/boundary changes, and canonical history
@@ -43,6 +50,13 @@ report fundingIntegrityClear=false. Failed calculations preserve existing flags.
 Apply `apps/backend/config/migrations/insights-integrity-epoch-v1.sql` in one
 transaction first. Acquire the required table locks NOWAIT and retry outside the
 transaction if old workers are still calculating; never kill the blocker.
+Apply `insights-snapshot-deferred-fk-v1.sql` before starting Release 2. Its
+backward-compatible constraint property permits the new publisher to delay FK
+checks while retaining immediate checks for old writers and the rollback build.
+Acquire the snapshot table lock NOWAIT inside a bounded transaction and retry if
+necessary. Never terminate a blocker. This additional migration is pending until
+all Release 2 CI and performance gates pass.
+
 Apply `insights-integrity-indexes-v1.sql` using psql with ON_ERROR_STOP outside a
 transaction. Inspect pg_index.indisvalid for all three normalized indexes. If
 an interrupted concurrent build left an invalid index, drop only that invalid
@@ -66,7 +80,7 @@ and integration suites with the built plether-candle-admin on PATH. Opt into the
 larger fixture using `INSIGHTS_INTEGRITY_BENCHMARK=1` and Hspec match
 `benchmarks isolated integrity`; never point this destructive test at live data.
 The fixture has 2,702 participants, 162,001 activities, 91,802 transfers, and
-over two million retained snapshots. It emits twenty samples and an actual-row-count
+over two million retained snapshots. It emits sixty samples and an actual-row-count
 EXPLAIN ANALYZE plan at `/tmp/insights-integrity-benchmark-plan.json`.
 
 Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published),
@@ -75,9 +89,8 @@ Events: `insights_integrity_refresh` (calculation_ms, publication_ms, published)
 `insights_integrity_skipped`, `insights_integrity_failed`,
 `registration_database_work` (duration_ms), and `registration_database_busy`
 (sql_state). Snapshot lock-held metrics include commit and exclude loading/parsing the private
-input staging table, which completes before locking. Integrity lock-held metrics end immediately before
-commit; full integrity publication benchmarks include commit and conservatively
-bound the complete lock duration. The benchmark also measures 400 concurrent
+input staging table and indexed row writes, which complete before locking. Both snapshot and integrity lock-held metrics include commit; all metric logging
+happens after commit so log backpressure cannot extend the locks. The benchmark also measures 1,200 concurrent
 session creations and completion-recovery operations.
 No events contain tokens, wallet identities, or personal data.
 
@@ -100,6 +113,13 @@ July calculation remains unchanged.
 The first native benchmark used PostgreSQL 16 with its default 128 MB shared cache.
 Its 2,702-participant run passed calculation (p95 3.92s), integrity publication
 (36.5ms), and registration (3.3ms), but failed snapshot lock time (p95 639ms).
+A subsequent 20-cycle Linux run with private input staging passed calculation
+(p95 4.61s), integrity publication (29.1ms) and registration (10.5ms), but narrowly
+missed snapshot p95 (266ms, maximum 415ms). A 60-cycle stress run confirmed I/O
+spikes still extended the lock (snapshot p95 407ms; calculation p95 5.66s). These
+failed runs motivated moving all indexed snapshot writes before the competition
+lock with deferred FK checks, plus narrowing and combining the funding passes.
+
 The final acceptance environment is a separate localhost-only PostgreSQL 16 ARM64
 container limited to 2 CPUs and 4 GB RAM, matching Sepolia's db.t4g.medium class,
 with a 1 GB shared cache. No live or existing local-server settings were modified.

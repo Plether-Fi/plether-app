@@ -4,7 +4,7 @@ module Plether.Insights.DatabaseSpec
 
 import Control.Exception (SomeException, bracket, finally, try, throwIO)
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import qualified Plether.Insights.RegistrationDatabaseSpec as RegistrationBenchmark
 import Control.Monad (void, forM_, forM, when, unless)
 import Data.Aeson (Value (..), encode, object, toJSON, (.=), eitherDecodeFileStrict', decode)
@@ -14,6 +14,7 @@ import qualified Data.ByteString as BS
 import Database.PostgreSQL.Simple.Types (Query (..))
 import GHC.Clock (getMonotonicTimeNSec)
 import System.Environment (lookupEnv)
+import System.Timeout (timeout)
 import Data.String (fromString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -34,7 +35,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query, query_)
+import Database.PostgreSQL.Simple (Connection, Only (..), execute, execute_, query, query_, withTransaction)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.CloseAssistance
 import Plether.Database (DbPool, newDbPool, withDb, destroyDbPool)
@@ -90,6 +91,50 @@ insightsDatabaseSpec databaseUrl =
   describe "Plether Insights PostgreSQL lifecycle" $ do
     benchmark <- runIO $ lookupEnv "INSIGHTS_INTEGRITY_BENCHMARK"
     when (benchmark == Just "1") $ it "benchmarks isolated integrity at twice the incident activity volume" $ runIntegrityBenchmark databaseUrl
+    it "keeps registration unblocked during indexed snapshot writes and rejects a changed roster atomically" $
+      withInsightsDatabase databaseUrl $ \pool -> do
+        registrationWallet <- withDb pool $ \conn -> do
+          insertParticipant conn walletA "snapshot-race"
+          w <- RegistrationBenchmark.prepareRegistrationBenchmark conn competitionSlug (crRulesVersion testSeptemberRules)
+          void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=? WHERE release_router=?" (liveBlock+1,fixtureRouter)
+          publishAccountSnapshotBatch conn [snapshot wallet SnapshotLive liveBlock liveHash liveTimestamp bankroll | wallet <- [walletA,w]]
+          void $ execute_ conn "CREATE FUNCTION test_hold_snapshot_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='snapshot-write-concurrency-test' THEN PERFORM pg_sleep(3); END IF; RETURN NULL; END $$"
+          void $ execute_ conn "CREATE TRIGGER test_hold_snapshot_write AFTER INSERT ON insights_account_snapshots FOR EACH STATEMENT EXECUTE FUNCTION test_hold_snapshot_write()"
+          pure w
+        let cleanup = withDb pool $ \conn -> do
+              void $ execute_ conn "DROP TRIGGER IF EXISTS test_hold_snapshot_write ON insights_account_snapshots"
+              void $ execute_ conn "DROP FUNCTION IF EXISTS test_hold_snapshot_write()"
+        (do
+          finished <- newEmptyMVar
+          void $ forkIO $ do
+            result <- try @SomeException $ withDb pool $ \conn -> do
+              void $ execute_ conn "SET application_name='snapshot-write-concurrency-test'"
+              publishAccountSnapshotBatch conn [snapshot wallet SnapshotLive (liveBlock+1) liveHash liveTimestamp (bankroll+gain) | wallet <- [walletA,registrationWallet]]
+                `finally` void (execute_ conn "RESET application_name")
+            putMVar finished result
+          registrationOutcome <- try @SomeException $ do
+            let waitForWrite = do
+                  running <- withDb pool $ \conn -> query_ conn "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='snapshot-write-concurrency-test' AND wait_event='PgSleep')" :: IO [Only Bool]
+                  if running == [Only True] then pure () else threadDelay 10_000 >> waitForWrite
+            timeout 2_000_000 waitForWrite `shouldReturn` Just ()
+            outcome <- timeout 1_000_000 $ withDb pool $ \conn -> do
+              RegistrationBenchmark.registrationBenchmarkRoundtrip conn competitionSlug (crRulesVersion testSeptemberRules) 99
+              withTransaction conn $ do
+                void (query conn "SELECT slug FROM insights_competitions WHERE slug=? FOR UPDATE" (Only competitionSlug) :: IO [Only Text])
+                insertParticipant conn walletB "concurrent-registration"
+              query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock+1) `shouldReturn` [Only (0 :: Int)]
+            outcome `shouldBe` Just ()
+            stillRunning <- tryReadMVar finished
+            case stillRunning of Nothing -> pure (); Just _ -> expectationFailure "registration must finish before indexed snapshot writes are released"
+          publicationOutcome <- takeMVar finished
+          either throwIO pure registrationOutcome
+          case publicationOutcome of Left _ -> pure (); Right () -> expectationFailure "publication must reject the changed epoch"
+          withDb pool $ \conn -> do
+            query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock+1) `shouldReturn` [Only (0 :: Int)]
+            query conn "SELECT COUNT(*) FROM insights_snapshot_batches WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock+1) `shouldReturn` [Only (0 :: Int)]
+            query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock) `shouldReturn` [Only (2 :: Int)]
+          ) `finally` cleanup
+
     it "requires a fresh authoritative calculation for eligibility approval" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         insertParticipant conn walletA "review-a"
@@ -944,6 +989,7 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
       pure $ rows == [Only True]
   unless reuse $ prepareDatabase pool
   withDb pool $ \conn -> do
+    void $ execute_ conn "ALTER TABLE insights_account_snapshots ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey DEFERRABLE INITIALLY IMMEDIATE"
     indexRows <- query_ conn "SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname IN ('idx_insights_transfers_normalized_inbound','idx_insights_transfers_normalized_outbound','idx_insights_transfers_normalized_transaction') AND i.indisvalid" :: IO [Only Int]
     unless (indexRows == [Only 3]) $ do
       indexes <- readFile "config/migrations/insights-integrity-indexes-v1.sql"

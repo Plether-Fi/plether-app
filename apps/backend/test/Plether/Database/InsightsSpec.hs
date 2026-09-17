@@ -128,7 +128,7 @@ spec = do
       queryContains integrityCalculationSql "fc.amount = p.starting_balance_usdc"
       queryContains integrityCalculationSql "JOIN perps_usdc_transfers x"
       queryContains integrityCalculationSql
-        "ROW(f.block_number, f.tx_index, f.log_index) > ROW(m.block_number, m.tx_index, m.log_index)"
+        "ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)"
       queryContains integrityCalculationSql "d.transfer_log_index = x.log_index"
       queryContains integrityCalculationSql "official_funds_left_before_allocation"
       queryContains leaderboardQuerySql "jsonb_array_length(integrity_flags) = 0"

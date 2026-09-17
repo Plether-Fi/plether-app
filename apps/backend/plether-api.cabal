@@ -10,6 +10,7 @@ category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
                     config/migrations/insights-integrity-epoch-v1.sql
+                    config/migrations/insights-snapshot-deferred-fk-v1.sql
                     config/migrations/insights-integrity-indexes-v1.sql
                     test/fixtures/insights-funding-integrity-baseline.sql
 
