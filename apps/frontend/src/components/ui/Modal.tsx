@@ -226,7 +226,7 @@ export function Modal({
         className={`
           relative flex max-h-dvh w-full ${sizeStyles[size]} flex-col
           bg-surface-panel  border border-brand-border/50
-          pb-[env(safe-area-inset-bottom)] sm:max-h-[calc(100dvh-2rem)] sm:pb-0
+          sm:max-h-[calc(100dvh-2rem)]
           ${contentClassName}
         `}
         role="dialog"
@@ -266,9 +266,11 @@ export function Modal({
         ) : null}
 
         {/* Body */}
-        <div className={`min-h-0 overflow-y-auto overscroll-contain ${bodyClassName}`}>{children}</div>
+        <div className={`min-h-0 overflow-y-auto overscroll-contain ${footer ? '' : 'pb-[env(safe-area-inset-bottom)] sm:pb-0'}`}>
+          <div className={bodyClassName}>{children}</div>
+        </div>
         {footer ? (
-          <div className="shrink-0 border-t border-brand-border/30 bg-surface-panel panel-padding-x py-4">
+          <div className="shrink-0 border-t border-brand-border/30 bg-surface-panel panel-padding-x pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4">
             {footer}
           </div>
         ) : null}
