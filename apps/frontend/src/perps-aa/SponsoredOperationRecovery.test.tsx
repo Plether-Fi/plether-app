@@ -32,6 +32,7 @@ import { PreparedOperationRecovery } from './PreparedOperationRecovery'
 import { createWalletPreparationRecovery, recoveryChallengeMessage } from './walletRecovery'
 import { recoveryFetch, resetRecoveryCredentialsForTests } from './recoveryTransport'
 import { preparationIdentifier } from './nativePreparation'
+import { requestOperationRecovery } from './requestOperationRecovery'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -169,6 +170,28 @@ function beginHashOperation(input: {
 }
 
 describe('SponsoredOperationRecovery', () => {
+  it('deduplicates explicit checks and preserves a live submission lock', async () => {
+    beginHashOperation({ id: 'manual-check', operation: signedOperation() })
+    useSponsoredOperationStore.getState().exhaustAutomaticRecovery('manual-check', Date.now())
+    let complete!: (snapshot: SponsoredOperationRecoverySnapshot) => void
+    const getRecoverySnapshot = vi.fn(() => new Promise<SponsoredOperationRecoverySnapshot>(resolve => { complete = resolve }))
+    const runtime = runtimeValue({ getRecoverySnapshot })
+    const view = render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await act(async () => {})
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+    expect(await requestOperationRecovery('manual-check')).toBe('unavailable')
+    expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+    await act(async () => { complete({ blockNumber: 123n, blockTimestamp: 2000n, accountNonce: 7n,
+      userOperationEvidence: { kind: 'inconclusive' } }) })
+    createSponsoredOperationSignal('manual-check')
+    try {
+      expect(await requestOperationRecovery('manual-check')).toBe('unavailable')
+      expect(getRecoverySnapshot).toHaveBeenCalledOnce()
+      expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('manual-check')
+      expect(runtime.smartAccount.signUserOperation).not.toHaveBeenCalled()
+      expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    } finally { releaseSponsoredOperationSignal('manual-check'); view.unmount() }
+  })
   it('keeps the lane blocked and backs off pending evidence without interpreting it as a missing receipt', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let clock = 1000
@@ -222,7 +245,7 @@ describe('SponsoredOperationRecovery', () => {
 
   it.each([true, false])('restores signed-attempt receipt access after explicit owner verification; safe evidence available: %s', async safeEvidence => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    let clock = 1000
+    const clock = 1000
     const started = Date.now()
     vi.spyOn(performance, 'now').mockImplementation(() => clock)
     vi.spyOn(Date, 'now').mockImplementation(() => started + clock)
@@ -287,11 +310,14 @@ describe('SponsoredOperationRecovery', () => {
     expect(signMessage).not.toHaveBeenCalled()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Verify wallet to recover' })) })
     expect(signMessage).toHaveBeenCalledOnce()
-    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(id)
+    // Verification restores the receipt capability, then immediately requests
+    // canonical recovery without waiting for the 60-second background interval.
+    expect(getRecoverySnapshot).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: /Discard|Resume/ })).not.toBeInTheDocument()
-    clock += 60_000
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-    await waitFor(() => expect(getRecoverySnapshot).toHaveBeenCalledTimes(2))
+    if (!safeEvidence) {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check recovery again' })) })
+      expect(getRecoverySnapshot).toHaveBeenCalledTimes(3)
+    }
     await useSponsoredOperationStore.persist.rehydrate()
     expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(safeEvidence ? undefined : id)
     expect(useSponsoredOperationStore.getState().operations[0].status).toBe(safeEvidence ? 'expired' : 'receipt-timeout')

@@ -5,6 +5,8 @@ import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-a
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
 import deployedManifest from '../../../public/perps-aa-manifest.json'
 
+vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => ({ orderHistory: [], refetch: vi.fn() }) }))
+
 const identityMocks = vi.hoisted(() => ({
   ownerAddress: '0x1111111111111111111111111111111111111111',
   accountAddress: '0x2222222222222222222222222222222222222222',
@@ -680,7 +682,7 @@ describe('SponsoredOperationHistoryButton', () => {
 
     expect(screen.getByText('Expired')).toBeInTheDocument()
     expect(screen.getByText(
-      'This operation expired before it was included onchain. It is safe to retry the action.'
+      'Transaction didn’t go through'
     )).toBeInTheDocument()
     expect(screen.getByText('Not included · No network gas used'))
       .toBeInTheDocument()
