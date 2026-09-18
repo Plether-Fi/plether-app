@@ -1765,6 +1765,194 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
+  it('restarts a shared price/volume request after an immediate hide/show without duplicate callbacks', async () => {
+    let visibility: DocumentVisibilityState = 'visible'
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    const pending = deferredValue<Response>()
+    const response = () => new Response(JSON.stringify({
+      data: candlePage(90_000, [rawCandle(64_920)]),
+      meta: { blockNumber: 1, cached: false, chainId: 421_614 },
+    }), { headers: { 'Content-Type': 'application/json' } })
+    let firstSignal: AbortSignal | null | undefined
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce((_input, init) => {
+        firstSignal = init?.signal
+        return pending.promise
+      })
+      .mockImplementation(async () => response())
+    const feed = new PletherDxyDatafeed({})
+    const onPrice = vi.fn()
+    const onVolume = vi.fn()
+    const onError = vi.fn()
+    const params = { from: 0, to: 65_000, countBack: 1, firstDataRequest: false }
+    try {
+      feed.getBars({} as TradingViewSymbolInfo, '1', params, onPrice, onError)
+      feed.getBars({ ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL } as TradingViewSymbolInfo, '1', params, onVolume, onError)
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce())
+      visibility = 'hidden'
+      document.dispatchEvent(new Event('visibilitychange'))
+      visibility = 'visible'
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(firstSignal?.aborted).toBe(true)
+      await vi.waitFor(() => {
+        expect(onPrice).toHaveBeenCalledOnce()
+        expect(onVolume).toHaveBeenCalledOnce()
+      })
+      pending.resolve(response())
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+      expect(onPrice).toHaveBeenCalledOnce()
+      expect(onVolume).toHaveBeenCalledOnce()
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      feed.destroy()
+      pending.resolve(response())
+      fetchSpy.mockRestore()
+      visibilitySpy.mockRestore()
+    }
+  })
+
+  describe.each([
+    ['price', {} as TradingViewSymbolInfo],
+    ['directional volume', { ticker: PLDXY_DIRECTIONAL_VOLUME_SYMBOL } as TradingViewSymbolInfo],
+  ])('%s history visibility', (_name, symbolInfo) => {
+    it('defers an initial hidden-tab load until visible without reporting an error', async () => {
+      let visibility: DocumentVisibilityState = 'hidden'
+      const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+      const getCandlePage = vi.fn(async () => candlePage(90_000, [rawCandle(64_920)]))
+      const feed = new PletherDxyDatafeed({ dataSource: dataSource({ getCandlePage }) })
+      const onResult = vi.fn()
+      const onError = vi.fn()
+      try {
+        feed.getBars(symbolInfo, '1', { from: 0, to: 65_000, countBack: 1, firstDataRequest: true }, onResult, onError)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        expect(getCandlePage).not.toHaveBeenCalled()
+        expect(onResult).not.toHaveBeenCalled()
+        expect(onError).not.toHaveBeenCalled()
+
+        visibility = 'visible'
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce())
+        expect(onResult.mock.calls[0]?.[0]).toHaveLength(1)
+        expect(getCandlePage).toHaveBeenCalledOnce()
+        expect(onError).not.toHaveBeenCalled()
+      } finally {
+        feed.destroy()
+        visibilitySpy.mockRestore()
+      }
+    })
+
+    it('retries interrupted history across repeated hide/show cycles and ignores late results', async () => {
+      let visibility: DocumentVisibilityState = 'visible'
+      const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+      const requests: { signal?: AbortSignal; pending: ReturnType<typeof deferredValue<PerpsBasketCandlePage>> }[] = []
+      const getCandlePage = vi.fn((_interval: number, _cursor: number, signal?: AbortSignal) => {
+        const pending = deferredValue<PerpsBasketCandlePage>()
+        requests.push({ signal, pending })
+        // Intentionally ignores cancellation, like a response already in flight.
+        return pending.promise
+      })
+      const feed = new PletherDxyDatafeed({ dataSource: dataSource({ getCandlePage }) })
+      const onResult = vi.fn()
+      const onError = vi.fn()
+      try {
+        feed.getBars(symbolInfo, '1', { from: 0, to: 65_000, countBack: 1, firstDataRequest: true }, onResult, onError)
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await vi.waitFor(() => expect(requests).toHaveLength(attempt + 1))
+          visibility = 'hidden'
+          document.dispatchEvent(new Event('visibilitychange'))
+          expect(requests[attempt]?.signal?.aborted).toBe(true)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          expect(onError).not.toHaveBeenCalled()
+          expect(getCandlePage).toHaveBeenCalledTimes(attempt + 1)
+          visibility = 'visible'
+          document.dispatchEvent(new Event('visibilitychange'))
+        }
+        await vi.waitFor(() => expect(requests).toHaveLength(3))
+        // A cancelled response must not poison generation tracking for the retry.
+        for (const request of requests.slice(0, 2)) {
+          request.pending.resolve(candlePage(90_000, [rawCandle(64_920)], { datasetGeneration: 99 }))
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        requests[2]?.pending.resolve(candlePage(90_000, [rawCandle(64_920)]))
+        await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce())
+        expect(onResult.mock.calls[0]?.[0]).toHaveLength(1)
+        expect(onError).not.toHaveBeenCalled()
+        expect(getCandlePage).toHaveBeenCalledTimes(3)
+      } finally {
+        feed.destroy()
+        for (const request of requests) request.pending.resolve(candlePage(90_000, []))
+        visibilitySpy.mockRestore()
+      }
+    })
+
+    it('disposes hidden pending history without callbacks or a later restart', async () => {
+      let visibility: DocumentVisibilityState = 'hidden'
+      const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+      const getCandlePage = vi.fn(async () => candlePage(90_000, [rawCandle(64_920)]))
+      const feed = new PletherDxyDatafeed({ dataSource: dataSource({ getCandlePage }) })
+      const onResult = vi.fn()
+      const onError = vi.fn()
+      try {
+        feed.getBars(symbolInfo, '1', { from: 0, to: 65_000, countBack: 1, firstDataRequest: true }, onResult, onError)
+        feed.destroy()
+        visibility = 'visible'
+        document.dispatchEvent(new Event('visibilitychange'))
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        expect(getCandlePage).not.toHaveBeenCalled()
+        expect(onResult).not.toHaveBeenCalled()
+        expect(onError).not.toHaveBeenCalled()
+      } finally {
+        feed.destroy()
+        visibilitySpy.mockRestore()
+      }
+    })
+
+    it('still reports real request errors rather than retrying them as visibility pauses', async () => {
+      const getCandlePage = vi.fn(async () => { throw new DOMException('upstream aborted', 'AbortError') })
+      const feed = new PletherDxyDatafeed({ dataSource: dataSource({ getCandlePage }) })
+      const onResult = vi.fn()
+      const onError = vi.fn()
+      try {
+        feed.getBars(symbolInfo, '1', { from: 0, to: 65_000, countBack: 1, firstDataRequest: true }, onResult, onError)
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledExactlyOnceWith('upstream aborted'))
+        expect(getCandlePage).toHaveBeenCalledOnce()
+        expect(onResult).not.toHaveBeenCalled()
+      } finally {
+        feed.destroy()
+      }
+    })
+
+    it('does not resume or deliver callbacks when destroyed during an interrupted load', async () => {
+      let visibility: DocumentVisibilityState = 'visible'
+      const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+      const pending = deferredValue<PerpsBasketCandlePage>()
+      const getCandlePage = vi.fn(() => pending.promise)
+      const feed = new PletherDxyDatafeed({ dataSource: dataSource({ getCandlePage }) })
+      const onResult = vi.fn()
+      const onError = vi.fn()
+      try {
+        feed.getBars(symbolInfo, '1', { from: 0, to: 65_000, countBack: 1, firstDataRequest: true }, onResult, onError)
+        await vi.waitFor(() => expect(getCandlePage).toHaveBeenCalledOnce())
+        visibility = 'hidden'
+        document.dispatchEvent(new Event('visibilitychange'))
+        // Destroy before the aborted attempt's rejection continuation runs.
+        feed.destroy()
+        visibility = 'visible'
+        document.dispatchEvent(new Event('visibilitychange'))
+        pending.resolve(candlePage(90_000, [rawCandle(64_920)]))
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        expect(getCandlePage).toHaveBeenCalledOnce()
+        expect(onResult).not.toHaveBeenCalled()
+        expect(onError).not.toHaveBeenCalled()
+      } finally {
+        feed.destroy()
+        pending.resolve(candlePage(90_000, []))
+        visibilitySpy.mockRestore()
+      }
+    })
+  })
+
   it('pauses v2 current-candle polling while hidden and aborts it when visibility changes', async () => {
     let visibilityState: DocumentVisibilityState = 'hidden'
     const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(

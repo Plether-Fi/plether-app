@@ -554,15 +554,18 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
   private readonly requestControllers = new Set<AbortController>()
+  private readonly visibilityWaiters = new Set<() => void>()
+  private readonly visibilityPauseReason = new DOMException('Chart loading paused', 'AbortError')
   private readonly handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
       for (const subscription of this.subscriptions.values()) {
         this.stopSubscriptionTimer(subscription)
       }
-      for (const controller of this.requestControllers) controller.abort()
+      for (const controller of this.requestControllers) controller.abort(this.visibilityPauseReason)
       return
     }
 
+    this.releaseVisibilityWaiters()
     for (const [listenerGuid, subscription] of this.subscriptions) {
       this.startSubscriptionTimer(listenerGuid, subscription)
       void this.pollSubscription(listenerGuid)
@@ -639,15 +642,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     onResult: (bars: TradingViewBar[], metadata: { noData: boolean }) => void,
     onError: (message: string) => void
   ): void {
-    if (!this.isDocumentVisible()) {
-      setTimeout(() => {
-        if (!this.destroyed) onError('Chart data loading is paused while this tab is hidden')
-      }, 0)
-      return
-    }
-
     const seriesKind = seriesKindForSymbol(symbolInfo)
-    void this.runRequest((signal) => this.loadCandleBars(resolution, periodParams, seriesKind, signal))
+    void this.runHistoryRequest((signal) => this.loadCandleBars(resolution, periodParams, seriesKind, signal))
       .then((bars) => {
         setTimeout(() => {
           if (!this.destroyed) {
@@ -717,6 +713,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     for (const controller of this.requestControllers) controller.abort()
     this.requestControllers.clear()
+    this.releaseVisibilityWaiters()
   }
 
   private async loadCandleBars(
@@ -785,9 +782,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
           throw new Error('The Perps candle history request budget was exhausted')
         }
         pageRequestCount += 1
-        return revalidate
+        const request = revalidate
           ? getCandlePage(intervalSeconds, cursor, signal, true)
           : getCandlePage(intervalSeconds, cursor, signal)
+        // A cancelled transport may still settle. Do not let an abandoned
+        // history attempt update shared generation/coverage state after resume.
+        return awaitWithAbort(request, signal)
       }
       let page = await loadPage(forceRevalidate)
       this.validateCandlePage(page, intervalSeconds, cursor)
@@ -912,9 +912,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     let primedCurrentBar: TradingViewBar | undefined
     if (currentCandleRequest) {
-      const currentResponse = await settleWithin(
-        currentCandleRequest,
-        INITIAL_CURRENT_CANDLE_WAIT_MS
+      const currentResponse = await awaitWithAbort(
+        settleWithin(currentCandleRequest, INITIAL_CURRENT_CANDLE_WAIT_MS),
+        signal
       )
       if (currentResponse && requestGeneration !== undefined && requestIdentity !== undefined) {
         try {
@@ -1370,6 +1370,35 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
   private isDocumentVisible(): boolean {
     return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  }
+
+  private releaseVisibilityWaiters(): void {
+    for (const resume of this.visibilityWaiters) resume()
+    this.visibilityWaiters.clear()
+  }
+
+  private async runHistoryRequest<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    // TradingView treats getBars errors as terminal, including on the hidden
+    // study symbol. Keep its callback pending during a visibility pause and
+    // restart the cancelled traversal with a fresh signal on foregrounding.
+    while (!this.destroyed) {
+      if (!this.isDocumentVisible()) {
+        await new Promise<void>((resolve) => this.visibilityWaiters.add(resolve))
+        continue
+      }
+      let requestSignal: AbortSignal | undefined
+      try {
+        return await this.runRequest((signal) => {
+          requestSignal = signal
+          return operation(signal)
+        })
+      } catch (error: unknown) {
+        // Only our visibility cancellation is resumable. Real API failures,
+        // timeouts and unrelated aborts must still reach TradingView's onError.
+        if (!requestSignal?.aborted || requestSignal.reason !== this.visibilityPauseReason) throw error
+      }
+    }
+    throw new DOMException('Chart datafeed destroyed', 'AbortError')
   }
 
   private startSubscriptionTimer(
