@@ -140,6 +140,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   addPositionMargin: vi.fn(),
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
+  managePositionProtection: vi.fn(),
   readOrderLifecycleOutcome: vi.fn(),
   executeOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
@@ -174,6 +175,7 @@ vi.mock('../../hooks', () => ({
     addPositionMargin: perpsTradingMocks.addPositionMargin,
     prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
+    managePositionProtection: perpsTradingMocks.managePositionProtection,
     readOrderLifecycleOutcome: perpsTradingMocks.readOrderLifecycleOutcome,
     executeOrder: perpsTradingMocks.executeOrder,
     cleanupExpiredOrder: perpsTradingMocks.cleanupExpiredOrder,
@@ -2192,6 +2194,104 @@ describe('perps lifecycle labels', () => {
     })
     expect(screen.getByRole('checkbox', { name: 'Reduce only' })).toBeChecked()
     expect(screen.getByRole('dialog')).toHaveTextContent('You are closing your Long plDXY Perp position.')
+  })
+
+  const protectedPosition = {
+    exists: true, side: 0, direction: 'long' as const, size: 2_000n * 10n ** 18n,
+    entryPrice: 98_300_000n, marginUsdc: 400_000_000n, unrealizedPnlUsdc: 0n,
+    estimatedNotionalUsdc: 1_966_000_000n, dxyExposureUsdc: 2_034_000_000n,
+    maintenanceMarginUsdc: 20_000_000n, liquidatable: false,
+  }
+  const closeProtection = {
+    protectionId: 7n, parentOrderId: 12n, linkedOrderId: 0n, account: V2_ACCOUNT,
+    side: 0, size: protectedPosition.size, takeProfitTriggerPrice: 90_000_000n,
+    stopLossTriggerPrice: 110_000_000n, triggerBountyUsdc: 200_000n,
+    executionBountyUsdc: 200_000n, armedAt: 0n, armedBlock: 0n, triggerMarkPrice: 0n,
+    triggerPublishTime: 0n, triggeredLeg: 0, status: 2,
+  }
+  const protectedCloseProps = {
+    enableLiveTrading: true, closePositionRequestId: 1, currentPosition: protectedPosition,
+    oraclePriceRaw: 98_300_000n, oraclePublishTime: 1_784_705_538,
+    availableToTradeRaw: 0n, activePositionProtectionId: 7n, activePositionProtectionStatus: 2,
+  }
+
+  it('removes TP/SL before preparing a fresh close and waits for account confirmation', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true, remainingSize: 0n, remainingMargin: 0n } }]
+    const prepared = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue({
+      ...prepared, request: { ...prepared.request, sizeDelta: protectedPosition.size, isClose: true, marginDelta: 0n },
+    })
+    let finishRemoval!: () => void
+    perpsTradingMocks.managePositionProtection.mockReturnValue(new Promise<void>(resolve => { finishRemoval = resolve }))
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    const view = render(<PerpsTradeTicket {...protectedCloseProps} onAccountRefresh={refresh} />)
+    expect(screen.getByRole('dialog')).toHaveTextContent('Remove TP/SL before closing')
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL and continue' }))
+    expect(perpsTradingMocks.managePositionProtection).toHaveBeenCalledExactlyOnceWith({ action: 'cancel', protectionId: 7n })
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
+    await act(async () => { finishRemoval() })
+    expect(refresh).toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent('Waiting for your account to refresh')
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
+    view.rerender(<PerpsTradeTicket {...protectedCloseProps} activePositionProtectionId={0n} activePositionProtectionStatus={0} onAccountRefresh={refresh} />)
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled() })
+    expect(screen.getByRole('dialog')).toHaveTextContent('TP/SL removed. Review and confirm your close order below.')
+    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await waitFor(() => { expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce() })
+    expect(perpsTradingMocks.commitOrder.mock.calls[0][0]).toMatchObject({ isClose: true, sizeDelta: protectedPosition.size })
+  })
+
+  it('keeps the close blocked after TP/SL removal fails and allows retry', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    perpsTradingMocks.managePositionProtection.mockRejectedValueOnce(new Error('Wallet rejected removal'))
+      .mockReturnValue(new Promise(() => {}))
+    render(<PerpsTradeTicket {...protectedCloseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL and continue' }))
+    await waitFor(() => { expect(screen.getByRole('alert')).toHaveTextContent('Wallet rejected removal') })
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL and continue' }))
+    expect(perpsTradingMocks.managePositionProtection).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries account refresh without removing TP/SL twice', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    perpsTradingMocks.managePositionProtection.mockResolvedValue({ protectionId: 7n })
+    const refresh = vi.fn().mockRejectedValueOnce(new Error('Account refresh failed')).mockResolvedValue(undefined)
+    render(<PerpsTradeTicket {...protectedCloseProps} onAccountRefresh={refresh} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove TP/SL and continue' }))
+    await waitFor(() => { expect(screen.getByRole('alert')).toHaveTextContent('Account refresh failed') })
+    expect(screen.queryByRole('button', { name: 'Remove TP/SL and continue' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh account' }))
+    await waitFor(() => { expect(refresh).toHaveBeenCalledTimes(2) })
+    expect(perpsTradingMocks.managePositionProtection).toHaveBeenCalledOnce()
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
+  })
+
+  it.each([2, 3, 8])('allows closing only untriggered TP/SL (status %s)', status => {
+    render(<PerpsAccountPanel isConnected position={protectedPosition} positionProtection={{ ...closeProtection, status }} onClosePosition={() => {}} />)
+    if (status === 2) expect(screen.getByRole('button', { name: 'Close position' })).toBeEnabled()
+    else expect(screen.getByRole('button', { name: 'Close position' })).toBeDisabled()
+  })
+
+  it.each([3, 8])('blocks a direct close when TP/SL has already triggered (status %s)', status => {
+    render(<PerpsTradeTicket {...protectedCloseProps} activePositionProtectionStatus={status} />)
+    expect(screen.queryByRole('button', { name: 'Remove TP/SL and continue' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    expect(perpsTradingMocks.managePositionProtection).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.prepareOrder).not.toHaveBeenCalled()
   })
 
   it('keeps a position-panel full close valid when the oracle price refreshes', async () => {
