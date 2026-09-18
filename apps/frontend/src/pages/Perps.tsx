@@ -289,6 +289,7 @@ export function Perps() {
             ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
             activePositionProtectionId={perpsAccount.activePositionProtectionId}
+            activePositionProtectionStatus={perpsAccount.activePositionProtectionStatus}
             protectionConfiguration={protectionConfiguration}
             protectionCapPrice={perpsAccount.capPrice}
             maxPendingOrders={perpsAccount.maxPendingOrders}
