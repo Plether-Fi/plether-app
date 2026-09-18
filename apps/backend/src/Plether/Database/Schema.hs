@@ -5017,6 +5017,11 @@ insertPerpsUsdcTransfer conn chainId releaseRouter tokenAddress fromAddress toAd
     fail "Canonical USDC transfer conflicts with a previously indexed event identity"
 
 perpsOrderBaseSelectSql :: Query
+-- Reconstruct lifetime accounting independently of the history page limit.
+-- Walk back from the close's remaining size to its opening. Balance changes
+-- across that interval include carry paid between trades; subtract external
+-- deposits and withdrawals, and retain claims so settling them is value-neutral.
+-- Missing receipts or an incomplete position history leave totals absent.
 perpsOrderBaseSelectSql =
   "SELECT o.order_id, o.order_router, o.account, o.side, o.commit_tx_hash, o.commit_block_number, o.commit_timestamp, \
   \o.terminal_tx_hash, o.terminal_block_number, terminal_event.block_hash, o.terminal_timestamp, o.terminal_status, o.failure_reason, \
@@ -5028,7 +5033,9 @@ perpsOrderBaseSelectSql =
   \  WHEN o.receipt_economics->>'executionBountyUsdc' IS NOT NULL THEN o.receipt_economics \
   \  WHEN intent_event.execution_bounty_usdc IS NULL THEN o.receipt_economics \
   \  ELSE o.receipt_economics || jsonb_build_object('executionBountyUsdc', intent_event.execution_bounty_usdc) \
-  \END, o.cleanup_actor, \
+  \END || CASE WHEN position_vpi.total_vpi_usdc IS NULL THEN '{}'::jsonb \
+  \  ELSE jsonb_build_object('totalPositionVpiUsdc', position_vpi.total_vpi_usdc::text) END \
+  \  || COALESCE(position_vpi.lifetime_accounting, '{}'::jsonb) AS receipt_economics, o.cleanup_actor, \
   \a.activity_type, a.size_delta, a.price, a.vpi_usdc, a.pnl_usdc, \
   \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
   \FROM perps_orders o \
@@ -5056,7 +5063,7 @@ perpsOrderBaseSelectSql =
   \  ORDER BY e.block_number DESC, e.tx_index DESC, e.log_index DESC LIMIT 1\
   \) intent_event ON TRUE \
   \LEFT JOIN LATERAL (\
-  \  SELECT activity_type, size_delta, price, (data->>'vpiUsdc')::numeric AS vpi_usdc, pnl_usdc \
+  \  SELECT activity_type, size_delta, price, a.block_number, a.log_index, (data->>'vpiUsdc')::numeric AS vpi_usdc, pnl_usdc \
   \  FROM perps_account_activity a \
   \  WHERE a.chain_id = o.chain_id AND a.release_router = o.order_router AND a.account = o.account AND a.tx_hash = o.terminal_tx_hash \
   \    AND o.terminal_status = 'Executed' AND terminal_event.log_index IS NOT NULL \
@@ -5065,6 +5072,71 @@ perpsOrderBaseSelectSql =
   \    AND (previous_terminal_event.log_index IS NULL OR a.log_index > previous_terminal_event.log_index) \
   \  ORDER BY a.log_index DESC LIMIT 1\
   \) a ON TRUE \
+  \LEFT JOIN LATERAL ( \
+  \  WITH history AS ( \
+  \    SELECT h.*, ROW_NUMBER() OVER w AS sequence, \
+  \      (o.receipt_economics->>'postPositionSize')::numeric - SUM( \
+  \        CASE WHEN h.activity_type = 'Open' THEN h.size_delta ELSE -h.size_delta END \
+  \      ) OVER w AS pre_size \
+  \    FROM perps_account_activity h \
+  \    WHERE a.activity_type = 'Close' \
+  \      AND h.chain_id = o.chain_id AND h.release_router = o.order_router AND h.account = o.account \
+  \      AND h.activity_type IN ('Open', 'Close', 'Liquidated') \
+  \      AND (h.block_number, h.log_index) <= (a.block_number, a.log_index) \
+  \    WINDOW w AS (ORDER BY h.block_number DESC, h.log_index DESC ROWS UNBOUNDED PRECEDING) \
+  \  ), boundary AS ( \
+  \    SELECT MIN(sequence) AS sequence FROM history WHERE pre_size = 0 AND activity_type = 'Open' \
+  \  ), lifetime AS ( \
+  \    SELECT h.*, receipt.economics, \
+  \      CASE WHEN h.sequence = 1 THEN o.receipt_economics->>'vpiUsdc' \
+  \        ELSE receipt.economics->>'vpiUsdc' END AS vpi \
+  \    FROM history h CROSS JOIN boundary b \
+  \    LEFT JOIN LATERAL ( \
+  \      SELECT e.data->'economics' AS economics \
+  \      FROM perps_events e \
+  \      WHERE e.chain_id = h.chain_id AND e.release_router = h.release_router AND e.account = h.account \
+  \        AND e.tx_hash = h.tx_hash AND e.block_number = h.block_number \
+  \        AND e.event_name = 'OrderFinalized' AND e.log_index > h.log_index \
+  \      ORDER BY e.log_index ASC LIMIT 1 \
+  \    ) receipt ON TRUE \
+  \    WHERE h.sequence <= b.sequence \
+  \  ), validated AS ( \
+  \    SELECT *, COALESCE(pre_size >= 0 AND size_delta > 0 AND side = o.side \
+  \      AND activity_type IN ('Open', 'Close') \
+  \      AND (economics->>'postPositionSize')::numeric = pre_size \
+  \        + CASE WHEN activity_type = 'Open' THEN size_delta ELSE -size_delta END, FALSE) AS size_valid, \
+  \      NOT EXISTS (SELECT 1 FROM unnest(ARRAY['preSettlementBalanceUsdc', 'postSettlementBalanceUsdc', \
+  \        'preTraderClaimBalanceUsdc', 'postTraderClaimBalanceUsdc']) key \
+  \        WHERE NOT COALESCE(economics->>key ~ '^[0-9]+$', FALSE)) AS balances_valid \
+  \    FROM lifetime \
+  \  ), funding AS ( \
+  \    SELECT COALESCE(SUM(CASE WHEN f.activity_type = 'Deposit' THEN f.amount_usdc ELSE -f.amount_usdc END), 0) AS net, \
+  \      COALESCE(BOOL_AND(f.amount_usdc IS NOT NULL AND f.amount_usdc >= 0), TRUE) AS valid \
+  \    FROM perps_account_activity f \
+  \    WHERE f.chain_id = o.chain_id AND f.release_router = o.order_router AND f.account = o.account \
+  \      AND f.activity_type IN ('Deposit', 'Withdraw') \
+  \      AND (f.block_number, f.log_index) > (SELECT block_number, log_index FROM lifetime ORDER BY sequence DESC LIMIT 1) \
+  \      AND (f.block_number, f.log_index) < (o.terminal_block_number, terminal_event.log_index) \
+  \  ), accounting AS ( \
+  \    SELECT COUNT(*) > 0 AND BOOL_AND(size_valid AND balances_valid) AS valid, \
+  \      SUM((economics->>'postSettlementBalanceUsdc')::numeric - (economics->>'preSettlementBalanceUsdc')::numeric \
+  \        + (economics->>'postTraderClaimBalanceUsdc')::numeric - (economics->>'preTraderClaimBalanceUsdc')::numeric) AS trades_net, \
+  \      (o.receipt_economics->>'postSettlementBalanceUsdc')::numeric \
+  \        + (o.receipt_economics->>'postTraderClaimBalanceUsdc')::numeric \
+  \        - (ARRAY_AGG((economics->>'preSettlementBalanceUsdc')::numeric ORDER BY sequence DESC))[1] \
+  \        - (ARRAY_AGG((economics->>'preTraderClaimBalanceUsdc')::numeric ORDER BY sequence DESC))[1] \
+  \        - (SELECT net FROM funding) AS lifetime_net \
+  \    FROM validated \
+  \  ) \
+  \  SELECT CASE WHEN COUNT(*) > 0 AND BOOL_AND(size_valid AND COALESCE(vpi ~ '^(-[0-9]+|[0-9]+)$', FALSE)) \
+  \    THEN SUM(CASE WHEN vpi ~ '^(-[0-9]+|[0-9]+)$' THEN vpi::numeric END) END AS total_vpi_usdc, \
+  \    (SELECT CASE WHEN accounting.valid AND funding.valid THEN jsonb_build_object( \
+  \      'positionLifetimeNetResultUsdc', lifetime_net::text, \
+  \      'positionLifetimeTradesResultUsdc', trades_net::text, \
+  \      'positionLifetimeAccountAdjustmentUsdc', (lifetime_net - trades_net)::text) END \
+  \      FROM accounting CROSS JOIN funding) AS lifetime_accounting \
+  \  FROM validated \
+  \) position_vpi ON TRUE \
   \WHERE o.chain_id = ? AND o.order_router = ? AND o.client_order_id IS NOT NULL"
 
 getPerpsOrdersByAccount :: Connection -> Integer -> Text -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsOrderRow]

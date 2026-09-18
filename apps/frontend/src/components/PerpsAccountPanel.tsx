@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
+import { usePerpsCloseMargin } from '../hooks/usePerpsCloseMargin'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
@@ -845,6 +846,17 @@ function CloseExecutionDetails({ order }: { order: PerpsOrderHistoryRow }) {
   )
 }
 
+function CloseHistoryReconciliation({ order, reconciliation }: {
+  order: PerpsOrderHistoryRow
+  reconciliation: PerpsCloseReconciliation
+}) {
+  const releasedPositionMarginUsdc = usePerpsCloseMargin(order)
+  return <PerpsCloseReconciliationDetails
+    reconciliation={{ ...reconciliation, releasedPositionMarginUsdc }}
+    executionDetails={<CloseExecutionDetails order={order} />}
+  />
+}
+
 function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   const [selectedRow, setSelectedRow] = useState<TradeRow | undefined>()
   if (rows.length === 0) return <EmptyState label="transaction history" />
@@ -910,13 +922,15 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
       >
         {selectedRow?.closeOrder ? (
           <div className="space-y-3">
-            <CloseExecutionDetails order={selectedRow.closeOrder} />
             {selectedRow.reconciliation ? (
-              <PerpsCloseReconciliationDetails reconciliation={selectedRow.reconciliation} />
+              <CloseHistoryReconciliation order={selectedRow.closeOrder} reconciliation={selectedRow.reconciliation} />
             ) : (
-              <div className="border border-brand-border/20 bg-app-bg p-4 text-sm text-content-secondary">
-                Detailed close accounting unavailable
-              </div>
+              <>
+                <CloseExecutionDetails order={selectedRow.closeOrder} />
+                <div className="border border-brand-border/20 bg-app-bg p-4 text-sm text-content-secondary">
+                  Detailed close accounting unavailable
+                </div>
+              </>
             )}
           </div>
         ) : null}
