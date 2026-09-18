@@ -151,6 +151,11 @@ interface BackendOrderRow {
 }
 
 export interface PerpsOrderReceiptEconomics {
+  /** Signed lifetime VPI through this execution; positive means net paid. */
+  totalPositionVpiUsdc?: string
+  positionLifetimeNetResultUsdc?: string
+  positionLifetimeTradesResultUsdc?: string
+  positionLifetimeAccountAdjustmentUsdc?: string
   executionNotionalUsdc?: string
   executionBountyUsdc?: string
   realizedPnlUsdc?: string
