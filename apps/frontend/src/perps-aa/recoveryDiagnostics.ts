@@ -1,6 +1,6 @@
 import { captureFrontendLog } from '../analytics/client'
 
-type RecoveryStage = 'awaiting_recovery_evidence' | 'awaiting_safe_head' | 'receipt_check_failed' |
+type RecoveryStage = 'awaiting_recovery_evidence' | 'awaiting_safe_head' | 'receipt_check_failed' | 'recovery_authorization_required' | 'preparation_check_failed' |
   'protocol_check_failed' | 'coordination_failed' | 'inclusion_persistence_failed' |
   'canonical_receipt_recovered' | 'canonical_receipt_unverified' |
   'account_confirmation_waiting' | 'account_confirmation_ready' | 'account_confirmation_unavailable'

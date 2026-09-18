@@ -17,6 +17,7 @@ import {
 } from './authorizationStore'
 import {
   asSponsorRequestError,
+  submissionFailureReason,
   BundlerRequestError,
   SponsorRequestError,
   SponsoredPreflightError,
@@ -110,14 +111,14 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
 }
 
 function asBundlerError(error: unknown): BundlerRequestError {
-  if (error instanceof BundlerRequestError) return error
   return new BundlerRequestError({
     message: error instanceof Error ? error.message : String(error),
     // The exact operation hash is persisted before submission. A transport
     // error cannot prove that the bundler did not receive it, so submitting again
     // is unsafe; recovery must reconcile the existing hash.
     retryable: false,
-    terminalStatus: 'receipt-timeout',
+    terminalStatus: 'submission-unknown',
+    reason: submissionFailureReason(error),
     cause: error,
   })
 }
@@ -584,7 +585,8 @@ export async function executeSponsoredPerpsAction(
         message:
           'The bundler returned a different hash for the submitted UserOperation',
         retryable: false,
-        terminalStatus: 'receipt-timeout',
+        terminalStatus: 'submission-unknown',
+        reason: 'SUBMISSION_HASH_MISMATCH',
       })
     }
 

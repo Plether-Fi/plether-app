@@ -29,6 +29,7 @@ import type {
 } from '../runtimeContext'
 import { UserOperationReceiptNotSafeError } from '../runtimeContext'
 import { SponsorRequestError } from '../errors'
+import { resolveProtocolOperation } from '../protocolOperationResolution'
 import {
   PLETHER_PAYMASTER_POLICY_ID,
   PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
@@ -336,13 +337,29 @@ describe('executeSponsoredPerpsAction', () => {
           clock.mockReturnValue(now + 51_000)
           return operation()
         }) }),
-      })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'receipt-timeout' })
+      })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'signed-not-submitted' })
       expect(sendUserOperation).not.toHaveBeenCalled()
       expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed')
       const record = useSponsoredOperationStore.getState().operations[0]
-      expect(record).toMatchObject({ status: 'receipt-timeout', userOperationHash: USER_OPERATION_HASH })
+      expect(record).toMatchObject({ status: 'signed-not-submitted', userOperationHash: USER_OPERATION_HASH })
       expect(record.signedUserOperation).toBeDefined()
       expect(useSponsoredOperationStore.getState().activeLanes).not.toEqual({})
+      await useSponsoredOperationStore.persist.rehydrate()
+      const restored = useSponsoredOperationStore.getState().operations[0]
+      expect(restored.status).toBe('signed-not-submitted')
+      const recoveryRuntime = runtime({ sendUserOperation })
+      const snapshot = { blockNumber: 123n, accountNonce: operation().nonce,
+        blockTimestamp: SPONSORSHIP_VALID_UNTIL,
+        userOperationEvidence: { kind: 'not-located' as const } }
+      recoveryRuntime.getRecoverySnapshot = vi.fn(async () => snapshot)
+      expect(await resolveProtocolOperation({ operation: restored, runtime: recoveryRuntime, userOperationHash: USER_OPERATION_HASH })).toBeUndefined()
+      expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe(record.id)
+      snapshot.blockTimestamp += 1n
+      const resolution = await resolveProtocolOperation({ operation: restored, runtime: recoveryRuntime, userOperationHash: USER_OPERATION_HASH })
+      expect(resolution).toEqual({ status: 'expired' })
+      useSponsoredOperationStore.getState().failOperation({ id: record.id, status: 'expired', reason: 'expired', retryable: true })
+      expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeUndefined()
+      expect(sendUserOperation).not.toHaveBeenCalled()
     } finally { clock.mockRestore() }
   })
   beforeEach(() => {
@@ -1159,14 +1176,14 @@ describe('executeSponsoredPerpsAction', () => {
       action,
       runtime: managedRuntime,
     })).rejects.toMatchObject({
-      terminalStatus: 'receipt-timeout',
+      terminalStatus: 'submission-unknown',
       retryable: false,
     })
 
     expect(managedRuntime.smartAccount.sendUserOperation).toHaveBeenCalledTimes(1)
     expect(getUserOperationStatus).not.toHaveBeenCalled()
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
-      status: 'receipt-timeout',
+      status: 'submission-unknown',
       userOperationHash: USER_OPERATION_HASH,
       retryable: false,
     })
@@ -1583,6 +1600,16 @@ describe('executeSponsoredPerpsAction', () => {
     ).toBeUndefined()
   })
 
+  it('retains a nested gateway failure without misreporting a receipt timeout or retrying submission', async () => {
+    const sendUserOperation = vi.fn(async () => { throw { cause: { data: { reason: 'SECURITY_ATTESTATION_UNAVAILABLE', retryable: true } } } })
+    await expect(executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action,
+      runtime: runtime({ sendUserOperation }),
+    })).rejects.toMatchObject({ terminalStatus: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE', retryable: false })
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({ status: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE' })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeDefined()
+    expect(sendUserOperation).toHaveBeenCalledOnce()
+  })
+
   it('keeps an ambiguous Pimlico submission non-retryable', async () => {
     const sendUserOperation = vi.fn(async () => {
       throw new Error('connection closed before response')
@@ -1595,12 +1622,13 @@ describe('executeSponsoredPerpsAction', () => {
       runtime: runtime({ sendUserOperation }),
     })).rejects.toMatchObject({
       retryable: false,
-      terminalStatus: 'receipt-timeout',
+      terminalStatus: 'submission-unknown',
+      reason: 'SUBMISSION_OUTCOME_UNKNOWN',
     })
 
     expect(sendUserOperation).toHaveBeenCalledTimes(1)
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
-      status: 'receipt-timeout',
+      status: 'submission-unknown',
       userOperationHash: USER_OPERATION_HASH,
       retryable: false,
     })

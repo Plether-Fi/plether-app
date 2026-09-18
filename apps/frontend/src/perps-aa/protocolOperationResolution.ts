@@ -1,7 +1,7 @@
 import { reportAttemptStage } from './attemptDiagnostics'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
 import { isAddressEqual, type Hex } from 'viem'
-import type { SponsoredOperation } from './operationStore'
+import { isSignedButUnsubmitted, type SponsoredOperation } from './operationStore'
 import {
   authorityBoundSponsorshipValidUntil,
   pimlicoSponsorshipValidUntil,
@@ -71,6 +71,18 @@ export async function resolveProtocolOperation(input: {
   }
 
   try {
+    if (input.operation.nativePreparation && isSignedButUnsubmitted(input.operation)) {
+      // Restore the exact preparation's read credential before chain recovery.
+      // RESUMABLE/elapsed wall time is not proof that liability can be released.
+      try {
+        await input.runtime.smartAccount.getPreparationStatus?.({ userOperationHash: input.userOperationHash })
+      } catch {
+        reportRecoveryDiagnostic({ operationKey: input.userOperationHash, attemptId: input.operation.id,
+          stage: 'preparation_check_failed' })
+        // A lost credential must not disable independent safe-chain proof.
+        // The signed preimage, nonce and safe timestamp are still checked below.
+      }
+    }
     const signedOperation = verifiedPersistedUserOperation(
       input.operation,
       input.runtime,
@@ -150,6 +162,7 @@ export async function resolveProtocolOperation(input: {
   } catch {
     reportRecoveryDiagnostic({
       operationKey: input.userOperationHash,
+      attemptId: input.operation.id,
       stage: 'protocol_check_failed',
     })
     // Corrupt persisted metadata or an unavailable chain/index read cannot

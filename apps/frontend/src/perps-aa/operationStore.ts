@@ -150,6 +150,14 @@ export interface SponsoredOperationInclusionObservation {
   success?: boolean
 }
 
+/** Late-signature guards run before send, including in older persisted journals.
+ * Legacy hash journaling also wrote a submitting timestamp, so that timestamp
+ * alone is not evidence of a network send. This never authorizes lane release. */
+export function isSignedButUnsubmitted(operation: SponsoredOperation): boolean {
+  return !operation.includedTransactionHash && !operation.transactionHash &&
+    (operation.status === 'signed-not-submitted' || operation.reason === 'DEADLINE_TOO_CLOSE')
+}
+
 export type SuccessfulSponsoredOperationInclusionObservation =
   SponsoredOperationInclusionObservation & { success: true }
 
@@ -349,6 +357,8 @@ export function isSponsoredOperationAttentionStatus(
     'preparation-pending',
     'sponsorship-refused',
     'receipt-timeout',
+    'signed-not-submitted',
+    'submission-unknown',
     'failed',
     'execution-reverted',
     'dropped',

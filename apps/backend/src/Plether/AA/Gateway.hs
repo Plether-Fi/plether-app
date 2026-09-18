@@ -22,6 +22,7 @@ module Plether.AA.Gateway
   , classifyAltoResult
   , closeAssistanceStatus
   , observePreparationInclusion
+  , securityFailureCategory
   ) where
 
 import Control.Exception (SomeException, try)
@@ -106,6 +107,7 @@ import Plether.Database.AaSponsorship
   , getSponsorshipByUserOperationHash
   , getRecoveryReceiptLocator
   , isRecoveryOperationAuthorized
+  , isSignedRecoveryOperationAuthorized
   , isSponsorshipDeliveryAllowedFenced
   , markSponsorshipSubmitted
   , reserveSponsorshipFenced
@@ -1250,7 +1252,7 @@ nativeSecurityContext
   -> IO (Either Legacy.ProxyFailure (Maybe NativeSecurityContext))
 nativeSecurityContext nativeCfg gatewayState primaryClient =
   case ngsSecurityClient gatewayState of
-    Nothing -> pure $ Left securityAttestationUnavailable
+    Nothing -> reject "SECURITY_CLIENT_MISSING"
     Just secondaryClient -> do
       -- Both are read-only evidence. No estimation, reservation or signing can
       -- start until chain identity AND the canonical snapshot have passed.
@@ -1260,7 +1262,7 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
       case (primaryChain, secondaryChain) of
         (Right (), Right ()) -> do
           case snapshot of
-            Left _ -> pure $ Left securityAttestationUnavailable
+            Left reason -> reject $ securityFailureCategory reason
             Right header -> do
               let blockNumber = sbhNumber header
               (trustedSnapshot, snapshots) <- modifyMVar (ngsSnapshots gatewayState) $ \previous -> do
@@ -1293,8 +1295,21 @@ nativeSecurityContext nativeCfg gatewayState primaryClient =
                 _ -> do
                   Cache.clearEvidence $ ngsProfileEvidence gatewayState
                   Cache.clearEvidence $ ngsAccountEvidence gatewayState
-                  pure $ Left securityAttestationUnavailable
-        _ -> pure $ Left securityAttestationUnavailable
+                  reject $ case (trustedSnapshot, profileResult, primaryPause, secondaryPause, finalHeader) of
+                    (False, _, _, _, _) -> "SNAPSHOT_REGRESSION_OR_REORG"
+                    (_, Left _, _, _, _) -> "PROFILE_ATTESTATION_FAILED"
+                    (_, _, Left _, _, _) -> "PRIMARY_PAUSE_READ_FAILED"
+                    (_, _, _, Left _, _) -> "SECONDARY_PAUSE_READ_FAILED"
+                    (_, _, Right True, _, _) -> "PAYMASTER_PAUSED"
+                    (_, _, _, Right True, _) -> "PAYMASTER_PAUSED"
+                    (_, _, _, _, Left reason) -> securityFailureCategory reason
+                    _ -> "SNAPSHOT_CHANGED"
+        (Left _, _) -> reject "PRIMARY_CHAIN_ATTESTATION_FAILED"
+        (_, Left _) -> reject "SECONDARY_CHAIN_ATTESTATION_FAILED"
+ where
+  reject category = do
+    logSecurityAttestationCategory "initial_context" category
+    pure $ Left securityAttestationUnavailable
 
 -- Retain the two highest snapshots; reject a same-height replacement once.
 advanceEvidenceSnapshots :: [(Integer, Text)] -> (Integer, Text) -> (Bool, [(Integer, Text)])
@@ -1371,14 +1386,37 @@ revalidateSecuritySnapshot mode maxSafeLag primaryClient secondaryClient capture
     validateSecurityHeaderTime maxSafeLag now header
 
 respondSecurityAttestationFailure :: Value -> Text -> ActionM ()
-respondSecurityAttestationFailure requestId _reason = do
-  liftIO $
-    logErrorEvery
-      30
-      "aa_native_security_attestation_failure"
-      "Independent RPC security attestation failed closed"
-      [field "method" ("native-aa" :: Text)]
+respondSecurityAttestationFailure requestId reason = do
+  liftIO $ logSecurityAttestationCategory "authorization_boundary" $ securityFailureCategory reason
   Legacy.respondFailure requestId securityAttestationUnavailable
+
+-- Never log RPC error text: it may contain credentials, calldata or addresses.
+-- Unknown details collapse to a fixed enum, not a sanitized-looking substring.
+securityFailureCategory :: Text -> Text
+securityFailureCategory reason
+  | Just category <- lookup reason
+      [ ("the dual-provider security snapshot is stale", "SNAPSHOT_STALE")
+      , ("the dual-provider security snapshot timestamp is in the future", "SNAPSHOT_FUTURE")
+      , ("security RPC providers disagree on the explicit block header", "PROVIDER_HEADER_DISAGREEMENT")
+      , ("primary safe header disagrees with its explicit numeric header", "PRIMARY_HEADER_DISAGREEMENT")
+      , ("secondary safe header disagrees with its explicit numeric header", "SECONDARY_HEADER_DISAGREEMENT")
+      , ("a security provider's safe head moved behind the authorization snapshot", "SAFE_HEAD_REGRESSION")
+      , ("primary safe head disagrees with the authorization snapshot", "PRIMARY_HEADER_DISAGREEMENT")
+      , ("secondary safe head disagrees with the authorization snapshot", "SECONDARY_HEADER_DISAGREEMENT")
+      , ("the agreed security block changed during request authorization", "SNAPSHOT_CHANGED")
+      , ("dual-provider account attestation", "ACCOUNT_ATTESTATION_FAILED")
+      , ("initial security context", "INITIAL_CONTEXT_UNAVAILABLE")
+      ] = category
+  | "primary security RPC: " `T.isPrefixOf` reason = "PRIMARY_HEADER_READ_FAILED"
+  | "secondary security RPC: " `T.isPrefixOf` reason = "SECONDARY_HEADER_READ_FAILED"
+  | otherwise = "ATTESTATION_UNAVAILABLE"
+
+logSecurityAttestationCategory :: Text -> Text -> IO ()
+logSecurityAttestationCategory stage category =
+  -- Keep the event name consumed by the existing CloudWatch metric filter.
+  logErrorEvery 30 "aa_native_security_attestation_failure"
+    "Independent RPC security attestation failed closed"
+    [field "method" ("native-aa" :: Text), field "stage" stage, field "reason_code" category]
 
 respondSecurityAwareFailure
   :: Value
@@ -1442,7 +1480,11 @@ authorizeRecoveryRead cfg pool clientKey request =
               result <-
                 liftDb $
                   withDb pool $ \conn ->
-                    isRecoveryOperationAuthorized conn operationHash authorizedClient "alto"
+                    do
+                      submitted <- isRecoveryOperationAuthorized conn operationHash authorizedClient "alto"
+                      if submitted then pure True else case capabilityClient of
+                        Just originalClient -> isSignedRecoveryOperationAuthorized conn operationHash originalClient
+                        Nothing -> pure False
               case result of
                 Right True -> do
                   issueRecoveryCapability cfg operationHash authorizedClient

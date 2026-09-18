@@ -170,6 +170,45 @@ function beginHashOperation(input: {
 }
 
 describe('SponsoredOperationRecovery', () => {
+  it.each(['signed-not-submitted', 'receipt-timeout'] as const)('recovers %s late approval without receipt polling or early lane release', async status => {
+    beginHashOperation({ id: 'late-approval', operation: signedOperation({ validUntil: 1_000n }) })
+    useSponsoredOperationStore.getState().failOperation({ id: 'late-approval', status, reason: 'DEADLINE_TOO_CLOSE', retryable: false })
+    await useSponsoredOperationStore.persist.rehydrate()
+    const runtime = runtimeValue({ chainTimestamp: 1_000n, nonce: 7n })
+    const view = render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await waitFor(() => expect(runtime.getRecoverySnapshot).toHaveBeenCalledOnce())
+    expect(runtime.smartAccount.getUserOperationReceipt).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('late-approval')
+    view.unmount()
+    const expiredRuntime = runtimeValue({ chainTimestamp: 1_001n, nonce: 7n })
+    render(<PerpsAaRuntimeContext value={expiredRuntime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await waitFor(() => expect(useSponsoredOperationStore.getState().operations[0].status).toBe('expired'))
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeUndefined()
+    expect(expiredRuntime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
+  it('stops denied receipt polling, preserves the cause, and continues bounded safe recovery', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let clock = 1_000
+    const started = Date.now()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    beginHashOperation({ id: 'unauthorized', operation: signedOperation() })
+    useSponsoredOperationStore.getState().failOperation({ id: 'unauthorized', status: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE', retryable: false })
+    vi.spyOn(Date, 'now').mockImplementation(() => started + clock)
+    const receipt = vi.fn(async () => { throw { cause: { data: { reason: 'RECOVERY_HASH_NOT_AUTHORIZED' } } } })
+    const runtime = runtimeValue({ receipt })
+    render(<PerpsAaRuntimeContext value={runtime}><SponsoredOperationRecovery /></PerpsAaRuntimeContext>)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    await waitFor(() => expect(receipt).toHaveBeenCalledOnce())
+    clock += 60_000
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(receipt).toHaveBeenCalledOnce()
+    expect(runtime.getRecoverySnapshot).toHaveBeenCalledOnce()
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({ status: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE' })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)?.id).toBe('unauthorized')
+    expect(runtime.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
   it('deduplicates explicit checks and preserves a live submission lock', async () => {
     beginHashOperation({ id: 'manual-check', operation: signedOperation() })
     useSponsoredOperationStore.getState().exhaustAutomaticRecovery('manual-check', Date.now())

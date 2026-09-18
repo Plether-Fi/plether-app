@@ -56,7 +56,7 @@ describe('deadline safety', () => {
   })
   it('retains recovery for signed operations rather than declaring safe expiry', () => {
     try { requireDeadlineHeadroom(109n, undefined, 'submission', 100_000) } catch (error) {
-      expect(error).toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'receipt-timeout', retryable: false })
+      expect(error).toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'signed-not-submitted', retryable: false })
       return
     }
     throw new Error('Expected deadline rejection')

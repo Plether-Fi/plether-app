@@ -19,6 +19,7 @@ module Plether.Database.AaSponsorship
   , settleSponsorship
   , recordRecoveryOperation
   , isRecoveryOperationAuthorized
+  , isSignedRecoveryOperationAuthorized
   , consumeAaRateLimit
   , pruneAaRateWindows
   , pruneExpiredRecoveryOperations
@@ -1252,6 +1253,19 @@ isRecoveryOperationAuthorized conn operationHash clientKey provider = do
   pure $ case rows of
     [Only allowed] -> allowed
     _ -> False
+
+-- | Read-only fallback for a capability-authenticated, signed-but-unsubmitted
+-- operation. This never marks submission or releases liability. The caller must
+-- verify the deployment/hash-bound recovery capability before using its client.
+isSignedRecoveryOperationAuthorized :: Connection -> Text -> Text -> IO Bool
+isSignedRecoveryOperationAuthorized conn operationHash clientKey = do
+  rows <- query conn
+    "SELECT EXISTS (SELECT 1 FROM aa_sponsorship_authorizations \
+    \WHERE expected_user_operation_hash=? AND client_key=? \
+    \AND state='signed' AND signature IS NOT NULL \
+    \AND signed_at>clock_timestamp()-INTERVAL '7 days')"
+    (T.toLower operationHash, T.toLower clientKey)
+  pure $ rows == [Only True]
 
 -- | Cross-replica fixed-window limiter. Both keys are HMAC pseudonyms created
 -- by the gateway, so this table never contains a raw client IP.

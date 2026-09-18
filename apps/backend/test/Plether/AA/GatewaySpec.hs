@@ -9,12 +9,17 @@ import Network.Wai (strictRequestBody, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Types (status200)
 import Network.HTTP.Client (newManager, defaultManagerSettings)
-import Plether.AA.Gateway (forwardAlto, classifyAltoResult)
+import Plether.AA.Gateway (forwardAlto, classifyAltoResult, securityFailureCategory)
 import qualified Plether.AA.Pimlico as Rpc
 import Test.Hspec
 
 spec :: Spec
 spec = describe "Alto request ID normalization" $ do
+  it "classifies security failures with bounded, credential-free categories" $ do
+    securityFailureCategory "the dual-provider security snapshot is stale" `shouldBe` "SNAPSHOT_STALE"
+    securityFailureCategory "security RPC providers disagree on the explicit block header" `shouldBe` "PROVIDER_HEADER_DISAGREEMENT"
+    securityFailureCategory "primary security RPC: https://secret.invalid/key" `shouldBe` "PRIMARY_HEADER_READ_FAILED"
+    securityFailureCategory "raw signed operation or secret" `shouldBe` "ATTESTATION_UNAVAILABLE"
   forM_ [("0x024ec6ee", "INSUFFICIENT_FREE_EQUITY"), ("0xe37e62c6", "INVALID_ORDER_DEADLINE"),
          ("0x2ae052ed" <> T.replicate 63 "0" <> "1", "MUST_CLOSE_OPPOSING"),
          ("0x2ae052ed" <> T.replicate 63 "0" <> "2", "SIMULATION_FAILED"),
