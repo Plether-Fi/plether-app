@@ -77,6 +77,7 @@ export interface WalletChallenge {
 }
 
 export interface Standing {
+  snapshotAt?: string | null
   rank: number | null
   address: string
   displayName: string | null

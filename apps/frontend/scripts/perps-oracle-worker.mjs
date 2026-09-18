@@ -76,8 +76,8 @@ export async function loadOracleFeeds(publicClient) {
   return { pyth, feedIds }
 }
 
-async function readHealth(publicClient, feeds) {
-  const block = await publicClient.getBlock({ blockTag: 'latest' })
+async function readHealth(publicClient, feeds, block = undefined) {
+  block ??= await publicClient.getBlock({ blockTag: 'latest' })
   const [status, ...prices] = await Promise.all([
     publicClient.readContract({ address: ADDRESSES.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getProtocolStatus', blockNumber: block.number }),
@@ -227,8 +227,44 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
   fetchPayload = () => fetchCachedPythUpdate(backendUrl), log = emitLog, logEvery = emitLogEvery,
 }) {
   let nextRefreshAt = 0
+  let retryAt = 0
+  let failures = 0
   let pending
   let running = false
+  const deferRetry = () => {
+    retryAt = now() + Math.min(30_000, 5000 * 2 ** Math.min(failures++, 3))
+  }
+  const refreshHealth = async previous => {
+    const block = await publicClient.getBlock({ blockTag: 'latest' })
+    // Reuse pinned reads only for the identical block, including across reorgs.
+    // Normally this adds one block lookup, not another seven contract reads.
+    if (block.hash && block.hash === previous.block.hash) return previous
+    return readHealth(publicClient, feeds, block)
+  }
+  const checkPayload = (health, minPublishTime, maxPublishTime) => {
+    const repair = health.lag > 0n
+    const markTime = health.status.lastMarkTime
+    if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
+      logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
+        min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
+        lag_seconds: Number(health.lag),
+      })
+      nextRefreshAt = now() + pollSeconds * 1000
+      failures = 0
+      retryAt = 0
+      return 'waiting_for_payload'
+    }
+    const ageSeconds = Number(health.block.timestamp) - minPublishTime
+    if (ageSeconds > maxPayloadAgeSeconds || BigInt(maxPublishTime) > health.block.timestamp) {
+      logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is outside the submission age window', {
+        min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
+        payload_age_seconds: ageSeconds, max_payload_age_seconds: maxPayloadAgeSeconds,
+      })
+      deferRetry()
+      return 'stale_payload'
+    }
+    return undefined
+  }
   const reconcile = async () => {
     const tx = pending
     // A timeout/RPC error retains the hash. Never send another transaction until resolved.
@@ -257,47 +293,50 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
     running = true
     try {
       if (pending) return await reconcile()
-      const before = await readHealth(publicClient, feeds)
-      const repair = before.lag > 0n
+      if (now() < retryAt) return { status: 'backoff' }
+      let before = await readHealth(publicClient, feeds)
+      let repair = before.lag > 0n
       if (repair) logEvery(60, 'WARN', 'oracle_sync_lag', 'Stored Pyth feeds are behind the engine mark', {
         lag_seconds: Number(before.lag), mark_time: before.status.lastMarkTime, oldest_publish_time: before.oldest,
       })
       if (!repair && now() < nextRefreshAt) return { status: 'healthy' }
-      nextRefreshAt = now() + pollSeconds * 1000
       const payload = validatePythPayload(await fetchPayload())
       const minPublishTime = Math.min(...payload.publishTimes)
       const maxPublishTime = Math.max(...payload.publishTimes)
-      const markTime = before.status.lastMarkTime
-      const ageSeconds = Number(before.block.timestamp) - minPublishTime
-      if (BigInt(minPublishTime) < markTime || (!repair && BigInt(minPublishTime) === markTime)) {
-        logEvery(60, repair ? 'WARN' : 'INFO', 'oracle_update_not_needed', 'Cached payload cannot advance or repair this mark', {
-          min_publish_time: minPublishTime, max_publish_time: maxPublishTime, onchain_mark_time: markTime,
-          lag_seconds: Number(before.lag),
-        })
-        return { status: 'waiting_for_payload' }
-      }
-      if (ageSeconds > maxPayloadAgeSeconds || BigInt(maxPublishTime) > before.block.timestamp) {
-        logEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is outside the submission age window', {
-          min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
-          payload_age_seconds: ageSeconds, max_payload_age_seconds: maxPayloadAgeSeconds,
-        })
-        return { status: 'stale_payload' }
-      }
+      before = await refreshHealth(before)
+      let rejection = checkPayload(before, minPublishTime, maxPublishTime)
+      if (rejection) return { status: rejection }
       const fee = await publicClient.readContract({ address: ADDRESSES.pletherOracle, abi: PLETHER_ORACLE_ABI,
         functionName: 'getUpdateFee', args: [payload.updateData] })
       if (dryRun) {
+        nextRefreshAt = now() + pollSeconds * 1000
+        failures = 0
+        retryAt = 0
         log('INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
-          min_publish_time: minPublishTime, update_fee_wei: fee, repair, lag_seconds: Number(before.lag),
+          min_publish_time: minPublishTime, update_fee_wei: fee, repair: before.lag > 0n, lag_seconds: Number(before.lag),
         })
         return { status: 'dry_run' }
       }
       const balance = await publicClient.getBalance({ address: account.address })
       if (balance < fee) throw new Error(`Updater balance ${formatEther(balance)} ETH is below update fee ${formatEther(fee)} ETH`)
+      // Fee/balance RPCs can be slow. Recheck immediately before simulation;
+      // never relax the future-time or oldest-component guards to recover.
+      before = await refreshHealth(before)
+      rejection = checkPayload(before, minPublishTime, maxPublishTime)
+      if (rejection) return { status: rejection }
+      repair = before.lag > 0n
+      const markTime = before.status.lastMarkTime
       const { request } = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
         abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
       const hash = await walletClient.writeContract(request)
+      nextRefreshAt = now() + pollSeconds * 1000
+      failures = 0
+      retryAt = 0
       pending = { hash, fee, repair, lag: before.lag, markTime }
       return await reconcile()
+    } catch (error) {
+      if (!pending) deferRetry()
+      throw error
     } finally { running = false }
   }
 }
