@@ -24,14 +24,15 @@ export function MethodologyPage() {
         </Rule>
         <Rule number="02" title="Ranking metric">
           <p>Traders are ranked by final net P&amp;L at the closing snapshot. Open positions are marked using the protocol’s official final mark.</p>
-          <div className="mt-3 border-l-2 border-brand-orange bg-app-bg/60 px-4 py-3 font-mono text-xs leading-6 text-content-primary sm:text-sm">final P&amp;L = closing account value − starting account value − deposits + withdrawals</div>
+          <div className="mt-3 border-l-2 border-brand-orange bg-app-bg/60 px-4 py-3 font-mono text-xs leading-6 text-content-primary sm:text-sm">final P&amp;L = closing account value − starting account value − deposits + withdrawals − net VPI rebate</div>
           <p>Account value includes collateral, marked open-position P&amp;L, incurred fees, carry, and outstanding trader claims. Pending orders that have not executed do not count.</p>
+          <p>The total VPI contribution across competition trades is capped at zero: net rebates are excluded from the score, while net VPI charges still reduce it. Actual account balances and execution breakdowns include rebates as received.</p>
           <p>Trade-history “realized P&amp;L” and open-position “unrealized P&amp;L” are directional price results before execution fees, VPI, carry, and execution rewards. They can be positive while final net P&amp;L is negative.</p>
           <p><strong>Protocol fee assessed</strong> is the fee in the executed receipt, including fees deducted from a rebate. VPI is the gross charge or rebate before fees and settlement adjustments. A zero treasury collection does not mean a trade was free.</p>
           <p>Use <strong>View breakdown</strong> on any open, increase, or close to reconcile directional P&amp;L, assessed fees, VPI, carry, frozen-close spread, execution reward, and confirmed adjustments to the actual account change. Breakdown amounts always show all six USDC decimals. Waived charges reduce costs; fees deducted from rebates reduce the amount paid to the trader. Subtotals are not additional gains.</p>
           <p>Each position breakdown includes its execution details and the position immediately afterward. It covers one execution; other opens, increases, and closes remain on their own activity rows.</p>
           <p>Actual account change is the change in settlement balance plus trader claims. Released margin is existing collateral, not profit. For an open or increase, the change covers that execution, not the eventual position return. Unclassified differences appear as Other settlement adjustment; missing evidence never means zero cost.</p>
-          <p>Competition ranking continues to use account-value snapshots. Summing the visible activity rows does not reproduce the competition score: the history may be limited, and open positions and other account adjustments also affect value.</p>
+          <p>Competition ranking uses account-value snapshots with the net VPI rebate removed. Summing the visible activity rows does not reproduce the competition score: the history may be limited, and open positions and other account adjustments also affect value.</p>
         </Rule>
         <Rule number="03" title="Prize eligibility">
           <p>A trader must finish with at least <strong className="text-positive">+1.00 mock USDC</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
