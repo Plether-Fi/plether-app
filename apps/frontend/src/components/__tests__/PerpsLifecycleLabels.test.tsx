@@ -54,7 +54,8 @@ vi.mock('../../perps-aa', async () => {
   }
 })
 vi.mock('../../hooks/usePerpsCloseMargin', () => ({ usePerpsCloseMargin: () => undefined }))
-import { PerpsAccountPanel } from '../PerpsAccountPanel'
+import { OpenOrderStatus, PerpsAccountPanel } from '../PerpsAccountPanel'
+import { replaceTextNodes } from '../../test/replaceTextNodes'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 import {
   BundlerRequestError,
@@ -66,6 +67,17 @@ import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
+
+it('updates a translated order countdown through expiry without removing foreign text nodes', () => {
+  const view = render(<OpenOrderStatus secondsToExpiry={60} />)
+  replaceTextNodes(view.container)
+  view.rerender(<OpenOrderStatus secondsToExpiry={30} />)
+  expect(screen.getByText('Expires in 30s')).toBeVisible()
+  replaceTextNodes(view.container)
+  view.rerender(<OpenOrderStatus secondsToExpiry={0} />)
+  expect(screen.getByText('Expired')).toBeVisible()
+  expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument()
+})
 const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
 const V2_RECEIPT_HASH = `0x${'34'.repeat(32)}` as `0x${string}`
 

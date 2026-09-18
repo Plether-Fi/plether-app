@@ -512,6 +512,11 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
           pure (context, owner, operation, assistance)
         case result of
           Left failure -> do
+            liftIO $ logInfo "aa_preparation_failed" "Native AA preparation rejected" $
+              [field "request_id" identifier, field "stage" ("preparation" :: Text),
+               field "reason_code" $ Legacy.pfReason failure,
+               field "retryable" $ Legacy.pfRetryable failure] ++
+              maybe [] (\attempt -> [field "attempt_id" attempt]) (ngsAttemptId gatewayState)
             _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
             Legacy.respondFailure requestId failure
@@ -646,7 +651,14 @@ buildPreparedOperation timing cfg client manager intent = runExceptT $ do
  where
   altoTimed stage method params = timed timing stage $ do
     timingCount timing "alto_calls"
-    altoResult manager cfg method params
+    result <- altoResult manager cfg method params
+    case result of
+      Left failure -> logInfo "aa_preparation_rpc_failed" "Native AA preparation RPC failed"
+        [field "request_id" $ timingIdentifier timing, field "stage" stage,
+         field "reason_code" $ Legacy.pfReason failure,
+         field "retryable" $ Legacy.pfRetryable failure]
+      Right _ -> pure ()
+    pure result
   quantity fields key = case KM.lookup key fields of
     Just (String value) | Just number <- parseRpcQuantity value, number >= 0, number < 2^(128 :: Int) -> pure number
     _ -> throwE $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto returned an invalid quantity"
@@ -675,6 +687,10 @@ classifyAltoResult method (Object fields)
               ("INSUFFICIENT_FREE_EQUITY", "Not enough available trading collateral. Reduce the order size or add collateral.")
             (-32521, Just (String "UserOperation reverted during simulation with reason: 0xe37e62c6")) ->
               ("INVALID_ORDER_DEADLINE", "The order deadline is invalid. Refresh the order and review it again.")
+            -- Exact ABI encoding of OrderRouter__PredictableOpenInvalid(uint8),
+            -- MUST_CLOSE_OPPOSING (1). Unknown/malformed payloads stay generic.
+            (-32521, Just (String "UserOperation reverted during simulation with reason: 0x2ae052ed0000000000000000000000000000000000000000000000000000000000000001")) ->
+              ("MUST_CLOSE_OPPOSING", "Close your existing position before opening one in the opposite direction. Refresh account state and review the action.")
             _ -> ("SIMULATION_FAILED", "The transaction was rejected during simulation. Refresh account state and review the action.")
        in Left $ Legacy.ProxyFailure status200 (truncate code) message reason False
 classifyAltoResult _ _ = Left $ Legacy.unavailable "BUNDLER_UNAVAILABLE" "Alto is temporarily unavailable"

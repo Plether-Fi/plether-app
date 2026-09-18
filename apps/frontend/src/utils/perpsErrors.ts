@@ -109,7 +109,7 @@ const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. 
 
 const OPEN_REVERT_MESSAGES: Partial<Record<number, string>> = {
   0: 'The order is valid.',
-  1: 'You have an opposing position. Close or reduce it before opening this side.',
+  1: 'You have an opposing position. Close it fully before opening this side.',
   2: 'The market is degraded, so new risk cannot be opened right now.',
   3: 'The resulting position would be below the minimum size.',
   4: 'Market skew is too high for this side right now.',

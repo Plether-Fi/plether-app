@@ -348,7 +348,7 @@ describe('createManagedPimlicoRuntime', () => {
     expect(sign).not.toHaveBeenCalled()
   })
 
-  it.each(['INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE', 'SIMULATION_FAILED'])('preserves non-retryable %s through the real preparation transport without signing or fallback', async reason => {
+  it.each(['INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE', 'SIMULATION_FAILED', 'MUST_CLOSE_OPPOSING'])('preserves non-retryable %s through the real preparation transport without signing or fallback', async reason => {
     const sign = vi.fn()
     mocks.toSimpleSmartAccount.mockResolvedValue({ address: ACCOUNT, signUserOperation: sign,
       encodeCalls: vi.fn(async () => '0x1234'), getFactoryArgs: vi.fn(async () => ({})) })
@@ -367,7 +367,7 @@ describe('createManagedPimlicoRuntime', () => {
     const error = await runtime.smartAccount.prepareUserOperation({ calls: [{ to: ACCOUNT, value: 0n, data: '0x1234' }],
       action: 'place-order', preparationId: 'rejected-attempt' }).then(() => { throw Error('Unexpected success') }, asSponsorRequestError)
     expect(error).toMatchObject({ reason, retryable: false, rpcCode: -32521 })
-    expect(sponsorReasonMessage(error)).toMatch(reason === 'INSUFFICIENT_FREE_EQUITY' ? /collateral/ : reason === 'INVALID_ORDER_DEADLINE' ? /deadline/ : /simulation/)
+    expect(sponsorReasonMessage(error)).toMatch(reason === 'INSUFFICIENT_FREE_EQUITY' ? /collateral/ : reason === 'INVALID_ORDER_DEADLINE' ? /deadline/ : reason === 'MUST_CLOSE_OPPOSING' ? /opposite direction/ : /simulation/)
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(sign).not.toHaveBeenCalled()
     expect(mocks.createSmartAccountClient.mock.results[0].value.prepareUserOperation).not.toHaveBeenCalled()

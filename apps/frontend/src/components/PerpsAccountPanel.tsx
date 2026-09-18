@@ -314,7 +314,7 @@ function formatDuration(seconds: number): string {
   return `${hours.toString()}h ${remainingMinutes.toString()}m`
 }
 
-function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
+export function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
   const { isAaManifestConfigured } = usePerpsIdentity()
   if (secondsToExpiry === undefined) {
     return (
@@ -342,7 +342,7 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
     <div>
       <div className="font-semibold text-content-primary">Pending reveal</div>
       <div className="mt-1 text-xs text-content-secondary">
-        Expires in {formatDuration(secondsToExpiry)}
+        {`Expires in ${formatDuration(secondsToExpiry)}`}
       </div>
     </div>
   )

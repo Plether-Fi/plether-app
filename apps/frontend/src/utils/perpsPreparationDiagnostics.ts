@@ -70,6 +70,7 @@ export function getPreparationFailureProperties(error: unknown): { error_code: s
       location ??= locations.get(current)
       const record = current as { name?: unknown; message?: unknown; cause?: unknown; reason?: unknown }
       if (record.name === 'PerpsOrderFundingShortfallError') fallbackCode = 'funding_shortfall'
+      else if (record.name === 'PerpsOrderPositionConflictError') fallbackCode = 'MUST_CLOSE_OPPOSING'
       else if (record.name === 'PerpsOrderReviewError') fallbackCode = record.reason === 'leverage' ? 'review_leverage' : 'review_validation'
       else if (record.name === 'AbortError') fallbackCode ??= 'aborted'
       const message = typeof record.message === 'string' ? record.message.toLowerCase() : ''

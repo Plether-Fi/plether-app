@@ -1,3 +1,5 @@
+import { isModuleLoadError } from '../utils/lazyWithRetry'
+
 // Keep enough stack information to identify UI failures, never serialize the
 // original exception/cause (RPC errors can embed keys and signed operations).
 export function sanitizeExceptionText(value: string): string {
@@ -34,6 +36,17 @@ function sanitizeStack(stack: string): string {
 
 export function sanitizedReactException(error: unknown, componentStack?: string | null) {
   const safe = new Error(error instanceof Error ? sanitizeExceptionText(error.message.split('\n')[0]) : 'Non-Error React exception')
+  // Lazy-import errors often have no application frame. Preserve only the
+  // public hashed asset filename, never the URL, query, credentials or body.
+  if (isModuleLoadError(error) && error instanceof Error) {
+    const raw = /https?:\/\/[^\s)]+/i.exec(error.message.split('\n')[0])?.[0]
+    try {
+      const url = new URL(raw ?? '')
+      if (url.origin === globalThis.location.origin && !url.username && !url.password && !url.search && !url.hash && /^\/assets\/[\w.-]{1,120}\.(js|css)$/.test(url.pathname)) {
+        safe.message += ` [asset: ${url.pathname.slice('/assets/'.length)}]`
+      }
+    } catch { /* No valid static application asset. */ }
+  }
   if (error instanceof Error) {
     safe.name = /^(Error|TypeError|RangeError|SyntaxError|ReferenceError|URIError|EvalError|DOMException|NotFoundError)$/.test(error.name) ? error.name : 'Error'
     safe.stack = `${safe.name}: ${safe.message}\n${sanitizeStack(error.stack ?? '')}`

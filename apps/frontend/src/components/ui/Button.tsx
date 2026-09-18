@@ -74,7 +74,8 @@ export function Button({
           <div className="absolute inset-0 rounded-full border-2 border-current/30 border-t-current animate-spin" />
         </div>
       )}
-      {children}
+      {/* Keep a stable element anchor when translation replaces label text. */}
+      <span className="contents">{children}</span>
     </button>
   )
 }

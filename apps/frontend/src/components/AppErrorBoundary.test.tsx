@@ -54,6 +54,8 @@ describe('application recovery boundary', () => {
     const BrokenLazy = lazy(() => Promise.reject(new Error('Failed to fetch dynamically imported module')))
     render(<AppErrorBoundary><Suspense fallback={<p>Loading</p>}><BrokenLazy /></Suspense></AppErrorBoundary>)
     await waitFor(() => expect(screen.getByRole('alert')).toBeVisible())
+    expect(screen.getByRole('heading')).toHaveTextContent('could not load')
+    expect(screen.getByText(/Check your connection/)).toBeVisible()
   })
 
   it('still renders the recovery screen if telemetry throws', () => {

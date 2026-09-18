@@ -143,6 +143,9 @@ export default defineConfig(({ mode }) => {
   },
   preview: { headers: parseHeadersFile() },
   build: {
+    // CI uploads maps privately and removes them before publishing. Normal
+    // local/public builds do not emit source maps.
+    sourcemap: env.POSTHOG_SOURCEMAPS === '1' ? 'hidden' : false,
     modulePreload: { polyfill: false },
     rollupOptions: {
       output: {

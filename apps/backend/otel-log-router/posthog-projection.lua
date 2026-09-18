@@ -15,7 +15,7 @@ end
 -- or provider credential must not become an event, stage or reason label.
 local events = set([[
 aa_attempt_prepared aa_request_failed aa_recovery_outcome aa_order_committed aa_receipt_recovery
-aa_preparation_gas_headroom aa_execution_diagnosed
+aa_preparation_gas_headroom aa_preparation_rpc_failed aa_preparation_failed aa_execution_diagnosed
 worker_funding_observation worker_funding_monitor_failed
 aa_order_execution_attempt_failed aa_diagnostic_export_dropped aa_diagnostic_queue_full
 aa_diagnostic_link_unavailable aa_preparation_timing aa_native_signer_failure
@@ -71,7 +71,7 @@ SPONSOR_BUDGET_EXCEEDED PER_OPERATION_BUDGET_EXCEEDED OUTSTANDING_BUDGET_EXCEEDE
 ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
-INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE
+INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE MUST_CLOSE_OPPOSING
 AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
 USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
 RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
@@ -124,6 +124,12 @@ local function projection(record)
     end
   end
   if uuid(record.attempt_id) then output.attempt_id = record.attempt_id end
+  -- Server-generated monotonic-clock/unique-counter identifier, not a client
+  -- identifier or arbitrary header. Retain only on preparation diagnostics.
+  if event:match('^aa_preparation_') and type(record.request_id) == 'string'
+    and #record.request_id <= 42 and record.request_id:match('^%d+%-%d+$') then
+    output.request_id = record.request_id
+  end
   local attrs = type(record.resource) == "table" and record.resource.attributes or nil
   if type(attrs) == "table" then
     local safe = {}
