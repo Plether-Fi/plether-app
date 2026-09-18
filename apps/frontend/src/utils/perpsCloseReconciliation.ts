@@ -5,6 +5,12 @@ export interface PerpsCloseReconciliation {
   executionBountyUsdc: bigint
   realizedPnlUsdc: bigint
   vpiUsdc: bigint
+  totalPositionVpiUsdc?: bigint
+  lifetime?: {
+    netResultUsdc: bigint
+    previousTradesResultUsdc: bigint
+    betweenTradesAccountChangeUsdc: bigint
+  }
   carryUsdc: bigint
   executionFeeUsdc: bigint
   frozenSpreadAssessedUsdc: bigint
@@ -174,6 +180,18 @@ export function derivePerpsCloseReconciliation(
     }
   }
 
+  const lifetimeNet = parseReceiptInteger(receipt.positionLifetimeNetResultUsdc)
+  const lifetimeTrades = parseReceiptInteger(receipt.positionLifetimeTradesResultUsdc)
+  const lifetimeAdjustment = parseReceiptInteger(receipt.positionLifetimeAccountAdjustmentUsdc)
+  const lifetime = lifetimeNet !== undefined && lifetimeTrades !== undefined && lifetimeAdjustment !== undefined
+    && lifetimeNet === lifetimeTrades + lifetimeAdjustment
+    ? {
+        netResultUsdc: lifetimeNet,
+        previousTradesResultUsdc: lifetimeTrades - actualAccountChangeUsdc,
+        betweenTradesAccountChangeUsdc: lifetimeAdjustment,
+      }
+    : undefined
+
   const preExecutionPositionMarginUsdc = options.preExecutionPositionMarginUsdc
   const releasedPositionMarginUsdc =
     preExecutionPositionMarginUsdc !== undefined &&
@@ -187,6 +205,8 @@ export function derivePerpsCloseReconciliation(
     executionBountyUsdc,
     realizedPnlUsdc,
     vpiUsdc,
+    totalPositionVpiUsdc: parseReceiptInteger(receipt.totalPositionVpiUsdc),
+    lifetime,
     carryUsdc,
     executionFeeUsdc,
     frozenSpreadAssessedUsdc,

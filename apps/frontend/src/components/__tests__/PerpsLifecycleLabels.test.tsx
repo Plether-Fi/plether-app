@@ -53,6 +53,7 @@ vi.mock('../../perps-aa', async () => {
     }),
   }
 })
+vi.mock('../../hooks/usePerpsCloseMargin', () => ({ usePerpsCloseMargin: () => undefined }))
 import { OpenOrderStatus, PerpsAccountPanel } from '../PerpsAccountPanel'
 import { replaceTextNodes } from '../../test/replaceTextNodes'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
@@ -1217,7 +1218,7 @@ describe('perps lifecycle labels', () => {
           commitTxHash: '0x7400000000000000000000000000000000000000000000000000000000000001',
           revealTxHash,
           receiptHash: V2_RECEIPT_HASH,
-          receiptEconomics,
+          receiptEconomics: { ...receiptEconomics, totalPositionVpiUsdc: '123000000' },
           activitySizeDeltaRaw: 650n * 10n ** 18n,
         }]}
         tradeHistory={[{
@@ -1237,15 +1238,19 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View breakdown' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Close reconciliation' })
+    expect(within(dialog).getByText('Position fully closed')).toBeInTheDocument()
+    expect(within(dialog).getByText('Realized PnL')).toBeInTheDocument()
     expect(within(dialog).getByText('Execution')).toBeInTheDocument()
-    expect(within(dialog).getByText('Close result')).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'This close' })).toBeInTheDocument()
+    expect(within(dialog).getByText('Total VPI balance').closest('div')?.querySelector('dd'))
+      .toHaveTextContent('-123')
     expect(within(dialog).getByText('Execution reward')).toBeInTheDocument()
-    expect(within(dialog).getByText('Account outcome')).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Collateral & balances' })).toBeInTheDocument()
     expect(within(dialog).getByText(scenario === 'claim' ? 'Trader claim created' : 'Trader claim change'))
       .toBeInTheDocument()
     expect(within(dialog).getByText('Close result before settlement adjustments').closest('div')?.querySelector('dd'))
       .toHaveTextContent(scenario === 'claim' ? '+23' : '-13 228.1')
-    expect(within(dialog).getByText('Actual account change').closest('div')?.querySelector('dd'))
+    expect(within(within(dialog).getByTestId('close-reconciliation-summary')).getByText('Net result of this close').closest('div')?.querySelector('dd'))
       .toHaveTextContent(scenario === 'claim' ? '+23' : '-7 271.14')
     if (scenario === 'adjustment') {
       expect(within(dialog).getByText('Settlement adjustment').closest('div')?.querySelector('dd'))
@@ -1254,7 +1259,7 @@ describe('perps lifecycle labels', () => {
       expect(within(dialog).queryByText('Settlement adjustment')).not.toBeInTheDocument()
     }
     expect(within(dialog).queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
-    expect(within(dialog).queryByText('Position margin released')).not.toBeInTheDocument()
+    expect(within(within(dialog).getByTestId('close-reconciliation-summary')).getByText('Position margin released').closest('div')?.querySelector('dd')).toHaveTextContent('Unavailable')
   })
 
   it('fills current position and max with the exact plDXY order quantity', () => {
@@ -2904,9 +2909,6 @@ describe('perps lifecycle labels', () => {
     })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
-    fireEvent.click(within(finalResult!).getByRole('button', {
-      name: /Detailed close accounting/,
-    }))
     const vpiRow = within(finalResult!).getByText('VPI charge').closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent('-182.82')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)

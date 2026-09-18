@@ -825,14 +825,7 @@ describe('perps ticket oracle regime matrix', () => {
 
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
-    const accountingDisclosure = within(finalResult!).getByTestId('close-reconciliation-disclosure')
-    const accountingTrigger = within(accountingDisclosure).getByRole('button', {
-      name: /Detailed close accounting/,
-    })
-    expect(accountingTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(accountingTrigger).toHaveTextContent('Actual account change')
-    fireEvent.click(accountingTrigger)
-    expect(accountingTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(within(finalResult!).getByTestId('close-reconciliation')).toBeVisible()
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
       .not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Frozen spread charged'))
@@ -854,17 +847,16 @@ describe('perps ticket oracle regime matrix', () => {
       includeMarginSnapshot: false,
       receiptEconomics: closeSettlementAdjustmentReceipt,
     })
-    const disclosure = screen.getByRole('button', { name: /Detailed close accounting/ })
-    expect(disclosure).toHaveTextContent('Actual account change')
-    expect(disclosure).toHaveTextContent('-7 271.14')
-    expect(disclosure).not.toHaveTextContent('-13 228.1')
-    fireEvent.click(disclosure)
+    const summary = screen.getByTestId('close-reconciliation-summary')
+    expect(within(summary).getByText('Net result of this close')).toBeInTheDocument()
+    expect(summary).toHaveTextContent('-7 271.14')
+    expect(summary).not.toHaveTextContent('-13 228.1')
     const details = within(screen.getByTestId('close-reconciliation'))
     const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
     expect(amount('Close result before settlement adjustments')).toHaveTextContent('-13 228.1')
     expect(amount('Settlement adjustment')).toHaveTextContent('+5 956.96')
     expect(amount('Settlement adjustment')).toHaveClass('text-content-primary')
-    expect(amount('Actual account change')).toHaveTextContent('-7 271.14')
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Net result of this close').closest('div')?.querySelector('dd')).toHaveTextContent('-7 271.14')
     expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
     expect(screen.queryByText('Detailed close accounting unavailable')).not.toBeInTheDocument()
   })
@@ -879,16 +871,14 @@ describe('perps ticket oracle regime matrix', () => {
       receiptEconomics: closeOrder14Receipt,
     })
     expect(screen.queryByText('Detailed close accounting unavailable')).not.toBeInTheDocument()
-    const disclosure = screen.getByRole('button', { name: /Detailed close accounting/ })
-    expect(disclosure).toHaveTextContent('-4.73')
-    fireEvent.click(disclosure)
+    expect(screen.getByTestId('close-reconciliation-summary')).toHaveTextContent('-4.73')
     const details = within(screen.getByTestId('close-reconciliation'))
     const amount = (label: string) => details.getByText(label).closest('div')?.querySelector('dd')
     expect(amount('VPI rebate')).toHaveTextContent('+1.35')
     expect(amount('Frozen spread charged')).toHaveTextContent('-5.46')
     expect(amount('Close result before settlement adjustments')).toHaveTextContent('-4.73')
     expect(amount('Margin Account balance change')).toHaveTextContent('-4.73')
-    expect(amount('Actual account change')).toHaveTextContent('-4.73')
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Net result of this close').closest('div')?.querySelector('dd')).toHaveTextContent('-4.73')
     expect(details.queryByText('Settlement adjustment')).not.toBeInTheDocument()
     expect(details.queryByText('Frozen spread waived')).not.toBeInTheDocument()
     expect(details.queryByText('Uncovered loss (bad debt)')).not.toBeInTheDocument()
@@ -915,9 +905,6 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Closed position value')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
-    fireEvent.click(within(finalResult!).getByRole('button', {
-      name: /Detailed close accounting/,
-    }))
     const vpiRow = within(finalResult!).getByText(label).closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
     expect(within(finalResult!).getByText('Close result before settlement adjustments')).toBeInTheDocument()
@@ -934,18 +921,16 @@ describe('perps ticket oracle regime matrix', () => {
     }
     const { unmount } = renderCloseTicket(input)
 
-    fireEvent.click(screen.getByRole('button', { name: /Detailed close accounting/ }))
-    expect(screen.getByText('Position margin released').closest('div')?.querySelector('dd'))
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Position margin released').closest('div')?.querySelector('dd'))
       .toHaveTextContent('250')
-    expect(screen.getByText('Remaining position margin').closest('div')?.querySelector('dd'))
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Remaining position margin').closest('div')?.querySelector('dd'))
       .toHaveTextContent('250')
 
     unmount()
     renderCloseTicket({ ...input, includeMarginSnapshot: false })
 
-    fireEvent.click(screen.getByRole('button', { name: /Detailed close accounting/ }))
-    expect(screen.queryByText('Position margin released')).not.toBeInTheDocument()
-    expect(screen.getByText('Remaining position margin')).toBeInTheDocument()
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Position margin released').closest('div')?.querySelector('dd')).toHaveTextContent('Unavailable')
+    expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Remaining position margin')).toBeInTheDocument()
   })
 
   it('keeps the committed slippage and execution limit when the live regime changes', () => {
