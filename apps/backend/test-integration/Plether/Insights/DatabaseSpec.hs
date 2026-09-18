@@ -2,7 +2,7 @@ module Plether.Insights.DatabaseSpec
   ( insightsDatabaseSpec
   ) where
 
-import Control.Exception (SomeException, bracket, finally, try, throwIO)
+import Control.Exception (SomeException, bracket, finally, try, throwIO, fromException)
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import qualified Plether.Insights.RegistrationDatabaseSpec as RegistrationBenchmark
@@ -55,6 +55,7 @@ import Plether.Database.Insights
   , materializeFinalizedStandings
   , publishAccountSnapshotBatch
   , publishAccountSnapshotBatchMeasured
+  , getSnapshotPublicationHealth
   , integrityCalculationSql
   , stageCompetitionIntegrity
   , publishStagedCompetitionIntegrity
@@ -65,6 +66,7 @@ import Plether.Database.Insights
   , stageCompetitionParticipantWalletRemap
   )
 import Plether.Database.Insights.Registration (ensureRegistrationSchema)
+import Plether.Insights.SnapshotObservability
 import Plether.Database.Schema
   ( ensurePerpsHistorySchema
   , ensureTestnetFaucetSchema
@@ -128,12 +130,68 @@ insightsDatabaseSpec databaseUrl =
             case stillRunning of Nothing -> pure (); Just _ -> expectationFailure "registration must finish before indexed snapshot writes are released"
           publicationOutcome <- takeMVar finished
           either throwIO pure registrationOutcome
-          case publicationOutcome of Left _ -> pure (); Right () -> expectationFailure "publication must reject the changed epoch"
+          case publicationOutcome of
+            Left err -> case fromException err of
+              Just rejection -> do
+                srReason rejection `shouldBe` InputEpochChanged
+                srCapturedEpoch rejection `shouldSatisfy` isJust
+                srCurrentEpoch rejection `shouldSatisfy` (> srCapturedEpoch rejection)
+              Nothing -> expectationFailure $ "Expected typed epoch rejection, got " <> show err
+            Right () -> expectationFailure "publication must reject the changed epoch"
           withDb pool $ \conn -> do
             query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock+1) `shouldReturn` [Only (0 :: Int)]
             query conn "SELECT COUNT(*) FROM insights_snapshot_batches WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock+1) `shouldReturn` [Only (0 :: Int)]
             query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number=?" (competitionSlug,liveBlock) `shouldReturn` [Only (2 :: Int)]
+            publishAccountSnapshotBatch conn [snapshot wallet SnapshotLive (liveBlock+1) liveHash liveTimestamp (bankroll+gain) | wallet <- [walletA,registrationWallet,walletB]]
+            hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive (liveBlock+1) liveHash `shouldReturn` True
           ) `finally` cleanup
+
+    forM_ [MixedBatchIdentity, DuplicateParticipant, CompetitionMissing, CompetitionFinalized,
+           HistoryCursorNotReady, AccountLensChanged, ParticipantSetChanged] $ \reason ->
+      it ("classifies " <> show reason <> " and preserves rollback and connection reuse") $
+        withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+          insertParticipant conn walletA "rejection-fixture"
+          void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block=? WHERE release_router=?" (liveBlock+1,fixtureRouter)
+          publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp bankroll]
+          let candidate = snapshot walletA SnapshotLive (liveBlock+1) liveHash liveTimestamp bankroll
+              inputs = case reason of
+                MixedBatchIdentity -> [candidate,candidate {asiBlockNumber=liveBlock+2}]
+                DuplicateParticipant -> [candidate,candidate]
+                CompetitionMissing -> [candidate {asiCompetitionSlug="missing-competition"}]
+                HistoryCursorNotReady -> [candidate {asiBlockNumber=liveBlock+2}]
+                AccountLensChanged -> [candidate {asiAccountLensAddress=walletB}]
+                ParticipantSetChanged -> [candidate {asiWallet=walletB}]
+                _ -> [candidate]
+          when (reason == CompetitionFinalized) $ void $ execute conn
+            "UPDATE insights_competitions SET finalized=TRUE WHERE slug=?" (Only competitionSlug)
+          outcome <- try @SnapshotRejection $ publishAccountSnapshotBatch conn inputs
+          case outcome of
+            Left rejection -> do
+              srReason rejection `shouldBe` reason
+              srKind rejection `shouldBe` "live"
+              when (reason == ParticipantSetChanged) $ do
+                srCapturedParticipants rejection `shouldBe` 1
+                srCurrentParticipants rejection `shouldBe` Just 1
+            Right () -> expectationFailure "Invalid batch was accepted"
+          query_ conn "SELECT txid_current_if_assigned() IS NULL" `shouldReturn` [Only True]
+          query_ conn "SELECT to_regclass('pg_temp.insights_snapshot_stage') IS NULL" `shouldReturn` [Only True]
+          query conn "SELECT COUNT(*) FROM insights_account_snapshots WHERE competition_slug=? AND block_number>?" (competitionSlug,liveBlock) `shouldReturn` [Only (0 :: Int)]
+          hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive liveBlock liveHash `shouldReturn` True
+          when (reason == CompetitionFinalized) $ void $ execute conn
+            "UPDATE insights_competitions SET finalized=FALSE WHERE slug=?" (Only competitionSlug)
+          publishAccountSnapshotBatch conn [candidate]
+          hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotLive (liveBlock+1) liveHash `shouldReturn` True
+
+    it "reads committed live publication health and excludes inactive competitions" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        void $ execute conn "UPDATE insights_competitions SET start_timestamp=EXTRACT(EPOCH FROM NOW())::bigint-60, new_risk_cutoff_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+1800, score_cutoff_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+3600, results_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+7200, payment_deadline_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+10800 WHERE slug=?" (Only competitionSlug)
+        getSnapshotPublicationHealth conn competitionSlug `shouldReturn` Just Nothing
+        insertParticipant conn walletA "publication-health"
+        publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp bankroll]
+        health <- getSnapshotPublicationHealth conn competitionSlug
+        health `shouldSatisfy` maybe False isJust
+        void $ execute conn "UPDATE insights_competitions SET finalized=TRUE WHERE slug=?" (Only competitionSlug)
+        getSnapshotPublicationHealth conn competitionSlug `shouldReturn` Nothing
 
     it "requires a fresh authoritative calculation for eligibility approval" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
@@ -475,7 +533,7 @@ insightsDatabaseSpec databaseUrl =
           `shouldReturn` False
         publishAccountSnapshotBatch conn
           [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)]
-          `shouldThrow` anyIOException
+          `shouldThrow` (\rejection -> srReason rejection == ParticipantSetChanged)
         during <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         existing <- requireWallet walletA during
         existing `shouldBe` original

@@ -1,14 +1,15 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, SomeAsyncException, fromException, throwIO, try)
-import Database.PostgreSQL.Simple (SqlError (..))
-import qualified Data.Text.Encoding as TextEncoding
-import qualified Plether.Logging as Log
+import Control.Exception (SomeException, try)
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Time (getCurrentTime)
+import Plether.Insights.SnapshotObservability
 import Control.Monad (forever)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
-import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Database.Insights (ensureInsightsSchema, getSnapshotPublicationHealth)
+import Plether.Insights.Competition (CompetitionRules (..))
 import Plether.Database.Schema (ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Insights.SnapshotWorker
@@ -54,18 +55,25 @@ main = do
                   <> show pollSeconds
                   <> " seconds using "
                   <> captureModeDescription multicallSize
+              workerStarted <- getCurrentTime
+              progress <- newIORef initialSnapshotProgress
               forever $ do
                 result <-
                   try @SomeException $
                     runInsightsSnapshotCycle client pool cfg multicallSize (2 * pollSeconds) integrityEnabled
-                case result of
-                  Left err -> case fromException err :: Maybe SomeAsyncException of
-                    Just _ -> throwIO err
-                    Nothing -> Log.logWarn "insights_snapshot_cycle_failed" "Insights snapshot cycle failed"
-                      [Log.field "sql_state" (case fromException err :: Maybe SqlError of
-                        Just sqlError -> TextEncoding.decodeUtf8 $ sqlState sqlError
-                        Nothing -> "not_database")]
-                  Right () -> pure ()
+                either logSnapshotCycleException pure result
+                -- Read committed publication state even after a rejection or an
+                -- RPC skip; returning normally does not prove a snapshot exists.
+                health <- try @SomeException $ withDb pool $ \conn ->
+                  getSnapshotPublicationHealth conn (crSlug $ cfgInsightsCompetitionRules cfg)
+                case health of
+                  Left err -> logSnapshotHealthException err
+                  Right publication -> do
+                    now <- getCurrentTime
+                    previous <- readIORef progress
+                    let current = advanceSnapshotProgress pollSeconds workerStarted now publication previous
+                    writeIORef progress current
+                    logSnapshotProgress workerStarted now publication previous current
                 threadDelay $ pollSeconds * 1_000_000
 
 loadPollSeconds :: IO Int

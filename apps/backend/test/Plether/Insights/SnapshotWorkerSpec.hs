@@ -1,6 +1,8 @@
 module Plether.Insights.SnapshotWorkerSpec (spec) where
 
 import Data.Aeson (Value (..))
+import Data.Time (UTCTime, addUTCTime)
+import Plether.Insights.SnapshotObservability
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
@@ -29,6 +31,29 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "snapshot progress" $ do
+    let started = read "2026-09-18 00:00:00 UTC" :: UTCTime
+        at n = addUTCTime n started
+        step n publication = advanceSnapshotProgress 60 started (at n) publication
+    it "counts skipped cycles, warns on a sustained streak, and recovers only on a new committed publication" $ do
+      let first = step 1 (Just $ Just $ at 0) initialSnapshotProgress
+          skipped = step 30 (Just $ Just $ at 0) first
+          twice = step 60 (Just $ Just $ at 0) skipped
+          stalled = step 90 (Just $ Just $ at 0) twice
+          recovered = step 100 (Just $ Just $ at 99) stalled
+      spUnsuccessfulCycles skipped `shouldBe` 1
+      spStalled twice `shouldBe` False
+      spStalled stalled `shouldBe` True
+      spUnsuccessfulCycles recovered `shouldBe` 0
+      spStalled recovered `shouldBe` False
+    it "alerts on freshness age and never invents an initial successful publication" $ do
+      let pending = step 121 (Just Nothing) initialSnapshotProgress
+          stale = step 121 (Just $ Just started) initialSnapshotProgress
+      spStalled pending `shouldBe` True
+      spLastPublication pending `shouldBe` Nothing
+      spStalled stale `shouldBe` True
+      step 1000 Nothing pending `shouldBe` initialSnapshotProgress
+
   describe "full account valuation" $ do
     it "reconciles the reported wallet at Arbitrum Sepolia block 308781536" $ do
       -- The old position-only value was 73,603.094480, omitting 30,425.778922

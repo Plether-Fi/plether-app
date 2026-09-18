@@ -109,6 +109,7 @@ library
         Plether.Insights.Registration.Types
         Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
+        Plether.Insights.SnapshotObservability
         Plether.Vaults.PerformanceIndexer
         Plether.Vaults.ActivityIndexer
         Plether.Vaults.DepositAttributionIndexer
@@ -314,7 +315,8 @@ executable plether-insights-worker
         base >= 4.17 && < 5,
         plether-api,
         postgresql-simple >= 0.6,
-        text >= 2.0
+        text >= 2.0,
+        time >= 1.12
     hs-source-dirs:   app
     default-language: GHC2021
     default-extensions:
