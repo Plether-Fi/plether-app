@@ -1,4 +1,5 @@
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
+import { lazyWithRetry as lazy } from './utils/lazyWithRetry'
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'

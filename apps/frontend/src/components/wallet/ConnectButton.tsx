@@ -1,4 +1,5 @@
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
+import { lazyWithRetry as lazy } from '../../utils/lazyWithRetry'
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { useLocation } from 'react-router-dom'

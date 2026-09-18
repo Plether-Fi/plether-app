@@ -4,6 +4,7 @@ import { AccountDeploymentConfirmation } from './AccountDeploymentConfirmation'
 import { useAccountDeploymentConfirmation } from './useAccountDeploymentConfirmation'
 import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { SponsorRequestError } from './errors'
+import { replaceTextNodes } from '../test/replaceTextNodes'
 
 const runtime = vi.hoisted(() => ({ current: undefined as unknown }))
 vi.mock('./runtimeContext', () => ({ usePerpsAaRuntime: () => runtime.current }))
@@ -38,6 +39,8 @@ describe('account confirmation status', () => {
     expect(vi.getTimerCount()).toBe(0)
     render(<><AccountDeploymentConfirmation /><Action /></>)
     expect(screen.getByRole('status')).toHaveTextContent('no transaction will be sent automatically')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000) })
+    replaceTextNodes(screen.getByRole('status'))
     check.mockResolvedValue(true)
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(screen.getByRole('status')).toHaveTextContent('Trading Account confirmed')

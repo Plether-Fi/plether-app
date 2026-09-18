@@ -61,6 +61,13 @@ export interface ReviewedPerpsOrderV2 {
   reviewSummary: PerpsOrderReviewSummary
 }
 
+export class PerpsOrderPositionConflictError extends Error {
+  constructor() {
+    super(getPerpsOpenRevertMessage(1))
+    this.name = 'PerpsOrderPositionConflictError'
+  }
+}
+
 export class PerpsOrderFundingShortfallError extends Error {
   readonly reviewedOrder: ReviewedPerpsOrderV2
   readonly shortfallUsdc: bigint
@@ -543,6 +550,20 @@ export async function reviewPerpsOrderV2(
   input.signal?.throwIfAborted()
   validateInput(input)
   const context = await withPreparationStep('context_read', undefined, () => loadPerpsOrderReviewContext(client, manifest, input.account))
+  if (!input.isClose) {
+    // UI position data may lag a fill or a trade made in another tab. Check at
+    // the same verified block as the review; never silently turn an open into
+    // a close or ask the sponsor to estimate a predictably invalid operation.
+    const position = await withPreparationStep('context_read', 'getPosition', () => client.readContract({
+      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI,
+      functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber,
+    }))
+    input.signal?.throwIfAborted()
+    if (position.exists && input.positionProtection) throw new Error('Protected opens require an account with no position')
+    if (position.exists && position.side !== input.side) {
+      throw preparationFailure(new PerpsOrderPositionConflictError(), 'preflight', 'getPosition')
+    }
+  }
   if (input.isClose) {
     context.closePreviewAddress = input.closeAssistance
       ? (await verifyCloseAssistanceLens(client, input.closeAssistance, context.blockNumber), input.closeAssistance.lens)
@@ -554,11 +575,7 @@ export async function reviewPerpsOrderV2(
     await withPreparationStep('deployment_verification', undefined, () => verifyProtectionDeployment(client, manifest, context.blockNumber))
     if (input.isClose) throw new Error('Protection can only be attached to a fresh open')
     validateProtectionParams(input.positionProtection, input.direction, context.lastMarkPrice, context.capPrice)
-    const [triggerBountyUsdc, position] = await Promise.all([
-      withPreparationStep('context_read', 'positionProtectionTriggerBountyUsdc', () => client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyUsdc', blockNumber: context.blockNumber })),
-      withPreparationStep('context_read', 'getPosition', () => client.readContract({ address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens, abi: PERPS_PUBLIC_LENS_ABI, functionName: 'getPosition', args: [input.account], blockNumber: context.blockNumber })),
-    ])
-    if (position.exists) throw new Error('Protected opens require an account with no position')
+    const triggerBountyUsdc = await withPreparationStep('context_read', 'positionProtectionTriggerBountyUsdc', () => client.readContract({ address: manifest.orderRouter, abi: PROTECTION_CONFIG_ABI, functionName: 'positionProtectionTriggerBountyUsdc', blockNumber: context.blockNumber }))
     protection = { book: manifest.positionProtectionBook, params: { ...input.positionProtection }, triggerBountyUsdc, executionBountyUsdc: context.closeBounty }
   }
   const review = async (candidate: PreparePerpsOrderV2Input) => {

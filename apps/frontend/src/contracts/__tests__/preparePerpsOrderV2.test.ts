@@ -119,6 +119,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
         case 'getPendingOrders': return []
         case 'maxPendingOrders': return 8n
         case 'getFreeBuyingPowerUsdc': return freeBuyingPowerUsdc
+        case 'getPosition': return { exists: false, side: 0 }
         case 'assessOrder': {
           const order = request.args?.[1] as { marginDelta: bigint }
           const price = request.args?.[3] as bigint
@@ -213,6 +214,7 @@ describe('reviewed leverage validation', () => {
       totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
       activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
       getFreeBuyingPowerUsdc: 10_000_000_000n,
+      getPosition: { exists: false, side: 0 },
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'assessOrder' || functionName === 'previewClose') {
@@ -420,10 +422,10 @@ describe('Max opening review', () => {
   }
 
   function maxClient({ size = 7_900n * quantum, available = 1_000_000_000n, failure,
-    leverage = 330_000n, quoteValid = true, assessmentFailure,
+    leverage = 330_000n, quoteValid = true, assessmentFailure, position = { exists: false, side: 0 },
   }: {
     size?: bigint; available?: bigint; failure?: unknown; leverage?: bigint | ((size: bigint, price: bigint) => bigint);
-    quoteValid?: boolean; assessmentFailure?: unknown;
+    quoteValid?: boolean; assessmentFailure?: unknown; position?: { exists: boolean; side: number };
   } = {}) {
     const values: Record<string, unknown> = {
       maxOrderAge: 60n, currentExecutionConfigHash: configHash,
@@ -433,7 +435,7 @@ describe('Max opening review', () => {
       totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n,
       activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n,
       getFreeBuyingPowerUsdc: available,
-      positionProtectionTriggerBountyUsdc: 200_000n, getPosition: { exists: false },
+      positionProtectionTriggerBountyUsdc: 200_000n, getPosition: position,
     }
     const readContract = vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'quoteMaxOpen' || functionName === 'previewOpen') {
@@ -466,6 +468,24 @@ describe('Max opening review', () => {
     vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
       block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
+  })
+
+  it.each([false, true])('rejects a stale opposite-direction open before quoting or simulation (max=%s)', async maxSize => {
+    const { client, readContract, simulateContract } = maxClient({ position: { exists: true, side: 0 } })
+    const error = await preparePerpsOrderV2(client, manifest, { ...input, maxSize }).catch((cause: unknown) => cause)
+    expect(error).toMatchObject({ name: 'PerpsOrderPositionConflictError', message: expect.stringMatching(/opposing/i) })
+    expect(getPreparationFailureProperties(error)).toEqual({ stage: 'preflight', contract_function: 'getPosition', error_code: 'MUST_CLOSE_OPPOSING' })
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getPosition', args: [account], blockNumber: block.number }))
+    expect(readContract.mock.calls.some(([request]) => ['quoteMaxOpen', 'assessOrder'].includes(request.functionName))).toBe(false)
+    expect(simulateContract).not.toHaveBeenCalled()
+  })
+
+  it('allows increasing an existing same-direction position', async () => {
+    const { client, simulateContract } = maxClient({ position: { exists: true, side: 1 } })
+    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    expect(prepared.request.side).toBe(1)
+    expect(prepared.request.isClose).toBe(false)
+    expect(simulateContract).toHaveBeenCalledOnce()
   })
 
   it('uses the exact lens maximum beyond the earlier ticket size, without probing smaller candidates', async () => {

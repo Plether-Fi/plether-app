@@ -3,6 +3,7 @@ export type StableSponsorReason =
   | 'RATE_LIMITED'
   | 'SPONSOR_BUDGET_EXCEEDED'
   | 'SIMULATION_FAILED'
+  | 'MUST_CLOSE_OPPOSING'
   | 'INSUFFICIENT_FREE_EQUITY'
   | 'INVALID_ORDER_DEADLINE'
   | 'SPONSOR_UNAVAILABLE'
@@ -208,7 +209,7 @@ export function isDefinitiveSponsorshipRefusal(reason?: string): boolean {
   return reason !== undefined && [
     'RESTART_ESTIMATION', 'RATE_LIMITED', 'SPONSOR_BUDGET_EXCEEDED',
     'SIMULATION_FAILED', 'POLICY_DENIED', 'PAYMASTER_PAUSED',
-    'INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE',
+    'INSUFFICIENT_FREE_EQUITY', 'INVALID_ORDER_DEADLINE', 'MUST_CLOSE_OPPOSING',
     'ACCOUNT_NOT_TRUSTED', 'EXECUTION_GAS_CAP_EXCEEDED',
   ].includes(reason)
 }
@@ -250,6 +251,8 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
       return 'Sponsored gas capacity is temporarily unavailable. Retry later or contact support.'
     case 'SIMULATION_FAILED':
       return 'The transaction was rejected during simulation. Refresh account state and review the action before trying again.'
+    case 'MUST_CLOSE_OPPOSING':
+      return 'Close your existing position before opening one in the opposite direction. Refresh account state and review the action. Your action was not sent.'
     case 'INSUFFICIENT_FREE_EQUITY':
       return 'Not enough available trading collateral. Reduce the order size or add collateral. Your action was not sent.'
     case 'INVALID_ORDER_DEADLINE':

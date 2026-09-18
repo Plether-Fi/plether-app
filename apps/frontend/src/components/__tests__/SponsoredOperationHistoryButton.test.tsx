@@ -584,6 +584,7 @@ describe('SponsoredOperationHistoryButton', () => {
   it.each([
     ['INSUFFICIENT_FREE_EQUITY', /Not enough available trading collateral/],
     ['INVALID_ORDER_DEADLINE', /The order deadline is invalid/],
+    ['MUST_CLOSE_OPPOSING', /Close your existing position/],
     ['SIMULATION_FAILED', /The transaction was rejected during simulation/],
   ] as const)('shows actionable %s guidance without a retry button for a refused preparation', (reason, message) => {
     useSponsoredOperationStore.setState({ operations: [operation({id:'simulation-refused',action:'place-order',

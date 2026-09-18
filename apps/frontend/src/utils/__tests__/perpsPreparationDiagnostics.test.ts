@@ -44,6 +44,7 @@ describe('preparation diagnostics privacy', () => {
     [new Error(COMMIT_UNDECODED_FALLBACK_MESSAGE), 'undecoded_revert'],
     [new Error('private failure details'), 'unknown'],
     [Object.assign(new Error('amount 123'), { name: 'PerpsOrderFundingShortfallError' }), 'funding_shortfall'],
+    [Object.assign(new Error('private position state'), { name: 'PerpsOrderPositionConflictError' }), 'MUST_CLOSE_OPPOSING'],
     [Object.assign(new Error('exact leverage'), { name: 'PerpsOrderReviewError', reason: 'leverage' }), 'review_leverage'],
   ])('classifies without forwarding exception text: %s', (error, errorCode) => {
     expect(getPreparationFailureProperties(error)).toEqual({ stage: 'preflight', error_code: errorCode })

@@ -15,7 +15,12 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Alto request ID normalization" $ do
-  forM_ [("0x024ec6ee", "INSUFFICIENT_FREE_EQUITY"), ("0xe37e62c6", "INVALID_ORDER_DEADLINE"), ("0xdeadbeef", "SIMULATION_FAILED")] $ \(selector, reason) ->
+  forM_ [("0x024ec6ee", "INSUFFICIENT_FREE_EQUITY"), ("0xe37e62c6", "INVALID_ORDER_DEADLINE"),
+         ("0x2ae052ed" <> T.replicate 63 "0" <> "1", "MUST_CLOSE_OPPOSING"),
+         ("0x2ae052ed" <> T.replicate 63 "0" <> "2", "SIMULATION_FAILED"),
+         ("0x2ae052ed01", "SIMULATION_FAILED"),
+         ("0x2ae052ed" <> T.replicate 63 "0" <> "100", "SIMULATION_FAILED"),
+         ("0xdeadbeef", "SIMULATION_FAILED")] $ \(selector, reason) ->
     it ("classifies an actual Alto simulation reply as " <> T.unpack reason) $ do
       let app _ respond = respond $ responseLBS status200 [] $ encode $ object
             ["jsonrpc" .= ("2.0" :: T.Text), "id" .= (1 :: Int), "error" .= object

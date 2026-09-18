@@ -92,6 +92,16 @@ jobs:
             echo "perps_aa_manifest_url=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require private source-map upload credential
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
+        run: |
+          if [ -z "$POSTHOG_CLI_API_KEY" ]; then
+            echo "::error::Set POSTHOG_CLI_API_KEY to a PostHog personal API key with error tracking write and organization read scopes. Do not use VITE_POSTHOG_KEY."
+            exit 1
+          fi
+
       - name: Build
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
@@ -107,7 +117,30 @@ jobs:
           VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
           VITE_ARBITRUM_SEPOLIA_RPC_URL: ${{ vars.VITE_ARBITRUM_SEPOLIA_RPC_URL }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
+          POSTHOG_SOURCEMAPS: '1'
         run: npm run build
+
+      - name: Upload private application source maps
+        if: env.TARGET_ENV == 'sepolia'
+        uses: PostHog/upload-source-maps@991172e085213c222c61d2ba6a0b9e57c81e5066 # v2
+        env:
+          # Associate releases through uploaded symbols; our SDK does not yet
+          # emit the newer per-event release ID.
+          POSTHOG_RELEASE_MODE: symbol-set
+        with:
+          directory: apps/frontend/dist/assets
+          api-key: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          project-id: '208816'
+          host: https://eu.posthog.com
+          release-name: plether-web-sepolia
+          release-version: ${{ github.sha }}
+          cli-version: '0.18.3'
+          delete-after-upload: 'true'
+
+      - name: Remove source maps and verify publish payload
+        if: always() && env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        run: node scripts/remove-source-maps.mjs dist
 
       - name: Validate TradingView runtime payload
         if: env.TARGET_ENV == 'sepolia'

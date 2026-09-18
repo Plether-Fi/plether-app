@@ -1,7 +1,16 @@
 dofile('posthog-projection.lua')
-for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE'}) do
+for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','MUST_CLOSE_OPPOSING'}) do
   local _,_,safe=project_posthog('test',0,{event='aa_request_failed',reason_code=reason,error='private calldata'})
   assert(safe.reason_code==reason and safe.error==nil)
+end
+local _,_,preparation=project_posthog('test',0,{event='aa_preparation_rpc_failed',stage='estimation',reason_code='MUST_CLOSE_OPPOSING',request_id='123456789-42',sender='private',error='private'})
+assert(preparation.event=='aa_preparation_rpc_failed' and preparation.request_id=='123456789-42' and preparation.stage=='estimation')
+assert(preparation.reason_code=='MUST_CLOSE_OPPOSING' and preparation.sender==nil and preparation.error==nil)
+local _,_,attempt=project_posthog('test',0,{event='aa_preparation_failed',request_id='123456789-42',attempt_id='12345678-1234-4123-8123-123456789abc',reason_code='MUST_CLOSE_OPPOSING'})
+assert(attempt.event=='aa_preparation_failed' and attempt.attempt_id=='12345678-1234-4123-8123-123456789abc' and attempt.request_id=='123456789-42')
+for _,id in ipairs({'secret','https://provider/credential','1234-secret',string.rep('1',43)}) do
+  local _,_,safe=project_posthog('test',0,{event='aa_preparation_rpc_failed',request_id=id})
+  assert(safe.request_id==nil)
 end
 local _,_,funding=project_posthog('test',0,{event='worker_funding_observation',diagnostic_code='JOURNAL_DECODE_FAILED',raw_transaction='private'})
 assert(funding.diagnostic_code=='JOURNAL_DECODE_FAILED' and funding.raw_transaction==nil)

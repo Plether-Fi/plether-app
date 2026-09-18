@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { captureFrontendLog, captureReactException } from '../analytics/client'
 import { BUILD_COMMIT } from '../config/buildInfo'
+import { isModuleLoadError } from '../utils/lazyWithRetry'
 
 function newSupportReference(): string {
   try {
@@ -17,13 +18,13 @@ interface Props {
 
 // Deliberately outside wallet, query, router and trading providers. The fallback
 // must not depend on any of the state that may have caused the application crash.
-export class AppErrorBoundary extends Component<Props, { failed: boolean }> {
-  state = { failed: false }
+export class AppErrorBoundary extends Component<Props, { failed: boolean; moduleLoadFailed: boolean }> {
+  state = { failed: false, moduleLoadFailed: false }
   private readonly supportReference = newSupportReference()
   private reported = false
 
-  static getDerivedStateFromError() {
-    return { failed: true }
+  static getDerivedStateFromError(error: unknown) {
+    return { failed: true, moduleLoadFailed: isModuleLoadError(error) }
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
@@ -44,8 +45,8 @@ export class AppErrorBoundary extends Component<Props, { failed: boolean }> {
       <main className="min-h-screen bg-surface flex items-center justify-center p-6 text-content-primary">
         <section role="alert" aria-labelledby="app-recovery-title" className="w-full max-w-xl rounded-xl border border-white/20 bg-surface-panel p-6 sm:p-8">
           <p className="mb-3 text-sm text-content-secondary">Plether</p>
-          <h1 id="app-recovery-title" className="text-2xl font-semibold">The trading interface stopped unexpectedly</h1>
-          <p className="mt-4 text-content-secondary">Try reloading the page. If this happens again, send support a screenshot of this screen.</p>
+          <h1 id="app-recovery-title" className="text-2xl font-semibold">{this.state.moduleLoadFailed ? 'Part of the trading interface could not load' : 'The trading interface stopped unexpectedly'}</h1>
+          <p className="mt-4 text-content-secondary">{this.state.moduleLoadFailed ? 'Check your connection, then reload to load the current app version. If this happens again, send support a screenshot of this screen.' : 'Try reloading the page. If this happens again, send support a screenshot of this screen.'}</p>
           <p className="mt-3 text-content-secondary">If you were signing or submitting a transaction, check its status in Transaction History before trying again. This screen does not confirm whether it was sent.</p>
           <p className="mt-3 text-content-secondary">Do not clear site data: it contains transaction-recovery records. Reloading does not clear those records.</p>
           <button type="button" onClick={() => { window.location.reload() }} className="mt-6 rounded-lg bg-primary-500 px-5 py-3 font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-4">

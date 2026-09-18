@@ -1,4 +1,5 @@
-import { lazy, Suspense, useState } from 'react'
+import { Suspense, useState } from 'react'
+import { lazyWithRetry as lazy } from '../../utils/lazyWithRetry'
 import { Link } from 'react-router-dom'
 import { BUILD_COMMIT } from '../../config/buildInfo'
 import { isPrimaryAppDeployment } from '../../utils/deployment'

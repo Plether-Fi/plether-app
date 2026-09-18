@@ -418,7 +418,7 @@ describe('executeSponsoredPerpsAction', () => {
     expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
   })
 
-  it.each(['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED'])('persists %s as an explicit refusal without retrying, signing, sending, or releasing the durable lane', async reason => {
+  it.each(['INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','SIMULATION_FAILED','MUST_CLOSE_OPPOSING'])('persists %s as an explicit refusal without retrying, signing, sending, or releasing the durable lane', async reason => {
     const prepare=vi.fn().mockRejectedValue(new SponsorRequestError({reason,retryable:false,message:'Simulation rejected'}))
     const managed=runtime({prepareUserOperation:prepare})
     await expect(executeSponsoredPerpsAction({manifest:{...v2Manifest(),preparationRpcVersion:1},ownerAddress:OWNER,action,runtime:managed})).rejects.toThrow('Simulation rejected')

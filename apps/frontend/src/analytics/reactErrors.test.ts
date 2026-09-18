@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { sanitizedReactException } from './reactErrors'
 
 describe('React exception privacy', () => {
+  it('retains only a public same-origin asset name for lazy-load failures', () => {
+    const message = 'Failed to fetch dynamically imported module: '
+    expect(sanitizedReactException(new TypeError(`${message}${location.origin}/assets/Perps-abc12345.js`)).error.message).toContain('[asset: Perps-abc12345.js]')
+    for (const url of [`${location.origin}/assets/Perps-abc12345.js?token=secret`, `${location.origin}/assets/Perps-abc12345.js#secret`, `${location.origin}/api/private.js`, 'https://rpc.example/assets/private.js']) {
+      const safe = sanitizedReactException(new TypeError(message + url))
+      expect(safe.error.message).not.toMatch(/\[asset:|secret|private\.js|rpc\.example/)
+    }
+  })
   it('retains exception identity and application frames without provider credentials or causes', () => {
     const error = new TypeError('Cannot read properties of undefined')
     error.stack = `TypeError: ignored\n    at Funding (${location.origin}/assets/app-abc123.js:42:7)\n    at rpc (https://rpc.example/private-key?token=secret:1:2)\nRequest body: secret`

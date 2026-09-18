@@ -1,8 +1,8 @@
 import { withCloseAssistanceRecovery } from './closeAssistanceRecovery'
+import { lazyWithRetry as lazy } from '../utils/lazyWithRetry'
 import { useSponsoredOperationStore } from './operationStore'
 import { closeAssistanceManifest } from './sponsoredClose'
 import {
-  lazy,
   Suspense,
   useCallback,
   useMemo,
