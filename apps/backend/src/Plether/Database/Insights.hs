@@ -33,6 +33,7 @@ module Plether.Database.Insights
   , publishStagedCompetitionIntegrity
   , publishAccountSnapshotBatch
   , publishAccountSnapshotBatchMeasured
+  , getSnapshotPublicationHealth
   , hasCompleteAccountSnapshotBatch
   , invalidateSnapshotBatchesAfter
   , invalidateCompetitionSnapshotsForReleaseRebuild
@@ -58,7 +59,9 @@ module Plether.Database.Insights
   ) where
 
 import Control.Monad (forM_, unless, when, void)
-import Control.Exception (finally, onException)
+import Control.Exception (finally, onException, catch, throwIO)
+import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
+import Plether.Insights.SnapshotObservability
 import GHC.Clock (getMonotonicTimeNSec)
 import qualified Plether.Logging as Log
 import Language.Haskell.TH.Syntax (qAddDependentFile, runIO, lift)
@@ -2065,121 +2068,159 @@ publishAccountSnapshotBatch conn snapshots = void $ publishAccountSnapshotBatchM
 publishAccountSnapshotBatchMeasured :: Connection -> [AccountSnapshotInput] -> IO Double
 publishAccountSnapshotBatchMeasured _ [] = pure 0
 publishAccountSnapshotBatchMeasured conn snapshots@(firstSnapshot : _) = do
-  -- Parse and load the complete batch into a private table before acquiring
-  -- any competition lock. Referential checks are deferred until atomic commit.
-  withTransaction conn $ do
-    void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
-    void $ execute_ conn "DROP TABLE IF EXISTS pg_temp.insights_snapshot_stage"
-    void $ execute_ conn "CREATE TEMP TABLE insights_snapshot_stage (LIKE insights_account_snapshots INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS"
-    void $ executeMany conn accountSnapshotStageInsertQuery $ map accountSnapshotParameters snapshots
-  let cleanup = void $ execute_ conn "DROP TABLE IF EXISTS pg_temp.insights_snapshot_stage"
-  (lockStarted,lockAcquired,writeStarted,deleted,inserted,validated) <- (withTransaction conn $ do
-    void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
-    let slug = asiCompetitionSlug firstSnapshot
-        kind = asiKind firstSnapshot
-        chainId = asiChainId firstSnapshot
-        releaseRouter = normalizeAddress $ asiReleaseRouter firstSnapshot
-        accountLensAddress = normalizeAddress $ asiAccountLensAddress firstSnapshot
-        blockNumber = asiBlockNumber firstSnapshot
-        blockHash = normalizeAddress $ asiBlockHash firstSnapshot
-        timestamp = asiTimestamp firstSnapshot
-        accountStateCount = length $ filter (equityHasAccountState . asiEquity) snapshots
-        sameIdentity snapshot =
-          asiCompetitionSlug snapshot == slug
-            && asiKind snapshot == kind
-            && asiChainId snapshot == chainId
-            && normalizeAddress (asiReleaseRouter snapshot) == releaseRouter
-            && normalizeAddress (asiAccountLensAddress snapshot) == accountLensAddress
-            && asiBlockNumber snapshot == blockNumber
-            && normalizeAddress (asiBlockHash snapshot) == blockHash
-            && asiTimestamp snapshot == timestamp
-        inputWallets = sort $ map (normalizeAddress . asiWallet) snapshots
-    unless (all sameIdentity snapshots) $
-      fail "Cannot publish a mixed-block or mixed-competition Insights snapshot batch"
-    unless (length inputWallets == length (nub inputWallets)) $
-      fail "Cannot publish an Insights snapshot batch with duplicate wallets"
-    expectedEpoch <- query conn "SELECT integrity_input_epoch FROM insights_competitions WHERE slug=? AND NOT finalized" (Only slug) :: IO [Only Integer]
-    when (null expectedEpoch) $ fail "Cannot publish snapshots for a missing or finalized competition"
-    -- These indexed writes remain invisible until commit. Deferral is essential:
-    -- an immediate FK would hold KEY SHARE and stall registration's FOR UPDATE.
-    void $ execute_ conn "SET CONSTRAINTS insights_account_snapshots_competition_slug_fkey DEFERRED"
-    writeStarted <- getMonotonicTimeNSec
-    _ <- execute conn
-      "DELETE FROM insights_account_snapshots s\
-      \ WHERE competition_slug = ? AND snapshot_kind = ? AND block_number = ?\
-      \ AND NOT EXISTS (SELECT 1 FROM insights_competition_participants p\
-      \ WHERE p.competition_slug=s.competition_slug AND p.wallet=s.wallet)"
-      (slug, snapshotKindText kind, blockNumber)
-    deleted <- getMonotonicTimeNSec
-    existing <- query conn
-      "SELECT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug=? AND snapshot_kind=? AND block_number=?)"
-      (slug,snapshotKindText kind,blockNumber) :: IO [Only Bool]
-    void $ execute_ conn $ accountSnapshotPublishQuery <> if existing == [Only True] then accountSnapshotConflictQuery else ""
-    inserted <- getMonotonicTimeNSec
-    lockStarted <- getMonotonicTimeNSec
-    mutableRows <- query conn
-      "SELECT NOT finalized,integrity_input_epoch FROM insights_competitions WHERE slug = ? FOR NO KEY UPDATE"
-      (Only slug)
-    lockAcquired <- getMonotonicTimeNSec
-    let mutable = case mutableRows of [(True,epoch)] -> expectedEpoch == [Only epoch]; _ -> False
-    unless mutable $
-      fail "Cannot publish an account snapshot batch: competition inputs changed, are missing, or are finalized"
-    cursorReady <- query conn
-      "SELECT EXISTS (SELECT 1 FROM perps_indexer_state i\
-      \ WHERE i.chain_id = ? AND i.release_router = ?\
-      \ AND i.indexer_name = (? || ?)\
-      \ AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= ?)"
-      (chainId, releaseRouter, competitionIndexerNamespace slug, releaseRouter, blockNumber)
-    unless (cursorReady == [Only True]) $
-      fail "Cannot publish an Insights snapshot ahead of a canonical perps-history cursor"
-    configuredLens <- query conn
-      "SELECT account_lens_address FROM insights_competitions WHERE slug = ?"
-      (Only slug)
-    unless (configuredLens == [Only accountLensAddress]) $
-      fail "Cannot publish an Insights snapshot batch from a stale account lens"
-    registered <- query conn
-      "SELECT wallet FROM insights_competition_participants\
-      \ WHERE competition_slug = ? ORDER BY wallet ASC"
-      (Only slug)
-    let registeredWallets = [wallet | Only wallet <- registered]
-    unless (inputWallets == registeredWallets) $
-      fail "Cannot publish an incomplete Insights snapshot batch: registered participant set changed"
-    validated <- getMonotonicTimeNSec
-    _ <- execute conn
-      "INSERT INTO insights_snapshot_batches\
-      \ (competition_slug, snapshot_kind, chain_id, release_router, account_lens_address, block_number, block_hash, timestamp, participant_count, account_state_count)\
-      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
-      \ ON CONFLICT (competition_slug, snapshot_kind, block_number) DO UPDATE SET\
-      \ chain_id = EXCLUDED.chain_id, release_router = EXCLUDED.release_router,\
-      \ account_lens_address = EXCLUDED.account_lens_address,\
-      \ block_hash = EXCLUDED.block_hash, timestamp = EXCLUDED.timestamp,\
-      \ participant_count = EXCLUDED.participant_count,\
-      \ account_state_count = EXCLUDED.account_state_count, published_at = NOW()"
-      ( slug
-      , snapshotKindText kind
-      , chainId
-      , releaseRouter
-      , accountLensAddress
-      , blockNumber
-      , blockHash
-      , timestamp
-      , length snapshots
-      , accountStateCount
-      )
-    pure (lockStarted,lockAcquired,writeStarted,deleted,inserted,validated)) `onException` cleanup
-  finished <- getMonotonicTimeNSec
-  cleanup
-  let heldMs = fromIntegral (finished-lockAcquired) / 1_000_000 :: Double
-  Log.logInfo "insights_snapshot_write" "Snapshot write phases"
-    [Log.field "delete_ms" (fromIntegral (deleted-writeStarted)/1_000_000 :: Double)
-    ,Log.field "insert_ms" (fromIntegral (inserted-deleted)/1_000_000 :: Double)
-    ,Log.field "validation_ms" (fromIntegral (validated-lockAcquired)/1_000_000 :: Double)]
-  Log.logInfo "insights_snapshot_publication" "Snapshot batch publication completed"
-    [ Log.field "lock_wait_ms" (fromIntegral (lockAcquired-lockStarted) / 1_000_000 :: Double)
-    , Log.field "lock_held_ms" heldMs
-    , Log.field "participant_count" (length snapshots)
-    ]
-  pure heldMs
+  started <- getMonotonicTimeNSec
+  context <- newIORef $ SnapshotRejection CompetitionMissing
+    (snapshotKindText $ asiKind firstSnapshot) (asiBlockNumber firstSnapshot)
+    Nothing Nothing (length snapshots) Nothing
+  lockTimes <- newIORef (Nothing, Nothing)
+  let reject :: SnapshotRejectionReason -> IO a
+      reject reason = readIORef context >>= throwIO . (\c -> c {srReason=reason})
+      report rejection = do
+        finished <- getMonotonicTimeNSec
+        (waiting, acquired) <- readIORef lockTimes
+        let ms end begin = fromIntegral (end-begin) / 1_000_000 :: Double
+        logSnapshotRejection (ms finished started)
+          (ms <$> acquired <*> waiting) (ms finished <$> acquired) rejection
+        throwIO (rejection :: SnapshotRejection)
+  (do
+    -- Parse and load the complete batch into a private table before acquiring
+    -- any competition lock. Referential checks are deferred until atomic commit.
+    withTransaction conn $ do
+      void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
+      void $ execute_ conn "DROP TABLE IF EXISTS pg_temp.insights_snapshot_stage"
+      void $ execute_ conn "CREATE TEMP TABLE insights_snapshot_stage (LIKE insights_account_snapshots INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS"
+      void $ executeMany conn accountSnapshotStageInsertQuery $ map accountSnapshotParameters snapshots
+    let cleanup = void $ execute_ conn "DROP TABLE IF EXISTS pg_temp.insights_snapshot_stage"
+    (lockStarted,lockAcquired,writeStarted,deleted,inserted,validated) <- (withTransaction conn $ do
+      void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
+      let slug = asiCompetitionSlug firstSnapshot
+          kind = asiKind firstSnapshot
+          chainId = asiChainId firstSnapshot
+          releaseRouter = normalizeAddress $ asiReleaseRouter firstSnapshot
+          accountLensAddress = normalizeAddress $ asiAccountLensAddress firstSnapshot
+          blockNumber = asiBlockNumber firstSnapshot
+          blockHash = normalizeAddress $ asiBlockHash firstSnapshot
+          timestamp = asiTimestamp firstSnapshot
+          accountStateCount = length $ filter (equityHasAccountState . asiEquity) snapshots
+          sameIdentity snapshot =
+            asiCompetitionSlug snapshot == slug
+              && asiKind snapshot == kind
+              && asiChainId snapshot == chainId
+              && normalizeAddress (asiReleaseRouter snapshot) == releaseRouter
+              && normalizeAddress (asiAccountLensAddress snapshot) == accountLensAddress
+              && asiBlockNumber snapshot == blockNumber
+              && normalizeAddress (asiBlockHash snapshot) == blockHash
+              && asiTimestamp snapshot == timestamp
+          inputWallets = sort $ map (normalizeAddress . asiWallet) snapshots
+      unless (all sameIdentity snapshots) $
+        reject MixedBatchIdentity
+      unless (length inputWallets == length (nub inputWallets)) $
+        reject DuplicateParticipant
+      expectedState <- query conn "SELECT finalized,integrity_input_epoch FROM insights_competitions WHERE slug=?" (Only slug) :: IO [(Bool,Integer)]
+      expectedEpoch <- case expectedState of
+        [(finalized,inputEpoch)] -> do
+          modifyIORef' context $ \c -> c {srCapturedEpoch=Just inputEpoch, srCurrentEpoch=Just inputEpoch}
+          when finalized $ reject CompetitionFinalized
+          pure inputEpoch
+        _ -> reject CompetitionMissing
+
+      -- These indexed writes remain invisible until commit. Deferral is essential:
+      -- an immediate FK would hold KEY SHARE and stall registration's FOR UPDATE.
+      void $ execute_ conn "SET CONSTRAINTS insights_account_snapshots_competition_slug_fkey DEFERRED"
+      writeStarted <- getMonotonicTimeNSec
+      _ <- execute conn
+        "DELETE FROM insights_account_snapshots s\
+        \ WHERE competition_slug = ? AND snapshot_kind = ? AND block_number = ?\
+        \ AND NOT EXISTS (SELECT 1 FROM insights_competition_participants p\
+        \ WHERE p.competition_slug=s.competition_slug AND p.wallet=s.wallet)"
+        (slug, snapshotKindText kind, blockNumber)
+      deleted <- getMonotonicTimeNSec
+      existing <- query conn
+        "SELECT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug=? AND snapshot_kind=? AND block_number=?)"
+        (slug,snapshotKindText kind,blockNumber) :: IO [Only Bool]
+      void $ execute_ conn $ accountSnapshotPublishQuery <> if existing == [Only True] then accountSnapshotConflictQuery else ""
+      inserted <- getMonotonicTimeNSec
+      lockStarted <- getMonotonicTimeNSec
+      writeIORef lockTimes (Just lockStarted, Nothing)
+      mutableRows <- query conn
+        "SELECT NOT finalized,integrity_input_epoch FROM insights_competitions WHERE slug = ? FOR NO KEY UPDATE"
+        (Only slug)
+      lockAcquired <- getMonotonicTimeNSec
+      writeIORef lockTimes (Just lockStarted, Just lockAcquired)
+      case mutableRows of
+        [(mutable,inputEpoch)] -> do
+          modifyIORef' context $ \c -> c {srCurrentEpoch=Just inputEpoch}
+          unless mutable $ reject CompetitionFinalized
+          unless (inputEpoch == expectedEpoch) $ reject InputEpochChanged
+        _ -> reject CompetitionMissing
+      cursorReady <- query conn
+        "SELECT EXISTS (SELECT 1 FROM perps_indexer_state i\
+        \ WHERE i.chain_id = ? AND i.release_router = ?\
+        \ AND i.indexer_name = (? || ?)\
+        \ AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= ?)"
+        (chainId, releaseRouter, competitionIndexerNamespace slug, releaseRouter, blockNumber)
+      unless (cursorReady == [Only True]) $
+        reject HistoryCursorNotReady
+      configuredLens <- query conn
+        "SELECT account_lens_address FROM insights_competitions WHERE slug = ?"
+        (Only slug)
+      unless (configuredLens == [Only accountLensAddress]) $
+        reject AccountLensChanged
+      registered <- query conn
+        "SELECT wallet FROM insights_competition_participants\
+        \ WHERE competition_slug = ? ORDER BY wallet ASC"
+        (Only slug)
+      let registeredWallets = [wallet | Only wallet <- registered]
+      modifyIORef' context $ \c -> c {srCurrentParticipants=Just $ length registeredWallets}
+      unless (inputWallets == registeredWallets) $
+        reject ParticipantSetChanged
+      validated <- getMonotonicTimeNSec
+      _ <- execute conn
+        "INSERT INTO insights_snapshot_batches\
+        \ (competition_slug, snapshot_kind, chain_id, release_router, account_lens_address, block_number, block_hash, timestamp, participant_count, account_state_count)\
+        \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+        \ ON CONFLICT (competition_slug, snapshot_kind, block_number) DO UPDATE SET\
+        \ chain_id = EXCLUDED.chain_id, release_router = EXCLUDED.release_router,\
+        \ account_lens_address = EXCLUDED.account_lens_address,\
+        \ block_hash = EXCLUDED.block_hash, timestamp = EXCLUDED.timestamp,\
+        \ participant_count = EXCLUDED.participant_count,\
+        \ account_state_count = EXCLUDED.account_state_count, published_at = NOW()"
+        ( slug
+        , snapshotKindText kind
+        , chainId
+        , releaseRouter
+        , accountLensAddress
+        , blockNumber
+        , blockHash
+        , timestamp
+        , length snapshots
+        , accountStateCount
+        )
+      pure (lockStarted,lockAcquired,writeStarted,deleted,inserted,validated)) `onException` cleanup
+    finished <- getMonotonicTimeNSec
+    cleanup
+    let heldMs = fromIntegral (finished-lockAcquired) / 1_000_000 :: Double
+    Log.logInfo "insights_snapshot_write" "Snapshot write phases"
+      [Log.field "delete_ms" (fromIntegral (deleted-writeStarted)/1_000_000 :: Double)
+      ,Log.field "insert_ms" (fromIntegral (inserted-deleted)/1_000_000 :: Double)
+      ,Log.field "validation_ms" (fromIntegral (validated-lockAcquired)/1_000_000 :: Double)]
+    Log.logInfo "insights_snapshot_publication" "Snapshot batch publication completed"
+      [ Log.field "lock_wait_ms" (fromIntegral (lockAcquired-lockStarted) / 1_000_000 :: Double)
+      , Log.field "lock_held_ms" heldMs
+      , Log.field "participant_count" (length snapshots)
+      ]
+    pure heldMs
+    ) `catch` report
+
+-- Read-only health evidence from committed batches; inactive/finalized competitions
+-- do not alert merely because they no longer publish live snapshots.
+getSnapshotPublicationHealth :: Connection -> Text -> IO (Maybe (Maybe UTCTime))
+getSnapshotPublicationHealth conn slug = withTransaction conn $ do
+  void $ execute_ conn "SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='5s'"
+  rows <- query conn
+    "SELECT (SELECT MAX(published_at) FROM insights_snapshot_batches b WHERE b.competition_slug=c.slug AND b.snapshot_kind='live') FROM insights_competitions c WHERE c.slug=? AND NOT c.finalized AND EXTRACT(EPOCH FROM NOW()) >= c.start_timestamp AND EXTRACT(EPOCH FROM NOW()) < c.score_cutoff_timestamp"
+    (Only slug) :: IO [Only (Maybe UTCTime)]
+  pure $ case rows of [Only latest] -> Just latest; _ -> Nothing
 
 equityHasAccountState :: EquitySnapshot -> Bool
 equityHasAccountState EquitySnapshot {..} =

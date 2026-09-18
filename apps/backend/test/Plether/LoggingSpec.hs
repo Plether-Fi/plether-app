@@ -2,7 +2,9 @@ module Plether.LoggingSpec (spec) where
 
 import Control.Concurrent.Async (mapConcurrently_)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
-import Control.Exception (bracket, finally)
+import Control.Exception (bracket, finally, toException, AsyncException (ThreadKilled))
+import Plether.Insights.SnapshotObservability
+import Database.PostgreSQL.Simple (SqlError (..), ExecStatus (FatalError))
 import Control.Monad (forM_, replicateM_)
 import Data.Aeson (Value (..), eitherDecodeStrict', toJSON)
 import qualified Data.Aeson.Key as Key
@@ -31,6 +33,44 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "snapshot publication logging" $ do
+    it "logs expected races as safe structured information, and defects as errors" $ do
+      forM_ [minBound .. maxBound] $ \reason -> do
+        let rejection = SnapshotRejection reason "live" 123 (Just 7) (Just 8) 10 (Just 11)
+            target = if snapshotRejectionIsDefect reason then stderr else stdout
+        output <- captureHandle target $ logSnapshotRejection 25 (Just 1) (Just 2) rejection
+        record <- decodeOnly output
+        lookupField "event" record `shouldBe` Just (String "insights_snapshot_rejected")
+        lookupField "reason" record `shouldBe` Just (String $ snapshotRejectionCode reason)
+        lookupField "level" record `shouldBe` Just (String $ if snapshotRejectionIsDefect reason then "ERROR" else "INFO")
+        lookupField "current_participant_count" record `shouldBe` Just (Number 11)
+        lookupField "lock_held_ms" record `shouldBe` Just (Number 2)
+        case record of
+          Object fields -> sort (map Key.toText $ KeyMap.keys fields) `shouldBe` sort
+            ["event","message","level","SeverityText","SeverityNumber","log_schema_version",
+             "reason","snapshot_kind","block_number","captured_epoch","current_epoch",
+             "captured_participant_count","current_participant_count","elapsed_ms",
+             "lock_wait_ms","lock_held_ms","retryable"]
+          _ -> expectationFailure "Expected a structured rejection"
+
+    it "does not duplicate typed rejections or swallow cancellation" $ do
+      output <- captureHandle stderr $ logSnapshotCycleException $ toException $
+        SnapshotRejection ParticipantSetChanged "live" 123 Nothing Nothing 10 Nothing
+      output `shouldBe` ByteString.empty
+      logSnapshotCycleException (toException ThreadKilled) `shouldThrow` (== ThreadKilled)
+
+    it "retains SQLSTATE and excludes database and unexpected exception payloads" $ do
+      let sql = SqlError "55P03" FatalError "private-wallet-and-token" "secret-detail" "secret-hint"
+      output <- captureHandle stderr $ logSnapshotCycleException $ toException sql
+      record <- decodeOnly output
+      lookupField "sql_state" record `shouldBe` Just (String "55P03")
+      Char8.isInfixOf "private" output `shouldBe` False
+      Char8.isInfixOf "secret" output `shouldBe` False
+      unexpected <- captureHandle stderr $ logSnapshotCycleException $ toException $ userError "private-wallet-and-token"
+      unexpectedRecord <- decodeOnly unexpected
+      lookupField "error_class" unexpectedRecord `shouldBe` Just (String "unexpected")
+      Char8.isInfixOf "private" unexpected `shouldBe` False
+
   describe "structured logging" $ do
     forM_ [("stdout", stdout, logInfo, logDebug), ("stderr", stderr, logWarn, logError)] $
       \(name, target, firstLevel, secondLevel) ->
