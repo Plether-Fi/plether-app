@@ -2893,6 +2893,8 @@ competitionSelect =
 -- Published batches remain valid for their captured wallets when registration
 -- grows the roster. New wallets remain unscored until both snapshots exist;
 -- publication and finalization still require the complete current roster.
+-- Indexed VPI is positive for charges and negative for rebates. Account value
+-- already includes both, so remove only the net rebate to cap VPI profit at zero.
 leaderboardQuery :: Query
 leaderboardQuery =
   ("WITH target AS (\
@@ -2958,7 +2960,9 @@ leaderboardQuery =
   \   THEN ABS(a.size_delta) * a.price / 100000000000000000000 ELSE 0 END), 0)) AS volume_usdc,\
   \ COUNT(*) FILTER (WHERE a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0) AS executed_trades,\
   \ COUNT(*) FILTER (WHERE a.activity_type = 'Liquidated') AS liquidations,\
-  \ COALESCE(SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated')), 0) AS realized_pnl_usdc\
+  \ COALESCE(SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated')), 0) AS realized_pnl_usdc,\
+  \ GREATEST(0, -COALESCE(SUM((a.data->>'vpiUsdc')::numeric)\
+  \   FILTER (WHERE a.activity_type IN ('Open', 'Close')), 0)) AS net_vpi_rebate_usdc\
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
@@ -2988,6 +2992,7 @@ leaderboardQuery =
   \ COALESCE(ast.active_days, 0) AS active_days,\
   \ COALESCE(ast.volume_usdc, 0) AS volume_usdc, COALESCE(ast.executed_trades, 0) AS executed_trades,\
   \ COALESCE(ast.liquidations, 0) AS liquidations, COALESCE(ast.realized_pnl_usdc, 0) AS realized_pnl_usdc,\
+  \ COALESCE(ast.net_vpi_rebate_usdc, 0) AS net_vpi_rebate_usdc,\
   \ cs.block_number, cs.timestamp, cs.has_open_position, cs.snapshot_kind,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'side' ELSE NULL END AS position_side,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'size' ELSE NULL END AS position_size_delta,\
@@ -3001,7 +3006,7 @@ leaderboardQuery =
   \ LEFT JOIN adjustments adj ON adj.wallet = p.wallet\
   \ ), scored AS (\
   \ SELECT raw.*, CASE WHEN starting_value_usdc IS NULL OR current_value_usdc IS NULL THEN NULL\
-  \ ELSE current_value_usdc - starting_value_usdc - deposits_usdc + withdrawals_usdc + adjustment_usdc END AS final_pnl_usdc\
+  \ ELSE current_value_usdc - starting_value_usdc - deposits_usdc + withdrawals_usdc + adjustment_usdc - net_vpi_rebate_usdc END AS final_pnl_usdc\
   \ FROM raw\
   \ ), ranked AS (\
   \ SELECT scored.*, CASE WHEN final_pnl_usdc IS NULL\

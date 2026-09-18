@@ -142,7 +142,7 @@ function PnlReconciliation({ wallet }: { wallet: WalletDetails }) {
         ))}
       </dl>
       <div className="border-t border-brand-border/20 bg-app-bg/45 px-5 py-3 text-xs leading-5 text-content-secondary">
-        <strong className="text-content-primary">Net competition P&amp;L</strong> = directional realized P&amp;L + directional unrealized P&amp;L + the net effect of execution fees, VPI, carry, execution rewards, and competition adjustments.
+        <strong className="text-content-primary">Net competition P&amp;L</strong> = directional realized P&amp;L + directional unrealized P&amp;L + the net effect of execution fees, VPI, carry, execution rewards, and competition adjustments. The total VPI contribution is capped at zero, excluding net rebates while retaining net VPI charges.
       </div>
     </Panel>
   )

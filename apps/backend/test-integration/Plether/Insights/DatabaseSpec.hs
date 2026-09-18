@@ -519,6 +519,50 @@ insightsDatabaseSpec databaseUrl =
         rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         sort (map ilrCurrentAccountValueUsdc rows) `shouldBe` [Just 0, Just 0]
 
+    forM_
+      [ ("rebate-only open", [-gain], gain, 0)
+      , ("rebate with execution costs", [-gain], gain - loss, -loss)
+      , ("net rebate after a close charge", [-gain, loss], gain - loss, 0)
+      , ("net charge after a rebate", [-loss, gain], loss - gain, loss - gain)
+      , ("balanced VPI", [-gain, gain], 0, 0)
+      , ("directional profit plus rebate", [-gain], gain + loss, loss)
+      , ("no VPI metadata", [], loss, loss)
+      ] $ \(label, vpis, accountPnl, expectedPnl) ->
+      it ("caps the total VPI contribution at zero: " <> label) $
+        withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+          insertParticipant conn walletA "rebate-trader"
+          insertParticipant conn walletB "price-trader"
+          setCompetitionBoundaryBlocks conn competitionSlug
+            (Just (startBlock, startHash, baselineHash)) Nothing
+          let insertVpi wallet blockNumber activityType vpi =
+                insertPerpsActivity
+                  conn fixtureChain fixtureRouter fixtureRouter ("insights:vpi:" <> wallet <> ":" <> T.pack (show blockNumber)) wallet activityType
+                  Nothing Nothing (Just 1) (Just 100_000_000) (Just 1_000_000_000_000_000_000) Nothing Nothing
+                  (hashText $ T.pack (show blockNumber) <> wallet) blockNumber liveHash 0 1
+                  (eventTimestamp blockNumber) (object ["vpiUsdc" .= show (vpi :: Integer)])
+          forM_ (zip [startBlock ..] vpis) $ \(blockNumber, vpi) ->
+            insertVpi walletA blockNumber (if blockNumber == startBlock then "Open" else "Close") vpi
+          -- Neither baseline rebates nor events beyond the published snapshot
+          -- may change the score. Non-trade metadata must not contribute either.
+          insertVpi walletA baselineBlock "Open" (-gain)
+          insertVpi walletA (liveBlock + 1) "Open" (-gain)
+          insertVpi walletA (liveBlock - 1) "OrderCommitted" (-gain)
+          insertTrade conn walletB startBlock 2
+          publishAccountSnapshotBatch conn
+            [snapshot wallet SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | wallet <- [walletA, walletB]]
+          publishAccountSnapshotBatch conn
+            [ (snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + accountPnl))
+                { asiEquity = EquitySnapshot True (bankroll + accountPnl) 0 0 }
+            , snapshot walletB SnapshotLive liveBlock liveHash liveTimestamp (bankroll + usdcScale)
+            ]
+          rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+          scored <- requireWallet walletA rows
+          ilrFinalPnlUsdc scored `shouldBe` Just expectedPnl
+          ilrCurrentAccountValueUsdc scored `shouldBe` Just (bankroll + accountPnl)
+          ilrRank scored `shouldBe` Just (if expectedPnl > usdcScale then 1 else 2)
+          ilrRoiBps scored `shouldBe` Just (expectedPnl * 10_000 `quot` bankroll)
+          getCompetitionWallet conn competitionSlug walletA `shouldReturn` Just scored
+
     it "recaptures unversioned September snapshots without invalidating finalized results" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         insertParticipant conn walletA "trader-a"

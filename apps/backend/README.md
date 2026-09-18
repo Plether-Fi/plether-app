@@ -811,7 +811,12 @@ minutes.
 Leaderboard query params: `limit` and integer offset `cursor`. Wallet detail
 accepts `activityLimit`.
 
-`finalPnlUsdc` is the cash-flow-adjusted net competition result. The separate
+`finalPnlUsdc` is the cash-flow-adjusted net competition result with the total
+VPI contribution capped at zero. Indexed VPI is positive for charges and negative
+for rebates: subtract `max(0, -sum(vpiUsdc))` over opens and closes in the
+competition window through the scored snapshot. Net VPI costs remain in P&L;
+account values and execution breakdowns retain actual rebates. Ranking, ROI,
+and prize eligibility all use this adjusted score. The separate
 `realizedPnlUsdc` field sums directional close/liquidation P&L before execution
 fees, VPI, carry, rewards, and manual competition adjustments.
 
