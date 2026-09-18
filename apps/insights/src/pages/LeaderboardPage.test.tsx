@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LeaderboardPage } from './LeaderboardPage'
@@ -10,6 +10,7 @@ const apiMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../api', () => apiMocks)
+vi.mock('../hooks/useUtcNow', () => ({ useUtcNow: () => Date.parse('2026-09-18T12:00:00Z') }))
 
 beforeEach(() => {
   apiMocks.useCurrentCompetition.mockReturnValue({
@@ -53,6 +54,69 @@ beforeEach(() => {
 })
 
 describe('LeaderboardPage', () => {
+  const trader = {
+    address: '0x1111111111111111111111111111111111111111',
+    displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
+    trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
+    prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+  }
+
+  it.each([
+    ['2026-09-18T11:56:59Z', true],
+    ['2026-09-18T11:57:00Z', false],
+    ['2026-09-18T11:59:30Z', false],
+  ])('uses snapshot time %s rather than indexer/fetch time for freshness', (snapshotAt, delayed) => {
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ standings: [{ ...trader, snapshotAt }], provisional: false }] },
+    })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getByText(/Oldest displayed snapshot/).parentElement?.querySelector('time'))
+      .toHaveAttribute('dateTime', new Date(snapshotAt).toISOString())
+    expect(screen.queryByText(/Insights update delayed/) !== null).toBe(delayed)
+  })
+
+  it('uses the oldest snapshot across loaded pages and ignores malformed or missing dates', () => {
+    apiMocks.useLeaderboard.mockReturnValue({ data: { pages: [
+      { standings: [{ ...trader, snapshotAt: '2026-09-18T11:59:30Z' }] },
+      { standings: [{ ...trader, address: '0x2222222222222222222222222222222222222222', snapshotAt: '2026-09-18T11:55:00Z' }] },
+      { standings: [{ ...trader, address: '0x3333333333333333333333333333333333333333', snapshotAt: 'invalid' }] },
+    ] } })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getByText(/Oldest displayed snapshot/).parentElement?.querySelector('time'))
+      .toHaveAttribute('dateTime', '2026-09-18T11:55:00.000Z')
+    expect(screen.getByText(/Insights update delayed/)).toBeInTheDocument()
+  })
+
+  it('does not label ended competitions as delayed', () => {
+    const current = apiMocks.useCurrentCompetition.getMockImplementation()?.()
+    apiMocks.useCurrentCompetition.mockReturnValue({ ...current, data: { ...current.data, status: 'ended' } })
+    apiMocks.useLeaderboard.mockReturnValue({ data: { pages: [{ standings: [{ ...trader, snapshotAt: '2026-09-17T12:00:00Z' }] }] } })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.queryByText(/Insights update delayed/)).not.toBeInTheDocument()
+  })
+
+  it('retains cached standings and integrity warnings when refreshing fails, with an explicit retry', () => {
+    const refetch = vi.fn()
+    apiMocks.useLeaderboard.mockReturnValue({
+      data: { pages: [{ competition: { integrityStatus: 'stale' }, standings: [trader], provisional: false }] },
+      isError: true, error: new Error('offline'), refetch,
+    })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getAllByRole('link', { name: '@Alice ↗' })).toHaveLength(2)
+    expect(screen.getByText(/Could not refresh Insights/)).toBeInTheDocument()
+    expect(screen.getByText('Integrity checks updating.')).toBeInTheDocument()
+    expect(screen.queryByText(/Oldest displayed snapshot/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry refresh' }))
+    expect(refetch).toHaveBeenCalledOnce()
+  })
+
+  it('still shows a blocking error when no cached data exists', () => {
+    apiMocks.useLeaderboard.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    expect(screen.getByText('offline')).toBeInTheDocument()
+    expect(screen.queryByText(/Showing the last available snapshot/)).not.toBeInTheDocument()
+  })
+
   it.each(['pending', 'stale'])('shows %s integrity without hiding standings', (integrityStatus) => {
     apiMocks.useLeaderboard.mockReturnValue({
       data: { pages: [{ competition: { integrityStatus }, standings: [], provisional: true, nextCursor: null }] },

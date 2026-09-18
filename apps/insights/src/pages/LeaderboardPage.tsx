@@ -6,19 +6,40 @@ import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, Rules
 import { ErrorState, LoadingState, Panel, ProvisionalNotice, IntegrityNotice } from '../components/ui'
 import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
+import { useUtcNow } from '../hooks/useUtcNow'
 
 function LeaderboardContent({ slug, search, competitionStatus }: { slug: string; search: string; competitionStatus: Competition['status'] }) {
   const query = useLeaderboard(slug, search)
   const standings = query.data?.pages.flatMap((page) => page.standings) ?? []
   const provisional = query.data?.pages[0]?.provisional ?? true
+  const now = useUtcNow(10_000)
+  const snapshotTimes = standings.flatMap((standing) => {
+    const timestamp = standing.snapshotAt ? Date.parse(standing.snapshotAt) : NaN
+    return Number.isFinite(timestamp) ? [timestamp] : []
+  })
+  const oldestSnapshot = snapshotTimes.length ? Math.min(...snapshotTimes) : null
+  const delayed = competitionStatus === 'live' && oldestSnapshot !== null && now - oldestSnapshot > 180_000
 
   if (query.isLoading) return <Panel><LoadingState rows={7} /></Panel>
-  if (query.isError) return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} />
+  if (query.isError && !query.data) return <ErrorState message={query.error.message} onRetry={() => void query.refetch()} />
 
   return (
     <div className="space-y-3">
       {provisional ? <ProvisionalNotice /> : null}
       {query.data?.pages[0]?.competition ? <IntegrityNotice competition={query.data.pages[0].competition} /> : null}
+      {oldestSnapshot !== null ? (
+        <div role="status" className="text-sm text-content-secondary">
+          <span>Oldest displayed snapshot: </span>
+          <time dateTime={new Date(oldestSnapshot).toISOString()}>{new Date(oldestSnapshot).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}</time>
+          {delayed ? <span> — Insights update delayed. Showing the previous snapshot.</span> : null}
+        </div>
+      ) : null}
+      {query.isError ? (
+        <div role="status" className="text-sm text-content-secondary">
+          <span>Could not refresh Insights. Showing the last available snapshot.</span>
+          <button type="button" className="ml-2 underline" onClick={() => void query.refetch()}>Retry refresh</button>
+        </div>
+      ) : null}
       <div className="border border-brand-peach/30 bg-brand-peach/5 px-4 py-3 text-sm leading-6 text-content-secondary" role="note">
         <strong className="text-content-primary">Ranked by net P&amp;L.</strong> The total VPI contribution is capped at zero: net rebates do not increase scores, while net VPI charges reduce them. Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 mock USDC and rank above active accounts whose net return is negative.
       </div>

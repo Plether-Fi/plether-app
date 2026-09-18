@@ -72,6 +72,7 @@ test('oldest component age and future publication prevent submission', async () 
   const f = fixture(); f.state.mark = 940n; f.state.stored = 930n; f.state.publishes = [940, 980, 980, 980, 980, 980]
   assert.equal((await f.iterate()).status, 'stale_payload')
   f.state.publishes.fill(1001)
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'stale_payload')
   assert.equal(f.state.writes, 0)
 })
@@ -86,6 +87,7 @@ test('simulation failure sends nothing and a concurrent mark advancement is re-e
   await assert.rejects(f.iterate(), /PriceOutOfOrder/)
   assert.equal(f.state.writes, 0)
   f.state.mark = 995n; f.state.simulationError = undefined
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'waiting_for_payload')
   f.state.publishes.fill(995)
   assert.equal((await f.iterate()).status, 'synchronized')
@@ -112,6 +114,7 @@ test('reverted receipt is reported and may be retried on a later health check', 
   await assert.rejects(f.iterate(), /tx failed/)
   assert.equal(f.state.stored, 980n)
   f.state.reverted = false
+  f.state.now += 5000
   assert.equal((await f.iterate()).status, 'synchronized')
   assert.equal(f.state.writes, 2)
 })
@@ -124,5 +127,136 @@ test('post-receipt reads can report continuing lag instead of claiming recovery'
 test('dry run does not send a transaction', async () => {
   const f = fixture()
   assert.equal((await createOracleWorker({ ...f.options, dryRun: true })()).status, 'dry_run')
+  assert.equal(f.state.writes, 0)
+})
+
+test('slow payload fetch is checked against a fresh block, not a pre-fetch timestamp', async () => {
+  const f = fixture()
+  let timestamp = 1000n
+  f.publicClient.getBlock = async () => ({ number: timestamp, hash: `0x${timestamp}`, timestamp })
+  const iterate = createOracleWorker({ ...f.options, fetchPayload: async () => {
+    timestamp = 1010n
+    f.state.publishes.fill(1008)
+    return f.options.fetchPayload()
+  } })
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
+})
+
+test('mark advancement during payload fetch prevents fee lookup and submission', async () => {
+  const f = fixture()
+  const iterate = createOracleWorker({ ...f.options, fetchPayload: async () => {
+    f.state.mark = 995n
+    return f.options.fetchPayload()
+  } })
+  assert.equal((await iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.reads.filter(read => read.functionName === 'getUpdateFee').length, 0)
+  assert.equal(f.state.writes, 0)
+})
+
+test('stale payload retries fetch fresh data after a bounded delay', async () => {
+  const f = fixture()
+  f.state.publishes.fill(1001)
+  const iterate = createOracleWorker(f.options)
+  assert.equal((await iterate()).status, 'stale_payload')
+  f.state.publishes.fill(995)
+  f.state.now += 4999
+  assert.equal((await iterate()).status, 'backoff')
+  f.state.now++
+  assert.equal((await iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
+})
+
+test('rechecks age, future time and concurrent mark changes after slow fee/balance calls', async () => {
+  for (const stage of ['fee', 'balance']) {
+    for (const change of ['expired', 'future', 'mark_advanced', 'already_repaired']) {
+      const f = fixture()
+      let timestamp = 1000n
+      let blockNumber = 42n
+      f.publicClient.getBlock = async () => ({ number: blockNumber, hash: `0x${blockNumber}`, timestamp })
+      let simulations = 0
+      f.publicClient.simulateContract = async () => { simulations++; throw new Error('must not simulate') }
+      const changeChain = () => {
+        blockNumber++
+        if (change === 'expired') timestamp = 1100n
+        if (change === 'future') timestamp = 989n
+        if (change === 'mark_advanced') f.state.mark = 995n
+        if (change === 'already_repaired') f.state.stored = f.state.mark
+      }
+      if (stage === 'fee') {
+        const read = f.publicClient.readContract
+        f.publicClient.readContract = async input => {
+          const result = await read(input)
+          if (input.functionName === 'getUpdateFee') changeChain()
+          return result
+        }
+      } else {
+        f.publicClient.getBalance = async () => { changeChain(); return 1000n }
+      }
+      const status = (await f.iterate()).status
+      assert.equal(status, ['expired', 'future'].includes(change) ? 'stale_payload' : 'waiting_for_payload', `${stage}: ${change}`)
+      assert.equal(simulations, 0)
+      assert.equal(f.state.writes, 0)
+    }
+  }
+})
+
+test('same-block freshness checks reuse health reads, but same-height reorgs do not', async () => {
+  const f = fixture()
+  let hash = '0xaaa'
+  f.publicClient.getBlock = async () => ({ number: 42n, hash, timestamp: 1000n })
+  await f.iterate()
+  // Initial and post-receipt health only: six Pyth reads each.
+  assert.equal(f.state.reads.filter(read => read.functionName === 'getPriceUnsafe').length, 12)
+
+  f.state.now += 30_000
+  f.state.publishes.fill(995)
+  f.publicClient.getBalance = async () => { hash = '0xbbb'; f.state.mark = 999n; return 1000n }
+  assert.equal((await f.iterate()).status, 'waiting_for_payload')
+  assert.equal(f.state.writes, 1)
+})
+
+test('fetch errors back off 5/10/20/30 seconds without RPC work and recover before normal cadence', async () => {
+  const f = fixture()
+  f.state.stored = f.state.mark
+  let fail = true
+  let fetches = 0
+  const iterate = createOracleWorker({ ...f.options, fetchPayload: async () => {
+    fetches++
+    if (fail) throw new Error('backend unavailable')
+    return f.options.fetchPayload()
+  } })
+  for (const delay of [5000, 10_000, 20_000, 30_000, 30_000]) {
+    await assert.rejects(iterate(), /backend unavailable/)
+    const reads = f.state.reads.length
+    const attempts = fetches
+    f.state.now += delay - 1
+    assert.equal((await iterate()).status, 'backoff')
+    assert.equal(f.state.reads.length, reads)
+    assert.equal(fetches, attempts)
+    f.state.now++
+  }
+  fail = false
+  f.state.publishes.fill(995)
+  assert.equal((await iterate()).status, 'synchronized')
+  f.state.now += 30_000
+  fail = true
+  await assert.rejects(iterate(), /backend unavailable/)
+  fail = false
+  f.state.publishes.fill(999)
+  f.state.now += 5000
+  assert.equal((await iterate()).status, 'synchronized')
+})
+
+test('healthy dry runs retain the normal polling cadence', async () => {
+  const f = fixture()
+  f.state.stored = f.state.mark
+  f.state.publishes.fill(995)
+  const iterate = createOracleWorker({ ...f.options, dryRun: true })
+  assert.equal((await iterate()).status, 'dry_run')
+  f.state.now += 5000
+  assert.equal((await iterate()).status, 'healthy')
+  f.state.now += 25_000
+  assert.equal((await iterate()).status, 'dry_run')
   assert.equal(f.state.writes, 0)
 })

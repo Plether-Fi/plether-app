@@ -66,6 +66,7 @@ interface WireCompetition {
 }
 
 interface WireStanding {
+  snapshotAt?: string | null
   rank?: number | null
   address?: string
   wallet?: string
@@ -485,6 +486,7 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
 
   return {
     rank: raw.rank ?? null,
+    snapshotAt: raw.snapshotAt ?? null,
     address: raw.address ?? raw.wallet ?? '',
     displayName: raw.displayName ?? raw.alias ?? null,
     pnl: raw.pnl ?? raw.finalPnlUsdc ?? null,

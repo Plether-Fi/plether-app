@@ -218,6 +218,15 @@ describe('Insights API client', () => {
     )
   })
 
+  it.each(['2026-09-18T11:55:00Z', null, undefined])('preserves the backend snapshot timestamp %s independently of indexer time', async (snapshotAt) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      competition, standings: [{ wallet: '0x1111111111111111111111111111111111111111', snapshotAt }],
+      nextCursor: null, provisional: true,
+    }), { status: 200 })))
+    const result = await getLeaderboard(competition.slug)
+    expect(result.standings[0].snapshotAt).toBe(snapshotAt ?? null)
+  })
+
   it('exposes typed API errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'not_found', message: 'Missing' } }), { status: 404 })))
     await expect(getCurrentCompetition()).rejects.toMatchObject<Partial<InsightsApiError>>({ status: 404, code: 'not_found', message: 'Missing' })
