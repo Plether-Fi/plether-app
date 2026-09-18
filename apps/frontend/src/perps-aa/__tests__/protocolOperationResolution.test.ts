@@ -1,6 +1,8 @@
 import { concatHex, numberToHex, type Address, type Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import type { SponsoredOperation } from '../operationStore'
+import deployedManifest from '../../../public/perps-aa-manifest.json'
+import type { PerpsAaDeploymentManifestV2 } from '../manifest'
 import {
   createSponsorshipAuthority,
   PLETHER_PAYMASTER_POLICY_ID,
@@ -152,6 +154,31 @@ function notLocatedSnapshot(input: {
 }
 
 describe('resolveProtocolOperation', () => {
+  it('restores preparation credentials before safe recovery and never treats RESUMABLE as expiry', async () => {
+    const saved = operation()
+    saved.status = 'signed-not-submitted'
+    saved.reason = 'DEADLINE_TOO_CLOSE'
+    saved.nativePreparation = { version: 1, preparationId: saved.id,
+      manifest: deployedManifest as PerpsAaDeploymentManifestV2,
+      action: { kind: 'place-order', account: ACCOUNT, calls: [] } }
+    const managed = runtime(notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_000n }))
+    const getPreparationStatus = vi.fn(async () => ({ version: 1 as const, phase: 'prepared' as const,
+      authorizationState: 'signed', reason: 'RESUMABLE', serverTime: '2000', safeBlockTimestamp: '1000',
+      validUntil: '1000', recoverable: true, freshReviewAllowed: false,
+      userOperationHash: HASH, transactionHash: null }))
+    managed.smartAccount.getPreparationStatus = getPreparationStatus
+    expect(await resolveProtocolOperation({ operation: saved, runtime: managed, userOperationHash: HASH })).toBeUndefined()
+    expect(getPreparationStatus).toHaveBeenCalledWith({ userOperationHash: HASH })
+    expect(getPreparationStatus.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(managed.getRecoverySnapshot!).mock.invocationCallOrder[0])
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    // Losing preparation credentials must not strand independently verifiable
+    // expiry. It also must not bypass nonce/hash/safe-timestamp validation.
+    getPreparationStatus.mockRejectedValue(new Error('PREPARATION_NOT_AUTHORIZED'))
+    expect(await resolveProtocolOperation({ operation: saved, runtime: managed, userOperationHash: HASH })).toBeUndefined()
+    managed.getRecoverySnapshot = vi.fn(async () => notLocatedSnapshot({ accountNonce: 7n, blockTimestamp: 1_001n }))
+    expect(await resolveProtocolOperation({ operation: saved, runtime: managed, userOperationHash: HASH })).toEqual({ status: 'expired' })
+  })
   it('expires after the safe deadline when the account nonce equals the operation nonce', async () => {
     const managedRuntime = runtime(notLocatedSnapshot({
       accountNonce: 7n,

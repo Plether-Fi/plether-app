@@ -38,6 +38,8 @@ export type UserOperationTerminalStatus =
   | 'replaced'
   | 'expired'
   | 'receipt-timeout'
+  | 'signed-not-submitted'
+  | 'submission-unknown'
 
 export class SponsoredPreflightError extends Error {
   readonly reason: StablePreflightReason
@@ -162,6 +164,21 @@ function sponsorMetadata(error: unknown): {
 
 export function isRecoveryPending(error: unknown): boolean {
   return sponsorMetadata(error).reason === 'RECOVERY_PENDING'
+}
+
+export function isRecoveryUnauthorized(error: unknown): boolean {
+  return sponsorMetadata(error).reason === 'RECOVERY_HASH_NOT_AUTHORIZED'
+}
+
+/** Preserve only stable gateway codes, never provider messages or payloads. */
+export function submissionFailureReason(error: unknown): string {
+  const reason = sponsorMetadata(error).reason
+  return reason && [
+    'SECURITY_ATTESTATION_UNAVAILABLE', 'SUBMISSION_PAUSED',
+    'SPONSORSHIP_NOT_AUTHORIZED', 'DATABASE_UNAVAILABLE',
+    'BUNDLER_UNAVAILABLE', 'SIMULATION_FAILED', 'POLICY_DENIED',
+    'RATE_LIMITED', 'INVALID_ORDER_DEADLINE', 'PAYMASTER_PAUSED',
+  ].includes(reason) ? reason : 'SUBMISSION_OUTCOME_UNKNOWN'
 }
 
 function walkCauses<T>(

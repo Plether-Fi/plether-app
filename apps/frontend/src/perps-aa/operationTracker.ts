@@ -306,7 +306,7 @@ export function beginSponsoredOperationTracking(
           retry_count:
             useSponsoredOperationStore.getState().operations
               .find((item) => item.id === id)?.retryCount ?? 0,
-          ...(operationStatus === 'receipt-timeout'
+          ...(['receipt-timeout', 'signed-not-submitted', 'submission-unknown'].includes(operationStatus)
             ? {}
             : { terminal_outcome: operationStatus }),
         })

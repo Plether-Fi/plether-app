@@ -8,6 +8,7 @@ import {
   hasObservedSponsoredOperationInclusion,
   isSponsoredOperationLaneBlocking,
   isSponsoredOperationTerminal,
+  isSignedButUnsubmitted,
   restoreSponsoredOperationLane,
   sponsoredOperationAutomaticRecoveryIsDue,
   sponsoredOperationAutomaticRecoveryIsExhausted,
@@ -26,7 +27,7 @@ import {
 } from './laneLock'
 import { registerOperationRecoveryCheck } from './requestOperationRecovery'
 import { reportRecoveryDiagnostic } from './recoveryDiagnostics'
-import { isRecoveryPending } from './errors'
+import { isRecoveryPending, isRecoveryUnauthorized } from './errors'
 import { SponsoredOperationLockedError } from './operationLockError'
 import { reconcileUserOperation } from './operationReconciler'
 import { resolveProtocolOperation } from './protocolOperationResolution'
@@ -160,6 +161,7 @@ export function SponsoredOperationRecovery() {
     const requestedChecks = new Map<string, (result: 'checked' | 'unavailable') => void>()
     const nextProtocolCheckAt = new Map<string, number>()
     const nextReceiptCheckAt = new Map<string, number>()
+    const receiptAuthorizationBlocked = new Set<string>()
 
     const scan = () => {
       const store = useSponsoredOperationStore.getState()
@@ -255,7 +257,7 @@ export function SponsoredOperationRecovery() {
           wallClockNow
         )
         const requested = requestedChecks.has(operation.id)
-        const protocolOnly = requested || operation.status === 'outcome-unknown' || exhausted
+        const protocolOnly = requested || isSignedButUnsubmitted(operation) || receiptAuthorizationBlocked.has(operation.id) || operation.status === 'outcome-unknown' || exhausted
         if (exhausted && operation.status !== 'outcome-unknown') {
           store.exhaustAutomaticRecovery(operation.id, wallClockNow)
         }
@@ -327,7 +329,7 @@ export function SponsoredOperationRecovery() {
 
             // Exhausting discovery retries must not stop safe-chain recovery
             // of an old, still-blocking submission after a reload.
-            const protocolOnly = requested || latestOperation.status === 'outcome-unknown' ||
+            const protocolOnly = requested || isSignedButUnsubmitted(latestOperation) || receiptAuthorizationBlocked.has(latestOperation.id) || latestOperation.status === 'outcome-unknown' ||
               sponsoredOperationAutomaticRecoveryIsExhausted(
                 latestOperation, Date.now()
               )
@@ -392,11 +394,22 @@ export function SponsoredOperationRecovery() {
             } catch (error) {
               if (isRecoveryPending(error)) {
                 nextReceiptCheckAt.set(latestOperation.id, globalThis.performance.now() + 60_000)
-                reportRecoveryDiagnostic({ operationKey: userOperationHash, stage: 'awaiting_recovery_evidence' })
+                reportRecoveryDiagnostic({ operationKey: userOperationHash, attemptId: latestOperation.id, stage: 'awaiting_recovery_evidence' })
+                return
+              }
+              if (isRecoveryUnauthorized(error)) {
+                receiptAuthorizationBlocked.add(latestOperation.id)
+                nextReceiptCheckAt.set(latestOperation.id, globalThis.performance.now() + 60_000)
+                reportRecoveryDiagnostic({ operationKey: userOperationHash, attemptId: latestOperation.id,
+                  stage: 'recovery_authorization_required' })
+                // Keep the original cause and liability. The visible preparation
+                // recovery view can restore owner-bound credentials. Never turn
+                // an authorization denial into a bundler outage or retry a send.
                 return
               }
               reportRecoveryDiagnostic({
                 operationKey: userOperationHash,
+                attemptId: latestOperation.id,
                 stage: 'receipt_check_failed',
               })
               const currentOperation =
@@ -676,6 +689,7 @@ export function SponsoredOperationRecovery() {
         requestedChecks.set(id, resolve)
         nextProtocolCheckAt.delete(id)
         nextReceiptCheckAt.delete(id)
+        receiptAuthorizationBlocked.delete(id)
         scan()
       })
     })

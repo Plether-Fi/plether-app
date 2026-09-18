@@ -51,6 +51,7 @@ import Plether.Database.AaSponsorship
   , ReceiptLocator(..)
   , initializeAaReconcilerCursor
   , isRecoveryOperationAuthorized
+  , isSignedRecoveryOperationAuthorized
   , isSponsorshipDeliveryAllowed
   , listSubmittedSponsorships
   , markSponsorshipSubmitted
@@ -381,6 +382,29 @@ aaIntegrationSpec databaseUrl =
         authorizationCount `shouldBe` [Only 1]
         reserveLedgerCount `shouldBe` [Only 1]
 
+    it "bounds signed recovery without changing liability or submission state" $
+      withFixture databaseUrl $ \conn -> do
+        readyDatabase conn
+        now <- currentEpochSeconds
+        authorization <- reserveSponsorship conn testConfig (draft '4' '5' '6' 8 1_000 now) >>= expectAuthorization
+        let digest = saDigest authorization
+            operationHash = hashOf '7'
+            client = saClientKey authorization
+        storeSponsorshipSignature conn testConfig digest (signatureOf '8') operationHash `shouldReturn` True
+        let credential = RecoveryCapability.issue "secret" "deployment" now operationHash client
+        RecoveryCapability.verify "wrong-secret" "deployment" now operationHash credential `shouldBe` Nothing
+        RecoveryCapability.verify "secret" "wrong-deployment" now operationHash credential `shouldBe` Nothing
+        RecoveryCapability.verify "secret" "deployment" now (hashOf '0') credential `shouldBe` Nothing
+        case RecoveryCapability.verify "secret" "deployment" now operationHash credential of
+          Nothing -> expectationFailure "signed recovery credential rejected"
+          Just originalClient -> isSignedRecoveryOperationAuthorized conn operationHash originalClient `shouldReturn` True
+        rows <- query_ conn "SELECT COUNT(*) FROM aa_recovery_operations" :: IO [Only Int64]
+        rows `shouldBe` [Only 0]
+        stored <- getSponsorshipByDigest conn digest
+        fmap saState stored `shouldBe` Just "signed"
+        void $ execute conn "UPDATE aa_sponsorship_authorizations SET created_at=clock_timestamp()-INTERVAL '8 days', signed_at=clock_timestamp()-INTERVAL '8 days' WHERE digest=?" (Only digest)
+        isSignedRecoveryOperationAuthorized conn operationHash client `shouldReturn` False
+
     it "persists the signature before submission and binds recovery to the exact client" $
       withFixture databaseUrl $ \conn -> do
         readyDatabase conn
@@ -392,8 +416,17 @@ aaIntegrationSpec databaseUrl =
             clientKey = clientKeyOf '6'
             signature = signatureOf '8'
 
+        isSignedRecoveryOperationAuthorized conn operationHash clientKey `shouldReturn` False
+
         storeSponsorshipSignature conn testConfig digest signature operationHash
           `shouldReturn` True
+        -- Preparing/signing alone does not create a submitted-operation row.
+        isRecoveryOperationAuthorized conn operationHash clientKey "alto" `shouldReturn` False
+        isSignedRecoveryOperationAuthorized conn operationHash clientKey `shouldReturn` True
+        isSignedRecoveryOperationAuthorized conn operationHash (clientKeyOf 'a') `shouldReturn` False
+        isSignedRecoveryOperationAuthorized conn (hashOf '0') clientKey `shouldReturn` False
+        signed <- getSponsorshipByDigest conn digest
+        fmap saState signed `shouldBe` Just "signed"
         storeSponsorshipSignature conn testConfig digest signature operationHash
           `shouldReturn` True
         storeSponsorshipSignature conn testConfig digest (signatureOf '9') operationHash

@@ -63,6 +63,10 @@ export function sponsoredOperationStatusLabel(
       return 'Outcome unknown'
     case 'receipt-timeout':
       return 'Status unknown — checking'
+    case 'signed-not-submitted':
+      return 'Not sent — checking safe expiry'
+    case 'submission-unknown':
+      return 'Submission uncertain — checking'
     case 'cancelled':
       return 'Cancelled locally'
     case 'failed':

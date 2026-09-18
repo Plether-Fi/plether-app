@@ -193,7 +193,7 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
     return false
   }
 
-  return operation.status === 'receipt-timeout' ||
+  return operation.status === 'receipt-timeout' || operation.status === 'submission-unknown' ||
     (
       operation.reason !== undefined &&
       (
@@ -230,6 +230,7 @@ function operationReasonMessage(
   }
 
   switch (sponsoredOperationDisplayStatus(operation)) {
+    case 'signed-not-submitted': return 'Wallet approval finished too late. This transaction was not sent. Recovery must verify safe expiry before another action can use this transaction slot.'
     case 'signature-declined': return 'Signature declined. Your transaction was not sent.'
     case 'preparation-pending': return operation.reason === 'ACCOUNT_DEPLOYMENT_PENDING'
       ? 'Preparation paused for Trading Account confirmation. Resume this attempt once the account is confirmed.'

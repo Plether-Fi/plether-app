@@ -50,6 +50,8 @@ export type PerpsSponsoredOperationStatus =
   | 'replaced'
   | 'expired'
   | 'receipt-timeout'
+  | 'signed-not-submitted'
+  | 'submission-unknown'
 
 export type PerpsAnalyticsProperties = AnalyticsProperties
 
@@ -178,12 +180,12 @@ export function trackPerpsSponsoredOperation(
     sponsorship_status: status,
     ...properties,
   }))
-  if (['failed', 'execution-reverted', 'dropped', 'replaced', 'expired', 'receipt-timeout', 'preflight_failed'].includes(status)) {
+  if (['failed', 'execution-reverted', 'dropped', 'replaced', 'expired', 'receipt-timeout', 'signed-not-submitted', 'submission-unknown', 'preflight_failed'].includes(status)) {
     const expected = properties?.error_category === 'user_rejected' || status === 'expired'
       || status === 'preflight_failed' || status === 'replaced'
       || ['DEADLINE_TOO_CLOSE', 'POLICY_DENIED', 'ACCOUNT_DEPLOYMENT_PENDING', 'SPONSOR_BUDGET_EXCEEDED', 'PAYMASTER_PAUSED', 'RATE_LIMITED'].includes(String(properties?.reason_code))
     captureFrontendLog(expected ? 'warn' : 'error', 'Sponsored operation did not complete', {
-      ...compactProperties(properties), component: 'sponsored_operation', stage: status, outcome: status === 'receipt-timeout' ? 'unknown' : expected ? 'rejected' : 'failure',
+      ...compactProperties(properties), component: 'sponsored_operation', stage: status, outcome: ['receipt-timeout', 'submission-unknown'].includes(status) ? 'unknown' : status === 'signed-not-submitted' ? 'not_submitted' : expected ? 'rejected' : 'failure',
     })
   }
 }
