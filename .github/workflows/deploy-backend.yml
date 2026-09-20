@@ -1454,17 +1454,19 @@ jobs:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
         run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/apps/backend/deployments/close-assistance-arbitrum-sepolia.json "$CLOSE_ASSISTANCE_MODE"
 
-      - name: Patch liquidation worker cost controls
+      - name: Configure liquidation worker reliability controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
         env:
-          LIQUIDATION_WORKER_POLL_SECONDS: "600"
+          LIQUIDATION_WORKER_POLL_SECONDS: "5"
           LIQUIDATION_WORKER_SCAN_BATCH_SIZE: "1000"
-          LIQUIDATION_WORKER_MULTICALL_SIZE: "10"
+          LIQUIDATION_WORKER_MULTICALL_SIZE: "100"
+          LIQUIDATION_WORKER_MAX_TRANSACTION_GAS: "25000000"
         run: |
           jq \
             --arg liquidationPollSeconds "$LIQUIDATION_WORKER_POLL_SECONDS" \
             --arg liquidationScanBatchSize "$LIQUIDATION_WORKER_SCAN_BATCH_SIZE" \
             --arg liquidationMulticallSize "$LIQUIDATION_WORKER_MULTICALL_SIZE" \
+            --arg liquidationMaxTransactionGas "$LIQUIDATION_WORKER_MAX_TRANSACTION_GAS" \
             '
             def upsert_env($name; $value):
               .environment = (
@@ -1477,6 +1479,7 @@ jobs:
                 upsert_env("LIQUIDATION_WORKER_POLL_SECONDS"; $liquidationPollSeconds)
                 | upsert_env("LIQUIDATION_WORKER_SCAN_BATCH_SIZE"; $liquidationScanBatchSize)
                 | upsert_env("LIQUIDATION_WORKER_MULTICALL_SIZE"; $liquidationMulticallSize)
+                | upsert_env("LIQUIDATION_WORKER_MAX_TRANSACTION_GAS"; $liquidationMaxTransactionGas)
               else
                 .
               end

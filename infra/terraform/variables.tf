@@ -1532,7 +1532,7 @@ variable "lp_settlement_max_tx_cost_wei" {
 
 variable "liquidation_worker_poll_seconds" {
   type    = string
-  default = "600"
+  default = "5"
 }
 
 variable "liquidation_worker_scan_batch_size" {
@@ -1542,7 +1542,7 @@ variable "liquidation_worker_scan_batch_size" {
 
 variable "liquidation_worker_multicall_size" {
   type        = string
-  default     = "10"
+  default     = "100"
   description = "Number of account-lens reads per liquidation-worker Multicall3 request. Must be between 1 and 100."
 
   validation {
@@ -1903,5 +1903,16 @@ variable "aa_preparation_retirement_enabled" {
   validation {
     condition     = !var.aa_preparation_retirement_enabled || var.aa_preparation_recovery_origin != ""
     error_message = "Preparation retirement requires a configured recovery origin."
+  }
+}
+
+variable "liquidation_worker_max_transaction_gas" {
+  type        = string
+  default     = "25000000"
+  description = "Liquidation gas simulation ceiling; batches that cannot complete are split. Also bounded by 80% of block gas limit."
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.liquidation_worker_max_transaction_gas))
+    error_message = "Liquidation gas ceiling must be a positive integer."
   }
 }

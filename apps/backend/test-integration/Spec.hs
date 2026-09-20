@@ -4,6 +4,7 @@ import qualified Data.Text as T
 import Plether.DatabaseDiagnosticsSpec (databaseDiagnosticsSpec)
 import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
 import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
+import Plether.Keeper.LiquidationMonitoringSpec (liquidationMonitoringSpec)
 import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
@@ -25,6 +26,7 @@ main = do
         databaseDiagnosticsSpec $ T.pack value
         criticalPathSpec $ T.pack value
         protectionExecutionSpec $ T.pack value
+        liquidationMonitoringSpec $ T.pack value
         lpSettlementDatabaseSpec $ T.pack value
         lpSettlementWorkerSpec $ T.pack value
         candleRollupSpec $ T.pack value

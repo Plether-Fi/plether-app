@@ -1691,6 +1691,15 @@ CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending
     ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC)
     WHERE pending_tx_hash IS NOT NULL;
 
+-- Durable liquidation observations: retries/restarts must not reset backlog age.
+ALTER TABLE perps_liquidation_candidates
+    ADD COLUMN IF NOT EXISTS monitoring_first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    ADD COLUMN IF NOT EXISTS risk_first_observed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS risk_checked_at TIMESTAMPTZ;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS last_liquidation_progress_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_liquidation_progress_block BIGINT;
+
 -- Incrementally maintained Perps basket OHLCV read model. These five tables are
 -- safe to bootstrap before the Perps history indexer schema exists. Historical
 -- population and the concurrent perps_events/perps_account_activity backfill

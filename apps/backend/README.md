@@ -571,9 +571,9 @@ Local URLs:
 | `LP_SETTLEMENT_PENDING_REPLACEMENT_SECONDS` | No | `60` | Age at which an unconfirmed durable transaction is replaced at the same nonce |
 | `LP_SETTLEMENT_MAX_REPLACEMENTS` | No | `3` | Maximum same-nonce fee replacements before the nonce lane requires manual review |
 | `LP_SETTLEMENT_MAX_TX_COST_WEI` | Execute mode | `0` | Hard maximum of transaction value plus gas-limit times max-fee; execute requires a positive observed-derived cap |
-| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
-| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
-| `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
+| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `5` | Idle delay after a full candidate sweep; pending transactions are reconciled every second |
+| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Accounts per page within a full candidate sweep |
+| `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `100` | Account-lens reads per Multicall3 request (`1`–`100`) |
 | `LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE` | No | `20` | Candidate accounts per `executeLiquidationBatch` transaction (`1`–`256`); one Pyth update is shared by the batch |
 | `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
 | `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
@@ -944,3 +944,40 @@ apps/backend/
 ## License
 
 AGPL-3.0-or-later
+
+### Liquidation recovery and weekend execution
+
+The liquidation worker resolves oracle-frozen policy from the contracts before
+preparing each batch. Frozen execution uses the on-chain age limit; live execution
+retains the stricter backend freshness limit. The latest signed payload cache is
+retained across the weekend. Do not increase the global `PYTH_LATEST_MAX_AGE_SECONDS`.
+
+`LIQUIDATION_WORKER_MAX_TRANSACTION_GAS` defaults to 25000000, bounded additionally
+by 80% of block gas limit. Each batch is simulated with its exact gas envelope;
+partial simulation doubles gas until the ceiling, then splits the batch. Receipts
+are still reconciled per account. Simulation completion is not liquidation success.
+
+A sweep snapshots candidate membership in checked-time order, reads pages without
+sleeping between them, and waits one second between confirmation checks. Pending
+or unreconciled transactions block additional submissions. Unattempted receipt
+suffixes get up to three immediate retries with refreshed policy and payloads;
+isolated failures remain discoverable on subsequent sweeps.
+
+Watch `liquidation_execution_policy`, `liquidation_sweep_finished` (including its
+`completed` flag), `liquidation_sweep_slow`, and per-account reconciliation errors.
+An incomplete sweep or a successful transaction must not be reported as a cleared
+backlog. See `docs/runbooks/liquidation-keeper-recovery.md` for rollout gates.
+
+The liquidation backlog watchdog runs every ten seconds on its own PostgreSQL
+connection while the executing worker holds the advisory lock. Risk age and
+confirmed-progress timestamps persist in PostgreSQL across restarts. Failed
+reads and resubmissions do not reset age; verified healthy/closed observations
+resolve risk. The queue includes the conservative preflight buffer and is not a
+claim that every candidate is currently executable.
+
+`liquidation_backlog_health` exports count, oldest risk age, time without a new
+confirmed liquidation, oldest successfully classified account age, pending
+account count, and a heartbeat. Operations alarms fire at 300 seconds unresolved
+risk, 60 seconds without confirmed progress, 60 seconds without classification,
+and two missing one-minute heartbeat periods. The watchdog uses an additional
+pool connection, does not submit transactions, and is disabled for dry runs.

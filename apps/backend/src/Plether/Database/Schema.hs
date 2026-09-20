@@ -164,6 +164,7 @@ module Plether.Database.Schema
   , deletePerpsHistoryFromBlock
   ) where
 
+import qualified Plether.LiquidationWorker.Monitoring as LiquidationMonitoring
 import Control.Monad (unless, when)
 import Data.Aeson (Value, encode, object, (.=))
 import Data.ByteString (ByteString)
@@ -3319,7 +3320,7 @@ ensurePerpsLiquidationSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending \
     \ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC) \
     \WHERE pending_tx_hash IS NOT NULL"
-  pure ()
+  LiquidationMonitoring.ensureMonitoringSchema conn
 
 perpsLiquidationLockNamespace :: Int
 perpsLiquidationLockNamespace = 421614486

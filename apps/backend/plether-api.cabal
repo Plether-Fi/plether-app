@@ -134,6 +134,7 @@ library
         Plether.Handlers.History
         Plether.Keeper
         Plether.LiquidationWorker
+        Plether.LiquidationWorker.Monitoring
         Plether.Handlers.PerpsHistory
         Plether.Handlers.ProtectionHistory
         Plether.Handlers.TestnetFaucet
@@ -471,6 +472,7 @@ test-suite plether-api-integration-test
         Plether.Perps.CriticalPathSpec
         Plether.Perps.ProtectionExecutionSpec
         Plether.Keeper.LpSettlementDatabaseSpec
+        Plether.Keeper.LiquidationMonitoringSpec
         Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec

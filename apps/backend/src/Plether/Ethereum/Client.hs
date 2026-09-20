@@ -12,6 +12,7 @@ module Plether.Ethereum.Client
   , ethCallAt
   , ethCallWithValue
   , ethCallWithTransactionGas
+  , ethCallWithTransactionGasAtBlock
   , ethCallAtBlock
   , ethBlockNumber
   , parseRpcQuantity
@@ -429,6 +430,13 @@ ethCallWithTransactionGas client params fromAddr value gasLimit
   | gasLimit <= 0 = pure $ Left $ RpcJsonError "eth_call gas must be positive"
   | otherwise =
       ethCallAtTag client params (Just fromAddr) (Just value) (Just gasLimit) Latest
+
+-- | Transaction-envelope simulation at a fixed state, used when sizing batches.
+ethCallWithTransactionGasAtBlock :: EthClient -> CallParams -> Text -> Integer -> Integer -> Integer -> IO (Either RpcError ByteString)
+ethCallWithTransactionGasAtBlock client params fromAddr value gasLimit blockNumber
+  | T.null (T.strip fromAddr) || value < 0 || gasLimit <= 0 || blockNumber < 0 =
+      pure $ Left $ RpcJsonError "Invalid fixed-block transaction simulation parameters"
+  | otherwise = ethCallAtTag client params (Just fromAddr) (Just value) (Just gasLimit) (BlockNumber blockNumber)
 
 ethCallAtTag
   :: EthClient
