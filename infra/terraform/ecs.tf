@@ -721,6 +721,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },
       { name = "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS", value = var.liquidation_worker_reorg_overlap_blocks },
       { name = "LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS", value = var.liquidation_worker_pending_replacement_seconds },
+      { name = "LIQUIDATION_WORKER_MAX_TRANSACTION_GAS", value = var.liquidation_worker_max_transaction_gas },
       { name = "LIQUIDATION_WORKER_GAS_BUFFER_BPS", value = var.liquidation_worker_gas_buffer_bps },
       { name = "LIQUIDATION_WORKER_FEE_BUFFER_BPS", value = var.liquidation_worker_fee_buffer_bps },
       { name = "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES", value = var.liquidation_worker_future_publish_max_retries },

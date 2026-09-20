@@ -45,10 +45,19 @@ module Plether.LiquidationWorker
   , liquidationFuturePublishRetryDelaySeconds
   , retryLiquidationRiskInputs
   , processLiquidationBatches
+  , runLiquidationSweep
+  , BatchOutcome (..)
+  , LiquidationExecutionPolicy (..)
+  , decodeLiquidationExecutionPolicy
+  , liquidationPayloadMaximumAge
+  , sizeLiquidationBatchGas
+  , waitForLiquidationConfirmation
   , freshLiquidationRiskInputsFromCache
   ) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (withAsync, link)
+import qualified Plether.LiquidationWorker.Monitoring as Monitoring
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, unless, when)
 import Data.Aeson
@@ -103,7 +112,7 @@ import Plether.Database.Schema
   , upsertPerpsLiquidationCandidate
   )
 import Plether.Ethereum.Abi (decodeBool, decodeInt256, decodeUint256, encodeCall, encodeUint256, keccak256)
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Client (EthClient, RpcError (..), CallParams (..), ethBlockNumber, ethCallWithTransactionGasAtBlock)
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , decodeAccountLedgerSnapshot
@@ -114,7 +123,7 @@ import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc
   ( RpcLog (..)
   , TxReceipt (..)
-  , ethEstimateGas
+  , ethEstimateGasAtBlock
   , ethGasPrice
   , ethGetLogs
   , ethGetBalance
@@ -173,6 +182,55 @@ data LiquidationBatchProgress = LiquidationBatchProgress
   }
   deriving stock (Show, Eq)
 
+data LiquidationExecutionPolicy = LiquidationExecutionPolicy
+  { lepFrozen :: Bool
+  , lepMaxAge :: Integer
+  , lepTimestamp :: Integer
+  , lepBlockGasLimit :: Integer
+  } deriving stock (Show, Eq)
+
+liquidationPayloadMaximumAge :: Integer -> LiquidationExecutionPolicy -> Integer
+liquidationPayloadMaximumAge liveAge policy
+  | lepFrozen policy = lepMaxAge policy
+  | otherwise = min liveAge (lepMaxAge policy)
+
+loadLiquidationExecutionPolicy :: LiquidationWorkerConfig -> EthClient -> IO (Either Text (Integer, LiquidationExecutionPolicy))
+loadLiquidationExecutionPolicy cfg client = ethBlockNumber client >>= \case
+  Left err -> pure $ Left $ rpcErrorText err
+  Right blockNumber -> do
+    let requests = [(lwcPletherOracle cfg, "isOracleFrozen()"), (lwcPletherOracle cfg, "liquidationStalenessLimit()"),
+          (lwcCfdEngine cfg, "fadMaxStaleness()"), (Multicall.multicallAddress, "getCurrentBlockTimestamp()"),
+          (Multicall.multicallAddress, "getCurrentBlockGasLimit()")]
+    result <- Multicall.multicallAtBlock client
+      [Multicall.Call target True (encodeCall signature []) | (target, signature) <- requests] blockNumber
+    pure $ fmap ((,) blockNumber) $ firstRpcError "execution policy" result >>= decodeLiquidationExecutionPolicy
+
+decodeLiquidationExecutionPolicy :: [Multicall.CallResult] -> Either Text LiquidationExecutionPolicy
+decodeLiquidationExecutionPolicy results
+  | length results /= 5 || any (\r -> not (Multicall.resultSuccess r) || BS.length (Multicall.resultData r) /= 32) results =
+      Left "Incomplete liquidation execution policy"
+  | otherwise = case map (decodeUint256 . Multicall.resultData) results of
+      [frozen, liveAge, frozenAge, timestamp, gasLimit]
+        | frozen `elem` [0, 1] && liveAge > 0 && frozenAge > 0 && timestamp > 0 && gasLimit > 0 ->
+            Right $ LiquidationExecutionPolicy (frozen == 1) (if frozen == 1 then frozenAge else liveAge) timestamp gasLimit
+      _ -> Left "Invalid liquidation execution policy"
+
+-- Nothing means split the batch (or isolate a single-account failure).
+-- RPC errors remain errors, never evidence of successful full execution.
+sizeLiquidationBatchGas :: Integer -> Integer -> Int -> (Integer -> IO (Either RpcError ByteString)) -> IO (Either RpcError (Maybe Integer))
+sizeLiquidationBatchGas cap initial count simulate
+  | cap <= 0 || count <= 0 = pure $ Left $ RpcJsonError "Invalid liquidation gas sizing inputs"
+  | otherwise = go $ min cap (max 1 initial)
+  where
+    go gas = simulate gas >>= \case
+      Left err -> pure $ Left err
+      Right bytes
+        | BS.length bytes /= 32 -> pure $ Left $ RpcJsonError "Invalid liquidation batch simulation return data"
+        | decodeUint256 bytes > fromIntegral count -> pure $ Left $ RpcJsonError "Invalid liquidation batch nextIndex"
+        | decodeUint256 bytes == fromIntegral count -> pure $ Right $ Just gas
+        | gas >= cap -> pure $ Right Nothing
+        | otherwise -> go $ min cap (gas * 2)
+
 data LiquidationWorkerConfig = LiquidationWorkerConfig
   { lwcChainId :: Integer
   , lwcOrderRouter :: Text
@@ -193,15 +251,17 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
   , lwcFeeBufferBps :: Integer
   , lwcFuturePublishMaxRetries :: Int
   , lwcFuturePublishRetryMaxSeconds :: Int
+  , lwcMaxTransactionGas :: Integer
   , lwcPythLatestMaxAgeSeconds :: Integer
   }
   deriving stock (Show)
 
 loadLiquidationWorkerConfig :: Config -> Text -> IO LiquidationWorkerConfig
 loadLiquidationWorkerConfig cfg privateKey = do
-  pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 600
+  pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 5
+  maxTransactionGas <- readEnv "LIQUIDATION_WORKER_MAX_TRANSACTION_GAS" 25_000_000
   scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 1_000
-  multicallSize <- readEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" 10
+  multicallSize <- readEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" 100
   executionBatchSize <- readEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" 20
   indexerStartBlock <- readEnv "LIQUIDATION_WORKER_START_BLOCK" (cfgPerpsIndexerStartBlock cfg)
   indexerConfirmations <- readEnv "LIQUIDATION_WORKER_CONFIRMATIONS" 1
@@ -233,6 +293,7 @@ loadLiquidationWorkerConfig cfg privateKey = do
       , lwcFeeBufferBps = max 0 feeBufferBps
       , lwcFuturePublishMaxRetries = max 0 $ min 5 futurePublishMaxRetries
       , lwcFuturePublishRetryMaxSeconds = max 1 $ min 30 futurePublishRetryMaxSeconds
+      , lwcMaxTransactionGas = max 1 maxTransactionGas
       , lwcPythLatestMaxAgeSeconds = cfgPythLatestMaxAgeSeconds cfg
       }
 
@@ -1099,18 +1160,25 @@ runLiquidationWorker cfg pool client mode dryRun =
                          , field "dry_run" dryRun
                          ]
                   )
-                case mode of
-                  LiquidationWorkerOnce -> runIteration cfg conn client workerAddress dryRun
-                  LiquidationWorkerLoop -> loop conn workerAddress
+                let work = case mode of
+                      LiquidationWorkerOnce -> runIteration cfg conn client workerAddress dryRun
+                      LiquidationWorkerLoop -> loop conn workerAddress
+                -- Dry runs do not emit production health signals; real pending
+                -- receipts still use canonical reconciliation.
+                if dryRun then work else
+                  withAsync (Monitoring.runBacklogWatchdog pool (lwcChainId cfg) (lwcCfdEngine cfg)) $ \watchdog -> do
+                    link watchdog
+                    work
+                    Monitoring.readBacklogHealth conn (lwcChainId cfg) (lwcCfdEngine cfg)
+                      >>= Monitoring.emitBacklogHealth (lwcChainId cfg) (lwcCfdEngine cfg)
   where
     loop conn workerAddress = do
       runIteration cfg conn client workerAddress dryRun
       waitForNextSweep conn workerAddress $ lwcPollSeconds cfg
       loop conn workerAddress
 
-    -- Discovery and health reads run every ten minutes, but a transaction that
-    -- was already submitted still needs timely receipt, rebroadcast, and nonce
-    -- reconciliation. An empty pending check is database-only and makes no RPC.
+    -- The idle delay follows a complete sweep, never an individual page.
+    -- Pending transactions are reconciled even during the short idle delay.
     waitForNextSweep _ _ remainingSeconds | remainingSeconds <= 0 = pure ()
     waitForNextSweep conn workerAddress remainingSeconds = do
       let delaySeconds = min pendingReconciliationPollSeconds remainingSeconds
@@ -1259,26 +1327,35 @@ processCandidates cfg conn client workerAddress dryRun = do
       when signerReady processAvailableCandidates
   where
     processAvailableCandidates = do
-      candidates <-
-        getPerpsLiquidationCandidates
-          conn
-          (lwcChainId cfg)
-          (lwcCfdEngine cfg)
-          (lwcScanBatchSize cfg)
-      unless (null candidates) $ do
-        blockResult <- ethBlockNumber client
-        case blockResult of
-          Left err ->
-            logWarnEvery
-              60
-              "liquidation_snapshot_block_fetch_failed"
-              "Liquidation worker could not resolve an exact block for its batched position reads"
-              ( workerLogFields cfg
-                  <> [ field "candidate_count" $ length candidates
-                     , field "error" $ rpcErrorText err
-                     ]
-              )
-          Right snapshotBlock -> processCandidatesAtBlock snapshotBlock candidates
+      -- Freeze membership/order for this sweep. Newly discovered accounts join
+      -- the next sweep; retries cannot monopolize page one. No database lock is
+      -- held while calling RPC or waiting for receipts.
+      candidates <- getPerpsLiquidationCandidates conn (lwcChainId cfg) (lwcCfdEngine cfg) 2_147_483_647
+      started <- getPOSIXTime
+      completed <- runLiquidationSweep (lwcScanBatchSize cfg) candidates processPage
+      finished <- getPOSIXTime
+      logInfo "liquidation_sweep_finished" "Liquidation discovery sweep finished" $
+        workerLogFields cfg <> [field "completed" completed, field "candidate_count" (length candidates), field "duration_seconds" (realToFrac (finished - started) :: Double)]
+      when (finished - started > 60) $
+        logWarn "liquidation_sweep_slow" "Liquidation sweep exceeded 60 seconds" (workerLogFields cfg)
+
+    processPage candidates = do
+      pending <- getPendingPerpsLiquidationCandidates conn (lwcChainId cfg) (lwcCfdEngine cfg)
+        (lwcPendingReplacementSeconds cfg) pendingBroadcastRetrySeconds
+      -- A timeout or reconciliation failure must never permit a second nonce.
+      if not (null pending)
+        then pure False
+        else do
+          blockResult <- ethBlockNumber client
+          case blockResult of
+            Left err -> do
+              logWarnEvery 60 "liquidation_snapshot_block_fetch_failed"
+                "Liquidation worker could not resolve an exact block" $
+                  workerLogFields cfg <> [field "error" (rpcErrorText err)]
+              pure False
+            Right snapshotBlock -> do
+              processCandidatesAtBlock snapshotBlock candidates
+              pure True
 
     processCandidatesAtBlock initialBlock candidates = do
       mPayload <- getLatestPythUpdatePayload conn
@@ -1400,6 +1477,14 @@ processCandidates cfg conn client workerAddress dryRun = do
               [ candidate
               | (candidate, _, LiquidationPositionRisky) <- classified
               ]
+        unless dryRun $ Monitoring.observeRisk conn (lwcChainId cfg) (lwcCfdEngine cfg)
+          [ (plcrAccount candidate, case decision of
+                LiquidationPositionRisky -> Just True
+                LiquidationPositionHealthy -> Just False
+                LiquidationPositionClosed -> Just False
+                LiquidationRiskUnknown _ -> Nothing)
+          | (candidate, _, decision) <- classified
+          ]
         case riskResult of
           Left err ->
             logWarnEvery
@@ -1475,17 +1560,14 @@ processCandidates cfg conn client workerAddress dryRun = do
         unless (null simulationCandidates) $
           processClassifiedPayload simulationCandidates
 
-    recordUnclassifiedOpenCandidates snapshots reason =
+    recordUnclassifiedOpenCandidates snapshots reason = do
+      unless dryRun $ Monitoring.observeRisk conn (lwcChainId cfg) (lwcCfdEngine cfg)
+        [(plcrAccount candidate, Just True) | (candidate, Right snapshot) <- snapshots, alsLiquidatable snapshot]
       forM_ snapshots $ \(candidate, snapshotResult) ->
         case snapshotResult of
           Right snapshot
             | alsHasPosition snapshot || alsSize snapshot /= 0 ->
-                recordCandidateError
-                  cfg
-                  conn
-                  candidate
-                  "risk_classification"
-                  reason
+                recordCandidateError cfg conn candidate "risk_classification" reason
           _ -> pure ()
 
     reconcileFlatCandidates _ [] = pure ()
@@ -1531,11 +1613,15 @@ processCandidates cfg conn client workerAddress dryRun = do
           conn
           (lwcChainId cfg)
           (lwcCfdEngine cfg)
-      executionPayload <-
-        loadFreshLiquidationExecutionPayload
-          (lwcPythLatestMaxAgeSeconds cfg)
-          (floor <$> getPOSIXTime)
-          (getLatestPythUpdatePayload conn)
+      policyResult <- loadLiquidationExecutionPolicy cfg client
+      executionPayload <- case policyResult of
+        Left err -> pure $ Left err
+        Right (blockNumber, policy) -> do
+          result <- loadFreshLiquidationExecutionPayload
+            (liquidationPayloadMaximumAge (lwcPythLatestMaxAgeSeconds cfg) policy)
+            (pure $ lepTimestamp policy)
+            (getLatestPythUpdatePayload conn)
+          pure $ fmap (\payload -> (blockNumber, policy, payload)) result
       case executionPayload of
         Left err -> do
           forM_ candidates $ \candidate ->
@@ -1555,12 +1641,13 @@ processCandidates cfg conn client workerAddress dryRun = do
                    ]
             )
           pure Nothing
-        Right updateData -> do
-          let payloadKey =
-                liquidationPayloadFingerprint
-                  (lwcPletherOracle cfg)
-                  (lwcOrderRouter cfg)
-                  updateData
+        Right (blockNumber, policy, updateData) -> do
+          -- A payload rejected before freezing can become admissible when the
+          -- policy changes; do not suppress it throughout the weekend.
+          let payloadKey = liquidationPayloadFingerprint (lwcPletherOracle cfg) (lwcOrderRouter cfg) updateData
+                <> ":" <> tshow (lepFrozen policy, lepMaxAge policy)
+          logInfoEvery 60 "liquidation_execution_policy" "Resolved liquidation oracle policy" $
+            workerLogFields cfg <> [field "oracle_frozen" (lepFrozen policy), field "maximum_age_seconds" (lepMaxAge policy)]
           case
               liquidationPayloadCircuitDecision
                 (plrprPayloadKey <$> rejectedPayload)
@@ -1582,7 +1669,7 @@ processCandidates cfg conn client workerAddress dryRun = do
                            ]
                     )
                   pure Nothing
-                Nothing -> preparePayload candidates payloadKey updateData
+                Nothing -> preparePayload candidates blockNumber policy payloadKey updateData
             ClearRejectedLiquidationPayload -> do
               clearPerpsLiquidationRejectedPayload
                 conn
@@ -1592,11 +1679,11 @@ processCandidates cfg conn client workerAddress dryRun = do
                 "liquidation_pyth_payload_changed"
                 "Liquidation scan resumed with a new Pyth payload"
                 (workerLogFields cfg <> [field "payload_key" payloadKey])
-              preparePayload candidates payloadKey updateData
+              preparePayload candidates blockNumber policy payloadKey updateData
             ProcessLiquidationPayload ->
-              preparePayload candidates payloadKey updateData
+              preparePayload candidates blockNumber policy payloadKey updateData
 
-    preparePayload candidates payloadKey updateData = do
+    preparePayload candidates blockNumber policy payloadKey updateData = do
       feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
       case feeResult of
         Left err -> do
@@ -1611,34 +1698,62 @@ processCandidates cfg conn client workerAddress dryRun = do
                    ]
             )
           pure Nothing
-        Right updateFee -> pure $ Just (payloadKey, updateData, updateFee)
+        Right updateFee -> pure $ Just (blockNumber, policy, payloadKey, updateData, updateFee)
 
-    executePreparedBatch candidates (payloadKey, updateData, updateFee) =
+    executePreparedBatch candidates (blockNumber, policy, payloadKey, updateData, updateFee) =
       processLiquidationBatch
         cfg
         conn
         client
         workerAddress
         dryRun
+        blockNumber
+        policy
         payloadKey
         updateData
         updateFee
         candidates
 
+-- Membership is captured once by the caller; page processing cannot reorder
+-- or starve the remainder when it updates last_checked_at.
+runLiquidationSweep :: Int -> [candidate] -> ([candidate] -> IO Bool) -> IO Bool
+runLiquidationSweep pageSize candidates processPage = go $ chunksOf pageSize candidates
+  where
+    go [] = pure True
+    go (page : rest) = processPage page >>= \continue -> if continue then go rest else pure False
+
+data BatchOutcome
+  = BatchComplete
+  | BatchStopped
+  | BatchSplit
+  | BatchRetryFrom Int
+  deriving stock (Show, Eq)
+
 processLiquidationBatches
   :: [[candidate]]
   -> ([candidate] -> IO (Maybe prepared))
-  -> ([candidate] -> prepared -> IO Bool)
+  -> ([candidate] -> prepared -> IO BatchOutcome)
   -> IO ()
-processLiquidationBatches [] _ _ = pure ()
-processLiquidationBatches (batch : rest) prepareBatch executeBatch = do
-  prepared <- prepareBatch batch
-  case prepared of
-    Nothing -> pure ()
-    Just batchInputs -> do
-      canContinue <- executeBatch batch batchInputs
-      when canContinue $
-        processLiquidationBatches rest prepareBatch executeBatch
+processLiquidationBatches batches prepareBatch executeBatch = go [(batch, 0 :: Int) | batch <- batches]
+  where
+    go [] = pure ()
+    go (([], _) : rest) = go rest
+    go ((batch, retries) : rest) = do
+      prepared <- prepareBatch batch
+      case prepared of
+        Nothing -> pure ()
+        Just inputs -> executeBatch batch inputs >>= \case
+          BatchStopped -> pure ()
+          BatchComplete -> go rest
+          BatchSplit
+            | length batch > 1 ->
+                let (left, right) = splitAt (length batch `div` 2) batch
+                 in go $ (left, 0) : (right, 0) : rest
+            | otherwise -> go rest -- isolated failure was recorded by executor
+          BatchRetryFrom index
+            | index >= 0 && index < length batch && retries < 3 ->
+                go $ (drop index batch, retries + 1) : rest
+            | otherwise -> go rest -- bounded retries; next sweep rechecks it
 
 processLiquidationBatch
   :: LiquidationWorkerConfig
@@ -1646,16 +1761,31 @@ processLiquidationBatch
   -> EthClient
   -> Text
   -> Bool
+  -> Integer
+  -> LiquidationExecutionPolicy
   -> Text
   -> [ByteString]
   -> Integer
   -> [PerpsLiquidationCandidateRow]
-  -> IO Bool
-processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateData updateFee candidates = do
+  -> IO BatchOutcome
+processLiquidationBatch cfg conn client workerAddress dryRun blockNumber policy payloadKey updateData updateFee candidates = do
   let accounts = map plcrAccount candidates
       callData = Perps.executeLiquidationBatchCall accounts updateData
-  gasResult <- ethEstimateGas client workerAddress (lwcOrderRouter cfg) updateFee callData
+  estimate <- ethEstimateGasAtBlock client workerAddress (lwcOrderRouter cfg) updateFee callData blockNumber
+  gasResult <- case estimate of
+    Left err -> pure $ Left err
+    Right estimated -> sizeLiquidationBatchGas
+      (min (lwcMaxTransactionGas cfg) (lepBlockGasLimit policy * 4 `div` 5))
+      (liquidationTransactionGasLimit (lwcGasBufferBps cfg) estimated)
+      (length accounts)
+      (\gas -> ethCallWithTransactionGasAtBlock client (CallParams (lwcOrderRouter cfg) callData)
+        workerAddress updateFee gas blockNumber)
   case gasResult of
+    Right Nothing -> do
+      when (length candidates == 1) $
+        forM_ candidates $ \candidate -> recordCandidateError cfg conn candidate "batch_gas_cap"
+          "Account could not complete within the transaction gas cap; continuing other accounts"
+      pure BatchSplit
     Left err
       | Just selectorText <- payloadGlobalSimulationRevertSelector err -> do
           let failure = "liquidation simulation rejected Pyth payload: " <> rpcErrorText err
@@ -1679,13 +1809,13 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
                    , field "error" failure
                    ]
             )
-          pure False
+          pure BatchStopped
       | otherwise -> do
           forM_ candidates $ \candidate ->
             recordCandidateError cfg conn candidate "batch_simulation" $
               "liquidation batch simulation failed: " <> rpcErrorText err
-          pure False
-    Right estimatedGas -> do
+          pure BatchStopped
+    Right (Just estimatedGas) -> do
       logInfo
         "liquidation_batch_opportunity_detected"
         "Liquidation batch passed transaction simulation"
@@ -1705,7 +1835,7 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
               (lwcChainId cfg)
               (lwcCfdEngine cfg)
               (plcrAccount candidate)
-          pure True
+          pure BatchComplete
         else do
           prepared <-
             prepareLiquidationTransaction cfg client workerAddress estimatedGas updateFee callData
@@ -1713,7 +1843,7 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
             Left err -> do
               forM_ candidates $ \candidate ->
                 recordCandidateError cfg conn candidate "batch_transaction_prepare" err
-              pure False
+              pure BatchStopped
             Right (tx, signed) -> do
               affordabilityResult <- checkTransactionAffordability client workerAddress tx
               case affordabilityResult of
@@ -1721,7 +1851,7 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
                   recordSignerTransactionRetry cfg conn tx err
                   forM_ candidates $ \candidate ->
                     recordCandidateError cfg conn candidate "batch_transaction_affordability" err
-                  pure False
+                  pure BatchStopped
                 Right _ -> do
                   let rawTx = signedRawTransaction signed
                       txHash = signedTransactionHash signed
@@ -1746,7 +1876,7 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
                       forM_ pendingCandidates $ \candidate ->
                         recordCandidateError cfg conn candidate "batch_transaction_broadcast" $
                           "batch broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
-                      pure False
+                      pure BatchStopped
                     Right returnedHash
                       | normalizeAddress returnedHash /= normalizeAddress txHash -> do
                           forM_ pendingCandidates $ \candidate ->
@@ -1757,7 +1887,7 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
                               "batch_broadcast_hash_mismatch"
                               [field "returned_transaction_hash" returnedHash]
                               "RPC returned a transaction hash that did not match the signed batch transaction hash"
-                          pure False
+                          pure BatchStopped
                       | otherwise -> do
                           logInfo
                             "liquidation_batch_transaction_submitted"
@@ -1778,9 +1908,14 @@ processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateDa
                             Left err -> do
                               forM_ pendingCandidates $ \candidate ->
                                 recordCandidateError cfg conn candidate "batch_receipt_wait" err
-                              pure False
-                            Right receipt ->
-                              handleLiquidationBatchReceipt cfg conn client pendingCandidates receipt
+                              pure BatchStopped
+                            Right receipt -> do
+                              reconciled <- handleLiquidationBatchReceipt cfg conn client pendingCandidates receipt
+                              if not reconciled then pure BatchStopped else
+                                case validateLiquidationBatchReceipt (lwcOrderRouter cfg) accounts receipt of
+                                  Right progress | lbpNextIndex progress < fromIntegral (length candidates) ->
+                                    pure $ BatchRetryFrom $ fromIntegral $ lbpNextIndex progress
+                                  _ -> pure BatchComplete
 
 prepareLiquidationTransaction
   :: LiquidationWorkerConfig
@@ -1798,7 +1933,7 @@ prepareLiquidationTransaction cfg client workerAddress estimatedGas value callDa
     (Right nonce, Right gasPrice) -> do
       let priorityBase = either (const gasPrice) id priorityResult
           maxFeeBase = max gasPrice priorityBase
-          gasLimit = liquidationTransactionGasLimit (lwcGasBufferBps cfg) estimatedGas
+          gasLimit = estimatedGas -- exact envelope already simulated; do not buffer twice
           maxPriorityFee = applyBuffer priorityBase (lwcFeeBufferBps cfg)
           maxFee = max maxPriorityFee $ applyBuffer maxFeeBase (lwcFeeBufferBps cfg)
           tx =
@@ -2199,29 +2334,34 @@ handleLiquidationBatchReceipt
   -> TxReceipt
   -> IO Bool
 handleLiquidationBatchReceipt cfg conn client candidates receipt = do
-  latestResult <- ethBlockNumber client
-  case latestResult of
+  confirmed <- waitForLiquidationConfirmation 60
+    (receiptBlockNumber receipt + fromIntegral (lwcIndexerConfirmations cfg))
+    (ethBlockNumber client) (threadDelay 1_000_000)
+  case confirmed of
     Left err -> do
-      forM_ candidates $ \candidate ->
-        recordCandidateErrorWith cfg conn candidate "batch_confirmation_depth_read" (receiptLogFields receipt) $
-          "could not verify batch confirmation depth: " <> rpcErrorText err
+      forM_ candidates $ \candidate -> recordCandidateError cfg conn candidate "batch_confirmation_wait" err
       pure False
-    Right latestBlock
-      | latestBlock < receiptBlockNumber receipt + fromIntegral (lwcIndexerConfirmations cfg) -> do
-          logInfoEvery
-            60
-            "liquidation_batch_receipt_confirmations_pending"
-            "Liquidation batch receipt is waiting for confirmation depth"
-            ( workerLogFields cfg
-                <> [ field "candidate_count" $ length candidates
-                   , field "transaction_hash" $ receiptTxHash receipt
-                   , field "receipt_block_number" $ receiptBlockNumber receipt
-                   , field "chain_head_block" latestBlock
-                   , field "required_confirmations" $ lwcIndexerConfirmations cfg
-                   ]
-            )
+    Right latestBlock -> do
+      current <- ethGetTransactionReceipt client (receiptTxHash receipt)
+      case current of
+        Right (Just verified)
+          | receiptBlockHash verified == receiptBlockHash receipt ->
+              handleConfirmedLiquidationBatchReceipt cfg conn client candidates latestBlock verified
+        _ -> do
+          logWarn "liquidation_receipt_changed" "Receipt changed while awaiting confirmations; retaining pending nonce"
+            (workerLogFields cfg <> receiptLogFields receipt)
           pure False
-      | otherwise -> handleConfirmedLiquidationBatchReceipt cfg conn client candidates latestBlock receipt
+
+-- Bounded wait: a slow chain retains the persisted transaction for recovery.
+waitForLiquidationConfirmation :: Int -> Integer -> IO (Either RpcError Integer) -> IO () -> IO (Either Text Integer)
+waitForLiquidationConfirmation attempts requiredHead readHead sleep = do
+  result <- readHead
+  case result of
+    Left err -> pure $ Left $ rpcErrorText err
+    Right headBlock
+      | headBlock >= requiredHead -> pure $ Right headBlock
+      | attempts <= 0 -> pure $ Left "Timed out waiting for liquidation confirmation depth"
+      | otherwise -> sleep >> waitForLiquidationConfirmation (attempts - 1) requiredHead readHead sleep
 
 handleConfirmedLiquidationBatchReceipt
   :: LiquidationWorkerConfig
@@ -2272,10 +2412,13 @@ handleConfirmedLiquidationBatchReceipt cfg conn client candidates latestBlock re
                   "batch reported a liquidation without the matching engine PositionLiquidated event"
               pure False
             ([], []) -> do
-              outcomes <-
-                withTransaction conn $
-                  forM positions $ \(candidate, positionResult) ->
-                    reconcileBatchItem cfg conn receipt progress candidate positionResult
+              outcomes <- withTransaction conn $ do
+                results <- forM positions $ \(candidate, positionResult) ->
+                  reconcileBatchItem cfg conn receipt progress candidate positionResult
+                let liquidated = any ((== Perps.LiquidationBatchLiquidated) . Perps.lbiResult) (lbpItems progress)
+                when (and results && liquidated) $
+                  Monitoring.recordConfirmedProgress conn (lwcChainId cfg) (lwcCfdEngine cfg) (receiptBlockNumber receipt)
+                pure results
               logInfo
                 "liquidation_batch_confirmed"
                 "Liquidation batch transaction was reconciled account by account"
@@ -2328,7 +2471,10 @@ reconcileBatchItem cfg conn receipt progress candidate positionResult =
               pure True
         Perps.LiquidationBatchSkippedSolvent
           | positionSize == 0 -> deleteCandidate cfg conn candidate >> pure True
-          | otherwise -> clearAndCheck >> pure True
+          | otherwise -> do
+              Monitoring.observeRisk conn (lwcChainId cfg) (lwcCfdEngine cfg) [(plcrAccount candidate, Just False)]
+              clearAndCheck
+              pure True
         Perps.LiquidationBatchFailed -> do
           clearPendingCandidate cfg conn candidate
           retryCandidate cfg conn candidate $
@@ -2470,6 +2616,7 @@ workerLogFields cfg =
   , field "scan_batch_size" $ lwcScanBatchSize cfg
   , field "multicall_size" $ lwcMulticallSize cfg
   , field "execution_batch_size" $ lwcExecutionBatchSize cfg
+  , field "max_transaction_gas" $ lwcMaxTransactionGas cfg
   ]
 
 candidateLogFields :: LiquidationWorkerConfig -> PerpsLiquidationCandidateRow -> [LogField]
@@ -2498,7 +2645,7 @@ waitForReceipt client txHash attempts = do
     Left err -> pure $ Left $ rpcErrorText err
     Right (Just receipt) -> pure $ Right receipt
     Right Nothing -> do
-      threadDelay 2_000_000
+      threadDelay 1_000_000
       waitForReceipt client txHash (attempts - 1)
 
 decodeCachedPythPayload :: PythUpdatePayloadRow -> Either Text ([Integer], [ByteString])
@@ -2751,10 +2898,10 @@ pendingBroadcastRetrySeconds :: Int
 pendingBroadcastRetrySeconds = 60
 
 pendingReconciliationPollSeconds :: Int
-pendingReconciliationPollSeconds = 60
+pendingReconciliationPollSeconds = 1
 
 -- Bound startup/outage catch-up without advancing only one 5,000-block page
--- per ten-minute health sweep. At the default page size this covers five
+-- per health sweep. At the default page size this covers five
 -- million blocks in one iteration while still terminating on bad state.
 liquidationDiscoveryCatchupPageLimit :: Int
 liquidationDiscoveryCatchupPageLimit = 1_000

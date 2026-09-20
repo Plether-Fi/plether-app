@@ -362,3 +362,27 @@ run "reject_faucet_lp_settlement_key" {
   }
   expect_failures = [aws_ssm_parameter.faucet_private_key]
 }
+
+run "liquidation_backlog_monitoring" {
+  command = plan
+  variables {
+    liquidation_worker_desired_count = 1
+    operations_alarm_sns_topic_arn   = "arn:aws:sns:ap-southeast-1:932542905614:synthetic-operations"
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.liquidation_backlog["oldest-risk"].threshold == 300 && aws_cloudwatch_metric_alarm.liquidation_backlog["without-progress"].threshold == 60 && aws_cloudwatch_metric_alarm.liquidation_backlog["oldest-unchecked"].threshold == 60
+    error_message = "Liquidation age, progress and scan coverage thresholds must match the keeper SLOs."
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.liquidation_watchdog_missing[0].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.liquidation_watchdog_missing[0].evaluation_periods == 2
+    error_message = "Missing health samples must alarm instead of falsely implying an empty queue."
+  }
+  assert {
+    condition     = aws_cloudwatch_log_metric_filter.liquidation_backlog["without-progress"].metric_transformation[0].value == "$.seconds_without_progress" && aws_cloudwatch_log_metric_filter.liquidation_backlog["oldest-risk"].metric_transformation[0].value == "$.oldest_risk_seconds"
+    error_message = "Age metrics must use durable elapsed time rather than count repeated log events."
+  }
+  assert {
+    condition     = contains(aws_cloudwatch_metric_alarm.liquidation_backlog["without-progress"].alarm_actions, var.operations_alarm_sns_topic_arn)
+    error_message = "Backlog alarms must reach the configured operations destination."
+  }
+}

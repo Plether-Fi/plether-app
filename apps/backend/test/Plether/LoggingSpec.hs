@@ -219,6 +219,7 @@ invalidSignerConfig =
     , lwcIndexerBatchSize = 1
     , lwcIndexerOverlapBlocks = 0
     , lwcPendingReplacementSeconds = 60
+    , lwcMaxTransactionGas = 25_000_000
     , lwcGasBufferBps = 0
     , lwcFeeBufferBps = 0
     , lwcFuturePublishMaxRetries = 2

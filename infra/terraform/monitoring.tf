@@ -1654,3 +1654,128 @@ resource "aws_cloudwatch_metric_alarm" "candle_coverage_unhealthy" {
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
   ok_actions          = local.operations_alarm_recovery_actions
 }
+
+locals {
+  liquidation_reliability_alerts = {
+    "slow-sweep" = {
+      pattern     = "{ $.event = \"liquidation_sweep_slow\" }"
+      description = "A liquidation sweep exceeded 60 seconds. Inspect backlog and RPC latency; this includes execution time."
+    }
+    "blocked-payload" = {
+      pattern     = "{ $.event = \"liquidation_execution_pyth_payload_unavailable\" || $.event = \"liquidation_pyth_payload_suppressed\" }"
+      description = "Liquidation execution is blocked by oracle payload admission. Check active frozen policy and cached feed publish times."
+    }
+    "receipt-invariant" = {
+      pattern     = "{ $.event = \"liquidation_batch_receipt_invariant_failed\" || $.event = \"liquidation_batch_item_invariant_failed\" || $.event = \"liquidation_receipt_changed\" }"
+      description = "Liquidation receipt reconciliation needs attention. Preserve pending transactions and do not start another signer."
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "liquidation_reliability" {
+  for_each = var.liquidation_worker_desired_count > 0 ? local.liquidation_reliability_alerts : {}
+
+  name           = "plether-${local.deployment_name}-liquidation-${each.key}"
+  pattern        = each.value.pattern
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "Liquidation-${each.key}-${local.deployment_name}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "liquidation_reliability" {
+  for_each = var.liquidation_worker_desired_count > 0 ? local.liquidation_reliability_alerts : {}
+
+  alarm_name          = "plether-${local.deployment_name}-liquidation-${each.key}"
+  alarm_description   = each.value.description
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.liquidation_reliability[each.key].metric_transformation[0].name
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
+locals {
+  liquidation_backlog_metrics = {
+    "risk-count"       = { field = "risk_backlog_count", unit = "Count" }
+    "oldest-risk"      = { field = "oldest_risk_seconds", unit = "Seconds" }
+    "without-progress" = { field = "seconds_without_progress", unit = "Seconds" }
+    "oldest-unchecked" = { field = "oldest_unchecked_seconds", unit = "Seconds" }
+    "pending-count"    = { field = "pending_account_count", unit = "Count" }
+    "heartbeat"        = { field = "heartbeat", unit = "Count" }
+  }
+  liquidation_backlog_alerts = {
+    "oldest-risk" = {
+      threshold   = 300
+      description = "A liquidation-risk candidate has remained unresolved for five minutes. Risk includes the keeper preflight buffer; inspect individual receipt outcomes."
+    }
+    "without-progress" = {
+      threshold   = 60
+      description = "Known liquidation-risk work remains but no new confirmed liquidation has been reconciled for 60 seconds. Submissions and skipped-solvent receipts do not count as progress."
+    }
+    "oldest-unchecked" = {
+      threshold   = 60
+      description = "An indexed liquidation candidate has not had a successful risk classification in 60 seconds. Failed reads and repeated retries do not reset this age."
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "liquidation_backlog" {
+  for_each = var.liquidation_worker_desired_count > 0 ? local.liquidation_backlog_metrics : {}
+
+  name           = "plether-${local.deployment_name}-liquidation-${each.key}"
+  pattern        = "{ $.event = \"liquidation_backlog_health\" && $.${each.value.field} = * }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "LiquidationBacklog-${each.key}-${local.deployment_name}"
+    namespace = "Plether/Operations"
+    value     = "$.${each.value.field}"
+    unit      = each.value.unit
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "liquidation_backlog" {
+  for_each = var.liquidation_worker_desired_count > 0 ? local.liquidation_backlog_alerts : {}
+
+  alarm_name          = "plether-${local.deployment_name}-liquidation-${each.key}"
+  alarm_description   = each.value.description
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.liquidation_backlog[each.key].metric_transformation[0].name
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = each.value.threshold
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}
+
+resource "aws_cloudwatch_metric_alarm" "liquidation_watchdog_missing" {
+  count = var.liquidation_worker_desired_count > 0 ? 1 : 0
+
+  alarm_name          = "plether-${local.deployment_name}-liquidation-watchdog-missing"
+  alarm_description   = "No liquidation health heartbeat for two minutes. Worker death, watchdog failure, or database unavailability must not appear as an empty healthy backlog."
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  metric_name         = aws_cloudwatch_log_metric_filter.liquidation_backlog["heartbeat"].metric_transformation[0].name
+  namespace           = "Plether/Operations"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+  ok_actions          = local.operations_alarm_recovery_actions
+}

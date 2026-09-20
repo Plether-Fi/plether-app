@@ -79,6 +79,13 @@ import Plether.LiquidationWorker
   , selectLiquidationSimulationCandidates
   , pythStoredPriceCalls
   , processLiquidationBatches
+  , runLiquidationSweep
+  , BatchOutcome (..)
+  , LiquidationExecutionPolicy (..)
+  , decodeLiquidationExecutionPolicy
+  , liquidationPayloadMaximumAge
+  , sizeLiquidationBatchGas
+  , waitForLiquidationConfirmation
   , retryLiquidationRiskInputs
   , transactionMaximumCost
   , validateLiquidationExecutionPayload
@@ -98,10 +105,10 @@ spec = do
         lwcCfdEngine workerCfg `shouldBe` configuredCfdEngine
         lwcCfdEngine workerCfg `shouldNotBe` retiredCfdEngine
 
-    it "polls every ten minutes by default" $ do
+    it "waits five seconds between complete sweeps by default" $ do
       withUnsetEnv "LIQUIDATION_WORKER_POLL_SECONDS" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
-        lwcPollSeconds workerCfg `shouldBe` 600
+        lwcPollSeconds workerCfg `shouldBe` 5
 
     it "uses bounded future-publish retries by default" $
       withUnsetEnv "LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES" $
@@ -126,7 +133,7 @@ spec = do
               workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
               lwcAccountLens workerCfg `shouldBe` configuredAccountLens
               lwcScanBatchSize workerCfg `shouldBe` 1_000
-              lwcMulticallSize workerCfg `shouldBe` 10
+              lwcMulticallSize workerCfg `shouldBe` 100
               lwcExecutionBatchSize workerCfg `shouldBe` 20
 
     it "clamps execution batches to the router's 256-account limit" $ do
@@ -583,7 +590,7 @@ spec = do
           executeBatch batch (executionUpdateData, updateFee) = do
             modifyIORef' executedBatches (<> [(batch, executionUpdateData, updateFee)])
             when (batch == [1]) $ advanceClock 12
-            pure True
+            pure BatchComplete
 
       processLiquidationBatches
         [[1], [2]]
@@ -598,6 +605,101 @@ spec = do
           [ ([1], [BS.pack [0xaa]], 1)
           , ([2], [BS.pack [0xbb]], 2)
           ]
+
+  describe "weekend execution policy" $ do
+    let frozenPolicy = LiquidationExecutionPolicy True 259200 40000 100000000
+        livePolicy = frozenPolicy {lepFrozen = False, lepMaxAge = 15}
+    it "admits the retained Friday payload only while frozen" $ do
+      let friday = executionPayloadAt 100 "0xaa"
+      validateLiquidationExecutionPayload 40000 (liquidationPayloadMaximumAge 10 frozenPolicy) friday
+        `shouldBe` Right [BS.pack [0xaa]]
+      validateLiquidationExecutionPayload 40000 (liquidationPayloadMaximumAge 10 livePolicy) friday
+        `shouldSatisfy` isLeft
+    it "keeps the stricter live limit and rejects expired weekend prices" $ do
+      liquidationPayloadMaximumAge 10 livePolicy `shouldBe` 10
+      liquidationPayloadMaximumAge 10 livePolicy {lepMaxAge = 5} `shouldBe` 5
+      validateLiquidationExecutionPayload 259301 259200 (executionPayloadAt 100 "0xaa") `shouldSatisfy` isLeft
+      validateLiquidationExecutionPayload 99 259200 (executionPayloadAt 100 "0xaa") `shouldSatisfy` isLeft
+    it "fails closed when policy reads are missing or malformed" $ do
+      decodeLiquidationExecutionPolicy [] `shouldSatisfy` isLeft
+      decodeLiquidationExecutionPolicy [Multicall.CallResult True (encodeUint256 n) | n <- [1,15,259200,40000,100000000]]
+        `shouldBe` Right frozenPolicy
+      decodeLiquidationExecutionPolicy [Multicall.CallResult True (encodeUint256 n) | n <- [2,15,259200,40000,100000000]]
+        `shouldSatisfy` isLeft
+
+  describe "complete batch gas simulation" $ do
+    it "raises the historical 17/20 envelope until all 20 are attempted" $ do
+      calls <- newIORef ([] :: [Integer])
+      result <- sizeLiquidationBatchGas 25000000 8066462 20 $ \gas -> do
+        modifyIORef' calls (<> [gas])
+        pure $ Right $ encodeUint256 $ if gas < 15000000 then 17 else 20
+      result `shouldBe` Right (Just 16132924)
+      readIORef calls `shouldReturn` [8066462,16132924]
+    it "requests splitting at the cap and never exceeds it" $ do
+      calls <- newIORef ([] :: [Integer])
+      result <- sizeLiquidationBatchGas 9000000 5000000 20 $ \gas -> do
+        modifyIORef' calls (<> [gas])
+        pure $ Right $ encodeUint256 0
+      result `shouldBe` Right Nothing
+      readIORef calls `shouldReturn` [5000000,9000000]
+    it "rejects RPC errors and malformed or impossible nextIndex values" $ do
+      sizeLiquidationBatchGas 25000000 5000000 20 (const $ pure $ Left $ RpcHttpError "429") `shouldReturn` Left (RpcHttpError "429")
+      result <- sizeLiquidationBatchGas 25000000 5000000 20 (const $ pure $ Right BS.empty)
+      result `shouldSatisfy` isLeft
+      invalid <- sizeLiquidationBatchGas 25000000 5000000 20 (const $ pure $ Right $ encodeUint256 21)
+      invalid `shouldSatisfy` isLeft
+
+  describe "backlog continuation" $ do
+    it "prepares every split and suffix retry afresh before continuing" $ do
+      calls <- newIORef ([] :: [[Int]])
+      let prepare batch = modifyIORef' calls (<> [batch]) >> pure (Just ())
+          execute batch _ = pure $ case batch of
+            [1,2,3,4] -> BatchSplit
+            [1,2] -> BatchRetryFrom 1
+            _ -> BatchComplete
+      processLiquidationBatches [[1,2,3,4],[5]] prepare execute
+      readIORef calls `shouldReturn` [[1,2,3,4],[1,2],[2],[3,4],[5]]
+    it "does not let an unprocessable account starve later batches" $ do
+      calls <- newIORef ([] :: [[Int]])
+      processLiquidationBatches [[1],[2]]
+        (\batch -> modifyIORef' calls (<> [batch]) >> pure (Just ()))
+        (\batch _ -> pure $ if batch == [1] then BatchRetryFrom 0 else BatchComplete)
+      readIORef calls `shouldReturn` [[1],[1],[1],[1],[2]]
+    it "stops submitting when a transaction is unresolved" $ do
+      calls <- newIORef ([] :: [[Int]])
+      processLiquidationBatches [[1],[2]]
+        (\batch -> modifyIORef' calls (<> [batch]) >> pure (Just ()))
+        (\_ _ -> pure BatchStopped)
+      readIORef calls `shouldReturn` [[1]]
+    it "visits all 8000 accounts and executes 250 risks distributed across pages" $ do
+      seen <- newIORef ([] :: [Int])
+      liquidated <- newIORef ([] :: [Int])
+      completed <- runLiquidationSweep 1000 [1..8000] $ \page -> do
+        modifyIORef' seen (<> page)
+        let risky = filter (\n -> n `mod` 32 == 0) page
+            batches [] = []
+            batches xs = take 20 xs : batches (drop 20 xs)
+        processLiquidationBatches (batches risky) (const $ pure $ Just ()) $ \batch _ -> do
+          modifyIORef' liquidated (<> batch)
+          pure BatchComplete
+        pure True
+      completed `shouldBe` True
+      readIORef seen `shouldReturn` [1..8000]
+      readIORef liquidated `shouldReturn` [32,64..8000]
+    it "waits for the extra confirmation then continues without an idle sweep" $ do
+      heads <- newIORef ([100,100,101] :: [Integer])
+      sleeps <- newIORef (0 :: Int)
+      let readHead = do
+            xs <- readIORef heads
+            case xs of
+              h:rest -> writeIORef heads rest >> pure (Right h)
+              [] -> pure $ Left $ RpcHttpError "unexpected poll"
+      result <- waitForLiquidationConfirmation 3 101 readHead (modifyIORef' sleeps (+1))
+      result `shouldBe` Right 101
+      readIORef sleeps `shouldReturn` 2
+    it "bounds confirmation waits and retains unresolved work for recovery" $ do
+      result <- waitForLiquidationConfirmation 2 101 (pure $ Right 100) (pure ())
+      result `shouldSatisfy` isLeft
 
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
