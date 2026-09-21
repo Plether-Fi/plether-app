@@ -5,23 +5,29 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-for (const [container,event,reason] of [
+for (const [container,event,reason,severity = 17,expectedSeverity = 17,level = 'ERROR'] of [
   ['plether-keeper','keeper_transaction_failed','KEEPER_INSUFFICIENT_FUNDS'],
   ['plether-keeper','keeper_order_deferral_summary','KEEPER_ENGINE_FAILURE'],
   ['plether-funding-monitor','worker_funding_observation','WORKER_INSUFFICIENT_FUNDS'],
   ['plether-api','aa_execution_diagnosed','USER_OPERATION_OUT_OF_GAS'],
   ['plether-api','aa_receipt_recovery','RECOVERY_EVIDENCE_UNAVAILABLE'],
   ['plether-api','aa_request_failed','ACCOUNT_DEPLOYMENT_PENDING'],
-]) test(`real Fluent Bit preserves CloudWatch and redacts PostHog for ${container}`, { skip: !process.env.AA_LOG_ROUTER_TEST_IMAGE }, () => {
+  ['plether-api','aa_request_failed','RATE_LIMITED','17'],
+  ['plether-api','aa_request_failed','RATE_LIMITED','absent'],
+  ['plether-api','aa_preparation_timing','READY',9,9,'INFO'],
+  ['plether-api','aa_request_failed','RATE_LIMITED',null,9,'INFO'],
+]) test(`real Fluent Bit preserves CloudWatch and redacts PostHog for ${container} (${reason}, severity ${severity})`, { skip: !process.env.AA_LOG_ROUTER_TEST_IMAGE }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'plether-log-routing-'))
   try {
     const input = { container_name: container, log: JSON.stringify({
-      event, message: 'private provider payload', level: 'ERROR',
+      event, message: 'private provider payload', level,
+      SeverityText: level, ...(severity === 'absent' ? {} : { SeverityNumber: severity }),
       error: 'private exception', order_ids: [8], signer_balance_wei: '1234',
       attempt_id: '12345678-1234-4123-8123-123456789abc', reason_code: reason,
     }) }
     const filters = readFileSync(new URL('otel-enrichment.conf', import.meta.url), 'utf8').split('[OUTPUT]')[0]
       .replace('/fluent-bit/etc/posthog-projection.lua', '/fixtures/posthog-projection.lua')
+      .replace('/fluent-bit/etc/severity.lua', '/fixtures/severity.lua')
     writeFileSync(join(directory, 'test.conf'), `[SERVICE]
     Flush 1
     Grace 1
@@ -45,7 +51,7 @@ ${filters}
     Match *
     Format json_lines
 `)
-    for (const name of ['posthog-projection.lua', 'plether-parsers.conf']) {
+    for (const name of ['posthog-projection.lua', 'plether-parsers.conf', 'severity.lua']) {
       writeFileSync(join(directory, name), readFileSync(new URL(name, import.meta.url)))
     }
     const result = spawnSync('docker', ['run', '--rm', '--network=none',
@@ -55,6 +61,7 @@ ${filters}
       '--entrypoint', '/usr/bin/timeout', process.env.AA_LOG_ROUTER_TEST_IMAGE,
       '5s', '/fluent-bit/bin/fluent-bit', '-c', '/fixtures/test.conf'], { encoding: 'utf8', timeout: 20_000 })
     assert.equal(result.status, 124, result.stderr)
+    assert.doesNotMatch(result.stderr, /failed to convert|src type is not str|lua.*error/i)
     const records = result.stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))
     const cloudwatch = records.find(record => record.test_sink === 'cloudwatch')
     const posthog = records.find(record => record.test_sink === 'posthog')
@@ -64,6 +71,8 @@ ${filters}
     assert.deepEqual(cloudwatch.order_ids, [8])
     assert.equal(cloudwatch.signer_balance_wei, '1234')
     assert.equal(cloudwatch.event, event)
+    assert.equal(cloudwatch.SeverityNumber, expectedSeverity)
+    assert.equal(posthog.SeverityNumber, expectedSeverity)
     assert.equal(posthog.message, event)
     assert.equal(posthog.attempt_id, input.log && JSON.parse(input.log).attempt_id)
     assert.equal(posthog.reason_code, reason)

@@ -15,6 +15,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y lua5.4
       - run: lua5.4 posthog-projection.test.lua
         working-directory: apps/backend/otel-log-router
+      - run: lua5.4 severity.test.lua
+        working-directory: apps/backend/otel-log-router
       - run: docker build -f apps/backend/otel-log-router/Dockerfile -t plether-aa-log-router-test .
       - run: node --test routing.test.mjs
         working-directory: apps/backend/otel-log-router
