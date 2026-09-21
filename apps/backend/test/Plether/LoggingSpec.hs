@@ -12,6 +12,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
 import Data.List (sort)
+import Data.IORef
 import qualified Data.Text as Text
 import GHC.IO.Handle (hDuplicate, hDuplicateTo)
 import Plether.LiquidationWorker
@@ -19,7 +20,7 @@ import Plether.LiquidationWorker
   , LiquidationWorkerMode (LiquidationWorkerOnce)
   , runLiquidationWorker
   )
-import Plether.Logging (field, logDebug, logError, logInfo, logWarn, logWarnEvery)
+import Plether.Logging (field, logDebug, logError, logInfo, logWarn, logWarnEvery, LogTiming (..), withLogTiming)
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO
   ( Handle
@@ -72,6 +73,34 @@ spec = do
       Char8.isInfixOf "private" unexpected `shouldBe` False
 
   describe "structured logging" $ do
+    it "measures request-local output and restores observers after nesting and exceptions" $ do
+      outer <- newIORef ([] :: [LogTiming])
+      inner <- newIORef ([] :: [LogTiming])
+      let observe ref sample = atomicModifyIORef' ref $ \xs -> (sample:xs, ())
+          emitOne = logInfo "timing_fixture" "fixed test message" []
+      _ <- captureHandle stdout $ do
+        withLogTiming (observe outer) $ do
+          emitOne
+          withLogTiming (observe inner) emitOne
+          withLogTiming (observe inner) (ioError $ userError "fixture") `shouldThrow` anyIOException
+          emitOne
+        emitOne
+      length <$> readIORef outer `shouldReturn` 2
+      length <$> readIORef inner `shouldReturn` 1
+      samples <- readIORef outer
+      forM_ samples $ \sample -> do
+        logLockWaitMs sample `shouldSatisfy` (>= 0)
+        logWriteMs sample `shouldSatisfy` (>= 0)
+
+    it "does not attribute concurrent threads' writes to another request" $ do
+      first <- newIORef (0 :: Int)
+      second <- newIORef (0 :: Int)
+      let observe ref _ = atomicModifyIORef' ref $ \n -> (n+1, ())
+          run ref n = withLogTiming (observe ref) $ replicateM_ n $ logInfo "timing_fixture" "fixed" []
+      _ <- captureHandle stdout $ mapConcurrently_ id [run first 7, run second 11]
+      readIORef first `shouldReturn` 7
+      readIORef second `shouldReturn` 11
+
     forM_ [("stdout", stdout, logInfo, logDebug), ("stderr", stderr, logWarn, logError)] $
       \(name, target, firstLevel, secondLevel) ->
         it ("keeps concurrent small and multi-chunk records intact on " <> name) $ do

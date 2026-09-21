@@ -79,6 +79,7 @@ RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
 }
 local numbers = {
   duration_ms=true, retry_count=true, occurrence_count=true, suppressed_count=true,
+  log_lock_wait_ms=true, log_write_ms=true,
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
   remaining_deadline_seconds=true,

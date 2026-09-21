@@ -82,7 +82,7 @@ import qualified Plether.AA.RecoveryCapability as RecoveryCapability
 import Plether.AA.Readiness (newReadiness)
 import qualified Plether.AA.Diagnostics as Diagnostics
 import qualified Plether.Database.AaPreparation as PreparationDb
-import Plether.AA.Timing (Timing, newTiming, timingIdentifier, timed, timingCount, timingHeaders)
+import Plether.AA.Timing (Timing, newTiming, timingIdentifier, timed, timingCount, timingHeaders, observeLogTiming)
 import qualified Plether.AA.EvidenceCache as Cache
 import Plether.AA.ClientKey
   ( pseudonymousAccountKey
@@ -129,7 +129,7 @@ import Plether.Ethereum.Client
   , rpcCall
   , withRpcObserver
   )
-import Plether.Logging (field, logError, logErrorEvery, logInfo, logWarn)
+import Plether.Logging (field, logError, logErrorEvery, logInfo, logWarn, withLogTiming)
 import Web.Scotty
   ( ActionM
   , header
@@ -303,7 +303,8 @@ handleNativeAaRpc gatewayState cfg mPool perpsClient manager = do
   let attempt = suppliedAttempt >>= \value -> if Diagnostics.validAttemptId value then Just (T.toLower value) else Nothing
   let observe = withRpcObserver $ timingCount timing "rpc_calls"
       scoped = gatewayState {ngsTiming = Just timing, ngsSecurityClient = observe <$> ngsSecurityClient gatewayState, ngsAttemptId = attempt}
-  timed timing "http_total" $ handleNativeAaRpcTimed scoped cfg mPool (observe perpsClient) manager
+  withLogTiming (observeLogTiming timing) $
+    timed timing "http_total" $ handleNativeAaRpcTimed scoped cfg mPool (observe perpsClient) manager
   emitTiming timing
 
 handleNativeAaRpcTimed :: NativeGatewayState -> Config -> Maybe DbPool -> EthClient -> Manager -> ActionM ()
@@ -354,7 +355,7 @@ handleNativeAaRpcTimed gatewayState cfg mPool perpsClient manager =
   readAndHandle nativeCfg pool trustedIp clientKey = do
     waiRequest <- Scotty.request
     requestBody <-
-      liftIO $
+      timeGateway gatewayState "body_read" $ liftIO $
         Legacy.readBoundedRequestBody
           (naaMaxRequestBytes nativeCfg)
           waiRequest
@@ -371,6 +372,8 @@ handleNativeAaRpcTimed gatewayState cfg mPool perpsClient manager =
             case Legacy.parseRpcRequest value of
               Left failure -> Legacy.respondFailure Null failure
               Right request -> do
+                -- rrMethod is a validated closed enum, never the raw method.
+                liftIO $ mapM_ (\timing -> timingCount timing $ "method_" <> T.pack (show $ Legacy.rrMethod request)) $ ngsTiming gatewayState
                 let (rateScope, ipLimit) =
                       case Legacy.rrMethod request of
                         -- Final issuance is deliberately isolated from the
@@ -416,12 +419,12 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager currentCli
     Left failure -> Legacy.respondFailure requestId failure
     Right intent -> do
       let scope = RecoveryDb.Scope (cfgPerpsChainId cfg) (T.toLower $ naaPaymasterAddress nativeCfg) (Preparation.piSender intent) (Preparation.piIdentifier intent)
-      authorized <- preparationRecoveryClient cfg pool scope currentClient
+      authorized <- timeGateway gatewayState "recovery_authorization" $ preparationRecoveryClient cfg pool scope currentClient
       case authorized of
         Left failure -> Legacy.respondFailure requestId failure
         Right clientKey -> do
-          token <- liftIO Recovery.randomToken
-          claimed <- liftDb $ withDb pool $ \conn -> RecoveryDb.beginPreparation conn scope token
+          token <- timeGateway gatewayState "lease_token" $ liftIO Recovery.randomToken
+          claimed <- timeGateway gatewayState "lease_acquire" $ liftDb $ withDb pool $ \conn -> RecoveryDb.beginPreparation conn scope token
           case claimed of
             Left _ -> Legacy.respondFailure requestId databaseUnavailable
             Right (Left "PREPARATION_RETIRED") -> Legacy.respondFailure requestId $
@@ -429,7 +432,7 @@ prepareNativeOperation gatewayState cfg nativeCfg pool client manager currentCli
             Right (Left reason) -> Legacy.respondFailure requestId $ Legacy.unavailable reason "Preparation cannot currently be resumed"
             Right (Right fence) -> do
               prepareNativeOperationFenced (gatewayState { ngsPreparationFence = Just fence }) cfg nativeCfg pool client manager clientKey request
-              _ <- liftDb $ withDb pool $ \conn -> RecoveryDb.releasePreparation conn fence
+              _ <- timeGateway gatewayState "lease_release" $ liftDb $ withDb pool $ \conn -> RecoveryDb.releasePreparation conn fence
               pure ()
  where requestId = Legacy.rrId request
 
@@ -466,7 +469,7 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
               profile = preparationProfileFingerprint nativeCfg
               previous = T.replace Preparation.gasPolicyVersion "execution-headroom-v2-sepolia-cap2100000-150pct-min100000" profile
           fence <- maybe (throwE databaseUnavailable) pure $ ngsPreparationFence gatewayState
-          claim <- db $ \conn -> PreparationDb.claimPreparationCompatibleFenced conn fence (naaPreparationEnabled nativeCfg && not (Preparation.piResumeOnly intent)) clientKey
+          claim <- timed timing "preparation_claim" $ db $ \conn -> PreparationDb.claimPreparationCompatibleFenced conn fence (naaPreparationEnabled nativeCfg && not (Preparation.piResumeOnly intent)) clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent)
             (boundIntent profile) [boundIntent previous] identifier
           stored <- case claim of
@@ -476,9 +479,9 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
             PreparationDb.PreparationDisabled -> throwE $ Legacy.unavailable "PREPARATION_DISABLED" "Native preparation is disabled"
             PreparationDb.PreparationBusy -> throwE $ Legacy.unavailable "PREPARATION_BUSY" "Retry the same preparation ID"
             PreparationDb.PreparationClaimed operation -> pure operation
-          bound <- db $ \conn -> PreparationDb.bindPreparationDeployment conn clientKey
+          bound <- timed timing "preparation_bind" $ db $ \conn -> PreparationDb.bindPreparationDeployment conn clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
-          recoveryBound <- case ngsPreparationFence gatewayState of
+          recoveryBound <- timed timing "recovery_bind" $ case ngsPreparationFence gatewayState of
             Nothing -> pure False
             Just fence -> db $ \conn -> RecoveryDb.bindDeployment conn fence clientKey
           unless (bound && recoveryBound) $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
@@ -500,7 +503,7 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
             Nothing -> do
               unless (naaPreparationEnabled nativeCfg) $ throwE $ Legacy.unavailable "PREPARATION_DISABLED" "New preparation is disabled"
               built <- ioStage timing "fees_nonce_estimation" $ buildPreparedOperation timing nativeCfg client manager intent
-              saved <- db $ \conn -> PreparationDb.savePreparedOperation conn clientKey
+              saved <- timed timing "preparation_save" $ db $ \conn -> PreparationDb.savePreparedOperation conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier (Object built)
               unless saved $ throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
               pure built
@@ -512,24 +515,24 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
             [Object $ KM.insert "signature" (String Legacy.dummySignature) operationObject, String nativeEntryPoint]
           _ <- checked $ Legacy.validateMethodParams finalPolicyRequest
           pure (context, owner, operation, assistance)
-        case result of
+        timed timing "preparation_result" $ case result of
           Left failure -> do
             liftIO $ logInfo "aa_preparation_failed" "Native AA preparation rejected" $
               [field "request_id" identifier, field "stage" ("preparation" :: Text),
                field "reason_code" $ Legacy.pfReason failure,
                field "retryable" $ Legacy.pfRetryable failure] ++
               maybe [] (\attempt -> [field "attempt_id" attempt]) (ngsAttemptId gatewayState)
-            _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+            _ <- timed timing "preparation_release" $ liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
               (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
             Legacy.respondFailure requestId failure
           Right (context, owner, operation, assistance) ->
             deliverPreparation assistance gatewayState (if Preparation.piResumeOnly intent then nativeCfg { naaPreparationEnabled = False } else nativeCfg) pool context clientKey owner request operation $ \envelope -> do
               let finalOperation = Paymaster.applyPaymasterEnvelope operation envelope
-              linked <- liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
+              linked <- timed timing "diagnostic_link" $ liftDb $ withDb pool $ \conn -> PreparationDb.linkPreparationDiagnostic conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
                 (encodeHex $ Paymaster.sponsorshipDigest operation envelope)
                 (ngsAttemptId gatewayState) (cfgPerpsChainId cfg) (T.toLower $ cfgPerpsOrderRouter cfg)
-              _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+              _ <- timed timing "preparation_release" $ liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
                 (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
               case linked of
                 Right True -> do
@@ -553,7 +556,7 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
                 _ -> Legacy.respondFailure requestId $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
         -- Errors after reservation also release the work lease, not the budget.
         -- Lost/aborted requests leave an expiring lease for another instance.
-        _ <- liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
+        _ <- timed timing "preparation_release" $ liftDb $ withDb pool $ \conn -> PreparationDb.releasePreparation conn clientKey
           (Preparation.piSender intent) (Preparation.piIdentifier intent) identifier
         pure ()
  where

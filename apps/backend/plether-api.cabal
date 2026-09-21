@@ -46,6 +46,7 @@ library
         Plether.Config
         Plether.Logging
         Plether.RequestLogging
+        Plether.Server
         Plether.Types
         Plether.Types.Api
         Plether.Types.Protocol
@@ -170,7 +171,8 @@ library
         postgresql-simple >= 0.7,
         resource-pool >= 0.4,
         template-haskell,
-        directory
+        directory,
+        unliftio-core >= 0.2
     pkgconfig-depends:
         libsecp256k1
     hs-source-dirs:   src
@@ -405,6 +407,8 @@ test-suite plether-api-test
         Plether.KeeperSpec
         Plether.LoggingSpec
         Plether.RequestLoggingSpec
+        Plether.ServerSpec
+        Plether.AA.TimingSpec
         Plether.LiquidationWorkerSpec
         Plether.Pyth.HermesSpec
         Plether.Pyth.HistorySpec
@@ -441,6 +445,8 @@ test-suite plether-api-test
         hspec-discover >= 2.11,
         async >= 2.2,
         QuickCheck >= 2.14,
+        transformers >= 0.6,
+        network >= 3.1,
         aeson >= 2.1,
         bytestring >= 0.11,
         containers >= 0.6,
@@ -452,7 +458,8 @@ test-suite plether-api-test
         base16-bytestring >= 1.0,
         time >= 1.12,
         wai >= 3.2,
-        warp >= 3.3
+        warp >= 3.3,
+        scotty >= 0.22
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test

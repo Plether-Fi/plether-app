@@ -27,12 +27,13 @@ import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Plether.Perps.Release (verifyPerpsV2ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
+import Plether.Server (apiServerOptions)
 import Plether.Vaults.PerformanceIndexer
   ( VaultPerformanceIndexerConfig (..)
   , startVaultPerformanceIndexer
   )
 import System.Exit (exitFailure)
-import Web.Scotty (middleware, scotty)
+import Web.Scotty (middleware, scottyOpts)
 
 main :: IO ()
 main = do
@@ -200,6 +201,6 @@ main = do
         , field "perps_chain_id" $ cfgPerpsChainId cfg
         , field "history_enabled" $ maybe False (const True) mPool
         ]
-      scotty (cfgPort cfg) $ do
+      scottyOpts (apiServerOptions $ cfgPort cfg) $ do
         middleware requestLogging
         app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState

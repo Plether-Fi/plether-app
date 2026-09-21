@@ -1,4 +1,8 @@
 dofile('posthog-projection.lua')
+local _,_,timing=project_posthog('test',0,{event='aa_preparation_timing',log_lock_wait_ms=12.5,log_write_ms=20,
+  stages='private input',request_id='private input',token='secret'})
+assert(timing.log_lock_wait_ms==12.5 and timing.log_write_ms==20)
+assert(timing.stages==nil and timing.request_id==nil and timing.token==nil)
 for _,reason in ipairs({'INSUFFICIENT_FREE_EQUITY','INVALID_ORDER_DEADLINE','MUST_CLOSE_OPPOSING'}) do
   local _,_,safe=project_posthog('test',0,{event='aa_request_failed',reason_code=reason,error='private calldata'})
   assert(safe.reason_code==reason and safe.error==nil)
