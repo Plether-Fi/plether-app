@@ -3,7 +3,8 @@ module Plether.Handlers.VaultPerformanceSpec (spec) where
 import Data.Aeson (encode, object, toJSON, (.=))
 import Plether.Database.VaultPerformance (VaultPerformanceSnapshotRow (..))
 import Plether.Handlers.VaultPerformance
-  ( buildVaultPerformanceHistoryAt
+  ( buildVaultAssetHistoryAt
+  , buildVaultPerformanceHistoryAt
   , carryForwardStaleSnapshots
   , computeVaultPerformance
   , hasCompleteVaultPerformanceCoverageAt
@@ -41,6 +42,37 @@ spec = do
         `shouldBe` False
       isCanonicalVaultPerformanceRequest ["range", "interval"] (Just "7d") (Just "03600")
         `shouldBe` False
+
+  describe "thirty-day asset history" $ do
+    it "accepts the canonical thirty-day request" $
+      isCanonicalVaultPerformanceRequest ["range", "interval"] (Just "30d") (Just "3600")
+        `shouldBe` True
+
+    it "returns 721 hourly observations while preserving seven-day APY" $ do
+      let rows = map snapshot [0 .. 720]
+          now = vpsEpochTimestamp (last rows) + 300
+          history = buildVaultAssetHistoryAt now deployment rows
+          performance = buildVaultPerformanceHistoryAt now deployment rows
+      vphRange history `shouldBe` "30d"
+      vpcComplete (vphCoverage history) `shouldBe` True
+      length (vptPoints $ vphSenior history) `shouldBe` 721
+      vptApy7d (vphSenior history) `shouldBe` vptApy7d (vphSenior performance)
+      vppLockedAssets (head $ vptPoints $ vphSenior history) `shouldBe` Just 150_000_000
+
+    it "leaves unknown and stale locked values unavailable" $ do
+      let rows = updateAt 167 (\row -> row {vpsSeniorLockedAssets = Nothing})
+            $ updateAt 168 (\row -> row {vpsMarkFresh = Just False}) completeRows
+          history = buildVaultAssetHistoryAt freshNow deployment rows
+      vpcComplete (vphCoverage history) `shouldBe` False
+      map vppLockedAssets (drop 167 $ vptPoints $ vphSenior history) `shouldBe` [Nothing, Nothing]
+
+    it "clips old observations and excludes other deployments" $ do
+      let rows = map snapshot [0 .. 730]
+          now = vpsEpochTimestamp (last rows) + 300
+          history = buildVaultAssetHistoryAt now deployment
+            (rows <> [ (snapshot 731) {vpsHousePoolAddress = "0xother"} ])
+      length (vptPoints $ vphSenior history) `shouldBe` 721
+      vppTimestamp (head $ vptPoints $ vphSenior history) `shouldBe` vpsBlockTimestamp (snapshot 10)
 
   describe "computeVaultPerformance" $ do
     it "annualizes a positive realized return using actual elapsed seconds" $ do
@@ -165,7 +197,9 @@ spec = do
             (snapshot 1)
               { vpsMarkFresh = Just False
               , vpsSeniorTotalAssets = 1
-              , vpsSeniorTotalSupply = 2
+              , vpsSeniorLockedAssets = Just 150_000_000
+    , vpsJuniorLockedAssets = Just 50_000_000
+    , vpsSeniorTotalSupply = 2
               , vpsSeniorSharePriceWad = 3
               , vpsJuniorTotalAssets = 4
               , vpsJuniorTotalSupply = 5
@@ -228,6 +262,7 @@ spec = do
                 , "markFresh" .= True
                 , "sharePrice" .= ("1007500000000000000" :: String)
                 , "totalAssets" .= ("402670000000000" :: String)
+                , "lockedAssets" .= ("150000000" :: String)
                 , "totalSupply" .= ("399673000000000000" :: String)
                 ]
             )
@@ -276,6 +311,8 @@ snapshot index =
     , vpsBlockTimestamp = baseEpoch + fromIntegral index * vaultPerformanceIntervalSeconds - 12
     , vpsMarkFresh = Just True
     , vpsSeniorTotalAssets = 400_000_000_000_000 + fromIntegral index * 1_000_000
+    , vpsSeniorLockedAssets = Just 150_000_000
+    , vpsJuniorLockedAssets = Just 50_000_000
     , vpsSeniorTotalSupply = 397_000_000_000_000
     , vpsSeniorSharePriceWad = 1_000_000_000_000_000_000 + fromIntegral index * 1_000_000_000_000
     , vpsJuniorTotalAssets = 100_000_000_000_000 + fromIntegral index * 2_000_000
@@ -297,6 +334,7 @@ samplePoint =
     , vppMarkFresh = True
     , vppSharePrice = 1_007_500_000_000_000_000
     , vppTotalAssets = 402_670_000_000_000
+    , vppLockedAssets = Just 150_000_000
     , vppTotalSupply = 399_673_000_000_000_000
     }
 

@@ -576,7 +576,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
     if not $ isCanonicalVaultPerformanceRequest queryKeys mRange mInterval
       then
         handleError $
-          E.invalidAmount "vault history is restricted to range=7d and interval=3600"
+          E.invalidAmount "vault history is restricted to range=7d or range=30d and interval=3600"
       else case mPool of
         Just pool -> do
           let deployment =
@@ -586,7 +586,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
                   , vpdSeniorVault = cfgVaultHistorySeniorVaultAddress cfg
                   , vpdJuniorVault = cfgVaultHistoryJuniorVaultAddress cfg
                   }
-          result <- liftIO $ getVaultPerformanceHistory pool deployment
+          result <- liftIO $ getVaultPerformanceHistory pool deployment (maybe "7d" id mRange)
           handleResult result
         Nothing ->
           handleServiceUnavailable $

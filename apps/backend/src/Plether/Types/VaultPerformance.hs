@@ -24,14 +24,14 @@ vaultPerformanceIntervalSeconds = 3_600
 vaultPerformancePointCount :: Int
 vaultPerformancePointCount = 169
 
--- | The endpoint has one cacheable public shape. Rejecting extra, duplicate,
+-- | The endpoint has two cacheable public ranges. Rejecting extra, duplicate,
 -- or alternative spellings prevents semantically identical cache-key variants.
 isCanonicalVaultPerformanceRequest :: [Text] -> Maybe Text -> Maybe Text -> Bool
 isCanonicalVaultPerformanceRequest queryKeys requestedRange requestedInterval =
   length queryKeys == 2
     && count "range" == 1
     && count "interval" == 1
-    && requestedRange == Just vaultPerformanceRange
+    && requestedRange `elem` [Just vaultPerformanceRange, Just "30d"]
     && requestedInterval == Just "3600"
  where
   count key = length $ filter (== key) queryKeys
@@ -79,6 +79,7 @@ data VaultPerformancePoint = VaultPerformancePoint
   , vppMarkFresh :: Bool
   , vppSharePrice :: Integer
   , vppTotalAssets :: Integer
+  , vppLockedAssets :: Maybe Integer
   , vppTotalSupply :: Integer
   }
   deriving stock (Eq, Show, Generic)
@@ -91,6 +92,7 @@ instance ToJSON VaultPerformancePoint where
       , "markFresh" .= vppMarkFresh
       , "sharePrice" .= show vppSharePrice
       , "totalAssets" .= show vppTotalAssets
+      , "lockedAssets" .= fmap show vppLockedAssets
       , "totalSupply" .= show vppTotalSupply
       ]
 

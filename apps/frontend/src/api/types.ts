@@ -279,7 +279,7 @@ export interface PerpsMarketStats {
 // Perps Vault Performance Types
 // =============================================================================
 
-export type VaultHistoryRange = '7d';
+export type VaultHistoryRange = '7d' | '30d';
 
 export interface VaultHistoryDeployment {
   chainId: number;
@@ -295,6 +295,8 @@ export interface VaultHistoryCoverage {
 }
 
 export interface VaultHistoryPoint {
+  /** Assets unavailable under the pool withdrawal cap; absent until backfilled or when the mark is stale. */
+  lockedAssets?: string | null;
   timestamp: number;
   blockNumber: string;
   /** Whether this hourly observation used a fresh protocol mark; false values carry the last fresh valuation. */

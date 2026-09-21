@@ -799,11 +799,11 @@ describe('Vaults page', () => {
 
     fireEvent.focus(chart)
     expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'left')
-    expect(parseFloat(screen.getByRole('status').style.left)).toBeCloseTo(90.27, 1)
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveAttribute('data-placement', 'left')
+    expect(parseFloat(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status').style.left)).toBeCloseTo(90.27, 1)
     fireEvent.keyDown(chart, { key: 'Home' })
     expect(screen.getByText('0.00% since start')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveAttribute('data-placement', 'right')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveAttribute('data-placement', 'right')
     fireEvent.keyDown(chart, { key: 'ArrowRight' })
     expect(screen.getByText('+0.05% since start')).toBeInTheDocument()
     fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 860 })
@@ -903,8 +903,8 @@ describe('Vaults page', () => {
       name: 'Senior Vault interactive seven-day share price chart',
     })
     fireEvent.focus(chart)
-    expect(screen.getByRole('status')).toHaveTextContent('1.001')
-    expect(screen.getByRole('status')).toHaveTextContent('+0.10% since start')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveTextContent('1.001')
+    expect(within(screen.getByRole('region', { name: 'Performance' })).getByRole('status')).toHaveTextContent('+0.10% since start')
     expect(screen.queryByText(/last fresh valuation/i)).not.toBeInTheDocument()
   })
 

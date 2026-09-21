@@ -41,6 +41,8 @@ data VaultPerformanceSnapshotRow = VaultPerformanceSnapshotRow
   , vpsBlockTimestamp :: Integer
   , vpsMarkFresh :: Maybe Bool
   , vpsSeniorTotalAssets :: Integer
+  , vpsSeniorLockedAssets :: Maybe Integer
+  , vpsJuniorLockedAssets :: Maybe Integer
   , vpsSeniorTotalSupply :: Integer
   , vpsSeniorSharePriceWad :: Integer
   , vpsJuniorTotalAssets :: Integer
@@ -62,6 +64,8 @@ instance FromRow VaultPerformanceSnapshotRow where
       <*> field
       <*> field
       <*> numericIntegerField
+      <*> nullableNumericIntegerField
+      <*> nullableNumericIntegerField
       <*> numericIntegerField
       <*> numericIntegerField
       <*> numericIntegerField
@@ -83,6 +87,14 @@ numericIntegerField =
           column
           "Vault performance NUMERIC value was not an integer"
 
+nullableNumericIntegerField :: RowParser (Maybe Integer)
+nullableNumericIntegerField = fieldWith $ \column raw ->
+  case raw of
+    Nothing -> pure Nothing
+    Just bytes -> case readMaybe (BS8.unpack bytes) of
+      Just integer -> pure $ Just integer
+      Nothing -> returnError ConversionFailed column "Vault locked assets was not an integer"
+
 instance ToRow VaultPerformanceSnapshotRow where
   toRow VaultPerformanceSnapshotRow {..} =
     toRow
@@ -96,6 +108,8 @@ instance ToRow VaultPerformanceSnapshotRow where
       , vpsBlockTimestamp
       , vpsMarkFresh
       , vpsSeniorTotalAssets
+      , vpsSeniorLockedAssets
+      , vpsJuniorLockedAssets
       , vpsSeniorTotalSupply
       , vpsSeniorSharePriceWad
       , vpsJuniorTotalAssets
@@ -116,6 +130,8 @@ ensureVaultPerformanceSchema conn = do
     \block_hash VARCHAR(66) NOT NULL,\
     \block_timestamp BIGINT NOT NULL,\
     \mark_fresh BOOLEAN NOT NULL,\
+    \senior_locked_assets NUMERIC(78,0),\
+    \junior_locked_assets NUMERIC(78,0),\
     \senior_total_assets NUMERIC(78,0) NOT NULL,\
     \senior_total_supply NUMERIC(78,0) NOT NULL,\
     \senior_share_price_wad NUMERIC(78,0) NOT NULL,\
@@ -149,6 +165,11 @@ ensureVaultPerformanceSchema conn = do
   _ <- execute_ conn
     "ALTER TABLE vault_performance_snapshots \
     \ADD COLUMN IF NOT EXISTS mark_fresh BOOLEAN"
+  -- NULL distinguishes legacy observations until exact-block backfill repairs them.
+  _ <- execute_ conn
+    "ALTER TABLE vault_performance_snapshots ADD COLUMN IF NOT EXISTS senior_locked_assets NUMERIC(78,0)"
+  _ <- execute_ conn
+    "ALTER TABLE vault_performance_snapshots ADD COLUMN IF NOT EXISTS junior_locked_assets NUMERIC(78,0)"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_vault_performance_deployment_epoch \
     \ON vault_performance_snapshots \
@@ -163,9 +184,9 @@ upsertVaultPerformanceSnapshot conn row = do
     "INSERT INTO vault_performance_snapshots (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad\
-    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (\
     \chain_id, house_pool_address, senior_vault_address, junior_vault_address, epoch_timestamp\
     \) DO UPDATE SET \
@@ -174,6 +195,8 @@ upsertVaultPerformanceSnapshot conn row = do
     \block_timestamp = EXCLUDED.block_timestamp,\
     \mark_fresh = EXCLUDED.mark_fresh,\
     \senior_total_assets = EXCLUDED.senior_total_assets,\
+    \senior_locked_assets = EXCLUDED.senior_locked_assets,\
+    \junior_locked_assets = EXCLUDED.junior_locked_assets,\
     \senior_total_supply = EXCLUDED.senior_total_supply,\
     \senior_share_price_wad = EXCLUDED.senior_share_price_wad,\
     \junior_total_assets = EXCLUDED.junior_total_assets,\
@@ -198,12 +221,12 @@ getVaultPerformanceSnapshots conn chainId housePool seniorVault juniorVault limi
   query conn
     "SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \junior_total_assets, junior_total_supply, junior_share_price_wad \
     \FROM (\
     \  SELECT chain_id, house_pool_address, senior_vault_address, junior_vault_address,\
     \  epoch_timestamp, block_number, block_hash, block_timestamp, mark_fresh,\
-    \  senior_total_assets, senior_total_supply, senior_share_price_wad,\
+    \  senior_total_assets, senior_locked_assets, junior_locked_assets, senior_total_supply, senior_share_price_wad,\
     \  junior_total_assets, junior_total_supply, junior_share_price_wad \
     \  FROM vault_performance_snapshots \
     \  WHERE chain_id = ? AND house_pool_address = ? \
