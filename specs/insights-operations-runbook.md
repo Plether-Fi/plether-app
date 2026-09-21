@@ -8,13 +8,25 @@ live in `insights-testnet-competition.md`.
 |---|---|
 | Registration opens | When the enabled API deployment first starts successfully |
 | Trading starts | `2026-09-13T21:00:00Z` |
-| Registration closes | `2026-09-20T21:00:00Z` |
+| Registration closes | `2026-09-22T00:00:00Z` |
 | New-risk and scoring cutoff | `2026-09-25T21:00:00Z` |
 | Results | `2026-09-28T12:00:00Z` |
 | Payout deadline | `2026-10-03T00:00:00Z` |
 
 Registration and trading intervals are half-open. A registration completion or
 trade at the exact closing timestamp is rejected.
+
+The September 21 registration extension moves the original
+`2026-09-20T21:00:00Z` cutoff to midnight UTC at the end of September 21.
+Deploy the updated backend to apply the extension: startup updates the existing
+September row atomically, provided that only this exact cutoff differs and the
+competition is not finalized. It preserves the opening time, existing
+registrations, release binding, and scoring history. Repeated startups are
+idempotent. The Insights UI reads the updated deadline and status from the API;
+no frontend deployment is needed. Verify that `/api/insights/v1/competitions/current`
+reports `registration.closesAt: "2026-09-22T00:00:00Z"` and `status: "open"`
+before that instant. Older backend binaries retain the original expected cutoff
+and will reject the extended row on restart; rollbacks must retain this extension.
 
 ## Launch invariant
 
@@ -440,9 +452,9 @@ After every late registration, monitor `GET /api/insights/v1/status` until:
 Pause investigation/finalization if the counts diverge, the worker or indexer
 stops advancing, or the baseline batch is not rebuilt across the entire roster.
 
-### September 20 roster lock
+### September 22 roster lock
 
-At `2026-09-20T21:00:00Z`, verify the public registration metadata changes to
+At `2026-09-22T00:00:00Z`, verify the public registration metadata changes to
 `closed`. A session creation or completion submitted at that exact timestamp or
 later must return the stable closed-registration error, even for a session that
 started earlier.
@@ -602,7 +614,8 @@ the half-open scoring cutoff.
    hashes in the restricted payout record.
 
 Competition identity, schedule, FX-session boundary, scoring version, and prize
-values are immutable after seeding. The release manifest has one explicit
+values are immutable after seeding, apart from the exact September 21
+registration extension documented above. The release manifest has one explicit
 pending-to-bound transition before the start/baseline, then is immutable. A
 mismatch stops startup; create a new versioned competition slug instead of
 rewriting historical results.

@@ -10,6 +10,7 @@ import Plether.Database.Insights
   , isLegacySeptemberPrizeAndXAccountAgeMismatch
   , isLegacySeptemberPrizeOnlyMismatch
   , isLegacySeptemberXAccountAgeOnlyMismatch
+  , isSeptemberRegistrationExtensionOnlyMismatch
   )
 import Plether.Insights.Competition
 import Test.Hspec
@@ -105,7 +106,7 @@ spec = do
         `shouldBe` UTCTime (fromGregorian 2026 9 25) (secondsToDiffTime $ 21 * 60 * 60)
       crScoreCutoffAt september2026Competition `shouldBe` crNewRiskCutoffAt september2026Competition
       crRegistrationClosesAt september2026Competition
-        `shouldBe` Just (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 21 * 60 * 60))
+        `shouldBe` Just (UTCTime (fromGregorian 2026 9 22) 0)
       crResultsAt september2026Competition
         `shouldBe` UTCTime (fromGregorian 2026 9 28) (secondsToDiffTime $ 12 * 60 * 60)
       crPaymentDeadlineAt september2026Competition
@@ -136,18 +137,24 @@ spec = do
       pendingCompetitionReleaseManifestText september2026Competition 421_614
         `shouldBe` "release-pending-v1|testnet-trading-2026-09|421614"
 
+    it "keeps registration available after the original September 20 cutoff" $ do
+      canInitiallySeedCompetitionAt
+        september2026Competition
+        (UTCTime (fromGregorian 2026 9 21) 0)
+        `shouldBe` True
+
     it "requires the registration opener to run strictly before close" $ do
       canInitiallySeedCompetitionAt
         september2026Competition
-        (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 20 * 60 * 60 + 59 * 60 + 59))
+        (UTCTime (fromGregorian 2026 9 21) (secondsToDiffTime $ 23 * 60 * 60 + 59 * 60 + 59))
         `shouldBe` True
       canInitiallySeedCompetitionAt
         september2026Competition
-        (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 21 * 60 * 60))
+        (UTCTime (fromGregorian 2026 9 22) 0)
         `shouldBe` False
 
     it "still permits an existing immutable competition row to restart after close" $ do
-      let afterClose = UTCTime (fromGregorian 2026 9 21) 0
+      let afterClose = UTCTime (fromGregorian 2026 9 22) 0
       canSeedCompetitionRowAt False september2026Competition afterClose `shouldBe` False
       canSeedCompetitionRowAt True september2026Competition afterClose `shouldBe` True
 
@@ -305,6 +312,25 @@ spec = do
         septemberExpected
         legacy {csmMinimumProfitBps = 200}
         `shouldBe` False
+
+    it "allows only the exact September registration extension with no other metadata changes" $ do
+      let current = expected
+            { csmSlug = september2026CompetitionSlug
+            , csmRegistrationCloseTimestamp = Just 1_790_035_200
+            }
+          previous = current {csmRegistrationCloseTimestamp = Just 1_789_938_000}
+      isSeptemberRegistrationExtensionOnlyMismatch current previous `shouldBe` True
+      isSeptemberRegistrationExtensionOnlyMismatch current current `shouldBe` False
+      isSeptemberRegistrationExtensionOnlyMismatch previous current `shouldBe` False
+      isSeptemberRegistrationExtensionOnlyMismatch current
+        (previous {csmRegistrationCloseTimestamp = Just 1_789_938_001}) `shouldBe` False
+      isSeptemberRegistrationExtensionOnlyMismatch
+        (current {csmRegistrationCloseTimestamp = Just 1_790_035_201}) previous `shouldBe` False
+      isSeptemberRegistrationExtensionOnlyMismatch current
+        (previous {csmMinimumActiveDays = 4}) `shouldBe` False
+      isSeptemberRegistrationExtensionOnlyMismatch
+        (current {csmSlug = july2026CompetitionSlug})
+        (previous {csmSlug = july2026CompetitionSlug}) `shouldBe` False
 
     it "reports no mismatches for an idempotent restart" $ do
       competitionSeedMismatches expected expected `shouldBe` []

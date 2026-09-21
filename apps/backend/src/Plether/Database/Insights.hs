@@ -19,6 +19,7 @@ module Plether.Database.Insights
   , isLegacySeptemberPrizeAndXAccountAgeMismatch
   , isLegacySeptemberPrizeOnlyMismatch
   , isLegacySeptemberXAccountAgeOnlyMismatch
+  , isSeptemberRegistrationExtensionOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
   , stageCompetitionParticipantWalletRemap
@@ -1047,14 +1048,17 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
       "SELECT release_bound_at IS NOT NULL FROM insights_competitions WHERE slug = ?"
       (Only $ csmSlug insertedExpected) :: IO [Only Bool]
     case (storedRows, bindingRows) of
-      ([stored], [Only storedReleaseBound])
-        | releaseBound && not storedReleaseBound -> do
-            validateCompetitionRulesSeed expected stored
-            bindPendingCompetitionRelease conn expected
-            validateOrMigrateCompetitionSeed conn expected expected
-        | releaseBound -> validateOrMigrateCompetitionSeed conn expected stored
-        | storedReleaseBound -> validateCompetitionRulesSeed expected stored
-        | otherwise -> validateOrMigrateCompetitionSeed conn pendingExpected stored
+      ([stored], [Only storedReleaseBound]) -> do
+        storedAfterExtension <- extendSeptemberRegistration conn
+          (if storedReleaseBound then expected else pendingExpected) stored
+        case () of
+          _ | releaseBound && not storedReleaseBound -> do
+                validateCompetitionRulesSeed expected storedAfterExtension
+                bindPendingCompetitionRelease conn expected
+                validateOrMigrateCompetitionSeed conn expected expected
+            | releaseBound -> validateOrMigrateCompetitionSeed conn expected storedAfterExtension
+            | storedReleaseBound -> validateCompetitionRulesSeed expected storedAfterExtension
+            | otherwise -> validateOrMigrateCompetitionSeed conn pendingExpected storedAfterExtension
       _ -> ioError $ userError $
         "Plether Insights could not read the competition row immediately after seeding slug "
           <> T.unpack (csmSlug insertedExpected)
@@ -1237,6 +1241,40 @@ competitionSeedMismatches expected stored = concat
 -- migrated only when the database has no resolved boundaries or snapshots.
 legacyPaymentDeadlineTimestamp :: Integer
 legacyPaymentDeadlineTimestamp = 1_786_319_999 -- 2026-08-09T23:59:59Z
+
+-- The September 21 extension is the sole allowed live registration-schedule
+-- change. Keep both endpoints pinned so future changes still fail validation.
+isSeptemberRegistrationExtensionOnlyMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isSeptemberRegistrationExtensionOnlyMismatch expected stored =
+  csmSlug expected == september2026CompetitionSlug
+    && csmSlug stored == september2026CompetitionSlug
+    && csmRegistrationCloseTimestamp stored == Just 1_789_938_000 -- September 20, 21:00 UTC
+    && csmRegistrationCloseTimestamp expected == Just 1_790_035_200 -- September 22, 00:00 UTC
+    && map csmmField (competitionSeedMismatches expected stored)
+      == ["registration_close_timestamp"]
+
+-- Called under the seed transaction's row lock, before release binding and
+-- validation. Existing registrations, snapshots, and the opening time survive.
+extendSeptemberRegistration
+  :: Connection
+  -> CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> IO CompetitionSeedMetadata
+extendSeptemberRegistration conn expected stored
+  | isSeptemberRegistrationExtensionOnlyMismatch expected stored = do
+      affected <- execute conn
+        "UPDATE insights_competitions SET registration_close_timestamp = ?, updated_at = NOW()\
+        \ WHERE slug = ? AND registration_close_timestamp = ? AND NOT finalized"
+        (csmRegistrationCloseTimestamp expected, csmSlug expected, csmRegistrationCloseTimestamp stored)
+      unless (affected == 1) $
+        seedMismatchError expected (competitionSeedMismatches expected stored) $
+          Just "The September registration extension cannot modify a finalized competition."
+      putStrLn "Extended September Insights registration to 2026-09-22T00:00:00Z."
+      pure stored {csmRegistrationCloseTimestamp = csmRegistrationCloseTimestamp expected}
+  | otherwise = pure stored
 
 isLegacyPaymentDeadlineOnlyMismatch
   :: CompetitionSeedMetadata
