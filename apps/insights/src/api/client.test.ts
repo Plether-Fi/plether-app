@@ -91,7 +91,7 @@ describe('Insights API client', () => {
       registration: {
         status: 'open' as const,
         opensAt: '2026-08-28T10:00:00Z',
-        closesAt: '2026-09-20T21:00:00Z',
+        closesAt: '2026-09-22T00:00:00Z',
         minimumXAccountAgeDays: 30,
         targetXHandle: 'plether_fi',
         rulesVersion: '2026-09-01',

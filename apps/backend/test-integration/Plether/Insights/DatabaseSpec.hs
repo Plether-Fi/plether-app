@@ -442,6 +442,43 @@ insightsDatabaseSpec databaseUrl =
         fmap icrSlug current `shouldBe` Just (crSlug testSeptemberRules)
         fmap icrFinalized current `shouldBe` Just False
 
+    it "extends September registration on restart while preserving the live roster and snapshots" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        prepareSeptemberRegistrationExtension conn
+        insertParticipant conn walletA "extension-trader"
+        setCompetitionBoundaryBlocks conn competitionSlug
+          (Just (startBlock, startHash, baselineHash)) Nothing
+        publishAccountSnapshotBatch conn
+          [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
+        before <- requireCompetition conn competitionSlug
+        standingsBefore <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
+
+        seedRelease conn september2026Competition fixtureManifest
+        after <- requireCompetition conn competitionSlug
+        after `shouldBe` before
+          { icrRegistrationCloseTimestamp = Just 1_790_035_200
+          , icrUpdatedTimestamp = icrUpdatedTimestamp after
+          }
+        getCompetitionLeaderboard conn competitionSlug Nothing 20 0 `shouldReturn` standingsBefore
+        seedRelease conn september2026Competition fixtureManifest
+        requireCompetition conn competitionSlug `shouldReturn` after
+
+    it "rejects the September registration extension for finalized competitions" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        prepareSeptemberRegistrationExtension conn
+        void $ execute conn "UPDATE insights_competitions SET finalized = TRUE WHERE slug = ?" (Only competitionSlug)
+        seedRelease conn september2026Competition fixtureManifest `shouldThrow` anyIOException
+        icrRegistrationCloseTimestamp <$> requireCompetition conn competitionSlug
+          `shouldReturn` Just 1_789_938_000
+
+    it "rejects the September registration extension when other rules differ" $
+      withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
+        prepareSeptemberRegistrationExtension conn
+        void $ execute conn "UPDATE insights_competitions SET minimum_active_days = 4 WHERE slug = ?" (Only competitionSlug)
+        seedRelease conn september2026Competition fixtureManifest `shouldThrow` anyIOException
+        icrRegistrationCloseTimestamp <$> requireCompetition conn competitionSlug
+          `shouldReturn` Just 1_789_938_000
+
     it "preserves completed registrations while relaxing the September X-account age from 90 to 30 days" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         now <- getCurrentTime
@@ -791,6 +828,15 @@ insightsDatabaseSpec databaseUrl =
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
         void $ execute conn "DELETE FROM aa_close_assistance WHERE digest=?" (Only digest)
         void $ execute conn "DELETE FROM aa_sponsorship_authorizations WHERE digest=?" (Only digest)
+
+-- Install the old cutoff directly so this regression remains runnable even
+-- after the real event's registration window has closed.
+prepareSeptemberRegistrationExtension :: Connection -> IO ()
+prepareSeptemberRegistrationExtension conn = void $ execute conn
+  "UPDATE insights_competitions SET registration_open_timestamp = start_timestamp,\
+  \ registration_close_timestamp = 1789938000, minimum_x_account_age_days = 30,\
+  \ target_x_handle = 'plether_fi', privacy_notice_version = 'fixture-v1' WHERE slug = ?"
+  (Only competitionSlug)
 
 seedRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
 seedRelease conn rules manifest =
