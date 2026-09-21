@@ -1402,7 +1402,7 @@ jobs:
                 .name == "FAUCET_CLIENT_REQUESTS_PER_HOUR" and .value == "20"
               )] | length) == 1
               and ([$environment[] | select(
-                .name == "FAUCET_GLOBAL_REQUESTS_PER_HOUR" and .value == "200"
+                .name == "FAUCET_GLOBAL_REQUESTS_PER_HOUR" and .value == "2000"
               )] | length) == 1
             ' task-def.json > /dev/null
 
