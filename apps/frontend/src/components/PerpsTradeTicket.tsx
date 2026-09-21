@@ -82,6 +82,7 @@ import {
   getPerpsOpenRevertMessage,
 } from '../utils/perpsErrors'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
+import { getPerpsOrderFailureContext } from '../utils/perpsOrderFailure'
 import { derivePerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
 import { DOCS_LINKS } from '../config/docs'
 import { formatLiquidationPrice } from '../utils/perpsRisk'
@@ -249,6 +250,10 @@ interface PerpsTradeTicketProps {
   /** Static execution-bound position-margin snapshot for deterministic stories and tests. */
   initialCommittedPrePositionMarginUsdc?: bigint
   initialFlowError?: string
+  /** Static terminal failure evidence for non-live stories and design review. */
+  initialFailedOrder?: PerpsOrderHistoryRow
+  /** Static committed display-price limit for deterministic stories and tests. */
+  initialCommittedTargetPrice?: number | null
   closePositionRequestId?: number
   currentPositionSide?: Direction
   currentPositionAmount?: string
@@ -526,34 +531,8 @@ function isTerminalOrderFailureMessage(message: string): boolean {
   return message.toLowerCase().startsWith('order failed:')
 }
 
-function failureReasonMessage(reason: string | undefined): string | undefined {
-  if (!reason) return undefined
-  const messages: Record<string, string> = {
-    Expired: 'The order expired before execution. Review and create a fresh order.',
-    Slippage: 'Execution exceeded the reviewed target price.',
-    ConfigMismatch: 'Protocol configuration changed after review.',
-    'Config mismatch': 'Protocol configuration changed after review.',
-    ExecutionModeDisallowed: 'The market regime changed after review.',
-    'Mode disallowed': 'The market regime changed after review.',
-    RiskOff: 'The order was invalidated by protocol risk-off policy.',
-    'Risk off': 'The order was invalidated by protocol risk-off policy.',
-    PlannerRejected: 'The execution planner rejected the order.',
-    'Planner rejected': 'The execution planner rejected the order.',
-    ConstraintViolation: 'Execution violated an onchain financial bound.',
-    'Constraint violation': 'Execution violated an onchain financial bound.',
-    AccountLiquidated: 'The account was liquidated before this order executed.',
-    'Account liquidated': 'The account was liquidated before this order executed.',
-  }
-  return messages[reason]
-}
-
 function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
-  const detail = failureReasonMessage(order.terminalReason)
-    ?? `Terminal status: ${order.status}. Refresh order history for details.`
-  const failedConstraint = order.failedConstraint
-    ? ` Failed constraint: ${order.failedConstraint}.`
-    : ''
-  return `Order failed: ${detail}${failedConstraint}`
+  return `Order failed: ${getPerpsOrderFailureContext(order, {}).explanation}`
 }
 
 function lifecycleOutcomeHistoryRow(
@@ -1779,6 +1758,8 @@ export function PerpsTradeTicket({
   initialCommittedDirection,
   initialCommittedPrePositionMarginUsdc,
   initialFlowError,
+  initialFailedOrder,
+  initialCommittedTargetPrice,
   closePositionRequestId,
   currentPositionSide = 'long',
   currentPositionAmount,
@@ -1907,14 +1888,19 @@ export function PerpsTradeTicket({
   const [committedDirection, setCommittedDirection] = useState<PerpsDirection | undefined>(initialCommittedDirection)
   const [committedMarginDelta, setCommittedMarginDelta] = useState<bigint | undefined>()
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
-  const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
+  const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>(initialCommittedTargetPrice)
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
     initialReduceOnly ? true : undefined
   )
   const [committedIsFullClose, setCommittedIsFullClose] = useState<boolean | undefined>(
     initialCommittedIsFullClose
   )
-  const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
+  const [failedOrder, setFailedOrder] = useState<PerpsOrderHistoryRow | undefined>(
+    enableLiveTrading ? undefined : initialFailedOrder
+  )
+  const [flowError, setFlowError] = useState<string | undefined>(() => initialFlowError ?? (
+    !enableLiveTrading && initialFailedOrder ? terminalOrderFailureMessage(initialFailedOrder) : undefined
+  ))
   const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
   const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
@@ -2133,6 +2119,18 @@ export function PerpsTradeTicket({
       }
     }
 
+    setFailedOrder((current) => order.status === 'Executed' ? undefined : (
+      isSameTerminalOrder && current !== undefined
+        ? {
+            ...current,
+            ...order,
+            executionPriceRaw: order.executionPriceRaw ?? current.executionPriceRaw,
+            receiptEconomics: order.receiptEconomics ?? current.receiptEconomics,
+            revealTxHash: order.revealTxHash ?? current.revealTxHash,
+          }
+        : order
+    ))
+
     const terminalDirection = historyOrderDirection(order)
     if (terminalDirection !== undefined) setCommittedDirection(terminalDirection)
     const terminalCloseIntent = historyOrderIsClose(order)
@@ -2261,6 +2259,7 @@ export function PerpsTradeTicket({
     setFinalReceiptEconomics(undefined)
     setFinalPostPositionSize(undefined)
     setFinalVpiUsdc(undefined)
+    setFailedOrder(undefined)
     setFlowError(undefined)
     setKeeperRevealDeadlineMs(rewindStartedAt + KEEPER_REVEAL_GRACE_MS)
     setKeeperRevealNowMs(rewindStartedAt)
@@ -2296,6 +2295,7 @@ export function PerpsTradeTicket({
       setFinalReceiptEconomics(undefined)
       setFinalPostPositionSize(undefined)
       setFinalVpiUsdc(undefined)
+      setFailedOrder(undefined)
       setFlowError(deferredSafeConfirmationError.message)
       setLifecycleState('failed')
       return
@@ -3448,6 +3448,11 @@ export function PerpsTradeTicket({
         />
       )
     : '--'
+  const failureContext = failedOrder === undefined ? undefined : getPerpsOrderFailureContext(failedOrder, {
+    direction: committedDirection ?? historyOrderDirection(failedOrder) ?? effectiveOrderDirection,
+    isClose: committedIsClose ?? historyOrderIsClose(failedOrder) ?? isReducingCurrentPosition,
+    limit: committedTargetPrice,
+  })
   const isTerminalRevealError = flowError !== undefined &&
     (isOrderNoLongerPendingMessage(flowError) || isTerminalOrderFailureMessage(flowError))
   const shouldShowFinalizationProgress = enableLiveTrading || showFinalizationProgress
@@ -3772,6 +3777,7 @@ export function PerpsTradeTicket({
     deferredSafeConfirmationErrorRef.current = undefined
     rejectedTerminalRef.current = undefined
     executionEvidencePollRef.current = undefined
+    setFailedOrder(undefined)
     setFlowError(undefined)
     setWalletRequestWarning(undefined)
     setCommitExecutionStatus(undefined)
@@ -4045,6 +4051,7 @@ export function PerpsTradeTicket({
     }
 
     try {
+      setFailedOrder(undefined)
       setFlowError(undefined)
       trackPerpsOrderLifecycle('reveal_started', commonAnalyticsProperties)
       setLifecycleState('selfExecutePending')
@@ -4096,6 +4103,7 @@ export function PerpsTradeTicket({
     setCommittedPositionVpiAccrued(undefined)
     setCommittedShowsPositionVpiBalance(false)
     setReviewSnapshot(undefined)
+    setFailedOrder(undefined)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)
@@ -4133,6 +4141,7 @@ export function PerpsTradeTicket({
 
   function retryExecutionProtections() {
     preparation.retry()
+    setFailedOrder(undefined)
     setFlowError(undefined)
   }
 
@@ -5189,8 +5198,16 @@ export function PerpsTradeTicket({
                       ? 'Historical price data rejected'
                       : 'Finalization transaction failed'
                 }
-                description={flowError ?? 'The wallet rejected the transaction or the finalization transaction did not settle the order.'}
+                description={failureContext?.explanation ?? flowError ?? 'The wallet rejected the transaction or the finalization transaction did not settle the order.'}
               />
+
+              {failureContext ? (
+                <div className="space-y-3 border border-brand-border/20 bg-app-bg p-4 text-sm leading-6 text-content-secondary">
+                  <p>{failureContext.outcome}</p>
+                  <p>{failureContext.rewardExplanation}</p>
+                  <p>{failureContext.nextStep}</p>
+                </div>
+              ) : null}
 
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Settlement Details</div>
@@ -5198,7 +5215,17 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
-                    { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
+                    ...(failureContext ? [
+                      { label: failureContext.limitLabel, value: failureContext.limit },
+                      { label: failureContext.priceLabel, value: failureContext.attemptedPrice },
+                      ...(failedOrder?.failedConstraint ? [{ label: 'Failed check', value: failedOrder.failedConstraint }] : []),
+                      { label: 'Execution reward charged', value: failureContext.reward },
+                      { label: 'Trading execution fee charged', value: failureContext.executionFee },
+                      {
+                        label: 'Finalization tx',
+                        value: failedOrder?.revealTxHash ? <TxHashActions hash={failedOrder.revealTxHash} /> : 'Not yet available',
+                      },
+                    ] : [{ label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) }]),
                     {
                       label: 'Manual finalization',
                       value: isTerminalRevealError ? 'Unavailable' : 'Retry available',

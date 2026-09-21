@@ -651,6 +651,74 @@ export const SelfExecuteFailed: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+const slippageFailedOrder: NonNullable<TicketProps['initialFailedOrder']> = {
+  orderId: 10725n,
+  time: '21 Sep, 09:16',
+  market: 'plDXY Perp',
+  side: 'Long',
+  type: 'Open',
+  price: '1.0206',
+  size: '--',
+  status: 'Failed',
+  account: STORY_ADDRESS,
+  clientOrderId: `0x${'12'.repeat(32)}`,
+  terminalReason: 'Slippage',
+  executionPriceRaw: 97_936_552n,
+  commitTxHash: '0xa25928530a9f2ec9dfd419cf5392c511571ecc256d4a991f1661bdf6d4897aee',
+  revealTxHash: '0x9cff4682bc1c9c478977e799c3e360a4e173f1b3371b4bcbb9d598f4f0010a45',
+  receiptEconomics: { executionBountyUsdc: '200000', executionFeeUsdc: '0' },
+}
+
+export const SlippageFailed: Story = {
+  name: 'Order Failed · Price Limit',
+  args: {
+    initialLifecycleState: 'selfExecuteFailed',
+    initialReviewOpen: true,
+    initialDirection: 'long',
+    initialOrderId: slippageFailedOrder.orderId,
+    initialCommitTxHash: slippageFailedOrder.commitTxHash,
+    initialFailedOrder: slippageFailedOrder,
+    // Illustrative exact limit: both prices would round to 1.0206 in the old UI.
+    initialCommittedTargetPrice: 1.02063,
+  },
+  render: (args) => <TicketFrame {...args} />,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body)
+    await expect(page.getByText('Order failed')).toBeVisible()
+    await expect(page.getByText(/execution price of 1\.02063448 was above your maximum acceptable price of 1\.02063000 by 0\.00000448/)).toBeVisible()
+    await expect(page.getByText('1.02063000')).toBeVisible()
+    await expect(page.getByText('1.02063448')).toBeVisible()
+    await expect(page.getByText('0.2 USDC')).toBeVisible()
+    await expect(page.getByText(/cannot be retried or finalized manually/)).toBeVisible()
+  },
+}
+
+export const CloseSlippageFailed: Story = {
+  name: 'Order Failed · Close Price Limit',
+  args: {
+    ...SlippageFailed.args,
+    initialDirection: 'short',
+    initialCommittedDirection: 'long',
+    initialReduceOnly: true,
+    initialCommittedTargetPrice: 1.02064,
+    initialFailedOrder: { ...slippageFailedOrder, type: 'Close' },
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const ExpiredOrder: Story = {
+  name: 'Order Failed · Expired',
+  args: {
+    ...SlippageFailed.args,
+    initialFailedOrder: {
+      ...slippageFailedOrder,
+      terminalReason: 'Expired',
+      executionPriceRaw: undefined,
+    },
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const Executed: Story = {
   name: 'Close Long · Reconciled Frozen Close',
   args: {
