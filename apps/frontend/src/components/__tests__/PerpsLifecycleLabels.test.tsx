@@ -3138,6 +3138,55 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
   })
 
+  it('shows precise failed execution prices and receipt charges without using a fresh quote as the committed limit', async () => {
+    mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: {
+        orderId: 10725n,
+        time: '21 Sep, 09:16',
+        market: 'plDXY Perp',
+        side: 'Long',
+        type: 'Order',
+        price: '1.0206',
+        size: '--',
+        status: 'Failed',
+        account: V2_ACCOUNT,
+        clientOrderId: V2_CLIENT_ORDER_ID,
+        terminalReason: 'Slippage',
+        executionPriceRaw: 97_936_552n,
+        receiptEconomics: { executionBountyUsdc: '200000', executionFeeUsdc: '0' },
+        revealTxHash: `0x${'ab'.repeat(32)}`,
+      },
+    })
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialDirection="long"
+        initialOrderQuantity="1 000"
+        initialOrderId={10725n}
+        oraclePriceRaw={97_330_315n}
+        oraclePublishTime={Math.floor(Date.now() / 1000)}
+        availableToTradeRaw={2_000_000_000n}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByText('Order failed')).toBeInTheDocument())
+    expect(screen.getByText(/Your price protection prevented the trade/)).toBeInTheDocument()
+    expect(screen.getByText('1.02063448')).toBeInTheDocument()
+    expect(screen.getByText('Maximum acceptable price').closest('div')).toHaveTextContent('Not available')
+    expect(screen.getByText('Execution reward charged').closest('div')).toHaveTextContent('0.2 USDC')
+    expect(screen.getByText('Trading execution fee charged').closest('div')).toHaveTextContent('0 USDC')
+    expect(screen.getByText('Finalization tx').closest('div')?.querySelector('a')).toHaveAttribute(
+      'href', `https://arbitrum-sepolia.blockscout.com/tx/0x${'ab'.repeat(32)}`,
+    )
+    expect(screen.getByText(/cannot be retried or finalized manually/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
+  })
+
   it('shows a direct lifecycle constraint failure while indexed history is behind', async () => {
     mockIsConnected = true
     perpsTradingMocks.readOrderLifecycleOutcome.mockResolvedValue({
@@ -3174,9 +3223,9 @@ describe('perps lifecycle labels', () => {
     await waitFor(() => {
       expect(screen.getByText('Order failed')).toBeInTheDocument()
     })
-    expect(screen.getByText(/Execution violated an onchain financial bound/i))
+    expect(screen.getByText(/The execution result did not satisfy a financial limit/i))
       .toBeInTheDocument()
-    expect(screen.getByText(/Failed constraint: Execution notional/i))
+    expect(screen.getByText(/^Execution notional$/i))
       .toBeInTheDocument()
     expect(screen.queryByText('Keeper processing')).not.toBeInTheDocument()
   })
