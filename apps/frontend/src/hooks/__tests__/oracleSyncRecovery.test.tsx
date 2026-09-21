@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { encodeErrorResult, parseAbi } from 'viem'
 import { usePerpsOrderPreparation } from '../usePerpsOrderPreparation'
 import { prepared } from '../../test/fixtures/preparedOrder'
+import { createOracleSyncError } from '../../test/fixtures/oracleSyncError'
 // @ts-expect-error The standalone Node worker intentionally has no TypeScript declaration.
 import { createOracleWorker } from '../../../scripts/perps-oracle-worker.mjs'
 
@@ -10,7 +11,7 @@ vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: vi.fn() }))
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-15T12:00:00Z')) })
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-it('recovers a review after the worker repairs independently stored Pyth feeds', async () => {
+it.each([true, false])('recovers a review after the worker repairs independently stored Pyth feeds (legacy ABI=%s)', async legacyAbi => {
   const tick = BigInt(Math.floor(Date.now() / 1000))
   let storedTime = tick - 5n
   const markTime = tick // Historical execution advanced this without touching stored feeds.
@@ -33,10 +34,9 @@ it('recovers a review after the worker repairs independently stored Pyth feeds',
   }
   const prepare = vi.fn(async () => {
     const block = await publicClient.getBlock()
-    if (storedTime < markTime) throw new Error('Review wrapper', { cause: {
-      data: encodeErrorResult({ abi: parseAbi(['error PletherOracle__PriceOutOfOrder(uint64,uint64)']),
-        errorName: 'PletherOracle__PriceOutOfOrder', args: [storedTime, markTime] }),
-    } })
+    if (storedTime < markTime) throw new Error('Review wrapper', { cause: createOracleSyncError(legacyAbi,
+      encodeErrorResult({ abi: parseAbi(['error PletherOracle__PriceOutOfOrder(uint64,uint64)']),
+        errorName: 'PletherOracle__PriceOutOfOrder', args: [storedTime, markTime] })) })
     return { ...prepared(), reviewedBlockNumber: block.number }
   })
   const candidate = { key: 'unchanged-draft', input: { size: 100n, margin: 20_000_000n } }

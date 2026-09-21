@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import { ORACLE_RECOVERY_UNAVAILABLE, orderPreparationKey, usePerpsOrderPreparation } from '../usePerpsOrderPreparation'
 import { preparationFailure } from '../../utils/perpsPreparationDiagnostics'
+import { createOracleSyncError } from '../../test/fixtures/oracleSyncError'
+import { getPerpsErrorMessage } from '../../utils/perpsErrors'
 
 const analytics = vi.hoisted(() => vi.fn())
 vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: analytics }))
@@ -283,14 +285,17 @@ describe('order preparation lifecycle', () => {
   })
 })
 
-const syncError = () => new Error('User-facing wrapper', { cause: { errorName: 'PletherOracle__PriceOutOfOrder', args: [10n, 20n] } })
+const syncError = (legacyAbi = false) => {
+  const cause = createOracleSyncError(legacyAbi)
+  return new Error(getPerpsErrorMessage(cause, 'review'), { cause })
+}
 
 describe('oracle recovery during review', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); analytics.mockClear() })
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-  it('retries the full preparation and preserves the reviewed input', async () => {
-    const prepare = vi.fn().mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared())
+  it.each([true, false])('retries the full preparation and preserves the reviewed input (legacy ABI=%s)', async legacyAbi => {
+    const prepare = vi.fn().mockRejectedValueOnce(syncError(legacyAbi)).mockImplementation(async () => prepared())
     const view = setup('review', prepare)
     await advance(0)
     expect(view.result.current.recoveringOracle).toBe(true)
@@ -304,8 +309,8 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.recoveringOracle).toBe(false)
     expect(analytics).toHaveBeenCalledWith('perps oracle recovery', expect.objectContaining({ reason_code: 'succeeded', duration_ms: 2000 }))
   })
-  it('exhausts the original budget and manual retry starts another budget', async () => {
-    const view = setup('review', vi.fn().mockRejectedValue(syncError()))
+  it.each([true, false])('exhausts the original budget and manual retry starts another budget (legacy ABI=%s)', async legacyAbi => {
+    const view = setup('review', vi.fn().mockRejectedValue(syncError(legacyAbi)))
     await advance(30_000)
     expect(view.prepare).toHaveBeenCalledTimes(15)
     expect(view.result.current.error).toMatchObject({ message: ORACLE_RECOVERY_UNAVAILABLE })
