@@ -41,6 +41,7 @@ import type {
   PerpsRevealPayload,
   PerpsMarketStats,
   VaultHistory,
+  VaultHistoryRange,
   VaultActivity,
   VaultActivityTrancheName,
   VaultRequestIdsPage,
@@ -532,10 +533,11 @@ export class PlethApiClient {
   }
 
   async getPerpsVaultHistory(
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    range: VaultHistoryRange = '7d'
   ): Promise<Result<ApiResponse<VaultHistory>, PlethApiError>> {
     const params = new URLSearchParams({
-      range: '7d',
+      range,
       interval: '3600',
     });
     return fetchApi<VaultHistory>(

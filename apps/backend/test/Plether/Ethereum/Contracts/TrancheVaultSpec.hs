@@ -19,25 +19,25 @@ spec = do
   describe "trancheVaultSnapshotCalls" $ do
     it "reads pool freshness plus assets, supply, and the conversion probe for both tranches" $ do
       let calls = trancheVaultSnapshotCalls housePool senior junior
-      length calls `shouldBe` 7
-      map callTarget calls `shouldBe` [housePool] <> replicate 3 senior <> replicate 3 junior
-      map callAllowFailure calls `shouldBe` replicate 7 True
-      BS.length (callCalldata $ calls !! 3) `shouldBe` 36
-      BS.drop 4 (callCalldata $ calls !! 3) `shouldBe` encodeUint256 vaultSharePriceProbe
+      length calls `shouldBe` 8
+      map callTarget calls `shouldBe` [housePool, housePool] <> replicate 3 senior <> replicate 3 junior
+      map callAllowFailure calls `shouldBe` replicate 8 True
+      BS.length (callCalldata $ calls !! 4) `shouldBe` 36
+      BS.drop 4 (callCalldata $ calls !! 4) `shouldBe` encodeUint256 vaultSharePriceProbe
 
   describe "decodeTrancheVaultSnapshotResults" $ do
-    it "decodes an exact coherent seven-result response" $ do
+    it "decodes an exact coherent eight-result response" $ do
       let converted = 1_007_500_000_000_000_000_000_000
-          results = poolView True : map success [400, 300, converted, 100, 80, converted]
+          results = poolView True : pendingState : map success [400, 300, converted, 100, 80, converted]
       decodeTrancheVaultSnapshotResults results
         `shouldBe` Right
           ( True
-          , TrancheVaultSnapshot 400 300 1_007_500_000_000_000_000
-          , TrancheVaultSnapshot 100 80 1_007_500_000_000_000_000
+          , TrancheVaultSnapshot 400 150 300 1_007_500_000_000_000_000
+          , TrancheVaultSnapshot 100 0 80 1_007_500_000_000_000_000
           )
 
     it "rejects failed, truncated, empty, and extra subcalls" $ do
-      let valid = poolView False : map success [1 .. 6]
+      let valid = poolView False : pendingState : map success [1 .. 6]
       decodeTrancheVaultSnapshotResults (CallResult False BS.empty : tail valid)
         `shouldSatisfy` isLeft
       decodeTrancheVaultSnapshotResults (CallResult True BS.empty : tail valid)
@@ -47,11 +47,18 @@ spec = do
       decodeTrancheVaultSnapshotResults (valid <> [success 7])
         `shouldSatisfy` isLeft
 
+    it "rejects missing or malformed withdrawal capacity" $ do
+      let tailResults = map success [1 .. 6]
+      decodeTrancheVaultSnapshotResults (poolView True : CallResult False BS.empty : tailResults)
+        `shouldSatisfy` isLeft
+      decodeTrancheVaultSnapshotResults (poolView True : success 1 : tailResults)
+        `shouldSatisfy` isLeft
+
     it "rejects non-canonical pool freshness data" $ do
       let invalidPool = CallResult True $ mconcat $ replicate 9 (encodeUint256 0)
             <> [encodeUint256 2]
             <> replicate 2 (encodeUint256 0)
-      decodeTrancheVaultSnapshotResults (invalidPool : map success [1 .. 6])
+      decodeTrancheVaultSnapshotResults (invalidPool : pendingState : map success [1 .. 6])
         `shouldSatisfy` isLeft
 
   describe "sharePriceWadFromConvertedAssets" $ do
@@ -85,6 +92,9 @@ poolView fresh =
     replicate 9 (encodeUint256 0)
       <> [encodeUint256 $ if fresh then 1 else 0]
       <> replicate 2 (encodeUint256 0)
+
+pendingState :: CallResult
+pendingState = CallResult True $ mconcat $ map encodeUint256 [400, 100, 250, 200]
 
 success :: Integer -> CallResult
 success = CallResult True . encodeUint256

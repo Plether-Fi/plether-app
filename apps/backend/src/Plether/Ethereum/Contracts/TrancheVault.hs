@@ -16,6 +16,7 @@ import Plether.Ethereum.Multicall (Call (..), CallResult (..))
 
 data TrancheVaultSnapshot = TrancheVaultSnapshot
   { tvsTotalAssets :: Integer
+  , tvsLockedAssets :: Integer
   , tvsTotalSupply :: Integer
   , tvsSharePriceWad :: Integer
   }
@@ -30,6 +31,7 @@ vaultSharePriceProbe = 10 ^ (27 :: Integer)
 trancheVaultSnapshotCalls :: Text -> Text -> Text -> [Call]
 trancheVaultSnapshotCalls housePool seniorVault juniorVault =
   Call housePool True (encodeCall "getPoolLiquidityView()" [])
+    : Call housePool True (encodeCall "getPendingTrancheState()" [])
     : concatMap callsFor [seniorVault, juniorVault]
  where
   callsFor vault =
@@ -72,16 +74,30 @@ decodeTrancheVaultSnapshotResults
   -> Either Text (Bool, TrancheVaultSnapshot, TrancheVaultSnapshot)
 decodeTrancheVaultSnapshotResults results =
   case results of
-    [poolLiquidity, seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] ->
-      (,,)
-        <$> decodePoolMarkFresh poolLiquidity
-        <*> decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
-        <*> decodeTranche "Junior" juniorAssets juniorSupply juniorConverted
+    [poolLiquidity, pendingState, seniorAssets, seniorSupply, seniorConverted, juniorAssets, juniorSupply, juniorConverted] -> do
+      markFresh <- decodePoolMarkFresh poolLiquidity
+      (seniorCap, juniorCap) <- decodeWithdrawalCaps pendingState
+      senior <- decodeTranche "Senior" seniorAssets seniorSupply seniorConverted
+      junior <- decodeTranche "Junior" juniorAssets juniorSupply juniorConverted
+      pure
+        ( markFresh
+        , senior {tvsLockedAssets = max 0 $ tvsTotalAssets senior - seniorCap}
+        , junior {tvsLockedAssets = max 0 $ tvsTotalAssets junior - juniorCap}
+        )
     _ ->
       Left $
         "Vault snapshot Multicall returned "
           <> T.pack (show $ length results)
-          <> " results; expected 7"
+          <> " results; expected 8"
+
+-- Both caps are sampled in the same exact-block Multicall as vault assets.
+decodeWithdrawalCaps :: CallResult -> Either Text (Integer, Integer)
+decodeWithdrawalCaps CallResult {..}
+  | not resultSuccess = Left "HousePool getPendingTrancheState subcall failed"
+  | BS.length resultData /= 4 * abiWordLength = Left "HousePool getPendingTrancheState expected 128 bytes"
+  | otherwise = Right (wordAt 2, wordAt 3)
+ where
+  wordAt index = decodeUint256 $ BS.take abiWordLength $ BS.drop (index * abiWordLength) resultData
 
 -- getPoolLiquidityView() is twelve static ABI words. `markFresh` is word 9
 -- (zero-based), after the nine monetary fields. Validate the canonical bool
@@ -114,6 +130,7 @@ decodeTranche label assetsResult supplyResult convertedResult = do
   pure $
     TrancheVaultSnapshot
       { tvsTotalAssets = assets
+      , tvsLockedAssets = 0
       , tvsTotalSupply = supply
       , tvsSharePriceWad = sharePriceWadFromConvertedAssets converted
       }

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { MemoryRouter } from 'react-router-dom'
 import type { VaultHistory } from '../api'
+import { createVaultAssetHistory } from './fixtures/vaultAssetHistory'
 import {
   ActivityTab,
   OverviewTab,
@@ -211,6 +212,8 @@ const history = {
   },
 } satisfies VaultHistory
 
+const assetHistory = createVaultAssetHistory()
+
 const activity = {
   holders: [
     {
@@ -374,6 +377,7 @@ export const SeniorVaultDetail: Story = {
         tranche={VAULT_TRANCHES.senior}
         snapshot={snapshot}
         history={history}
+        assetHistory={assetHistory}
         isConnected
         isWrongNetwork={false}
         onConnect={noop}
@@ -394,6 +398,7 @@ export const JuniorVaultDetail: Story = {
         tranche={VAULT_TRANCHES.junior}
         snapshot={snapshot}
         history={history}
+        assetHistory={assetHistory}
         isConnected
         isWrongNetwork={false}
         onConnect={noop}

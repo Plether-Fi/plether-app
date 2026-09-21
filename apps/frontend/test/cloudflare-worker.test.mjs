@@ -228,7 +228,7 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
 });
 
 describe('Cloudflare API proxy vault history caching', () => {
-  it('caches the exact anonymous seven-day query under a canonical key', async () => {
+  for (const range of ['7d', '30d']) it(`caches the exact anonymous ${range} query under a canonical key`, async () => {
     mock.method(Date, 'now', () => 1_800_000_000_000);
     const cacheMatch = mock.fn(async () => undefined);
     const cachePut = mock.fn(async () => undefined);
@@ -251,7 +251,7 @@ describe('Cloudflare API proxy vault history caching', () => {
     let response;
     try {
       response = await worker.fetch(
-        new Request(VAULT_HISTORY_URL),
+        new Request(VAULT_HISTORY_URL.replace('7d', range)),
         workerEnv(),
         { waitUntil: (promise) => backgroundWork.push(promise) },
       );
@@ -262,11 +262,11 @@ describe('Cloudflare API proxy vault history caching', () => {
     }
 
     const canonicalUrl =
-      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=3600';
+      `https://app.plether.com/api/perps/v1/perps/vaults/history?range=${range}&interval=3600`;
     assert.equal(fetchMock.mock.callCount(), 1);
     assert.equal(
       fetchMock.mock.calls[0].arguments[0].href,
-      'https://sepolia-api.plether.test/api/perps/vaults/history?range=7d&interval=3600',
+      `https://sepolia-api.plether.test/api/perps/vaults/history?range=${range}&interval=3600`,
     );
     assert.equal(fetchMock.mock.calls[0].arguments[1].cf, undefined);
     assert.equal(cacheMatch.mock.callCount(), 1);
@@ -304,7 +304,7 @@ describe('Cloudflare API proxy vault history caching', () => {
     ));
     const urls = [
       'https://app.plether.com/api/perps/v1/perps/vaults/history?interval=3600',
-      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=30d&interval=3600',
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=90d&interval=3600',
       'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=300',
       'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=3600&cursor=1',
       'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&range=7d&interval=3600',

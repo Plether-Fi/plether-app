@@ -222,7 +222,7 @@ export function getPublicPerpsCachePolicy(request, url = new URL(request.url)) {
 
   if (url.pathname === VAULT_HISTORY_PATH) {
     if (!hasExactQuery(url, ['range', 'interval'])) return undefined;
-    return url.searchParams.get('range') === '7d' &&
+    return ['7d', '30d'].includes(url.searchParams.get('range')) &&
       url.searchParams.get('interval') === '3600'
       ? policy
       : undefined;

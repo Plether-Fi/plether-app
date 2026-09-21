@@ -16,6 +16,7 @@ import {
   type VaultHistoryPoint,
   type VaultHistoryTranche,
 } from '../api'
+import { VaultAssetChart } from '../components/VaultAssetChart'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
@@ -1243,7 +1244,7 @@ function getCompleteVaultPerformance(
   history: VaultHistory | undefined,
   trancheId: TrancheId
 ): CompleteVaultPerformance | undefined {
-  if (!history
+  if (history?.range !== '7d'
     || !history.coverage.complete
     || !historyMatchesConfiguredDeployment(history)
     || history.coverage.start === null
@@ -1962,6 +1963,9 @@ function ActivityTypeLabel({ activity }: { activity: VaultOverviewActivityItem }
 }
 
 function VaultActivitySection({
+  assetHistory,
+  assetHistoryLoading,
+  assetHistoryError,
   holders,
   activity,
   tranche,
@@ -1970,6 +1974,9 @@ function VaultActivitySection({
   isError,
   isStale,
 }: {
+  assetHistory?: VaultHistory
+  assetHistoryLoading?: boolean
+  assetHistoryError?: boolean
   holders: VaultHolderDistribution[]
   activity: VaultOverviewActivityItem[]
   tranche: VaultActivityTranche
@@ -2042,6 +2049,12 @@ function VaultActivitySection({
       </div>
 
       <div className="space-y-6">
+        <VaultAssetChart
+          tranche={tranche}
+          history={assetHistory && historyMatchesConfiguredDeployment(assetHistory) ? assetHistory : undefined}
+          isLoading={assetHistoryLoading}
+          isError={assetHistoryError}
+        />
         {isStale ? (
           <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-content-secondary">
             Vault activity is temporarily stale. The last confirmed holder and request data remains visible while the backend catches up.
@@ -5114,6 +5127,9 @@ interface VaultDetailProps {
   tranche: TrancheDefinition
   snapshot: VaultsSnapshot
   history?: VaultHistory
+  assetHistory?: VaultHistory
+  assetHistoryLoading?: boolean
+  assetHistoryError?: boolean
   ownerAddress?: Address
   isConnected: boolean
   isWrongNetwork: boolean
@@ -5159,6 +5175,9 @@ function VaultDetail({
 }
 
 export function VaultDetailView({
+  assetHistory,
+  assetHistoryLoading,
+  assetHistoryError,
   tranche,
   snapshot,
   history,
@@ -5506,6 +5525,9 @@ export function VaultDetailView({
       </div>
 
       <VaultActivitySection
+        assetHistory={assetHistory}
+        assetHistoryLoading={assetHistoryLoading}
+        assetHistoryError={assetHistoryError}
         holders={vaultActivity.holders}
         activity={vaultActivity.activity}
         tranche={tranche.id}
@@ -5572,6 +5594,9 @@ export function Vaults() {
       tranche={selectedTranche}
       snapshot={snapshot}
       history={vaultHistory}
+      assetHistory={vaultHistory}
+      assetHistoryLoading={vaultHistoryQuery.isLoading}
+      assetHistoryError={vaultHistoryQuery.isError}
       ownerAddress={address}
       isConnected={isConnected}
       isWrongNetwork={isWrongNetwork}

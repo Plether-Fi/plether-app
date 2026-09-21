@@ -22,6 +22,7 @@ import type {
   BasketHistoryRange,
   PerpsCandleIntervalSeconds,
   VaultHistory,
+  VaultHistoryRange,
 } from './types';
 
 // =============================================================================
@@ -49,7 +50,7 @@ export const apiQueryKeys = {
     basketCurrentCandle: (intervalSeconds: PerpsCandleIntervalSeconds) =>
       [...apiQueryKeys.perps.basketCandlesAll(), 'current', intervalSeconds] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
-    vaultHistory: () => [...apiQueryKeys.perps.all(), 'vaultHistory', '7d', 3600] as const,
+    vaultHistory: (range: VaultHistoryRange = '7d') => [...apiQueryKeys.perps.all(), 'vaultHistory', range, 3600] as const,
   },
   user: {
     all: (address: string) => ['user', SPOT_API_SCOPE, address] as const,
@@ -213,10 +214,11 @@ export const VAULT_HISTORY_QUERY_POLICY = {
  * refresh fails. Every successful response is accepted so the UI fails closed
  * when the backend reports incomplete or stale indexer coverage.
  */
-export function usePerpsVaultHistory(): UseQueryResult<ApiResponse<VaultHistory>, PlethApiError> {
+export function usePerpsVaultHistory(range: VaultHistoryRange = '7d', enabled = true): UseQueryResult<ApiResponse<VaultHistory>, PlethApiError> {
   return useQuery<ApiResponse<VaultHistory>, PlethApiError>({
-    queryKey: apiQueryKeys.perps.vaultHistory(),
-    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsVaultHistory(signal)),
+    queryKey: apiQueryKeys.perps.vaultHistory(range),
+    enabled,
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsVaultHistory(signal, range)),
     staleTime: VAULT_HISTORY_QUERY_POLICY.staleTime,
     refetchInterval: VAULT_HISTORY_QUERY_POLICY.refetchInterval,
     retry: retryTransientFailureOnce,

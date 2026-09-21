@@ -98,6 +98,17 @@ describe('usePerpsVaultHistory', () => {
     queryClient.clear();
   });
 
+  it('requests and caches thirty-day assets separately from seven-day performance', async () => {
+    const getHistory = vi.spyOn(perpsApi, 'getPerpsVaultHistory').mockResolvedValue(Result.ok(completeHistory));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => usePerpsVaultHistory('30d'), { wrapper: createWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getHistory).toHaveBeenCalledWith(expect.any(AbortSignal), '30d');
+    expect(queryClient.getQueryData(apiQueryKeys.perps.vaultHistory('30d'))).toEqual(completeHistory);
+    expect(queryClient.getQueryData(apiQueryKeys.perps.vaultHistory())).toBeUndefined();
+    queryClient.clear();
+  });
+
   it('keeps the last complete deployment response when a refresh fails', async () => {
     const getHistory = vi.spyOn(perpsApi, 'getPerpsVaultHistory')
       .mockResolvedValueOnce(Result.ok(completeHistory))
