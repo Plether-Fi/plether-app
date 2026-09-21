@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
+import { createOracleSyncError, ORACLE_SYNC_REVERT_DATA } from '../../test/fixtures/oracleSyncError'
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsErrorMessage,
+  getPerpsContractErrorCode,
   isPerpsOracleSyncError,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
@@ -326,6 +328,93 @@ it('decodes maximum quote search exhaustion without reporting zero capacity', ()
 })
 
 describe('oracle synchronization error classification', () => {
+  it.each([true, false])('decodes the historical viem error with legacy ABI=%s', legacyAbi => {
+    const error = createOracleSyncError(legacyAbi)
+    const reverted = error.cause as ContractFunctionRevertedError
+    if (legacyAbi) {
+      expect(reverted.cause).toMatchObject({ name: 'AbiErrorSignatureNotFoundError', signature: '0x8e3e110d' })
+      expect(reverted.raw).toBe(ORACLE_SYNC_REVERT_DATA)
+    } else {
+      expect(reverted.data).toMatchObject({ errorName: 'PletherOracle__PriceOutOfOrder', args: [1790007647n, 1790007649n] })
+    }
+    const wrapped = new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
+    expect(getPerpsErrorMessage(wrapped, 'review')).toContain('older than the stored mark')
+    expect(getPerpsContractErrorCode(wrapped)).toBe('PletherOracle__PriceOutOfOrder')
+    expect(isPerpsOracleSyncError(wrapped)).toBe(true)
+  })
+
+  it.each([
+    { cause: { data: '0x8e3e110d' }, raw: ORACLE_SYNC_REVERT_DATA },
+    { cause: { raw: '0xZZ' }, data: ORACLE_SYNC_REVERT_DATA },
+    { cause: { data: '0x12345678' }, raw: ORACLE_SYNC_REVERT_DATA },
+    { error: { data: { originalError: { data: ORACLE_SYNC_REVERT_DATA } } } },
+  ])('continues past incomplete candidates and follows RPC envelopes: %j', error => {
+    expect(getPerpsContractErrorCode(error)).toBe('PletherOracle__PriceOutOfOrder')
+    expect(isPerpsOracleSyncError(error)).toBe(true)
+  })
+
+  it('pairs decoded names with their own arguments', () => {
+    const error = { args: [8], cause: { data: { errorName: 'OrderRouter__PredictableOpenInvalid', args: [6] } } }
+    expect(getPerpsErrorMessage(error, 'review')).toContain('Initial margin is too low')
+    expect(getPerpsErrorMessage({ args: [8], cause: { errorName: 'OrderRouter__PredictableOpenInvalid' } }, 'review'))
+      .not.toContain('100 plDXY increments')
+  })
+
+  it('prefers underlying revert data over outer request calldata', () => {
+    const error = { data: ORACLE_SYNC_REVERT_DATA, cause: { data: encodeErrorResult({
+      abi: PERPS_TEST_ERROR_ABI, errorName: 'OrderRouter__TooManyPendingOrders',
+    }) } }
+    expect(getPerpsContractErrorCode(error)).toBe('OrderRouter__TooManyPendingOrders')
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+  })
+
+  it.each([
+    { signature: '0x8e3e110d' },
+    { signature: '0x8e3e110d', data: '0x8e3e110d' },
+    { request: { data: ORACLE_SYNC_REVERT_DATA } },
+    { args: [ORACLE_SYNC_REVERT_DATA], address: ORACLE_SYNC_REVERT_DATA, hash: ORACLE_SYNC_REVERT_DATA },
+    { transaction: { data: ORACLE_SYNC_REVERT_DATA }, calldata: ORACLE_SYNC_REVERT_DATA },
+    { unrelated: { errorName: 'PletherOracle__PriceOutOfOrder' } },
+    new Error('Network request failed'),
+    new Error('Unknown error'),
+  ])('does not infer ordering failures from unrelated metadata: %j', error => {
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+    expect(getPerpsContractErrorCode(error)).toBeUndefined()
+  })
+
+  it('handles cycles and throwing getters without hiding other valid fields', () => {
+    const error = Object.defineProperty({ raw: ORACLE_SYNC_REVERT_DATA }, 'cause', { get() { throw new Error('private') } })
+    const cycle: { cause?: unknown; error?: unknown } = { error }
+    cycle.cause = cycle
+    expect(isPerpsOracleSyncError(cycle)).toBe(true)
+    expect(getPerpsErrorMessage(error, 'review')).toContain('older than the stored mark')
+    const malformed = Object.defineProperty({}, 'cause', { get() { throw new Error('private') } })
+    expect(isPerpsOracleSyncError(malformed)).toBe(false)
+    expect(getPerpsErrorMessage(malformed, 'review')).toContain('No order was submitted')
+  })
+
+  it('bounds traversal to eight levels and 64 objects', () => {
+    let error: object = { raw: ORACLE_SYNC_REVERT_DATA }
+    for (let i = 0; i < 7; i++) error = { cause: error }
+    expect(isPerpsOracleSyncError(error)).toBe(true)
+    expect(isPerpsOracleSyncError({ cause: error })).toBe(false)
+    let visited = 0
+    const tree = (depth: number): object => Object.defineProperties({}, {
+      cause: { get() { visited++; return depth ? tree(depth - 1) : undefined } },
+      error: { get() { return depth ? tree(depth - 1) : undefined } },
+    })
+    expect(isPerpsOracleSyncError(tree(7))).toBe(false)
+    expect(visited).toBe(64)
+  })
+
+  it('uses safe review guidance for generic viem failures without assuming a cause', () => {
+    const error = { shortMessage: 'An unknown error occurred while executing the contract function "getLatestPrice".',
+      cause: new Error('execution reverted') }
+    expect(getPerpsErrorMessage(error, 'review')).toBe('Order review is unavailable. No order was submitted. Refresh and try again.')
+    expect(isPerpsOracleSyncError(error)).toBe(false)
+    expect(getPerpsErrorMessage(error, 'execute')).toBe(error.shortMessage)
+  })
+
   it('recognizes encoded errors through Error.cause and decoded metadata', () => {
     const data = encodeErrorResult({ abi: PERPS_TEST_ERROR_ABI, errorName: 'PletherOracle__PriceOutOfOrder', args: [1n, 2n] })
     expect(isPerpsOracleSyncError(new Error('Wrapped', { cause: { data } }))).toBe(true)

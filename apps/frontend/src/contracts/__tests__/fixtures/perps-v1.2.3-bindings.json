@@ -35,8 +35,8 @@
       "layoutSha256": "6475fa325ed6b9138540c9b3eda7b4f29bd161bd2d153c6b770a97be9944b72b"
     },
     "PERPS_PLETHER_ORACLE_ABI": {
-      "entries": 7,
-      "layoutSha256": "f19e42cc5c08aa52ea26de6b9be72bd325b541b9eedc2705b9395792a8e402a5"
+      "entries": 8,
+      "layoutSha256": "83e3d90bc7eb844cbd502f664d3cc73a01e7fce8056334ad79c588cb831e809a"
     },
     "PERPS_POSITION_PROTECTION_BOOK_ABI": {
       "entries": 103,

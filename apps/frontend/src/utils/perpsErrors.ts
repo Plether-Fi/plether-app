@@ -1,5 +1,5 @@
 import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
-import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
+import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
 type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'review' | 'commit' | 'execute' | 'protection'
 
@@ -75,7 +75,6 @@ const PERPS_ERROR_ABI = parseAbi([
 
   'error PletherOracle__MissingUpdateData()',
   'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
-  'error PletherOracle__PriceOutOfOrder(uint64 publishTime,uint64 lastMarkTime)',
   'error PletherOracle__StalePrice(uint8 mode, bytes32 feedId, uint256 publishTime, uint256 maxStaleness, uint256 currentTimestamp)',
   'error PletherOracle__InvalidPrice(bytes32 feedId, int64 price)',
   'error PletherOracle__ConfidenceTooWide(bytes32 feedId, uint64 confidence, int64 price, uint256 maxConfidenceBps)',
@@ -103,7 +102,12 @@ const PERPS_ERROR_ABI = parseAbi([
   'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
 ])
 
-const ALL_PERPS_ERROR_ABI = [...PERPS_ERROR_ABI, ...PERPS_POSITION_PROTECTION_BOOK_ABI, ...PERPS_CFD_CLOSE_PREVIEW_ABI]
+const ALL_PERPS_ERROR_ABI = [
+  ...PERPS_ERROR_ABI,
+  ...PERPS_PLETHER_ORACLE_ABI.filter(item => item.type === 'error'),
+  ...PERPS_POSITION_PROTECTION_BOOK_ABI,
+  ...PERPS_CFD_CLOSE_PREVIEW_ABI,
+]
 
 const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
 
@@ -165,77 +169,68 @@ const V2_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   9: 'post-position leverage',
 }
 
-function getNestedString(error: unknown, keys: string[], depth = 0): string | undefined {
-  if (!error || typeof error !== 'object' || depth > 6) return undefined
-  const record = error as Record<string, unknown>
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string' && value) return value
+function errorProperty(record: object, key: string): unknown {
+  try {
+    return (record as Record<string, unknown>)[key]
+  } catch {
+    return undefined
   }
-  const causedString = getNestedString(record.cause, keys, depth + 1)
-  if (causedString) return causedString
-  for (const value of Object.values(record)) {
-    const nested = getNestedString(value, keys, depth + 1)
-    if (nested) return nested
-  }
-  return undefined
 }
 
-function getNestedArgs(error: unknown, depth = 0): readonly unknown[] | undefined {
-  if (!error || typeof error !== 'object' || depth > 6) return undefined
-  const record = error as Record<string, unknown>
-  const args = record.args
-  if (Array.isArray(args)) return args as readonly unknown[]
-  const causedArgs = getNestedArgs(record.cause, depth + 1)
-  if (causedArgs) return causedArgs
-  for (const value of Object.values(record)) {
-    const nested = getNestedArgs(value, depth + 1)
-    if (nested) return nested
+/** Follow error envelopes only, never request arguments or arbitrary hex metadata. */
+function* errorRecords(error: unknown, causesFirst = true): Generator<object> {
+  const seen = new Set<object>()
+  function* visit(value: unknown, depth: number): Generator<object> {
+    if (!value || typeof value !== 'object' || depth >= 8 || seen.has(value) || seen.size >= 64) return
+    seen.add(value)
+    if (!causesFirst) yield value
+    for (const key of ['cause', 'error', 'originalError', 'data', 'raw']) {
+      yield* visit(errorProperty(value, key), depth + 1)
+    }
+    if (causesFirst) yield value
   }
-  return undefined
+  yield* visit(error, 0)
 }
 
-function extractRevertData(error: unknown, depth = 0): string | undefined {
-  if (!error || depth > 6) return undefined
-  if (typeof error === 'string') return error.startsWith('0x') ? error : undefined
-  if (typeof error !== 'object') return undefined
-
-  const record = error as Record<string, unknown>
-  // Standard Error.cause is non-enumerable. Prefer the underlying RPC error
-  // over transaction calldata attached to an outer wrapper.
-  const causedData = extractRevertData(record.cause, depth + 1)
-  if (causedData) return causedData
-  for (const key of ['data', 'raw']) {
-    const value = record[key]
-    if (typeof value === 'string' && value.startsWith('0x')) return value
-    if (value && typeof value === 'object') {
-      const nested = extractRevertData(value, depth + 1)
-      if (nested) return nested
+function getNestedString(error: unknown, keys: string[]): string | undefined {
+  for (const record of errorRecords(error, false)) {
+    for (const key of keys) {
+      const value = errorProperty(record, key)
+      if (typeof value === 'string' && value) return value
     }
   }
-
-  for (const value of Object.values(record)) {
-    const nested = extractRevertData(value, depth + 1)
-    if (nested) return nested
-  }
-  return undefined
 }
 
-function decodePerpsError(error: unknown): { name?: string; args?: readonly unknown[] } {
-  const data = extractRevertData(error)
-  if (data) {
-    try {
-      const decoded = decodeErrorResult({ abi: ALL_PERPS_ERROR_ABI, data: data as `0x${string}` })
-      return { name: decoded.errorName, args: decoded.args }
-    } catch {
-      // Fall back to viem's decoded metadata below.
-    }
-  }
+interface DecodedPerpsError { name?: string; args?: readonly unknown[] }
 
-  return {
-    name: getNestedString(error, ['errorName']),
-    args: getNestedArgs(error),
+function decodeRevertData(value: unknown): DecodedPerpsError | undefined {
+  if (typeof value !== 'string' || !/^0x(?:[a-fA-F0-9]{2}){4,}$/.test(value)) return undefined
+  try {
+    const decoded = decodeErrorResult({ abi: ALL_PERPS_ERROR_ABI, data: value as `0x${string}` })
+    return { name: decoded.errorName, args: decoded.args }
+  } catch {
+    // An incomplete signature or unknown payload must not hide a later valid revert.
+    return undefined
   }
+}
+
+function decodePerpsError(error: unknown): DecodedPerpsError {
+  const direct = decodeRevertData(error)
+  if (direct) return direct
+  // Prefer underlying RPC revert bytes over outer wrapper data. A viem decoding
+  // error's signature is not revert data; its parent's raw field still is.
+  for (const record of errorRecords(error)) {
+    for (const key of ['raw', 'data']) {
+      const decoded = decodeRevertData(errorProperty(record, key))
+      if (decoded) return decoded
+    }
+    // viem may already have decoded the error. Keep each name paired with its args.
+    const name = errorProperty(record, 'errorName')
+    if (typeof name !== 'string' || (!KNOWN_PERPS_ERROR_NAMES.has(name) && name !== 'Panic' && name !== 'Error')) continue
+    const args = errorProperty(record, 'args')
+    return { name, args: Array.isArray(args) ? args : undefined }
+  }
+  return {}
 }
 
 const KNOWN_PERPS_ERROR_NAMES = new Set<string>(
@@ -257,21 +252,8 @@ export function getPerpsContractErrorCode(error: unknown): string | undefined {
 
 /** Only decoded ordering failures are eligible for read-only review recovery. */
 export function isPerpsOracleSyncError(error: unknown): boolean {
-  // Walk each cause explicitly so an outer decoded error cannot hide a
-  // nested ordering failure. Keep traversal bounded and cycle-safe.
-  const seen = new Set<unknown>()
-  try {
-    for (let current = error, depth = 0; current && depth < 8 && !seen.has(current); depth++) {
-      seen.add(current)
-      const { name } = decodePerpsError(current)
-      if (name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder') return true
-      if (typeof current !== 'object') break
-      current = (current as { cause?: unknown }).cause
-    }
-  } catch {
-    // Malformed provider errors must never break the recovery controller.
-  }
-  return false
+  const { name } = decodePerpsError(error)
+  return name === 'PletherOracle__PriceOutOfOrder' || name === 'OrderRouter__MarkPriceOutOfOrder'
 }
 
 function argNumber(args: readonly unknown[] | undefined, index = 0): number | undefined {
@@ -625,6 +607,9 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
 
   const rawMessage = getNestedString(error, ['shortMessage', 'message']) ?? (typeof error === 'string' ? error : '')
   const lower = rawMessage.toLowerCase()
+  if (action === 'review' && /^an unknown error occurred while executing the contract function "[^"]+"\.?$/.test(lower)) {
+    return fallbackMessage(action)
+  }
   if (lower.includes('commit reverted after wallet confirmation')) {
     return rawMessage
   }

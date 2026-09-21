@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { encodeErrorResult, parseAbi } from 'viem'
+import { createOracleSyncError } from '../../test/fixtures/oracleSyncError'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE } from '../perpsErrors'
 import { getPreparationDebugContext, getPreparationFailureProperties, preparationFailure, withPreparationStep } from '../perpsPreparationDiagnostics'
 
 describe('preparation diagnostics privacy', () => {
+  it.each([true, false])('classifies a real oracle error without leaking its payload (legacy ABI=%s)', legacyAbi => {
+    const cause = preparationFailure(createOracleSyncError(legacyAbi), 'context_read', 'getLatestPrice')
+    const wrapped = new Error('Review wrapper', { cause })
+    expect(getPreparationFailureProperties(wrapped)).toEqual({
+      error_code: 'PletherOracle__PriceOutOfOrder', stage: 'context_read', contract_function: 'getLatestPrice',
+    })
+  })
   it('retains the inner failing step through UI normalization and decodes only the ABI name', async () => {
     const raw = Object.assign(new Error('reverted for user@example.com with signed payload'), {
       data: encodeErrorResult({ abi: parseAbi(['error OrderRouter__CommitValidation(uint8 code)']),

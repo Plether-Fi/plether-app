@@ -1357,6 +1357,14 @@ export const PERPS_HOUSE_POOL_ABI = [
 
 export const PERPS_PLETHER_ORACLE_ABI = [
   {
+    type: 'error',
+    name: 'PletherOracle__PriceOutOfOrder',
+    inputs: [
+      { name: 'publishTime', type: 'uint64' },
+      { name: 'lastMarkTime', type: 'uint64' },
+    ],
+  },
+  {
     type: 'function',
     name: 'getUpdateFee',
     stateMutability: 'view',
