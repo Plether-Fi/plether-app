@@ -26,6 +26,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
+      - name: Pin npm to the frontend deployment version
+        run: npm install -g npm@11.6.2
       - run: npm ci --no-audit --no-fund
         working-directory: apps/frontend
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
