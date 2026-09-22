@@ -1055,6 +1055,8 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_keeper_orders ADD COLUMN IF NOT EXISTS order_router TEXT"
   _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_reliability ON perps_keeper_orders (order_router, commit_time)"
+  _ <- execute_ conn
     "UPDATE perps_keeper_orders SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
     "DO $$ \

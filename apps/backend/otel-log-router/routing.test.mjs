@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process'
 
 for (const [container,event,reason,severity = 17,expectedSeverity = 17,level = 'ERROR'] of [
   ['plether-keeper','keeper_transaction_failed','KEEPER_INSUFFICIENT_FUNDS'],
+  ['plether-keeper','keeper_order_finalized_failed','KEEPER_EXECUTION_FAILED'],
+  ['plether-keeper','keeper_order_reliability_snapshot','READY',9,9,'INFO'],
   ['plether-keeper','keeper_order_deferral_summary','KEEPER_ENGINE_FAILURE'],
   ['plether-funding-monitor','worker_funding_observation','WORKER_INSUFFICIENT_FUNDS'],
   ['plether-api','aa_execution_diagnosed','USER_OPERATION_OUT_OF_GAS'],
@@ -21,6 +23,8 @@ for (const [container,event,reason,severity = 17,expectedSeverity = 17,level = '
   try {
     const input = { container_name: container, log: JSON.stringify({
       event, message: 'private provider payload', level,
+      terminal_reason_code: 2, window_seconds: 3600, expired_orders: 3,
+      affected_accounts: 2, repeat_affected_accounts: 1,
       SeverityText: level, ...(severity === 'absent' ? {} : { SeverityNumber: severity }),
       error: 'private exception', order_ids: [8], signer_balance_wei: '1234',
       attempt_id: '12345678-1234-4123-8123-123456789abc', reason_code: reason,
@@ -76,6 +80,10 @@ ${filters}
     assert.equal(posthog.message, event)
     assert.equal(posthog.attempt_id, input.log && JSON.parse(input.log).attempt_id)
     assert.equal(posthog.reason_code, reason)
+    assert.equal(posthog.terminal_reason, event === 'keeper_order_finalized_failed' ? 'EXPIRED' : undefined)
+    for (const [key, value] of Object.entries({window_seconds: 3600, expired_orders: 3, affected_accounts: 2, repeat_affected_accounts: 1})) {
+      assert.equal(posthog[key], event === 'keeper_order_reliability_snapshot' ? value : undefined)
+    }
     for (const key of ['error', 'order_ids', 'signer_balance_wei', 'log', 'container_name']) assert.equal(posthog[key], undefined)
     assert.equal(records.length, 2, 'Cloning must not recurse or duplicate exports')
   } finally { rmSync(directory, { recursive: true, force: true }) }

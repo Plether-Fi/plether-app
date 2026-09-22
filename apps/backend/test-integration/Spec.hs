@@ -1,6 +1,7 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Plether.Keeper.ReliabilitySpec (reliabilitySpec)
 import Plether.DatabaseDiagnosticsSpec (databaseDiagnosticsSpec)
 import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
 import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
@@ -23,6 +24,7 @@ main = do
   case databaseUrl of
     Just value ->
       hspec $ do
+        reliabilitySpec $ T.pack value
         databaseDiagnosticsSpec $ T.pack value
         criticalPathSpec $ T.pack value
         protectionExecutionSpec $ T.pack value
