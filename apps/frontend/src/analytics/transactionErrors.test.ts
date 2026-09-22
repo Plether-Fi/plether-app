@@ -20,7 +20,7 @@ describe('transaction failure reporting', () => {
     const wrapped = reportedTransactionError(new Error('wrapper', { cause: original }), 'Approval took too long.', context)
     expect(wrapped.message).toContain(`Support reference: ${attemptId}`)
     expect(first.errorCode).toBe('DEADLINE_TOO_CLOSE')
-    expect(first.message).toContain('Too little time remained')
+    expect(first.message).toContain('Approval finished too close')
     expect(captureAnalyticsEvent).toHaveBeenCalledOnce()
     expect(captureAnalyticsEvent).toHaveBeenCalledWith('transaction failed', expect.objectContaining({
       support_reference: attemptId, attempt_id: attemptId, reason_code: 'DEADLINE_TOO_CLOSE', stage: 'submission',

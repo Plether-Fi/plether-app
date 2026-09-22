@@ -209,7 +209,7 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(screen.queryByText('Sponsored by Plether · 0 ETH network gas'))
       .not.toBeInTheDocument()
     expect(screen.getByText(
-      'Plether gas sponsorship is temporarily unavailable. Your action was not sent. Retry the same Trading Account action or contact support.'
+      'Gas sponsorship is temporarily unavailable. Check account activity before trying again. Retry the same Trading Account action or contact support.'
     )).toBeInTheDocument()
     expect(screen.queryByText(/could not verify whether this transaction/i))
       .not.toBeInTheDocument()

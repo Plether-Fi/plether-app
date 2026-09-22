@@ -101,9 +101,10 @@ describe('getPerpsErrorMessage', () => {
     })
     const error = new Error(new BaseError('An error occurred while executing user operation', { cause }).message, { cause })
     const message = getPerpsErrorMessage(error, 'commit')
-    expect(message).toContain('Too little time remained')
-    expect(message).toContain('did not send this request')
-    expect(message).toContain('any earlier submission')
+    expect(message).toContain('Approval finished too close')
+    expect(message).toContain('This request was not sent.')
+    expect(message).toContain('If an earlier attempt is still pending, check Trading Account activity first.')
+    expect(message).not.toContain('when recovery is complete')
     expect(message).not.toMatch(/private-signature|0xdeadbeef|viem@|HTTP/)
   })
 
@@ -111,7 +112,7 @@ describe('getPerpsErrorMessage', () => {
     for (const error of [
       { cause: { data: { reason: 'DEADLINE_TOO_CLOSE' } } },
       { details: JSON.stringify({ error: { data: { reason: 'DEADLINE_TOO_CLOSE' } } }) },
-    ]) expect(getPerpsErrorMessage(error, 'commit')).toContain('Too little time remained')
+    ]) expect(getPerpsErrorMessage(error, 'commit')).toContain('Approval finished too close')
   })
 
   it.each(['HTTP request failed.', 'Network request failed', 'Unexpected provider failure'])(
@@ -119,7 +120,7 @@ describe('getPerpsErrorMessage', () => {
       const error = new Error(`${summary}\nRequest Arguments:\n signature: private-signature\n${'0'.repeat(1000)}`)
       const message = getPerpsErrorMessage(error, 'commit')
       expect(message).toContain('Trading Account activity')
-      expect(message).not.toMatch(/private-signature|Request Arguments|did not send|No order/)
+      expect(message).not.toMatch(/private-signature|Request Arguments|did not send|was not sent|No order/)
       expect(message.length).toBeLessThan(250)
     }
   )
@@ -127,7 +128,7 @@ describe('getPerpsErrorMessage', () => {
   it('does not infer expiry from request data or malformed response details', () => {
     const error = new HttpRequestError({ url: '/api/perps/v1/aa/rpc',
       body: { data: { reason: 'DEADLINE_TOO_CLOSE' } }, details: '{invalid JSON' })
-    expect(getPerpsErrorMessage(error, 'commit')).not.toContain('did not send')
+    expect(getPerpsErrorMessage(error, 'commit')).not.toMatch(/did not send|was not sent/)
   })
 
   it('decodes the reported TP/SL settlement shortfall through a standard Error cause', () => {

@@ -249,7 +249,7 @@ describe('perps lifecycle labels', () => {
     })
   })
 
-  it('shows readable recovery guidance after a gateway deadline refusal', async () => {
+  it('makes the activity check conditional after a gateway deadline refusal', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
@@ -265,8 +265,8 @@ describe('perps lifecycle labels', () => {
       availableToTradeRaw={1_000_000_000n} />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
-    await screen.findByText(/Too little time remained/)
-    expect(screen.getByText(/Check Trading Account activity for any earlier submission/)).toBeInTheDocument()
+    await screen.findByText(/Approval finished too close/)
+    expect(screen.getByText(/If an earlier attempt is still pending, check Trading Account activity first/)).toBeInTheDocument()
     expect(screen.queryByText(/private-signature|0xdeadbeef|HTTP request failed/)).not.toBeInTheDocument()
   })
 

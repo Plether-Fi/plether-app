@@ -783,7 +783,7 @@ export const ApprovalDeadlineFailed: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body)
     await expect(page.getByText('Commit transaction failed')).toBeVisible()
-    await expect(page.getByText(/Too little time remained/)).toBeVisible()
+    await expect(page.getByText(/Approval finished too close/)).toBeVisible()
     await expect(page.getByText('7b2d5d87-5ddf-4eca-8c03-cd68c4af7281')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Review again' })).toBeVisible()
   },

@@ -1,7 +1,7 @@
 /** Public failure copy and bounded inspection of error envelopes, never request payloads. */
 export const TRANSACTION_FAILURE_MESSAGES: Record<string, string> = {
-  DEADLINE_TOO_CLOSE: 'Too little time remained to submit this transaction after approval. Plether did not send this request. Check Trading Account activity for any earlier submission, then review the order again when recovery is complete.',
-  INVALID_ORDER_DEADLINE: 'The order review expired. Check account activity, then review a fresh order.',
+  DEADLINE_TOO_CLOSE: 'Approval finished too close to the submission deadline. This request was not sent. Review the order again. If an earlier attempt is still pending, check Trading Account activity first.',
+  INVALID_ORDER_DEADLINE: 'The order deadline is invalid. Refresh the order and review it again.',
   WALLET_DECLINED: 'You declined the request in your wallet. Review the transaction again when you are ready.',
   WALLET_DISCONNECTED: 'The wallet disconnected. Reconnect it and check account activity before trying again.',
   NETWORK_ERROR: 'The connection failed. Check account activity to see whether the transaction was received before trying again.',

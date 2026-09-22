@@ -287,7 +287,7 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
     case 'ACCOUNT_DEPLOYMENT_PENDING':
       return 'Your Trading Account deployment is awaiting safe confirmation. This can take several minutes. Wait before retrying; this action has not been sent.'
     case 'SPONSOR_UNAVAILABLE':
-      return 'Plether gas sponsorship is temporarily unavailable. Your action was not sent.'
+      return TRANSACTION_FAILURE_MESSAGES.SPONSOR_UNAVAILABLE
     default:
       return Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, error.reason)
         ? TRANSACTION_FAILURE_MESSAGES[error.reason]
