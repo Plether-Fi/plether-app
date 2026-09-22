@@ -32,12 +32,57 @@ Before activation (a separate authorized release):
    public/API manifest and schema 3 in the protocol deployment manifest. Preserve
    historical V2 files. AA transport version 2 is independent of order version 3.
 3. Regenerate bindings from those artifacts and run all ABI, sponsorship,
-   submission/recovery, history and worker checks. The app uses local V3 order
-   encoders with the published 0.1.0 SDK's unchanged generic account helpers;
-   switching to SDK 0.2.0 can follow its separately approved publication.
+   submission/recovery, history and worker checks. The app consumes the pinned
+   SDK 0.2.0 artifact below. Registry publication is a separate release action.
 4. Use a fresh router-scoped indexer cursor and journal identity. Verify a delayed
    approval near `submitBy`, execution after `submitBy` within the full committed
    window, expiry, retries, protected-open and sponsored-close receipts.
 
 The `v3-insights-close-*` fixtures are synthetic V3 encodings of historical
 financial values. They are test vectors, not claims of a V3 transaction on chain.
+
+## Shared SDK source
+
+The app imports ordinary/protected order builders, the protection ABI, request
+components, and request/bounds types from one SDK artifact built by Core's
+`scripts/perps-aa-artifact.mjs`. There is no second app encoder or edited vendor
+source. Both close-preview consumers also share one generated ABI.
+
+- Source: `abb30db068019a906b1d4570bb4f171685846340`
+- Package: `@plether-fi/perps-aa-client@0.2.0`
+- Integrity: `sha512-dh4VQCU3D4vmj7qRzKDDDNGQE5DY3xycZ2KKEEmglL1VK2O6xSKFq3iD687w2qN8f0VgeOSfgMrtfP+QJuz7rQ==`
+- Provenance: `config/perps-aa-client-release.json` and
+  `apps/frontend/vendor/perps-aa-client/release.json`
+
+Verify with `node scripts/verify-vendored-perps-aa-client.mjs`. To refresh, build
+and pack a clean, reviewed Core commit with its packaging script; replace the
+artifact, provenance, lockfile integrity, and local-flow CI Core SHA together.
+Never modify the tarball contents manually. The previous published SDK's
+provenance is retained in `config/perps-aa-client-release-v0.1.0.json`.
+
+## Local end-to-end proof
+
+With Node, Foundry, GHC 9.4.8, Cabal, libpq and libsecp256k1 installed, run
+`npm ci` in `apps/frontend`, then from the repository root:
+
+```sh
+node scripts/test-order-v3-local.mjs /path/to/clean/pinned/plether-core
+```
+
+The runner checks the Core source pin, builds production contracts and a test
+adapter around the real Haskell timing policy, starts its own loopback-only
+Anvil chain, and stops it on exit. No live RPC, fork, credentials, publication,
+or deployment workflow is used. Only MockUSDC/Pyth, readiness transport,
+telemetry, and the local relay replace external services. The real app review,
+native preparation journal, SDK, owner/sponsor signatures, reference EntryPoint
+and SimpleAccount, production paymaster/router/engine, and canonical recovery
+execute together. Account creation is local test setup; this does not test a
+wallet extension, KMS, or the production bundler service.
+
+Coverage includes 75 seconds in wallet approval, commitment one second before
+`submitBy`, lost submission acknowledgement, restored journal recovery after
+sponsorship expiry, execution within the full 60-second committed window with
+one owner signature, exact replay/conflicting terms, late approval safe expiry,
+committed expiry, historical-price rejection, and protected opens. CI runs the
+same non-skipping harness in `order-v3-local.yml`. Database integration is
+verified separately by the existing PostgreSQL CI job.

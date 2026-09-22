@@ -14,6 +14,7 @@ module Plether.AA.Pimlico
   , decodeSmartAccountCalls
   , validateActionSequence
   , orderSubmissionDeadline
+  , capSponsorshipDeadline
   , validateSubmissionHeadroom
   , validateNativeActionSequence
   , CloseAssistanceIntent (..)
@@ -818,6 +819,11 @@ validateSubmissionHeadroom now sponsorshipExpiry callData = do
   let effective = maybe sponsorshipExpiry (min sponsorshipExpiry) deadline
   unless (effective - now >= 30) $ Left $
     ProxyFailure status400 (-32001) "Approval finished too late; this request was not forwarded. Check recovery for any earlier submission." "DEADLINE_TOO_CLOSE" False
+
+-- | Shared by stub and final issuance. Malformed order calldata must fail closed.
+capSponsorshipDeadline :: Integer -> ByteString -> Either ProxyFailure Integer
+capSponsorshipDeadline configuredExpiry callData =
+  maybe configuredExpiry (min configuredExpiry) <$> orderSubmissionDeadline callData
 
 -- Calldata has already passed action/target validation before sponsorship issuance.
 -- Returning an error is mandatory for malformed order-bearing calldata.

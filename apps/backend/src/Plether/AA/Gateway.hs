@@ -865,7 +865,7 @@ handleOperation assistance gatewayState nativeCfg pool manager securityContext c
                             Paymaster.makeSponsorshipEnvelope
                               nativeCfg
                               (max 0 $ now - 30)
-                              (either (const 0) (maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg))) (Legacy.orderSubmissionDeadline (Paymaster.puoCallData operation)))
+                              (either (const 0) id (Legacy.capSponsorshipDeadline (now + naaValiditySeconds nativeCfg) (Paymaster.puoCallData operation)))
                               (naaMaxCostWei nativeCfg)
                               Paymaster.dummyPaymasterSignature
                       if Paymaster.seValidUntil envelope <= now
@@ -942,7 +942,7 @@ issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKe
   reserveNew signer context requestKey = do
         now <- liftEpochSeconds
         let validAfter = max 0 $ now - 30
-            validUntil = either (const 0) (maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg))) (Legacy.orderSubmissionDeadline (Paymaster.puoCallData operation))
+            validUntil = either (const 0) id (Legacy.capSponsorshipDeadline (now + naaValiditySeconds nativeCfg) (Paymaster.puoCallData operation))
             provisional =
               Paymaster.makeSponsorshipEnvelope
                 nativeCfg validAfter validUntil (naaMaxCostWei nativeCfg) BS.empty

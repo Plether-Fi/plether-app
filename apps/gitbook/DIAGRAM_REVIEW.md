@@ -8,7 +8,7 @@ Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122
 
 The app now pins v1.2.3. The 2026-09-10 AA package migration updates only client-source references in the catalog and manifest; it does not certify all 30 diagrams against v1.2.3 or change their SVGs. Full regeneration remains blocked by the existing contract-review guard until a separate semantic review updates this record and the generator's reviewed commit.
 
-Account-abstraction ordering was checked against [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts), the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. Package provenance is recorded in `config/perps-aa-client-release.json`.
+Account-abstraction ordering was checked against [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client/src/orchestrator.ts), the frontend operation-status mapping, withdrawal action encoding, and receipt-recovery code. Package provenance is recorded in `config/perps-aa-client-release-v0.1.0.json`.
 
 Each of the 30 records in [the manifest](.gitbook/assets/diagrams/diagram-manifest.json) lists its article, SVG, accessible description and reviewed source functions. `diagram-catalog.mjs` is the editable content source. Regeneration fails when the pinned contract commit changes so that a visual rebuild cannot silently masquerade as a new semantic review.
 

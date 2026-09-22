@@ -1,5 +1,11 @@
 # Self-hosted Account Abstraction Rollout
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 Current public-Sepolia policy and release procedure:
 [Singapore Sepolia AA release](singapore-sepolia-aa-release.md).
 The owner-approved [Sepolia tracing exception](alto-sepolia-validation-exception-2026-09-12.md)

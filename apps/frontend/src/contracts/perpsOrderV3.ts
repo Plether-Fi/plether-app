@@ -1,3 +1,4 @@
+import type { OrderRequestV3 } from '@plether-fi/perps-aa-client'
 import { bytesToHex, type Address, type Hex } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
 import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
@@ -82,31 +83,8 @@ export type PerpsPendingReason =
 export type PerpsFailedConstraint =
   typeof PERPS_FAILED_CONSTRAINT[keyof typeof PERPS_FAILED_CONSTRAINT]
 
-export interface PerpsExecutionBounds {
-  submitBy: bigint
-  executionWindowSeconds: number
-  allowedExecutionModes: number
-  expectedConfigHash: Hex
-  maxExecutionBountyUsdc: bigint
-  maxExecutionNotionalUsdc: bigint
-  maxGrossAccountDebitUsdc: bigint
-  maxActionChargeUsdc: bigint
-  maxExplicitFeesUsdc: bigint
-  maxPostPositionSize: bigint
-  minPostSettlementBalanceUsdc: bigint
-  minPostPositionEquityUsdc: bigint
-  maxPostLeverageBps: number
-}
-
-export interface PerpsOrderRequestV3 {
-  clientOrderId: Hex
-  side: number
-  sizeDelta: bigint
-  marginDelta: bigint
-  targetPrice: bigint
-  isClose: boolean
-  bounds: PerpsExecutionBounds
-}
+export type PerpsOrderRequestV3 = OrderRequestV3
+export type PerpsExecutionBounds = OrderRequestV3['bounds']
 
 export interface PerpsExecutionAssessment {
   mode: PerpsExecutionMode

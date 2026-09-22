@@ -1,0 +1,51 @@
+name: V3 order lifecycle
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+permissions:
+  contents: read
+jobs:
+  local-flow:
+    name: Delayed approval and canonical recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the SDK's immutable Core source
+        uses: actions/checkout@v4
+        with:
+          repository: Plether-Fi/plether-core
+          ref: abb30db068019a906b1d4570bb4f171685846340
+          path: .ci-order-v3-core
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: apps/frontend
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.5.1
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: 'latest'
+          cabal-update: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+      - run: cabal update
+        working-directory: apps/backend
+      - name: Typecheck the local integration harness
+        run: npx tsc --project test/local-order-v3/tsconfig.json --noEmit
+        working-directory: apps/frontend
+      - name: Verify signed V3 orders on an isolated local chain
+        run: node scripts/test-order-v3-local.mjs .ci-order-v3-core

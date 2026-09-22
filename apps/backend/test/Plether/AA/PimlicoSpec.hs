@@ -30,6 +30,7 @@ import Plether.AA.Pimlico
   , parseRpcRequest
   , recordSubmittedOperation
   , orderSubmissionDeadline
+  , capSponsorshipDeadline
   , validateSubmissionHeadroom
   , validateActionSequence
   , validateNativeActionSequence
@@ -67,6 +68,12 @@ spec = do
             selector "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
               <> BS.drop 4 (smartCallData orderCall) <> encodeUint256 70000000 <> encodeUint256 90000000
       orderSubmissionDeadline (encodeExecute protected) `shouldBe` Right (Just 2000000000)
+
+    it "caps stub and final sponsorship to the same signed bound and fails on malformed calldata" $ do
+      capSponsorshipDeadline 2000000100 (encodeExecute orderCall) `shouldBe` Right 2000000000
+      capSponsorshipDeadline 1999999990 (encodeExecute orderCall) `shouldBe` Right 1999999990
+      capSponsorshipDeadline 2000000100 (encodeExecute addMarginCall) `shouldBe` Right 2000000100
+      capSponsorshipDeadline 2000000100 "invalid" `shouldSatisfy` isLeft
 
     it "accepts exactly thirty seconds but rejects a late approval" $ do
       validateSubmissionHeadroom 1999999970 2000000100 (encodeExecute orderCall) `shouldSatisfy` isRight

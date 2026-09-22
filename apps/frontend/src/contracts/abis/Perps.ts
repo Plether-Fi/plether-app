@@ -1,3 +1,5 @@
+import { orderRouterV3TraderAbi, positionProtectionBookAbi } from '@plether-fi/perps-aa-client'
+
 const ORDER_TIMING_COMPONENTS = [
   { name: 'submitBy', type: 'uint64' },
   { name: 'executionWindowSeconds', type: 'uint32' },
@@ -30,35 +32,8 @@ const ROUTER_PENDING_ORDER_COMPONENTS = [
   { name: 'executionBountyUsdc', type: 'uint256' },
 ] as const
 
-export const PERPS_EXECUTION_BOUNDS_COMPONENTS = [
-  { name: 'submitBy', type: 'uint64' },
-  { name: 'executionWindowSeconds', type: 'uint32' },
-  { name: 'allowedExecutionModes', type: 'uint8' },
-  { name: 'expectedConfigHash', type: 'bytes32' },
-  { name: 'maxExecutionBountyUsdc', type: 'uint256' },
-  { name: 'maxExecutionNotionalUsdc', type: 'uint256' },
-  { name: 'maxGrossAccountDebitUsdc', type: 'uint256' },
-  { name: 'maxActionChargeUsdc', type: 'uint256' },
-  { name: 'maxExplicitFeesUsdc', type: 'uint256' },
-  { name: 'maxPostPositionSize', type: 'uint256' },
-  { name: 'minPostSettlementBalanceUsdc', type: 'uint256' },
-  { name: 'minPostPositionEquityUsdc', type: 'uint256' },
-  { name: 'maxPostLeverageBps', type: 'uint32' },
-] as const
-
-export const PERPS_ORDER_REQUEST_V3_COMPONENTS = [
-  { name: 'clientOrderId', type: 'bytes32' },
-  { name: 'side', type: 'uint8' },
-  { name: 'sizeDelta', type: 'uint256' },
-  { name: 'marginDelta', type: 'uint256' },
-  { name: 'targetPrice', type: 'uint256' },
-  { name: 'isClose', type: 'bool' },
-  {
-    name: 'bounds',
-    type: 'tuple',
-    components: PERPS_EXECUTION_BOUNDS_COMPONENTS,
-  },
-] as const
+export const PERPS_ORDER_REQUEST_V3_COMPONENTS = orderRouterV3TraderAbi[0].inputs[0].components
+export const PERPS_EXECUTION_BOUNDS_COMPONENTS = PERPS_ORDER_REQUEST_V3_COMPONENTS[6].components
 
 const CFD_ORDER_COMPONENTS = [
   { name: 'account', type: 'address' },
@@ -625,19 +600,7 @@ export const PERPS_MARGIN_CLEARINGHOUSE_ABI = [
 ] as const
 
 export const PERPS_ORDER_ROUTER_ABI = [
-  {
-    type: 'function',
-    name: 'commitOrder',
-    stateMutability: 'nonpayable',
-    inputs: [
-      {
-        name: 'request',
-        type: 'tuple',
-        components: PERPS_ORDER_REQUEST_V3_COMPONENTS,
-      },
-    ],
-    outputs: [{ name: 'orderId', type: 'uint64' }],
-  },
+  ...orderRouterV3TraderAbi,
   {
     type: 'function',
     name: 'getPendingOrderView',
@@ -1076,7 +1039,6 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-import { positionProtectionBookAbi } from './PositionProtectionV3'
 
 // V3 source ABI; deployed release pins are supplied separately.
 export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi
