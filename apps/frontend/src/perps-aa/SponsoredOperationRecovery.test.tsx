@@ -302,7 +302,7 @@ describe('SponsoredOperationRecovery', () => {
       fetched.push(body.method)
       const headers = new Headers(init?.headers)
       let result: unknown = null
-      const responseHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+      const responseHeaders: Record<string, string> = { 'Content-Type': 'application/json', Date: new Date(Date.now()).toUTCString() }
       if (body.method === 'plether_getRecoveryChallenge') {
         const nonce = 'a'.repeat(64), expiresAt = Math.floor(Date.now() / 1000) + 300
         result = { version: 1, challengeId: nonce, expiresAt, message: recoveryChallengeMessage({
