@@ -2,6 +2,7 @@ import { reportAttemptStage } from '../attemptDiagnostics'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   concatHex,
+  TimeoutError,
   numberToHex,
   type Address,
   type Hex,
@@ -1610,9 +1611,12 @@ describe('executeSponsoredPerpsAction', () => {
     expect(sendUserOperation).toHaveBeenCalledOnce()
   })
 
-  it('keeps an ambiguous Pimlico submission non-retryable', async () => {
+  it.each([
+    new Error('connection closed before response'),
+    new TimeoutError({ url: 'https://example.test/aa/rpc' }),
+  ])('keeps an ambiguous submission non-retryable after %s', async cause => {
     const sendUserOperation = vi.fn(async () => {
-      throw new Error('connection closed before response')
+      throw cause
     })
 
     await expect(executeSponsoredPerpsAction({
@@ -1632,6 +1636,8 @@ describe('executeSponsoredPerpsAction', () => {
       userOperationHash: USER_OPERATION_HASH,
       retryable: false,
     })
+    expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeDefined()
+    expect(useSponsoredOperationStore.getState().operations[0]?.signedUserOperation).toBeDefined()
   })
 
   it('does not sign or submit sponsorship without a recoverable deadline', async () => {
