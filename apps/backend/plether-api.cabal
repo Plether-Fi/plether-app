@@ -488,6 +488,7 @@ test-suite plether-api-integration-test
         Plether.Perps.ProtectionExecutionSpec
         Plether.Keeper.LpSettlementDatabaseSpec
         Plether.Keeper.LiquidationMonitoringSpec
+        Plether.Keeper.PythCachePairSpec
         Plether.Keeper.LpSettlementWorkerSpec
         Plether.Insights.DatabaseSpec
         Plether.Insights.RegistrationDatabaseSpec

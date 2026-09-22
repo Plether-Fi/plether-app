@@ -9,7 +9,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Function (on)
 import Data.List (nubBy)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import GHC.Clock (getMonotonicTimeNSec)
 import qualified Data.Text as T
@@ -33,12 +33,16 @@ import Plether.Database.Candles
   )
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
+  , PairedPythUpdatePayloadRow (..)
+  , PythUpdatePayloadRow (..)
   , ensureBasketSnapshotSchema
   , ensurePerpsKeeperSchema
   , getPendingPerpsKeeperOrders
   , getPythUpdatePayloadForWindow
   , insertBasketSnapshotWithSource
-  , insertPythUpdatePayload
+  , insertPairedPythUpdatePayload
+  , hydratePythUpdatePayloadBasket
+  , getLatestPairedPythUpdatePayload
   , isHistoricalRevealPayload
   , promotePythPayloadSource
   )
@@ -510,6 +514,19 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                             update
                             minPublishTime
                         then do
+                          -- Re-admission above proves these components belong
+                          -- to these exact bytes, even while markets are closed.
+                          -- Repair an existing row only; never promote stale data.
+                          hydrated <- withDb pool $ \conn ->
+                            hydratePythUpdatePayloadBasket conn minPublishTime maxPublishTime
+                              (toJSON $ map pppPublishTime signedPoints)
+                              (toJSON $ hbuUpdateData update) admittedSource
+                              signedBasketPrice (toJSON signedComponents)
+                          when hydrated $
+                            logInfo "pyth_payload_basket_hydrated"
+                              "Attached verified basket components to an existing Pyth payload"
+                              [field "min_publish_time" minPublishTime, field "max_publish_time" maxPublishTime]
+                          emitPythCachePairStatus pool
                           -- A stale but signed latest response is expected when
                           -- the underlying markets are closed. It proves that
                           -- Hermes had no newer update as of the fetch time,
@@ -580,7 +597,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               signedBasketPrice
                               (toJSON signedComponents)
                               admittedSource
-                            insertPythUpdatePayload
+                            insertPairedPythUpdatePayload
                               conn
                               minPublishTime
                               maxPublishTime
@@ -588,6 +605,8 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               (toJSON $ hbuUpdateData update)
                               (hbuFetchedAt update)
                               admittedSource
+                              signedBasketPrice
+                              (toJSON signedComponents)
                           logInfoEvery
                             300
                             "basket_cache_progress"
@@ -597,6 +616,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                             , field "minute_bucket" minuteBucket
                             , field "source" admittedSource
                             ]
+                          when latestSourcePoll $ emitPythCachePairStatus pool
                           when (candleWritesEnabled cfg && latestSourcePoll) $
                             emitPriceWriterHeartbeat
                               pool
@@ -608,6 +628,22 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                               "admitted_latest"
                               "An admitted latest Pyth update completed a basket source watermark poll"
                           pure $ Right ()
+
+-- A readback of the newest eligible row is the rollout gate, not an assumption
+-- that the preceding write won source precedence.
+emitPythCachePairStatus :: DbPool -> IO ()
+emitPythCachePairStatus pool = do
+  paired <- withDb pool getLatestPairedPythUpdatePayload
+  case paired of
+    Just row | isJust (ppuprBasket row) ->
+      logInfoEvery 60 "pyth_payload_basket_pair_ready"
+        "Newest admitted latest Pyth payload has its paired signed basket"
+        [ field "min_publish_time" $ puprMinPublishTime $ ppuprPayload row
+        , field "max_publish_time" $ puprMaxPublishTime $ ppuprPayload row
+        ]
+    _ ->
+      logWarnEvery 60 "pyth_payload_basket_pair_missing"
+        "Newest admitted latest Pyth payload is not ready for paired liquidation reads" []
 
 signedObservationPriority :: Int
 signedObservationPriority = 100
