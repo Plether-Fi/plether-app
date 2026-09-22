@@ -249,6 +249,34 @@ describe('perps lifecycle labels', () => {
     })
   })
 
+  it('keeps reviewed execution terms and submits the same order after market polling updates', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    perpsTradingMocks.prepareOrder.mockClear()
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
+    const publishTime = Math.floor(Date.now() / 1_000)
+    const view = render(
+      <PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+        oraclePriceRaw={100_000_000n} oraclePublishTime={publishTime}
+        availableToTradeRaw={1_000_000_000n} />
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce()
+    view.rerender(
+      <PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+        oraclePriceRaw={100_005_000n} oraclePublishTime={publishTime + 2}
+        availableToTradeRaw={999_999_000n} />
+    )
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    expect(screen.queryByText('Order updated. Review the changes before confirming.')).not.toBeInTheDocument()
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+    expect(perpsTradingMocks.commitOrder.mock.calls[0][0].preparedOrder).toBe(original)
+  })
+
   it('makes the activity check conditional after a gateway deadline refusal', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
@@ -330,9 +358,9 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n} />
     )
-    expect(await within(screen.getByRole('dialog')).findByText('This review has expired or is about to expire. Retry review for fresh order terms.')).toBeInTheDocument()
+    expect(await within(screen.getByRole('dialog')).findByText('This quote is no longer valid for confirmation. Refresh review to get updated order terms.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retry review' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: 'Refresh review' })[0])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
     expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()

@@ -157,26 +157,33 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(3)
   })
 
-  it('refreshes at forty-five seconds remaining and retains the last displayed terms', async () => {
+  it('expires at forty-five seconds remaining and retains terms until an explicit retry', async () => {
     const pending = deferred<PreparedPerpsOrderV2>()
     const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(55)))
     await advance(0)
     const original = view.result.current.result
     await advance(10_000)
     expect(view.result.current.ready).toBe(false)
-    expect(view.result.current.refreshing).toBe(true)
+    expect(view.result.current.refreshing).toBe(false)
     expect(view.result.current.result).toBe(original)
+    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
+    expect(view.prepare).toHaveBeenCalledTimes(1)
+    act(() => { view.result.current.retry() })
+    expect(view.result.current.refreshing).toBe(true)
     await act(async () => { pending.resolve(prepared(55, 30_000_000n)) })
     expect(view.result.current.previous).toBe(original)
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
     await advance(10_000)
-    expect(view.prepare).toHaveBeenCalledTimes(3)
+    expect(view.prepare).toHaveBeenCalledTimes(2)
+    expect(view.result.current.ready).toBe(false)
   })
 
-  it('stops on refresh failure or an already expiring response', async () => {
+  it('stops on explicit refresh failure or an already expiring response', async () => {
     const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValue(new Error('offline')))
     await advance(10_000)
+    act(() => { view.result.current.retry() })
+    await advance(0)
     expect(view.result.current.status).toBe('error')
     expect(view.result.current.ready).toBe(false)
     await advance(60_000)
@@ -231,8 +238,9 @@ describe('order preparation lifecycle', () => {
     expect(view.result.current.ready).toBe(false)
     act(() => { visibility = 'visible'; document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(view.prepare).toHaveBeenCalledTimes(2)
-    expect(view.result.current.ready).toBe(true)
+    expect(view.prepare).toHaveBeenCalledTimes(1)
+    expect(view.result.current.ready).toBe(false)
+    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
   })
 
   it('recovers after StrictMode effect cleanup and ignores work after unmount', async () => {
@@ -248,7 +256,7 @@ describe('order preparation lifecycle', () => {
     expect(prepare).toHaveBeenCalledTimes(count)
   })
 
-  it('rechecks changed account context without changing the frozen order', async () => {
+  it('keeps the prepared quote stable when polled context changes until explicit retry', async () => {
     const prepare = vi.fn().mockImplementation(async () => prepared())
     const input = { quantity: 100n }
     const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({ mode: 'review', identityKey: 'account',
@@ -256,14 +264,20 @@ describe('order preparation lifecycle', () => {
     await advance(0)
     const before = view.result.current.result
     view.rerender({ contextKey: 'balance-two' })
-    expect(view.result.current.ready).toBe(false)
+    await advance(0)
+    expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.matches).toBe(true)
+    expect(view.result.current.result).toBe(before)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    act(() => { view.result.current.retry() })
     await advance(0)
     expect(view.result.current.previous).toBe(before)
+    expect(view.result.current.contextKey).toBe('balance-two')
     expect(prepare).toHaveBeenCalledTimes(2)
     expect(prepare).toHaveBeenLastCalledWith(input, expect.any(AbortSignal))
   })
 
-  it('refreshes changed context on returning from a briefly hidden tab even inside the reuse window', async () => {
+  it('preserves a valid quote on returning from a hidden tab despite polled context changes', async () => {
     let visibility: DocumentVisibilityState = 'visible'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
     const prepare = vi.fn().mockImplementation(async () => prepared())
@@ -276,7 +290,7 @@ describe('order preparation lifecycle', () => {
     expect(prepare).toHaveBeenCalledTimes(1)
     act(() => { visibility = 'visible'; document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(prepare).toHaveBeenCalledTimes(2)
+    expect(prepare).toHaveBeenCalledTimes(1)
     expect(view.result.current.ready).toBe(true)
   })
 
@@ -396,6 +410,8 @@ describe('oracle recovery during review', () => {
     await advance(0)
     const previous = view.result.current.result
     await advance(10_000)
+    act(() => { view.result.current.retry() })
+    await advance(0)
     expect(view.result.current.result).toBe(previous)
     expect(view.result.current.ready).toBe(false)
     await advance(2000)
@@ -403,7 +419,7 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
   })
-  it('rebuilds changed account context before resuming hidden recovery', async () => {
+  it('resumes initial recovery without restarting it when hidden context changes', async () => {
     const prepare = vi.fn().mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared())
     const view = renderHook(({ contextKey }) => usePerpsOrderPreparation({
       candidate: { key: 'draft', input: { quantity: 100n } }, identityKey: 'account',
@@ -418,7 +434,7 @@ describe('oracle recovery during review', () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     act(() => { document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
-    expect(view.result.current.contextKey).toBe('after')
+    expect(view.result.current.contextKey).toBe('before')
     expect(view.result.current.ready).toBe(true)
     expect(prepare).toHaveBeenCalledTimes(2)
   })
