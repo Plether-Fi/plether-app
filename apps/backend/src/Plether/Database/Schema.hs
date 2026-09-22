@@ -20,6 +20,10 @@ module Plether.Database.Schema
   , BasketHistorySnapshotRow (..)
   , BasketSnapshotRow (..)
   , insertPythUpdatePayload
+  , insertPairedPythUpdatePayload
+  , hydratePythUpdatePayloadBasket
+  , getLatestPairedPythUpdatePayload
+  , PairedPythUpdatePayloadRow (..)
   , getPythUpdatePayloadForWindow
   , getLatestPythUpdatePayload
   , getLatestPythUpdatePayloadAtOrAfter
@@ -635,6 +639,7 @@ ensureBasketSnapshotSchema conn = do
     \created_at TIMESTAMP DEFAULT NOW(),\
     \UNIQUE (min_publish_time, max_publish_time)\
     \)"
+  ensurePairedPythPayloadSchema conn
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window \
     \ON perps_pyth_update_payloads(min_publish_time, max_publish_time)"
@@ -642,6 +647,24 @@ ensureBasketSnapshotSchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest \
     \ON perps_pyth_update_payloads(max_publish_time DESC) \
     \WHERE source = 'backend_hermes_latest_v2'"
+  pure ()
+
+-- Several ECS services initialize this schema concurrently during deployment.
+-- Serialize the additive migration and its constraint under one transaction.
+ensurePairedPythPayloadSchema :: Connection -> IO ()
+ensurePairedPythPayloadSchema conn = withTransaction conn $ do
+  _ <- query_ conn "SELECT 1 FROM pg_advisory_xact_lock(20260922, 1)" :: IO [Only Int]
+  _ <- execute_ conn
+    "ALTER TABLE perps_pyth_update_payloads \
+    \ADD COLUMN IF NOT EXISTS basket_price BIGINT, \
+    \ADD COLUMN IF NOT EXISTS component_prices JSONB"
+  _ <- execute_ conn
+    "DO $$ BEGIN \
+    \IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_pyth_update_payloads'::regclass \
+    \AND conname = 'pyth_payload_basket_pair') THEN \
+    \ALTER TABLE perps_pyth_update_payloads ADD CONSTRAINT pyth_payload_basket_pair \
+    \CHECK ((basket_price IS NULL) = (component_prices IS NULL)); \
+    \END IF; END $$"
   pure ()
 
 insertBasketSnapshot
@@ -820,6 +843,22 @@ instance FromRow PythUpdatePayloadRow where
     <*> field
     <*> field
 
+-- Legacy rows remain distinguishable from an absent payload. Classification
+-- must never substitute an older payload or a mutable minute snapshot.
+data PairedPythUpdatePayloadRow = PairedPythUpdatePayloadRow
+  { ppuprPayload :: PythUpdatePayloadRow
+  , ppuprBasket :: Maybe BasketSnapshotRow
+  }
+  deriving stock (Show)
+
+instance FromRow PairedPythUpdatePayloadRow where
+  fromRow = do
+    payload <- fromRow
+    price <- field
+    components <- field
+    let basket = BasketSnapshotRow (puprMinPublishTime payload) 0 <$> price <*> components
+    pure $ PairedPythUpdatePayloadRow payload basket
+
 isHistoricalRevealPayload :: PythUpdatePayloadRow -> Bool
 isHistoricalRevealPayload =
   isHistoricalRevealPayloadSource . puprSource
@@ -859,23 +898,59 @@ insertPythUpdatePayload
   -> Integer -- fetched_at
   -> Text    -- source
   -> IO ()
-insertPythUpdatePayload _ _ _ _ _ _ source
+insertPythUpdatePayload conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source =
+  insertPythUpdatePayloadInternal conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source Nothing
+
+insertPairedPythUpdatePayload
+  :: Connection -> Integer -> Integer -> Value -> Value -> Integer -> Text -> Integer -> Value -> IO ()
+insertPairedPythUpdatePayload conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source basketPrice components =
+  insertPythUpdatePayloadInternal conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source (Just (basketPrice, components))
+
+insertPythUpdatePayloadInternal
+  :: Connection -> Integer -> Integer -> Value -> Value -> Integer -> Text -> Maybe (Integer, Value) -> IO ()
+insertPythUpdatePayloadInternal _ _ _ _ _ _ source _
   | not (isAdmittedPythPayloadSource source) =
       fail $ "refusing to persist a Pyth payload without on-chain-admitted source v2: " <> T.unpack source
-insertPythUpdatePayload conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source = do
+insertPythUpdatePayloadInternal conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source basket = do
   _ <- execute conn
     "INSERT INTO perps_pyth_update_payloads \
-    \(min_publish_time, max_publish_time, publish_times, update_data, source, fetched_at) \
-    \VALUES (?, ?, ?, ?, ?, ?) \
+    \(min_publish_time, max_publish_time, publish_times, update_data, source, fetched_at, basket_price, component_prices) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (min_publish_time, max_publish_time) DO UPDATE SET \
     \publish_times = EXCLUDED.publish_times, \
     \update_data = EXCLUDED.update_data, \
     \source = EXCLUDED.source, \
-    \fetched_at = EXCLUDED.fetched_at \
+    \fetched_at = EXCLUDED.fetched_at, \
+    \basket_price = EXCLUDED.basket_price, \
+    \component_prices = EXCLUDED.component_prices \
     \WHERE perps_pyth_update_payloads.source NOT IN ('backend_hermes_historical_v2', 'backend_hermes_reveal_v2') \
     \OR EXCLUDED.source IN ('backend_hermes_historical_v2', 'backend_hermes_reveal_v2')"
-    (minPublishTime, maxPublishTime, encode publishTimes, encode updateData, source, fetchedAt)
+    (minPublishTime, maxPublishTime, encode publishTimes, encode updateData, source, fetchedAt, fst <$> basket, encode . snd <$> basket)
   pure ()
+
+-- A signed stale latest response can repair only its exact existing payload;
+-- it cannot promote a new price, refresh fetched_at or advance observations.
+hydratePythUpdatePayloadBasket
+  :: Connection -> Integer -> Integer -> Value -> Value -> Text -> Integer -> Value -> IO Bool
+hydratePythUpdatePayloadBasket conn minPublishTime maxPublishTime publishTimes updateData source basketPrice components
+  | not (isAdmittedPythPayloadSource source) = fail "refusing to hydrate an unadmitted Pyth payload"
+  | otherwise = do
+      changed <- execute conn
+        "UPDATE perps_pyth_update_payloads SET basket_price = ?, component_prices = ? \
+        \WHERE min_publish_time = ? AND max_publish_time = ? AND publish_times = ?::jsonb \
+        \AND update_data = ?::jsonb AND source = ? AND basket_price IS NULL AND component_prices IS NULL"
+        (basketPrice, encode components, minPublishTime, maxPublishTime, encode publishTimes, encode updateData, source)
+      pure $ changed == 1
+
+getLatestPairedPythUpdatePayload :: Connection -> IO (Maybe PairedPythUpdatePayloadRow)
+getLatestPairedPythUpdatePayload conn = do
+  rows <- query_ conn
+    "SELECT min_publish_time, max_publish_time, publish_times, update_data, fetched_at, source, basket_price, component_prices \
+    \FROM perps_pyth_update_payloads WHERE source = 'backend_hermes_latest_v2' \
+    \ORDER BY max_publish_time DESC, min_publish_time DESC LIMIT 1"
+  case rows of
+    [row] -> pure $ Just row
+    _ -> pure Nothing
 
 getPythUpdatePayloadForWindow
   :: Connection

@@ -252,6 +252,20 @@ CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE (min_publish_time, max_publish_time)
 );
+ALTER TABLE perps_pyth_update_payloads
+    ADD COLUMN IF NOT EXISTS basket_price BIGINT,
+    ADD COLUMN IF NOT EXISTS component_prices JSONB;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'perps_pyth_update_payloads'::regclass
+          AND conname = 'pyth_payload_basket_pair'
+    ) THEN
+        ALTER TABLE perps_pyth_update_payloads
+            ADD CONSTRAINT pyth_payload_basket_pair
+            CHECK ((basket_price IS NULL) = (component_prices IS NULL));
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window
     ON perps_pyth_update_payloads(min_publish_time, max_publish_time);
 
