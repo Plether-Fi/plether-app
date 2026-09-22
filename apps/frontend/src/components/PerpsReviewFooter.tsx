@@ -29,7 +29,7 @@ export function PerpsReviewFooter({ sponsoredCloseUsdc, depositCarryUsdc, commit
           <p>{recoveringOracle ? 'Updating market price…' : slow ? 'Network is taking longer than usual.' : refreshing
             ? 'Updating review. Previous values remain visible until checks finish.'
             : 'Checking your order before confirmation.'}</p>
-        ) : error ? <p className="text-brand-orange">{error}</p> : changes.length > 0 ? (
+        ) : error ? <p className="whitespace-pre-line [overflow-wrap:anywhere] text-brand-orange">{error.split('\n\n').map(part => <span key={part} className="block">{part}</span>)}</p> : changes.length > 0 ? (
           <>
             <p className="font-semibold text-content-primary">Order updated. Review the changes before confirming.</p>
             <ul tabIndex={0} aria-label="Updated order terms" className="mt-2 max-h-40 space-y-1 overflow-y-auto">

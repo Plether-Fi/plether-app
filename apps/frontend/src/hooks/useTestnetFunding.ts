@@ -1,3 +1,4 @@
+import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useEffect, useRef, useState } from 'react'
 import { Result } from 'better-result'
 import { isAddressEqual, isHash, type Address } from 'viem'
@@ -111,7 +112,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       }
     } catch (cause) {
       if (!isCancelled()) {
-        setError(cause instanceof Error ? cause.message : 'Unable to fund your Margin Account. Please try again.')
+        setError(reportedTransactionError(cause, cause instanceof Error ? cause.message : 'Unable to fund your Margin Account. Please try again.', { surface: 'perps', action: 'testnet_funding', stage: 'funding' }).message)
         setPhase('idle')
       }
     } finally {

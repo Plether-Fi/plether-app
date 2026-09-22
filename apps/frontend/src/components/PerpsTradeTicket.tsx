@@ -1,3 +1,5 @@
+import { getPerpsErrorMessage } from '../utils/perpsErrors'
+import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1615,14 +1617,17 @@ function SuccessStateCard({
   )
 }
 
-function FailedStateCard({ title, description }: { title: string; description: string }) {
+function FailedStateCard({ title, description, referenceSource = description }: { title: string; description: string; referenceSource?: string }) {
+  const reference = /Support reference: ((?:tx-)?[0-9a-f-]{36})/i.exec(referenceSource)?.[1]
+  const explanation = description.replace(/\s*Support reference: (?:tx-)?[0-9a-f-]{36}/i, '')
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-brand-orange/40 bg-brand-orange/10 px-6 py-8 text-center">
+    <div className="flex min-h-52 min-w-0 flex-col items-center justify-center border border-brand-orange/40 bg-brand-orange/10 px-6 py-8 text-center">
       <div className="flex h-14 w-14 items-center justify-center border border-brand-orange/40 bg-brand-orange/15 text-brand-orange">
         <span className="material-symbols-outlined text-4xl">close</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-brand-orange">{title}</div>
-      <div className="mt-2 max-w-xl whitespace-pre-line text-left text-sm leading-6 text-content-secondary">{description}</div>
+      <div className="mt-2 w-full min-w-0 max-w-xl whitespace-pre-line [overflow-wrap:anywhere] text-left text-sm leading-6 text-content-secondary">{explanation}</div>
+      {reference && <p className="mt-4 w-full min-w-0 text-left text-xs text-content-secondary">Support reference: <code className="select-all [overflow-wrap:anywhere]">{reference}</code></p>}
     </div>
   )
 }
@@ -2230,7 +2235,7 @@ export function PerpsTradeTicket({
         })()
       }
     } else {
-      setFlowError(terminalOrderFailureMessage(order))
+      setFlowError(reportedTransactionError({ reason: 'CONTRACT_REVERTED' }, terminalOrderFailureMessage(order), { surface: 'perps', action: 'order_execution', stage: 'finalization' }).message)
       setLifecycleState('selfExecuteFailed')
       void onAccountRefreshRef.current?.()
     }
@@ -3077,8 +3082,9 @@ export function PerpsTradeTicket({
     : preparationError instanceof PerpsOrderReviewError ? preparationError.reviewSummary : undefined
   const reviewFundingShortfallUsdc = preparationError instanceof PerpsOrderFundingShortfallError ? preparationError.shortfallUsdc : undefined
   const isExecutionProtectionsLoading = canPrepare && isReviewOpen && (preparation.status === 'pending' || !preparation.matches)
-  const executionProtectionsError = preparationError instanceof Error ? preparationError.message
-    : preparationError ? 'Order checks failed. Retry review.' : undefined
+  const executionProtectionsError = preparationError
+    ? `${getPerpsErrorMessage(preparationError, 'review').replace(/\s*Support reference: (?:tx-)?[0-9a-f-]{36}/gi, '')}${preparation.supportReference ? `\n\nSupport reference: ${preparation.supportReference}` : ''}`
+    : undefined
   const reviewChanges = perpsReviewChanges(preparation.previous, preparedOrder)
   const reviewedExecutionLimit = preparedOrder?.request.targetPrice ?? rawExecutionLimit
   const executionLimit = reviewedExecutionLimit === 0n
@@ -5198,6 +5204,7 @@ export function PerpsTradeTicket({
                       ? 'Historical price data rejected'
                       : 'Finalization transaction failed'
                 }
+                referenceSource={flowError}
                 description={failureContext?.explanation ?? flowError ?? 'The wallet rejected the transaction or the finalization transaction did not settle the order.'}
               />
 
@@ -5620,7 +5627,7 @@ export function PerpsTradeTicket({
 
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-              <p>{marginActionError}</p>
+              <p className="whitespace-pre-line [overflow-wrap:anywhere]">{marginActionError}</p>
               {marginAction === 'deposit' && usesOwnerDepositAuthorization && !activeAccountOperation?.nativePreparation ? (
                 <button
                   type="button"

@@ -56,7 +56,7 @@ export function TransactionNotifications() {
         addToast({
           type: 'error',
           title: `${label} Failed`,
-          message: tx.errorMessage ?? tx.title,
+          message: `${tx.errorMessage ?? 'Check transaction activity for details.'}${tx.supportReference ? ` Support reference: ${tx.supportReference}` : ''}`,
         })
       }
     })

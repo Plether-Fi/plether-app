@@ -1,3 +1,4 @@
+import { reportedTransactionError } from '../analytics/transactionErrors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
@@ -575,7 +576,7 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
-      throw new Error(getPerpsErrorMessage(error, 'fund'))
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'fund'), { surface: 'perps', action: 'fund' })
     }
   }, [
     invalidatePerpsReads,
@@ -699,8 +700,8 @@ export function usePerpsTrading() {
         }, error)
       }
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'deposit'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'deposit' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'deposit'), { surface: 'perps', action: 'deposit' })
     }
   }, [
     aaRuntime,
@@ -739,8 +740,8 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'withdraw'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'withdraw' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'withdraw'), { surface: 'perps', action: 'withdraw' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
@@ -770,8 +771,8 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'addPositionMargin'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'addPositionMargin' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'addPositionMargin'), { surface: 'perps', action: 'addPositionMargin' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
@@ -840,7 +841,7 @@ export function usePerpsTrading() {
     } catch (error) {
       if (error instanceof PerpsOrderFundingShortfallError || error instanceof PerpsOrderReviewError) throw error
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'review' })
       throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
   }, [address, publicClient, requireSponsoredExecution])
@@ -1033,7 +1034,7 @@ export function usePerpsTrading() {
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
-        throw new Error(sponsorReasonMessage(sponsorError))
+        throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'commit' })
       }
       const message = getPerpsErrorMessage(error, 'commit')
       debugPerpsCommit('failed', {
@@ -1050,8 +1051,8 @@ export function usePerpsTrading() {
         diagnosticMarginDelta !== undefined
       ) {
         const failureHash = diagnosticHash ?? findTransactionHash(error)
-        throw new Error(
-          await describeCommitFailure({
+        throw reportedTransactionError(
+          error, await describeCommitFailure({
             client: diagnosticClient,
             address,
             hash: failureHash,
@@ -1065,11 +1066,11 @@ export function usePerpsTrading() {
             marginDelta: diagnosticMarginDelta,
             oraclePrice,
           }),
-          { cause: error }
+          { surface: 'perps', action: 'commit' }
         )
       }
 
-      throw new Error(message, { cause: error })
+      throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
   }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, walletClient])
 
@@ -1151,8 +1152,8 @@ export function usePerpsTrading() {
       return hash
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
-      throw new Error(getPerpsErrorMessage(error, 'settleClaim'))
+      if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'settleClaim' })
+      throw reportedTransactionError(error, getPerpsErrorMessage(error, 'settleClaim'), { surface: 'perps', action: 'settleClaim' })
     }
   }, [address, invalidatePerpsReads, requireSponsoredExecution])
 
@@ -1218,7 +1219,7 @@ export function usePerpsTrading() {
       return { protectionId: events[0].args.protectionId, hash: result.transactionHash }
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
-      throw new Error(sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { cause: error })
+      throw reportedTransactionError(error, sponsorError ? sponsorReasonMessage(sponsorError) : getPerpsErrorMessage(error, 'protection'), { surface: 'perps', action: 'protection' })
     }
   }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
 

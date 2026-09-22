@@ -1,3 +1,4 @@
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 import type { SavedOrderDraft } from './orderDraft'
 import type { NativePreparationRequestV1, PreparedOperationV1 } from './preparedOperation'
 import type {
@@ -3159,6 +3160,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           ) {
             return
           }
+          reportTransactionFailure({ reason, terminalStatus: status }, undefined, { surface: 'perps', action: currentOperation.action, stage: status, attemptId: id })
           const now = Math.max(
             Date.now(),
             currentOperation.updatedAt + 1

@@ -1,6 +1,7 @@
 import { deadlineNow } from '../perps-aa/deadlineClock'
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 import { captureAnalyticsEvent } from '../analytics/client'
 import { getPreparationFailureProperties, preparationFailure } from '../utils/perpsPreparationDiagnostics'
 import { isPerpsOracleSyncError } from '../utils/perpsErrors'
@@ -43,6 +44,7 @@ interface PreparationState {
   result?: PreparedPerpsOrderV2
   previous?: PreparedPerpsOrderV2
   error?: unknown
+  supportReference?: string
   startedAt: number
   visible: boolean
   slow: boolean
@@ -50,7 +52,7 @@ interface PreparationState {
   recoveringOracle: boolean
 }
 const initialState: PreparationState = {
-  key: undefined, identityKey: undefined, contextKey: undefined, result: undefined, previous: undefined, error: undefined,
+  key: undefined, identityKey: undefined, contextKey: undefined, result: undefined, previous: undefined, error: undefined, supportReference: undefined,
   status: 'idle', startedAt: 0, visible: true, slow: false, refreshing: false, recoveringOracle: false,
 }
 
@@ -170,7 +172,7 @@ class PreparationController<T> {
     if (source === 'background') this.backgroundGeneration = generation
     if (source === 'refresh') { this.openedAt = startedAt; this.admission = 'refresh' }
     this.publish({ key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey, status: 'pending', startedAt,
-      result: previous, previous, error: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
+      result: previous, previous, error: undefined, supportReference: undefined, slow: false, recoveringOracle: continuingRecovery !== undefined, refreshing: source === 'refresh' })
     const current = () => !this.disposed && generation === this.generation
     let finished = false
     let recoveryStartedAt = continuingRecovery?.startedAt
@@ -198,10 +200,14 @@ class PreparationController<T> {
           result = undefined
         }
       }
+      const failure = current() && error ? reportTransactionFailure(error, undefined, {
+        surface: 'perps', action: 'order_review', stage: getPreparationFailureProperties(error).stage,
+      }) : undefined
       if (!this.disposed) captureAnalyticsEvent('perps order preparation finished', {
         surface: 'perps', duration_ms: performance.now() - startedAt, reason_code: source,
         error_category: !current() ? 'cancelled' : error ? 'preparation_failed' : 'none',
         ...(current() && error ? getPreparationFailureProperties(error) : {}),
+        ...(failure ? { support_reference: failure.supportReference } : {}),
       })
       if (current()) {
         this.clearTimers()
@@ -211,7 +217,7 @@ class PreparationController<T> {
         if (recoveryStartedAt !== undefined) trackRecovery(error
           ? error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE ? 'exhausted' : 'failed'
           : 'succeeded')
-        this.publish({ status: error ? 'error' : 'ready', result: result ?? previous, error, slow: false, recoveringOracle: false })
+        this.publish({ status: error ? 'error' : 'ready', result: result ?? previous, error, supportReference: failure?.supportReference, slow: false, recoveringOracle: false })
         if (!error) { this.trackReady(); this.scheduleRefresh() }
       }
     }

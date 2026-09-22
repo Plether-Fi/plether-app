@@ -1,3 +1,5 @@
+import { transactionFailureCode, TRANSACTION_FAILURE_MESSAGES } from '../utils/transactionFailure'
+
 export type StableSponsorReason =
   | 'RESTART_ESTIMATION'
   | 'RATE_LIMITED'
@@ -172,7 +174,7 @@ export function isRecoveryUnauthorized(error: unknown): boolean {
 
 /** Preserve only stable gateway codes, never provider messages or payloads. */
 export function submissionFailureReason(error: unknown): string {
-  const reason = sponsorMetadata(error).reason
+  const reason = sponsorMetadata(error).reason ?? transactionFailureCode(error)
   return reason && [
     'SECURITY_ATTESTATION_UNAVAILABLE', 'SUBMISSION_PAUSED',
     'SPONSORSHIP_NOT_AUTHORIZED', 'DATABASE_UNAVAILABLE',
@@ -285,8 +287,10 @@ export function sponsorReasonMessage(error: SponsorRequestError): string {
     case 'ACCOUNT_DEPLOYMENT_PENDING':
       return 'Your Trading Account deployment is awaiting safe confirmation. This can take several minutes. Wait before retrying; this action has not been sent.'
     case 'SPONSOR_UNAVAILABLE':
-      return 'Plether gas sponsorship is temporarily unavailable. Your action was not sent.'
+      return TRANSACTION_FAILURE_MESSAGES.SPONSOR_UNAVAILABLE
     default:
-      return 'Plether could not sponsor this transaction. Your action was not sent.'
+      return Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, error.reason)
+        ? TRANSACTION_FAILURE_MESSAGES[error.reason]
+        : TRANSACTION_FAILURE_MESSAGES.SUBMISSION_OUTCOME_UNKNOWN
   }
 }

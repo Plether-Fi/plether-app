@@ -8,6 +8,7 @@ import {
   type PreparedPerpsOrderV2,
 } from '../contracts/perpsOrderV2'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
+import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import {
   PerpsIdentityContext,
   type PerpsAaDeploymentManifest,
@@ -768,6 +769,24 @@ export const Failed: Story = {
     initialReviewOpen: true,
   },
   render: (args) => <TicketFrame {...args} />,
+}
+
+export const ApprovalDeadlineFailed: Story = {
+  name: 'Commit Failed · Approval Deadline',
+  args: {
+    ...Failed.args,
+    initialFlowError: getPerpsErrorMessage({
+      details: JSON.stringify({ code: -32001, data: { reason: 'DEADLINE_TOO_CLOSE', retryable: false } }),
+    }, 'commit') + '\n\nSupport reference: 7b2d5d87-5ddf-4eca-8c03-cd68c4af7281',
+  },
+  render: (args) => <TicketFrame {...args} />,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body)
+    await expect(page.getByText('Commit transaction failed')).toBeVisible()
+    await expect(page.getByText(/Approval finished too close/)).toBeVisible()
+    await expect(page.getByText('7b2d5d87-5ddf-4eca-8c03-cd68c4af7281')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Review again' })).toBeVisible()
+  },
 }
 
 export const DepositMargin: Story = {

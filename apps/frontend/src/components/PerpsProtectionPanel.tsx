@@ -225,7 +225,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         </div> : null}
         {pending ? <p role="status" className="text-xs text-content-secondary">Confirm in your wallet, then wait for the update.</p> : null}
         {view !== 'overview' && (targetChanged || (view === 'review' && reviewChanged)) ? <p role="alert" className="text-xs text-brand-orange">{STATE_CHANGED}</p> : null}
-        {error ? <p role="alert" className="break-words text-sm text-brand-orange">{error}</p> : null}
+        {error ? <p role="alert" className="whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error}</p> : null}
         {view === 'review' && reviewPriceError ? <p role="alert" className="text-sm text-brand-orange">{reviewPriceError}</p> : null}
         {success ? <p role="status" className="text-xs text-positive">{success}</p> : null}
       </div>

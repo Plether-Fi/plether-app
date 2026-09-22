@@ -1,3 +1,4 @@
+import { readableTransactionMessage } from './transactionFailure'
 import { TaggedError, matchErrorPartial } from 'better-result'
 
 const ERROR_SELECTORS: Record<string, string> = {
@@ -191,7 +192,7 @@ export class ContractRevertError extends TaggedError('ContractRevertError')<{
 }>() {
   constructor(args: { reason?: string; rawData?: string }) {
     const reason = args.reason ?? 'Unknown reason'
-    super({ reason, message: reason, rawData: args.rawData })
+    super({ reason, message: readableTransactionMessage(reason), rawData: args.rawData })
   }
 }
 
@@ -230,21 +231,6 @@ export type TransactionError =
   | TimeoutError
   | UnknownTransactionError
 
-function extractHttpDetails(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null
-  const err = error as { url?: string; status?: number; cause?: unknown }
-  if (err.url) {
-    const host = safeParseHost(err.url)
-    return `${host} responded ${String(err.status ?? '?')}`
-  }
-  if (err.cause) return extractHttpDetails(err.cause)
-  return null
-}
-
-function safeParseHost(url: string): string {
-  try { return new URL(url).host } catch { return url }
-}
-
 function extractMessage(error: unknown): string {
   if (!error) return 'Transaction failed'
 
@@ -260,13 +246,7 @@ function extractMessage(error: unknown): string {
   else if (errorObj.message) msg = errorObj.message
   else if (typeof error === 'string') msg = error
 
-  const httpDetail = extractHttpDetails(error)
-  if (httpDetail) msg += ` (${httpDetail})`
-
-  if (msg.length > 200) {
-    return msg.slice(0, 200) + '...'
-  }
-  return msg
+  return readableTransactionMessage(msg)
 }
 
 const USER_REJECTION_PATTERNS = [
@@ -369,7 +349,7 @@ export function parseTransactionError(error: unknown): TransactionError {
     // Unknown selector - show full error data
     const selector = errorData.slice(0, 10)
     return new ContractRevertError({
-      reason: `Unknown error ${selector}`,
+      reason: `The contract rejected this transaction with an unrecognized error (${selector}). Refresh account state before trying again.`,
       rawData: errorData
     })
   }

@@ -131,7 +131,7 @@ export function useMint() {
       updateTransaction(txIdRef.current, {
         status: 'failed',
         errorMessage: getErrorMessage(txError),
-      })
+      }, txError)
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
@@ -172,7 +172,7 @@ export function useMint() {
                 updateTransaction(txId, {
                   status: 'failed',
                   errorMessage: getErrorMessage(txError),
-                })
+                }, txError)
                 txIdRef.current = null
                 reject(txError)
               },
@@ -187,7 +187,7 @@ export function useMint() {
         updateTransaction(txId, {
           status: 'failed',
           errorMessage: getErrorMessage(txError),
-        })
+        }, txError)
         txIdRef.current = null
         return txError
       },
@@ -231,7 +231,7 @@ export function useBurn() {
       updateTransaction(txIdRef.current, {
         status: 'failed',
         errorMessage: getErrorMessage(txError),
-      })
+      }, txError)
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
@@ -272,7 +272,7 @@ export function useBurn() {
                 updateTransaction(txId, {
                   status: 'failed',
                   errorMessage: getErrorMessage(txError),
-                })
+                }, txError)
                 txIdRef.current = null
                 reject(txError)
               },
@@ -287,7 +287,7 @@ export function useBurn() {
         updateTransaction(txId, {
           status: 'failed',
           errorMessage: getErrorMessage(txError),
-        })
+        }, txError)
         txIdRef.current = null
         return txError
       },

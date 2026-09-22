@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
 import { STORAGE_KEYS } from '../config/constants'
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 
 export type TransactionStatus = 'pending' | 'confirming' | 'success' | 'failed'
 export type TransactionType = 'mint' | 'burn' | 'swap' | 'stake' | 'unstake' | 'leverage' | 'lend' | 'approve' | 'supply' | 'withdraw' | 'borrow' | 'repay'
@@ -18,6 +19,8 @@ export interface Transaction {
   steps: TransactionStep[]
   hash?: string
   errorMessage?: string
+  supportReference?: string
+  errorCode?: string
   timestamp: number
   chainId?: number
 }
@@ -27,14 +30,14 @@ interface TransactionState {
   activeOperations: Record<string, string>
 
   addTransaction: (tx: Omit<Transaction, 'timestamp'>) => void
-  updateTransaction: (id: string, update: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => void
+  updateTransaction: (id: string, update: Partial<Omit<Transaction, 'id' | 'timestamp'>>, cause?: unknown) => void
   removeTransaction: (id: string) => void
   clearTransactions: () => void
   cleanupOldTransactions: () => void
 
   setStepInProgress: (id: string, stepIndex: number) => void
   setStepConfirming: (id: string, stepIndex: number, hash: string) => void
-  setStepError: (id: string, stepIndex: number, errorMessage: string) => void
+  setStepError: (id: string, stepIndex: number, errorMessage: string, cause?: unknown) => void
   setStepSuccess: (id: string, hash: string) => void
 
   setActiveOperation: (key: string, txId: string) => void
@@ -57,12 +60,27 @@ export const useTransactionStore = create<TransactionState>()(
             ],
           })),
 
-        updateTransaction: (id, update) =>
+        updateTransaction: (id, update, cause) => {
+          const previous = get().transactions.find(tx => tx.id === id)
+          if (previous && (update.status === 'failed' || (previous.status === 'failed' && update.errorMessage !== undefined))) {
+            const failure = reportTransactionFailure(cause ?? update.errorMessage, update.errorMessage, {
+              surface: 'wallet', action: previous.type, stage: 'transaction', attemptId: previous.supportReference ?? id,
+            })
+            const steps = update.steps ?? previous.steps
+            const activeIndex = steps.findIndex(step => step.status === 'in_progress' || step.status === 'confirming')
+            const pendingIndex = steps.findIndex(step => step.status === 'pending')
+            const errorIndex = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : steps.length - 1
+            update = { ...update, errorMessage: failure.message, supportReference: failure.supportReference, errorCode: failure.errorCode,
+              steps: steps.some(step => step.status === 'error') ? steps
+                : steps.map((step, index) => index === errorIndex ? { ...step, status: 'error' } : step),
+            }
+          }
           set((state) => ({
             transactions: state.transactions.map((tx) =>
               tx.id === id ? { ...tx, ...update } : tx
             ),
-          })),
+          }))
+        },
 
         removeTransaction: (id) =>
           set((state) => ({
@@ -122,7 +140,7 @@ export const useTransactionStore = create<TransactionState>()(
           }))
         },
 
-        setStepError: (id, stepIndex, errorMessage) => {
+        setStepError: (id, stepIndex, errorMessage, cause) => {
           const tx = get().transactions.find((t) => t.id === id)
           if (!tx) return
 
@@ -135,11 +153,7 @@ export const useTransactionStore = create<TransactionState>()(
             return step
           })
 
-          set((state) => ({
-            transactions: state.transactions.map((t) =>
-              t.id === id ? { ...t, steps: newSteps, status: 'failed', errorMessage } : t
-            ),
-          }))
+          get().updateTransaction(id, { steps: newSteps, status: 'failed', errorMessage }, cause)
         },
 
         setStepSuccess: (id, hash) => {

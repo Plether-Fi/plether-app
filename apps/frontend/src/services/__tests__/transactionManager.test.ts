@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { captureAnalyticsEvent } from '../../analytics/client'
+import { useTransactionModal } from '../../hooks/useTransactionModal'
 import { useTransactionStore } from '../../stores/transactionStore'
 
 const MOCK_ADDRESS = '0x1234567890123456789012345678901234567890' as const
@@ -11,6 +13,8 @@ const mockSignTypedData = vi.fn()
 const mockGetWalletClient = vi.fn()
 const mockWaitForTransactionReceipt = vi.fn()
 const mockGetPublicClient = vi.fn()
+
+vi.mock('../../analytics/client', () => ({ captureAnalyticsEvent: vi.fn(), captureFrontendLog: vi.fn() }))
 
 vi.mock('@wagmi/core', () => ({
   readContract: (...args: unknown[]) => mockReadContract(...args),
@@ -48,6 +52,21 @@ describe('transactionManager permit signing', () => {
     useTransactionStore.getState().transactions = []
     transactionManager.setConfig(mockConfig)
     setupMocks()
+  })
+
+  it('presents and reports wallet setup failures before a transaction exists', async () => {
+    mockGetWalletClient.mockRejectedValueOnce(new Error('Failed to fetch'))
+    await transactionManager.executeMint(1n, 1n)
+    const failure = useTransactionStore.getState().transactions.at(-1)
+    expect(failure?.status).toBe('failed')
+    expect(failure?.errorMessage).toContain('Check account activity')
+    expect(failure?.supportReference).toMatch(/[\da-f-]{36}/)
+    expect(useTransactionModal.getState().isOpen).toBe(true)
+    expect(useTransactionStore.getState().transactions[useTransactionModal.getState().currentIndex].id).toBe(failure?.id)
+    expect(captureAnalyticsEvent).toHaveBeenCalledWith('transaction failed', expect.objectContaining({
+      support_reference: failure?.supportReference, action_kind: 'mint', reason_code: 'NETWORK_ERROR',
+    }))
+    expect(mockWriteContract).not.toHaveBeenCalled()
   })
 
   it('uses eip712Domain version when supported', async () => {

@@ -1,3 +1,4 @@
+import { reportTransactionFailure } from '../analytics/transactionErrors'
 import type { SavedOrderDraft } from './orderDraft'
 import { isExplicitSignatureRejection } from './preparedOperation'
 import type {
@@ -145,8 +146,10 @@ export function trackSponsoredOperationPreflightFailure(
   error: unknown
 ): StablePreflightReason {
   const reason = sponsoredPreflightFailureReason(error)
+  const attemptId = operationId()
+  reportTransactionFailure(error, undefined, { surface: 'perps', action: metadata.action, stage: 'preflight', attemptId })
   trackPerpsSponsoredOperation('preflight_failed', analyticsProperties(metadata, {
-    attempt_id: operationId(),
+    attempt_id: attemptId,
     stage: 'preflight',
     sponsorship_accepted: false,
     retry_count: 0,
@@ -244,6 +247,7 @@ export function beginSponsoredOperationTracking(
       ) {
         return
       }
+      reportTransactionFailure(error, undefined, { surface: 'perps', action: metadata.action, stage: previousStatus ?? 'preflight', attemptId: id })
       const sponsorError = findSponsorRequestError(error)
       if (currentOperation?.nativePreparation && !currentOperation.userOperationHash) {
         const declined = currentOperation.status === 'awaiting-signature' && isExplicitSignatureRejection(error)
