@@ -648,6 +648,14 @@ gas, and final-request rate limits use the `AA_PAYMASTER_*` variables listed in
 `.env.example`; do not relax them independently of the contract profile and
 rollout review.
 
+New native order sponsorships expire at the earlier of
+`AA_PAYMASTER_VALIDITY_SECONDS` from issuance and the reviewed order's
+`validUntil`, including orders with TP/SL and assisted closes. Non-order
+actions retain the configured lifetime. Estimation stubs use the same cap;
+retries return the original durable authorization without changing its signed
+expiry. Trading recovery still requires verified safe-chain expiry, so the
+order deadline is not a guaranteed unlock time.
+
 The separate `plether-aa-reconciler` additionally requires
 `AA_RECONCILER_START_BLOCK`, `AA_RECONCILER_START_BLOCK_HASH`,
 `AA_RECONCILER_POLL_SECONDS`, `AA_RECONCILER_BATCH_BLOCKS`,

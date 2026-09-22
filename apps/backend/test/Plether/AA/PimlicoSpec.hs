@@ -12,7 +12,8 @@ import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS, strictRequestBody)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Plether.Ethereum.Client (EthClient, newClient)
-import Plether.AA.Gateway (agreeAccountIdentity)
+import Plether.AA.Gateway (agreeAccountIdentity, nativeSponsorshipExpiry)
+import Plether.AA.PaymasterSpec (fixtureConfig)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (addUTCTime)
@@ -30,6 +31,7 @@ import Plether.AA.Pimlico
   , parseRpcRequest
   , recordSubmittedOperation
   , validateSubmissionHeadroom
+  , capSponsorshipExpiry
   , validateActionSequence
   , validateNativeActionSequence
   , validateMethodParams
@@ -59,6 +61,50 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "order-bound sponsorship expiry" $ do
+    it "caps a five-minute sponsorship at the reviewed order deadline" $ do
+      nativeSponsorshipExpiry 1999999940 fixtureConfig Nothing (encodeExecute orderCall)
+        `shouldBe` Right 2000000000
+    it "requires the reservation's thirty-second safety margin before fresh issuance" $ do
+      nativeSponsorshipExpiry 1999999969 fixtureConfig Nothing (encodeExecute orderCall)
+        `shouldBe` Right 2000000000
+      mapM_ (\now -> case nativeSponsorshipExpiry now fixtureConfig Nothing (encodeExecute orderCall) of
+        Left failure -> do
+          pfReason failure `shouldBe` "INVALID_ORDER_DEADLINE"
+          pfRetryable failure `shouldBe` False
+        Right _ -> expectationFailure "issued sponsorship without enough deadline headroom")
+        [1999999970, 1999999971, 2000000000, 2000000001]
+    it "never extends a shorter configured sponsorship lifetime" $ do
+      capSponsorshipExpiry 1999999980 (encodeExecute orderCall)
+        `shouldBe` Right 1999999980
+    it "retains the configured expiry for actions without an order" $ do
+      capSponsorshipExpiry 2000000200 (encodeExecute addMarginCall)
+        `shouldBe` Right 2000000200
+      capSponsorshipExpiry 2000000200 (encodeExecuteBatch depositCalls)
+        `shouldBe` Right 2000000200
+    it "caps orders with TP/SL at the embedded order deadline" $ do
+      let protectedOrder = smartCall (T.toLower Manifest.positionProtectionBookAddress) $
+            encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
+              [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
+      capSponsorshipExpiry 2000000200 (encodeExecute protectedOrder)
+        `shouldBe` Right 2000000000
+      capSponsorshipExpiry 2000000200 (encodeExecuteBatch [protectedOrder])
+        `shouldBe` Right 2000000000
+    it "uses the earliest order deadline in a batch" $ do
+      let bytes = smartCallData orderCall
+          earlierOrder = orderCall { smartCallData = BS.take (4 + 6*32) bytes
+            <> encodeUint256 1999999990 <> BS.drop (4 + 7*32) bytes }
+      capSponsorshipExpiry 2000000200 (encodeExecuteBatch [orderCall, earlierOrder])
+        `shouldBe` Right 1999999990
+    it "preserves the assisted-close deadline cap" $ do
+      capSponsorshipExpiry 2000000200 (encodeExecuteBatch $ assistedCalls 10 sender)
+        `shouldBe` Right 2000000000
+      capSponsorshipExpiry 1999999980 (encodeExecuteBatch $ assistedCalls 10 sender)
+        `shouldBe` Right 1999999980
+    it "rejects malformed account and recognized order calldata" $ do
+      capSponsorshipExpiry 2000000200 "invalid" `shouldSatisfy` isLeft
+      capSponsorshipExpiry 2000000200 (encodeExecute $ orderCall
+        { smartCallData = BS.take 4 $ smartCallData orderCall }) `shouldSatisfy` isLeft
   describe "submission time reserve" $ do
     it "accepts exactly thirty seconds but rejects a late approval" $ do
       validateSubmissionHeadroom 1999999970 2000000100 (encodeExecute orderCall) `shouldSatisfy` isRight

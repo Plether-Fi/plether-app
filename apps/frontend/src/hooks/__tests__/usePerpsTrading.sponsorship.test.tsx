@@ -167,9 +167,10 @@ describe('usePerpsTrading sponsorship route', () => {
   it('tracks invalid deposits as explicit preflight failures', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.depositMargin(0n)).rejects.toThrow(
-      'Deposit amount must be greater than zero'
-    )
+    await expect(result.current.depositMargin(0n)).rejects.toMatchObject({
+      message: expect.stringContaining('Enter an amount greater than zero and within the available balance.'),
+      cause: expect.objectContaining({ reason: 'INVALID_AMOUNT' }),
+    })
 
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
     expect(
