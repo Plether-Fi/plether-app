@@ -3096,8 +3096,7 @@ export function PerpsTradeTicket({
     ? executionLimit
     : committedTargetPrice
   const requiresCloseReview = enableLiveTrading && isReviewOpen && isReducingCurrentPosition
-  const activeReviewSummary = requiresCloseReview && (preparation.status !== 'ready' || preparationError)
-    ? undefined : orderReviewSummary ?? preparedOrder?.reviewSummary
+  const activeReviewSummary = orderReviewSummary ?? preparedOrder?.reviewSummary
   const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
   const isPreparedOrderExpiring = preparedOrder !== undefined &&
     Number(preparedOrder.protection.validUntil) - nowSeconds <= REVIEW_REFRESH_SECONDS

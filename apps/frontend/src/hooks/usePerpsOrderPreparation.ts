@@ -67,7 +67,6 @@ class PreparationController<T> {
   timer?: ReturnType<typeof setTimeout>
   slowTimer?: ReturnType<typeof setTimeout>
   jobs = new Set<ReturnType<typeof setTimeout>>()
-  oracleRecoveryExhausted = false
   oracleRecovery?: { startedAt: number; deadline: number; error: unknown }
   resumeRecovery?: () => void
   backgroundGeneration?: number
@@ -102,9 +101,9 @@ class PreparationController<T> {
       if (this.state.status === 'ready') this.trackReady()
       return
     }
-    if (!changed && contextChanged && options.mode === 'review') {
-      if (this.oracleRecoveryExhausted) { this.publish({ contextKey: options.contextKey }); return }
-      this.start('refresh')
+    if (!changed && contextChanged && old.mode === 'review' && options.mode === 'review') {
+      // A review is a quote snapshot. Polling must not replace terms the user
+      // is reading or restart preparation/recovery already in progress.
       return
     }
     if (options.mode === 'inactive' || !options.candidate) {
@@ -124,7 +123,7 @@ class PreparationController<T> {
       if (changed || contextChanged || opening) {
         if (!changed && !contextChanged && this.reusable()) {
           this.admission = this.state.status === 'ready' ? 'completed_reuse' : 'pending_reuse'
-          if (this.state.status === 'ready') { this.trackReady(); this.scheduleRefresh() }
+          if (this.state.status === 'ready') { this.trackReady(); this.scheduleExpiry() }
         } else {
           this.admission = 'cold'
           this.start('cold')
@@ -140,10 +139,16 @@ class PreparationController<T> {
     if (!this.state.visible || this.backgroundGeneration !== undefined) return
     this.timer = setTimeout(() => { this.start('background'); }, PREPARATION_IDLE_MS)
   }
-  scheduleRefresh() {
+  checkReviewDeadline() {
+    if (this.state.status === 'ready' && this.state.result && !this.hasDeadline()) {
+      this.publish({ status: 'error', error: preparationFailure(
+        new Error('This review has expired or is about to expire. Retry review for fresh order terms.'), 'review_freshness') })
+    }
+  }
+  scheduleExpiry() {
     clearTimeout(this.timer)
     if (!this.state.visible || this.options?.mode !== 'review' || !this.state.result || this.state.status !== 'ready') return
-    this.timer = setTimeout(() => { this.start('refresh'); }, Math.max(0,
+    this.timer = setTimeout(() => { this.checkReviewDeadline(); this.scheduleExpiry() }, Math.max(0,
       Number(this.state.result.protection.validUntil) * 1000 - deadlineNow() - REVIEW_REFRESH_SECONDS * 1000))
   }
   trackReady() {
@@ -162,7 +167,6 @@ class PreparationController<T> {
       ? this.oracleRecovery : undefined
     this.invalidate()
     this.oracleRecovery = continuingRecovery
-    this.oracleRecoveryExhausted = false
     const abortController = new AbortController()
     this.abortController = abortController
     const candidate = options.candidate
@@ -213,12 +217,11 @@ class PreparationController<T> {
         this.clearTimers()
         this.resumeRecovery = undefined
         this.oracleRecovery = undefined
-        this.oracleRecoveryExhausted = error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE
         if (recoveryStartedAt !== undefined) trackRecovery(error
           ? error instanceof Error && error.message === ORACLE_RECOVERY_UNAVAILABLE ? 'exhausted' : 'failed'
           : 'succeeded')
         this.publish({ status: error ? 'error' : 'ready', result: result ?? previous, error, supportReference: failure?.supportReference, slow: false, recoveringOracle: false })
-        if (!error) { this.trackReady(); this.scheduleRefresh() }
+        if (!error) { this.trackReady(); this.scheduleExpiry() }
       }
     }
     const releaseBackground = () => {
@@ -269,13 +272,13 @@ class PreparationController<T> {
     clearTimeout(this.timer)
     if (!visible) return
     if (this.options?.mode === 'review') {
-      if (this.options.contextKey !== this.state.contextKey) this.start(this.state.result ? 'refresh' : 'cold')
-      else if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
+      if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
       // Monotonic timers may pause during device sleep. A visible review gets
-      // fresh server/chain context even if its local elapsed time looks short.
-      else if (this.state.status === 'ready' || (this.state.status === 'pending' && !this.reusable())) this.start(this.state.result ? 'refresh' : 'cold')
+      // another deadline check, without replacing the displayed quote.
+      else if (this.state.status === 'ready') { this.checkReviewDeadline(); this.scheduleExpiry() }
+      else if (this.state.status === 'pending' && !this.reusable()) this.start(this.state.result ? 'refresh' : 'cold')
       else if (this.state.status === 'idle') this.start('cold')
-      else this.scheduleRefresh()
+      else this.scheduleExpiry()
     } else if (this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()
   }
   dispose = () => { this.disposed = true; this.invalidate(); this.jobs.forEach(clearTimeout); this.jobs.clear(); this.options = undefined; this.state = initialState; this.backgroundGeneration = undefined }
@@ -291,7 +294,8 @@ export function usePerpsOrderPreparation<T>(options: Options<T>) {
     document.addEventListener('visibilitychange', onVisibility)
     return () => { document.removeEventListener('visibilitychange', onVisibility); controller.dispose() }
   }, [controller])
-  const matches = options.candidate?.key === state.key && options.identityKey === state.identityKey && options.contextKey === state.contextKey
+  const matches = options.candidate?.key === state.key && options.identityKey === state.identityKey &&
+    (options.mode === 'review' && controller.options?.mode === 'review' || options.contextKey === state.contextKey)
   const ready = options.mode !== 'inactive' && options.reviewValid !== false && matches && state.status === 'ready' && state.visible &&
     document.visibilityState !== 'hidden' && controller.hasDeadline() &&
     (options.mode === 'review' && controller.options?.mode === 'review' || controller.reusable())
