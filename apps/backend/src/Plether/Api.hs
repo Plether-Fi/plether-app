@@ -202,8 +202,8 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
             req <- request
             bounded <- liftIO $ AaProxy.readBoundedRequestBody 512 req
             case either (const Nothing) (either (const Nothing) Just . Aeson.eitherDecode) bounded of
-              Just value | Just (attempt, stage) <- AaDiagnostics.parseBrowserStage value -> do
-                liftIO $ AaDiagnostics.recordBrowserStage pool (pseudonymousClientKey (naaProxyOriginToken native) ip) attempt stage
+              Just value | Just (attempt, stage, details) <- AaDiagnostics.parseBrowserStage value -> do
+                liftIO $ AaDiagnostics.recordBrowserStage pool (pseudonymousClientKey (naaProxyOriginToken native) ip) attempt stage details
                 -- Never disclose whether an attempt belongs to this client.
                 json $ Aeson.object ["accepted" .= True]
               _ -> status status400 >> json (Aeson.object ["error" .= ("Invalid diagnostic" :: Text)])

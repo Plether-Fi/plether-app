@@ -83,6 +83,7 @@ COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.se
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
+COPY apps/backend/config/migrations/aa-attempt-failure-v1.sql /app/config/migrations/aa-attempt-failure-v1.sql
 COPY apps/backend/config/migrations/insights-integrity-epoch-v1.sql /app/config/migrations/insights-integrity-epoch-v1.sql
 COPY apps/backend/config/migrations/insights-snapshot-deferred-fk-v1.sql /app/config/migrations/insights-snapshot-deferred-fk-v1.sql
 COPY apps/backend/config/migrations/insights-integrity-indexes-v1.sql /app/config/migrations/insights-integrity-indexes-v1.sql

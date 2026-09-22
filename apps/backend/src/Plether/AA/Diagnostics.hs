@@ -1,4 +1,4 @@
-module Plether.AA.Diagnostics (Diagnostic(..), DiagnosticSink, startDiagnostics, enqueueDiagnostic, validAttemptId, readDiagnostic, parseBrowserStage, recordBrowserStage, persistAttemptStage) where
+module Plether.AA.Diagnostics (Diagnostic(..), DiagnosticSink, startDiagnostics, enqueueDiagnostic, validAttemptId, readDiagnostic, parseBrowserStage, BrowserFailure(..), recordBrowserStage, persistBrowserStage, persistAttemptStage) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
@@ -147,14 +147,49 @@ readDiagnostic pool client attempt = do
     _ -> object ["version" .= (1 :: Int), "stage" .= ("unavailable" :: Text)]
 
 -- Advisory reports cannot authorize recovery or overwrite canonical outcomes.
--- A browser can only name a stage; provenance is selected by the server.
-parseBrowserStage :: Value -> Maybe (Text, Text)
+-- Old clients can omit details. New details must be a complete allowlisted pair.
+data BrowserFailure = BrowserFailure { failureStep :: Text, failureReason :: Text }
+  deriving stock (Eq, Show)
+
+parseBrowserStage :: Value -> Maybe (Text, Text, Maybe BrowserFailure)
 parseBrowserStage (Object fields)
-  | KM.size fields == 2
-  , Just (String attempt) <- KM.lookup "attemptId" fields
+  | Just (String attempt) <- KM.lookup "attemptId" fields
   , Just (String stage) <- KM.lookup "stage" fields
-  , validAttemptId attempt, stage `elem` browserStages = Just (T.toLower attempt, stage)
+  , validAttemptId attempt, stage `elem` browserStages =
+      if KM.size fields == 2 then Just (T.toLower attempt, stage, Nothing)
+      else case (KM.size fields, KM.lookup "failureStep" fields, KM.lookup "reasonCode" fields) of
+        (4, Just (String step), Just (String reason))
+          | validBrowserFailure stage (BrowserFailure step reason) ->
+              Just (T.toLower attempt, stage, Just $ BrowserFailure step reason)
+        _ -> Nothing
 parseBrowserStage _ = Nothing
+
+validBrowserFailure :: Text -> BrowserFailure -> Bool
+validBrowserFailure stage (BrowserFailure step reason) =
+  stage `elem` ["execution_interrupted", "deadline_elapsed"]
+    && step `elem` failureSteps && reason `elem` failureReasons
+
+failureSteps, failureReasons :: [Text]
+failureSteps =
+  [ "preflight", "review_read", "preparation_journal", "review_clock"
+  , "review_deadline", "recovery_check", "sponsorship", "prepared_payload_check"
+  , "pre_sign_journal", "readiness_check", "review_revalidation", "signing_clock"
+  , "signing_deadline", "wallet_approval", "signed_payload_check", "signed_journal"
+  , "submission_clock", "submission_deadline", "submission_journal", "submission"
+  , "confirmation"
+  ]
+failureReasons =
+  [ "UNKNOWN", "REQUEST_ABORTED", "REQUEST_TIMEOUT", "WALLET_DECLINED"
+  , "WALLET_DISCONNECTED", "NETWORK_ERROR", "REVIEW_CHANGED", "PREPARED_PAYLOAD_CHANGED"
+  , "PREPARATION_UNUSABLE", "OPERATION_STORE_UNAVAILABLE", "INVALID_ORDER_DEADLINE", "DEADLINE_TOO_CLOSE"
+  , "SPONSOR_UNAVAILABLE", "SPONSOR_REQUEST_TIMEOUT", "RATE_LIMITED", "SPONSOR_BUDGET_EXCEEDED"
+  , "SIMULATION_FAILED", "POLICY_DENIED", "PAYMASTER_PAUSED", "ACCOUNT_NOT_TRUSTED"
+  , "ACCOUNT_DEPLOYMENT_PENDING", "INSUFFICIENT_FREE_EQUITY", "MUST_CLOSE_OPPOSING", "EXECUTION_GAS_CAP_EXCEEDED"
+  , "RESTART_ESTIMATION", "SECURITY_ATTESTATION_UNAVAILABLE", "SUBMISSION_PAUSED", "SPONSORSHIP_NOT_AUTHORIZED"
+  , "DATABASE_UNAVAILABLE", "BUNDLER_UNAVAILABLE", "SUBMISSION_OUTCOME_UNKNOWN", "SUBMISSION_HASH_MISMATCH"
+  , "RECEIPT_TIMEOUT", "USER_OPERATION_REVERTED", "READINESS_UNAVAILABLE", "OPEN_EXECUTION_UNAVAILABLE"
+  , "PROTECTION_TRIGGER_UNAVAILABLE"
+  ]
 
 browserStages :: [Text]
 browserStages = ["wallet_requested", "wallet_approved", "wallet_declined", "wallet_interrupted",
@@ -177,11 +212,26 @@ persistAttemptStage conn client reference source stage
       (source, stage, reference, client)
   | otherwise = pure 0
 
-recordBrowserStage :: DbPool -> Text -> Text -> Text -> IO ()
-recordBrowserStage pool client attempt stage = do
+-- Keep the first observation per stage, just like the existing timeline. Never
+-- overwrite an earlier browser report or a canonical backend diagnostic.
+persistBrowserStage :: Connection -> Text -> Text -> Text -> Maybe BrowserFailure -> IO Int64
+persistBrowserStage conn client attempt stage Nothing = persistAttemptStage conn client attempt "browser" stage
+persistBrowserStage conn client attempt stage (Just details@(BrowserFailure step reason))
+  | validAttemptId attempt && validBrowserFailure stage details = execute conn
+      "INSERT INTO aa_attempt_events(attempt_id,source,stage,failure_step,reason_code) SELECT diagnostic_attempt_id,'browser',?,?,? FROM aa_preparations WHERE diagnostic_attempt_id=?::uuid AND client_key=? ON CONFLICT DO NOTHING"
+      (stage, step, reason, attempt, client)
+  | otherwise = pure 0
+
+recordBrowserStage :: DbPool -> Text -> Text -> Text -> Maybe BrowserFailure -> IO ()
+recordBrowserStage pool client attempt stage details = do
   result <- try $ timeout 500_000 $ withDb pool $ \conn -> do
     allowed <- consumeAaRateLimit conn "attempt-events" client client 120
-    when allowed $ void $ persistAttemptStage conn client attempt "browser" stage
+    when allowed $ do
+      inserted <- persistBrowserStage conn client attempt stage details
+      when (inserted > 0) $ forM_ details $ \(BrowserFailure step reason) ->
+        logInfo "aa_browser_attempt_failure" "Browser reported an interrupted operation; advisory only"
+          [field "attempt_id" attempt, field "stage" stage, field "failure_step" step,
+           field "reason_code" reason, field "failure_source" ("browser" :: Text)]
   case result of
     Left (err :: SomeException) -> case fromException err :: Maybe SomeAsyncException of
       Just _ -> throwIO err

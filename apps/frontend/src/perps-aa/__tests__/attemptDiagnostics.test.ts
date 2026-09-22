@@ -2,6 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { reportAttemptStage } from '../attemptDiagnostics'
 afterEach(() => vi.unstubAllGlobals())
 describe('attempt diagnostics', () => {
+  it('projects only allowlisted failure details and drops unexpected fields', () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}'))
+    vi.stubGlobal('fetch', fetch)
+    const id = '22345678-1234-4123-8123-123456789abc'
+    const details = { failureStep: 'wallet_approval' as const, reasonCode: 'WALLET_DECLINED' as const, signature: 'secret' }
+    reportAttemptStage(id, 'execution_interrupted', details)
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual({ attemptId: id, stage: 'execution_interrupted',
+      failureStep: 'wallet_approval', reasonCode: 'WALLET_DECLINED' })
+    reportAttemptStage(id, 'deadline_elapsed', { failureStep: 'submission', reasonCode: 'secret' } as never)
+    expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string)).toEqual({ attemptId: id, stage: 'deadline_elapsed' })
+  })
   it('sends only a support reference and allowlisted stage, once per stage', () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}'))
     vi.stubGlobal('fetch', fetch)
