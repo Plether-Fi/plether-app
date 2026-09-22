@@ -1883,6 +1883,7 @@ parseIntentRegistered logEntry = do
         , "intentHash" .= hexWordAt (rlData logEntry) 0
         , "executionBountyUsdc" .= show (wordAt (rlData logEntry) 1)
         , "side" .= side
+        , "isClose" .= (wordAt (rlData logEntry) 7 == 1)
         , "validUntil" .= show (wordAt (rlData logEntry) 8)
         , "allowedExecutionModes" .= wordAt (rlData logEntry) 9
         , "expectedConfigHash" .= hexWordAt (rlData logEntry) 10

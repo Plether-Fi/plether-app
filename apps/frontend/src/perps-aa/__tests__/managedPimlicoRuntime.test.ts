@@ -904,3 +904,5 @@ describe('createManagedPimlicoRuntime', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

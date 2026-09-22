@@ -1,12 +1,17 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Exception (SomeException, displayException, try)
-import Control.Monad (forM_, when)
+import Control.Concurrent.Async (concurrently_)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Control.Monad (when)
 import Data.Aeson (toJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Function (on)
+import Data.List (nubBy)
 import Data.Maybe (fromMaybe)
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import GHC.Clock (getMonotonicTimeNSec)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple (withTransaction)
 import Network.HTTP.Client (Manager, newManager)
@@ -66,6 +71,7 @@ import Plether.Pyth.History
   , runBasketBackfill
   , startBasketHistoryIngestor
   )
+import Plether.Pyth.Prefetch (runPriorityPrefetch, retryAfterSeconds, ProviderGate, newProviderGate, withProviderGate)
 import Plether.Pyth.RevealPayload
   ( PythPayloadAdmission (..)
   , classifyPythPayloadAdmission
@@ -139,6 +145,7 @@ runWorker args = do
             exitFailure
           Just dbUrl -> do
             manager <- newManager tlsManagerSettings
+            providerGate <- newProviderGate
             ethClient <-
               newClientWithOptions $
                 RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "basket-worker"
@@ -154,7 +161,7 @@ runWorker args = do
               ]
             case waMode args of
               RunOnce -> do
-                result <- runLatestOnce manager ethClient pool cfg
+                result <- runLatestOnce providerGate manager ethClient pool cfg
                 case result of
                   Left err -> do
                     logError
@@ -183,7 +190,9 @@ runWorker args = do
                           , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                           }
                   pure ()
-                latestLoop manager ethClient pool cfg (waPollSeconds args)
+                concurrently_
+                  (latestLoop providerGate manager ethClient pool cfg (waPollSeconds args))
+                  (revealLoop providerGate manager ethClient pool cfg)
               BackfillOnce -> do
                 let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
                 runBasketBackfill manager pool BasketIngestorConfig
@@ -246,11 +255,14 @@ runWorker args = do
                         []
                       exitFailure
 
-latestLoop :: Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
-latestLoop manager ethClient pool cfg pollSeconds = do
-  result <- try (runLatestCycle manager ethClient pool cfg) :: IO (Either SomeException (Either T.Text ()))
+latestLoop :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
+latestLoop providerGate manager ethClient pool cfg pollSeconds = do
+  result <- try (runLatestOnce providerGate manager ethClient pool cfg) :: IO (Either SomeException (Either T.Text ()))
   delaySeconds <- case result of
     Left err -> do
+      case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> pure ()
       logErrorEvery
         60
         "basket_worker_iteration_failed"
@@ -272,24 +284,15 @@ latestLoop manager ethClient pool cfg pollSeconds = do
             [ field "rate_limited" $ "429" `T.isInfixOf` err
             , field "error" err
             ]
-          pure $ if "429" `T.isInfixOf` err then 60 else pollSeconds
+          pure $ fromMaybe pollSeconds $ retryAfterSeconds err
     Right (Right ()) ->
       pure pollSeconds
   threadDelay (max 1 delaySeconds * 1_000_000)
-  latestLoop manager ethClient pool cfg pollSeconds
+  latestLoop providerGate manager ethClient pool cfg pollSeconds
 
-runLatestCycle :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-runLatestCycle manager ethClient pool cfg = do
-  latestResult <- runLatestOnce manager ethClient pool cfg
-  backfillResult <- backfillPendingOrderRevealPayloads manager ethClient pool cfg
-  pure $ case (latestResult, backfillResult) of
-    (Left err, _) -> Left err
-    (_, Left err) -> Left err
-    (Right (), Right ()) -> Right ()
-
-runLatestOnce :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-runLatestOnce manager ethClient pool cfg = do
-  result <- fetchLatestBasketUpdate manager cfg
+runLatestOnce :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
+runLatestOnce providerGate manager ethClient pool cfg = do
+  result <- withProviderGate providerGate $ fetchLatestBasketUpdate manager cfg
   case result of
     Left err -> pure $ Left err
     Right update -> cacheBasketUpdate ethClient pool cfg Nothing update
@@ -414,68 +417,48 @@ verifyLatestRecoveryPayload ethClient cfg update
                       , signedComponents
                       )
 
-backfillPendingOrderRevealPayloads :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
-backfillPendingOrderRevealPayloads manager ethClient pool cfg = do
+-- Independent of latest prices and chart ingestion. Shared ticks are fetched once.
+revealLoop :: ProviderGate -> Manager -> EthClient -> DbPool -> Config -> IO ()
+revealLoop providerGate manager ethClient pool cfg = runPriorityPrefetch $ do
   pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
-  case pending of
-    [] -> pure $ Right ()
-    _ -> do
-      settlementWindowResult <- orderSettlementWindow ethClient (cfgPerpsPletherOracle cfg)
-      case settlementWindowResult of
-        Left err ->
-          pure $ Left $ "could not read the on-chain order settlement window: " <> T.pack (show err)
-        Right settlementWindow -> do
-          forM_ pending $ \order -> do
-            let firstRevealTick = pkorCommitTime order + 1
-                maxRevealTick = pkorCommitTime order + settlementWindow
-            mExisting <- withDb pool $ \conn ->
-              getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
-            when (maybe True (not . isHistoricalRevealPayload) mExisting) $ do
-              result <- fetchBasketUpdateAt manager cfg firstRevealTick
-              case result of
-                Left err ->
-                  logWarnEvery
-                    60
-                    "reveal_payload_backfill_fetch_failed"
-                    "Reveal payload backfill fetch failed"
-                    [ field "order_id" $ pkorOrderId order
-                    , field "error" err
-                    ]
-                Right update ->
-                  case validateRevealWindow (pkorCommitTime order) settlementWindow (hbuPublishTimes update) of
-                    Left err ->
-                      logWarnEvery
-                        60
-                        "reveal_payload_backfill_invalid"
-                        "Reveal payload backfill returned an unusable payload"
-                        [ field "order_id" $ pkorOrderId order
-                        , field "error" err
-                        ]
-                    Right _ -> do
-                      cacheResult <-
-                        cacheBasketUpdate
-                          ethClient
-                          pool
-                          cfg
-                          (Just (firstRevealTick, maxRevealTick))
-                          update
-                      case cacheResult of
-                        Left err ->
-                          logWarnEvery
-                            60
-                            "reveal_payload_backfill_cache_failed"
-                            "Reveal payload backfill could not be cached"
-                            [ field "order_id" $ pkorOrderId order
-                            , field "error" err
-                            ]
-                        Right () ->
-                          logInfo
-                            "reveal_payload_backfilled"
-                            "First reveal payload was backfilled for an order"
-                            [ field "order_id" $ pkorOrderId order
-                            , field "publish_time" firstRevealTick
-                            ]
-          pure $ Right ()
+  if null pending then pure [] else do
+    settlement <- orderSettlementWindow ethClient $ cfgPerpsPletherOracle cfg
+    case settlement of
+      Left _ -> do
+        logWarnEvery 30 "reveal_queue_load_failed" "Could not verify the historical-price settlement window" []
+        pure []
+      Right window -> pure
+        [ ((pkorCommitTime order + 1, window), fetchReveal order window)
+        | order <- nubBy ((==) `on` pkorCommitTime) pending ]
+ where
+  fetchReveal order window = do
+    let firstTick = pkorCommitTime order + 1
+        lastTick = pkorCommitTime order + window
+    cached <- withDb pool $ \conn -> getPythUpdatePayloadForWindow conn firstTick lastTick
+    case cached of
+      Just payload | isHistoricalRevealPayload payload -> pure $ Right ()
+      _ -> do
+        started <- getMonotonicTimeNSec
+        fetched <- withProviderGate providerGate $ fetchBasketUpdateAt manager cfg firstTick
+        case fetched of
+          Left err -> do
+            logWarnEvery 30 "reveal_payload_backfill_fetch_failed" "Historical reveal price unavailable" [field "order_id" $ pkorOrderId order]
+            pure $ Left err
+          Right update -> case validateRevealWindow (pkorCommitTime order) window (hbuPublishTimes update) of
+            Left err -> pure $ Left err
+            Right _ -> do
+              cachedResult <- cacheBasketUpdate ethClient pool cfg (Just (firstTick, lastTick)) update
+              case cachedResult of
+                Left err -> pure $ Left err
+                Right () -> do
+                  finished <- getMonotonicTimeNSec
+                  availableAt <- floor . (* 1000) <$> getPOSIXTime
+                  logInfo "reveal_payload_fetch_completed" "Historical price is validated and available"
+                    [field "duration_ms" (fromIntegral (finished - started) / 1_000_000 :: Double),
+                     field "commit_to_price_available_ms" (max 0 (availableAt - pkorCommitTime order * 1000) :: Integer)]
+                  logInfo "reveal_payload_backfilled" "First reveal payload was backfilled for an order"
+                    [field "order_id" $ pkorOrderId order, field "publish_time" firstTick]
+                  pure $ Right ()
 
 cacheBasketUpdate
   :: EthClient

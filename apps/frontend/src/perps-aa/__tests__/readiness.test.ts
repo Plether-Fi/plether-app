@@ -78,11 +78,11 @@ describe('deadline safety', () => {
     expect(() => requireDeadlineHeadroom(110n, '200', 'submission', 100_001)).toThrow()
     expect(() => requireDeadlineHeadroom(200n, '110', 'submission', 100_001)).toThrow()
   })
-  it('requires 20 seconds before signing and ten before submission', () => {
-    expect(() => requireDeadlineHeadroom(150n, '120', 'signing', 100_000)).not.toThrow()
-    expect(() => requireDeadlineHeadroom(150n, '119', 'signing', 100_000)).toThrow()
-    expect(() => requireDeadlineHeadroom(110n, '150', 'submission', 100_000)).not.toThrow()
-    expect(() => requireDeadlineHeadroom(109n, '150', 'submission', 100_000)).toThrow()
+  it('requires 45 seconds before signing and 30 before submission', () => {
+    expect(() => requireDeadlineHeadroom(150n, '145', 'signing', 100_000)).not.toThrow()
+    expect(() => requireDeadlineHeadroom(150n, '144', 'signing', 100_000)).toThrow()
+    expect(() => requireDeadlineHeadroom(130n, '150', 'submission', 100_000)).not.toThrow()
+    expect(() => requireDeadlineHeadroom(129n, '150', 'submission', 100_000)).toThrow()
   })
   it('retains recovery for signed operations rather than declaring safe expiry', () => {
     try { requireDeadlineHeadroom(109n, undefined, 'submission', 100_000) } catch (error) {
@@ -100,3 +100,5 @@ describe('opaque diagnostic references', () => {
     expect(sanitizeAnalyticsProperties({ attempt_id: '0xdead' })).toEqual({})
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

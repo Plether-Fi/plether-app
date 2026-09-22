@@ -1163,7 +1163,19 @@ submitSponsoredOperation gatewayState nativeCfg pool manager securityContext cli
                                 securityContext
                           case finalSecurityCheck of
                             Left reason -> observedAuthorized "security_rejected" >> respondSecurityAttestationFailure requestId reason
-                            Right () -> relayToAltoObserved nativeCfg manager request (Just operationHash) observedAuthorized
+                            Right () -> do
+                              now <- liftEpochSeconds
+                              let authoritativeNow = max now $ maybe now (sbhTimestamp . nscHeader) securityContext
+                              case Legacy.validateSubmissionHeadroom authoritativeNow (Paymaster.seValidUntil envelope) (Paymaster.puoCallData operation) of
+                                Left failure -> do
+                                  observedAuthorized "deadline_elapsed"
+                                  -- A retry may already have reached the bundler. Do not claim
+                                  -- it was never submitted, or release its authorization lane.
+                                  if saState authorization == "submitted"
+                                    then Legacy.respondFailure requestId $ Legacy.ProxyFailure status400 (-32001)
+                                      "Submission may already have reached the network; check recovery" "SUBMISSION_OUTCOME_UNKNOWN" False
+                                    else Legacy.respondFailure requestId failure
+                                Right () -> relayToAltoObserved nativeCfg manager request (Just operationHash) observedAuthorized
 
   requestId = Legacy.rrId request
 

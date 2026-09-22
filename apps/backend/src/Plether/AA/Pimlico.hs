@@ -13,6 +13,7 @@ module Plether.AA.Pimlico
   , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
+  , validateSubmissionHeadroom
   , validateNativeActionSequence
   , CloseAssistanceIntent (..)
   , injectSponsorshipPolicy
@@ -807,6 +808,22 @@ data CloseAssistanceIntent = CloseAssistanceIntent
   , caiAmountUsdc :: Integer
   , caiValidUntil :: Integer
   } deriving stock (Eq, Show)
+
+-- Defense in depth immediately before relaying an already validated operation.
+-- The account signature binds the deadline: never extend or rebuild it here.
+validateSubmissionHeadroom :: Integer -> Integer -> ByteString -> Either ProxyFailure ()
+validateSubmissionHeadroom now sponsorshipExpiry callData = do
+  calls <- decodeSmartAccountCalls callData
+  deadlines <- traverse orderDeadline calls
+  let effective = minimum $ sponsorshipExpiry : [deadline | Just deadline <- deadlines]
+  unless (effective - now >= 30) $ Left $
+    ProxyFailure status400 (-32001) "Approval finished too late; this request was not forwarded. Check recovery for any earlier submission." "DEADLINE_TOO_CLOSE" False
+ where
+  orderDeadline call
+    | BS.take 4 bytes == selectorCommitOrder = Just . bytesToInteger . (!! 6) <$> fixedWords selectorCommitOrder 18 bytes
+    | BS.take 4 bytes == decodeSelector "8df7504a" = Just . bytesToInteger . (!! 6) <$> fixedWords (decodeSelector "8df7504a") 20 bytes
+    | otherwise = pure Nothing
+   where bytes = smartCallData call
 
 validateNativeActionSequence
   :: Maybe Text -> Config -> Text -> Text -> [SmartCall]

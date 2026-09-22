@@ -30,6 +30,7 @@ keeper_order_deferral_summary keeper_deferral_cache_evicted
 keeper_order_reliability_snapshot keeper_order_reliability_unavailable
 keeper_order_failed keeper_order_finalized_failed keeper_readiness_unavailable keeper_funding_low
 keeper_queue_head_refresh_failed keeper_queue_context_fetch_failed keeper_batch_refresh_failed
+keeper_broadcast_unresolved keeper_broadcast_invalid reveal_queue_load_failed reveal_payload_fetch_completed
 keeper_cached_payload_decode_failed keeper_cached_payload_invalid keeper_order_logs_fetch_failed
 keeper_frozen_close_payload_failed keeper_chain_head_fetch_failed keeper_commit_metadata_fetch_failed
 order_keeper_worker_restarting order_keeper_worker_stopped
@@ -73,7 +74,7 @@ ACCOUNT_BUDGET_EXCEEDED HOURLY_BUDGET_EXCEEDED DAILY_BUDGET_EXCEEDED
 PREPARATION_DISABLED PREPARATION_EXPIRED PREPARATION_BUSY PREPARATION_CONFLICT PREPARATION_LEASE_LOST
 SIGNER_UNAVAILABLE DATABASE_UNAVAILABLE SPONSOR_UNAVAILABLE SIMULATION_FAILED
 INSUFFICIENT_FREE_EQUITY INVALID_ORDER_DEADLINE MUST_CLOSE_OPPOSING
-AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE
+AUTHORIZATION_EXPIRED USER_OPERATION_REVERTED SECURITY_ATTESTATION_UNAVAILABLE DEADLINE_TOO_CLOSE SUBMISSION_OUTCOME_UNKNOWN
 USER_OPERATION_OUT_OF_GAS EXECUTION_GAS_CAP_EXCEEDED
 RECOVERY_VERIFIED RECOVERY_EVIDENCE_UNAVAILABLE
 ]]),
@@ -83,7 +84,7 @@ local numbers = {
   log_lock_wait_ms=true, log_write_ms=true,
   http_status=true, request_count=true, failure_count=true,
   gas_headroom_bps=true, gas_utilization_bps=true,
-  remaining_deadline_seconds=true,
+  remaining_deadline_seconds=true, commit_to_price_available_ms=true,
   lag_seconds=true, previous_lag_seconds=true, poll_seconds=true, health_poll_seconds=true,
 }
 local resources = {

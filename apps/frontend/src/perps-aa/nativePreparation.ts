@@ -1,3 +1,4 @@
+import { deadlineNow } from './deadlineClock'
 import { getAddress, isHex, keccak256, toBytes, hexToBigInt, slice, type Address, type Hex } from 'viem'
 import { getUserOperationHash } from 'viem/account-abstraction'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
@@ -68,7 +69,7 @@ export function validateNativePreparation(
     throw new Error('Prepared operation differs from the reviewed intent or exceeds bounds')
   }
   const validUntil = manifestSponsorshipValidUntil(manifest, op)
-  if (validUntil === undefined || validUntil <= BigInt(Math.floor(Date.now() / 1000) + 30)) {
+  if (validUntil === undefined || validUntil <= BigInt(Math.ceil(deadlineNow() / 1000) + 30)) {
     throw new Error('Prepared sponsorship is invalid or expiring')
   }
   const liability = (op.callGasLimit + op.verificationGasLimit + op.preVerificationGas

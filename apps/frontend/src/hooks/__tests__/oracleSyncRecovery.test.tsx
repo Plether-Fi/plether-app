@@ -59,3 +59,5 @@ it.each([true, false])('recovers a review after the worker repairs independently
   expect(walletClient.writeContract).toHaveBeenCalledTimes(1) // Only the worker repair, no user submission.
   expect(markTime).toBe(tick)
 })
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

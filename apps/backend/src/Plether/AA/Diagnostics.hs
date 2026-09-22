@@ -164,7 +164,7 @@ browserStages = ["wallet_requested", "wallet_approved", "wallet_declined", "wall
 backendStages :: [Text]
 backendStages = ["submission_received", "rate_limited", "security_rejected", "identity_rejected",
   "policy_rejected", "runtime_rejected", "submission_paused", "authorization_rejected",
-  "submission_journal_failed", "submission_journaled", "bundler_forwarded",
+  "submission_journal_failed", "submission_journaled", "deadline_elapsed", "bundler_forwarded",
   "bundler_unavailable", "bundler_rejected", "bundler_acknowledged", "bundler_hash_mismatch"]
 
 persistAttemptStage :: Connection -> Text -> Text -> Text -> Text -> IO Int64

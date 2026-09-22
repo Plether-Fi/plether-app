@@ -202,7 +202,7 @@ describe('Perps trade preview debounce', () => {
   })
 
   it('refreshes automatically and displays exact changed terms before enabling updated confirmation', async () => {
-    const first = prepared(20)
+    const first = prepared(55)
     first.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     first.request.sizeDelta = 100n * 10n ** 18n
     let resolveRefresh!: (value: typeof first) => void
@@ -546,3 +546,5 @@ describe('Perps trade preview debounce', () => {
     expect(within(confirmation).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
   })
 })
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

@@ -124,3 +124,7 @@ for _,bad in ipairs({-1,0/0,math.huge,1e12,1.5,'3',{secret=true}}) do
 end
 local _,_,other=project_posthog('test',0,{event='rpc_request_failed',expired_orders=3,terminal_reason_code=2})
 assert(other.expired_orders==nil and other.terminal_reason==nil)
+for _,event in ipairs({'keeper_broadcast_unresolved','keeper_broadcast_invalid','reveal_queue_load_failed'}) do
+  local _,_,projected=project_posthog('test',0,{event=event,raw_tx='secret',tx_hash='secret'})
+  assert(projected.event==event and projected.raw_tx==nil and projected.tx_hash==nil)
+end
