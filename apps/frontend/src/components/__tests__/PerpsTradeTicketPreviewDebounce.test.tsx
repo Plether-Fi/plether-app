@@ -201,36 +201,26 @@ describe('Perps trade preview debounce', () => {
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
-  it('retains an expiring review until explicit retry and requires confirmation of refreshed terms', async () => {
+  it('keeps reviewed terms and confirmation available after the provisional deadline', async () => {
     const first = prepared(55)
     first.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     first.request.sizeDelta = 100n * 10n ** 18n
-    let resolveRefresh!: (value: typeof first) => void
-    wagmiMocks.prepareOrder.mockResolvedValueOnce(first).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve }))
+    wagmiMocks.prepareOrder.mockResolvedValue(first)
+    wagmiMocks.commitOrder.mockImplementation(() => new Promise(() => {}))
     render(<PerpsTradeTicket enableLiveTrading initialOrderQuantity="100" initialReviewOpen oraclePriceRaw={100_000_000n}
       oraclePublishTime={1_700_000_000} availableToTradeRaw={1_000_000_000n} />)
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
-    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: 'Updating review…' })).not.toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByRole('status')).toHaveTextContent('This quote is no longer valid for confirmation. Refresh review to get updated order terms.')
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    expect(screen.queryByText(/This quote is no longer valid/)).not.toBeInTheDocument()
     expect(within(screen.getByRole('dialog')).getByText('Required margin').closest('div')).toHaveTextContent('20.0USDC')
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(wagmiMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: first }))
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
-    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Refresh review' }))
-    expect(screen.getByRole('button', { name: 'Updating review…' })).toBeDisabled()
-    const validUntil = BigInt(Math.floor(Date.now() / 1000) + 60)
-    const updated = { ...first, protection: { ...first.protection, validUntil },
-      request: { ...first.request, marginDelta: first.request.marginDelta + 1n,
-        bounds: { ...first.request.bounds, validUntil } } }
-    await act(async () => { resolveRefresh(updated) })
-    expect(screen.getByRole('button', { name: 'Confirm updated order' })).toBeEnabled()
-    expect(screen.getByText('Required margin: 20 USDC → 20.000001 USDC')).toBeInTheDocument()
-    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(2)
-    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
   it('closes a review after an account switch and ignores its late response', async () => {

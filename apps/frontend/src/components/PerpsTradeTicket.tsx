@@ -20,8 +20,7 @@ import {
   type PerpsLifecycleOutcomeSnapshot,
 } from '../contracts/perpsOrderV2'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
-import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS, REVIEW_REFRESH_REQUIRED } from '../hooks/usePerpsOrderPreparation'
-import { getPreparationFailureProperties } from '../utils/perpsPreparationDiagnostics'
+import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerpsOrderPreparation'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
@@ -3099,18 +3098,10 @@ export function PerpsTradeTicket({
   const requiresCloseReview = enableLiveTrading && isReviewOpen && isReducingCurrentPosition
   const activeReviewSummary = orderReviewSummary ?? preparedOrder?.reviewSummary
   const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
-  const isPreparedOrderExpiring = preparedOrder !== undefined &&
-    Number(preparedOrder.protection.validUntil) - nowSeconds <= REVIEW_REFRESH_SECONDS
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
-  const preparedOrderExpiryMessage = isPreparedOrderExpiring
-    ? REVIEW_REFRESH_REQUIRED
-    : undefined
-  const reviewFooterError = executionProtectionsError ?? preparedOrderExpiryMessage
-  const reviewRefreshRequired = preparationError
-    ? getPreparationFailureProperties(preparationError).stage === 'review_freshness'
-    : isPreparedOrderExpiring
+  const reviewFooterError = executionProtectionsError
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
@@ -3127,7 +3118,7 @@ export function PerpsTradeTicket({
     })
   }
   const reviewValidationError = enableLiveTrading
-    ? pendingOperationGuidance?.title ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? liveValidationError
+    ? pendingOperationGuidance?.title ?? fundingShortfallMessage ?? executionProtectionsError ?? liveValidationError
     : orderQuantityValidationError
   const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === reviewFooterError
     ? undefined : reviewValidationError
@@ -3777,7 +3768,6 @@ export function PerpsTradeTicket({
 
   async function handleConfirmCommit() {
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
-      Number(preparedOrder.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000 ||
       document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
       setFlowError('Wait for a fresh order review before confirming.')
       return
@@ -4680,7 +4670,6 @@ export function PerpsTradeTicket({
               refreshing={preparation.refreshing}
               slow={preparation.slow}
               error={reviewFooterError}
-              refreshRequired={reviewRefreshRequired}
               changes={reviewChanges}
               direction={direction}
               canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready)}
@@ -4909,9 +4898,7 @@ export function PerpsTradeTicket({
                         },
                         {
                           label: 'Deadline',
-                          value: new Date(
-                            Number(displayedExecutionProtections.protection.validUntil) * 1_000
-                          ).toLocaleString(),
+                          value: 'Set when you confirm',
                         },
                         {
                           label: 'Pinned regime',

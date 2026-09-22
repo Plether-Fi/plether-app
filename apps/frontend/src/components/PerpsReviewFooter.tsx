@@ -11,7 +11,6 @@ interface PerpsReviewFooterProps {
   refreshing: boolean
   slow: boolean
   error?: string
-  refreshRequired?: boolean
   changes: PerpsReviewChange[]
   canConfirm: boolean
   direction: 'long' | 'short'
@@ -22,7 +21,7 @@ interface PerpsReviewFooterProps {
 }
 
 export function PerpsReviewFooter({ sponsoredCloseUsdc, depositCarryUsdc, commitmentCarryUsdc, recoveringOracle = false, preparing, refreshing, slow, error, changes, canConfirm, direction,
-  onConfirm, onCancel, onRetry, refreshRequired = false, analyticsProperties }: PerpsReviewFooterProps) {
+  onConfirm, onCancel, onRetry, analyticsProperties }: PerpsReviewFooterProps) {
   return (
     <div className="space-y-3">
       <div role="status" aria-live="polite" aria-atomic="true" className="text-sm text-content-secondary">
@@ -42,7 +41,7 @@ export function PerpsReviewFooter({ sponsoredCloseUsdc, depositCarryUsdc, commit
       {sponsoredCloseUsdc && <p className="text-sm text-content-secondary">Plether covers {sponsoredCloseUsdc} USDC of your keeper bounty and transaction gas. The bounty remains a trading cost in competition PnL.</p>}
       {depositCarryUsdc && <p className="text-sm text-content-secondary">Carry collected with assistance funding: {depositCarryUsdc} USDC.</p>}
       {commitmentCarryUsdc && <p className="text-sm text-content-secondary">Carry collected when the order is committed: {commitmentCarryUsdc} USDC.</p>}
-      {!preparing && error && onRetry ? <Button size="sm" variant="secondary" onClick={onRetry}>{refreshRequired ? 'Refresh review' : 'Retry review'}</Button> : null}
+      {!preparing && error && onRetry ? <Button size="sm" variant="secondary" onClick={onRetry}>Retry review</Button> : null}
       <div className="flex gap-3">
         <Button className="flex-1 !border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D]"
           variant="secondary" analyticsId="cancel_review" analyticsProperties={analyticsProperties} onClick={onCancel}>Cancel</Button>

@@ -10,7 +10,7 @@ The worker now checks all six configured Pyth feeds and the engine mark at one b
 
 Review retries only decoded oracle/router ordering failures, two seconds after each failed attempt, within the original 30-second preparation deadline. Every retry rebuilds the full review at a fresh block. Inputs and previously displayed terms remain visible, but only a successfully rebuilt review can enable confirmation. No user transaction is retried or submitted automatically. Recovery telemetry contains outcome and duration, not account identifiers or raw errors.
 
-Once prepared, the visible review keeps its quoted terms across market/account polling and tab visibility changes. At 45 seconds before its deadline, confirmation is disabled and the user must explicitly retry the review for fresh terms. Editing order inputs or changing identity still invalidates the prepared order; current account validation and submission checks remain in force.
+Once prepared, the visible review keeps its quoted terms across market/account polling and tab visibility changes. The provisional simulation deadline does not expire the preview. Confirm assigns the new request a deadline from the latest block timestamp plus the router’s current `maxOrderAge`, preserving all reviewed economic terms, then simulates against current state before signing. Once assigned, the request is immutable across retries; recorded attempts must use activity recovery. Editing order inputs or changing identity still invalidates the prepared order; current account validation and submission checks remain in force.
 
 The current release does not weaken oracle guards, change historical execution pricing, persist browser drafts, or change a public API or database schema.
 

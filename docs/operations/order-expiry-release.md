@@ -2,15 +2,19 @@
 
 ## Phase 1: existing V2 contracts
 
-The V2 absolute deadline still covers preparation, wallet approval, inclusion,
-queueing and execution. This release improves that path without changing signed
-terms or extending an existing authorization.
+The V2 absolute deadline covers confirmation, wallet approval, inclusion,
+queueing and execution. Preview preparation uses a provisional deadline; time
+spent reading a completed review does not consume the final execution window.
 
-- Review context refreshes when 45 seconds remain and whenever a ready review
-  becomes visible again. Changes to financial terms use the existing updated-review
-  confirmation. Server HTTP Date (including precision, Age and transport margin),
-  advanced with a monotonic timer, replaces the device clock. Refresh timing
-  before signing and again after wallet approval, including after device sleep.
+- Keep prepared review terms stable across polling and tab visibility changes.
+  Confirm assigns a new, unrecorded request its deadline using a fresh block and
+  the router's `maxOrderAge` at that block, without changing any economic bounds.
+  Simulate the finalized request against current state before sponsorship/signing.
+  Never reassign the deadline after finalization or for a recorded attempt;
+  activity recovery retains existing signed/submitted requests.
+- Server HTTP Date (including precision, Age and transport margin), advanced
+  with a monotonic timer, replaces the device clock for signing checks. Refresh
+  timing before signing and after wallet approval, including after device sleep.
 - Require 45 seconds before opening the signing prompt and 30 before submitting,
   using the earlier order/sponsorship expiry. The gateway independently applies
   the 30-second guard immediately before relay. Missing timing fails closed.
