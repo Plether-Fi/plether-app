@@ -58,6 +58,23 @@ describe('transactionStore', () => {
   })
 
   describe('updateTransaction', () => {
+    it('marks the active step failed and retains a stable support reference across updates', () => {
+      const store = useTransactionStore.getState()
+      const id = crypto.randomUUID()
+      store.addTransaction({ id, type: 'mint', status: 'pending', title: 'Mint',
+        steps: [{ label: 'Approve', status: 'completed' }, { label: 'Mint', status: 'in_progress' }],
+      })
+      store.updateTransaction(id, { status: 'failed', errorMessage: 'HTTP request failed. Request body: secret' }, { name: 'HttpRequestError' })
+      const failed = useTransactionStore.getState().transactions[0]
+      expect(failed.steps[1].status).toBe('error')
+      expect(failed.supportReference).toBe(id)
+      expect(failed.errorCode).toBe('NETWORK_ERROR')
+      expect(failed.errorMessage).toContain('Check account activity')
+      expect(failed.errorMessage).not.toContain('secret')
+      store.updateTransaction(id, { status: 'failed', errorMessage: failed.errorMessage })
+      expect(useTransactionStore.getState().transactions[0].supportReference).toBe(id)
+    })
+
     it('updates transaction status', () => {
       useTransactionStore.getState().addTransaction({
         id: 'tx-1',

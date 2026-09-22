@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
+import { BaseError, ContractFunctionRevertedError, HttpRequestError, encodeErrorResult, parseAbi } from 'viem'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { createOracleSyncError, ORACLE_SYNC_REVERT_DATA } from '../../test/fixtures/oracleSyncError'
 import {
@@ -93,6 +93,43 @@ function encodedErrorMessage(errorName: string, args: readonly unknown[], action
 }
 
 describe('getPerpsErrorMessage', () => {
+  it('explains a deadline refusal inside a viem HTTP response without exposing transaction data', () => {
+    const cause = new HttpRequestError({
+      url: '/api/perps/v1/aa/rpc', status: 400,
+      body: { signature: 'private-signature', callData: '0xdeadbeef' },
+      details: JSON.stringify({ code: -32001, data: { reason: 'DEADLINE_TOO_CLOSE', retryable: false }, message: 'Approval finished too late' }),
+    })
+    const error = new Error(new BaseError('An error occurred while executing user operation', { cause }).message, { cause })
+    const message = getPerpsErrorMessage(error, 'commit')
+    expect(message).toContain('Too little time remained')
+    expect(message).toContain('did not send this request')
+    expect(message).toContain('any earlier submission')
+    expect(message).not.toMatch(/private-signature|0xdeadbeef|viem@|HTTP/)
+  })
+
+  it('recognizes structured deadline metadata and JSON-RPC error envelopes', () => {
+    for (const error of [
+      { cause: { data: { reason: 'DEADLINE_TOO_CLOSE' } } },
+      { details: JSON.stringify({ error: { data: { reason: 'DEADLINE_TOO_CLOSE' } } }) },
+    ]) expect(getPerpsErrorMessage(error, 'commit')).toContain('Too little time remained')
+  })
+
+  it.each(['HTTP request failed.', 'Network request failed', 'Unexpected provider failure'])(
+    'hides diagnostic payloads for %s without asserting a submission outcome', (summary) => {
+      const error = new Error(`${summary}\nRequest Arguments:\n signature: private-signature\n${'0'.repeat(1000)}`)
+      const message = getPerpsErrorMessage(error, 'commit')
+      expect(message).toContain('Trading Account activity')
+      expect(message).not.toMatch(/private-signature|Request Arguments|did not send|No order/)
+      expect(message.length).toBeLessThan(250)
+    }
+  )
+
+  it('does not infer expiry from request data or malformed response details', () => {
+    const error = new HttpRequestError({ url: '/api/perps/v1/aa/rpc',
+      body: { data: { reason: 'DEADLINE_TOO_CLOSE' } }, details: '{invalid JSON' })
+    expect(getPerpsErrorMessage(error, 'commit')).not.toContain('did not send')
+  })
+
   it('decodes the reported TP/SL settlement shortfall through a standard Error cause', () => {
     const error = new Error('Execution reverted for an unknown reason.', {
       cause: { code: 3, message: 'execution reverted', data: '0x024ec6ee' },

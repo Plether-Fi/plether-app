@@ -10,6 +10,8 @@ interface LoadingScreenProps {
   title?: string
   steps: LoadingStep[]
   errorMessage?: string
+  supportReference?: string
+  errorCode?: string
   onClose?: () => void
   onRetry?: () => void
   transactionUrl?: string
@@ -19,12 +21,14 @@ export function LoadingScreen({
   title = 'Your request is being processed.',
   steps,
   errorMessage,
+  supportReference,
+  errorCode,
   onClose,
   onRetry,
   transactionUrl,
 }: LoadingScreenProps) {
   const errorIndex = steps.findIndex((s) => s.status === 'error')
-  const hasError = errorIndex !== -1
+  const hasError = errorIndex !== -1 || Boolean(errorMessage)
   const isComplete = steps.length > 0 && steps.every((s) => s.status === 'completed')
   const completedCount = steps.filter((s) => s.status === 'completed').length
   const progress = hasError || isComplete
@@ -66,7 +70,7 @@ export function LoadingScreen({
 
       <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain panel-padding-x pb-4 sm:pb-6">
         {steps.map((step, index) => {
-          const isAfterError = hasError && index > errorIndex
+          const isAfterError = errorIndex !== -1 && index > errorIndex
           return (
             <div key={`${step.label}-${String(index)}`}>
               <div className={`flex items-center gap-4 ${isAfterError ? 'opacity-20' : ''}`}>
@@ -85,17 +89,19 @@ export function LoadingScreen({
                   {index + 1}. {step.label}
                 </span>
               </div>
-              {step.status === 'error' && errorMessage && (
-                <div className="mt-3 border border-brand-orange/30 bg-brand-orange/10 p-3 sm:ml-10">
-                  <p className="break-words text-sm text-brand-orange">{errorMessage}</p>
-                </div>
-              )}
             </div>
           )
         })}
+        {hasError && errorMessage && (
+          <div role="alert" className="min-w-0 border border-brand-orange/30 bg-brand-orange/10 p-3">
+            <p className="whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{errorMessage}</p>
+            {errorCode && <p className="mt-2 text-xs text-content-secondary">Reason code: {errorCode}</p>}
+            {supportReference && <p className="mt-2 text-xs text-content-secondary">Support reference: <code className="select-all [overflow-wrap:anywhere]">{supportReference}</code></p>}
+          </div>
+        )}
       </div>
 
-      {(hasError && onRetry) || (isComplete && transactionUrl) ? (
+      {(hasError && onRetry) || ((isComplete || hasError) && transactionUrl) ? (
         <div className="shrink-0 border-t border-brand-border/30 panel-padding-x py-4">
           {hasError && onRetry && (
             <Button variant="secondary" onClick={onRetry} className="w-full">
@@ -103,7 +109,7 @@ export function LoadingScreen({
             </Button>
           )}
 
-          {isComplete && transactionUrl && (
+          {(isComplete || hasError) && transactionUrl && (
             <a
               href={transactionUrl}
               target="_blank"

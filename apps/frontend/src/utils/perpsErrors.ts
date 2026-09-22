@@ -1,3 +1,4 @@
+import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
 import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
 import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
@@ -595,6 +596,11 @@ export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): s
 }
 
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {
+  for (const record of transactionErrorRecords(error)) {
+    const reason = errorField(record, 'reason') ?? errorField(record, 'diagnosticCode')
+    if (typeof reason === 'string' && Object.hasOwn(TRANSACTION_FAILURE_MESSAGES, reason)
+      && reason !== 'UNKNOWN' && reason !== 'SUBMISSION_OUTCOME_UNKNOWN') return TRANSACTION_FAILURE_MESSAGES[reason]
+  }
   const decoded = decodePerpsError(error)
   if (decoded.name === 'Panic') {
     const reason = argNumber(decoded.args) === 17 ? 'an internal arithmetic error' : 'an internal error'
@@ -611,7 +617,7 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     return fallbackMessage(action)
   }
   if (lower.includes('commit reverted after wallet confirmation')) {
-    return rawMessage
+    return readableTransactionMessage(rawMessage)
   }
   const rawDecodedMessage = messageForRawError(lower)
   if (rawDecodedMessage) return rawDecodedMessage
@@ -631,12 +637,10 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     lower.includes('backend did not return pyth update data') ||
     lower.includes('hermes rate limit reached')
   ) {
-    return rawMessage
+    return readableTransactionMessage(rawMessage)
   }
-  if (lower.includes('network') || lower.includes('fetch')) {
-    return rawMessage
-      ? `Network request failed: ${rawMessage}`
-      : 'Network request failed. Check RPC/Hermes connectivity and retry.'
+  if (/network (request|error)|failed to fetch|fetch failed/i.test(rawMessage)) {
+    return 'The connection failed. Check Trading Account activity to see whether the transaction was received before trying again.'
   }
   if (lower.includes('transaction receipt') && lower.includes('could not be found')) {
     return 'Transaction was submitted, but confirmation timed out. Check the explorer before retrying.'
@@ -648,5 +652,9 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     return fallbackMessage(action)
   }
 
-  return rawMessage && rawMessage !== 'Transaction failed' ? rawMessage : fallbackMessage(action)
+  if (/http request failed|rpc request failed|request arguments:|request body:|raw call arguments:|\b0x[\da-f]{40,}|\bviem@/i.test(rawMessage) || rawMessage.length > 600) {
+    return 'We could not confirm this transaction. Check Trading Account activity for its status before trying again.'
+  }
+
+  return rawMessage && rawMessage !== 'Transaction failed' ? readableTransactionMessage(rawMessage) : fallbackMessage(action)
 }

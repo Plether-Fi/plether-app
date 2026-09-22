@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { HttpRequestError } from 'viem'
+import { getPerpsErrorMessage } from '../../utils/perpsErrors'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -245,6 +247,27 @@ describe('perps lifecycle labels', () => {
         executionBountyUsdc: 10_000n,
       },
     })
+  })
+
+  it('shows readable recovery guidance after a gateway deadline refusal', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const error = new HttpRequestError({
+      url: '/api/perps/v1/aa/rpc', status: 400,
+      body: { signature: 'private-signature', callData: '0xdeadbeef' },
+      details: JSON.stringify({ code: -32001, data: { reason: 'DEADLINE_TOO_CLOSE', retryable: false } }),
+    })
+    // usePerpsTrading formats the gateway error before passing it to the dialog.
+    perpsTradingMocks.commitOrder.mockRejectedValue(new Error(getPerpsErrorMessage(error, 'commit'), { cause: error }))
+    render(<PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
+      oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
+      availableToTradeRaw={1_000_000_000n} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await screen.findByText(/Too little time remained/)
+    expect(screen.getByText(/Check Trading Account activity for any earlier submission/)).toBeInTheDocument()
+    expect(screen.queryByText(/private-signature|0xdeadbeef|HTTP request failed/)).not.toBeInTheDocument()
   })
 
   it.each(['Review again', 'Back to Preview'])(

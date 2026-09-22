@@ -318,7 +318,7 @@ export function useZapBuyWithPermit() {
       updateTransaction(txIdRef.current, {
         status: 'failed',
         errorMessage: getErrorMessage(txError),
-      })
+      }, txError)
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
@@ -395,7 +395,7 @@ export function useZapBuyWithPermit() {
           updateTransaction(txId, {
             status: 'failed',
             errorMessage: getErrorMessage(txError),
-          })
+          }, txError)
           txIdRef.current = null
           return txError
         },
@@ -460,7 +460,7 @@ export function useZapSellWithPermit() {
       updateTransaction(txIdRef.current, {
         status: 'failed',
         errorMessage: getErrorMessage(txError),
-      })
+      }, txError)
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
@@ -533,7 +533,7 @@ export function useZapSellWithPermit() {
           updateTransaction(txId, {
             status: 'failed',
             errorMessage: getErrorMessage(txError),
-          })
+          }, txError)
           txIdRef.current = null
           return txError
         },

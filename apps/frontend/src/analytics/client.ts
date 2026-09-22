@@ -22,6 +22,8 @@ const MAX_LOG_ATTRIBUTE_STRING_LENGTH = 128
 
 const ALLOWED_PROPERTY_KEYS = new Set([
   'attempt_id',
+  'support_reference',
+  'build_commit',
   'stage',
   'outcome',
   'deployment_name',
@@ -151,6 +153,7 @@ export function sanitizeFrontendLogAttributes(
 
   const sanitized: LogAttributes = {}
   for (const [key, value] of Object.entries(attributes)) {
+    if (key === 'support_reference' && (typeof value !== 'string' || !/^(?:ui-[a-z0-9-]{1,60}|(?:tx-)?[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(value))) continue
     if (key === 'attempt_id' && (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) continue
     if (!ALLOWED_LOG_ATTRIBUTE_KEYS.has(key) || value === undefined || value === null) continue
 
@@ -182,6 +185,7 @@ export function sanitizeAnalyticsProperties(properties?: AnalyticsProperties): P
 
   const sanitized: Properties = {}
   for (const [key, value] of Object.entries(properties)) {
+    if (key === 'support_reference' && (typeof value !== 'string' || !/^(?:ui-[a-z0-9-]{1,60}|(?:tx-)?[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(value))) continue
     if (key === 'attempt_id' && (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))) continue
     if (shouldDropProperty(key) || value === undefined || value === null) continue
 

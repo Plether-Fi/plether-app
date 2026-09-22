@@ -366,7 +366,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.',
+        message: expect.stringContaining('Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -379,7 +379,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action, protectionId: 7n, params })).rejects.toMatchObject({
-        message: 'TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.',
+        message: expect.stringContaining('TP/SL could not be updated because the RPC did not return a readable contract error. Refresh your position, pending orders, and free margin, then retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -391,7 +391,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: 'Plether gas sponsorship is temporarily paused.',
+        message: expect.stringContaining('Plether gas sponsorship is temporarily paused.\n\nSupport reference: '),
         cause: failure,
       })
     })
@@ -812,7 +812,7 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('shows the transaction hash and diagnostics when sponsored submission fails opaquely', async () => {
+  it('shows the transaction hash and support reference without a diagnostic dump when submission fails opaquely', async () => {
     mocks.identityReady = true
     const failedHash = `0x${'11'.repeat(32)}` as Hex
     mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(
@@ -823,13 +823,7 @@ describe('usePerpsTrading', () => {
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.commitOrder(commitInput())).rejects.toThrow([
-      'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
-      `Failed tx: ${failedHash}`,
-      'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
-      'Latest open preview still passes.',
-      'A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.',
-    ].join('\n'))
+    await expect(result.current.commitOrder(commitInput())).rejects.toThrow(`Transaction: ${failedHash}\n\nSupport reference:`)
   })
 
   it('adds isolated margin through the Trading Account and invalidates only perps reads', async () => {

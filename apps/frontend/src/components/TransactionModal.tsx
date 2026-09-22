@@ -91,7 +91,7 @@ export function TransactionModal() {
   }
 
   const transactionUrl = currentTx?.hash
-    ? getExplorerTxUrl(chainId, currentTx.hash)
+    ? getExplorerTxUrl(currentTx.chainId ?? chainId, currentTx.hash)
     : undefined
 
   if (!isOpen || !currentTx) return null
@@ -123,6 +123,8 @@ export function TransactionModal() {
               title={currentTx.title}
               steps={currentTx.steps}
               errorMessage={currentTx.errorMessage}
+              supportReference={currentTx.supportReference}
+              errorCode={currentTx.errorCode}
               transactionUrl={transactionUrl}
               onClose={close}
               onRetry={canRetry ? handleRetry : undefined}

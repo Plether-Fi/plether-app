@@ -37,9 +37,11 @@ describe('order preparation lifecycle', () => {
     const view = setup('review', vi.fn().mockRejectedValue(error))
     await advance(0)
     expect(view.result.current.error).toBe(error)
+    expect(view.result.current.supportReference).toMatch(/^tx-[\da-f-]{36}$/)
+    expect(analytics).toHaveBeenCalledWith('transaction failed', expect.objectContaining({ support_reference: view.result.current.supportReference }))
     expect(analytics).toHaveBeenCalledWith('perps order preparation finished', {
       surface: 'perps', duration_ms: 0, reason_code: 'cold', error_category: 'preparation_failed',
-      error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder',
+      error_code: 'undecoded_revert', stage: 'commit_simulation', contract_function: 'commitOrder', support_reference: view.result.current.supportReference,
     })
   })
 
@@ -50,7 +52,7 @@ describe('order preparation lifecycle', () => {
     await act(async () => { pending.reject(new Error('execution reverted')) })
     expect(analytics.mock.calls.filter(([name]) => name === 'perps order preparation finished')).toEqual([
       ['perps order preparation finished', { surface: 'perps', duration_ms: 30_000, reason_code: 'cold',
-        error_category: 'preparation_failed', error_code: 'timeout', stage: 'preparation_timeout' }],
+        error_category: 'preparation_failed', error_code: 'timeout', stage: 'preparation_timeout', support_reference: expect.stringMatching(/^tx-[\da-f-]{36}$/) }],
     ])
   })
 

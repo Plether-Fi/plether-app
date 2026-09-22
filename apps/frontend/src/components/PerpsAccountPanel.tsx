@@ -676,7 +676,7 @@ function PositionView({
           </dl>
 
           {positionMarginError ? (
-            <div className="border border-[#FF572D]/40 bg-[#FF572D]/10 p-3 text-sm text-[#FFAB96]">
+            <div className="whitespace-pre-line [overflow-wrap:anywhere] border border-[#FF572D]/40 bg-[#FF572D]/10 p-3 text-sm text-[#FFAB96]">
               {positionMarginError}
             </div>
           ) : null}
@@ -991,7 +991,7 @@ function TraderClaimCard({
         </Button>
       </div>
       {error ? (
-        <p className="mt-3 text-sm text-brand-orange">{error}</p>
+        <p className="mt-3 whitespace-pre-line [overflow-wrap:anywhere] text-sm text-brand-orange">{error}</p>
       ) : null}
     </div>
   )
