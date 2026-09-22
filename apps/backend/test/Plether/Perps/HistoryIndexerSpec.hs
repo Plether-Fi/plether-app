@@ -327,8 +327,9 @@ spec = do
       parsePerpsLog
         (mkLog intentRegisteredTopic [word 42, addressTopic, clientOrderId] intentData)
         `shouldBeParsedAs` \case
-          ParsedIntentRegistered 42 account clientId 1 _ ->
+          ParsedIntentRegistered 42 account clientId 1 (Object fields) ->
             account == testAccount && clientId == clientOrderIdText
+              && KeyMap.lookup "isClose" fields == Just (Bool False)
           _ -> False
       parsePerpsLog
         (mkLog orderFinalizedTopic [word 42, addressTopic, clientOrderId] finalizedData)

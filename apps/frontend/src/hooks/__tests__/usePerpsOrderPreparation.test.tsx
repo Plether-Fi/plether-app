@@ -155,16 +155,16 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(3)
   })
 
-  it('refreshes at ten seconds remaining and retains the last displayed terms', async () => {
+  it('refreshes at forty-five seconds remaining and retains the last displayed terms', async () => {
     const pending = deferred<PreparedPerpsOrderV2>()
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(20)))
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(55)))
     await advance(0)
     const original = view.result.current.result
     await advance(10_000)
     expect(view.result.current.ready).toBe(false)
     expect(view.result.current.refreshing).toBe(true)
     expect(view.result.current.result).toBe(original)
-    await act(async () => { pending.resolve(prepared(20, 30_000_000n)) })
+    await act(async () => { pending.resolve(prepared(55, 30_000_000n)) })
     expect(view.result.current.previous).toBe(original)
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
@@ -173,7 +173,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('stops on refresh failure or an already expiring response', async () => {
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockRejectedValue(new Error('offline')))
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValue(new Error('offline')))
     await advance(10_000)
     expect(view.result.current.status).toBe('error')
     expect(view.result.current.ready).toBe(false)
@@ -390,7 +390,7 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.ready).toBe(true)
   })
   it('retains prior terms during recovery and surfaces updated terms after success', async () => {
-    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(20)).mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared(60, 30_000_000n)))
+    const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValueOnce(syncError()).mockImplementation(async () => prepared(60, 30_000_000n)))
     await advance(0)
     const previous = view.result.current.result
     await advance(10_000)
@@ -454,3 +454,5 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.error).toMatchObject({ message: 'insufficient margin' })
   })
 })
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

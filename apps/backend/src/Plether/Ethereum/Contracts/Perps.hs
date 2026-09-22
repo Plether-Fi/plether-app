@@ -28,15 +28,20 @@ module Plether.Ethereum.Contracts.Perps
   , decodeLiquidationBatchItem
   , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
+  , getPendingOrderViewAtBlock
   , pendingPolicyValidUntil
+  , pendingPolicyValidUntilAtBlock
   , lifecycleStatus
+  , lifecycleStatusAtBlock
   , orderTerminalOutcome
+  , orderTerminalOutcomeAtBlock
   , decodeOrderTerminalOutcome
   , getPositionSize
   , getPositionSizeAtBlock
   , decodePositionSize
   , maxOrderAge
   , orderSettlementWindow
+  , orderSettlementWindowAtBlock
   , orderExecutionStalenessLimit
   , adverseConfidenceMultiplierBps
   , isOracleFrozen
@@ -494,12 +499,25 @@ getPendingOrderView client orderRouter orderId = do
   result <- ethCall client (CallParams orderRouter (getPendingOrderViewCall orderId))
   pure $ fmap decodePendingOrderView result
 
+getPendingOrderViewAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError PendingOrderView)
+getPendingOrderViewAtBlock client orderRouter orderId blockNumber = do
+  result <- ethCallAtBlock client (CallParams orderRouter (getPendingOrderViewCall orderId)) blockNumber
+  pure $ fmap decodePendingOrderView result
+
 pendingPolicyValidUntil :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
 pendingPolicyValidUntil client lifecycleBook orderId = do
   result <-
     ethCall
       client
       (CallParams lifecycleBook $ encodeCall "pendingPolicy(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodePendingPolicyValidUntil
+
+pendingPolicyValidUntilAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError Integer)
+pendingPolicyValidUntilAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "pendingPolicy(uint64)" [encodeUint256 orderId]) blockNumber
   pure $ result >>= decodePendingPolicyValidUntil
 
 lifecycleStatus :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
@@ -510,12 +528,28 @@ lifecycleStatus client lifecycleBook orderId = do
       (CallParams lifecycleBook $ encodeCall "lifecycleStatus(uint64)" [encodeUint256 orderId])
   pure $ result >>= decodeLifecycleStatus
 
+lifecycleStatusAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError Integer)
+lifecycleStatusAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "lifecycleStatus(uint64)" [encodeUint256 orderId]) blockNumber
+  pure $ result >>= decodeLifecycleStatus
+
 orderTerminalOutcome :: EthClient -> Text -> Integer -> IO (Either RpcError OrderTerminalOutcome)
 orderTerminalOutcome client lifecycleBook orderId = do
   result <-
     ethCall
       client
       (CallParams lifecycleBook $ encodeCall "outcome(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodeOrderTerminalOutcome
+
+orderTerminalOutcomeAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError OrderTerminalOutcome)
+orderTerminalOutcomeAtBlock client lifecycleBook orderId blockNumber = do
+  result <-
+    ethCallAtBlock
+      client
+      (CallParams lifecycleBook $ encodeCall "outcome(uint64)" [encodeUint256 orderId]) blockNumber
   pure $ result >>= decodeOrderTerminalOutcome
 
 getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
@@ -542,6 +576,11 @@ maxOrderAge client orderRouter = do
 orderSettlementWindow :: EthClient -> Text -> IO (Either RpcError Integer)
 orderSettlementWindow client oracle = do
   result <- ethCall client (CallParams oracle (encodeCall "orderSettlementWindow()" []))
+  pure $ fmap decodeUint256 result
+
+orderSettlementWindowAtBlock :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+orderSettlementWindowAtBlock client oracle blockNumber = do
+  result <- ethCallAtBlock client (CallParams oracle (encodeCall "orderSettlementWindow()" [])) blockNumber
   pure $ fmap decodeUint256 result
 
 orderExecutionStalenessLimit :: EthClient -> Text -> IO (Either RpcError Integer)

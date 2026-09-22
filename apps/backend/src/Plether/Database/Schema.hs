@@ -989,6 +989,8 @@ instance FromRow PerpsKeeperTerminalOrderRow where
 ensurePerpsKeeperSchema :: Connection -> IO ()
 ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_keeper_broadcasts (order_router TEXT PRIMARY KEY, tx_hash TEXT NOT NULL, raw_tx BYTEA NOT NULL, last_broadcast_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_state (\
     \id INTEGER PRIMARY KEY DEFAULT 1,\
     \order_router TEXT,\
@@ -3140,7 +3142,6 @@ getPendingPerpsKeeperOrders conn orderRouter limitRows =
     \status, attempt_count, last_error \
     \FROM perps_keeper_orders \
     \WHERE order_router = ? AND status = 'pending' \
-    \AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '5 seconds') \
     \ORDER BY order_id ASC LIMIT ?"
     (normalizeRouter orderRouter, limitRows)
 

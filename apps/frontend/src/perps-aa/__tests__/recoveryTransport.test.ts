@@ -57,7 +57,7 @@ describe('operation recovery transport', () => {
   })
   it('ignores expired, malformed and wrong-operation credentials', async () => {
     for (const value of ['bad', token().replace(/\.\d+\./, '.1.'), token().replace(hash, `0x${'d'.repeat(64)}`)]) {
-      await recoveryFetch(url, vi.fn(async () => new Response('{}', { headers: { 'X-Plether-AA-Recovery': value } })))(url, request())
+      await recoveryFetch(url, vi.fn(async () => new Response('{}', { headers: { 'X-Plether-AA-Recovery': value, Date: new Date().toUTCString() } })))(url, request())
     }
     expect(localStorage.getItem('plether:aa:recovery-capabilities:v1')).toBeNull()
   })

@@ -1,3 +1,4 @@
+import { deadlineNow } from '../perps-aa/deadlineClock'
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
 import { captureAnalyticsEvent } from '../analytics/client'
@@ -7,7 +8,7 @@ import { isPerpsOracleSyncError } from '../utils/perpsErrors'
 export const PREPARATION_IDLE_MS = 500
 export const PREPARATION_REUSE_MS = 10_000
 export const PREPARATION_TIMEOUT_MS = 30_000
-export const REVIEW_REFRESH_SECONDS = 10
+export const REVIEW_REFRESH_SECONDS = 45
 export const ORACLE_RECOVERY_RETRY_MS = 2_000
 export const ORACLE_RECOVERY_UNAVAILABLE = 'Market prices are temporarily unavailable. Your order details are saved.'
 
@@ -82,11 +83,11 @@ class PreparationController<T> {
   }
   invalidate() { this.oracleRecovery = undefined; this.resumeRecovery = undefined; this.generation++; this.abortController?.abort(); this.clearTimers() }
   reusable() {
-    return Date.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
+    return performance.now() - this.state.startedAt < PREPARATION_REUSE_MS &&
       (this.state.status === 'pending' || (this.state.status === 'ready' && this.hasDeadline()))
   }
   hasDeadline() {
-    return !!this.state.result && Number(this.state.result.protection.validUntil) * 1000 - Date.now() > REVIEW_REFRESH_SECONDS * 1000
+    try { return !!this.state.result && Number(this.state.result.protection.validUntil) * 1000 - deadlineNow() > REVIEW_REFRESH_SECONDS * 1000 } catch { return false }
   }
   configure(options: Options<T>) {
     this.disposed = false
@@ -115,7 +116,7 @@ class PreparationController<T> {
       this.publish({ ...initialState, visible: this.state.visible, key: options.candidate.key, identityKey: options.identityKey, contextKey: options.contextKey })
     }
     const opening = options.mode === 'review' && old?.mode !== 'review'
-    if (opening) this.openedAt = Date.now()
+    if (opening) this.openedAt = performance.now()
     if (options.mode === 'review') {
       if (!this.state.visible) return
       if (changed || contextChanged || opening) {
@@ -141,12 +142,12 @@ class PreparationController<T> {
     clearTimeout(this.timer)
     if (!this.state.visible || this.options?.mode !== 'review' || !this.state.result || this.state.status !== 'ready') return
     this.timer = setTimeout(() => { this.start('refresh'); }, Math.max(0,
-      Number(this.state.result.protection.validUntil) * 1000 - Date.now() - REVIEW_REFRESH_SECONDS * 1000))
+      Number(this.state.result.protection.validUntil) * 1000 - deadlineNow() - REVIEW_REFRESH_SECONDS * 1000))
   }
   trackReady() {
     if (!this.state.visible || this.options?.mode !== 'review' || this.options.reviewValid === false || this.openedAt === undefined) return
     captureAnalyticsEvent('perps review ready', {
-      surface: 'perps', duration_ms: Date.now() - this.openedAt, reason_code: this.admission ?? 'cold',
+      surface: 'perps', duration_ms: performance.now() - this.openedAt, reason_code: this.admission ?? 'cold',
     })
     this.openedAt = undefined
   }
@@ -164,7 +165,7 @@ class PreparationController<T> {
     this.abortController = abortController
     const candidate = options.candidate
     const generation = this.generation
-    const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : Date.now()
+    const startedAt = continuingRecovery ? continuingRecovery.deadline - PREPARATION_TIMEOUT_MS : performance.now()
     const previous = source === 'refresh' ? this.state.result : undefined
     if (source === 'background') this.backgroundGeneration = generation
     if (source === 'refresh') { this.openedAt = startedAt; this.admission = 'refresh' }
@@ -178,7 +179,7 @@ class PreparationController<T> {
     let retryAt = 0
     const trackRecovery = (reason: 'started' | 'succeeded' | 'exhausted' | 'failed') => {
       captureAnalyticsEvent('perps oracle recovery', {
-        surface: 'perps', reason_code: reason, duration_ms: Date.now() - (recoveryStartedAt ?? Date.now()),
+        surface: 'perps', reason_code: reason, duration_ms: performance.now() - (recoveryStartedAt ?? performance.now()),
       })
     }
     const finish = (result?: PreparedPerpsOrderV2, error?: unknown) => {
@@ -187,12 +188,18 @@ class PreparationController<T> {
       releaseBackground()
       clearTimeout(jobTimeout)
       this.jobs.delete(jobTimeout)
-      if (current() && result && Number(result.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000) {
-        error = preparationFailure(new Error('This review has expired or is about to expire. Retry review for fresh order terms.'), 'review_freshness')
-        result = undefined
+      if (current() && result) {
+        try {
+          if (Number(result.protection.validUntil) * 1000 - deadlineNow() <= REVIEW_REFRESH_SECONDS * 1000) {
+            throw new Error('This review has expired or is about to expire. Retry review for fresh order terms.')
+          }
+        } catch (cause) {
+          error = preparationFailure(cause, 'review_freshness')
+          result = undefined
+        }
       }
       if (!this.disposed) captureAnalyticsEvent('perps order preparation finished', {
-        surface: 'perps', duration_ms: Date.now() - startedAt, reason_code: source,
+        surface: 'perps', duration_ms: performance.now() - startedAt, reason_code: source,
         error_category: !current() ? 'cancelled' : error ? 'preparation_failed' : 'none',
         ...(current() && error ? getPreparationFailureProperties(error) : {}),
       })
@@ -219,12 +226,12 @@ class PreparationController<T> {
       finish(undefined, recoveryStartedAt === undefined
         ? preparationFailure(new Error('Order checks took too long. Retry review.'), 'preparation_timeout')
         : new Error(ORACLE_RECOVERY_UNAVAILABLE, { cause: lastRecoveryError }))
-    }, Math.max(0, startedAt + PREPARATION_TIMEOUT_MS - Date.now()))
+    }, Math.max(0, startedAt + PREPARATION_TIMEOUT_MS - performance.now()))
     this.jobs.add(jobTimeout)
     const scheduleRecovery = () => {
       if (!current() || finished || inFlight || !this.state.visible || this.options?.mode !== 'review') return
       clearTimeout(this.timer)
-      this.timer = setTimeout(() => { runAttempt() }, Math.max(0, retryAt - Date.now()))
+      this.timer = setTimeout(() => { runAttempt() }, Math.max(0, retryAt - performance.now()))
     }
     const runAttempt = () => {
       if (!current() || finished || inFlight || !this.state.visible) return
@@ -233,10 +240,10 @@ class PreparationController<T> {
         inFlight = false
         if (current() && !finished && this.options?.mode === 'review' && isPerpsOracleSyncError(error)) {
           lastRecoveryError = error
-          if (recoveryStartedAt === undefined) { recoveryStartedAt = Date.now(); trackRecovery('started') }
+          if (recoveryStartedAt === undefined) { recoveryStartedAt = performance.now(); trackRecovery('started') }
           this.oracleRecovery = { startedAt: recoveryStartedAt, deadline: startedAt + PREPARATION_TIMEOUT_MS, error }
           this.publish({ recoveringOracle: true })
-          retryAt = Date.now() + ORACLE_RECOVERY_RETRY_MS
+          retryAt = performance.now() + ORACLE_RECOVERY_RETRY_MS
           this.resumeRecovery = scheduleRecovery
           scheduleRecovery()
         } else finish(undefined, error)
@@ -249,7 +256,7 @@ class PreparationController<T> {
     runAttempt()
   }
 
-  retry = () => { this.admission = 'cold'; this.openedAt = Date.now(); this.start(this.state.result ? 'refresh' : 'cold') }
+  retry = () => { this.admission = 'cold'; this.openedAt = performance.now(); this.start(this.state.result ? 'refresh' : 'cold') }
   setVisible = (visible: boolean) => {
     if (visible === this.state.visible) return
     this.publish({ visible })
@@ -258,7 +265,9 @@ class PreparationController<T> {
     if (this.options?.mode === 'review') {
       if (this.options.contextKey !== this.state.contextKey) this.start(this.state.result ? 'refresh' : 'cold')
       else if (this.state.recoveringOracle) { this.resumeRecovery?.(); return }
-      else if ((this.state.status === 'ready' || this.state.status === 'pending') && !this.reusable()) this.start(this.state.result ? 'refresh' : 'cold')
+      // Monotonic timers may pause during device sleep. A visible review gets
+      // fresh server/chain context even if its local elapsed time looks short.
+      else if (this.state.status === 'ready' || (this.state.status === 'pending' && !this.reusable())) this.start(this.state.result ? 'refresh' : 'cold')
       else if (this.state.status === 'idle') this.start('cold')
       else this.scheduleRefresh()
     } else if (this.options?.mode === 'background' && this.state.status === 'idle') this.scheduleBackground()

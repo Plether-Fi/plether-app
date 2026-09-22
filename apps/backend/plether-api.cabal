@@ -30,6 +30,7 @@ library
         Plether.AA.Timing
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
+        Plether.Keeper.Broadcast
         Plether.Keeper.Funding
         Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
@@ -118,6 +119,7 @@ library
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
+        Plether.Pyth.Prefetch
         Plether.Pyth.RevealPayload
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
@@ -242,12 +244,14 @@ executable plether-basket-worker
     import:           warnings
     main-is:          BasketWorker.hs
     build-depends:
+        async >= 2.2,
         base >= 4.17 && < 5,
         plether-api,
         aeson >= 2.1,
         bytestring >= 0.11,
         postgresql-simple >= 0.7,
         text >= 2.0,
+        time >= 1.12,
         http-client >= 0.7,
         http-client-tls >= 0.3
     hs-source-dirs:   app
@@ -411,6 +415,7 @@ test-suite plether-api-test
         Plether.ServerSpec
         Plether.AA.TimingSpec
         Plether.LiquidationWorkerSpec
+        Plether.Pyth.PrefetchSpec
         Plether.Pyth.HermesSpec
         Plether.Pyth.HistorySpec
         Plether.Pyth.RevealPayloadSpec
@@ -474,6 +479,7 @@ test-suite plether-api-integration-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.Keeper.BroadcastSpec
         Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
         Plether.Perps.CandleRollupSpec

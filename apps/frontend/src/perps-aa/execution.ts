@@ -1,3 +1,4 @@
+import { refreshDeadlineClock } from './deadlineClock'
 import type { SavedOrderDraft } from './orderDraft'
 import { reportAttemptStage } from './attemptDiagnostics'
 import { isExplicitSignatureRejection, isPreparationVersionSupported, persistPreparedOperation, persistReviewedAction, restorePreparedOperation, restoreReviewedAction } from './preparedOperation'
@@ -139,7 +140,7 @@ async function waitForUserOperationOutcome(input: {
   timeoutMs?: number
   pollIntervalMs?: number
 }): Promise<UserOperationWaitOutcome> {
-  const startedAt = Date.now()
+  const startedAt = performance.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   let persistedInclusion:
     SponsoredOperationInclusionObservation | undefined
@@ -230,7 +231,7 @@ async function waitForUserOperationOutcome(input: {
     }
   }
 
-  while (Date.now() - startedAt < timeoutMs) {
+  while (performance.now() - startedAt < timeoutMs) {
     input.signal.throwIfAborted()
     try {
       const outcome = await reconcileUserOperation({
@@ -285,7 +286,7 @@ async function waitForUserOperationOutcome(input: {
       // transiently. Keep reconciling the already-persisted local hash.
     }
 
-    await wait(input.pollIntervalMs ?? (Date.now() - startedAt < 60_000 ? 2_000 : 5_000), input.signal)
+    await wait(input.pollIntervalMs ?? (performance.now() - startedAt < 60_000 ? 2_000 : 5_000), input.signal)
   }
 
   throw new BundlerRequestError({
@@ -420,6 +421,7 @@ export async function executeSponsoredPerpsAction(
     if (preparationRequest && !resumed && !useSponsoredOperationStore.getState().recordPreparation(activeTracker.id, preparationRequest)) {
       throw new SponsoredPreflightError({ reason: 'OPERATION_STORE_UNAVAILABLE', message: 'The preparation request could not be saved' })
     }
+    await refreshDeadlineClock(activeTracker.signal)
     if (orderDeadlineNeedsReview(input.orderRequestV2?.validUntil) || (resumed && operationNeedsFreshOrderReview(resumed))) {
       throw new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false,
         message: 'This order has expired or is too close to expiry. Review the order again.' })
@@ -495,6 +497,7 @@ export async function executeSponsoredPerpsAction(
       const currentState = await input.runtime.readReviewedActionState(reviewedStateInput)
       if (preparationRequest.reviewedState !== currentState) throw new Error('The reviewed position or protection state changed. Review a new transaction.')
     }
+    await refreshDeadlineClock(activeTracker.signal)
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'signing')
     if (preparationRequest) useSponsoredOperationStore.getState().recordWalletPreparationOutcome(activeTracker.id, 'unknown')
     status('awaiting-signature')
@@ -544,6 +547,7 @@ export async function executeSponsoredPerpsAction(
     }
 
     reportAttemptStage(activeTracker.id, 'signed_operation_saved')
+    await refreshDeadlineClock(activeTracker.signal)
     requireDeadlineHeadroom(sponsorshipValidUntil, input.orderRequestV2?.validUntil, 'submission')
     status('submitting')
     // No user callback runs after this point. Reconcile any storage event that

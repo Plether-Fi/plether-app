@@ -29,6 +29,7 @@ import Plether.AA.Pimlico
   , newPimlicoProxyState
   , parseRpcRequest
   , recordSubmittedOperation
+  , validateSubmissionHeadroom
   , validateActionSequence
   , validateNativeActionSequence
   , validateMethodParams
@@ -58,6 +59,17 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "submission time reserve" $ do
+    it "accepts exactly thirty seconds but rejects a late approval" $ do
+      validateSubmissionHeadroom 1999999970 2000000100 (encodeExecute orderCall) `shouldSatisfy` isRight
+      validateSubmissionHeadroom 1999999971 2000000100 (encodeExecute orderCall) `shouldSatisfy` isLeft
+    it "uses the earlier sponsorship expiry, including for non-order actions" $ do
+      validateSubmissionHeadroom 100 130 (encodeExecute orderCall) `shouldSatisfy` isRight
+      validateSubmissionHeadroom 100 129 (encodeExecute orderCall) `shouldSatisfy` isLeft
+      validateSubmissionHeadroom 100 129 (encodeExecute addMarginCall) `shouldSatisfy` isLeft
+    it "checks orders inside account batches and rejects malformed calldata" $ do
+      validateSubmissionHeadroom 1999999971 2000000100 (encodeExecuteBatch [orderCall]) `shouldSatisfy` isLeft
+      validateSubmissionHeadroom 100 200 "invalid" `shouldSatisfy` isLeft
   describe "strict JSON-RPC handling" $ do
     it "rejects batch requests and unknown methods" $ do
       parseRpcRequest (toJSON [gasPriceRequest]) `shouldSatisfy` isLeft

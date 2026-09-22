@@ -202,3 +202,5 @@ describe('lost preparation response recovery with the durable trading lane', () 
     flow.unmount()
   })
 })
+
+vi.mock('./deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

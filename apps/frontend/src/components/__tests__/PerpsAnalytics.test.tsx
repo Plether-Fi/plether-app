@@ -265,3 +265,5 @@ describe('Perps analytics', () => {
     )
   })
 })
+
+vi.mock('../../perps-aa/deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))

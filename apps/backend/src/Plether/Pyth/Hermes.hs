@@ -9,11 +9,14 @@ module Plether.Pyth.Hermes
 import Data.Aeson (FromJSON (..), Value (..), eitherDecode, toJSON, withObject, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Char8 as BS
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
-import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Clock.POSIX (getPOSIXTime, utcTimeToPOSIXSeconds)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Control.Applicative ((<|>))
 import Network.HTTP.Client
   ( Manager
   , httpLbs
@@ -21,6 +24,8 @@ import Network.HTTP.Client
   , requestHeaders
   , responseBody
   , responseHeaders
+  , responseTimeout
+  , responseTimeoutMicro
   , responseStatus
   , setQueryString
   )
@@ -108,14 +113,15 @@ fetchBasketUpdate manager cfg pathSegment source =
       requestBase <- parseRequest $ T.unpack requestUrl
       let request =
             setQueryString queryParams requestBase
-              { requestHeaders = authHeaders apiKey <> requestHeaders requestBase
+              { responseTimeout = responseTimeoutMicro 3_000_000
+              , requestHeaders = authHeaders apiKey <> requestHeaders requestBase
               }
       response <- httpLbs request manager
       nowUnix <- round <$> getPOSIXTime
       let code = statusCode (responseStatus response)
           body = responseBody response
       if code == 429
-        then pure $ Left $ "Hermes returned HTTP 429; retry after " <> retryAfterText response
+        then pure $ Left $ "Hermes returned HTTP 429; retry after " <> retryAfterText nowUnix response
         else
           if code < 200 || code >= 300
             then pure $ Left $ "Hermes returned HTTP " <> T.pack (show code) <> ": " <> previewBody body
@@ -134,8 +140,11 @@ fetchBasketUpdate manager cfg pathSegment source =
       Nothing -> []
       Just key -> [("Authorization", encodeUtf8 $ "Bearer " <> key)]
 
-    retryAfterText response =
-      maybe "60s" (T.pack . show) (lookup "Retry-After" (responseHeaders response))
+    retryAfterText now response =
+      maybe "60" (T.pack . show . max (1 :: Integer)) $ do
+        header <- BS.unpack <$> lookup "Retry-After" (responseHeaders response)
+        readMaybe header <|> ((\date -> ceiling (utcTimeToPOSIXSeconds date) - now)
+          <$> parseTimeM True defaultTimeLocale "%a, %d %b %Y %H:%M:%S GMT" header)
 
     decodeBasket now body = do
       HermesResponse {..} <-

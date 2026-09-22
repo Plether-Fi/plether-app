@@ -1,3 +1,4 @@
+import { deadlineNow, observeDeadlineResponse } from './deadlineClock'
 import { http } from 'viem'
 
 const HEADER = 'X-Plether-AA-Recovery'
@@ -16,7 +17,10 @@ function bound(entries: Map<string, string>) {
 
 function parse(token: string): { hash: string; expires: number } | undefined {
   const match = /^v1\.(0x[0-9a-f]{64})\.0x[0-9a-f]{64}\.(\d{1,12})\.[0-9a-f]{64}$/.exec(token)
-  if (!match || Number(match[2]) * 1000 <= Date.now()) return undefined
+  if (!match) return undefined
+  // Keep a read-only recovery credential when time is unknown; the server
+  // authenticates its expiry. An incorrect device clock must not erase it.
+  try { if (Number(match[2]) * 1000 <= deadlineNow()) return undefined } catch { /* No response clock yet. */ }
   return { hash: match[1], expires: Number(match[2]) }
 }
 
@@ -63,7 +67,9 @@ export function recoveryFetch(rpcUrl: string, fetcher: typeof fetch = fetch, cre
     } catch { /* Upstream validates malformed requests. */ }
     const saved = hash && credentials().get(`${scope}|${hash}`)
     if (saved) headers.set(HEADER, saved)
+    const startedAt = performance.now()
     const response = await fetcher(input, { ...init, headers, redirect: 'error' })
+    try { observeDeadlineResponse(response, startedAt) } catch { /* Read/recovery transport remains usable without timing; authorization checks fail closed. */ }
     const token = response.headers.get(HEADER)
     const parsed = token && parse(token)
     if (parsed && (!hash || parsed.hash === hash)) {

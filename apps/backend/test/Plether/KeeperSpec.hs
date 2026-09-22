@@ -70,6 +70,7 @@ spec = do
     it "uses the idle cadence only when no pending order exists" $ do
       keeperPollDelayMicros 1 5 KeeperIdle `shouldBe` 5_000_000
       keeperPollDelayMicros 1 5 KeeperPending `shouldBe` 1_000_000
+      keeperPollDelayMicros 1 5 KeeperProgress `shouldBe` 0
 
     it "keeps every delay positive" $
       keeperPollDelayMicros 0 0 KeeperIdle `shouldBe` 1_000_000

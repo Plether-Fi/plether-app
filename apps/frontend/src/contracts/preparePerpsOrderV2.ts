@@ -1,3 +1,4 @@
+import { refreshDeadlineClock } from '../perps-aa/deadlineClock'
 import { CFD_CLOSE_PREVIEW_ABI } from './abis/CfdSponsoredClosePreview'
 import { BaseError, ContractFunctionRevertedError, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
 import { buildSponsoredCloseAction, verifyCloseAssistanceLens, SIMPLE_ACCOUNT_BATCH_ABI, type CloseAssistanceConfig, type SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
@@ -178,6 +179,7 @@ async function loadPerpsOrderReviewContext(
   manifest: PerpsAaDeploymentManifest,
   account: Address
 ): Promise<PerpsOrderReviewContext> {
+  await refreshDeadlineClock()
   const orderLifecycleBook = manifest.orderLifecycleBook
   const policyEvaluator = manifest.policyEvaluator
   const verified = await withPreparationStep('deployment_verification', undefined, () => verifyPerpsV2DeploymentBindings(client, manifest))

@@ -1735,3 +1735,5 @@ describe('executeSponsoredPerpsAction', () => {
     expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('../deadlineClock', () => ({ deadlineNow: () => Date.now(), refreshDeadlineClock: async () => ({ now: () => Date.now() }), observeDeadlineResponse: () => {} }))
