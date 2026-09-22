@@ -37,6 +37,7 @@ module Plether.LiquidationWorker
   , decodeLiquidationSnapshotResults
   , selectLiquidationSimulationCandidates
   , decodeCachedLiquidationComponents
+  , decodePairedLiquidationComponents
   , pythStoredPriceCalls
   , decodePythStoredPriceResults
   , mergeLiquidationBasketComponents
@@ -88,11 +89,12 @@ import Plether.Database.Schema
   , PerpsLiquidationRejectedPayloadRow (..)
   , PerpsLiquidationSignerRetryRow (..)
   , PythUpdatePayloadRow (..)
+  , PairedPythUpdatePayloadRow (..)
   , clearPerpsLiquidationCandidatePending
   , clearPerpsLiquidationRejectedPayload
   , clearPerpsLiquidationSignerRetry
   , deletePerpsLiquidationCandidate
-  , getLatestBasketSnapshot
+  , getLatestPairedPythUpdatePayload
   , getLatestPythUpdatePayload
   , getPerpsLiquidationCandidates
   , getPerpsLiquidationLastIndexedBlock
@@ -339,6 +341,12 @@ data LiquidationFuturePublishTime = LiquidationFuturePublishTime
 data LiquidationRiskInputError
   = LiquidationRiskInputUnavailable Text
   | LiquidationRiskInputFuturePublishTime LiquidationFuturePublishTime
+  | LiquidationRiskInputCachePairUnavailable
+      { lrcpReason :: Text
+      , lrcpDetail :: Text
+      , lrcpPayloadBounds :: (Integer, Integer)
+      , lrcpComponentBounds :: Maybe (Integer, Integer)
+      }
   deriving stock (Show, Eq)
 
 data LiquidationBasketComponent = LiquidationBasketComponent
@@ -870,14 +878,28 @@ validateMergedLiquidationBasketDetailed globals components@(firstComponent : rem
 liquidationRiskInputErrorText :: LiquidationRiskInputError -> Text
 liquidationRiskInputErrorText = \case
   LiquidationRiskInputUnavailable err -> err
+  LiquidationRiskInputCachePairUnavailable {..} -> lrcpDetail
   LiquidationRiskInputFuturePublishTime _ ->
     "Merged Pyth basket contained a future publish time"
 
 liquidationRiskInputErrorLogFields :: LiquidationRiskInputError -> [LogField]
 liquidationRiskInputErrorLogFields = \case
-  LiquidationRiskInputUnavailable _ -> []
+  LiquidationRiskInputUnavailable err ->
+    [field "failure_reason" $
+      if err == "Merged Pyth basket was outside the liquidation freshness window"
+        then ("stale_merged_prices" :: Text)
+        else "risk_inputs_unavailable"]
+  LiquidationRiskInputCachePairUnavailable {..} ->
+    [ field "failure_reason" lrcpReason
+    , field "payload_min_publish_time" $ fst lrcpPayloadBounds
+    , field "payload_max_publish_time" $ snd lrcpPayloadBounds
+    ] <> maybe [] (\(minimumTime, maximumTime) ->
+      [ field "component_min_publish_time" minimumTime
+      , field "component_max_publish_time" maximumTime
+      ]) lrcpComponentBounds
   LiquidationRiskInputFuturePublishTime LiquidationFuturePublishTime {..} ->
-    [ field "block_timestamp" lfptBlockTimestamp
+    [ field "failure_reason" ("future_publish_time" :: Text)
+    , field "block_timestamp" lfptBlockTimestamp
     , field "minimum_publish_time" lfptMinimumPublishTime
     , field "maximum_publish_time" lfptMaximumPublishTime
     , field "future_skew_seconds" lfptFutureSkewSeconds
@@ -890,6 +912,7 @@ liquidationFuturePublishRetryDelaySeconds
   -> Maybe Int
 liquidationFuturePublishRetryDelaySeconds maximumDelay = \case
   LiquidationRiskInputUnavailable _ -> Nothing
+  LiquidationRiskInputCachePairUnavailable {} -> Nothing
   LiquidationRiskInputFuturePublishTime LiquidationFuturePublishTime {..} ->
     Just . fromInteger $
       min
@@ -1025,20 +1048,28 @@ loadFreshLiquidationRiskInputs cfg client blockNumber cachedComponents = do
                   Left err -> Left $ LiquidationRiskInputUnavailable err
                   Right inputs -> Right inputs
 
-loadCachedLiquidationComponents
-  :: Connection
-  -> PythUpdatePayloadRow
-  -> IO (Either LiquidationRiskInputError [LiquidationBasketComponent])
-loadCachedLiquidationComponents conn payload = do
-  basket <- getLatestBasketSnapshot conn
-  pure $ case basket of
+decodePairedLiquidationComponents
+  :: PairedPythUpdatePayloadRow
+  -> Either LiquidationRiskInputError [LiquidationBasketComponent]
+decodePairedLiquidationComponents PairedPythUpdatePayloadRow {ppuprPayload = payload, ppuprBasket = basket} =
+  case basket of
     Nothing ->
-      Left . LiquidationRiskInputUnavailable $
-        "No basket snapshot was available for the cached Pyth payload"
+      pairFailure "cache_pair_missing" "Newest Pyth payload has no paired signed basket"
     Just snapshot ->
       case decodeCachedLiquidationComponents payload snapshot of
-        Left err -> Left $ LiquidationRiskInputUnavailable err
+        Left err -> pairFailure "cache_pair_invalid" err
         Right components -> Right components
+  where
+    pairFailure reason detail =
+      Left $ LiquidationRiskInputCachePairUnavailable reason detail
+        (puprMinPublishTime payload, puprMaxPublishTime payload) componentBounds
+    componentBounds = do
+      snapshot <- basket
+      case fromJSON (bsrComponents snapshot) of
+        Success components | not (null components) ->
+          let publishTimes = map lbcPublishTime components
+          in Just (minimum publishTimes, maximum publishTimes)
+        _ -> Nothing
 
 loadCandidateSnapshots
   :: LiquidationWorkerConfig
@@ -1358,8 +1389,8 @@ processCandidates cfg conn client workerAddress dryRun = do
               pure True
 
     processCandidatesAtBlock initialBlock candidates = do
-      mPayload <- getLatestPythUpdatePayload conn
-      case mPayload of
+      mPair <- getLatestPairedPythUpdatePayload conn
+      case mPair of
         Nothing -> do
           (snapshots, _) <- loadAndReconcileSnapshots initialBlock candidates
           recordUnclassifiedOpenCandidates
@@ -1370,7 +1401,8 @@ processCandidates cfg conn client workerAddress dryRun = do
             "liquidation_pyth_payload_missing"
             "Liquidation scan is waiting for a cached latest Pyth payload"
             (workerLogFields cfg <> [field "candidate_count" $ length candidates])
-        Just payload ->
+        Just paired ->
+          let payload = ppuprPayload paired in
           case decodeCachedPythPayload payload of
             Left err -> do
               (snapshots, _) <- loadAndReconcileSnapshots initialBlock candidates
@@ -1383,8 +1415,7 @@ processCandidates cfg conn client workerAddress dryRun = do
                 "Latest cached Pyth payload could not be decoded"
                 (workerLogFields cfg <> [field "error" err])
             Right _ -> do
-              cachedComponentsResult <-
-                loadCachedLiquidationComponents conn payload
+              let cachedComponentsResult = decodePairedLiquidationComponents paired
               (snapshotBlock, retryCount, riskResult) <-
                 case cachedComponentsResult of
                   Left err -> pure (initialBlock, 0, Left err)

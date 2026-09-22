@@ -17,6 +17,7 @@ import Plether.Config
 import Plether.Database.Schema
   ( BasketSnapshotRow (..)
   , PythUpdatePayloadRow (..)
+  , PairedPythUpdatePayloadRow (..)
   )
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
@@ -55,6 +56,7 @@ import Plether.LiquidationWorker
   , checkLiveSignerBalance
   , decodeCachedPythPayload
   , decodeCachedLiquidationComponents
+  , decodePairedLiquidationComponents
   , decodeLiquidationRiskGlobals
   , decodePythStoredPriceResults
   , freshLiquidationRiskInputsFromCache
@@ -318,6 +320,39 @@ spec = do
         200_000_000
         500
         15_000
+        `shouldSatisfy` isLeft
+
+  describe "paired liquidation cache" $ do
+    it "validates the basket embedded in the selected payload" $
+      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just basketSnapshot) of
+        Right components -> map lbcPublishTime components `shouldBe` [102, 101]
+        Left err -> expectationFailure $ "expected valid signed components: " <> show err
+
+    it "fails closed on a legacy row without invoking future-block retries" $ do
+      let result = decodePairedLiquidationComponents $ PairedPythUpdatePayloadRow payload Nothing
+      case result of
+        Left err@LiquidationRiskInputCachePairUnavailable {..} -> do
+          lrcpReason `shouldBe` "cache_pair_missing"
+          lrcpPayloadBounds `shouldBe` (101, 102)
+          lrcpComponentBounds `shouldBe` Nothing
+          liquidationFuturePublishRetryDelaySeconds 5 err `shouldBe` Nothing
+        other -> expectationFailure $ "expected a missing-pair failure: " <> show other
+
+    it "rejects corrupt paired components and reports their timestamp bounds" $ do
+      let corrupt = basketSnapshot {bsrComponents = toJSON mismatchedPublishTimeComponents}
+      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just corrupt) of
+        Left LiquidationRiskInputCachePairUnavailable {..} -> do
+          lrcpReason `shouldBe` "cache_pair_invalid"
+          lrcpPayloadBounds `shouldBe` (101, 102)
+          lrcpComponentBounds `shouldSatisfy` (/= Nothing)
+        other -> expectationFailure $ "expected a corrupt-pair failure: " <> show other
+
+    it "still rejects an inconsistent basket price or malformed component JSON" $ do
+      decodePairedLiquidationComponents
+        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrBasketPrice = 1})
+        `shouldSatisfy` isLeft
+      decodePairedLiquidationComponents
+        (PairedPythUpdatePayloadRow payload $ Just basketSnapshot {bsrComponents = toJSON ("invalid" :: Text)})
         `shouldSatisfy` isLeft
 
   describe "Pyth stored-price merge" $ do
