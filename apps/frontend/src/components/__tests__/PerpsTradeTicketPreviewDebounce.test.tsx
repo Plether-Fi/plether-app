@@ -201,7 +201,7 @@ describe('Perps trade preview debounce', () => {
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
   })
 
-  it('refreshes automatically and displays exact changed terms before enabling updated confirmation', async () => {
+  it('retains an expiring review until explicit retry and requires confirmation of refreshed terms', async () => {
     const first = prepared(55)
     first.account = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
     first.request.sizeDelta = 100n * 10n ** 18n
@@ -212,9 +212,19 @@ describe('Perps trade preview debounce', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Updating review…' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Required margin').closest('div')).toHaveTextContent('20.0USDC')
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
+    expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Retry review' }))
     expect(screen.getByRole('button', { name: 'Updating review…' })).toBeDisabled()
-    const updated = { ...first, protection: { ...first.protection, validUntil: BigInt(Math.floor(Date.now() / 1000) + 60) },
-      request: { ...first.request, marginDelta: first.request.marginDelta + 1n } }
+    const validUntil = BigInt(Math.floor(Date.now() / 1000) + 60)
+    const updated = { ...first, protection: { ...first.protection, validUntil },
+      request: { ...first.request, marginDelta: first.request.marginDelta + 1n,
+        bounds: { ...first.request.bounds, validUntil } } }
     await act(async () => { resolveRefresh(updated) })
     expect(screen.getByRole('button', { name: 'Confirm updated order' })).toBeEnabled()
     expect(screen.getByText('Required margin: 20 USDC → 20.000001 USDC')).toBeInTheDocument()
