@@ -20,7 +20,8 @@ import {
   type PerpsLifecycleOutcomeSnapshot,
 } from '../contracts/perpsOrderV2'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
-import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
+import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS, REVIEW_REFRESH_REQUIRED } from '../hooks/usePerpsOrderPreparation'
+import { getPreparationFailureProperties } from '../utils/perpsPreparationDiagnostics'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
@@ -3104,8 +3105,12 @@ export function PerpsTradeTicket({
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
   const preparedOrderExpiryMessage = isPreparedOrderExpiring
-    ? 'This review has expired or is about to expire. Refresh the review before committing.'
+    ? REVIEW_REFRESH_REQUIRED
     : undefined
+  const reviewFooterError = executionProtectionsError ?? preparedOrderExpiryMessage
+  const reviewRefreshRequired = preparationError
+    ? getPreparationFailureProperties(preparationError).stage === 'review_freshness'
+    : isPreparedOrderExpiring
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
@@ -3124,7 +3129,7 @@ export function PerpsTradeTicket({
   const reviewValidationError = enableLiveTrading
     ? pendingOperationGuidance?.title ?? fundingShortfallMessage ?? executionProtectionsError ?? (isExecutionProtectionsLoading ? undefined : preparedOrderExpiryMessage) ?? liveValidationError
     : orderQuantityValidationError
-  const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === executionProtectionsError
+  const reviewBodyValidationError = !isExecutionProtectionsLoading && reviewValidationError === reviewFooterError
     ? undefined : reviewValidationError
   const displayedValidationError = reviewValidationError ?? (
     enableLiveTrading ? undefined : validationErrorFixture
@@ -4674,7 +4679,8 @@ export function PerpsTradeTicket({
               recoveringOracle={preparation.recoveringOracle}
               refreshing={preparation.refreshing}
               slow={preparation.slow}
-              error={executionProtectionsError}
+              error={reviewFooterError}
+              refreshRequired={reviewRefreshRequired}
               changes={reviewChanges}
               direction={direction}
               canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready)}

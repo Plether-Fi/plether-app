@@ -10,6 +10,7 @@ export const PREPARATION_IDLE_MS = 500
 export const PREPARATION_REUSE_MS = 10_000
 export const PREPARATION_TIMEOUT_MS = 30_000
 export const REVIEW_REFRESH_SECONDS = 45
+export const REVIEW_REFRESH_REQUIRED = 'This quote is no longer valid for confirmation. Refresh review to get updated order terms.'
 export const ORACLE_RECOVERY_RETRY_MS = 2_000
 export const ORACLE_RECOVERY_UNAVAILABLE = 'Market prices are temporarily unavailable. Your order details are saved.'
 
@@ -142,7 +143,7 @@ class PreparationController<T> {
   checkReviewDeadline() {
     if (this.state.status === 'ready' && this.state.result && !this.hasDeadline()) {
       this.publish({ status: 'error', error: preparationFailure(
-        new Error('This review has expired or is about to expire. Retry review for fresh order terms.'), 'review_freshness') })
+        new Error(REVIEW_REFRESH_REQUIRED), 'review_freshness') })
     }
   }
   scheduleExpiry() {
@@ -197,7 +198,7 @@ class PreparationController<T> {
       if (current() && result) {
         try {
           if (Number(result.protection.validUntil) * 1000 - deadlineNow() <= REVIEW_REFRESH_SECONDS * 1000) {
-            throw new Error('This review has expired or is about to expire. Retry review for fresh order terms.')
+            throw new Error(REVIEW_REFRESH_REQUIRED)
           }
         } catch (cause) {
           error = preparationFailure(cause, 'review_freshness')

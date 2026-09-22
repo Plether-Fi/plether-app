@@ -166,7 +166,7 @@ describe('order preparation lifecycle', () => {
     expect(view.result.current.ready).toBe(false)
     expect(view.result.current.refreshing).toBe(false)
     expect(view.result.current.result).toBe(original)
-    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Retry review') })
+    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
     expect(view.prepare).toHaveBeenCalledTimes(1)
     act(() => { view.result.current.retry() })
     expect(view.result.current.refreshing).toBe(true)
@@ -240,7 +240,7 @@ describe('order preparation lifecycle', () => {
     await advance(0)
     expect(view.prepare).toHaveBeenCalledTimes(1)
     expect(view.result.current.ready).toBe(false)
-    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Retry review') })
+    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
   })
 
   it('recovers after StrictMode effect cleanup and ignores work after unmount', async () => {
