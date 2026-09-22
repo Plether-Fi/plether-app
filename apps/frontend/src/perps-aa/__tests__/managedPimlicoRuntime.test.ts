@@ -301,6 +301,12 @@ describe('createManagedPimlicoRuntime', () => {
       ...operation,
       entryPointAddress: ENTRY_POINT,
     })
+    // Even without recovery headers, sends must not reuse the read client's
+    // implicit 10-second timeout or its automatic retry policy.
+    const submissionConfig = mocks.createBundlerClient.mock.lastCall?.[0]
+    expect(submissionConfig.account).toBeUndefined()
+    expect(submissionConfig.transport({ retryCount: 3 }).config)
+      .toMatchObject({ timeout: 30_000, retryCount: 0 })
     await expect(runtime.smartAccount.getUserOperationStatus(HASH))
       .resolves.toEqual({ status: 'queued', transactionHash: null })
 

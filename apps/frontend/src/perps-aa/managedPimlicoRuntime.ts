@@ -5,6 +5,7 @@ import { createDeploymentConfirmationGate } from './deploymentConfirmation'
 import { recoverCanonicalInclusion } from './canonicalRecovery'
 import { createSmartAccountClient } from 'permissionless'
 import { recoveryHttp } from './recoveryTransport'
+import { submissionHttp } from './submissionTransport'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
 import { createPimlicoClient } from 'permissionless/clients/pimlico'
 import {
@@ -438,9 +439,12 @@ export async function createManagedAaRuntime({
     sendUserOperation = (operation) => {
       const hash = getUserOperationHash({ chainId: manifest.chainId, entryPointAddress: manifest.entryPoint, entryPointVersion: manifest.entryPointVersion, userOperation: operation })
       const headers = preparationRecovery?.operationHeaders(hash) ?? {}
-      const submissionClient = Object.keys(headers).length > 0
-        ? createBundlerClient({ chain: arbitrumSepolia, transport: recoveryHttp(bundlerRpcUrl, { fetchOptions: { headers } }) })
-        : bundlerClient
+      // Keep submission policy separate from polling, including when no
+      // preparation-recovery headers are available (legacy/reloaded records).
+      const submissionClient = createBundlerClient({
+        chain: arbitrumSepolia,
+        transport: submissionHttp(bundlerRpcUrl, headers),
+      })
       return submissionClient.sendUserOperation({ ...operation, entryPointAddress: manifest.entryPoint })
     }
     getUserOperationStatus = async (userOperationHash) =>
