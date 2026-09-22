@@ -11,6 +11,7 @@ module Plether.AA.Gateway
   , validateHardEconomicCaps
   , nativeAccountRateClientKey
   , nativeMaxFeeAllowance
+  , nativeSponsorshipExpiry
   , nativeStartupFailure
   , SecurityBlockHeader (..)
   , validateSecurityHeaderTime
@@ -625,7 +626,8 @@ buildPreparedOperation timing cfg client manager intent = runExceptT $ do
         [("nonce",String $ Paymaster.canonicalQuantity nonce), ("maxFeePerGas",String $ Paymaster.canonicalQuantity maxFee), ("maxPriorityFeePerGas",String $ Paymaster.canonicalQuantity priority)]
   packed <- ExceptT $ pure $ firstInvalidParams $ Paymaster.parsePackedUserOperation skeleton
   now <- liftIO $ floor <$> getPOSIXTime
-  let stub = Paymaster.makeSponsorshipEnvelope cfg (max 0 $ now-30) (now+naaValiditySeconds cfg) (naaMaxCostWei cfg) Paymaster.dummyPaymasterSignature
+  validUntil <- ExceptT $ pure $ nativeSponsorshipExpiry now cfg Nothing (Paymaster.puoCallData packed)
+  let stub = Paymaster.makeSponsorshipEnvelope cfg (max 0 $ now-30) validUntil (naaMaxCostWei cfg) Paymaster.dummyPaymasterSignature
       estimateObject = foldr KM.delete (Paymaster.puoObject $ Paymaster.applyPaymasterEnvelope packed stub)
         ["callGasLimit", "verificationGasLimit", "preVerificationGas"]
   estimates <- ExceptT $ altoTimed "estimation" "eth_estimateUserOperationGas" [Object estimateObject, String nativeEntryPoint]
@@ -860,21 +862,39 @@ handleOperation assistance gatewayState nativeCfg pool manager securityContext c
                   snapshotStillCanonical <- liftIO $ revalidateSecurityContext context
                   case snapshotStillCanonical of
                     Left reason -> respondSecurityAttestationFailure requestId reason
-                    Right () -> do
-                      let envelope =
-                            Paymaster.makeSponsorshipEnvelope
-                              nativeCfg
-                              (max 0 $ now - 30)
-                              (maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance)
-                              (naaMaxCostWei nativeCfg)
-                              Paymaster.dummyPaymasterSignature
-                      respondSuccess requestId $ paymasterResponse False envelope
+                    Right () -> case nativeSponsorshipExpiry now nativeCfg assistance (Paymaster.puoCallData operation) of
+                      Left failure -> Legacy.respondFailure requestId failure
+                      Right validUntil -> do
+                        let envelope =
+                              Paymaster.makeSponsorshipEnvelope
+                                nativeCfg
+                                (max 0 $ now - 30)
+                                validUntil
+                                (naaMaxCostWei nativeCfg)
+                                Paymaster.dummyPaymasterSignature
+                        respondSuccess requestId $ paymasterResponse False envelope
     Legacy.GetPaymasterData ->
       issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKey owner request operation
         (respondSuccess requestId . paymasterResponse True)
     Legacy.SendUserOperation ->
       submitSponsoredOperation gatewayState nativeCfg pool manager securityContext clientKey request operation
     _ -> relayToAlto nativeCfg manager request Nothing
+
+-- Use the same deadline for estimation stubs and fresh durable reservations.
+-- Stored authorizations keep their original signed validity on retries.
+nativeSponsorshipExpiry
+  :: Integer -> NativeAaConfig -> Maybe Legacy.CloseAssistanceIntent
+  -> ByteString -> Either Legacy.ProxyFailure Integer
+nativeSponsorshipExpiry now cfg assistance callData = do
+  let ceiling = maybe (now + naaValiditySeconds cfg)
+        (min (now + naaValiditySeconds cfg) . Legacy.caiValidUntil) assistance
+  validUntil <- Legacy.capSponsorshipExpiry ceiling callData
+  unless (validUntil > now + 30) $ Left sponsorshipDeadlineFailure
+  pure validUntil
+
+sponsorshipDeadlineFailure :: Legacy.ProxyFailure
+sponsorshipDeadlineFailure =
+  (Legacy.policyDenied "The sponsorship deadline expired or is too close; review a new transaction") {Legacy.pfReason = "INVALID_ORDER_DEADLINE"}
 
 issueSponsorship
   :: Maybe Legacy.CloseAssistanceIntent
@@ -939,8 +959,11 @@ issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKe
   requestId = Legacy.rrId request
   reserveNew signer context requestKey = do
         now <- liftEpochSeconds
+        case nativeSponsorshipExpiry now nativeCfg assistance (Paymaster.puoCallData operation) of
+          Left failure -> Legacy.respondFailure requestId failure
+          Right validUntil -> reserveWithValidity signer context requestKey now validUntil
+  reserveWithValidity signer context requestKey now validUntil = do
         let validAfter = max 0 $ now - 30
-            validUntil = maybe (now + naaValiditySeconds nativeCfg) (min (now + naaValiditySeconds nativeCfg) . Legacy.caiValidUntil) assistance
             provisional =
               Paymaster.makeSponsorshipEnvelope
                 nativeCfg validAfter validUntil (naaMaxCostWei nativeCfg) BS.empty
@@ -988,6 +1011,8 @@ issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKe
                   Right (Left "SPONSORSHIP_RETRY_EXPIRED") ->
                     Legacy.respondFailure requestId $
                       Legacy.policyDenied "This exact sponsorship request has already expired or completed"
+                  Right (Left "SPONSORSHIP_VALIDITY_TOO_SHORT") ->
+                    Legacy.respondFailure requestId sponsorshipDeadlineFailure
                   Right (Left reason) ->
                     Legacy.respondFailure requestId $
                       Legacy.ProxyFailure status200 (-32005) "Sponsorship budget exceeded" reason True

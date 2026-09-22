@@ -14,6 +14,7 @@ module Plether.AA.Pimlico
   , decodeSmartAccountCalls
   , validateActionSequence
   , validateSubmissionHeadroom
+  , capSponsorshipExpiry
   , validateNativeActionSequence
   , CloseAssistanceIntent (..)
   , injectSponsorshipPolicy
@@ -813,11 +814,18 @@ data CloseAssistanceIntent = CloseAssistanceIntent
 -- The account signature binds the deadline: never extend or rebuild it here.
 validateSubmissionHeadroom :: Integer -> Integer -> ByteString -> Either ProxyFailure ()
 validateSubmissionHeadroom now sponsorshipExpiry callData = do
-  calls <- decodeSmartAccountCalls callData
-  deadlines <- traverse orderDeadline calls
-  let effective = minimum $ sponsorshipExpiry : [deadline | Just deadline <- deadlines]
+  effective <- capSponsorshipExpiry sponsorshipExpiry callData
   unless (effective - now >= 30) $ Left $
     ProxyFailure status400 (-32001) "Approval finished too late; this request was not forwarded. Check recovery for any earlier submission." "DEADLINE_TOO_CLOSE" False
+
+-- Bind new sponsorships to the same immutable order deadline used at submission.
+-- Non-order actions retain the configured lifetime; batches use the earliest
+-- order deadline. This does not rewrite an already-issued authorization.
+capSponsorshipExpiry :: Integer -> ByteString -> Either ProxyFailure Integer
+capSponsorshipExpiry sponsorshipExpiry callData = do
+  calls <- decodeSmartAccountCalls callData
+  deadlines <- traverse orderDeadline calls
+  pure $ minimum $ sponsorshipExpiry : [deadline | Just deadline <- deadlines]
  where
   orderDeadline call
     | BS.take 4 bytes == selectorCommitOrder = Just . bytesToInteger . (!! 6) <$> fixedWords selectorCommitOrder 18 bytes
