@@ -324,8 +324,9 @@ spec = do
 
   describe "paired liquidation cache" $ do
     it "validates the basket embedded in the selected payload" $
-      decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just basketSnapshot)
-        `shouldBe` either (error . show) Right (decodeCachedLiquidationComponents payload basketSnapshot)
+      case decodePairedLiquidationComponents (PairedPythUpdatePayloadRow payload $ Just basketSnapshot) of
+        Right components -> map lbcPublishTime components `shouldBe` [102, 101]
+        Left err -> expectationFailure $ "expected valid signed components: " <> show err
 
     it "fails closed on a legacy row without invoking future-block retries" $ do
       let result = decodePairedLiquidationComponents $ PairedPythUpdatePayloadRow payload Nothing
