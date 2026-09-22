@@ -33,6 +33,7 @@ const NOW = Date.UTC(2026, 6, 16, 15, 30)
 
 const MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -418,6 +419,7 @@ export const ModalOpen: Story = {
 const NATIVE_MANIFEST: PerpsAaDeploymentManifestV2 = {
   ...MANIFEST,
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   bundlerRpcUrl: '/storybook/aa/rpc',
   paymasterRpcUrl: '/storybook/aa/rpc',
   paymasterAddress: '0x3333333333333333333333333333333333333333',

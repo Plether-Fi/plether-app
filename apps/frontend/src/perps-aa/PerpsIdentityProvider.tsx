@@ -7,7 +7,7 @@ import {
 } from 'react'
 import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
-import { verifyPerpsV2DeploymentBindings } from '../contracts/verifyPerpsV2Bindings'
+import { verifyPerpsV3DeploymentBindings } from '../contracts/verifyPerpsV3Bindings'
 import {
   comparePerpsIdentities,
   createPersistedPerpsIdentity,
@@ -627,7 +627,7 @@ export function WagmiPerpsIdentityProvider(
     signal,
   }) => {
     if (signal.aborted) return
-    await verifyPerpsV2DeploymentBindings(publicClient, manifest)
+    await verifyPerpsV3DeploymentBindings(publicClient, manifest)
   }, [publicClient])
   return (
     <PerpsIdentityProvider

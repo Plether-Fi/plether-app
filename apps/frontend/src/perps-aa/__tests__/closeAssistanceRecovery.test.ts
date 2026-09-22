@@ -20,7 +20,7 @@ function runtime() {
 function operation() {
   return { chainId: 421614, ownerAddress: owner, accountAddress: account, userOperationHash: hash,
     sponsorshipAuthority: { version: 1, paymasterAddress: paymaster, validUntil: '1' },
-    orderRequestV2: { closeAssistance: { amountUsdc: '198000', lens: account, lensCodeHash: hash, paymasterAddress: paymaster } },
+    orderRequestV3: { closeAssistance: { amountUsdc: '198000', lens: account, lensCodeHash: hash, paymasterAddress: paymaster } },
   } as SponsoredOperation
 }
 describe('sponsored close recovery routing', () => {
@@ -40,7 +40,7 @@ describe('sponsored close recovery routing', () => {
   })
   it('routes ordinary native operations using their journaled paymaster after a flag change', async () => {
     const entry = operation()
-    delete entry.orderRequestV2
+    delete entry.orderRequestV3
     const native = runtime(), factory = vi.fn(async () => native)
     const routed = withCloseAssistanceRecovery(runtime(), () => [entry], factory)
     await routed.smartAccount.getUserOperationReceipt(hash)

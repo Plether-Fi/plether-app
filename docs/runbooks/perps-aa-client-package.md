@@ -1,5 +1,11 @@
 # Adopt the Core AA client package
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 The replacement is `@plether-fi/perps-aa-client@0.1.0`, published by
 `Plether-Fi/plether-core` to GitHub Packages with tag
 `perps-aa-client-v0.1.0`. The app now consumes this exact registry version;

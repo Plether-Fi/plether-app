@@ -1,5 +1,11 @@
 # Full-position TP/SL — Arbitrum Sepolia v1.2.1
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 This release supports only the Book deployment pinned in
 `config/perps/arbitrum-sepolia-v2.json`, chain 421614, deployment block
 305627052. There is no legacy-contract fallback. The implementation is shipped

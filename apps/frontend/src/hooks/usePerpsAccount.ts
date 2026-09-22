@@ -406,7 +406,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'maxOrderAge',
+        functionName: 'maxExecutionWindowSeconds',
       },
     ],
     query: {
@@ -486,7 +486,7 @@ export function usePerpsAccount(markPrice?: bigint) {
           chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
           address: manifest.orderLifecycleBook,
           abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
-          functionName: 'pendingPolicy',
+          functionName: 'orderTiming',
           args: [order.orderId],
         } as const))
       : [],
@@ -513,7 +513,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     const activeProtection = readResult(dynamicContractData, 10)
     const riskParams = readResult(dynamicContractData, 13)
     const maxPendingOrders = readResult(routerConfigurationData, 1) as bigint | undefined
-    const maxOrderAge = readResult(routerConfigurationData, 2) as bigint | undefined
+    const maxExecutionWindowSeconds = readResult(routerConfigurationData, 2) as bigint | undefined
     const capPrice = readResult(immutableContractData, 0) as bigint | undefined
     const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
@@ -556,12 +556,8 @@ export function usePerpsAccount(markPrice?: bigint) {
     const pendingOrders = basicPendingOrders.map((order, index) => {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
       const pendingPolicy = readResult(pendingOrderPoliciesData, index)
-      const policyValidUntil = readBigInt(pendingPolicy, 0, 'validUntil')
-      const expiryTime = manifest?.orderLifecycleBook
-        ? policyValidUntil
-        : commitTime !== undefined && maxOrderAge !== undefined
-          ? commitTime + maxOrderAge
-          : undefined
+      const executionDeadline = readBigInt(pendingPolicy, 3, 'executionDeadline')
+      const expiryTime = executionDeadline !== undefined && executionDeadline > 0n ? executionDeadline : undefined
 
       return {
         ...order,
@@ -613,7 +609,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       pendingOrderMarginUsdc: tupleValue(accountView, 2, 'pendingOrderMarginUsdc') as bigint | undefined,
       pendingExecutionBountyUsdc: tupleValue(accountView, 3, 'pendingExecutionBountyUsdc') as bigint | undefined,
       maxPendingOrders,
-      maxOrderAge,
+      maxExecutionWindowSeconds,
       activePositionProtectionId:
         readBigInt(activeProtection, 0, 'protectionId') ?? 0n,
       activePositionProtection: parsePositionProtection(activeProtection),
@@ -638,7 +634,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
       },
     }
-  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, manifest?.orderLifecycleBook, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
+  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return

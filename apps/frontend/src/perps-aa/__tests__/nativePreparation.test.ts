@@ -7,6 +7,7 @@ import { PLETHER_PAYMASTER_POLICY_ID, PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH } f
 import type { ManagedUserOperation } from '../runtimeContext'
 
 const manifest = { chainId: 421614, entryPoint: PERPS_ENTRY_POINT_V08, version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   paymasterAddress: '0x1234567890123456789012345678901234567890', paymasterVersion: 'plether-verifying-v1',
   bundlerRpcUrl: '/api/perps/v1/aa/rpc', paymasterRpcUrl: '/api/perps/v1/aa/rpc',
 } as PerpsAaDeploymentManifestV2

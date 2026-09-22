@@ -9,7 +9,7 @@ module Plether.Perps.Release
   , perpsV2PositionProtectionBook
   , perpsV2PublicLens
   , validatePerpsV2ReleaseConfig
-  , verifyPerpsV2ReleaseBindings
+  , verifyPerpsV3ReleaseBindings
   ) where
 
 import qualified Plether.Perps.Manifest as Manifest
@@ -97,7 +97,7 @@ validatePerpsV2ReleaseConfig chainId router lifecycleBook engine clearinghouse h
     unless (actual == expected) $
       Left $ label <> " must match the pinned bounded V2 release " <> T.pack (show expected)
 
-verifyPerpsV2ReleaseBindings
+verifyPerpsV3ReleaseBindings
   :: EthClient
   -> Integer
   -> Text
@@ -107,7 +107,7 @@ verifyPerpsV2ReleaseBindings
   -> Text
   -> Integer
   -> IO (Either Text Integer)
-verifyPerpsV2ReleaseBindings client chainId router maybeLifecycle engine clearinghouse housePool startBlock =
+verifyPerpsV3ReleaseBindings client chainId router maybeLifecycle engine clearinghouse housePool startBlock =
   case validatePerpsV2ReleaseConfig chainId router maybeLifecycle engine clearinghouse housePool startBlock of
     Left failure -> pure $ Left failure
     Right () -> do
@@ -132,7 +132,11 @@ verifyPerpsV2ReleaseBindings client chainId router maybeLifecycle engine clearin
                 , ("Public lens HousePool", perpsV2PublicLens, "HOUSE_POOL()", housePool)
                 , ("Position-protection Router", perpsV2PositionProtectionBook, "ROUTER()", router)
                 ]
-          bindings <- foldM (verifyAddressAt client blockNumber) (Right ()) addressChecks
+          intentResult <- ethCallAtBlock client (CallParams lifecycle $ selector "INTENT_TYPEHASH()") blockNumber
+          let interfaceCheck = case intentResult of
+                Right actual | actual == keccak256 (TE.encodeUtf8 orderV3IntentDomain) -> Right ()
+                _ -> Left "Lifecycle Book does not implement the V3 signed order interface"
+          bindings <- foldM (verifyAddressAt client blockNumber) interfaceCheck addressChecks
           case bindings of
             Left failure -> pure $ Left failure
             Right () -> do
@@ -192,3 +196,7 @@ verifyRuntimeHashAt client blockNumber (Right ()) (label, address, expected) = d
                         then Right ()
                         else Left $ label <> " runtime-code hash mismatch: expected " <> expected <> ", received " <> actual
     Right _ -> Left $ label <> " runtime-code response was not a hex string"
+
+-- Must match OrderLifecycleBook.INTENT_TYPEHASH; checked before sponsorship is enabled.
+orderV3IntentDomain :: Text
+orderV3IntentDomain = "PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyUsdc,uint256 maxExecutionNotionalUsdc,uint256 maxGrossAccountDebitUsdc,uint256 maxActionChargeUsdc,uint256 maxExplicitFeesUsdc,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceUsdc,uint256 minPostPositionEquityUsdc,uint32 maxPostLeverageBps)"

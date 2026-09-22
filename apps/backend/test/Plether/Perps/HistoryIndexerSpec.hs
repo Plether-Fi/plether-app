@@ -53,7 +53,7 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "settlement receipt enrichment" $ do
-    it "verifies the real waived-fee close and its internal treasury credit" $ do
+    it "verifies the V3 waived-fee close and its internal treasury credit" $ do
       receipt <- fixtureReceipt "waiver"
       let result = decodeFixtureReceipt receipt
       case result of
@@ -304,14 +304,14 @@ spec = do
       terminalStatus "Expired" `shouldBe` "Expired / Cleaned up"
       terminalStatus "EngineRevert" `shouldBe` "Failed"
 
-    it "parses V2 intent identity and canonical finalization evidence" $ do
+    it "parses V3 intent identity and canonical finalization evidence" $ do
       let clientOrderId = BS.replicate 32 0x11
           clientOrderIdText = "0x" <> Text.replicate 32 "11"
           intentData = BS.concat
             [ if index == 3 then word 1
               else if index == 8 then word 1_700_000_300
               else word 0
-            | index <- [0 :: Int .. 19]
+            | index <- [0 :: Int .. 24]
             ]
           finalizedData = BS.concat
             [ if index == 0 then BS.replicate 32 0xaa
@@ -322,7 +322,7 @@ spec = do
               else if index == 19 then word 200_000
               else if index == 25 then word 4
               else word 0
-            | index <- [0 :: Int .. 45]
+            | index <- [0 :: Int .. 49]
             ]
       parsePerpsLog
         (mkLog intentRegisteredTopic [word 42, addressTopic, clientOrderId] intentData)
@@ -569,11 +569,11 @@ orderFailedTopic = keccak256Text "OrderFailed(uint64,uint8)"
 
 intentRegisteredTopic :: ByteString
 intentRegisteredTopic = keccak256Text
-  "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+  "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic = keccak256Text
-  "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+  "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256),(uint64,uint32,uint64,uint64)))"
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"
@@ -595,7 +595,7 @@ withdrawTopic = keccak256Text "Withdraw(address,address,uint256)"
 
 fixtureReceipt :: String -> IO Value
 fixtureReceipt name = do
-  decoded <- eitherDecodeFileStrict' ("../../scripts/fixtures/insights-close-" <> name <> ".json")
+  decoded <- eitherDecodeFileStrict' ("../../scripts/fixtures/v3-insights-close-" <> name <> ".json")
   case decoded of
     Right (Object fixture) | Just receipt <- KeyMap.lookup "receipt" fixture -> pure receipt
     other -> fail $ "Invalid receipt fixture: " <> show other

@@ -61,8 +61,8 @@ import {
   BundlerRequestError,
   useSponsoredOperationStore,
 } from '../../perps-aa'
-import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../contracts/preparePerpsOrderV2'
-import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../contracts/preparePerpsOrderV3'
+import type { PerpsExecutionAssessment, PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
 
@@ -221,7 +221,7 @@ describe('perps lifecycle labels', () => {
         targetPrice: 100_100_000n,
         isClose: false,
         bounds: {
-          validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
+          submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
           maxExecutionBountyUsdc: 10_000n,
@@ -240,7 +240,7 @@ describe('perps lifecycle labels', () => {
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 100_000_000n,
       protection: {
-        validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
+        submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
       },
@@ -252,16 +252,16 @@ describe('perps lifecycle labels', () => {
       mockIsConnected = true
       identityMocks.isAaManifestConfigured = true
       wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
-      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
-      const freshDeadline = original.protection.validUntil + 300n
-      const fresh: PreparedPerpsOrderV2 = {
+      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
+      const freshDeadline = original.protection.submitBy + 300n
+      const fresh: PreparedPerpsOrderV3 = {
         ...original,
         request: {
           ...original.request,
           clientOrderId: `0x${'ab'.repeat(32)}`,
-          bounds: { ...original.request.bounds, validUntil: freshDeadline },
+          bounds: { ...original.request.bounds, submitBy: freshDeadline },
         },
-        protection: { ...original.protection, validUntil: freshDeadline },
+        protection: { ...original.protection, submitBy: freshDeadline },
       }
       perpsTradingMocks.prepareOrder.mockReset()
         .mockResolvedValueOnce(original).mockResolvedValue(fresh)
@@ -285,8 +285,8 @@ describe('perps lifecycle labels', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
       expect(perpsTradingMocks.commitOrder).toHaveBeenCalledTimes(2)
       expect(perpsTradingMocks.commitOrder.mock.calls[1][0].preparedOrder).toMatchObject({
-        request: { clientOrderId: fresh.request.clientOrderId, bounds: { validUntil: freshDeadline } },
-        protection: { validUntil: freshDeadline },
+        request: { clientOrderId: fresh.request.clientOrderId, bounds: { submitBy: freshDeadline } },
+        protection: { submitBy: freshDeadline },
       })
     }
   )
@@ -295,11 +295,11 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
-    const fresh = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const fresh = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     const expired = {
       ...fresh,
-      request: { ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n } },
-      protection: { ...fresh.protection, validUntil: 1n },
+      request: { ...fresh.request, bounds: { ...fresh.request.bounds, submitBy: 1n } },
+      protection: { ...fresh.protection, submitBy: 1n },
     }
     perpsTradingMocks.prepareOrder.mockReset().mockResolvedValueOnce(expired).mockResolvedValue(fresh)
     render(
@@ -840,7 +840,7 @@ describe('perps lifecycle labels', () => {
       valid: true, executionPrice: 100_000_000n,
       remainingSize: fullClose ? 0n : 100n * 10n ** 18n, remainingMargin: 20_000_000n,
     } }]
-    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     const prepared = { ...original, request: { ...original.request,
       side: positionDirection === 'long' ? 0 as const : 1 as const,
       isClose: true, marginDelta: 0n, sizeDelta: 100n * 10n ** 18n,
@@ -881,7 +881,7 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
-    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     const prepared = { ...original, request: { ...original.request,
       marginDelta: 2_129_400_000n, sizeDelta: 10_000n * 10n ** 18n,
     } }
@@ -1338,10 +1338,10 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: false, invalidReason: 5 } }]
-    const base = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const base = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     const prepared = { ...base, request: { ...base.request, sizeDelta: 300n * 10n ** 18n, marginDelta: 65_000_000n } }
-    let resolveReview!: (order: PreparedPerpsOrderV2) => void
-    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV2>((resolve) => { resolveReview = resolve }))
+    let resolveReview!: (order: PreparedPerpsOrderV3) => void
+    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV3>((resolve) => { resolveReview = resolve }))
     perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
     render(<PerpsTradeTicket
       enableLiveTrading initialOrderQuantity="0"
@@ -1391,9 +1391,9 @@ describe('perps lifecycle labels', () => {
   it('ignores a Max result delivered after the review is cancelled', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
-    const prepared = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
-    let resolveReview!: (order: PreparedPerpsOrderV2) => void
-    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV2>((resolve) => { resolveReview = resolve }))
+    const prepared = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
+    let resolveReview!: (order: PreparedPerpsOrderV3) => void
+    perpsTradingMocks.prepareOrder.mockReset().mockReturnValue(new Promise<PreparedPerpsOrderV3>((resolve) => { resolveReview = resolve }))
     render(<PerpsTradeTicket
       enableLiveTrading initialOrderQuantity="0"
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
@@ -1442,7 +1442,7 @@ describe('perps lifecycle labels', () => {
         targetPrice: 100_100_000n,
         isClose: false,
         bounds: {
-          validUntil: BigInt(Math.floor(Date.now() / 1_000) + 60),
+          submitBy: BigInt(Math.floor(Date.now() / 1_000) + 60), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
           maxExecutionBountyUsdc: 10_000n,
@@ -1461,12 +1461,12 @@ describe('perps lifecycle labels', () => {
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 100_000_000n,
       protection: {
-        validUntil: BigInt(Math.floor(Date.now() / 1_000) + 60),
+        submitBy: BigInt(Math.floor(Date.now() / 1_000) + 60), executionWindowSeconds: 60,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
       },
       reviewSummary,
-    } satisfies PreparedPerpsOrderV2
+    } satisfies PreparedPerpsOrderV3
     perpsTradingMocks.prepareOrder.mockRejectedValueOnce(
       new PerpsOrderFundingShortfallError(
         { preparedOrder: reviewedPreparedOrder, reviewSummary },
@@ -1533,7 +1533,7 @@ describe('perps lifecycle labels', () => {
         remainingSize: fullClose ? 0n : 100n * 10n ** 18n,
         remainingMargin: fullClose ? 0n : 20_120_724n,
       } }]
-      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+      const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
       const reviewSummary = {
         commitmentCarryUsdc: 1_250_000n,
         requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
@@ -2200,7 +2200,7 @@ describe('perps lifecycle labels', () => {
     const positionSizeToUsdcScale = 10n ** 20n
     const priceCap = 200_000_000n
 
-    const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV2
+    const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
     perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue({
       ...reviewed, request: { ...reviewed.request, sizeDelta: positionSize, isClose: true, marginDelta: 0n },
     })

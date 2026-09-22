@@ -363,12 +363,12 @@ orderFailedTopic = keccak256Text "OrderFailed(uint64,uint8)"
 intentRegisteredTopic :: ByteString
 intentRegisteredTopic =
   keccak256Text
-    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic =
   keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256),(uint64,uint32,uint64,uint64)))"
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"
@@ -830,8 +830,8 @@ validateReplayLogAbi logEntry =
   case rlTopics logEntry of
     topic : indexedTopics
       | topic == orderCommittedTopic -> requireShape 3 32 indexedTopics
-      | topic == intentRegisteredTopic -> requireShape 4 (20 * 32) indexedTopics
-      | topic == orderFinalizedTopic -> requireShape 4 (46 * 32) indexedTopics
+      | topic == intentRegisteredTopic -> requireShape 4 (25 * 32) indexedTopics
+      | topic == orderFinalizedTopic -> requireShape 4 (50 * 32) indexedTopics
       | topic == orderExecutedTopic -> requireShape 2 32 indexedTopics
       | topic == orderFailedTopic -> requireShape 2 32 indexedTopics
       | topic == positionOpenedTopic -> requireShape 2 128 indexedTopics
@@ -1871,7 +1871,7 @@ parseOrderCommitted logEntry = do
 
 parseIntentRegistered :: RpcLog -> Maybe ParsedPerpsLog
 parseIntentRegistered logEntry = do
-  unless (BS.length (rlData logEntry) == 20 * 32) Nothing
+  unless (BS.length (rlData logEntry) == 25 * 32) Nothing
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
@@ -1884,15 +1884,18 @@ parseIntentRegistered logEntry = do
         , "executionBountyUsdc" .= show (wordAt (rlData logEntry) 1)
         , "side" .= side
         , "isClose" .= (wordAt (rlData logEntry) 7 == 1)
-        , "validUntil" .= show (wordAt (rlData logEntry) 8)
-        , "allowedExecutionModes" .= wordAt (rlData logEntry) 9
-        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 10
+        , "submitBy" .= show (wordAt (rlData logEntry) 8)
+        , "executionWindowSeconds" .= wordAt (rlData logEntry) 9
+        , "commitTimestamp" .= show (wordAt (rlData logEntry) 23)
+        , "executionDeadline" .= show (wordAt (rlData logEntry) 24)
+        , "allowedExecutionModes" .= wordAt (rlData logEntry) 10
+        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 11
         ]
   pure $ ParsedIntentRegistered oid account clientOrderId side payload
 
 parseOrderFinalized :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderFinalized logEntry = do
-  unless (BS.length (rlData logEntry) == 46 * 32) Nothing
+  unless (BS.length (rlData logEntry) == 50 * 32) Nothing
   oid <- indexedUint (rlTopics logEntry) 1
   account <- indexedAddress (rlTopics logEntry) 2
   clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
@@ -1938,6 +1941,10 @@ parseOrderFinalized logEntry = do
         , "account" .= account
         , "clientOrderId" .= clientOrderId
         , "receiptHash" .= receiptHash
+        , "submitBy" .= show (wordAt bytes 46)
+        , "executionWindowSeconds" .= wordAt bytes 47
+        , "commitTimestamp" .= show (wordAt bytes 48)
+        , "executionDeadline" .= show (wordAt bytes 49)
         , "terminalBlock" .= show (wordAt bytes 1)
         , "terminalTime" .= show (wordAt bytes 2)
         , "status" .= lifecycleStatus

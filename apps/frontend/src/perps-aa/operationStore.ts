@@ -28,7 +28,7 @@ import {
 } from './laneLock'
 import { SponsoredOperationLockedError } from './operationLockError'
 import type { ManagedUserOperation } from './runtimeContext'
-import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 
 export { SponsoredOperationLockedError } from './operationLockError'
 
@@ -52,7 +52,7 @@ export interface SponsoredOperation {
   action: PerpsActionKind
   /** Immutable bounded-order intent, journaled before UserOperation signing. */
   orderDraft?: SavedOrderDraft
-  orderRequestV2?: PersistedPerpsOrderRequestV2
+  orderRequestV3?: PersistedPerpsOrderRequestV3
   protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
   /** EIP-3009 nonce paired with authorizationToken for owned cleanup. */
@@ -131,7 +131,7 @@ interface BeginSponsoredOperationInput {
   manifestVersion: string
   action: PerpsActionKind
   orderDraft?: SavedOrderDraft
-  orderRequestV2?: PersistedPerpsOrderRequestV2
+  orderRequestV3?: PersistedPerpsOrderRequestV3
   protectionIntent?: PersistedProtectionIntent
   authorizationToken?: Address
   authorizationNonce?: Hex
@@ -212,7 +212,7 @@ interface SponsoredOperationState {
 }
 
 export const SPONSORED_OPERATION_STORAGE_NAME =
-  'plether_perps_sponsored_operations'
+  'plether_perps_v3_sponsored_operations'
 export const SPONSORED_OPERATION_JOURNAL_PREFIX =
   `${SPONSORED_OPERATION_STORAGE_NAME}:operation:`
 export const SPONSORED_OPERATION_LANE_HEAD_PREFIX =
@@ -755,8 +755,8 @@ function mergeOperationRecord(
     preparedOperation: preferred.preparedOperation ?? other.preparedOperation,
     signedUserOperation:
       preferred.signedUserOperation ?? other.signedUserOperation,
-    orderRequestV2:
-      preferred.orderRequestV2 ?? other.orderRequestV2,
+    orderRequestV3:
+      preferred.orderRequestV3 ?? other.orderRequestV3,
     orderDraft: preferred.orderDraft ?? other.orderDraft,
     protectionIntent: preferred.protectionIntent ?? other.protectionIntent,
     submissionMetadataVersion:
@@ -1533,9 +1533,9 @@ function mergeExactOperationJournals(
       preSignJournal.userOperationHash === undefined
     ) {
       if (
-        (operation.orderRequestV2 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined) ||
-        JSON.stringify(operation.orderRequestV2) !==
-          JSON.stringify(preSignJournal.orderRequestV2) ||
+        (operation.orderRequestV3 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined) ||
+        JSON.stringify(operation.orderRequestV3) !==
+          JSON.stringify(preSignJournal.orderRequestV3) ||
         JSON.stringify(operation.protectionIntent) !== JSON.stringify(preSignJournal.protectionIntent) ||
         !operationMatchesLane(preSignJournal, operation)
       ) {
@@ -1798,7 +1798,7 @@ function writeExactOperationJournal(
   if (
     operation.userOperationHash === undefined &&
     existing === undefined &&
-    operation.orderRequestV2 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined
+    operation.orderRequestV3 === undefined && operation.protectionIntent === undefined && operation.nativePreparation === undefined
   ) {
     return undefined
   }
@@ -3504,16 +3504,16 @@ export function hasDurableNativePreparation(id: string, request: NativePreparati
 
 export function hasDurableSponsoredOperationOrderIntent(
   operationId: string,
-  expected: PersistedPerpsOrderRequestV2
+  expected: PersistedPerpsOrderRequestV3
 ): boolean {
   try {
     const operation = useSponsoredOperationStore.getState().operations
       .find((candidate) => candidate.id === operationId)
     const journal = readExactOperationJournal(operationId)
-    return operation?.orderRequestV2 !== undefined &&
-      journal?.orderRequestV2 !== undefined &&
-      JSON.stringify(operation.orderRequestV2) === JSON.stringify(expected) &&
-      JSON.stringify(journal.orderRequestV2) === JSON.stringify(expected)
+    return operation?.orderRequestV3 !== undefined &&
+      journal?.orderRequestV3 !== undefined &&
+      JSON.stringify(operation.orderRequestV3) === JSON.stringify(expected) &&
+      JSON.stringify(journal.orderRequestV3) === JSON.stringify(expected)
   } catch {
     return false
   }

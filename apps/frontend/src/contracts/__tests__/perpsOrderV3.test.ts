@@ -15,13 +15,13 @@ import {
   PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX,
   PERPS_EXECUTION_MODE,
   PERPS_EXECUTION_MODE_MASK,
-  persistPerpsOrderRequestV2,
+  persistPerpsOrderRequestV3,
   relaxedWebPerpsExecutionBounds,
   reviewedExecutionBountyMaximum,
-  restorePerpsOrderRequestV2,
+  restorePerpsOrderRequestV3,
   type PerpsExecutionAssessment,
-  type PerpsOrderRequestV2,
-} from '../perpsOrderV2'
+  type PerpsOrderRequestV3,
+} from '../perpsOrderV3'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111'
 const CONFIG_HASH = `0x${'22'.repeat(32)}` as Hex
@@ -53,7 +53,7 @@ function assessment(
   }
 }
 
-describe('bounded V2 order identity', () => {
+describe('bounded V3 order identity', () => {
   it('rejects zero and the reserved protocol prefix before returning randomness', () => {
     let attempt = 0
     const clientOrderId = generatePerpsClientOrderId((bytes) => {
@@ -79,7 +79,7 @@ describe('bounded V2 order identity', () => {
   })
 
   it('round-trips every immutable request field without changing bounds', () => {
-    const request: PerpsOrderRequestV2 = {
+    const request: PerpsOrderRequestV3 = {
       clientOrderId: `0x${'11'.repeat(32)}`,
       side: PERPS_SIDE.SHORT,
       sizeDelta: 100n,
@@ -87,7 +87,7 @@ describe('bounded V2 order identity', () => {
       targetPrice: 1234n,
       isClose: false,
       bounds: derivePerpsExecutionBounds({
-        validUntil: 2_000_000_000n,
+        submitBy: 2_000_000_000n, executionWindowSeconds: 60,
         expectedConfigHash: CONFIG_HASH,
         executionBountyUsdc: 3n,
         selectedMaxLeverageBps: 60_000,
@@ -95,8 +95,8 @@ describe('bounded V2 order identity', () => {
       }),
     }
 
-    expect(restorePerpsOrderRequestV2(
-      persistPerpsOrderRequestV2(ACCOUNT, request)
+    expect(restorePerpsOrderRequestV3(
+      persistPerpsOrderRequestV3(ACCOUNT, request)
     )).toEqual(request)
   })
 })
@@ -118,20 +118,20 @@ describe('bounded V2 execution protections', () => {
   })
 
   it('does not increase the maximum again when restoring a reviewed request', () => {
-    const request: PerpsOrderRequestV2 = {
+    const request: PerpsOrderRequestV3 = {
       clientOrderId: `0x${'11'.repeat(32)}`, side: PERPS_SIDE.SHORT,
       sizeDelta: 100n, marginDelta: 10n, targetPrice: 1234n, isClose: false,
-      bounds: relaxedWebPerpsExecutionBounds({ validUntil: 2_000_000_000n,
+      bounds: relaxedWebPerpsExecutionBounds({ submitBy: 2_000_000_000n, executionWindowSeconds: 60,
         expectedConfigHash: CONFIG_HASH, executionBountyUsdc: 119_061n,
         executionMode: PERPS_EXECUTION_MODE.LIVE }),
     }
-    const restored = restorePerpsOrderRequestV2(persistPerpsOrderRequestV2(ACCOUNT, request))
+    const restored = restorePerpsOrderRequestV3(persistPerpsOrderRequestV3(ACCOUNT, request))
     expect(restored).toEqual(request)
     expect(restored.bounds.maxExecutionBountyUsdc).toBe(120_252n)
   })
   it('keeps web accounting bounds wide while pinning lifecycle protections', () => {
     const bounds = relaxedWebPerpsExecutionBounds({
-      validUntil: 2_000_000_000n,
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
       executionBountyUsdc: 200_000n,
       executionMode: PERPS_EXECUTION_MODE.LIVE,
@@ -139,7 +139,7 @@ describe('bounded V2 execution protections', () => {
     const uint256Max = (1n << 256n) - 1n
 
     expect(bounds).toEqual({
-      validUntil: 2_000_000_000n,
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: CONFIG_HASH,
       maxExecutionBountyUsdc: 202_000n,
@@ -211,7 +211,7 @@ describe('bounded V2 execution protections', () => {
 
   it('pins one regime and derives component-wise exact extrema', () => {
     const bounds = derivePerpsExecutionBounds({
-      validUntil: 2_000_000_000n,
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
       executionBountyUsdc: 30n,
       selectedMaxLeverageBps: 70_000,
@@ -229,7 +229,7 @@ describe('bounded V2 execution protections', () => {
     })
 
     expect(bounds).toMatchObject({
-      validUntil: 2_000_000_000n,
+      submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: CONFIG_HASH,
       maxExecutionBountyUsdc: 30n,
@@ -256,7 +256,7 @@ describe('bounded V2 execution protections', () => {
 
   it('fails review on regime drift or leverage above the selected maximum', () => {
     expect(() => derivePerpsExecutionBounds({
-      validUntil: 1n,
+      submitBy: 1n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
       executionBountyUsdc: 1n,
       selectedMaxLeverageBps: 60_000,
@@ -267,7 +267,7 @@ describe('bounded V2 execution protections', () => {
     })).toThrow(/regime changed/)
 
     expect(() => derivePerpsExecutionBounds({
-      validUntil: 1n,
+      submitBy: 1n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
       executionBountyUsdc: 1n,
       selectedMaxLeverageBps: 50_000,
@@ -276,16 +276,17 @@ describe('bounded V2 execution protections', () => {
   })
 })
 
-describe('V2 ABI snapshots', () => {
+describe('V3 ABI snapshots', () => {
   it('pins the nested commit selector and perps LONG/SHORT wire values', () => {
     expect(toFunctionSelector(
-      'commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))'
-    )).toBe('0xd4da06d2')
+      'commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))'
+    )).toBe('0xe4275866')
     expect(PERPS_SIDE).toEqual({ LONG: 0, SHORT: 1 })
 
     const commit = PERPS_ORDER_ROUTER_ABI.find((item) =>
       item.type === 'function' && item.name === 'commitOrder'
     )
+    expect(commit && toFunctionSelector(commit)).toBe('0xe4275866')
     expect(commit?.inputs[0]).toMatchObject({
       name: 'request',
       type: 'tuple',
@@ -294,9 +295,11 @@ describe('V2 ABI snapshots', () => {
 
   it('pins lifecycle event topics and fixed enum values', () => {
     expect(toEventSelector(
-      'IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))'
-    )).toBe('0x0f6c9fee478d0c2a764cb32acbbc94790018467626d72ba895ff43dab1919f4a')
+      'IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))'
+    )).toBe('0x9e0a84bebf3b3afbb106e34a9dc57e51209c08755eedc36619f40efae55c7318')
 
+    const registered = PERPS_ORDER_LIFECYCLE_BOOK_ABI.find(item => item.type === 'event' && item.name === 'IntentRegistered')
+    expect(registered && toEventSelector(registered)).toBe('0x9e0a84bebf3b3afbb106e34a9dc57e51209c08755eedc36619f40efae55c7318')
     expect(PERPS_ORDER_LIFECYCLE_BOOK_ABI.some((item) =>
       item.type === 'event' && item.name === 'OrderFinalized'
     )).toBe(true)

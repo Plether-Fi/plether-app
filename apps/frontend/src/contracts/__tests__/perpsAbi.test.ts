@@ -59,6 +59,7 @@ import type { Abi, AbiParameter } from 'viem'
 import * as perpsBindings from '../abis/Perps'
 import { TRANCHE_VAULT_READ_ABI } from '../abis/TrancheVault'
 import releaseBindings from './fixtures/perps-v1.2.3-bindings.json'
+import sourceBindings from './fixtures/perps-v3-source-abis.json'
 
 // Digests are computed from the matching entries in the checksum-verified
 // release bundle. Parameter names and Solidity internalType do not affect the
@@ -73,6 +74,17 @@ describe('v1.2.3 application ABI compatibility', () => {
   for (const [name, expected] of Object.entries(releaseBindings.bindings)) {
     it(`matches all released entries used by ${name}`, () => {
       const abi = bindings[name as keyof typeof bindings] as Abi
+      if (name in sourceBindings) {
+        const source = sourceBindings[name as keyof typeof sourceBindings]
+        for (const entry of abi) {
+          const compiled = source.find(candidate => candidate.type === entry.type && ('name' in candidate ? candidate.name : undefined) === ('name' in entry ? entry.name : undefined))
+          expect(compiled, `${name}.${'name' in entry ? entry.name : entry.type}`).toBeDefined()
+          if (!compiled) continue
+          const wire = (item: { type: string; name?: string; inputs?: readonly AbiParameter[]; outputs?: readonly AbiParameter[]; stateMutability?: string; anonymous?: boolean }) => ({ type: item.type, name: item.name, inputs: item.inputs?.map(parameter), outputs: item.outputs?.map(parameter), stateMutability: item.stateMutability, anonymous: item.type === 'event' ? (item.anonymous ?? false) : undefined })
+          expect(wire(entry)).toEqual(wire(compiled))
+        }
+        return
+      }
       const layouts = abi.map(entry => ({
         type: entry.type,
         name: 'name' in entry ? entry.name : undefined,

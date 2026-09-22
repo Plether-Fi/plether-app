@@ -14,16 +14,16 @@ import {
   PERPS_FAILED_CONSTRAINT_LABELS,
   PERPS_LIFECYCLE_STATUS,
   PERPS_TERMINAL_REASON_LABELS,
-  type PreparedPerpsOrderV2,
+  type PreparedPerpsOrderV3,
   type PerpsLifecycleOutcomeSnapshot,
-} from '../contracts/perpsOrderV2'
+} from '../contracts/perpsOrderV3'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOrderPreparation, orderPreparationKey, REVIEW_REFRESH_SECONDS } from '../hooks/usePerpsOrderPreparation'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
-import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type {
@@ -271,8 +271,8 @@ interface PerpsTradeTicketProps {
   closePreviewFixture?: ClosePreviewView
   /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
   validationErrorFixture?: string
-  /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
-  executionProtectionsFixture?: PreparedPerpsOrderV2
+  /** Static V3 protections for deterministic stories and design review. Ignored when live trading is enabled. */
+  executionProtectionsFixture?: PreparedPerpsOrderV3
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -3094,7 +3094,7 @@ export function PerpsTradeTicket({
     ? undefined : orderReviewSummary ?? preparedOrder?.reviewSummary
   const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
   const isPreparedOrderExpiring = preparedOrder !== undefined &&
-    Number(preparedOrder.protection.validUntil) - nowSeconds <= REVIEW_REFRESH_SECONDS
+    Number(preparedOrder.protection.submitBy) - nowSeconds <= REVIEW_REFRESH_SECONDS
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
@@ -3767,7 +3767,7 @@ export function PerpsTradeTicket({
 
   async function handleConfirmCommit() {
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
-      Number(preparedOrder.protection.validUntil) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000 ||
+      Number(preparedOrder.protection.submitBy) * 1000 - Date.now() <= REVIEW_REFRESH_SECONDS * 1000 ||
       document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
       setFlowError('Wait for a fresh order review before confirming.')
       return
@@ -4897,10 +4897,14 @@ export function PerpsTradeTicket({
                           value: `${displayedExecutionProtections.request.clientOrderId.slice(0, 10)}…${displayedExecutionProtections.request.clientOrderId.slice(-8)}`,
                         },
                         {
-                          label: 'Deadline',
+                          label: 'Submit by',
                           value: new Date(
-                            Number(displayedExecutionProtections.protection.validUntil) * 1_000
+                            Number(displayedExecutionProtections.protection.submitBy) * 1_000
                           ).toLocaleString(),
+                        },
+                        {
+                          label: 'Execution window',
+                          value: `${String(displayedExecutionProtections.protection.executionWindowSeconds)} seconds after commitment`,
                         },
                         {
                           label: 'Pinned regime',
@@ -4918,7 +4922,7 @@ export function PerpsTradeTicket({
                         },
                       ]} />
                       <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, deadline, pinned regime, reward maximum, and reviewed protocol configuration still apply.
+                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, submission deadline, execution window, pinned regime, reward maximum, and reviewed protocol configuration still apply.
                       </p>
                     </div>
                   ) : (

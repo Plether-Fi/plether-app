@@ -34,6 +34,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,

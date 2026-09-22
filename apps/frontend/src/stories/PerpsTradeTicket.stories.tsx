@@ -5,8 +5,8 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
   PERPS_EXECUTION_MODE,
   PERPS_EXECUTION_MODE_MASK,
-  type PreparedPerpsOrderV2,
-} from '../contracts/perpsOrderV2'
+  type PreparedPerpsOrderV3,
+} from '../contracts/perpsOrderV3'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import {
   PerpsIdentityContext,
@@ -26,6 +26,7 @@ const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 
 const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -131,7 +132,7 @@ const executionProtectionsFixture = {
     targetPrice: 98_250_000n,
     isClose: false,
     bounds: {
-      validUntil: 1_788_000_300n,
+      submitBy: 1_788_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: `0x${'34'.repeat(32)}`,
       maxExecutionBountyUsdc: 250_000n,
@@ -150,11 +151,11 @@ const executionProtectionsFixture = {
   reviewedBlockHash: `0x${'56'.repeat(32)}`,
   reviewedPrice: ORACLE_PRICE,
   protection: {
-    validUntil: 1_788_000_300n,
+    submitBy: 1_788_000_300n, executionWindowSeconds: 60,
     executionMode: PERPS_EXECUTION_MODE.LIVE,
     executionBountyUsdc: 250_000n,
   },
-} satisfies PreparedPerpsOrderV2
+} satisfies PreparedPerpsOrderV3
 
 function openPreviewFixture({
   size,

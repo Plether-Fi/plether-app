@@ -56,3 +56,6 @@ of addresses. The configured lifecycle-book protocol selects the worker format;
 current competition queries use bounded V2. The archived July competition retains
 its original V1 format. Every cursor and lock remains scoped to one competition's
 immutable chain and router.
+
+The next source release uses [V3 commit-relative timing](ORDER_V3_TIMING.md).
+Activation requires a separately verified fresh deployment; the historical pins above remain unchanged.

@@ -1,4 +1,4 @@
-import { isAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
+import { isAddress, isAddressEqual, keccak256, stringToHex, type Address, type Hex, type PublicClient } from 'viem'
 import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
 import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
 import {
@@ -10,6 +10,8 @@ import {
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
+
+export const ORDER_V3_INTENT_TYPEHASH = keccak256(stringToHex('PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyUsdc,uint256 maxExecutionNotionalUsdc,uint256 maxGrossAccountDebitUsdc,uint256 maxActionChargeUsdc,uint256 maxExplicitFeesUsdc,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceUsdc,uint256 minPostPositionEquityUsdc,uint32 maxPostLeverageBps)'))
 
 function requireSameAddress(
   label: string,
@@ -61,10 +63,10 @@ export async function verifyProtectionDeployment(client: PublicClient, manifest:
 }
 
 /**
- * Verifies the immutable V2 graph at one coherent block. Any mismatch blocks
+ * Verifies the immutable V3 graph at one coherent block. Any mismatch blocks
  * order preparation before a client intent is journaled or signed.
  */
-export async function verifyPerpsV2DeploymentBindings(
+export async function verifyPerpsV3DeploymentBindings(
   client: PublicClient,
   manifest: PerpsAaDeploymentManifest
 ): Promise<{
@@ -89,6 +91,7 @@ export async function verifyPerpsV2DeploymentBindings(
     lensRouter,
     lensHousePool,
     protectionRouter,
+    intentTypehash,
   ] = await Promise.all([
     client.readContract({
       address: manifest.orderRouter,
@@ -176,8 +179,10 @@ export async function verifyPerpsV2DeploymentBindings(
       functionName: 'ROUTER',
       blockNumber,
     }),
+    client.readContract({ address: manifest.orderLifecycleBook, abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI, functionName: 'INTENT_TYPEHASH', blockNumber }),
   ])
 
+  if (intentTypehash !== ORDER_V3_INTENT_TYPEHASH) throw new Error('Lifecycle Book does not implement the V3 signed order interface')
   requireSameAddress('Router Engine', routerEngine, manifest.cfdEngine)
   requireSameAddress(
     'Router lifecycle Book',

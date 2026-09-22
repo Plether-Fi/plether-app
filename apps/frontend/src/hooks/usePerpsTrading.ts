@@ -1,3 +1,4 @@
+import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
@@ -15,7 +16,6 @@ import {
   buildCreateProtectionAction,
   buildReplaceProtectionAction,
   buildCancelProtectionAction,
-  buildProtectedOpenAction,
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
 } from '@plether-fi/perps-aa-client'
@@ -29,22 +29,22 @@ import {
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
-  preparePerpsOrderV2,
+  preparePerpsOrderV3,
   PerpsOrderFundingShortfallError,
   PerpsOrderReviewError,
-} from '../contracts/preparePerpsOrderV2'
+} from '../contracts/preparePerpsOrderV3'
 import {
   PERPS_CLIENT_INTENT_RESOLUTION,
   PERPS_LIFECYCLE_STATUS,
-  persistPerpsOrderRequestV2,
-  type PreparedPerpsOrderV2,
+  persistPerpsOrderRequestV3,
+  type PreparedPerpsOrderV3,
   type PerpsExecutionMode,
   type PerpsFailedConstraint,
   type PerpsLifecycleStatus,
   type PerpsLifecycleOutcomeSnapshot,
-  type PerpsOrderRequestV2,
+  type PerpsOrderRequestV3,
   type PerpsTerminalReason,
-} from '../contracts/perpsOrderV2'
+} from '../contracts/perpsOrderV3'
 import {
   executeSponsoredPerpsAction,
   clearDepositAuthorization,
@@ -66,9 +66,9 @@ import {
   type PerpsDirection,
 } from '../utils/perps'
 import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
-import { buildPlaceOrderV2Action } from '../perps-aa/orderActionV2'
+import { buildPlaceOrderV3Action } from '../perps-aa/orderActionV3'
 import { persistProtectionIntent, PROTECTION_RELEASE_ENABLED, type PositionProtectionParams } from '../contracts/positionProtection'
-import { verifyPerpsV2DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV2Bindings'
+import { verifyPerpsV3DeploymentBindings, verifyProtectionDeployment } from '../contracts/verifyPerpsV3Bindings'
 
 interface PrepareOrderInput {
   direction: PerpsDirection
@@ -86,7 +86,7 @@ interface PrepareOrderInput {
 
 interface CommitOrderInput extends PrepareOrderInput {
   orderDraft?: SavedOrderDraft
-  preparedOrder: PreparedPerpsOrderV2
+  preparedOrder: PreparedPerpsOrderV3
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: CommitOrderResult) => void
 }
@@ -119,7 +119,7 @@ const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
   'getFreeBuyingPowerUsdc',
   'getPendingOrderView',
   'getPendingOrders',
-  'pendingPolicy',
+  'orderTiming',
   'getPoolLiquidityView',
   'getPosition',
   'getProtocolStatus',
@@ -172,7 +172,7 @@ interface CleanupExpiredOrderResult {
 }
 
 type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
-type CommitOrderArgs = readonly [PerpsOrderRequestV2]
+type CommitOrderArgs = readonly [PerpsOrderRequestV3]
 
 const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/
 
@@ -787,7 +787,7 @@ export function usePerpsTrading() {
     positionProtection,
     maxSize,
     signal,
-  }: PrepareOrderInput): Promise<PreparedPerpsOrderV2> => {
+  }: PrepareOrderInput): Promise<PreparedPerpsOrderV3> => {
     try {
       if (!address) {
         throw new Error(
@@ -823,7 +823,7 @@ export function usePerpsTrading() {
       }
       const client = requireClient(publicClient)
       const closeAssistance = isClose && sponsored.manifest.chainId === 421614 ? await loadCloseAssistanceConfig(sponsored.ownerAddress, signal) : undefined
-      return await preparePerpsOrderV2(client, sponsored.manifest, {
+      return await preparePerpsOrderV3(client, sponsored.manifest, {
         closeAssistance,
         account: sponsored.accountAddress,
         direction,
@@ -914,7 +914,8 @@ export function usePerpsTrading() {
         marginDelta,
         targetPrice: request.targetPrice,
         clientOrderId: request.clientOrderId,
-        validUntil: request.bounds.validUntil,
+        submitBy: request.bounds.submitBy,
+        executionWindowSeconds: request.bounds.executionWindowSeconds,
         isClose,
       })
       const client = requireClient(publicClient)
@@ -974,8 +975,8 @@ export function usePerpsTrading() {
 
       const assisted = preparedOrder.sponsoredClose
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
-        : protection ? buildProtectedOpenAction({ account: address, book: protection.book, request, params: protection.params })
-        : buildPlaceOrderV2Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
+        : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+        : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
       let executionManifest = sponsored.manifest
       let executionRuntime = sponsored.runtime
       if (assisted) {
@@ -1012,7 +1013,7 @@ export function usePerpsTrading() {
         action,
         runtime: executionRuntime,
         orderDraft,
-        orderRequestV2: { ...persistPerpsOrderRequestV2(address, request),
+        orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
           closeAssistance: assisted ? { amountUsdc: assisted.amountUsdc.toString(), lens: assisted.config.lens,
             lensCodeHash: assisted.config.lensCodeHash, paymasterAddress: assisted.config.paymasterAddress } : undefined },
         protectionIntent: protection ? persistProtectionIntent(protection.book, protection.params) : undefined,
@@ -1184,7 +1185,7 @@ export function usePerpsTrading() {
       const sponsored = requireSponsoredExecution()
       const client = requireClient(publicClient)
       if (input.action !== 'cancel' && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
-      await verifyPerpsV2DeploymentBindings(client, sponsored.manifest)
+      await verifyPerpsV3DeploymentBindings(client, sponsored.manifest)
       await verifyProtectionDeployment(client, sponsored.manifest)
       const book = sponsored.manifest.positionProtectionBook
       const account = sponsored.accountAddress

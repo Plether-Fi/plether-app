@@ -93,7 +93,7 @@ try {
     console.log(`PASS ${direction}: open preview agreement, exact boundary and adjacent tick, deposits, margin additions, withdrawal ceiling`)
   }
 
-  const { preparePerpsOrderV2 } = await vite.ssrLoadModule('/src/contracts/preparePerpsOrderV2.ts')
+  const { preparePerpsOrderV3 } = await vite.ssrLoadModule('/src/contracts/preparePerpsOrderV3.ts')
   const manifest = JSON.parse(fs.readFileSync('public/perps-aa-manifest.json', 'utf8'))
   for (const direction of ['long', 'short']) {
     await action('reset', {})
@@ -103,7 +103,7 @@ try {
     await action('manage', { action: 'cancel', protectionId: opened.protection.protectionId })
     await action('price', { price: '1.00012345' })
     for (const isClose of [false, true]) {
-      const prepared = await preparePerpsOrderV2(client, manifest, { account: trader, direction, side: direction === 'long' ? 0 : 1,
+      const prepared = await preparePerpsOrderV3(client, manifest, { account: trader, direction, side: direction === 'long' ? 0 : 1,
         sizeDelta: parseUnits('3100', 18), marginDelta: isClose ? 0n : parseUnits('800', 6), slippagePercent: 1, isClose, selectedMaxLeverageBps: 50_000 })
       await write('orderRouter', 'commitOrder', [prepared.request])
       await rpc('evm_increaseTime', [2])
@@ -123,7 +123,7 @@ try {
   let state = await action('execute', {})
   await action('manage', { action: 'cancel', protectionId: state.protection.protectionId })
   await action('price', { price: '1.05' })
-  const prepared = await preparePerpsOrderV2(client, manifest, { account: trader, direction: 'long', side: 0,
+  const prepared = await preparePerpsOrderV3(client, manifest, { account: trader, direction: 'long', side: 0,
     sizeDelta: parseUnits('3000', 18), marginDelta: 0n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 50_000 })
   await write('orderRouter', 'commitOrder', [prepared.request])
   const pool = contracts.housePool.address

@@ -5,14 +5,14 @@ import { parsePerpsAaManifest } from '../manifest'
 import { buildSponsoredCloseAction, closeAssistanceManifest, loadCloseAssistanceConfig, type SponsoredCloseFunding } from '../sponsoredClose'
 import { CFD_CLOSE_PREVIEW_ABI } from '../../contracts/abis/CfdSponsoredClosePreview'
 import { PERPS_ORDER_ROUTER_ABI } from '../../contracts/abis'
-import { permissivePerpsExecutionBounds, type PerpsOrderRequestV2 } from '../../contracts/perpsOrderV2'
+import { permissivePerpsExecutionBounds, type PerpsOrderRequestV3 } from '../../contracts/perpsOrderV3'
 
-const manifest = parsePerpsAaManifest(rawManifest)
+const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
 const account = '0x1111111111111111111111111111111111111111' as Address
-const request: PerpsOrderRequestV2 = {
+const request: PerpsOrderRequestV3 = {
   clientOrderId: `0x${'11'.repeat(32)}`, side: 0, sizeDelta: 100n * 10n ** 18n,
   marginDelta: 0n, targetPrice: 101_000_000n, isClose: true,
-  bounds: { ...permissivePerpsExecutionBounds({ validUntil: 2_000_000_000n,
+  bounds: { ...permissivePerpsExecutionBounds({ submitBy: 2_000_000_000n, executionWindowSeconds: 60,
     expectedConfigHash: `0x${'22'.repeat(32)}`, executionBountyUsdc: 200_000n }), allowedExecutionModes: 1 },
 }
 const funding: SponsoredCloseFunding = { amountUsdc: 198_000n, depositCarryUsdc: 42n, commitmentCarryUsdc: 0n,

@@ -478,14 +478,19 @@ intentRegisteredData =
       else if index == 1 then encodeUint256 250_000
       else if index == 3 then encodeUint256 1
       else if index == 8 then encodeUint256 (commitTimestamp + 300)
-      else if index == 9 then encodeUint256 1
+      else if index == 9 then encodeUint256 60
+      else if index == 10 then encodeUint256 1
+      else if index == 21 then encodeUint256 (commitTimestamp + 300)
+      else if index == 22 then encodeUint256 60
+      else if index == 23 then encodeUint256 commitTimestamp
+      else if index == 24 then encodeUint256 (commitTimestamp + 60)
       else encodeUint256 0
-    | index <- [0 :: Int .. 19]
+    | index <- [0 :: Int .. 24]
     ]
 
 orderFinalizedData :: BranchFixture -> EvidenceFixture -> BS.ByteString
 orderFinalizedData branch evidence =
-  mconcat $ map eventWord [0 :: Int .. 45]
+  mconcat $ map eventWord [0 :: Int .. 49]
  where
   eventWord index
     | index == 0 = encodeUint256 $ bfReceiptHashWord branch
@@ -933,10 +938,10 @@ orderExecutedTopic =
 
 intentRegisteredTopic =
   hexText $ keccak256Text
-    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 orderFinalizedTopic =
   hexText $ keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256),(uint64,uint32,uint64,uint64)))"
 positionClosedTopic =
   hexText $ keccak256Text "PositionClosed(address,uint8,uint256,uint256,int256)"
 

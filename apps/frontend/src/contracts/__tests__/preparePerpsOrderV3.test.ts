@@ -4,18 +4,18 @@ import { CFD_CLOSE_PREVIEW_ABI } from '../abis/CfdSponsoredClosePreview'
 import { buildSponsoredCloseAction } from '../../perps-aa/sponsoredClose'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
-import type { PerpsExecutionAssessment } from '../perpsOrderV2'
-import { PerpsOrderReviewError, preparePerpsOrderV2, reviewPerpsOrderV2 } from '../preparePerpsOrderV2'
-import { verifyClosePreviewDeployment, verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
+import type { PerpsExecutionAssessment } from '../perpsOrderV3'
+import { PerpsOrderReviewError, preparePerpsOrderV3, reviewPerpsOrderV3 } from '../preparePerpsOrderV3'
+import { verifyClosePreviewDeployment, verifyPerpsV3DeploymentBindings } from '../verifyPerpsV3Bindings'
 import { getPreparationFailureProperties } from '../../utils/perpsPreparationDiagnostics'
 
-vi.mock('../verifyPerpsV2Bindings', () => ({
-  verifyPerpsV2DeploymentBindings: vi.fn(),
+vi.mock('../verifyPerpsV3Bindings', () => ({
+  verifyPerpsV3DeploymentBindings: vi.fn(),
   verifyClosePreviewDeployment: vi.fn(async () => '0x202A2C5156563Ec4fEF7D3997771bBCa90e98117'),
   verifyProtectionDeployment: vi.fn(),
 }))
 
-const manifest = parsePerpsAaManifest(rawManifest)
+const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
 const account = '0x00000000000000000000000000000000000000A1' as Address
 const configHash = `0x${'11'.repeat(32)}` as Hex
 const block = {
@@ -60,9 +60,9 @@ function assessment(
   }
 }
 
-describe('preparePerpsOrderV2 leverage margin', () => {
+describe('preparePerpsOrderV3 leverage margin', () => {
   beforeEach(() => {
-    vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+    vi.mocked(verifyPerpsV3DeploymentBindings).mockResolvedValue({
       block,
       blockNumber: block.number,
       positionProtectionBook: manifest.positionProtectionBook,
@@ -75,7 +75,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     const params = { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n }
     const input = { account, direction: 'short' as const, side: 1 as const, sizeDelta: 50n * 10n ** 20n, marginDelta: 1_000_000_000n, slippagePercent: 0.1, isClose: false, selectedMaxLeverageBps: 50_000, clientOrderId: `0x${'33'.repeat(32)}` as Hex }
     const simulateContract = vi.fn(async () => ({ request: {} }))
-    const values: Record<string, unknown> = { maxOrderAge: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n, maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyUsdc: 200_000n }
+    const values: Record<string, unknown> = { maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash, openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n, maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n, lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n, totalAssets: 1_000_000_000_000n, getLatestPrice: 100_000_000n, activePositionProtectionId: 0n, getPendingOrders: [], maxPendingOrders: 8n, positionProtectionTriggerBountyUsdc: 200_000n }
     const client = { getBlock: vi.fn(async () => block), simulateContract, readContract: vi.fn(async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
       if (functionName === 'getPosition') return { exists }
       if (functionName === 'getFreeBuyingPowerUsdc') return available
@@ -83,17 +83,17 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       if (functionName in values) return values[functionName]
       throw new Error(`Unexpected read ${functionName}`)
     }) } as unknown as PublicClient
-    const plain = await reviewPerpsOrderV2(client, manifest, input)
-    const protectedReview = await reviewPerpsOrderV2(client, manifest, { ...input, positionProtection: params })
+    const plain = await reviewPerpsOrderV3(client, manifest, input)
+    const protectedReview = await reviewPerpsOrderV3(client, manifest, { ...input, positionProtection: params })
     expect(protectedReview.reviewSummary.requiredFundingUsdc - plain.reviewSummary.requiredFundingUsdc).toBe(400_000n)
     expect(protectedReview.preparedOrder.request.bounds).toEqual(plain.preparedOrder.request.bounds)
-    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })
+    const prepared = await preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })
     expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: manifest.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [prepared.request, params], blockNumber: block.number }))
     available = protectedReview.reviewSummary.requiredFundingUsdc - 1n
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallUsdc: 1n })
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })).rejects.toMatchObject({ shortfallUsdc: 1n })
     available = 10_000_000_000n
     exists = true
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('no position')
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, positionProtection: params })).rejects.toThrow('no position')
     expect(simulateContract).toHaveBeenCalledTimes(1)
   })
 
@@ -105,7 +105,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       args?: readonly unknown[]
     }) => {
       switch (request.functionName) {
-        case 'maxOrderAge': return 60n
+        case 'maxExecutionWindowSeconds': return 60n
         case 'currentExecutionConfigHash': return configHash
         case 'openOrderExecutionBountyBps': return 1n
         case 'minOpenOrderExecutionBountyUsdc': return 10_000n
@@ -136,7 +136,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
       simulateContract,
     } as unknown as PublicClient
 
-    const prepared = await preparePerpsOrderV2(client, manifest, {
+    const prepared = await preparePerpsOrderV3(client, manifest, {
       account,
       direction: 'short',
       side: 1,
@@ -151,7 +151,8 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     expect(prepared.request.marginDelta).toBe(1_001_500_000n)
     expect(client.getBlock).not.toHaveBeenCalled()
     expect(prepared.reviewedBlockHash).toBe(block.hash)
-    expect(prepared.protection.validUntil).toBe(block.timestamp + 60n)
+    expect(prepared.protection.submitBy).toBe(block.timestamp + 120n)
+    expect(prepared.request.bounds.executionWindowSeconds).toBe(60)
     expect(prepared.request.bounds.maxExecutionNotionalUsdc).toBe(
       (1n << 256n) - 1n
     )
@@ -179,7 +180,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     }))
 
     freeBuyingPowerUsdc = 1_000_000_000n
-    await expect(preparePerpsOrderV2(client, manifest, {
+    await expect(preparePerpsOrderV3(client, manifest, {
       account,
       direction: 'short',
       side: 1,
@@ -207,7 +208,7 @@ describe('reviewed leverage validation', () => {
 
   function reviewClient(overrides: (price: bigint) => Partial<PerpsExecutionAssessment>) {
     const values: Record<string, unknown> = {
-      maxOrderAge: 60n, currentExecutionConfigHash: configHash,
+      maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash,
       openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
       maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
       lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
@@ -231,7 +232,7 @@ describe('reviewed leverage validation', () => {
   }
 
   beforeEach(() => {
-    vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+    vi.mocked(verifyPerpsV3DeploymentBindings).mockResolvedValue({
       block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
   })
@@ -249,7 +250,7 @@ describe('reviewed leverage validation', () => {
       return originalRead(request)
     })
     if (functionName === 'commitOrder') simulateContract.mockRejectedValueOnce(failure)
-    const error = await preparePerpsOrderV2(client, manifest, input).catch((error: unknown) => error)
+    const error = await preparePerpsOrderV3(client, manifest, input).catch((error: unknown) => error)
     expect(error).toBe(failure)
     expect(getPreparationFailureProperties(new Error('Normalized review error', { cause: error }))).toEqual({
       error_code: 'undecoded_revert', stage, contract_function: functionName,
@@ -260,8 +261,8 @@ describe('reviewed leverage validation', () => {
   it('separates deployment verification failures from review validation', async () => {
     const { client, readContract } = reviewClient(() => ({}))
     const failure = new Error('HTTP request failed at a private endpoint')
-    vi.mocked(verifyPerpsV2DeploymentBindings).mockRejectedValueOnce(failure)
-    const error = await preparePerpsOrderV2(client, manifest, input).catch((error: unknown) => error)
+    vi.mocked(verifyPerpsV3DeploymentBindings).mockRejectedValueOnce(failure)
+    const error = await preparePerpsOrderV3(client, manifest, input).catch((error: unknown) => error)
     expect(error).toBe(failure)
     expect(readContract).not.toHaveBeenCalled()
     expect(getPreparationFailureProperties(error)).toEqual({ error_code: 'network_failure', stage: 'deployment_verification' })
@@ -269,7 +270,7 @@ describe('reviewed leverage validation', () => {
 
   it('uses all six-argument close previews and keeps commitment carry outside execution bounds', async () => {
     const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     const calls = readContract.mock.calls.map(([request]) => request).filter(request => request.functionName === 'previewClose')
     expect(calls).toHaveLength(6)
     expect(new Set(calls.map(call => call.args?.[3])).size).toBe(3)
@@ -297,13 +298,13 @@ describe('reviewed leverage validation', () => {
     })
     // The lens has already paid carry from position margin; remaining free USDC
     // covers the bounty. Adding carry to the local funding gate would block this.
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.reviewSummary).toMatchObject({ commitmentCarryUsdc: 1_250_000n, availableFundingUsdc: 200_000n, requiredFundingUsdc: 200_000n })
   })
 
   it('keeps frozen-mode bits, signed economics and deferred claims in the nested assessment', async () => {
     const { client } = reviewClient(() => ({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n, postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.request.bounds.allowedExecutionModes).toBe(4)
     expect(prepared.reviewSummary?.currentAssessment).toMatchObject({ mode: 3, realizedPnlUsdc: -1_000_000n, vpiUsdc: -50_000n, postTraderClaimUsdc: 7_000_000n })
   })
@@ -311,8 +312,8 @@ describe('reviewed leverage validation', () => {
   it('does not let a missing close lens block opens', async () => {
     const { client } = reviewClient(() => ({ postLeverageBps: 0n }))
     vi.mocked(verifyClosePreviewDeployment).mockRejectedValueOnce(new Error('Close lens unavailable'))
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, isClose: false, marginDelta: 2_000_000_000n })).resolves.toBeDefined()
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Close lens unavailable')
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, isClose: false, marginDelta: 2_000_000_000n })).resolves.toBeDefined()
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Close lens unavailable')
   })
 
   it.each(['executionBountyUsdc', 'commitmentCarryUsdc'])('rejects inconsistent %s across close samples without fallback', async field => {
@@ -324,7 +325,7 @@ describe('reviewed leverage validation', () => {
       if (request.functionName === 'previewClose' && ++samples === 2) return { ...(result as object), [field]: 1n }
       return result
     })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Close review changed')
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Close review changed')
     expect(simulateContract).not.toHaveBeenCalled()
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
   })
@@ -345,7 +346,7 @@ describe('reviewed leverage validation', () => {
         assessment: { ...assessment(100_000_000n, 2_000_000_000n), postPositionSize: 0n, postLeverageBps: 0n, postPositionEquityUsdc: 0n } }
       return original(call)
     })
-    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, closeAssistance })
+    const prepared = await preparePerpsOrderV3(client, manifest, { ...input, closeAssistance })
     expect(prepared.sponsoredClose?.depositCarryUsdc).toBe(123n)
     expect(prepared.reviewSummary?.currentAssessment.carryUsdc).toBe(0n)
     const action = buildSponsoredCloseAction(manifest, account, prepared.request, prepared.sponsoredClose!)
@@ -354,12 +355,12 @@ describe('reviewed leverage validation', () => {
       args: [action.calls.map(call => ({ target: call.to, value: call.value, data: call.data }))],
     }))
     simulateContract.mockRejectedValueOnce(new Error('Funding requirement changed'))
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, closeAssistance })).rejects.toThrow('Funding requirement changed')
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, closeAssistance })).rejects.toThrow('Funding requirement changed')
   })
 
   it('allows a reduction above the opening slider limit without adding margin', async () => {
     const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBe(50_300n)
     expect(prepared.request.marginDelta).toBe(0n)
     expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({
@@ -369,7 +370,7 @@ describe('reviewed leverage validation', () => {
 
   it('reviews a full close with no remaining leverage independently of the opening slider', async () => {
     const { client } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityUsdc: 0n, postLeverageBps: 0n }))
-    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, selectedMaxLeverageBps: 0 })
+    const prepared = await preparePerpsOrderV3(client, manifest, { ...input, selectedMaxLeverageBps: 0 })
     expect(prepared.reviewSummary?.currentAssessment.postPositionSize).toBe(0n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBe(0n)
   })
@@ -378,7 +379,7 @@ describe('reviewed leverage validation', () => {
     const { client, readContract, simulateContract } = reviewClient(price => ({
       postLeverageBps: price === 100_000_000n ? 49_700n : 50_001n,
     }))
-    const error = await preparePerpsOrderV2(client, manifest, {
+    const error = await preparePerpsOrderV3(client, manifest, {
       ...input, isClose: false, marginDelta: 2_000_000_000n,
     }).catch((error: unknown) => error)
     expect(error).toBeInstanceOf(PerpsOrderReviewError)
@@ -401,14 +402,14 @@ describe('reviewed leverage validation', () => {
     ['maximum leverage', () => ({ postLeverageBps: 0x1_0000_0000n })],
   ])('still rejects a reduction with %s', async (message, overrides) => {
     const { client, simulateContract } = reviewClient(overrides)
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow(message)
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow(message)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
   it('still requires the close commit simulation to succeed', async () => {
     const { client, simulateContract } = reviewClient(() => ({ postLeverageBps: 50_300n }))
     simulateContract.mockRejectedValueOnce(new Error('Protocol rejected close'))
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Protocol rejected close')
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Protocol rejected close')
   })
 })
 
@@ -428,7 +429,7 @@ describe('Max opening review', () => {
     quoteValid?: boolean; assessmentFailure?: unknown; position?: { exists: boolean; side: number };
   } = {}) {
     const values: Record<string, unknown> = {
-      maxOrderAge: 60n, currentExecutionConfigHash: configHash,
+      maxExecutionWindowSeconds: 60n, currentExecutionConfigHash: configHash,
       openOrderExecutionBountyBps: 1n, minOpenOrderExecutionBountyUsdc: 10_000n,
       maxOpenOrderExecutionBountyUsdc: 200_000n, closeOrderExecutionBountyUsdc: 200_000n,
       lastMarkPrice: 100_000_000n, CAP_PRICE: 200_000_000n,
@@ -465,14 +466,14 @@ describe('Max opening review', () => {
   }
 
   beforeEach(() => {
-    vi.mocked(verifyPerpsV2DeploymentBindings).mockResolvedValue({
+    vi.mocked(verifyPerpsV3DeploymentBindings).mockResolvedValue({
       block, blockNumber: block.number, positionProtectionBook: manifest.positionProtectionBook,
     })
   })
 
   it.each([false, true])('rejects a stale opposite-direction open before quoting or simulation (max=%s)', async maxSize => {
     const { client, readContract, simulateContract } = maxClient({ position: { exists: true, side: 0 } })
-    const error = await preparePerpsOrderV2(client, manifest, { ...input, maxSize }).catch((cause: unknown) => cause)
+    const error = await preparePerpsOrderV3(client, manifest, { ...input, maxSize }).catch((cause: unknown) => cause)
     expect(error).toMatchObject({ name: 'PerpsOrderPositionConflictError', message: expect.stringMatching(/opposing/i) })
     expect(getPreparationFailureProperties(error)).toEqual({ stage: 'preflight', contract_function: 'getPosition', error_code: 'MUST_CLOSE_OPPOSING' })
     expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getPosition', args: [account], blockNumber: block.number }))
@@ -482,7 +483,7 @@ describe('Max opening review', () => {
 
   it('allows increasing an existing same-direction position', async () => {
     const { client, simulateContract } = maxClient({ position: { exists: true, side: 1 } })
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.request.side).toBe(1)
     expect(prepared.request.isClose).toBe(false)
     expect(simulateContract).toHaveBeenCalledOnce()
@@ -490,7 +491,7 @@ describe('Max opening review', () => {
 
   it('uses the exact lens maximum beyond the earlier ticket size, without probing smaller candidates', async () => {
     const { client, readContract, simulateContract } = maxClient()
-    const prepared = await preparePerpsOrderV2(client, manifest, input)
+    const prepared = await preparePerpsOrderV3(client, manifest, input)
     expect(prepared.request.sizeDelta).toBe(7_900n * quantum)
     expect(prepared.request.marginDelta).toBe(999_598_000n)
     expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(999_800_000n)
@@ -508,7 +509,7 @@ describe('Max opening review', () => {
 
   it('refreshes a smaller lens maximum and reserves both attached protection rewards', async () => {
     const { client, readContract } = maxClient({ size: 200n * quantum })
-    const prepared = await preparePerpsOrderV2(client, manifest, {
+    const prepared = await preparePerpsOrderV3(client, manifest, {
       ...input, positionProtection: { takeProfitTriggerPrice: 110_000_000n, stopLossTriggerPrice: 90_000_000n },
     })
     expect(prepared.request.sizeDelta).toBe(200n * quantum)
@@ -519,14 +520,14 @@ describe('Max opening review', () => {
 
   it('does not quote when the account cannot cover the router reward reserve', async () => {
     const { client, readContract, simulateContract } = maxClient({ available: 200_000n })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('after execution rewards')
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('after execution rewards')
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'quoteMaxOpen')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
   it.each([{ size: 0n, quoteValid: false }, { size: quantum, quoteValid: false }])('rejects zero capacity or an invalid quote: %s', async (options) => {
     const { client, readContract, simulateContract } = maxClient(options)
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow()
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow()
     expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
@@ -534,7 +535,7 @@ describe('Max opening review', () => {
 
   it.each([new Error('RPC connection lost'), { errorName: 'CfdEngineLens__QuoteSearchLimitExceeded' }])('propagates quote failures without falling back to client sizing', async (failure) => {
     const { client, readContract, simulateContract } = maxClient({ failure })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toBe(failure)
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toBe(failure)
     expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
@@ -542,7 +543,7 @@ describe('Max opening review', () => {
 
   it('reports no capacity when no smaller size fits the selected leverage', async () => {
     const { client, readContract, simulateContract } = maxClient({ leverage: 400_000n })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toThrow('Available margin cannot fund an opening order at the selected leverage.')
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toThrow('Available margin cannot fund an opening order at the selected leverage.')
     expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
     expect(simulateContract).not.toHaveBeenCalled()
   })
@@ -558,7 +559,7 @@ describe('Max opening review', () => {
       }
       return read(request)
     })
-    const prepared = await preparePerpsOrderV2(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
+    const prepared = await preparePerpsOrderV3(client, manifest, { ...input, slippagePercent: 2, selectedMaxLeverageBps: 100_000 })
     expect(prepared.request.sizeDelta).toBe(97n * quantum)
     expect(prepared.request.marginDelta).toBe(999_598_000n)
     expect(prepared.reviewSummary?.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
@@ -569,15 +570,15 @@ describe('Max opening review', () => {
   it('retains router rejection without retrying another size', async () => {
     const failure = new Error('Router rejected the quoted size')
     const { client, readContract, simulateContract } = maxClient({ assessmentFailure: failure })
-    await expect(preparePerpsOrderV2(client, manifest, input)).rejects.toBe(failure)
+    await expect(preparePerpsOrderV3(client, manifest, input)).rejects.toBe(failure)
     expect(readContract.mock.calls.filter(([request]) => request.functionName === 'quoteMaxOpen')).toHaveLength(1)
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
   it('does not use the maximum lens for a close or manually entered size', async () => {
     const { client, readContract } = maxClient({ leverage: 50_000n })
-    await preparePerpsOrderV2(client, manifest, { ...input, maxSize: undefined })
-    await preparePerpsOrderV2(client, manifest, { ...input, isClose: true, marginDelta: 0n })
+    await preparePerpsOrderV3(client, manifest, { ...input, maxSize: undefined })
+    await preparePerpsOrderV3(client, manifest, { ...input, isClose: true, marginDelta: 0n })
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'quoteMaxOpen')).toBe(false)
   })
 
@@ -590,7 +591,7 @@ describe('Max opening review', () => {
       if (request.functionName === 'quoteMaxOpen') controller.abort()
       return result
     })
-    await expect(preparePerpsOrderV2(client, manifest, { ...input, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(preparePerpsOrderV3(client, manifest, { ...input, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
     expect(readContract.mock.calls.some(([request]) => request.functionName === 'assessOrder')).toBe(false)
     expect(simulateContract).not.toHaveBeenCalled()
   })

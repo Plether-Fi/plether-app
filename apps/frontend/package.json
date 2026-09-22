@@ -30,7 +30,9 @@
     "build-storybook": "storybook build",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
-    "tradingview:install": "node scripts/install-tradingview-charting-library.mjs"
+    "tradingview:install": "node scripts/install-tradingview-charting-library.mjs",
+    "test:order-v3-local": "node ../../scripts/test-order-v3-local.mjs",
+    "verify:perps-sdk": "node ../../scripts/verify-vendored-perps-aa-client.mjs"
   },
   "dependencies": {
     "@fontsource/uncut-sans": "^5.2.5",
@@ -48,7 +50,7 @@
     "viem": "2.45.2",
     "wagmi": "^3.2.0",
     "zustand": "^5.0.9",
-    "@plether-fi/perps-aa-client": "0.1.0"
+    "@plether-fi/perps-aa-client": "file:vendor/perps-aa-client/plether-fi-perps-aa-client-0.2.0.tgz"
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.0.0",

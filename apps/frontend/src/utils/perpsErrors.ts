@@ -58,7 +58,8 @@ const PERPS_ERROR_ABI = parseAbi([
   'error OrderRouter__PredictableOpenInvalid(uint8 code)',
   'error OrderRouter__ZeroClientOrderId()',
   'error OrderRouter__ZeroTargetPrice()',
-  'error OrderRouter__InvalidValidUntil()',
+  'error OrderRouter__InvalidSubmitBy()',
+  'error OrderRouter__InvalidExecutionWindow()',
   'error OrderRouter__InvalidExecutionModeMask()',
   'error OrderRouter__ExecutionConfigMismatch(bytes32 expectedConfigHash,bytes32 currentConfigHash)',
   'error OrderRouter__ZeroPostLeverageBound()',
@@ -428,7 +429,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Order integrity error: this client order ID is already bound to different deadline, bounds, or trade fields.'
     case 'OrderRouter__ZeroTargetPrice':
       return 'A bounded V2 order requires a nonzero target price.'
-    case 'OrderRouter__InvalidValidUntil':
+    case 'OrderRouter__InvalidExecutionWindow':
+    case 'OrderRouter__InvalidSubmitBy':
       return 'The reviewed order deadline expired or is outside the current maximum order age. Review a fresh order.'
     case 'OrderRouter__InvalidExecutionModeMask':
       return 'The reviewed execution regime is invalid. Review the order again.'

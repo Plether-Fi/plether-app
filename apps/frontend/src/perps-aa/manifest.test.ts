@@ -16,6 +16,7 @@ import {
 function validManifest(): Record<string, unknown> {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: PERPS_ENTRY_POINT_V08,
     entryPointVersion: '0.8',
@@ -49,6 +50,7 @@ function validManifestV2(): Record<string, unknown> {
   return {
     ...common,
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     bundlerRpcUrl: PERPS_AA_NATIVE_RPC_PATH,
     paymasterRpcUrl: PERPS_AA_NATIVE_RPC_PATH,
     paymasterAddress: '0x1234567890123456789012345678901234567890',
@@ -60,12 +62,16 @@ function validManifestV1(): Record<string, unknown> {
   return {
     ...validManifest(),
     version: 'perps-aa-arbitrum-sepolia-v1',
+    orderInterfaceVersion: 3,
   }
 }
 
 describe('parsePerpsAaManifest', () => {
-  it('validates the manifest served by the app', () => {
-    const manifest = parsePerpsAaManifest(publicManifest)
+  it('rejects the historical deployed manifest until a V3 deployment is configured', () => {
+    expect(() => parsePerpsAaManifest(publicManifest)).toThrow()
+  })
+  it('validates an explicitly versioned V3 manifest', () => {
+    const manifest = parsePerpsAaManifest({ ...publicManifest, orderInterfaceVersion: 3 })
 
     expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260910-v2')
     expect(manifest.chainId).toBe(421614)
@@ -150,6 +156,7 @@ describe('parsePerpsAaManifest', () => {
   it('parses the V2 deployment bindings', () => {
     expect(parsePerpsAaManifest(validManifest())).toMatchObject({
       version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
       orderLifecycleBook: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
       policyEvaluator: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
     })
@@ -336,6 +343,7 @@ describe('fetchPerpsAaManifest', () => {
       signal,
     })).resolves.toMatchObject({
       version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
       chainId: 421614,
     })
 

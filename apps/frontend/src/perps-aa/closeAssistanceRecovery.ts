@@ -43,7 +43,7 @@ export function withCloseAssistanceRecovery(
       }
       return forPreparation(manifest)
     }
-    const funding = operation.orderRequestV2?.closeAssistance
+    const funding = operation.orderRequestV3?.closeAssistance
     const authority = funding ?? operation.sponsorshipAuthority
     if (!authority) return base
     if (!operation.sponsorshipAuthority || !isAddressEqual(operation.sponsorshipAuthority.paymasterAddress, authority.paymasterAddress)) {

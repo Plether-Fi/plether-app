@@ -1,3 +1,12 @@
+import { orderRouterV3TraderAbi, positionProtectionBookAbi } from '@plether-fi/perps-aa-client'
+
+const ORDER_TIMING_COMPONENTS = [
+  { name: 'submitBy', type: 'uint64' },
+  { name: 'executionWindowSeconds', type: 'uint32' },
+  { name: 'commitTimestamp', type: 'uint64' },
+  { name: 'executionDeadline', type: 'uint64' },
+] as const
+
 export { PERPS_CFD_CLOSE_PREVIEW_ABI } from './CfdClosePreview'
 
 const PENDING_ORDER_COMPONENTS = [
@@ -23,34 +32,8 @@ const ROUTER_PENDING_ORDER_COMPONENTS = [
   { name: 'executionBountyUsdc', type: 'uint256' },
 ] as const
 
-export const PERPS_EXECUTION_BOUNDS_COMPONENTS = [
-  { name: 'validUntil', type: 'uint64' },
-  { name: 'allowedExecutionModes', type: 'uint8' },
-  { name: 'expectedConfigHash', type: 'bytes32' },
-  { name: 'maxExecutionBountyUsdc', type: 'uint256' },
-  { name: 'maxExecutionNotionalUsdc', type: 'uint256' },
-  { name: 'maxGrossAccountDebitUsdc', type: 'uint256' },
-  { name: 'maxActionChargeUsdc', type: 'uint256' },
-  { name: 'maxExplicitFeesUsdc', type: 'uint256' },
-  { name: 'maxPostPositionSize', type: 'uint256' },
-  { name: 'minPostSettlementBalanceUsdc', type: 'uint256' },
-  { name: 'minPostPositionEquityUsdc', type: 'uint256' },
-  { name: 'maxPostLeverageBps', type: 'uint32' },
-] as const
-
-export const PERPS_ORDER_REQUEST_V2_COMPONENTS = [
-  { name: 'clientOrderId', type: 'bytes32' },
-  { name: 'side', type: 'uint8' },
-  { name: 'sizeDelta', type: 'uint256' },
-  { name: 'marginDelta', type: 'uint256' },
-  { name: 'targetPrice', type: 'uint256' },
-  { name: 'isClose', type: 'bool' },
-  {
-    name: 'bounds',
-    type: 'tuple',
-    components: PERPS_EXECUTION_BOUNDS_COMPONENTS,
-  },
-] as const
+export const PERPS_ORDER_REQUEST_V3_COMPONENTS = orderRouterV3TraderAbi[0].inputs[0].components
+export const PERPS_EXECUTION_BOUNDS_COMPONENTS = PERPS_ORDER_REQUEST_V3_COMPONENTS[6].components
 
 const CFD_ORDER_COMPONENTS = [
   { name: 'account', type: 'address' },
@@ -146,6 +129,7 @@ const ORDER_RECEIPT_COMPONENTS = [
     type: 'tuple',
     components: ORDER_ECONOMICS_COMPONENTS,
   },
+  { name: "timing", type: "tuple", components: ORDER_TIMING_COMPONENTS },
 ] as const
 
 const PRICE_SNAPSHOT_COMPONENTS = [
@@ -616,19 +600,7 @@ export const PERPS_MARGIN_CLEARINGHOUSE_ABI = [
 ] as const
 
 export const PERPS_ORDER_ROUTER_ABI = [
-  {
-    type: 'function',
-    name: 'commitOrder',
-    stateMutability: 'nonpayable',
-    inputs: [
-      {
-        name: 'request',
-        type: 'tuple',
-        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
-      },
-    ],
-    outputs: [{ name: 'orderId', type: 'uint64' }],
-  },
+  ...orderRouterV3TraderAbi,
   {
     type: 'function',
     name: 'getPendingOrderView',
@@ -645,7 +617,7 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'function',
-    name: 'maxOrderAge',
+    name: 'maxExecutionWindowSeconds',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: 'ageSeconds', type: 'uint256' }],
@@ -795,9 +767,10 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'error',
-    name: 'OrderRouter__InvalidValidUntil',
+    name: 'OrderRouter__InvalidSubmitBy',
     inputs: [],
   },
+  { type: 'error', name: 'OrderRouter__InvalidExecutionWindow', inputs: [] },
   {
     type: 'error',
     name: 'OrderRouter__InvalidExecutionModeMask',
@@ -832,6 +805,7 @@ export const PERPS_ORDER_ROUTER_ABI = [
 ] as const
 
 export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
+  { type: 'function', name: 'INTENT_TYPEHASH', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] },
   ...(['ROUTER', 'ENGINE', 'CLEARINGHOUSE', 'HOUSE_POOL'] as const).map(
     (name) => ({
       type: 'function' as const,
@@ -857,7 +831,7 @@ export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
       {
         name: 'request',
         type: 'tuple',
-        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
+        components: PERPS_ORDER_REQUEST_V3_COMPONENTS,
       },
     ],
     outputs: [
@@ -884,6 +858,13 @@ export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
         ],
       },
     ],
+  },
+  {
+    type: 'function',
+    name: 'orderTiming',
+    stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }],
+    outputs: [{ name: 'timing', type: 'tuple', components: ORDER_TIMING_COMPONENTS }],
   },
   {
     type: 'function',
@@ -938,6 +919,7 @@ export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
           { name: 'failedConstraint', type: 'uint8' },
           { name: 'revertDataHash', type: 'bytes32' },
           { name: 'receiptHash', type: 'bytes32' },
+          { name: 'timing', type: 'tuple', components: ORDER_TIMING_COMPONENTS },
         ],
       },
     ],
@@ -955,8 +937,9 @@ export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
         name: 'request',
         type: 'tuple',
         indexed: false,
-        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
+        components: PERPS_ORDER_REQUEST_V3_COMPONENTS,
       },
+      { name: "timing", type: "tuple", indexed: false, components: ORDER_TIMING_COMPONENTS },
     ],
   },
   {
@@ -1056,13 +1039,9 @@ export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
   },
 ] as const
 
-import { positionProtectionBookAbi } from '@plether-fi/perps-aa-client'
 
-// The vendored client retains this retired error. All remaining entries match
-// the checksum-verified v1.2.3 bundle, including TP/SL actions and events.
-export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi.filter(
-  entry => !(entry.type === 'error' && entry.name === 'OrderRouter__ProtectionDisabled')
-)
+// V3 source ABI; deployed release pins are supplied separately.
+export const PERPS_POSITION_PROTECTION_BOOK_ABI = positionProtectionBookAbi
 
 export const PERPS_CFD_ENGINE_ABI = [
   {

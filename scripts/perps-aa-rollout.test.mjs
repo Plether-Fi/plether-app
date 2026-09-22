@@ -11,14 +11,14 @@ const manifest = JSON.parse(manifestText)
 const { release, contracts } = JSON.parse(read('config/perps/arbitrum-sepolia-v2.json'))
 const runbook = read('docs/runbooks/self-hosted-aa-rollout.md')
 
-test('published client provenance matches the dependency, lockfile and installed artifact', () => {
+test('client provenance matches the dependency, lockfile and installed artifact', () => {
   const record = JSON.parse(read('config/perps-aa-client-release.json'))
   const pkg = JSON.parse(read('apps/frontend/package.json'))
   const lock = JSON.parse(read('apps/frontend/package-lock.json'))
   const installed = JSON.parse(read(`apps/frontend/node_modules/${record.package}/package.json`))
   const locked = lock.packages[`node_modules/${record.package}`]
   assert.equal(record.package, '@plether-fi/perps-aa-client')
-  assert.equal(pkg.dependencies[record.package], record.version)
+  assert.equal(pkg.dependencies[record.package], record.distribution === 'vendored' ? record.tarball : record.version)
   assert.equal(pkg.dependencies['@plether/perps-aa-client'], undefined)
   assert.equal(locked.version, record.version)
   assert.equal(locked.resolved, record.tarball)
@@ -26,8 +26,13 @@ test('published client provenance matches the dependency, lockfile and installed
   assert.equal(locked.link, undefined)
   assert.equal(installed.version, record.version)
   assert.equal(installed.gitHead, record.sourceCommit)
-  assert.ok(runbook.includes(record.sourceCommit))
-  assert.ok(runbook.includes(record.integrity))
+  const provenance = record.distribution === 'vendored' ? read('config/perps/ORDER_V3_TIMING.md') : runbook
+  assert.ok(provenance.includes(record.sourceCommit))
+  assert.ok(provenance.includes(record.integrity))
+  if (record.distribution === 'vendored') {
+    const checked = spawnSync(process.execPath, ['scripts/verify-vendored-perps-aa-client.mjs'], { encoding: 'utf8' })
+    assert.equal(checked.status, 0, checked.stderr)
+  }
 })
 
 test('native activation preserves every reviewed candidate binding and enables fast preparation', () => {

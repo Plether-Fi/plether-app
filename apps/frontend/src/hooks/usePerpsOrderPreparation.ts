@@ -1,6 +1,6 @@
 import { deadlineNow } from '../perps-aa/deadlineClock'
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
-import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../contracts/perpsOrderV3'
 import { captureAnalyticsEvent } from '../analytics/client'
 import { getPreparationFailureProperties, preparationFailure } from '../utils/perpsPreparationDiagnostics'
 import { isPerpsOracleSyncError } from '../utils/perpsErrors'
@@ -33,15 +33,15 @@ interface Options<T> {
   contextKey?: string
   reviewValid?: boolean
   mode: Mode
-  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV2>
+  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV3>
 }
 interface PreparationState {
   key?: string
   identityKey?: string
   contextKey?: string
   status: 'idle' | 'pending' | 'ready' | 'error'
-  result?: PreparedPerpsOrderV2
-  previous?: PreparedPerpsOrderV2
+  result?: PreparedPerpsOrderV3
+  previous?: PreparedPerpsOrderV3
   error?: unknown
   startedAt: number
   visible: boolean
@@ -87,7 +87,7 @@ class PreparationController<T> {
       (this.state.status === 'pending' || (this.state.status === 'ready' && this.hasDeadline()))
   }
   hasDeadline() {
-    try { return !!this.state.result && Number(this.state.result.protection.validUntil) * 1000 - deadlineNow() > REVIEW_REFRESH_SECONDS * 1000 } catch { return false }
+    try { return !!this.state.result && Number(this.state.result.protection.submitBy) * 1000 - deadlineNow() > REVIEW_REFRESH_SECONDS * 1000 } catch { return false }
   }
   configure(options: Options<T>) {
     this.disposed = false
@@ -142,7 +142,7 @@ class PreparationController<T> {
     clearTimeout(this.timer)
     if (!this.state.visible || this.options?.mode !== 'review' || !this.state.result || this.state.status !== 'ready') return
     this.timer = setTimeout(() => { this.start('refresh'); }, Math.max(0,
-      Number(this.state.result.protection.validUntil) * 1000 - deadlineNow() - REVIEW_REFRESH_SECONDS * 1000))
+      Number(this.state.result.protection.submitBy) * 1000 - deadlineNow() - REVIEW_REFRESH_SECONDS * 1000))
   }
   trackReady() {
     if (!this.state.visible || this.options?.mode !== 'review' || this.options.reviewValid === false || this.openedAt === undefined) return
@@ -182,7 +182,7 @@ class PreparationController<T> {
         surface: 'perps', reason_code: reason, duration_ms: performance.now() - (recoveryStartedAt ?? performance.now()),
       })
     }
-    const finish = (result?: PreparedPerpsOrderV2, error?: unknown) => {
+    const finish = (result?: PreparedPerpsOrderV3, error?: unknown) => {
       if (finished) return
       finished = true
       releaseBackground()
@@ -190,7 +190,7 @@ class PreparationController<T> {
       this.jobs.delete(jobTimeout)
       if (current() && result) {
         try {
-          if (Number(result.protection.validUntil) * 1000 - deadlineNow() <= REVIEW_REFRESH_SECONDS * 1000) {
+          if (Number(result.protection.submitBy) * 1000 - deadlineNow() <= REVIEW_REFRESH_SECONDS * 1000) {
             throw new Error('This review has expired or is about to expire. Retry review for fresh order terms.')
           }
         } catch (cause) {

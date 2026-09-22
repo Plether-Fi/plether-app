@@ -2,7 +2,7 @@
 
 A disposable Anvil fork for manually testing real PositionProtectionBook
 transitions with the production `ProtectionInputs`, `PositionProtectionManager`,
-and `preparePerpsOrderV2` code. This is **not** an end-to-end test of the full
+and `preparePerpsOrderV3` code. This is **not** an end-to-end test of the full
 trade ticket, managed AA sponsorship, Haskell API, PostgreSQL history indexer,
 or production protection worker. The local controller replaces those services
 with direct test-account transactions and explicit keeper controls.

@@ -24,7 +24,7 @@ import {
 } from './operationStore'
 import type { PersistedSponsorshipAuthorityV1 } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
-import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 
 export interface SponsoredOperationAnalyticsMetadata {
   accountMode?: string
@@ -46,7 +46,7 @@ export interface SponsoredOperationMetadata
   authorizationToken?: Address
   authorizationNonce?: Hex
   orderDraft?: SavedOrderDraft
-  orderRequestV2?: PersistedPerpsOrderRequestV2
+  orderRequestV3?: PersistedPerpsOrderRequestV3
   protectionIntent?: PersistedProtectionIntent
   lane?: string
 }
@@ -171,7 +171,7 @@ export function beginSponsoredOperationTracking(
     accountMode: metadata.accountMode,
     manifestVersion: metadata.manifestVersion,
     action: metadata.action,
-    orderRequestV2: metadata.orderRequestV2,
+    orderRequestV3: metadata.orderRequestV3,
     orderDraft: metadata.orderDraft,
     protectionIntent: metadata.protectionIntent,
     authorizationToken: metadata.authorizationToken,
