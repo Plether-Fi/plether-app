@@ -31,6 +31,7 @@ library
         Plether.AA.Readiness
         Plether.AA.OracleReadiness
         Plether.Keeper.Funding
+        Plether.Keeper.Reliability
         Plether.Keeper.Deferrals
         Plether.AA.Diagnostics
         Plether.AA.ExecutionDiagnostics
@@ -473,6 +474,7 @@ test-suite plether-api-integration-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture

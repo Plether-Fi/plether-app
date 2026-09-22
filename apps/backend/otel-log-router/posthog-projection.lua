@@ -27,6 +27,7 @@ aa_reconciler_cost_exceeds_reservation aa_reconciler_cursor_discontinuity
 aa_reconciler_safe_block_advanced aa_reconciler_timestamp_invalid
 keeper_transaction_failed keeper_transaction_mined keeper_transaction_deferred
 keeper_order_deferral_summary keeper_deferral_cache_evicted
+keeper_order_reliability_snapshot keeper_order_reliability_unavailable
 keeper_order_failed keeper_order_finalized_failed keeper_readiness_unavailable keeper_funding_low
 keeper_queue_head_refresh_failed keeper_queue_context_fetch_failed keeper_batch_refresh_failed
 keeper_cached_payload_decode_failed keeper_cached_payload_invalid keeper_order_logs_fetch_failed
@@ -122,6 +123,23 @@ local function projection(record)
   if event:match('^oracle_') then
     for _,key in ipairs({'repair','synchronized'}) do
       if type(record[key]) == 'boolean' then output[key] = record[key] end
+    end
+  end
+  -- Canonical enum only; never forward arbitrary terminal labels or IDs.
+  if event == 'keeper_order_finalized_failed' then
+    local reasons = {[0]='NONE',[1]='EXECUTED',[2]='EXPIRED',[3]='SLIPPAGE',
+      [4]='CONFIG_MISMATCH',[5]='EXECUTION_MODE_DISALLOWED',[6]='RISK_OFF',
+      [7]='PLANNER_REJECTED',[8]='CONSTRAINT_VIOLATION',[9]='ACCOUNT_LIQUIDATED'}
+    output.terminal_reason = reasons[record.terminal_reason_code] or 'UNKNOWN'
+  end
+  if event == 'keeper_order_reliability_snapshot' then
+    for _,key in ipairs({'window_seconds','cohort_end_unix','total_orders','executed_orders',
+      'expired_orders','other_failed_orders','pending_orders','active_accounts',
+      'affected_accounts','repeat_affected_accounts'}) do
+      local value = record[key]
+      if type(value) == 'number' and value >= 0 and value < 1e12 and value == math.floor(value) then
+        output[key] = value
+      end
     end
   end
   if uuid(record.attempt_id) then output.attempt_id = record.attempt_id end

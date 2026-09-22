@@ -59,6 +59,7 @@ import Database.PostgreSQL.Simple (Connection, execute)
 import Plether.Config (Config (..), LpSettlementMode (..), lpSettlementModeText)
 import Plether.Database (DbPool, withDb)
 import Plether.AA.OrderDiagnostics (executionFailureReason)
+import Plether.Keeper.Reliability (runOrderReliabilityObserver)
 import Plether.Keeper.Deferrals (recordDeferral, finishDeferrals, pendingReasonCode)
 import Plether.Keeper.Funding
   ( readFundingEvidence, keeperFeeCaps, keeperReserveCost, classifyKeeperReserve )
@@ -331,7 +332,11 @@ runOrderKeeperSession cfg pool client mode dryRun =
                   threadDelay 10_000_000
             case mode of
               KeeperOnce -> void iteration
-              KeeperLoop -> withAsync observeLoop $ \_ -> loop iteration
+              KeeperLoop -> withAsync observeLoop $ \_ ->
+                case (dryRun, cfgDatabaseUrl cfg) of
+                  (False, Just databaseUrl) ->
+                    withAsync (runOrderReliabilityObserver databaseUrl $ cfgPerpsOrderRouter cfg) $ \_ -> loop iteration
+                  _ -> loop iteration
   where
     loop iteration = do
       activity <- iteration
