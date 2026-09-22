@@ -2367,7 +2367,7 @@ refreshPendingOrder cfg client blockNumber order =
     refreshPending lifecycleBook = do
       (viewResult, policyResult) <- runConcurrently $
         (,) <$> Concurrently (Perps.getPendingOrderViewAtBlock client (cfgPerpsOrderRouter cfg) orderId blockNumber)
-            <*> Concurrently (Perps.pendingPolicyValidUntilAtBlock client lifecycleBook orderId blockNumber)
+            <*> Concurrently (Perps.orderExecutionDeadlineAtBlock client lifecycleBook orderId blockNumber)
       case policyResult of
         Left err ->
           pure $

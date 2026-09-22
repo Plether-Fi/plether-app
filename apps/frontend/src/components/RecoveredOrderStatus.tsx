@@ -7,8 +7,8 @@ export function RecoveredOrderStatus({ operation }: { operation: SponsoredOperat
   const history = usePerpsHistory()
   const matches = history.orderHistory.filter(order =>
     order.account.toLowerCase() === operation.accountAddress.toLowerCase()
-    && (operation.orderRequestV2
-      ? order.clientOrderId.toLowerCase() === operation.orderRequestV2.clientOrderId.toLowerCase()
+    && (operation.orderRequestV3
+      ? order.clientOrderId.toLowerCase() === operation.orderRequestV3.clientOrderId.toLowerCase()
       : operation.transactionHashVerified === true && operation.transactionHash !== undefined
         && order.commitTxHash?.toLowerCase() === operation.transactionHash.toLowerCase()))
   const order = matches.length === 1 ? matches[0] : undefined

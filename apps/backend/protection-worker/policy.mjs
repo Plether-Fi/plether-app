@@ -12,13 +12,13 @@ export function triggerLeg(protection, mark, publication, blockNumber) {
   return 0
 }
 
-export function retryDecision({ protection, outcome, pendingCount, oracleAvailable, queueSize, maxOrderAge, keeperBatchSize, keeperPollSeconds }) {
+export function retryDecision({ protection, outcome, pendingCount, oracleAvailable, queueSize, maxExecutionWindowSeconds, keeperBatchSize, keeperPollSeconds }) {
   if (protection.status !== 8) return 'inactive'
   if (outcome.reason !== 2 || outcome.status !== 3) return 'operator-required'
   if (pendingCount !== 0n) return 'pending-orders'
   if (!oracleAvailable) return 'oracle-unavailable'
   const arrivalSeconds = (queueSize + BigInt(keeperBatchSize) - 1n) / BigInt(keeperBatchSize) * BigInt(keeperPollSeconds)
-  return arrivalSeconds <= maxOrderAge - 15n ? 'retry' : 'queue-congested'
+  return arrivalSeconds <= maxExecutionWindowSeconds - 15n ? 'retry' : 'queue-congested'
 }
 
 export function admittedPayload(row, now, maxAge) {

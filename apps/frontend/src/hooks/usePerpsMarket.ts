@@ -248,7 +248,7 @@ export function usePerpsMarket() {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'maxOrderAge',
+        functionName: 'maxExecutionWindowSeconds',
       },
     ],
     query: {

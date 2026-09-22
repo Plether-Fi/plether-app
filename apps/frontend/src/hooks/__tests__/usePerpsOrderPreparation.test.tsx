@@ -1,7 +1,7 @@
 import { StrictMode, type ReactNode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import { ORACLE_RECOVERY_UNAVAILABLE, orderPreparationKey, usePerpsOrderPreparation } from '../usePerpsOrderPreparation'
 import { preparationFailure } from '../../utils/perpsPreparationDiagnostics'
 import { createOracleSyncError } from '../../test/fixtures/oracleSyncError'
@@ -19,7 +19,7 @@ function deferred<T>() {
 async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
 type Input = { quantity: bigint }
 type Mode = 'background' | 'review' | 'inactive'
-function setup(mode: Mode = 'background', prepare = vi.fn<(input: Input) => Promise<PreparedPerpsOrderV2>>().mockImplementation(async () => prepared())) {
+function setup(mode: Mode = 'background', prepare = vi.fn<(input: Input) => Promise<PreparedPerpsOrderV3>>().mockImplementation(async () => prepared())) {
   const initialProps = { mode, key: 'one', identityKey: 'account-one' }
   const view = renderHook((props: typeof initialProps) => usePerpsOrderPreparation({
     ...props, prepare, candidate: { key: props.key, input: { quantity: 100n } },
@@ -44,7 +44,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('distinguishes timeouts from late rejected work and records only one failure', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     setup('review', vi.fn().mockReturnValue(pending.promise))
     await advance(30_000)
     await act(async () => { pending.reject(new Error('execution reverted')) })
@@ -55,7 +55,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('does not attach failure codes to obsolete requests or successful retries', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(prepared()))
     view.update({ mode: 'review', key: 'two' })
     await advance(0)
@@ -83,7 +83,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('starts cold review without debounce and joins a matching pending background request', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValue(pending.promise))
     await advance(500)
     await advance(2000)
@@ -113,7 +113,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('queues only the latest background candidate and ignores old completions', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const prepare = vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared())
     const view = setup('background', prepare)
     await advance(500)
@@ -130,7 +130,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('does not wait for obsolete background work when review opens', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(500)
     view.update({ mode: 'review', key: 'two' })
@@ -156,7 +156,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('refreshes at forty-five seconds remaining and retains the last displayed terms', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(55)))
     await advance(0)
     const original = view.result.current.result
@@ -187,7 +187,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('times out from the original request start and ignores a late result', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValue(pending.promise))
     await advance(500)
     await advance(2000)
@@ -200,7 +200,7 @@ describe('order preparation lifecycle', () => {
   })
 
   it('invalidates results on identity changes, cancellation, and commit start', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(0)
     view.update({ mode: 'review', identityKey: 'account-two' })
@@ -349,7 +349,7 @@ describe('oracle recovery during review', () => {
     expect(view.result.current.status).toBe('error')
   })
   it('keeps background errors quiet but recovers a request joined by review', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('background', vi.fn().mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(500)
     view.update({ mode: 'review' })
@@ -379,7 +379,7 @@ describe('oracle recovery during review', () => {
     expect(view.prepare).toHaveBeenCalledTimes(2)
   })
   it('ignores a late retry result after inputs change', async () => {
-    const pending = deferred<PreparedPerpsOrderV2>()
+    const pending = deferred<PreparedPerpsOrderV3>()
     const view = setup('review', vi.fn().mockRejectedValueOnce(syncError()).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared()))
     await advance(2000)
     view.update({ key: 'new-input' })

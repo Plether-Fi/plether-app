@@ -213,7 +213,7 @@ describe('Perps trade preview debounce', () => {
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
     expect(screen.getByRole('button', { name: 'Updating review…' })).toBeDisabled()
-    const updated = { ...first, protection: { ...first.protection, validUntil: BigInt(Math.floor(Date.now() / 1000) + 60) },
+    const updated = { ...first, protection: { ...first.protection, submitBy: BigInt(Math.floor(Date.now() / 1000) + 60) },
       request: { ...first.request, marginDelta: first.request.marginDelta + 1n } }
     await act(async () => { resolveRefresh(updated) })
     expect(screen.getByRole('button', { name: 'Confirm updated order' })).toBeEnabled()

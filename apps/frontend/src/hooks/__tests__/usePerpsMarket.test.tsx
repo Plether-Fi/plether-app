@@ -122,7 +122,7 @@ describe('usePerpsMarket', () => {
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'minOpenNotionalUsdc',
       'maxPendingOrders',
-      'maxOrderAge',
+      'maxExecutionWindowSeconds',
     ])
     expect(configurationCall?.query).toMatchObject({
       staleTime: 300_000,

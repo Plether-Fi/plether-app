@@ -5,7 +5,7 @@ import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { executeSponsoredPerpsAction, resumeSponsoredPerpsAction } from './execution'
 import { SponsorRequestError } from './errors'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
-import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import type { PersistedPerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 import { PreparedOperationRecovery } from './PreparedOperationRecovery'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from './runtimeContext'
 import { useSponsoredOperationStore } from './operationStore'
@@ -88,10 +88,10 @@ describe('lost preparation response recovery with the durable trading lane', () 
     const draft = { version: 1 as const, direction: 'short' as const, orderQuantity: '125', leverage: 3, slippage: 0.5,
       reduceOnly: false, fullClose: false, maxOpen: false, protectionEnabled: false,
       protection: { mode: 'price' as const, takeProfit: '', stopLoss: '' } }
-    const order = { validUntil: String(Math.floor(Date.now() / 1000) + 120), sizeDelta: String(125n * 10n ** 18n), side: 1,
-      isClose: false } as PersistedPerpsOrderRequestV2
+    const order = { executionWindowSeconds: 60, submitBy: String(Math.floor(Date.now() / 1000) + 120), sizeDelta: String(125n * 10n ** 18n), side: 1,
+      isClose: false } as PersistedPerpsOrderRequestV3
     await expect(executeSponsoredPerpsAction({ ...flow.input, action: { ...flow.input.action, kind: 'place-order' },
-      orderRequestV2: order, orderDraft: draft })).rejects.toThrow('Account pending')
+      orderRequestV3: order, orderDraft: draft })).rejects.toThrow('Account pending')
     const pending = useSponsoredOperationStore.getState().getActiveOperation(account)!
     await act(async () => { await vi.advanceTimersByTimeAsync(20 * 60_000) })
     const prepareCount = flow.prepare.mock.calls.length

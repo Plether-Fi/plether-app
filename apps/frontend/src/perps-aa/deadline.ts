@@ -11,10 +11,10 @@ export function orderDeadlineNeedsReview(deadline: string | undefined, nowMs = d
 }
 
 export function operationNeedsFreshOrderReview(operation: SponsoredOperation, nowMs?: number): boolean {
-  if (nowMs === undefined) { try { nowMs = deadlineNow() } catch { return operation.orderRequestV2 !== undefined } }
+  if (nowMs === undefined) { try { nowMs = deadlineNow() } catch { return operation.orderRequestV3 !== undefined } }
   return (!operation.userOperationHash || isSignedButUnsubmitted(operation)) && (operation.reason === 'INVALID_ORDER_DEADLINE'
-    || (operation.orderRequestV2 !== undefined && (operation.reason === 'DEADLINE_TOO_CLOSE'
-      || orderDeadlineNeedsReview(operation.orderRequestV2.validUntil, nowMs))))
+    || (operation.orderRequestV3 !== undefined && (operation.reason === 'DEADLINE_TOO_CLOSE'
+      || orderDeadlineNeedsReview(operation.orderRequestV3.submitBy, nowMs))))
 }
 
 export function requireDeadlineHeadroom(sponsorshipDeadline: bigint, orderDeadline: string | undefined, phase: 'signing' | 'submission', nowMs = deadlineNow()): void {

@@ -1,5 +1,16 @@
-// Generated from the verified sponsored-close release; see backend/deployments/close-assistance-arbitrum-sepolia.json.
+// Generated from the V3 Solidity ABI. Source-only; no deployment addresses.
 export const CFD_CLOSE_PREVIEW_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "sponsoredEngine",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
   {
     "type": "function",
     "name": "MAX_CLOSE_SUBSIDY_USDC",
@@ -105,12 +116,17 @@ export const CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "bounds",
         "type": "tuple",
-        "internalType": "struct OrderV2Types.ExecutionBounds",
+        "internalType": "struct OrderV3Types.ExecutionBounds",
         "components": [
           {
-            "name": "validUntil",
+            "name": "submitBy",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "executionWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
             "name": "allowedExecutionModes",
@@ -189,12 +205,12 @@ export const CFD_CLOSE_PREVIEW_ABI = [
           {
             "name": "assessment",
             "type": "tuple",
-            "internalType": "struct OrderV2Types.ExecutionAssessment",
+            "internalType": "struct OrderV3Types.ExecutionAssessment",
             "components": [
               {
                 "name": "mode",
                 "type": "uint8",
-                "internalType": "enum OrderV2Types.ExecutionMode"
+                "internalType": "enum OrderV3Types.ExecutionMode"
               },
               {
                 "name": "executionNotionalUsdc",
@@ -310,7 +326,7 @@ export const CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "request",
         "type": "tuple",
-        "internalType": "struct OrderV2Types.OrderRequest",
+        "internalType": "struct OrderV3Types.OrderRequest",
         "components": [
           {
             "name": "clientOrderId",
@@ -345,12 +361,17 @@ export const CFD_CLOSE_PREVIEW_ABI = [
           {
             "name": "bounds",
             "type": "tuple",
-            "internalType": "struct OrderV2Types.ExecutionBounds",
+            "internalType": "struct OrderV3Types.ExecutionBounds",
             "components": [
               {
-                "name": "validUntil",
+                "name": "submitBy",
                 "type": "uint64",
                 "internalType": "uint64"
+              },
+              {
+                "name": "executionWindowSeconds",
+                "type": "uint32",
+                "internalType": "uint32"
               },
               {
                 "name": "allowedExecutionModes",
@@ -456,12 +477,12 @@ export const CFD_CLOSE_PREVIEW_ABI = [
           {
             "name": "assessment",
             "type": "tuple",
-            "internalType": "struct OrderV2Types.ExecutionAssessment",
+            "internalType": "struct OrderV3Types.ExecutionAssessment",
             "components": [
               {
                 "name": "mode",
                 "type": "uint8",
-                "internalType": "enum OrderV2Types.ExecutionMode"
+                "internalType": "enum OrderV3Types.ExecutionMode"
               },
               {
                 "name": "executionNotionalUsdc",
@@ -572,7 +593,7 @@ export const CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "request",
         "type": "tuple",
-        "internalType": "struct OrderV2Types.OrderRequest",
+        "internalType": "struct OrderV3Types.OrderRequest",
         "components": [
           {
             "name": "clientOrderId",
@@ -607,12 +628,17 @@ export const CFD_CLOSE_PREVIEW_ABI = [
           {
             "name": "bounds",
             "type": "tuple",
-            "internalType": "struct OrderV2Types.ExecutionBounds",
+            "internalType": "struct OrderV3Types.ExecutionBounds",
             "components": [
               {
-                "name": "validUntil",
+                "name": "submitBy",
                 "type": "uint64",
                 "internalType": "uint64"
+              },
+              {
+                "name": "executionWindowSeconds",
+                "type": "uint32",
+                "internalType": "uint32"
               },
               {
                 "name": "allowedExecutionModes",
@@ -813,7 +839,7 @@ export const CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "constraint",
         "type": "uint8",
-        "internalType": "enum OrderV2Types.ConstraintKind"
+        "internalType": "enum OrderV3Types.ConstraintKind"
       },
       {
         "name": "actual",
@@ -834,7 +860,7 @@ export const CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "mode",
         "type": "uint8",
-        "internalType": "enum OrderV2Types.ExecutionMode"
+        "internalType": "enum OrderV3Types.ExecutionMode"
       },
       {
         "name": "allowedExecutionModes",
@@ -880,4 +906,4 @@ export const CFD_CLOSE_PREVIEW_ABI = [
     "name": "OrderRouter__SideMismatch",
     "inputs": []
   }
-] as const
+] as const;

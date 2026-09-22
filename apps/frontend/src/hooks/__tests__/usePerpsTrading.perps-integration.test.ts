@@ -4,7 +4,7 @@ import { arbitrumSepolia } from 'viem/chains'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { PERPS_PUBLIC_LENS_ABI } from '../../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
-import { preparePerpsOrderV2 } from '../../contracts/preparePerpsOrderV2'
+import { preparePerpsOrderV3 } from '../../contracts/preparePerpsOrderV3'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import { sizeDeltaToNotionalUsdc } from '../../utils/perps'
 import { resolvePerpsSizeDelta } from '../../utils/perpsOrder'
@@ -12,7 +12,7 @@ import { resolvePerpsSizeDelta } from '../../utils/perpsOrder'
 const rpcUrl = process.env.ARBITRUM_SEPOLIA_RPC_URL
 const account = (process.env.PERPS_INTEGRATION_ACCOUNT ??
   '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B') as Address
-const manifest = parsePerpsAaManifest(rawManifest)
+const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
 
 const client = rpcUrl
   ? createPublicClient({
@@ -70,7 +70,7 @@ describe('perps full-close integration', () => {
     })
     expect(resolvedSizeDelta).toBe(size)
 
-    const prepared = await preparePerpsOrderV2(client, manifest, {
+    const prepared = await preparePerpsOrderV3(client, manifest, {
       account,
       direction: side === 1 ? 'short' : 'long',
       side,

@@ -15,6 +15,7 @@ const USER_OPERATION_HASH =
 
 const STORY_MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',

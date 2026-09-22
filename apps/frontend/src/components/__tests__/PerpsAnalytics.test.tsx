@@ -162,7 +162,7 @@ describe('Perps analytics', () => {
         targetPrice: 99_099_000n,
         isClose: false,
         bounds: {
-          validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
+          submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
           maxExecutionBountyUsdc: 10_000n,
@@ -181,7 +181,7 @@ describe('Perps analytics', () => {
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 99_000_000n,
       protection: {
-        validUntil: BigInt(Math.floor(Date.now() / 1_000) + 300),
+        submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
       },

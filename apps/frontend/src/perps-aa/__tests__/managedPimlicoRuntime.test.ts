@@ -51,6 +51,7 @@ import { asSponsorRequestError, sponsorReasonMessage } from '../errors'
 
 const manifest: PerpsAaDeploymentManifestV1 = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: ENTRY_POINT,
   entryPointVersion: '0.8' as const,
@@ -92,6 +93,7 @@ const v2Manifest: PerpsAaDeploymentManifestV2 = {
     'version' | 'pimlicoRpcUrl'
   >,
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   bundlerRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterAddress:

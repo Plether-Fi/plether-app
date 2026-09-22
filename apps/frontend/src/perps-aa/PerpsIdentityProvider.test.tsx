@@ -25,6 +25,7 @@ const accountAddress =
 function validManifest(): Record<string, unknown> {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: PERPS_ENTRY_POINT_V08,
     entryPointVersion: '0.8',

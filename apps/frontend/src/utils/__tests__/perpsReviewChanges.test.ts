@@ -18,8 +18,8 @@ describe('refreshed review changes', () => {
     after.reviewedBlockNumber++
     after.reviewedBlockHash = '0x99'
     after.request.clientOrderId = '0x99'
-    after.protection.validUntil++
-    after.request.bounds.validUntil++
+    after.protection.submitBy++
+    after.request.bounds.submitBy++
     expect(perpsReviewChanges(before, after)).toEqual([])
   })
   it('shows full precision for one-unit price and funding changes', () => {

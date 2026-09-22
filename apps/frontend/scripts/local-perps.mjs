@@ -145,7 +145,7 @@ const vite = await createServer({ configFile: false, plugins: [react(), { name: 
         else if (req.url === '/auto') { autoExecute = Boolean(input.enabled) }
         else if (req.url === '/expire') {
           autoExecute = false
-          await rpc('evm_increaseTime', [Number(await read('orderRouter', 'maxOrderAge')) + 1]); await rpc('evm_mine')
+          await rpc('evm_increaseTime', [Number(await read('orderRouter', 'maxExecutionWindowSeconds')) + 1]); await rpc('evm_mine')
           const head = await read('orderRouter', 'accountHeadOrderId', [trader]); if (head) await write('orderRouter', 'executeOrder', [head, ['0x00']])
         } else if (req.url === '/retry') { await write('positionProtectionBook', 'retryPositionProtectionClose', [lastProtectionId]) }
         else if (req.url === '/reset') { await rpc('evm_revert', [resetSnapshot]); resetSnapshot = await rpc('evm_snapshot'); lastProtectionId = 0n; autoExecute = true; log.length = 0 }
@@ -154,8 +154,8 @@ const vite = await createServer({ configFile: false, plugins: [react(), { name: 
           if (!fn) throw new Error('Unknown management action')
           await write('positionProtectionBook', fn, input.action === 'create' ? [input.params] : input.action === 'replace' ? [input.protectionId, input.params] : [input.protectionId], trader)
         } else if (req.url === '/open') {
-          const { preparePerpsOrderV2 } = await vite.ssrLoadModule('/src/contracts/preparePerpsOrderV2.ts')
-          const prepared = await preparePerpsOrderV2(client, manifest, { account: trader, direction: input.direction, side: input.direction === 'long' ? 0 : 1, sizeDelta: parseUnits(String(input.size), 18), marginDelta: parseUnits(String(input.margin), 6), slippagePercent: 1, isClose: false, selectedMaxLeverageBps: 50_000, positionProtection: input.params })
+          const { preparePerpsOrderV3 } = await vite.ssrLoadModule('/src/contracts/preparePerpsOrderV3.ts')
+          const prepared = await preparePerpsOrderV3(client, manifest, { account: trader, direction: input.direction, side: input.direction === 'long' ? 0 : 1, sizeDelta: parseUnits(String(input.size), 18), marginDelta: parseUnits(String(input.margin), 6), slippagePercent: 1, isClose: false, selectedMaxLeverageBps: 50_000, positionProtection: input.params })
           const result = await write('positionProtectionBook', 'commitOpenOrderWithProtection', [prepared.request, input.params], trader)
           lastProtectionId = result[1]
         } else throw new Error('Unknown sandbox action')

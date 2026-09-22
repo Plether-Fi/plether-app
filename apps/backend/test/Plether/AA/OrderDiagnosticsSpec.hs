@@ -61,7 +61,7 @@ accountWord = (BS.replicate 12 0 <>) . unhex
 
 registration :: Integer -> Integer -> Text -> RpcLog
 registration index order account = RpcLog transaction 100 block 0 index lifecycle
-  [Perps.intentRegisteredTopic,encodeUint256 order,accountWord account,BS.replicate 32 0] (BS.replicate 640 0)
+  [Perps.intentRegisteredTopic,encodeUint256 order,accountWord account,BS.replicate 32 0] (BS.replicate 800 0)
 
 userEvent :: Integer -> Text -> Text -> RpcLog
 userEvent index hash account = RpcLog transaction 100 block 0 index "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"

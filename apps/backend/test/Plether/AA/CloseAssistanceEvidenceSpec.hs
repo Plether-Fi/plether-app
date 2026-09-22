@@ -53,7 +53,7 @@ grant :: CloseAssistanceReservation
 grant = CloseAssistanceReservation Manifest.orderRouterAddress account otherHash (hex $ keccak256 request) otherAccount 198000
 
 request :: BS.ByteString
-request = BS.replicate (18*32) 0
+request = BS.replicate (19*32) 0
 
 receipt :: [Value] -> Value
 receipt logs = receiptWithoutStart $ executionStart : logs
@@ -87,8 +87,8 @@ deposit, intent, commit :: Value
 deposit = logEntry 2 Manifest.marginClearinghouseAddress
   [topic "Deposit(address,address,uint256)",hex $ encodeAddress account,hex $ encodeAddress Manifest.mockUsdcAddress] (encodeUint256 198000)
 intent = logEntry 3 Manifest.orderLifecycleBookAddress
-  [topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))",
-   hex $ encodeUint256 7,hex $ encodeAddress account,otherHash] (BS.replicate 64 0 <> request)
+  [topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))",
+   hex $ encodeUint256 7,hex $ encodeAddress account,otherHash] (BS.replicate 64 0 <> request <> BS.replicate 128 0)
 commit = logEntry 4 Manifest.orderRouterAddress
   [topic "OrderCommitted(uint64,address,uint8)",hex $ encodeUint256 7,hex $ encodeAddress account] (encodeUint256 0)
 

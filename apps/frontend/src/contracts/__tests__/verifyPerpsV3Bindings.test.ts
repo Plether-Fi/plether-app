@@ -3,9 +3,9 @@ import type { Address, Hex, PublicClient } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import { PERPS_ARBITRUM_SEPOLIA } from '../perpsAddresses'
-import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
+import { ORDER_V3_INTENT_TYPEHASH, verifyPerpsV3DeploymentBindings } from '../verifyPerpsV3Bindings'
 
-const manifest = parsePerpsAaManifest(rawManifest)
+const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
 const block = {
   number: 302_300_000n,
   timestamp: 2_000_000_000n,
@@ -14,6 +14,7 @@ const block = {
 
 function bindingClient(override?: { functionName: string; value: Address }) {
   const bindings: Record<string, Address> = {
+    INTENT_TYPEHASH: ORDER_V3_INTENT_TYPEHASH,
     engine: manifest.cfdEngine,
     lifecycleBook: manifest.orderLifecycleBook,
     policyEvaluator: manifest.policyEvaluator,
@@ -43,10 +44,10 @@ function bindingClient(override?: { functionName: string; value: Address }) {
   return { client, getBlock, readContract, releaseForwardBinding }
 }
 
-describe('verifyPerpsV2DeploymentBindings', () => {
+describe('verifyPerpsV3DeploymentBindings', () => {
   it('checks the reverse protection binding in parallel at the same block and returns that snapshot', async () => {
     const { client, getBlock, readContract, releaseForwardBinding } = bindingClient()
-    const verification = verifyPerpsV2DeploymentBindings(client, manifest)
+    const verification = verifyPerpsV3DeploymentBindings(client, manifest)
     await Promise.resolve()
 
     expect(readContract).toHaveBeenCalledWith(expect.objectContaining({
@@ -54,7 +55,7 @@ describe('verifyPerpsV2DeploymentBindings', () => {
       functionName: 'ROUTER',
       blockNumber: block.number,
     }))
-    expect(readContract).toHaveBeenCalledTimes(14)
+    expect(readContract).toHaveBeenCalledTimes(15)
     for (const [request] of readContract.mock.calls) {
       expect(request).toMatchObject({ blockNumber: block.number })
     }
@@ -68,6 +69,13 @@ describe('verifyPerpsV2DeploymentBindings', () => {
     expect(getBlock).toHaveBeenCalledExactlyOnceWith({ blockTag: 'latest' })
   })
 
+  it('rejects a V2 graph even if its manifest is relabeled V3', async () => {
+    const { client, releaseForwardBinding } = bindingClient({ functionName: 'INTENT_TYPEHASH', value: `0x${'00'.repeat(32)}` })
+    const verification = verifyPerpsV3DeploymentBindings(client, manifest)
+    releaseForwardBinding()
+    await expect(verification).rejects.toThrow('V3 signed order interface')
+  })
+
   it.each(['positionProtectionBook', 'ROUTER'])(
     'still rejects a mismatched %s binding',
     async (functionName) => {
@@ -75,7 +83,7 @@ describe('verifyPerpsV2DeploymentBindings', () => {
         functionName,
         value: '0x0000000000000000000000000000000000000001',
       })
-      const verification = verifyPerpsV2DeploymentBindings(client, manifest)
+      const verification = verifyPerpsV3DeploymentBindings(client, manifest)
       releaseForwardBinding()
       await expect(verification).rejects.toThrow(functionName === 'ROUTER'
         ? 'Position-protection Router binding mismatch'

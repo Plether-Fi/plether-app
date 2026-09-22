@@ -1,8 +1,8 @@
 import { encodeFunctionData, getAddress, isHex, keccak256, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
 import { CFD_CLOSE_PREVIEW_ABI } from '../contracts/abis/CfdSponsoredClosePreview'
-import type { PerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
-import { buildPlaceOrderV2Action } from './orderActionV2'
+import type { PerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
+import { buildPlaceOrderV3Action } from './orderActionV3'
 import { parsePerpsAaManifest, type PerpsAaDeploymentManifest, type PerpsAaDeploymentManifestV2 } from './manifest'
 
 export interface CloseAssistanceConfig {
@@ -56,7 +56,7 @@ export function closeAssistanceManifest(manifest: PerpsAaDeploymentManifest, con
   }) as PerpsAaDeploymentManifestV2
 }
 
-export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, account: Address, request: PerpsOrderRequestV2, funding: SponsoredCloseFunding): PerpsActionPlan {
+export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, account: Address, request: PerpsOrderRequestV3, funding: SponsoredCloseFunding): PerpsActionPlan {
   const amount = funding.amountUsdc
   if (!request.isClose || request.marginDelta !== 0n || amount <= 0n || amount > 200_000n) throw new Error('Invalid close assistance')
   const call = (to: Address, data: Hex) => Object.freeze({ to, data, value: 0n })
@@ -65,7 +65,7 @@ export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, a
     call(manifest.usdc, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'mint', args: [account, amount] })),
     call(manifest.usdc, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'approve', args: [manifest.marginClearinghouse, amount] })),
     call(manifest.marginClearinghouse, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'depositMargin', args: [amount] })),
-    ...buildPlaceOrderV2Action({ account, orderRouter: manifest.orderRouter, request }).calls,
+    ...buildPlaceOrderV3Action({ account, orderRouter: manifest.orderRouter, request }).calls,
   ]) })
 }
 

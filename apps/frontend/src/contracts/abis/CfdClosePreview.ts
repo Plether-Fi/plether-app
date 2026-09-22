@@ -1,6 +1,42 @@
-// Generated from config/perps/close-preview/CfdClosePreview.abi.json.
-// Run node scripts/generate-close-preview-abi.mjs from apps/frontend to regenerate.
+// Generated from the V3 Solidity ABI. Source-only; no deployment addresses.
 export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "sponsoredEngine",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "MAX_CLOSE_SUBSIDY_USDC",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SPONSORED_ENGINE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
   {
     "type": "function",
     "name": "previewClose",
@@ -80,12 +116,17 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "bounds",
         "type": "tuple",
-        "internalType": "struct OrderV2Types.ExecutionBounds",
+        "internalType": "struct OrderV3Types.ExecutionBounds",
         "components": [
           {
-            "name": "validUntil",
+            "name": "submitBy",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "executionWindowSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
             "name": "allowedExecutionModes",
@@ -164,12 +205,12 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
           {
             "name": "assessment",
             "type": "tuple",
-            "internalType": "struct OrderV2Types.ExecutionAssessment",
+            "internalType": "struct OrderV3Types.ExecutionAssessment",
             "components": [
               {
                 "name": "mode",
                 "type": "uint8",
-                "internalType": "enum OrderV2Types.ExecutionMode"
+                "internalType": "enum OrderV3Types.ExecutionMode"
               },
               {
                 "name": "executionNotionalUsdc",
@@ -269,9 +310,450 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "previewSponsoredClose",
+    "inputs": [
+      {
+        "name": "engineAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "request",
+        "type": "tuple",
+        "internalType": "struct OrderV3Types.OrderRequest",
+        "components": [
+          {
+            "name": "clientOrderId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "enum CfdTypes.Side"
+          },
+          {
+            "name": "sizeDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "marginDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "targetPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isClose",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "bounds",
+            "type": "tuple",
+            "internalType": "struct OrderV3Types.ExecutionBounds",
+            "components": [
+              {
+                "name": "submitBy",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "executionWindowSeconds",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "allowedExecutionModes",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "expectedConfigHash",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
+                "name": "maxExecutionBountyUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxExecutionNotionalUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxGrossAccountDebitUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxActionChargeUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxExplicitFeesUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxPostPositionSize",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "minPostSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "minPostPositionEquityUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxPostLeverageBps",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "executor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "executionPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "publishTime",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "tuple",
+        "internalType": "struct CfdClosePreview.SponsoredClosePreview",
+        "components": [
+          {
+            "name": "subsidyUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "depositCarryUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "commitmentCarryUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "executionBountyUsdc",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assessment",
+            "type": "tuple",
+            "internalType": "struct OrderV3Types.ExecutionAssessment",
+            "components": [
+              {
+                "name": "mode",
+                "type": "uint8",
+                "internalType": "enum OrderV3Types.ExecutionMode"
+              },
+              {
+                "name": "executionNotionalUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "grossAccountDebitUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "actionChargeAssessedUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "actionChargeCollectedUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "explicitFeesUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "preSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "realizedPnlUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "vpiUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "carryUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "executionFeeUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "frozenSpreadUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "preTraderClaimUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postTraderClaimUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionSize",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionMarginUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "postPositionEquityUsdc",
+                "type": "int256",
+                "internalType": "int256"
+              },
+              {
+                "name": "postLeverageBps",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "validateSponsoredClose",
+    "inputs": [
+      {
+        "name": "engineAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "request",
+        "type": "tuple",
+        "internalType": "struct OrderV3Types.OrderRequest",
+        "components": [
+          {
+            "name": "clientOrderId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "enum CfdTypes.Side"
+          },
+          {
+            "name": "sizeDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "marginDelta",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "targetPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "isClose",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "bounds",
+            "type": "tuple",
+            "internalType": "struct OrderV3Types.ExecutionBounds",
+            "components": [
+              {
+                "name": "submitBy",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "executionWindowSeconds",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "allowedExecutionModes",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "expectedConfigHash",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
+                "name": "maxExecutionBountyUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxExecutionNotionalUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxGrossAccountDebitUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxActionChargeUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxExplicitFeesUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxPostPositionSize",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "minPostSettlementBalanceUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "minPostPositionEquityUsdc",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxPostLeverageBps",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "expectedSubsidyUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "CfdClosePreview__NotCloseOrder",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__SponsoredAccountBusy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__SponsoredDeploymentMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__SponsoredIntentInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__SubsidyMismatch",
+    "inputs": [
+      {
+        "name": "expectedUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requiredUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdClosePreview__UncoveredCarry",
+    "inputs": [
+      {
+        "name": "unpaidCarryUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -357,7 +839,7 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "constraint",
         "type": "uint8",
-        "internalType": "enum OrderV2Types.ConstraintKind"
+        "internalType": "enum OrderV3Types.ConstraintKind"
       },
       {
         "name": "actual",
@@ -378,7 +860,7 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
       {
         "name": "mode",
         "type": "uint8",
-        "internalType": "enum OrderV2Types.ExecutionMode"
+        "internalType": "enum OrderV3Types.ExecutionMode"
       },
       {
         "name": "allowedExecutionModes",
@@ -424,4 +906,4 @@ export const PERPS_CFD_CLOSE_PREVIEW_ABI = [
     "name": "OrderRouter__SideMismatch",
     "inputs": []
   }
-] as const
+] as const;

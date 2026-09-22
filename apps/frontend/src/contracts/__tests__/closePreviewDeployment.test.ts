@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { keccak256, type PublicClient } from 'viem'
+import sourceAbis from './fixtures/perps-v3-source-abis.json'
 import pin from '../../../../../config/perps/close-preview/arbitrum-sepolia.json'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import { PERPS_CFD_CLOSE_PREVIEW_ABI } from '../abis'
-import { verifyClosePreviewDeployment } from '../verifyPerpsV2Bindings'
+import { verifyClosePreviewDeployment } from '../verifyPerpsV3Bindings'
 
-const manifest = parsePerpsAaManifest(rawManifest)
+const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
 const originalPin = structuredClone(pin)
 afterEach(() => { Object.assign(pin, structuredClone(originalPin)) })
 const code = '0x6001600055' as const
@@ -20,7 +21,7 @@ describe('supplemental close preview deployment', () => {
   it('pins the delivered artifact and generated ABI without relabeling the evaluator', () => {
     const bytes = readFileSync('../../config/perps/close-preview/CfdClosePreview.abi.json')
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(pin.contracts.cfdClosePreview.abiSha256)
-    expect(PERPS_CFD_CLOSE_PREVIEW_ABI).toEqual(JSON.parse(bytes.toString()).filter((item: { type: string; name?: string }) => item.type === 'error' || item.name === 'previewClose'))
+    expect(PERPS_CFD_CLOSE_PREVIEW_ABI).toEqual(sourceAbis.PERPS_CFD_CLOSE_PREVIEW_ABI)
     expect(pin.contracts.cfdClosePreview.runtimeCodeHash).toBe('0x2f8f5cf607ddcd71f3bafd166e3fa3d20980a4077eaa28b8508b2a0ac1c29b16')
     expect(pin.existingProtocol.policyEvaluator.toLowerCase()).toBe(manifest.policyEvaluator.toLowerCase())
     expect(pin.contracts.cfdClosePreview.address.toLowerCase()).not.toBe(manifest.policyEvaluator.toLowerCase())

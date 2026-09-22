@@ -7,11 +7,11 @@ import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../../contracts/perpsAddresses'
-import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import { usePerpsTrading } from '../usePerpsTrading'
-import * as orderV2 from '../../contracts/perpsOrderV2'
-import * as orderPreparation from '../../contracts/preparePerpsOrderV2'
-import * as deploymentBindings from '../../contracts/verifyPerpsV2Bindings'
+import * as orderV2 from '../../contracts/perpsOrderV3'
+import * as orderPreparation from '../../contracts/preparePerpsOrderV3'
+import * as deploymentBindings from '../../contracts/verifyPerpsV3Bindings'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
 import { SponsorRequestError } from '../../perps-aa/errors'
@@ -74,6 +74,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,
@@ -190,7 +191,7 @@ function sponsoredResult() {
   }
 }
 
-function preparedOrder(): PreparedPerpsOrderV2 {
+function preparedOrder(): PreparedPerpsOrderV3 {
   const request = {
     clientOrderId: CLIENT_ORDER_ID,
     side: 0,
@@ -199,7 +200,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     targetPrice: 98_398_300n,
     isClose: false,
     bounds: {
-      validUntil: 1_700_000_300n,
+      submitBy: 1_700_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: 1,
       expectedConfigHash: CONFIG_HASH,
       maxExecutionBountyUsdc: 10_000n,
@@ -224,7 +225,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     reviewedBlockHash: REVIEWED_BLOCK_HASH,
     reviewedPrice: 98_300_000n,
     protection: {
-      validUntil: request.bounds.validUntil,
+      submitBy: request.bounds.submitBy, executionWindowSeconds: 60,
       executionMode: 1,
       executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
     },
@@ -296,7 +297,7 @@ describe('usePerpsTrading', () => {
 
     beforeEach(() => {
       mocks.identityReady = true
-      vi.spyOn(deploymentBindings, 'verifyPerpsV2DeploymentBindings').mockResolvedValue({
+      vi.spyOn(deploymentBindings, 'verifyPerpsV3DeploymentBindings').mockResolvedValue({
         positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
         blockNumber: 123n,
         block: { number: 123n, timestamp: 1_700_000_000n, hash: REVIEWED_BLOCK_HASH },
@@ -459,7 +460,7 @@ describe('usePerpsTrading', () => {
 
   it('passes explicit Max intent and cancellation to the review', async () => {
     mocks.identityReady = true
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(preparedOrder())
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(preparedOrder())
     const maxSize = true
     const signal = new AbortController().signal
     try {
@@ -476,7 +477,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const reviewSummary = { worstPostLeverageBps: 50_001n } as orderV2.PerpsOrderReviewSummary
     const error = new orderPreparation.PerpsOrderReviewError(reviewSummary, new Error('Leverage limit exceeded'))
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockRejectedValue(error)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockRejectedValue(error)
     try {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
       await expect(result.current.prepareOrder(commitInput())).rejects.toBe(error)
@@ -489,7 +490,7 @@ describe('usePerpsTrading', () => {
   it('blocks stale reviews while a failed submission is unresolved, then prepares a fresh order', async () => {
     mocks.identityReady = true
     const fresh = preparedOrder()
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(fresh)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(fresh)
     const store = useSponsoredOperationStore.getState()
     globalThis.localStorage.clear()
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
@@ -498,8 +499,8 @@ describe('usePerpsTrading', () => {
         id: 'expired-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2',
         action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...fresh.request, bounds: { ...fresh.request.bounds, submitBy: 1n },
         }),
       })
       store.recordUserOperationHash('expired-order', USER_OPERATION_HASH)
@@ -531,8 +532,8 @@ describe('usePerpsTrading', () => {
       store.beginOperation({
         id: 'unsigned-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...original.request, bounds: { ...original.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...original.request, bounds: { ...original.request.bounds, submitBy: 1n },
         }),
       })
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
@@ -551,7 +552,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const unalignedSizeDelta = 100_000_000_000_000_000_001n
     const basePreparedOrder = preparedOrder()
-    const closePreparedOrder: PreparedPerpsOrderV2 = {
+    const closePreparedOrder: PreparedPerpsOrderV3 = {
       ...basePreparedOrder,
       request: {
         ...basePreparedOrder.request,

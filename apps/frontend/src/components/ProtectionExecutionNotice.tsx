@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { PositionProtection } from '../contracts/positionProtection'
-import { PERPS_TERMINAL_REASON_LABELS } from '../contracts/perpsOrderV2'
+import { PERPS_TERMINAL_REASON_LABELS } from '../contracts/perpsOrderV3'
 import { currentProtectionObservation, PROTECTION_EXECUTION_COPY, type ProtectionExecutionReport } from '../utils/protectionExecution'
 import { getExplorerTxUrl } from '../utils/explorer'
 
