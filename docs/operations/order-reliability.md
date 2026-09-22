@@ -71,6 +71,45 @@ Browser deadline and recovery panels deduplicate by random attempt UUID within
 each reason. Reasons can overlap, blocked analytics can undercount, and these
 panels must never be presented as unique trader counts.
 
+## Interrupted browser attempts
+
+New browser reports attach an allowlisted `failureStep` and `reasonCode` to
+`execution_interrupted` and `deadline_elapsed`. For example, `wallet_approval`
+with `WALLET_DECLINED` means the wallet provider explicitly returned code 4001;
+an arbitrary wallet error stays `UNKNOWN`. Messages, stacks, URLs, calldata,
+signatures and wallet addresses are never inspected or exported for this purpose.
+
+The API stores `failure_step` and `reason_code` in `aa_attempt_events`, scoped to
+the same first-party client as the preparation. It emits `aa_browser_attempt_failure`
+only for a newly persisted report. CloudWatch and PostHog Logs receive the safe
+fields plus the support reference and `failure_source=browser`. This is advisory
+browser evidence; it never changes the canonical diagnostic, authorization,
+submission state or recovery decision. A timeout during submission does not prove
+that the operation was never sent.
+
+Each attempt/source/stage retains its first observation. Retries and duplicate
+reports do not overwrite it. Old reports remain valid with null detail fields;
+missing historical reasons cannot be reconstructed or backfilled by this change.
+Reports without a persisted preparation matching the first-party client cannot
+be linked and are dropped, as with the existing stage-only timeline.
+Logs are best effort after persistence, so consult the database if export is lost.
+
+Before deploying the backend, apply the idempotent
+`config/migrations/aa-attempt-failure-v1.sql` (also included in `schema.sql`). Then
+deploy the backend and log router before the frontend. Older backends reject the
+new diagnostic shape, which drops telemetry but does not affect trading. Rollback
+may leave the additive columns in place. Verify a controlled wallet rejection and
+deadline refusal produce the expected step/reason in both the timeline and Logs.
+
+Support lookup (read-only; supply an exact attempt UUID):
+
+```sql
+SELECT observed_at, source, stage, failure_step, reason_code
+FROM aa_attempt_events
+WHERE attempt_id = :'attempt_id'::uuid
+ORDER BY observed_at;
+```
+
 ## Validation
 
 Run `lua posthog-projection.test.lua` in `apps/backend/otel-log-router` and

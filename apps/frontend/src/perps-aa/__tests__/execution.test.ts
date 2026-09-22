@@ -314,6 +314,29 @@ const action = {
 }
 
 describe('executeSponsoredPerpsAction', () => {
+  it('identifies changed review state without opening the wallet or altering recovery classification', async () => {
+    const managed = runtime({ prepareUserOperation: vi.fn(async () => pletherOperation()) })
+    managed.readReviewedActionState = vi.fn().mockResolvedValueOnce('original').mockResolvedValueOnce('changed')
+    await expect(executeSponsoredPerpsAction({
+      manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER, action, runtime: managed,
+    })).rejects.toThrow('The reviewed position or protection state changed')
+    expect(managed.smartAccount.signUserOperation).not.toHaveBeenCalled()
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', {
+      failureStep: 'review_revalidation', reasonCode: 'REVIEW_CHANGED',
+    })
+  })
+
+  it('records an unknown wallet interruption without inventing a user refusal', async () => {
+    const managed = runtime({ signUserOperation: vi.fn(async () => { throw new Error('private wallet detail') }) })
+    await expect(executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action, runtime: managed }))
+      .rejects.toThrow('private wallet detail')
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', {
+      failureStep: 'wallet_approval', reasonCode: 'UNKNOWN',
+    })
+    expect(managed.smartAccount.sendUserOperation).not.toHaveBeenCalled()
+  })
+
   it('refuses sponsorship and signing when the reviewed order has fewer than twenty seconds left', async () => {
     const now = Date.now()
     const prepareUserOperation = vi.fn(async () => operation())
@@ -343,7 +366,7 @@ describe('executeSponsoredPerpsAction', () => {
         }) }),
       })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'signed-not-submitted' })
       expect(sendUserOperation).not.toHaveBeenCalled()
-      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed')
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'deadline_elapsed', { failureStep: 'submission_deadline', reasonCode: 'DEADLINE_TOO_CLOSE' })
       const record = useSponsoredOperationStore.getState().operations[0]
       expect(record).toMatchObject({ status: 'signed-not-submitted', userOperationHash: USER_OPERATION_HASH })
       expect(record.signedUserOperation).toBeDefined()
@@ -407,6 +430,7 @@ describe('executeSponsoredPerpsAction', () => {
         action: { ...action, kind }, runtime: managed, authorizationTokenToClearOnConfirmation: TARGET,
         authorizationNonceToClearOnConfirmation: AUTHORIZATION_NONCE }
       await expect(executeSponsoredPerpsAction(input)).rejects.toThrow('Signature declined. Your transaction was not sent.')
+      expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', { failureStep: 'wallet_approval', reasonCode: 'WALLET_DECLINED' })
       const declined = useSponsoredOperationStore.getState().operations[0]
       expect(declined.status).toBe('signature-declined')
       expect(declined.preparedOperation?.operation).not.toHaveProperty('signature')
@@ -1609,6 +1633,7 @@ describe('executeSponsoredPerpsAction', () => {
     await expect(executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action,
       runtime: runtime({ sendUserOperation }),
     })).rejects.toMatchObject({ terminalStatus: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE', retryable: false })
+    expect(reportAttemptStage).toHaveBeenCalledWith(expect.any(String), 'execution_interrupted', { failureStep: 'submission', reasonCode: 'SECURITY_ATTESTATION_UNAVAILABLE' })
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({ status: 'submission-unknown', reason: 'SECURITY_ATTESTATION_UNAVAILABLE' })
     expect(useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)).toBeDefined()
     expect(sendUserOperation).toHaveBeenCalledOnce()

@@ -128,3 +128,12 @@ for _,event in ipairs({'keeper_broadcast_unresolved','keeper_broadcast_invalid',
   local _,_,projected=project_posthog('test',0,{event=event,raw_tx='secret',tx_hash='secret'})
   assert(projected.event==event and projected.raw_tx==nil and projected.tx_hash==nil)
 end
+
+local _,_,failure=project_posthog('test',0,{event='aa_browser_attempt_failure',stage='execution_interrupted',
+  failure_step='wallet_approval',reason_code='WALLET_DECLINED',failure_source='browser',
+  signature='secret',error='private wallet message',sender='0x1234',operation={secret=true}})
+assert(failure.event=='aa_browser_attempt_failure' and failure.failure_step=='wallet_approval')
+assert(failure.reason_code=='WALLET_DECLINED' and failure.failure_source=='browser')
+assert(failure.signature==nil and failure.error==nil and failure.sender==nil and failure.operation==nil)
+local _,_,unsafe=project_posthog('test',0,{event='aa_browser_attempt_failure',failure_step='private_payload',reason_code='private_token',failure_source='backend'})
+assert(unsafe.failure_step==nil and unsafe.reason_code==nil and unsafe.failure_source==nil)
