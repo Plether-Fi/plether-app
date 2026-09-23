@@ -252,7 +252,7 @@ describe('usePerpsTrading', () => {
     mocks.intentResolution = 0
     mocks.resolvedOrderId = 0n
     mocks.protectionParent = 42n
-    mocks.getBlock.mockResolvedValue({ timestamp: 1_700_000_000n })
+    mocks.getBlock.mockResolvedValue({ number: 123n, timestamp: 1_700_000_000n })
     mocks.simulateContract.mockResolvedValue({})
     mocks.executeSponsoredPerpsAction.mockResolvedValue(sponsoredResult())
     mocks.parseEventLogs.mockImplementation(({ eventName }: { eventName: string }) =>
@@ -263,6 +263,8 @@ describe('usePerpsTrading', () => {
     )
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
       switch (functionName) {
+        case 'maxOrderAge':
+          return 300n
         case 'getPendingOrders':
           return []
         case 'maxPendingOrders':
@@ -410,11 +412,13 @@ describe('usePerpsTrading', () => {
 
   it('commits protected opens atomically and reconciles the unique parent/protection pair', async () => {
     mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
     const input = commitInput()
     input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n, protectionId: 7n })
-    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [input.preparedOrder.request, input.preparedOrder.positionProtection.params] }))
+    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, validUntil: 1_700_000_900n } }
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [finalized, input.preparedOrder.positionProtection.params] }))
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({ action: expect.objectContaining({ kind: 'place-protected-order' }), protectionIntent: expect.objectContaining({ takeProfitTriggerPrice: '90000000', stopLossTriggerPrice: '110000000' }) }))
   })
 
@@ -753,6 +757,101 @@ describe('usePerpsTrading', () => {
     )
   })
 
+  it.each([false, true])('sets the deadline at confirmation while preserving every reviewed term (close=%s)', async isClose => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    const input = commitInput()
+    input.isClose = isClose
+    input.preparedOrder.request.isClose = isClose
+    if (isClose) input.preparedOrder.request.marginDelta = 0n
+    const reviewed = structuredClone(input.preparedOrder)
+    const expected = { ...reviewed.request, bounds: { ...reviewed.request.bounds, validUntil: 1_700_000_900n } }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await result.current.commitOrder(input)
+
+    expect(mocks.getBlock).toHaveBeenCalledExactlyOnceWith({ blockTag: 'latest' })
+    expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: reviewed.orderRouter, functionName: 'maxOrderAge', blockNumber: 456n,
+    }))
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'commitOrder', args: [expected] }))
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({
+      orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, expected),
+    }))
+    expect(input.preparedOrder).toEqual(reviewed)
+    expect(mocks.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getLatestPrice' }))
+  })
+
+  it('preserves the finalized request when confirmation is retried after a failed attempt', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    mocks.executeSponsoredPerpsAction.mockRejectedValueOnce(new Error('Network unavailable'))
+    const input = commitInput()
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow()
+    const first = mocks.executeSponsoredPerpsAction.mock.calls[0][0].orderRequestV2
+    mocks.getBlock.mockResolvedValue({ number: 789n, timestamp: 1_700_001_200n })
+
+    await result.current.commitOrder(input)
+
+    expect(mocks.getBlock).toHaveBeenCalledOnce()
+    expect(mocks.executeSponsoredPerpsAction.mock.calls[1][0].orderRequestV2).toEqual(first)
+    expect(mocks.readContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'resolveClientIntent', args: [ACCOUNT, orderV2.restorePerpsOrderRequestV2(first)],
+    }))
+  })
+
+  it('allows retry after a deadline read fails without simulating or signing the failed request', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockRejectedValueOnce(new Error('Block unavailable'))
+    const input = commitInput()
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(input)).rejects.toThrow()
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    await result.current.commitOrder(input)
+    expect(mocks.getBlock).toHaveBeenCalledTimes(2)
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
+  })
+
+  it('does not sign if current-state simulation rejects the finalized request', async () => {
+    mocks.identityReady = true
+    mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
+    mocks.simulateContract.mockRejectedValueOnce(new Error('Order no longer valid'))
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.commitOrder(commitInput())).rejects.toThrow()
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      args: [expect.objectContaining({ bounds: expect.objectContaining({ validUntil: 1_700_000_900n }) })],
+    }))
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('never renews an existing recorded attempt (submitted=%s)', async submitted => {
+    mocks.identityReady = true
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    const input = commitInput()
+    const persisted = orderV2.persistPerpsOrderRequestV2(ACCOUNT, input.preparedOrder.request)
+    const store = useSponsoredOperationStore.getState()
+    try {
+      store.beginOperation({
+        id: 'recorded-confirmation', ownerAddress: OWNER, accountAddress: ACCOUNT,
+        chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
+        orderRequestV2: persisted,
+      })
+      if (submitted) store.recordUserOperationHash('recorded-confirmation', USER_OPERATION_HASH)
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.commitOrder(input)).rejects.toThrow('recorded attempt')
+      expect(mocks.getBlock).not.toHaveBeenCalled()
+      expect(mocks.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+      expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === 'recorded-confirmation')?.orderRequestV2).toEqual(persisted)
+    } finally {
+      globalThis.localStorage.clear()
+      useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    }
+  })
+
   it('returns an exact replay without creating another UserOperation', async () => {
     mocks.identityReady = true
     mocks.intentResolution = 1
@@ -777,6 +876,7 @@ describe('usePerpsTrading', () => {
       orderId: 42n,
       replayed: true,
     })
+    expect(mocks.getBlock).not.toHaveBeenCalled()
     expect(mocks.simulateContract).not.toHaveBeenCalled()
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })

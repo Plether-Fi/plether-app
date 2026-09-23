@@ -157,16 +157,16 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(3)
   })
 
-  it('expires at forty-five seconds remaining and retains terms until an explicit retry', async () => {
+  it('keeps a review ready beyond its provisional deadline until an explicit retry', async () => {
     const pending = deferred<PreparedPerpsOrderV2>()
     const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockReturnValueOnce(pending.promise).mockImplementation(async () => prepared(55)))
     await advance(0)
     const original = view.result.current.result
-    await advance(10_000)
-    expect(view.result.current.ready).toBe(false)
+    await advance(600_000)
+    expect(view.result.current.ready).toBe(true)
     expect(view.result.current.refreshing).toBe(false)
     expect(view.result.current.result).toBe(original)
-    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
+    expect(view.result.current.error).toBeUndefined()
     expect(view.prepare).toHaveBeenCalledTimes(1)
     act(() => { view.result.current.retry() })
     expect(view.result.current.refreshing).toBe(true)
@@ -174,12 +174,12 @@ describe('order preparation lifecycle', () => {
     expect(view.result.current.previous).toBe(original)
     expect(view.result.current.result?.request.marginDelta).toBe(30_000_000n)
     expect(view.result.current.ready).toBe(true)
-    await advance(10_000)
+    await advance(600_000)
     expect(view.prepare).toHaveBeenCalledTimes(2)
-    expect(view.result.current.ready).toBe(false)
+    expect(view.result.current.ready).toBe(true)
   })
 
-  it('stops on explicit refresh failure or an already expiring response', async () => {
+  it('stops on explicit refresh failure but accepts a provisional deadline in the past', async () => {
     const view = setup('review', vi.fn().mockResolvedValueOnce(prepared(55)).mockRejectedValue(new Error('offline')))
     await advance(10_000)
     act(() => { view.result.current.retry() })
@@ -191,7 +191,8 @@ describe('order preparation lifecycle', () => {
     view.unmount()
     const expired = setup('review', vi.fn().mockResolvedValue(prepared(10)))
     await advance(60_000)
-    expect(expired.result.current.status).toBe('error')
+    expect(expired.result.current.status).toBe('ready')
+    expect(expired.result.current.ready).toBe(true)
     expect(expired.prepare).toHaveBeenCalledTimes(1)
   })
 
@@ -223,7 +224,7 @@ describe('order preparation lifecycle', () => {
     expect(view.prepare).toHaveBeenCalledTimes(2)
   })
 
-  it('pauses while hidden and rechecks freshness when returning', async () => {
+  it('pauses while hidden and keeps the same ready review when returning', async () => {
     let visibility: DocumentVisibilityState = 'hidden'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
     const view = setup()
@@ -239,8 +240,8 @@ describe('order preparation lifecycle', () => {
     act(() => { visibility = 'visible'; document.dispatchEvent(new Event('visibilitychange')) })
     await advance(0)
     expect(view.prepare).toHaveBeenCalledTimes(1)
-    expect(view.result.current.ready).toBe(false)
-    expect(view.result.current.error).toMatchObject({ message: expect.stringContaining('Refresh review') })
+    expect(view.result.current.ready).toBe(true)
+    expect(view.result.current.error).toBeUndefined()
   })
 
   it('recovers after StrictMode effect cleanup and ignores work after unmount', async () => {

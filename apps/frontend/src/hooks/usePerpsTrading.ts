@@ -58,6 +58,8 @@ import {
   usePerpsAaRuntime,
   usePerpsIdentity,
   useSponsoredOperationStore,
+  restoreSponsoredOperationLane,
+  DEFAULT_SPONSORED_OPERATION_LANE,
 } from '../perps-aa'
 import {
   directionToPerpsSide,
@@ -174,6 +176,32 @@ interface CleanupExpiredOrderResult {
 
 type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
 type CommitOrderArgs = readonly [PerpsOrderRequestV2]
+
+// Once confirmation starts, this request is immutable across retries. Preparation
+// objects are replaced only by an explicit new review (with a new client order ID).
+const confirmationRequests = new WeakMap<PreparedPerpsOrderV2, Promise<PerpsOrderRequestV2>>()
+
+function finalizeOrderDeadline(client: PerpsPublicClient, prepared: PreparedPerpsOrderV2): Promise<PerpsOrderRequestV2> {
+  const existing = confirmationRequests.get(prepared)
+  if (existing) return existing
+  const pending = (async () => {
+    const block = await client.getBlock({ blockTag: 'latest' })
+    const maxOrderAge = await client.readContract({
+      address: prepared.orderRouter,
+      abi: PERPS_ORDER_ROUTER_ABI,
+      functionName: 'maxOrderAge',
+      blockNumber: block.number,
+    })
+    const validUntil = block.timestamp + maxOrderAge
+    if (maxOrderAge <= 0n || validUntil > (1n << 64n) - 1n) throw new Error('Invalid order deadline')
+    return { ...prepared.request, bounds: { ...prepared.request.bounds, validUntil } }
+  })()
+  confirmationRequests.set(prepared, pending)
+  // A failed read creates no request and is safe to retry. Once created, even a
+  // simulation/signing failure must not silently change this immutable intent.
+  void pending.catch(() => { confirmationRequests.delete(prepared) })
+  return pending
+}
 
 const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/
 
@@ -890,7 +918,7 @@ export function usePerpsTrading() {
       if (quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
         throw new Error('Order size must use 100 plDXY increments')
       }
-      const request = preparedOrder.request
+      let request = await (confirmationRequests.get(preparedOrder) ?? preparedOrder.request)
       const protection = preparedOrder.positionProtection
       if (protection && !PROTECTION_RELEASE_ENABLED) throw new Error('TP/SL is not enabled for this release yet')
       const marginDelta = request.marginDelta
@@ -904,20 +932,6 @@ export function usePerpsTrading() {
           'The trade changed after final review. Review fresh execution protections before signing.'
         )
       }
-      const args = [request] as const
-      diagnosticArgs = args
-      diagnosticSide = side
-      diagnosticSizeDelta = sizeDelta
-      diagnosticMarginDelta = marginDelta
-      debugPerpsCommit('args-ready', {
-        side,
-        sizeDelta,
-        marginDelta,
-        targetPrice: request.targetPrice,
-        clientOrderId: request.clientOrderId,
-        validUntil: request.bounds.validUntil,
-        isClose,
-      })
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
@@ -972,6 +986,29 @@ export function usePerpsTrading() {
       if (resolution !== PERPS_CLIENT_INTENT_RESOLUTION.UNUSED) {
         throw new Error('Order integrity error: unknown client-intent resolution')
       }
+
+      // Consult durable activity before assigning a new deadline. Recorded
+      // attempts go through recovery; this path never rewrites a signed request.
+      restoreSponsoredOperationLane({ chainId: sponsored.manifest.chainId, accountAddress: address, lane: DEFAULT_SPONSORED_OPERATION_LANE })
+      const recorded = useSponsoredOperationStore.getState().operations.some(operation =>
+        operation.chainId === sponsored.manifest.chainId && isAddressEqual(operation.accountAddress, address) &&
+        operation.orderRequestV2?.clientOrderId === request.clientOrderId)
+      if (recorded) throw new Error('This order already has a recorded attempt. Check its activity before reviewing a new order.')
+      request = await finalizeOrderDeadline(client, preparedOrder)
+      const args = [request] as const
+      diagnosticArgs = args
+      diagnosticSide = side
+      diagnosticSizeDelta = sizeDelta
+      diagnosticMarginDelta = marginDelta
+      debugPerpsCommit('args-ready', {
+        side,
+        sizeDelta,
+        marginDelta,
+        targetPrice: request.targetPrice,
+        clientOrderId: request.clientOrderId,
+        validUntil: request.bounds.validUntil,
+        isClose,
+      })
 
       const assisted = preparedOrder.sponsoredClose
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)

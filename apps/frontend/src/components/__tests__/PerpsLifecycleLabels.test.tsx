@@ -342,7 +342,7 @@ describe('perps lifecycle labels', () => {
     }
   )
 
-  it('blocks an expired review without a review summary and refreshes its deadline', async () => {
+  it('allows confirmation after the provisional review deadline passes', async () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
@@ -352,18 +352,19 @@ describe('perps lifecycle labels', () => {
       request: { ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n } },
       protection: { ...fresh.protection, validUntil: 1n },
     }
-    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValueOnce(expired).mockResolvedValue(fresh)
+    perpsTradingMocks.prepareOrder.mockReset().mockResolvedValue(expired)
+    perpsTradingMocks.commitOrder.mockImplementation(() => new Promise(() => {}))
     render(
       <PerpsTradeTicket enableLiveTrading initialReviewOpen initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n} />
     )
-    expect(await within(screen.getByRole('dialog')).findByText('This quote is no longer valid for confirmation. Refresh review to get updated order terms.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
-    fireEvent.click(screen.getAllByRole('button', { name: 'Refresh review' })[0])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
-    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(2)
-    expect(perpsTradingMocks.commitOrder).not.toHaveBeenCalled()
+    expect(screen.queryByText(/This quote is no longer valid/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh review' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    await waitFor(() => expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: expired })))
+    expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(1)
   })
 
   async function startDelayedSponsoredCommit() {
