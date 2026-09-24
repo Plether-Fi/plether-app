@@ -56,3 +56,67 @@ coverage. Preserve those pending gates explicitly until the market permits them.
 
 Rollback restores the previous backend image. All existing preparation records,
 authorizations, exact-payload submission and recovery remain compatible.
+
+## Deployment and measured result
+
+PR #268 merged as `9bf56aa0db9e5d9004dfe1295daee2b72e18a563` after all eight
+checks passed. Local verification also passed 14 PostgreSQL native-AA integration
+examples and 17 execution/benchmark tests (including 14 real-contract cases).
+Backend workflow [34748540910](https://github.com/Plether-Fi/plether-app/actions/runs/34748540910)
+succeeded at that exact commit. API task revision 61 and reconciler revision 10
+reached steady state; API image readback matched the commit and public health
+returned HTTP 200. No additional frontend or Terraform deployment was needed.
+
+Three fresh unsigned deposit preparations through the same frontend runtime
+measured 3,244 ms cold-client, 2,130 ms warm and 2,122 ms warm. Each warm sample
+made one browser preparation request. Warm backend totals were 1,924 and 1,887 ms:
+security 658–663 ms, fees/nonce/estimation 502–546 ms, and four mandatory
+canonical boundaries approximately 160–170 ms each. KMS took 7 ms. Exact-block
+account/runtime evidence hit the cache. The two warm observations improved by
+approximately 35–39% against the earlier two, but this small preflight is not a
+statistical qualification run and still fails the latency target.
+
+The three operations were not signed or submitted. Their private journals remain
+intact and their reservations must expire through normal safe reconciliation.
+Do not clear or replace these records to accelerate qualification.
+
+## Close qualification findings
+
+A 100-token close was rejected by Alto with verified Core
+`OrderRouter__CommitValidation(11)`, before reservation, signing or submission.
+The harness had checked token quantization but omitted the frontend's separate
+minimum-notional check. A read-only 200-token commit preflight also rejected it.
+Core's current minimum notional is 1,000 USDC; at the observed reference price,
+the smallest valid quantized partial close is 1,100 tokens. The harness now uses
+the existing frontend commit preflight, without changing production RPC behavior.
+
+A freshly reviewed 1,100-token close passed that preflight and Alto simulation.
+Alto estimated 1,349,330 call gas; the approved 50% headroom requires 2,023,995.
+The existing 2,000,000 cap correctly rejected the operation before reservation
+or owner signing. No close transaction was broadcast and the test position was
+not changed. This is not an out-of-gas transaction or a successful close test.
+The gateway's generic error obscures this distinction; the cause above was
+verified from the exact bounded Alto log and checked-in Core error definition.
+
+Increasing the execution-gas cap, reducing headroom or clipping the result has
+not been performed. A separate explicit decision is required for a cap change;
+ETH spending caps and other authorization checks remain unchanged.
+
+At the latest readiness check, deposit/close service components and all six
+funding roles were ready. Opens remained blocked by current execution mode and
+protection triggers were unavailable. Readiness does not guarantee that a
+particular operation fits the gas cap. Positive close execution, market-dependent
+open/protection execution, the three mixed-action 100-preparation runs and the
+two-minute RPC-reduction gate remain unqualified. This deployment is not a claim
+that all release acceptance criteria passed.
+
+Post-deployment read-only database inspection confirmed issuance unpaused,
+reconciler heartbeat age 1–4 seconds, 54 settled authorizations, 23 expired,
+three signed benchmark authorizations and one separate submitted operation.
+Outstanding ledger liability was 0.0009876573741 ETH. The submitted operation
+was created at 09:09:34 UTC, not by the close harness. Its canonical EntryPoint
+event reports success at block 308407366 (199,392 actual gas used), in transaction
+`0x25a452861bc3b40e63053029f80f4657cb5f76204ade71464e8019db6d2b0add`.
+At inspection the safe head was 308406308, so settlement was correctly pending.
+Do not manually release this unrelated submitted liability or count its unknown
+action as the planned close smoke test. Both read-only audit tasks exited zero.
