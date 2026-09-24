@@ -4,6 +4,8 @@ Plether does not match traders in an order book, and it does not let an AMM[^amm
 
 Orders use delayed, oracle-settled[^oracle] execution.
 
+For a focused explanation of stale data, confidence-based price adjustments and the frozen-market exception, see [Oracle & execution model](oracle-and-execution-model.md).
+
 **Commit first. Price second.**
 
 A trader commits the direction, size, margin and acceptable-price boundary before the final execution price is known.

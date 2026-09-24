@@ -12,6 +12,8 @@ There are three important conditions:
 
 These conditions are related, but they are not interchangeable.
 
+See [Oracle & execution model](oracle-and-execution-model.md) for how data validation affects pending orders and how confidence changes execution prices.
+
 > **Oracle frozen is a calendar state, not an outage detector.** It does not automatically activate whenever Pyth stops publishing.
 
 ### The weekly schedule

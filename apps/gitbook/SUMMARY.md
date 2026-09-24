@@ -41,6 +41,7 @@
 ## How Plether Works
 
 * [The Plether Perps market model](how-plether-works/the-plether-perps-market-model.md)
+* [Oracle & execution model](how-plether-works/oracle-and-execution-model.md)
 * [How orders execute](how-plether-works/how-orders-execute.md)
 * [Keepers and permissionless execution](how-plether-works/keepers-and-permissionless-execution.md)
 * [How PnL is calculated](how-plether-works/how-pnl-is-calculated.md)

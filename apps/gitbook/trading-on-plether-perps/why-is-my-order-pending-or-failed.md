@@ -1,5 +1,7 @@
 # Why is my order pending or failed?
 
+For the pricing rules behind oracle-related delays, see [Oracle & execution model](../how-plether-works/oracle-and-execution-model.md).
+
 An action can fail before an order exists or after a confirmed order commitment. These are separate lifecycles and require different responses.
 
 ![Sponsored transaction success and order execution are different lifecycles. V2 transient oracle, gas, engine or receipt failures can remain pending; only terminal reasons fail the order.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
