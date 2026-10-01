@@ -23,6 +23,7 @@ module Plether.Database.Candles
   , lockMarketVolumeDataset
   , advanceBasketPriceCoverage
   , recoverBasketPriceCoverageGap
+  , recoverLiveBasketPriceCoverageGap
   , advanceMarketVolumeCoverage
   , invalidateMarketVolumeFromBlock
   , getActiveBasketSeriesId
@@ -60,6 +61,7 @@ import Database.PostgreSQL.Simple
   , Query
   , execute
   , execute_
+  , executeMany
   , query
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
@@ -1243,6 +1245,77 @@ recoverBasketPriceCoverageGap
         , pgrRecoveredThrough = checkedThrough
         , pgrGeneration = generation
         }
+
+-- Only the protected live-gap command may add inputs to an already-published
+-- price domain. Caller must supply independently validated six-feed history
+-- and wrap this entire operation in a transaction. All source inserts,
+-- derived rows and the new coverage generation commit together or not at all.
+recoverLiveBasketPriceCoverageGap
+  :: Connection -> Text -> Integer -> Integer -> Integer
+  -> [(Integer, Integer, Value)] -> Integer -> IO PriceGapRecoveryResult
+recoverLiveBasketPriceCoverageGap conn seriesId expectedEnd historyEnd recoverBefore samples lateness = do
+  _ <- execute_ conn "SET LOCAL lock_timeout = '1000ms'"
+  _ <- execute_ conn "SET LOCAL statement_timeout = '30000ms'"
+  ensureCurrentBasketDefinition conn seriesId
+  lockBasketPriceDataset conn seriesId
+  unless (expectedEnd >= 0 && expectedEnd `mod` 60 == 0 && historyEnd `mod` 60 == 0
+          && historyEnd > expectedEnd && historyEnd - expectedEnd <= 86_400) $
+    fail "Live price recovery requires a minute-aligned range of at most 24 hours"
+  unless (map (\(t, _, _) -> t) samples == [expectedEnd, expectedEnd + 60 .. historyEnd - 60]) $
+    fail "Live price recovery requires one validated sample for every minute"
+  let checkDeadline = do
+        clocks <- query conn "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT" () :: IO [Only Integer]
+        case clocks of
+          [Only now] | now < recoverBefore && historyEnd <= now && now - historyEnd <= 240 -> pure ()
+          _ -> fail "Live price recovery evidence expired before publication"
+  checkDeadline
+  rows <- forM canonicalCandleIntervals $ \interval -> do
+    found <- getRollupCoverage conn PriceRollup (Just seriesId) Nothing Nothing interval
+    case found of
+      Just row
+        | not (rcComplete row)
+        , rcCoverageEnd row == Just (alignDown expectedEnd interval)
+        , rcLastError row == Just "price_watermark_gap"
+        , rcDerivationVersion row == currentDerivationVersion
+        , rcMaintenanceFrom row == Nothing
+        , rcMaintenanceTo row == Nothing -> pure row
+      _ -> fail "Live price recovery coverage identity changed or is not a watermark gap"
+  let generations = Set.fromList $ map rcGeneration rows
+  generation <- case Set.toList generations of
+    [old] -> do
+      assertGenerationCapacity conn PriceRollup (Just seriesId) Nothing Nothing
+      pure $ old + 1
+    _ -> fail "Live price recovery requires one shared generation"
+  -- Never overwrite a recorded price, including a lower-priority historical
+  -- sample. Canonical backfill prefers observed minute OHLC over snapshots.
+  _ <- executeMany conn
+    "INSERT INTO perps_basket_snapshots (timestamp, interval_seconds, basket_price, component_prices, source) \
+    \VALUES (?, ?, ?, ?, ?) \
+    \ON CONFLICT (timestamp, interval_seconds) DO NOTHING"
+    [(t, 60 :: Integer, price, components, "pyth_tradingview_history_v1" :: Text) | (t, price, components) <- samples]
+  _ <- backfillLegacyBasketSnapshots conn seriesId expectedEnd historyEnd
+  count <- countBasketCandles conn seriesId 60 expectedEnd historyEnd
+  unless (count == (historyEnd - expectedEnd) `div` 60) $
+    fail "Live price recovery failed to rebuild every verified minute"
+  checkDeadline
+  restored <- execute conn
+    "UPDATE perps_rollup_coverage SET generation = ?, complete = TRUE, last_error = NULL, \
+    \updated_at = NOW() WHERE kind = 'price' AND series_id = ? AND chain_id = 0 \
+    \AND release_router = '' AND complete = FALSE AND last_error = 'price_watermark_gap'"
+    (generation, seriesId)
+  unless (restored == fromIntegral (length canonicalCandleIntervals)) $
+    fail "Live price recovery did not restore every interval atomically"
+  forM_ canonicalCandleIntervals $ \interval ->
+    advanceExistingCoverage conn PriceRollup (Just seriesId) Nothing Nothing interval
+      historyEnd (alignDown historyEnd interval) lateness
+  forM_ canonicalCandleIntervals $ \interval -> do
+    published <- getRollupCoverage conn PriceRollup (Just seriesId) Nothing Nothing interval
+    unless (maybe False (\row -> rcComplete row && rcGeneration row == generation
+                   && rcLastError row == Nothing
+                   && rcCoverageEnd row == Just (alignDown historyEnd interval)) published) $
+      fail "Live price recovery did not publish complete advanced coverage"
+  checkDeadline
+  pure $ PriceGapRecoveryResult expectedEnd historyEnd generation
 
 recomputeMarketVolumeHierarchy :: Connection -> Integer -> Text -> Integer -> Integer -> IO ()
 recomputeMarketVolumeHierarchy conn chainId releaseRouter timestamp latenessSeconds =

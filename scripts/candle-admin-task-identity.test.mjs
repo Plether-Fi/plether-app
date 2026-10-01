@@ -5,6 +5,29 @@ import { spawnSync } from 'node:child_process'
 
 const workflow = readFileSync(new URL('../.github/workflows/candle-admin.yml', import.meta.url), 'utf8')
 const apiStep = workflow.split('- name: Resolve deployed task and network')[1]
+const workerSource = readFileSync(new URL('../apps/backend/app/BasketWorker.hs', import.meta.url), 'utf8')
+
+test('live recovery checks the deployed worker supports the command before resolving its image', () => {
+  const guard = apiStep.match(/if \[ "\$ACTION" = "recover-live-price-gap" \]; then[\s\S]*?\n          fi/)?.[0]
+  assert.ok(guard)
+  assert.match(guard, /\^\[0-9a-f\]\{40\}\$/)
+  assert.match(guard, /BasketWorker\.hs\?ref=\$deployed_commit/)
+  const marker = guard.match(/grep -Fxq '([^']+)'/)?.[1]
+  assert.ok(marker)
+  assert.ok(workerSource.split('\n').includes(marker), 'capability marker matches the compiled worker source')
+  assert.match(guard, /exit 1/)
+  assert.match(apiStep, /GH_TOKEN: \$\{\{ github.token \}\}/)
+})
+
+test('live recovery uses the bounded worker command and protected audit identity', () => {
+  assert.match(workflow, /\$action == "recover-closed-price-gap" or \$action == "recover-live-price-gap"/)
+  assert.match(workflow, /\("--" \+ \$action\)/)
+  assert.match(workflow, /--expected-coverage-end/)
+  assert.match(workflow, /--recover-before/)
+  assert.match(workflow, /--requested-by/)
+  assert.match(workflow, /--request-reference/)
+  assert.match(workflow, /\[ "\$TARGET_ENV" != "sepolia" \]/)
+})
 const filter = apiStep?.match(/'\(\[\.containerDefinitions\[\][\s\S]*?' \\\n\s+"\$task_definition_file"/)?.[0].split("' \\\n")[0].slice(1)
 assert.ok(filter, 'extract the actual API task identity check from the workflow')
 
