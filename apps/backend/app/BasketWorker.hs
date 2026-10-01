@@ -29,6 +29,7 @@ import Plether.Database.Candles
   , getRollupCoverage
   , recomputeBasketCandleHierarchy
   , recoverBasketPriceCoverageGap
+  , recoverLiveBasketPriceCoverageGap
   , upsertBasketObservation
   )
 import Plether.Database.Schema
@@ -72,6 +73,7 @@ import Plether.Pyth.History
   , BasketIngestorConfig (..)
   , basketObservationId
   , fetchBasketHistoryActivity
+  , fetchContinuousBasketHistory
   , runBasketBackfill
   , startBasketHistoryIngestor
   )
@@ -87,6 +89,7 @@ import Plether.Perps.ClosedPriceGap (validateClosedPriceGapEvidence)
 import Plether.Utils.Hex (hexToByteStringEither)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
 data WorkerMode
@@ -94,6 +97,7 @@ data WorkerMode
   | LatestLoop
   | BackfillOnce
   | RecoverClosedPriceGap
+  | RecoverLivePriceGap
   deriving (Eq, Show)
 
 data WorkerArgs = WorkerArgs
@@ -211,6 +215,29 @@ runWorker args = do
                   , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
                   , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
+              RecoverLivePriceGap -> do
+                -- One absolute bound covers network work, pool acquisition,
+                -- and the transaction; cancellation rolls back all DB writes.
+                outcome <- try @SomeException $ timeout 90_000_000 $
+                  runLivePriceGapRecovery manager ethClient pool cfg args
+                case outcome of
+                  Right (Just (Right recovery)) ->
+                    logInfo "basket_live_price_gap_recovered" "Verified live-market price history was recovered"
+                      [ field "previous_coverage_end" $ pgrPreviousCoverageEnd recovery
+                      , field "recovered_through" $ pgrRecoveredThrough recovery
+                      , field "generation" $ pgrGeneration recovery
+                      , field "requested_by" $ waRequestedBy args
+                      , field "request_reference" $ waRequestReference args
+                      ]
+                  _ -> do
+                    -- Network exceptions can contain credential-bearing URLs.
+                    logError "basket_live_price_gap_failed" "Live price recovery aborted; no partial coverage was published"
+                      [ field "reason" $ case outcome of
+                          Right (Just (Left reason)) -> reason
+                          Right Nothing -> "absolute recovery deadline exceeded"
+                          _ -> "recovery exception (details withheld)"
+                      ]
+                    exitFailure
               RecoverClosedPriceGap ->
                 case
                     ( waExpectedCoverageEnd args
@@ -380,6 +407,59 @@ runClosedPriceGapRecovery manager ethClient pool cfg expectedCoverageEnd recover
                               , field "request_reference" requestReference
                               ]
                             pure $ Right recovery
+
+runLivePriceGapRecovery
+  :: Manager -> EthClient -> DbPool -> Config -> WorkerArgs
+  -> IO (Either T.Text PriceGapRecoveryResult)
+runLivePriceGapRecovery manager client pool cfg args =
+  case (waExpectedCoverageEnd args, waRecoverBefore args) of
+    (Just start, Just deadline)
+      | cfgPerpsChainId cfg == 421_614
+      , candleWritesEnabled cfg
+      , Just key <- cfgPythApiKey cfg
+      , not (T.null $ T.strip key) -> do
+          now <- floor <$> getPOSIXTime
+          let end = ((now - max 120 (cfgPerpsCandleLatenessSeconds cfg)) `div` 60) * 60
+              historyCfg = BasketIngestorConfig
+                { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                , bicHistoryUrl = cfgPythHistoryUrl cfg
+                , bicApiKey = cfgPythApiKey cfg
+                , bicChainId = cfgPerpsChainId cfg
+                , bicBackfillDays = 1
+                , bicOwnHistoryTargets = False
+                , bicSampleIntervalSeconds = 60
+                , bicPollSeconds = 0
+                , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+                }
+          if now >= deadline || start `mod` 60 /= 0 || start >= end || end - start > 86_400
+            then pure $ Left "Invalid, expired, or greater-than-24-hour live recovery range"
+            else do
+              history <- fetchContinuousBasketHistory manager historyCfg start end
+              case history of
+                Left reason -> pure $ Left reason
+                Right samples -> do
+                  latest <- fetchLatestBasketUpdate manager cfg
+                  case latest of
+                    Left _ -> pure $ Left "Latest signed Pyth request failed"
+                    Right update -> do
+                      signed <- verifyLatestRecoveryPayload client cfg update
+                      case signed of
+                        Right (firstTime, lastTime, _, _)
+                          | firstTime >= end
+                          , lastTime <= hbuFetchedAt update
+                          , hbuFetchedAt update - firstTime <= 10 -> do
+                              logInfo "basket_live_price_gap_evidence_verified" "Verified continuous six-feed minute history and fresh onchain Pyth evidence"
+                                [ field "from_timestamp" start, field "to_timestamp" end
+                                , field "sample_count" $ length samples
+                                , field "requested_by" $ waRequestedBy args
+                                , field "request_reference" $ waRequestReference args
+                                ]
+                              Right <$> withDb pool (\conn -> withTransaction conn $
+                                recoverLiveBasketPriceCoverageGap conn defaultBasketSeriesId start end deadline samples
+                                  (cfgPerpsCandleLatenessSeconds cfg))
+                        _ -> pure $ Left "Fresh signed Pyth/RPC validation failed"
+    _ -> pure $ Left "Live price recovery requires Sepolia, dual writes, authenticated Pyth, and bounded arguments"
 
 verifyLatestRecoveryPayload
   :: EthClient
@@ -821,6 +901,9 @@ mapLeft f result =
 
 parseWorkerArgs :: [String] -> Either T.Text WorkerArgs
 parseWorkerArgs args
+  | "--recover-live-price-gap" `elem` args = do
+      parsed <- parseRecoveryArgs $ map (\arg -> if arg == "--recover-live-price-gap" then "--recover-closed-price-gap" else arg) args
+      pure parsed {waMode = RecoverLivePriceGap}
   | "--recover-closed-price-gap" `elem` args = parseRecoveryArgs args
   | otherwise =
       Right

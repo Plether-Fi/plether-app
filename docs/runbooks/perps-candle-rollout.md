@@ -526,6 +526,48 @@ The legacy Benchmarks `/v1/shims/tradingview/*` endpoints were retired during
 the August 2026 Pyth Core upgrade and a 404 from that host is not evidence of
 an empty market interval.
 
+### Recover a live-market price watermark gap (Sepolia only)
+
+Deploy the backend containing `--recover-live-price-gap` before using this
+action. Read `status` to obtain the exact minute **coverage_end**, not
+`finalized_through`. Confirm the underlying RPC incident has ended first.
+
+```bash
+run_candle_admin sepolia recover-live-price-gap none \
+  -f from_timestamp=EXACT_MINUTE_COVERAGE_END \
+  -f to_timestamp=APPROVED_DEADLINE_EXCLUSIVE
+```
+
+The protected confirmation is `RUN RECOVER-LIVE-PRICE-GAP ON SEPOLIA`.
+The deadline is an authorization expiry, not a promised future coverage end.
+The task derives a recent minute-aligned end at least 120 seconds behind the
+clock and fetches authenticated Pyth Pro history from the expected anchor
+through that end. The entire range must be at most 24 hours and contain one
+actual close per minute for each of all six configured feeds. Missing minutes,
+closed-market intervals, endpoint failures, duplicate timestamps and invalid
+prices abort; there is no carry-forward fallback. A fresh signed latest payload
+must also pass the deployed onchain Pyth parser before database work begins.
+
+The one transaction locks the price dataset, checks all seven coverage rows
+still describe the same `price_watermark_gap`, inserts only missing historical
+snapshots, rebuilds the affected candles and overlapping parents, and advances
+one shared generation. Existing snapshots and signed observations are never
+overwritten. Observed minute OHLC takes priority over historical samples; missing
+minutes retain the existing `legacy_sampled` quality label. Minute closes are
+not a reconstruction of unavailable intraminute ticks or highs/lows.
+
+An expired approval, a history end over 240 seconds old, changed coverage,
+lock timeout or reconstruction failure aborts and rolls back the transaction.
+Limits are a 1-second lock wait, 30-second statement timeout and 90-second
+whole-operation deadline. No network requests occur under the dataset lock.
+No signer, sponsorship, volume, history-target or oracle state is changed.
+
+Require the `basket_live_price_gap_recovered` log (not merely an exit code),
+then a regular complete/zero-lag writer heartbeat and successful current and
+history responses across all seven intervals. Reload the public chart and
+verify rendering. An already-complete dataset rejects a repeated run without
+changing any data. If any check fails, do not bypass coverage validation.
+
 ### Operator-selected price-history target
 
 After the target/progress migration and target-capable basket worker are

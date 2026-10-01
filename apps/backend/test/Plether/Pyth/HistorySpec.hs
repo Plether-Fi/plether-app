@@ -11,6 +11,7 @@ import Plether.Pyth.History
   , deriveEarliestBasketGridTimestamp
   , deriveBasketHistoryObservation
   , deriveTradingViewBasketHistory
+  , deriveContinuousBasketHistory
   , filterTradingViewHistorySamplesForPersistence
   , legacyObservationId
   , minimumBasketHistoryPublicationEnd
@@ -74,6 +75,26 @@ spec = do
           , "fixed_rate@200ms"
           , "fixed_rate@200ms"
           ]
+
+    describe "strict live-gap evidence" $ do
+      let histories = [ [(t, componentClose component) | t <- [120,180,240]] | component <- basketComponents ]
+          isFailure (Left _) = True
+          isFailure _ = False
+      it "derives exactly one sample per minute from all six complete feeds" $
+        fmap (map (\(t, _, _) -> t)) (deriveContinuousBasketHistory 120 300 histories)
+          `shouldBe` Right [120,180,240]
+      it "rejects a missing minute rather than carrying a price forward" $
+        deriveContinuousBasketHistory 120 300 (map (filter ((/= 180) . fst)) histories)
+          `shouldSatisfy` isFailure
+      it "rejects no-data, missing feeds, duplicates, and reversed timestamps" $ do
+        deriveContinuousBasketHistory 120 300 ([] : tail histories) `shouldSatisfy` isFailure
+        deriveContinuousBasketHistory 120 300 (tail histories) `shouldSatisfy` isFailure
+        deriveContinuousBasketHistory 120 300 (map (\xs -> head xs : xs) histories) `shouldSatisfy` isFailure
+        deriveContinuousBasketHistory 120 300 (map reverse histories) `shouldSatisfy` isFailure
+      it "rejects unaligned, empty, negative, or unbounded ranges" $
+        mapM_ (\(start,end) -> deriveContinuousBasketHistory start end histories `shouldSatisfy` isFailure)
+          [(121,300),(120,301),(120,120),(-60,300),(120,86580)]
+    it "uses the configured channel in each history URL" $
       map (pythHistoryRequestUrl "https://pyth.dourolabs.app/v1/") basketComponents
         `shouldBe`
           [ "https://pyth.dourolabs.app/v1/real_time/history"

@@ -106,6 +106,7 @@ import Plether.Database.Candles
   , markRollupCoverageIncomplete
   , recomputeBasketCandleHierarchy
   , recoverBasketPriceCoverageGap
+  , recoverLiveBasketPriceCoverageGap
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
   , beginRollupMaintenance
@@ -1769,6 +1770,92 @@ candleRollupSpec databaseUrl =
             componentPayload
             120
             `shouldThrow` anyException
+
+    it "atomically recovers a live-gap, preserving observed prices and rejecting replays" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+          let end = (now `div` 60) * 60 - 120
+              start = end - 600
+              samples = [(t, 100, componentPayload) | t <- [start,start + 60 .. end - 60]]
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+              (alignDownForTest start interval) 17 True
+          advanceBasketPriceCoverage connection testSeries (start + 301) 120
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "live-gap-existing" (start + 1) 150 componentPayload "backend_hermes_latest" 100
+          insertBasketSnapshotWithSource connection (start + 60) 60 175 componentPayload latestSnapshotSource
+          result <- withTransaction connection $
+            recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) samples 120
+          pgrGeneration result `shouldBe` 19
+          pgrRecoveredThrough result `shouldBe` end
+          forM_ canonicalCandleIntervals $ \interval -> do
+            row <- requirePriceCoverage connection interval
+            rcComplete row `shouldBe` True
+            rcGeneration row `shouldBe` 19
+            rcCoverageEnd row `shouldBe` Just (alignDownForTest end interval)
+          prices <- query connection
+            "SELECT raw_close_price FROM perps_basket_candles WHERE series_id = ? AND interval_seconds = 60 AND bucket_start = ?"
+            (testSeries, start) :: IO [Only Integer]
+          prices `shouldBe` [Only 150]
+          preserved <- query connection
+            "SELECT basket_price, source FROM perps_basket_snapshots WHERE timestamp = ? AND interval_seconds = 60"
+            (Only $ start + 60) :: IO [(Integer, Text)]
+          preserved `shouldBe` [(175, latestSnapshotSource)]
+          sampled <- query connection
+            "SELECT raw_close_price, quality FROM perps_basket_candles WHERE series_id = ? AND interval_seconds = 60 AND bucket_start = ?"
+            (testSeries, start + 120) :: IO [(Integer, Text)]
+          sampled `shouldBe` [(100, "legacy_sampled")]
+          withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) samples 120)
+            `shouldThrow` anyException
+
+    forM_ ["missing-minute", "wrong-anchor", "expired", "stale", "mixed-generation", "maintenance"] $ \scenario ->
+      it ("rejects live-gap " <> scenario <> " without source writes") $
+        withCandleDatabase databaseUrl $ \pool ->
+          withDb pool $ \connection -> do
+            ensureCurrentBasketDefinition connection testSeries
+            [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+            let end = (now `div` 60) * 60 - if scenario == "stale" then 600 else 120
+                start = end - 600
+                inputStart = start + if scenario == "wrong-anchor" then 60 else 0
+                samples = [(t, 100, componentPayload) | t <- [inputStart,inputStart + 60 .. end - 60]]
+                input = if scenario == "missing-minute" then drop 1 samples else samples
+                deadline = now + if scenario == "expired" then -1 else 300
+            forM_ canonicalCandleIntervals $ \interval ->
+              putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+                (alignDownForTest start interval) 17 True
+            advanceBasketPriceCoverage connection testSeries (start + 301) 120
+            when (scenario == "mixed-generation") $ void $ execute connection
+              "UPDATE perps_rollup_coverage SET generation = 19 WHERE series_id = ? AND kind = 'price' AND interval_seconds = 60" (Only testSeries)
+            when (scenario == "maintenance") $ void $ execute connection
+              "UPDATE perps_rollup_coverage SET last_error = 'bounded_admin_repair', maintenance_from = ?, maintenance_to = ? WHERE series_id = ? AND kind = 'price'" (start, end, testSeries)
+            withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries inputStart end deadline input 120)
+              `shouldThrow` anyException
+            rows <- query connection "SELECT COUNT(*)::BIGINT FROM perps_basket_snapshots WHERE timestamp >= ? AND timestamp < ?"
+              (start,end) :: IO [Only Integer]
+            rows `shouldBe` [Only 0]
+
+    it "rolls live-gap source inserts back if canonical validation fails" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          [Only now] <- query_ connection "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+          let end = (now `div` 60) * 60 - 120
+              start = end - 600
+              invalid = [(t, -1, componentPayload) | t <- [start,start + 60 .. end - 60]]
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage connection interval baseTime (alignDownForTest start interval)
+              (alignDownForTest start interval) 17 True
+          advanceBasketPriceCoverage connection testSeries (start + 301) 120
+          withTransaction connection (recoverLiveBasketPriceCoverageGap connection testSeries start end (now + 300) invalid 120)
+            `shouldThrow` anyException
+          rows <- query connection "SELECT COUNT(*)::BIGINT FROM perps_basket_snapshots WHERE timestamp >= ? AND timestamp < ?"
+            (start,end) :: IO [Only Integer]
+          rows `shouldBe` [Only 0]
+          coverage <- requirePriceCoverage connection 60
+          rcComplete coverage `shouldBe` False
+          rcGeneration coverage `shouldBe` 18
 
     it "invalidates complete coarser coverage despite a minute repair marker" $
       withCandleDatabase databaseUrl $ \pool ->
