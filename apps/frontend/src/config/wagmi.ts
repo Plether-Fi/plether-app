@@ -184,6 +184,9 @@ export function ensureAppKit(): Promise<AppKitInstance> {
       projectId: WALLETCONNECT_PROJECT_ID,
       networks,
       metadata,
+      // Plether's SimpleAccount requires an EOA owner, not a second smart wallet.
+      // Existing users' saved account selections remain theirs to change.
+      defaultAccountTypes: { eip155: 'eoa' },
       themeMode: 'dark',
       themeVariables: {
         '--w3m-font-family': "'Uncut Sans', ui-sans-serif, system-ui, sans-serif",

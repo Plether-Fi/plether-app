@@ -11,7 +11,9 @@ import {
   type ReactNode,
 } from 'react'
 import { isAddressEqual } from 'viem'
-import { usePublicClient, useWalletClient } from 'wagmi'
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
+import { ensureAppKit } from '../config/wagmi'
+import { assertEmbeddedPerpsOwner } from './embeddedOwner'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -52,6 +54,8 @@ export function PerpsAaProvider({
   runtime?: PerpsAaSmartAccountRuntime
 }) {
   const publicClient = usePublicClient()
+  const { connector } = useAccount()
+  const isEmbeddedWallet = connector?.type === 'AUTH'
   const { data: walletClient } = useWalletClient()
   const [resolvedRuntime, setResolvedRuntime] = useState<{
     connectionKey: string
@@ -81,6 +85,10 @@ export function PerpsAaProvider({
       if (runtime) return runtime
       if (!walletClient) {
         throw new Error('The connected wallet client is unavailable')
+      }
+      if (isEmbeddedWallet) {
+        const appKit = await ensureAppKit()
+        assertEmbeddedPerpsOwner(appKit.getAccount('eip155'), ownerAddress)
       }
 
       const key = [
@@ -133,7 +141,7 @@ export function PerpsAaProvider({
       setResolvedRuntime({ connectionKey, runtime: nextRuntime })
       return nextRuntime
     },
-    [connectionKey, publicClient, runtime, walletClient]
+    [connectionKey, isEmbeddedWallet, publicClient, runtime, walletClient]
   )
 
   const effectiveRuntime = runtime ??

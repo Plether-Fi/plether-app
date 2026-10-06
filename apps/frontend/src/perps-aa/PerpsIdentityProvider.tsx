@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
 import { useAccount, usePublicClient } from 'wagmi'
+import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
 import { verifyPerpsV2DeploymentBindings } from '../contracts/verifyPerpsV2Bindings'
 import {
   comparePerpsIdentities,
@@ -173,7 +174,10 @@ async function resolveConfiguredIdentity(input: {
       manifest,
       signal: input.signal,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof UnsupportedEmbeddedOwnerError) {
+      return blockedResolution('UNSUPPORTED_OWNER_WALLET', error.message, manifest)
+    }
     return blockedResolution(
       'ACCOUNT_RESOLUTION_FAILED',
       'The reviewed trading account address could not be resolved.',
