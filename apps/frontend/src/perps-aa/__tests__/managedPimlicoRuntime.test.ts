@@ -161,6 +161,47 @@ describe('createManagedPimlicoRuntime', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([manifest, v2Manifest])('resolves and signs with an embedded wallet without rediscovering accounts ($version)', async (deployment) => {
+    const actual = await vi.importActual<typeof import('permissionless/accounts/simple')>('permissionless/accounts/simple')
+    mocks.toSimpleSmartAccount.mockImplementation(actual.SimpleSmartAccount.toSimpleSmartAccount)
+    const request = vi.fn().mockRejectedValue(new Error('Requested RPC call is not allowed'))
+    const signature = `0x${'ab'.repeat(65)}` as Hex
+    const walletClient = {
+      chain: { id: 421614 },
+      account: { address: OWNER, type: 'json-rpc' },
+      request,
+      signMessage: vi.fn().mockResolvedValue(signature),
+      signTypedData: vi.fn().mockResolvedValue(signature),
+    }
+    const publicClient = {
+      chain: { id: 421614 },
+      call: vi.fn().mockResolvedValue({ data: encodeAbiParameters([{ type: 'address' }], [ACCOUNT]) }),
+    }
+
+    const runtime = await createManagedPimlicoRuntime({
+      manifest: deployment,
+      ownerAddress: OWNER,
+      walletClient: walletClient as never,
+      publicClient: publicClient as never,
+    })
+
+    expect(runtime.smartAccount.accountAddress).toBe(ACCOUNT)
+    expect(publicClient.call).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+    expect(walletClient.signTypedData).not.toHaveBeenCalled()
+    const signed = await runtime.smartAccount.signUserOperation(operation)
+    expect(signed.signature).toBe(signature)
+    expect(walletClient.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      account: walletClient.account,
+      domain: expect.objectContaining({ chainId: 421614, verifyingContract: ENTRY_POINT }),
+    }))
+    expect(request).not.toHaveBeenCalled()
+
+    const rejection = new Error('User declined signing')
+    walletClient.signTypedData.mockRejectedValueOnce(rejection)
+    await expect(runtime.smartAccount.signUserOperation(operation)).rejects.toBe(rejection)
+  })
+
   it('blocks native re-preparation until a throttled safe-code check passes, never signing or submitting', async () => {
     let now = 0
     vi.spyOn(performance, 'now').mockImplementation(() => now)
@@ -209,7 +250,7 @@ describe('createManagedPimlicoRuntime', () => {
     expect(mocks.toSimpleSmartAccount).toHaveBeenCalledWith(
       expect.objectContaining({
         client: publicClient,
-        owner: walletClient,
+        owner: expect.objectContaining({ address: OWNER, type: 'local' }),
         entryPoint: {
           address: ENTRY_POINT,
           version: '0.8',

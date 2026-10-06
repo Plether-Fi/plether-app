@@ -8,6 +8,7 @@ import { recoveryHttp } from './recoveryTransport'
 import { submissionHttp } from './submissionTransport'
 import { SimpleSmartAccount } from 'permissionless/accounts/simple'
 import { createPimlicoClient } from 'permissionless/clients/pimlico'
+import { toAccount } from 'viem/accounts'
 import {
   getAddress,
   hexToBigInt,
@@ -343,9 +344,23 @@ export async function createManagedAaRuntime({
     Account
   >
   const accountIndex = BigInt(manifest.smartAccountIndex)
+  // permissionless 0.3.7 treats WalletClient.request as an EIP-1193 provider
+  // and rediscovers accounts. Reown email/social wallets reject that login RPC.
+  // Bind the already-validated owner explicitly; signing stays in their wallet.
+  const ownerSigner = toAccount({
+    address: owner.account.address,
+    signMessage: ({ message }) => owner.signMessage({ account: owner.account, message }),
+    signTypedData: (typedData) => owner.signTypedData({
+      ...typedData,
+      account: owner.account,
+    } as Parameters<typeof owner.signTypedData>[0]),
+    signTransaction: async () => {
+      throw new Error('The Trading Account owner signer cannot sign raw transactions')
+    },
+  })
   const smartAccount = await SimpleSmartAccount.toSimpleSmartAccount({
     client: publicClient,
-    owner,
+    owner: ownerSigner,
     entryPoint: {
       address: manifest.entryPoint,
       version: manifest.entryPointVersion,
