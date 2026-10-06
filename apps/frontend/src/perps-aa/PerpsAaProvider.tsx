@@ -12,7 +12,6 @@ import {
 } from 'react'
 import { isAddressEqual } from 'viem'
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
-import { ensureAppKit } from '../config/wagmi'
 import { assertEmbeddedPerpsOwner } from './embeddedOwner'
 import {
   PERPS_ARBITRUM_SEPOLIA,
@@ -87,6 +86,7 @@ export function PerpsAaProvider({
         throw new Error('The connected wallet client is unavailable')
       }
       if (isEmbeddedWallet) {
+        const { ensureAppKit } = await import('../config/wagmi')
         const appKit = await ensureAppKit()
         assertEmbeddedPerpsOwner(appKit.getAccount('eip155'), ownerAddress)
       }
