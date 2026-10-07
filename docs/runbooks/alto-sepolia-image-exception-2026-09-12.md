@@ -13,7 +13,10 @@ scan still reports exactly one critical finding, CVE-2024-5535; deployment must
 obtain a fresh completed scan and enforce the unchanged exact-match checks.
 
 Recovery replaces the missing log-router image with an available immutable
-digest using the normal protected Alto deployment workflow. It does not change
+digest using the protected Alto deployment workflow with
+`action=deploy` and `recover_unavailable=true`. Recovery is restricted to a
+single completed deployment at desired count one with no running or pending
+tasks; the stop-before-start deployment policy remains required. It does not change
 the Alto image, runtime validation policy, signing keys or sponsorship limits.
 The shared log-router retention fix prevents count-based cleanup from deleting
 images referenced by independently deployed ECS services.

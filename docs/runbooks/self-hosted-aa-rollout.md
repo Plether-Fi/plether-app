@@ -239,11 +239,12 @@ trap 'exit 143' TERM
 alto_dispatch_fingerprint() {
   jq -cn \
     --arg action "$1" \
+    --arg recover_unavailable "${6:-false}" \
     --arg api_hostname "$2" \
     --arg environment "$3" \
     --arg rollback_task_definition "$4" \
     --arg utility_gas_cushion_wei "$5" \
-    '{schema:1, action:$action, apiHostname:$api_hostname,
+    '{schema:2, action:$action, recoverUnavailable:$recover_unavailable, apiHostname:$api_hostname,
       environment:$environment,
       rollbackTaskDefinition:$rollback_task_definition,
       utilityGasCushionWei:$utility_gas_cushion_wei}' |
