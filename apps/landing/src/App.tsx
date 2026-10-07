@@ -229,7 +229,10 @@ function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }
       <div className="footer__inner">
         <FooterBrand />
         <div className="footer__bottom">
-          <p>© Plether 2026</p>
+          <div className="footer__company">
+            <p>© Plether 2026</p>
+            <a href="/company">Company</a>
+          </div>
           <nav className="footer__nav" aria-label="Footer navigation">
             <a href={X_URL}>X</a>
             <DividerDot />
@@ -883,6 +886,42 @@ function LandingPage() {
   )
 }
 
+function CompanyPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const previousTitle = document.title
+    document.title = 'Company | Plether'
+    const robots = document.createElement('meta')
+    robots.name = 'robots'
+    robots.content = 'noindex'
+    document.head.appendChild(robots)
+    return () => {
+      document.title = previousTitle
+      robots.remove()
+    }
+  }, [])
+
+  return (
+    <div className="manifesto-shell">
+      <SiteHeader theme="light" headerRef={headerRef} />
+      <main className="manifesto-page" aria-labelledby="company-title">
+        <article className="manifesto company">
+          <h1 id="company-title">Company</h1>
+          <h2>Plether Labs Limited</h2>
+          <p>Incorporated in the British Virgin Islands.</p>
+          <h2>Development address</h2>
+          <address>
+            ul. Kujawska 11a/10<br />
+            30-042 Kraków, Poland
+          </address>
+        </article>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
 function ManifestoPage() {
   const headerRef = useRef<HTMLElement | null>(null)
 
@@ -980,6 +1019,10 @@ function MediaKitPage() {
 }
 
 export function App() {
+  if (window.location.pathname.replace(/\/+$/, '') === '/company') {
+    return <CompanyPage />
+  }
+
   if (window.location.pathname === '/manifesto') {
     return <ManifestoPage />
   }
