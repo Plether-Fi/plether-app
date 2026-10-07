@@ -1105,7 +1105,7 @@ jobs:
                 and $account == "932542905614" and $repository == "plether-alto-sepolia"
                 and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
                 and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
-                and ($now | uint) and $now >= 1789171200 and $now < 1789776000) as $exception_scope
+                and ($now | uint) and $now >= 1791331200 and $now < 1791936000) as $exception_scope
             | [$critical[] | select($exception_scope
                 and .name == "CVE-2024-5535"
                 and package_attribute("package_name"; "openssl")
@@ -1115,8 +1115,8 @@ jobs:
               else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
             ' <<< "$scan_findings")
           if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
-            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-09-19 00:00 UTC. The finding remains visible; other critical findings still block deployment."
-            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-09-19 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-10-14 00:00 UTC. The finding remains visible; other critical findings still block deployment."
+            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-10-14 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"

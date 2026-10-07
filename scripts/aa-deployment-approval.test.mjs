@@ -51,7 +51,7 @@ test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
   const args = {
     environment: 'sepolia', region: 'ap-southeast-1', account: '932542905614', repository: 'plether-alto-sepolia',
     digest: 'sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a',
-    upstream: 'sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d', now: 1789224700,
+    upstream: 'sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d', now: 1791357469,
   }
   const fixture = () => ({registryId: args.account, repositoryName: args.repository,
     imageId: {imageDigest: args.digest}, imageScanStatus: {status: 'COMPLETE'},
@@ -84,11 +84,13 @@ test('Alto scan exception is exact, temporary, visible and fail-closed', () => {
     ['wrong scan image', v => {v.imageId.imageDigest = 'sha256:' + 'a'.repeat(64)}, false],
     ['wrong scan account', v => {v.registryId = '111111111111'}, false],
     ['wrong scan repository', v => {v.repositoryName = 'other'}, false],
-    ...Object.entries({environment: 'mainnet', region: 'us-east-1', account: '111111111111', repository: 'other', digest: 'sha256:' + 'b'.repeat(64), upstream: 'sha256:' + 'c'.repeat(64), now: 1789776000}).map(([key, value]) => [
+    ...Object.entries({environment: 'mainnet', region: 'us-east-1', account: '111111111111', repository: 'other', digest: 'sha256:' + 'b'.repeat(64), upstream: 'sha256:' + 'c'.repeat(64), now: 1791936000}).map(([key, value]) => [
       `exception rejects ${key}`, (v, a) => {a[key] = value; if(key === 'account') v.registryId = value; if(key === 'repository') v.repositoryName = value; if(key === 'digest') v.imageId.imageDigest = value}, false,
     ]),
-    ['last second before expiry', (_, a) => {a.now = 1789775999}, true, 1],
-    ['before approval date', (_, a) => {a.now = 1789171199}, false],
+    ['last second before expiry', (_, a) => {a.now = 1791935999}, true, 1],
+    ['before approval date', (_, a) => {a.now = 1791331199}, false],
+    ['expired original exception', (_, a) => {a.now = 1789776000}, false],
+    ['first second of renewed approval', (_, a) => {a.now = 1791331200}, true, 1],
     ['missing clock value', (_, a) => {a.now = null}, false],
   ]
   for (const [label, mutate, passed, accepted] of cases) {
