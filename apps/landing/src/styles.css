@@ -100,6 +100,19 @@ a {
   text-underline-offset: 5px;
 }
 
+.company h2 {
+  margin: 36px 0 12px;
+  font-size: clamp(22px, 3vw, 32px);
+}
+
+.company p,
+.company address {
+  margin: 0;
+  font-size: clamp(18px, 2.4vw, 24px);
+  font-style: normal;
+  line-height: 1.5;
+}
+
 .media-kit-shell {
   min-height: 100vh;
   background: var(--plether-cream);
@@ -1716,6 +1729,22 @@ a {
 
 .footer__bottom p {
   margin: 0;
+}
+
+.footer__company {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.footer__company a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .footer__nav {
