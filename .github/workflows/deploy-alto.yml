@@ -19,6 +19,11 @@ on:
           - deploy
           - bootstrap-simulations
           - rollback
+      recover_unavailable:
+        description: Recover a completed deployment with desired count 1 but no running or pending tasks (deploy only)
+        required: false
+        default: false
+        type: boolean
       rollback_task_definition:
         description: Exact ACTIVE plether-sepolia-alto task-definition ARN or family:revision (rollback only)
         required: false
@@ -119,6 +124,7 @@ jobs:
       - name: Record secret-safe dispatch fingerprint
         env:
           ACTION: ${{ inputs.action }}
+          RECOVER_UNAVAILABLE: ${{ inputs.recover_unavailable }}
           API_HOSTNAME: ${{ inputs.api_hostname }}
           ENVIRONMENT: ${{ inputs.environment }}
           ROLLBACK_TASK_DEFINITION: ${{ inputs.rollback_task_definition }}
@@ -128,11 +134,12 @@ jobs:
 
           fingerprint=$(jq -cn \
             --arg action "$ACTION" \
+            --arg recover_unavailable "$RECOVER_UNAVAILABLE" \
             --arg api_hostname "$API_HOSTNAME" \
             --arg environment "$ENVIRONMENT" \
             --arg rollback_task_definition "$ROLLBACK_TASK_DEFINITION" \
             --arg utility_gas_cushion_wei "$UTILITY_GAS_CUSHION_WEI" \
-            '{schema:1, action:$action, apiHostname:$api_hostname,
+            '{schema:2, action:$action, recoverUnavailable:$recover_unavailable, apiHostname:$api_hostname,
               environment:$environment,
               rollbackTaskDefinition:$rollback_task_definition,
               utilityGasCushionWei:$utility_gas_cushion_wei}' \
@@ -217,6 +224,7 @@ jobs:
         id: preflight
         env:
           ROLLBACK_TASK_DEFINITION: ${{ inputs.rollback_task_definition }}
+          RECOVER_UNAVAILABLE: ${{ inputs.recover_unavailable }}
           AWS_MAX_ATTEMPTS: '3'
           AWS_PAGER: ''
           AWS_RETRY_MODE: standard
@@ -272,13 +280,19 @@ jobs:
           if ! jq -e \
               --arg cluster "$ECS_CLUSTER" \
               --arg service "$ECS_SERVICE" \
+              --arg action "$ALTO_ACTION" \
+              --arg recover "$RECOVER_UNAVAILABLE" \
               '. != null
                and .status == "ACTIVE"
                and .serviceName == $service
                and (.clusterArn | endswith("/" + $cluster))
                and .platformVersion == "1.4.0"
                and (.desiredCount == 0 or .desiredCount == 1)
-               and .runningCount == .desiredCount
+               and (if $recover == "true" then
+                      $action == "deploy" and .desiredCount == 1 and .runningCount == 0
+                      and .deployments[0].rolloutState == "COMPLETED"
+                    elif $recover == "false" then .runningCount == .desiredCount
+                    else false end)
                and .pendingCount == 0
                and .deploymentConfiguration.minimumHealthyPercent == 0
                and .deploymentConfiguration.maximumPercent == 100
@@ -290,7 +304,7 @@ jobs:
                and ([.deployments[] | select(.status == "PRIMARY")] | length) == 1
                and ([.deployments[] | select(.status != "PRIMARY")] | length) == 0' \
               "$service_file" >/dev/null; then
-            echo "::error title=Alto ECS preflight failed::The service must be ACTIVE, stable at desired/running count 0 or 1, use its reviewed public-IP awsvpc network, and have circuit-breaker rollback plus stop-before-start deployment (0/100)."
+            echo "::error title=Alto ECS preflight failed::The service must be ACTIVE and stable at count 0 or 1, or explicitly recovering a completed deployment with desired count 1 and no running/pending tasks. Reviewed networking, single deployment, circuit-breaker rollback and stop-before-start (0/100) remain required."
             exit 1
           fi
 
@@ -1105,7 +1119,7 @@ jobs:
                 and $account == "932542905614" and $repository == "plether-alto-sepolia"
                 and $upstream == "sha256:28cee87ea6b58ba10a37273e58602b50321516c36a81d0c35d50526d1f06995d"
                 and $digest == "sha256:9db94fbd439a26f01b0ece3cc5f76b3791c1e1660b990d74892274267096f12a"
-                and ($now | uint) and $now >= 1789171200 and $now < 1789776000) as $exception_scope
+                and ($now | uint) and $now >= 1791331200 and $now < 1791936000) as $exception_scope
             | [$critical[] | select($exception_scope
                 and .name == "CVE-2024-5535"
                 and package_attribute("package_name"; "openssl")
@@ -1115,8 +1129,8 @@ jobs:
               else {criticalCount: $critical_count, acceptedCriticalCount: ($accepted | length)} end
             ' <<< "$scan_findings")
           if [ "$(jq -r '.acceptedCriticalCount' <<< "$scan_policy")" -eq 1 ]; then
-            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-09-19 00:00 UTC. The finding remains visible; other critical findings still block deployment."
-            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-09-19 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Approved Sepolia image exception::CVE-2024-5535 in openssl 3.1.4-r5 is accepted only for this exact image until 2026-10-14 00:00 UTC. The finding remains visible; other critical findings still block deployment."
+            echo 'Accepted image risk: CVE-2024-5535 / openssl 3.1.4-r5 / exact approved Alto digest / Singapore Sepolia only / expires 2026-10-14 00:00 UTC.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY@$mirrored_digest" >> "$GITHUB_OUTPUT"
