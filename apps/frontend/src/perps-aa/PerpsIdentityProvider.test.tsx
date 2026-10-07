@@ -16,6 +16,7 @@ import {
   writePersistedPerpsIdentity,
 } from './identityPersistence'
 import { usePerpsIdentity } from './usePerpsIdentity'
+import { UnsupportedEmbeddedOwnerError } from './embeddedOwner'
 
 const ownerAddress =
   '0x1111111111111111111111111111111111111111' as Address
@@ -109,6 +110,42 @@ describe('PerpsIdentityProvider', () => {
       sponsorshipEnabled: false,
       error: { code: 'ACCOUNT_RESOLVER_MISSING' },
     })
+  })
+
+  it('blocks an unsupported embedded owner with actionable guidance and retains saved identity', async () => {
+    const previousIdentity = createPersistedPerpsIdentity({
+      chainId: 421614,
+      ownerAddress,
+      accountAddress,
+      accountMode: 'simple',
+      accountVersion: 'permissionless-simple-v0.8',
+      accountIndex: '0',
+      entryPoint: PERPS_ENTRY_POINT_V08,
+      entryPointVersion: '0.8',
+      factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      manifestVersion: String(validManifest().version),
+    })
+    writePersistedPerpsIdentity(localStorage, previousIdentity)
+    const before = { ...localStorage }
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    function wrapper({ children }: { children: ReactNode }) {
+      return <PerpsIdentityProvider
+        ownerAddress={ownerAddress}
+        chainId={421614}
+        manifestUrl="/perps-aa-manifest.json"
+        fetch={async () => new Response(JSON.stringify(validManifest()))}
+        accountAddressResolver={async () => { throw new UnsupportedEmbeddedOwnerError() }}
+      >{children}</PerpsIdentityProvider>
+    }
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+    await waitFor(() => expect(result.current.status).toBe('blocked'))
+    expect(result.current.accountAddress).toBeUndefined()
+    expect(result.current.error).toMatchObject({
+      code: 'UNSUPPORTED_OWNER_WALLET',
+      message: expect.stringContaining('Switch to your EOA'),
+    })
+    expect(write).not.toHaveBeenCalled()
+    expect({ ...localStorage }).toEqual(before)
   })
 
   it('automatically persists a newly derived account', async () => {
