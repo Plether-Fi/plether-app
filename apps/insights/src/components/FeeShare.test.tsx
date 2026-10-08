@@ -2,7 +2,8 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { manualFeeShareApproval } from '../feeShareApprovals'
-import { ManualFeeShareBadge, ManualFeeShareCategory } from './FeeShare'
+import { EligibilityBadge } from './ui'
+import { ManualFeeShareCategory } from './FeeShare'
 
 const slug = 'testnet-trading-2026-09'
 const wallet = '0x505ae6017be53b8dde88cff349c873eca8dd4cb5'
@@ -29,9 +30,11 @@ describe('manual fee-share approvals', () => {
   })
 
   it('shows the explicit organizer decision on approved badges only', () => {
-    const { rerender } = render(<ManualFeeShareBadge competitionSlug={slug} address={wallet} />)
-    expect(screen.getByText('Fee share: eligible after manual verification')).toHaveAttribute('title', expect.stringContaining('Approved personally by Stan'))
-    rerender(<ManualFeeShareBadge competitionSlug={slug} address="0x1111111111111111111111111111111111111111" />)
-    expect(screen.queryByText('Fee share: eligible after manual verification')).not.toBeInTheDocument()
+    const { rerender } = render(<EligibilityBadge competitionSlug={slug} competitionStatus="review" standing={{ address: wallet, eligible: false, eligibilityStatus: 'ineligible' }} />)
+    expect(screen.getByText('Eligible after manual verification')).toHaveAttribute('title', expect.stringContaining('Approved personally by Stan'))
+    expect(screen.queryByText('Not eligible')).not.toBeInTheDocument()
+    expect(screen.getByText('Eligible after manual verification')).toHaveClass('text-positive')
+    rerender(<EligibilityBadge competitionSlug={slug} competitionStatus="review" standing={{ address: "0x1111111111111111111111111111111111111111", eligible: false, eligibilityStatus: 'ineligible' }} />)
+    expect(screen.queryByText('Eligible after manual verification')).not.toBeInTheDocument()
   })
 })

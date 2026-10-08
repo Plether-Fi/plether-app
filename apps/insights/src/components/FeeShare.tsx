@@ -1,14 +1,5 @@
-import { manualFeeShareApproval, manualFeeShareApprovals, manualFeeShareExplanation } from '../feeShareApprovals'
+import { manualFeeShareApprovals, manualFeeShareExplanation } from '../feeShareApprovals'
 import { Panel, WalletIdentity } from './ui'
-
-export function ManualFeeShareBadge({ competitionSlug, address }: { competitionSlug: string; address: string }) {
-  if (!manualFeeShareApproval(competitionSlug, address)) return null
-  return (
-    <div title={manualFeeShareExplanation} className="mt-2 text-xs font-semibold text-positive">
-      Fee share: eligible after manual verification
-    </div>
-  )
-}
 
 export function ManualFeeShareCategory({ competitionSlug }: { competitionSlug: string }) {
   const approvals = manualFeeShareApprovals.filter((approval) => approval.competitionSlug === competitionSlug)

@@ -124,7 +124,7 @@ describe('WalletPage activity costs', () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole('heading', { name: 'Eligible after manual verification' })).toBeInTheDocument()
-    expect(screen.getByText('Not eligible')).toBeInTheDocument()
+    expect(screen.queryByText('Not eligible')).not.toBeInTheDocument()
     expect(screen.getByText('Cash-prize eligibility:').parentElement).toHaveTextContent('2 of 5 active days')
     expect(screen.queryByText('Prize eligible')).not.toBeInTheDocument()
   })

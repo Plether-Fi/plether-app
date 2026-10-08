@@ -169,7 +169,7 @@ export function WalletPage() {
   }
 
   const { wallet, activity, activityStatus, competition } = query.data
-  const eligibility = eligibilityPresentation(wallet, competition.status)
+  const eligibility = eligibilityPresentation(wallet, competition.status, competition.slug)
   const profileUrl = xProfileUrl(wallet.displayName)
   const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
@@ -210,7 +210,7 @@ export function WalletPage() {
             </p>
           </div>
           <div className="max-w-sm sm:text-right">
-            <EligibilityBadge standing={wallet} competitionStatus={competition.status} />
+            <EligibilityBadge standing={wallet} competitionStatus={competition.status} competitionSlug={competition.slug} />
             {eligibility.explanation ? (
               <p className="mt-2 text-sm leading-6 text-content-secondary">{eligibility.explanation}</p>
             ) : null}
@@ -223,7 +223,7 @@ export function WalletPage() {
           <p className="text-xs font-semibold uppercase tracking-wider text-positive">Fee share</p>
           <h2 className="mt-2 text-lg font-semibold">Eligible after manual verification</h2>
           <p className="mt-2 text-sm leading-6 text-content-secondary">{manualFeeShareExplanation}</p>
-          <p className="mt-2 text-xs text-content-tertiary">This approval applies to fee share only. Cash-prize eligibility is shown separately above.</p>
+          <p className="mt-2 text-xs text-content-tertiary">This approval applies to fee share only. Cash-prize eligibility remains subject to competition rules.</p>
         </Panel>
       ) : null}
 

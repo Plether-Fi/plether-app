@@ -62,6 +62,20 @@ describe('LeaderboardPage', () => {
   }
 
   it.each([
+    '0x505ae6017be53b8dde88cff349c873eca8dd4cb5',
+    '0x07f5bdb61891a09d58e0ee2c373c287e9526386b',
+  ])('replaces the ineligible entry badge on desktop and mobile for %s', (address) => {
+    apiMocks.useLeaderboard.mockReturnValue({ data: { pages: [{ standings: [
+      { ...trader, address, eligibilityStatus: 'ineligible' },
+    ], provisional: false }] } })
+    render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
+    const badges = screen.getAllByText('Eligible after manual verification', { selector: 'span' })
+    expect(badges).toHaveLength(2)
+    for (const badge of badges) expect(badge).toHaveClass('text-positive')
+    expect(screen.queryByText('Not eligible')).not.toBeInTheDocument()
+  })
+
+  it.each([
     ['2026-09-18T11:56:59Z', true],
     ['2026-09-18T11:57:00Z', false],
     ['2026-09-18T11:59:30Z', false],

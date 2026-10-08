@@ -1,3 +1,4 @@
+import { manualFeeShareApproval } from '../feeShareApprovals'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api/types'
@@ -17,9 +18,9 @@ export function StatusBadge({ eligible, label, neutral = false, title }: { eligi
   )
 }
 
-export function EligibilityBadge({ standing, competitionStatus }: { standing: Pick<Standing, 'eligible' | 'eligibilityStatus'>; competitionStatus: Competition['status'] }) {
-  const presentation = eligibilityPresentation(standing, competitionStatus)
-  return <StatusBadge eligible={standing.eligible} label={presentation.label} neutral={presentation.neutral} title={presentation.explanation ?? undefined} />
+export function EligibilityBadge({ standing, competitionStatus, competitionSlug }: { standing: Pick<Standing, 'address' | 'eligible' | 'eligibilityStatus'>; competitionStatus: Competition['status']; competitionSlug: string }) {
+  const presentation = eligibilityPresentation(standing, competitionStatus, competitionSlug)
+  return <StatusBadge eligible={standing.eligible || !!manualFeeShareApproval(competitionSlug, standing.address)} label={presentation.label} neutral={presentation.neutral} title={presentation.explanation ?? undefined} />
 }
 
 export function ProvisionalNotice() {
