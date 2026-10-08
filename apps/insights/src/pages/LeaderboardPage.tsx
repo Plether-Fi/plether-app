@@ -1,3 +1,4 @@
+import { ManualFeeShareCategory } from '../components/FeeShare'
 import { useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCurrentCompetition, useInsightsStatus, useLeaderboard } from '../api'
@@ -98,6 +99,7 @@ export function LeaderboardPage() {
       </div>
 
       <RulesSummary competition={competitionData} />
+      <ManualFeeShareCategory competitionSlug={competitionData.slug} />
 
       <section aria-labelledby="leaderboard-title" className="space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

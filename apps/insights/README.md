@@ -67,3 +67,16 @@ anonymous public handlers. Registration is accepted only on the configured
 canonical origin, authenticated to the backend with the private Pages secret,
 and never cached upstream or downstream. The deployment workflow also requires
 the backend status endpoint to succeed before publishing Pages.
+
+## Manual fee-share approvals
+
+`src/feeShareApprovals.ts` records organizer-approved exceptions for the September
+competition. On October 8, 2026, Stan approved `@nightpuper` and
+`@FishesReal72265` after a verification call, waiving normal fee-share conditions.
+Their wallet identities were checked against the public Insights API.
+The category appears on the leaderboard and approved wallet pages, with badges
+on desktop and mobile standings. Matching uses competition slug and wallet, not
+handles. These are fee-share decisions only: the backend's cash-prize review,
+rank, and payout calculations are unchanged. This frontend registry is not an
+onchain grant or an automated fee distribution mechanism; include these approved
+wallets when preparing the fee-share distribution.

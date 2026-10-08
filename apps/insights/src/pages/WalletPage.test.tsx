@@ -109,6 +109,26 @@ beforeEach(() => {
 })
 
 describe('WalletPage activity costs', () => {
+  it('shows manual fee-share approval while retaining cash-prize ineligibility', () => {
+    const current = apiMocks.useWallet.getMockImplementation()?.()
+    const approvedAddress = '0x505ae6017be53b8dde88cff349c873eca8dd4cb5'
+    apiMocks.useWallet.mockReturnValue({ ...current, data: {
+      ...current.data,
+      competition: { ...current.data.competition, slug: 'testnet-trading-2026-09', status: 'review' },
+      wallet: { ...current.data.wallet, address: approvedAddress, displayName: 'nightpuper',
+        eligible: false, eligibilityStatus: 'ineligible', eligibilityReasons: ['2 of 5 active days'] },
+    } })
+    render(
+      <MemoryRouter initialEntries={[`/competitions/testnet-trading-2026-09/wallets/${approvedAddress}`]}>
+        <Routes><Route path="/competitions/:slug/wallets/:address" element={<WalletPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('heading', { name: 'Eligible after manual verification' })).toBeInTheDocument()
+    expect(screen.getByText('Not eligible')).toBeInTheDocument()
+    expect(screen.getByText('Cash-prize eligibility:').parentElement).toHaveTextContent('2 of 5 active days')
+    expect(screen.queryByText('Prize eligible')).not.toBeInTheDocument()
+  })
+
   it.each([
     ['live', 'pending', false, 'Registered'],
     ['review', 'pending', false, 'Awaiting prize review'],

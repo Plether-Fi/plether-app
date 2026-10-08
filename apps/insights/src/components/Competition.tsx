@@ -1,3 +1,4 @@
+import { ManualFeeShareBadge } from './FeeShare'
 import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api'
 import { useUtcNow } from '../hooks/useUtcNow'
@@ -146,7 +147,7 @@ function DesktopTable({ standings, competitionSlug, competitionStatus }: { stand
           {standings.map((standing) => (
             <tr key={standing.address} className={`transition-colors hover:bg-brand-peach/5 ${standing.prizePlace !== null ? 'bg-brand-yellow/5' : ''}`}>
               <td className="px-5 py-4"><Rank value={standing.rank} prizePlace={standing.prizePlace} /></td>
-              <td className="px-3 py-4"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></td>
+              <td className="px-3 py-4"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /><ManualFeeShareBadge competitionSlug={competitionSlug} address={standing.address} /></td>
               <td className="px-3 py-4 text-right font-semibold"><Pnl value={standing.pnl} usdcKind="mock" /></td>
               <td className={`px-3 py-4 text-right text-sm tabular-nums ${standing.roiBps !== null && standing.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}`}>{formatRoi(standing.roiBps)}</td>
               <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{standing.pnl === null ? '—' : formatCompactMockUsdc(standing.volume)}</td>
@@ -170,7 +171,7 @@ function MobileList({ standings, competitionSlug, competitionStatus }: { standin
             <Rank value={standing.rank} prizePlace={standing.prizePlace} />
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></div>
+                <div className="min-w-0"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /><ManualFeeShareBadge competitionSlug={competitionSlug} address={standing.address} /></div>
                 <div className="text-right">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">Net P&amp;L</div>
                   <Pnl value={standing.pnl} usdcKind="mock" className="whitespace-nowrap text-sm font-semibold" />

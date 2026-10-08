@@ -1,3 +1,4 @@
+import { manualFeeShareApproval, manualFeeShareExplanation } from '../feeShareApprovals'
 import { Fragment, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
@@ -217,6 +218,15 @@ export function WalletPage() {
         </div>
       </div>
 
+      {manualFeeShareApproval(competition.slug, wallet.address) ? (
+        <Panel className="border-positive/30 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-positive">Fee share</p>
+          <h2 className="mt-2 text-lg font-semibold">Eligible after manual verification</h2>
+          <p className="mt-2 text-sm leading-6 text-content-secondary">{manualFeeShareExplanation}</p>
+          <p className="mt-2 text-xs text-content-tertiary">This approval applies to fee share only. Cash-prize eligibility is shown separately above.</p>
+        </Panel>
+      ) : null}
+
       {wallet.prizeAmountUsdc !== null ? (
         <div className="border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow">
           <strong>{wallet.prizePlaces.length > 1 ? `Tied prize places ${wallet.prizePlaces.join('–')}` : `Prize place #${String(wallet.prizePlace ?? '—')}`}:</strong>{' '}
@@ -226,7 +236,7 @@ export function WalletPage() {
 
       {!wallet.eligible && wallet.eligibilityReasons.length > 0 ? (
         <div className="border border-brand-orange/35 bg-brand-orange/10 px-4 py-3 text-sm text-brand-peach">
-          <strong>Eligibility:</strong> {wallet.eligibilityReasons.join(' · ')}
+          <strong>Cash-prize eligibility:</strong> {wallet.eligibilityReasons.join(' · ')}
         </div>
       ) : null}
 
