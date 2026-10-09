@@ -7,6 +7,7 @@ import Test.Hspec
 import Plether.Insights.Registration.Wallet (recoverPersonalSignAddress)
 import Plether.AA.PreparationRecovery
 import Plether.Database.AaPreparationRecovery (Scope(..))
+import qualified Plether.Perps.Manifest as Manifest
 
 spec :: Spec
 spec = describe "owner-scoped preparation recovery protocol" $ do
@@ -15,8 +16,11 @@ spec = describe "owner-scoped preparation recovery protocol" $ do
       identifier = "0x" <> T.replicate 64 "3"
       scope = Scope 421614 paymaster sender identifier
       locator chain = object ["version" .= (1::Int), "chainId" .= (chain::T.Text), "sender" .= sender, "preparationId" .= identifier]
-  it "parses only the versioned Sepolia locator" $ do
-    fmap fst (parseRecoveryRequest paymaster [] [locator "0x66eee"]) `shouldBe` Right scope
+  it "parses only the versioned compiled-release locator" $ do
+    fmap fst (parseRecoveryRequest paymaster [] [locator Manifest.releaseChainIdHex])
+      `shouldBe` Right (scope { scopeChain = Manifest.releaseChainId })
+    let otherChain = if Manifest.releaseChainId == 42161 then "0x66eee" else "0xa4b1"
+    parseRecoveryRequest paymaster [] [locator otherChain] `shouldSatisfy` isLeft
     parseRecoveryRequest paymaster [] [locator "0x1"] `shouldSatisfy` isLeft
     parseRecoveryRequest paymaster [] [Null] `shouldSatisfy` isLeft
   it "binds the wallet message to purpose, deployment and attempt" $ do
@@ -26,6 +30,7 @@ spec = describe "owner-scoped preparation recovery protocol" $ do
     message `shouldNotBe` renderChallenge "https://another.example" scope sender "nonce" 123
     message `shouldNotBe` renderChallenge "https://testnet.plether.com" (scope { scopePaymaster = sender }) sender "nonce" 123
     message `shouldNotBe` renderChallenge "https://testnet.plether.com" scope sender "other" 123
+    message `shouldNotBe` renderChallenge "https://testnet.plether.com" (scope { scopeChain = 42161 }) sender "nonce" 123
   it "issues opaque tokens and stores a separate digest" $ do
     first <- randomToken
     second <- randomToken

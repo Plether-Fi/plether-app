@@ -1,10 +1,11 @@
 import { http, type Config } from 'wagmi'
-import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { arbitrum, arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { defineChain } from 'viem'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { mainnet as appKitMainnet, sepolia as appKitSepolia } from '@reown/appkit/networks'
 import type { AppKitNetwork } from '@reown/appkit/networks'
 import { transactionManager } from '../services/transactionManager'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
 type AppKitInstance = ReturnType<(typeof import('@reown/appkit/react'))['createAppKit']>
 type AppKitOpenOptions = Parameters<AppKitInstance['open']>[0]
@@ -20,6 +21,8 @@ function optionalRpcUrl(value: unknown): string | undefined {
 
 const MAINNET_RPC_URL = optionalRpcUrl(import.meta.env.VITE_MAINNET_RPC_URL)
 const SEPOLIA_RPC_URL = optionalRpcUrl(import.meta.env.VITE_SEPOLIA_RPC_URL)
+const ARBITRUM_RPC_URL = optionalRpcUrl(import.meta.env.VITE_ARBITRUM_RPC_URL)
+  ?? arbitrum.rpcUrls.default.http[0]
 const envArbitrumSepoliaRpcUrl: unknown = import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL
 const ARBITRUM_SEPOLIA_RPC_URL =
   typeof envArbitrumSepoliaRpcUrl === 'string' && envArbitrumSepoliaRpcUrl.length > 0
@@ -64,10 +67,18 @@ export const appKitArbitrumSepolia = {
   },
 } satisfies AppKitNetwork
 
+export const appKitArbitrum = {
+  ...arbitrum,
+  chainNamespace: 'eip155' as const,
+  caipNetworkId: 'eip155:42161' as const,
+  rpcUrls: { default: { http: [ARBITRUM_RPC_URL] } },
+} satisfies AppKitNetwork
+
 const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   appKitMainnet,
   appKitSepolia,
   appKitArbitrumSepolia,
+  appKitArbitrum,
   appKitAnvil,
 ]
 
@@ -85,6 +96,7 @@ const wagmiAdapter = new WagmiAdapter({
     [mainnet.id]: http(MAINNET_RPC_URL),
     [sepolia.id]: http(SEPOLIA_RPC_URL),
     [arbitrumSepolia.id]: http(ARBITRUM_SEPOLIA_RPC_URL),
+    [arbitrum.id]: http(ARBITRUM_RPC_URL),
     [anvil.id]: http('http://127.0.0.1:8545'),
   },
 })
@@ -215,10 +227,13 @@ export async function openAppKit(options?: AppKitOpenOptions): Promise<void> {
   syncAppKitModalStyleOverrides()
 }
 
-export async function switchAppKitToArbitrumSepolia(): Promise<void> {
+export async function switchAppKitToPerpsNetwork(): Promise<void> {
   const appKit = await ensureAppKit()
-  await appKit.switchNetwork(appKitArbitrumSepolia, { throwOnFailure: true })
+  await appKit.switchNetwork(PERPS_CHAIN_ID === arbitrum.id ? appKitArbitrum : appKitArbitrumSepolia, { throwOnFailure: true })
 }
+
+/** @deprecated Compatibility alias switches to the active perps deployment network. */
+export const switchAppKitToArbitrumSepolia = switchAppKitToPerpsNetwork
 
 export function scheduleAppKitInitialization(): void {
   const scheduleImport = () => {
@@ -236,7 +251,7 @@ export function scheduleAppKitInitialization(): void {
   }
 }
 
-type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof anvil]
+type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof arbitrum, typeof anvil]
 export const config = wagmiAdapter.wagmiConfig as Config<Chains>
 
 declare module 'wagmi' {

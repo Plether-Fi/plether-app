@@ -3,6 +3,7 @@ import type { PositionProtection } from '../contracts/positionProtection'
 import { PERPS_TERMINAL_REASON_LABELS } from '../contracts/perpsOrderV2'
 import { currentProtectionObservation, PROTECTION_EXECUTION_COPY, type ProtectionExecutionReport } from '../utils/protectionExecution'
 import { getExplorerTxUrl } from '../utils/explorer'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
 export function ProtectionExecutionNotice({ protection, report, loading, error, onRefresh }: {
   protection: PositionProtection
@@ -34,7 +35,7 @@ export function ProtectionExecutionNotice({ protection, report, loading, error, 
     {observation ? <div className="mt-2 space-y-1 text-xs text-content-secondary">
       {observation.outcomeReason !== undefined ? <p>Last close outcome: {PERPS_TERMINAL_REASON_LABELS[observation.outcomeReason] ?? 'Unknown failure'}</p> : null}
       <p>Last worker check: <time dateTime={observation.checkedAt}>{new Date(observation.checkedAt).toLocaleTimeString()}</time> · advisory, not an execution guarantee</p>
-      {transaction ? <a className="inline-block underline underline-offset-4" href={getExplorerTxUrl(421614, transaction)} target="_blank" rel="noopener noreferrer">View pending transaction ↗</a> : null}
+      {transaction ? <a className="inline-block underline underline-offset-4" href={getExplorerTxUrl(PERPS_CHAIN_ID, transaction)} target="_blank" rel="noopener noreferrer">View pending transaction ↗</a> : null}
     </div> : null}
     {!loading && onRefresh ? <button type="button" className="mt-2 text-xs text-content-secondary underline underline-offset-4" onClick={onRefresh}>Refresh execution status</button> : null}
   </section>

@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
@@ -52,7 +53,7 @@ runProviderPreflight client cfg = do
   case chain of
     Left err -> pure $ Left $ "eth_chainId failed: " <> T.pack (show err)
     Right chainId
-      | chainId /= 421614 -> pure $ Left "PERPS_RPC_URL must report chain ID 421614"
+      | chainId /= Manifest.releaseChainId -> pure $ Left "PERPS_RPC_URL must report the compiled perps release chain ID"
       | chainId /= cfgPerpsChainId cfg -> pure $ Left "PERPS_RPC_URL does not match PERPS_CHAIN_ID"
       | otherwise -> do
           historical <- traverse (verifyHistoricalVaultCall client cfg) configuredVaults

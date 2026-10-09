@@ -40,6 +40,7 @@ module Plether.Database.AaSponsorship
   , getRecoveryReceiptLocator
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Monad (unless, void, when)
 import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Char8 as BS8
@@ -1013,13 +1014,14 @@ storeSponsorshipSignatureFenced conn cfg digest signature expectedUserOperationH
       \WHERE singleton=TRUE AND NOT issuance_paused AND paused_reason IS NULL) \
       \AND EXISTS (SELECT 1 FROM aa_reconciler_health h \
       \JOIN aa_reconciler_cursor c USING (chain_id,paymaster) \
-      \WHERE h.chain_id=421614 AND h.paymaster=? \
+      \WHERE h.chain_id=? AND h.paymaster=? \
       \AND h.safe_block=c.safe_block AND h.safe_block_hash=c.safe_block_hash \
       \AND h.last_success_at >= clock_timestamp()-INTERVAL '120 seconds')"
       ( T.toLower signature
       , T.toLower expectedUserOperationHash
       , T.toLower digest
       , signatureValiditySafetySeconds
+      , Manifest.releaseChainId
       , T.toLower $ naaPaymasterAddress cfg
       )
     if affected == (1 :: Int64)
@@ -1054,11 +1056,12 @@ isSponsorshipDeliveryAllowedFenced conn cfg digest fence = withTransaction conn 
         \AND a.valid_until > FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT + ? \
         \AND EXISTS (SELECT 1 FROM aa_reconciler_health h \
         \JOIN aa_reconciler_cursor c USING (chain_id,paymaster) \
-        \WHERE h.chain_id=421614 AND h.paymaster=? \
+        \WHERE h.chain_id=? AND h.paymaster=? \
         \AND h.safe_block=c.safe_block AND h.safe_block_hash=c.safe_block_hash \
         \AND h.last_success_at >= clock_timestamp()-INTERVAL '120 seconds'))"
         ( T.toLower digest
         , signatureValiditySafetySeconds
+        , Manifest.releaseChainId
         , T.toLower $ naaPaymasterAddress cfg
         ) :: IO [Only Bool]
       case rows of
@@ -1586,10 +1589,10 @@ aaReconcilerIsFresh conn cfg = do
   rows <- query conn
     "SELECT EXISTS (SELECT 1 FROM aa_reconciler_health h \
     \JOIN aa_reconciler_cursor c USING (chain_id,paymaster) \
-    \WHERE h.chain_id=421614 AND h.paymaster=? \
+    \WHERE h.chain_id=? AND h.paymaster=? \
     \AND h.safe_block=c.safe_block AND h.safe_block_hash=c.safe_block_hash \
     \AND h.last_success_at >= clock_timestamp()-INTERVAL '120 seconds')"
-    (Only $ T.toLower $ naaPaymasterAddress cfg)
+    (Manifest.releaseChainId, T.toLower $ naaPaymasterAddress cfg)
   case rows of
     [Only fresh] -> pure fresh
     _ -> fail "aa reconciler health query did not return exactly one row"

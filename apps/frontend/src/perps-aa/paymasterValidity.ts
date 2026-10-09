@@ -21,6 +21,7 @@ import {
   type PerpsAaDeploymentManifest,
 } from './manifest'
 import type { ManagedUserOperation } from './runtimeContext'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
 export const PIMLICO_SINGLETON_PAYMASTER_V8 = getAddress(
   '0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402'
@@ -33,7 +34,8 @@ export const PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH =
 export const PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT = 100_000n
 export const PLETHER_PAYMASTER_POST_OP_GAS_LIMIT = 0n
 export const PLETHER_PAYMASTER_MAX_VALIDITY_WINDOW_SECONDS = 600n
-export const PLETHER_PAYMASTER_CHAIN_ID = 421614
+/** @deprecated Use PERPS_CHAIN_ID from the active deployment. */
+export { PERPS_CHAIN_ID as PLETHER_PAYMASTER_CHAIN_ID } from '../contracts/perpsAddresses'
 const VERIFYING_MODE = 0
 const MODE_AND_BUNDLER_FLAG_BYTES = 1
 const VALIDITY_TIMESTAMP_BYTES = 6
@@ -192,11 +194,11 @@ export function pletherSponsorshipValidUntil(
   }
 
   try {
-    // The contract address is deployment-specific, while the rest of the
-    // initial Sepolia profile is reviewed and pinned across the core contract,
+    // The contract address and chain are deployment-specific, while the rest
+    // of the profile remains reviewed and pinned across the core contract,
     // backend startup attestation, Terraform guards, and this client.
     const profile: PletherPaymasterProfile = {
-      chainId: PLETHER_PAYMASTER_CHAIN_ID,
+      chainId: PERPS_CHAIN_ID,
       entryPoint: PERPS_ENTRY_POINT_V08,
       paymaster: expectedPaymaster,
       policyId: PLETHER_PAYMASTER_POLICY_ID,
@@ -251,9 +253,9 @@ export function manifestSponsorshipValidUntil(
   manifest: PerpsAaDeploymentManifest,
   operation: ManagedUserOperation
 ): bigint | undefined {
+  if (manifest.chainId !== PERPS_CHAIN_ID) return undefined
   if (isNativePaymasterManifest(manifest)) {
     if (
-      manifest.chainId !== PLETHER_PAYMASTER_CHAIN_ID ||
       !isAddressEqual(manifest.entryPoint, PERPS_ENTRY_POINT_V08)
     ) {
       return undefined

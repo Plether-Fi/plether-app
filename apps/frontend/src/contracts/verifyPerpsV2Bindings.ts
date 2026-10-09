@@ -1,6 +1,4 @@
 import { isAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
-import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
-import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
 import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -8,7 +6,8 @@ import {
   PERPS_POSITION_PROTECTION_BOOK_ABI,
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
-import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
+import { PERPS_ACTIVE_DEPLOYMENT, PERPS_CONTRACTS } from './perpsAddresses'
+import { isPerpsManifestForDeployment, type PerpsDeployment } from './perpsDeployment'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
 
 function requireSameAddress(
@@ -28,18 +27,18 @@ export async function verifyClosePreviewDeployment(
   client: PublicClient,
   manifest: PerpsAaDeploymentManifest,
   blockNumber: bigint,
+  deployment: PerpsDeployment = PERPS_ACTIVE_DEPLOYMENT,
 ): Promise<Address> {
-  const configuration: { contracts?: { cfdClosePreview?: { address: string; runtimeCodeHash: string } } } = closePreview
-  const pin = configuration.contracts?.cfdClosePreview
-  if (!pin || !isAddress(pin.address) || !/^0x[0-9a-f]{64}$/i.test(pin.runtimeCodeHash)) {
+  const pin = deployment.closePreview
+  if (!isAddress(pin.address) || !/^0x[0-9a-f]{64}$/i.test(pin.runtimeCodeHash)) {
     throw new Error('Close review is unavailable: preview deployment configuration is invalid.')
   }
-  if (manifest.chainId !== closePreview.network.chainId || await client.getChainId() !== closePreview.network.chainId) {
-    throw new Error('Close review requires Arbitrum Sepolia.')
+  if (manifest.chainId !== deployment.chainId || pin.chainId !== deployment.chainId || await client.getChainId() !== deployment.chainId) {
+    throw new Error(`Close review requires the active perps deployment on chain ${String(deployment.chainId)}.`)
   }
-  requireSameAddress('Close preview Engine', manifest.cfdEngine, closePreview.existingProtocol.engine as Address)
-  requireSameAddress('Close preview Router', manifest.orderRouter, closePreview.existingProtocol.router as Address)
-  requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, closePreview.existingProtocol.policyEvaluator as Address)
+  requireSameAddress('Close preview Engine', manifest.cfdEngine, pin.cfdEngine)
+  requireSameAddress('Close preview Router', manifest.orderRouter, pin.orderRouter)
+  requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, pin.policyEvaluator)
   if (isAddressEqual(pin.address, manifest.policyEvaluator)) {
     throw new Error('Close review is unavailable: preview aliases the execution evaluator.')
   }
@@ -50,13 +49,17 @@ export async function verifyClosePreviewDeployment(
   return pin.address
 }
 
-export async function verifyProtectionDeployment(client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint): Promise<void> {
-  if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
+export async function verifyProtectionDeployment(
+  client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint,
+  deployment: PerpsDeployment = PERPS_ACTIVE_DEPLOYMENT,
+): Promise<void> {
+  if (!isPerpsManifestForDeployment(manifest, deployment) || await client.getChainId() !== deployment.chainId) {
+    throw new Error('TP/SL requires the active reviewed perps deployment')
+  }
   for (const [key, address] of [['positionProtectionBook', manifest.positionProtectionBook], ['orderRouter', manifest.orderRouter], ['orderLifecycleBook', manifest.orderLifecycleBook]] as const) {
-    const contract = release.contracts[key]
-    requireSameAddress(`TP/SL ${key}`, address, contract.address as Address)
+    requireSameAddress(`TP/SL ${key}`, address, deployment.contracts[key])
     const code = await client.getCode({ address, blockNumber })
-    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version}`)
+    if (!code || keccak256(code) !== deployment.runtimeCodeHashes[key].toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${deployment.releaseId}`)
   }
 }
 
@@ -72,7 +75,11 @@ export async function verifyPerpsV2DeploymentBindings(
   blockNumber: bigint
   block: { number: bigint; hash: Hex; timestamp: bigint }
 }> {
-  const block = await client.getBlock({ blockTag: 'latest' })
+  if (!isPerpsManifestForDeployment(manifest, PERPS_ACTIVE_DEPLOYMENT)) {
+    throw new Error('Perps manifest does not match the active reviewed deployment')
+  }
+  const [block, chainId] = await Promise.all([client.getBlock({ blockTag: 'latest' }), client.getChainId()])
+  if (chainId !== PERPS_ACTIVE_DEPLOYMENT.chainId) throw new Error('Perps RPC chain does not match the active deployment')
   const blockNumber = block.number
   const [
     routerEngine,
@@ -151,19 +158,19 @@ export async function verifyPerpsV2DeploymentBindings(
       blockNumber,
     }),
     client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+      address: PERPS_CONTRACTS.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'ENGINE',
       blockNumber,
     }),
     client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+      address: PERPS_CONTRACTS.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'ORDER_ROUTER',
       blockNumber,
     }),
     client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+      address: PERPS_CONTRACTS.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'HOUSE_POOL',
       blockNumber,
@@ -204,20 +211,20 @@ export async function verifyPerpsV2DeploymentBindings(
   requireSameAddress(
     'Lifecycle HousePool',
     lifecycleHousePool,
-    PERPS_ARBITRUM_SEPOLIA.housePool
+    PERPS_CONTRACTS.housePool
   )
   requireSameAddress(
     'Engine Clearinghouse',
     engineClearinghouse,
     manifest.marginClearinghouse
   )
-  requireSameAddress('Engine Pool', enginePool, PERPS_ARBITRUM_SEPOLIA.housePool)
+  requireSameAddress('Engine Pool', enginePool, PERPS_CONTRACTS.housePool)
   requireSameAddress('Public lens Engine', lensEngine, manifest.cfdEngine)
   requireSameAddress('Public lens Router', lensRouter, manifest.orderRouter)
   requireSameAddress(
     'Public lens HousePool',
     lensHousePool,
-    PERPS_ARBITRUM_SEPOLIA.housePool
+    PERPS_CONTRACTS.housePool
   )
 
   requireSameAddress(

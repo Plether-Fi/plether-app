@@ -1,3 +1,4 @@
+import { AddFunds } from '../perps-funding/AddFunds'
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
@@ -4648,6 +4649,7 @@ export function PerpsTradeTicket({
             Withdraw
           </Button>
         </div>
+        {enableLiveTrading ? <AddFunds identity={identity} onAccountRefresh={onAccountRefresh} /> : null}
       </div>
 
       <Modal

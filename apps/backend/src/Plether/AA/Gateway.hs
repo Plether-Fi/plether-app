@@ -197,6 +197,9 @@ newNativeGatewayState manager cfg client = do
   codeHash <- fmap T.pack <$> lookupEnv "PERPS_CLOSE_ASSISTANCE_LENS_CODE_HASH"
   unless (enabled `elem` [Nothing,Just "false",Just "true"] && global `elem` [Nothing,Just "false",Just "true"]) $
     fail "Close assistance flags must be true or false"
+  when ((enabled == Just "true" || lens `notElem` [Nothing, Just ""] || codeHash `notElem` [Nothing, Just ""])
+    && (Manifest.releaseChainId /= 421614 || cfgPerpsChainId cfg /= 421614)) $
+      fail "Close assistance is reviewed only for Arbitrum Sepolia"
   assistance <- if lens `elem` [Nothing,Just ""] && codeHash `elem` [Nothing,Just ""] && enabled /= Just "true" then pure Nothing else case (lens,codeHash,cfgNativeAaConfig cfg) of
     (Just address,Just hash,Just native)
       | isFixedHex 20 address && isFixedHex 32 hash && (enabled /= Just "true" || naaRpcMode native == DualIndependent) ->
@@ -279,7 +282,7 @@ data CloseAssistanceConfig = CloseAssistanceConfig
 closeAssistanceStatus :: NativeGatewayState -> Config -> Value
 closeAssistanceStatus state cfg = case (ngsCloseAssistance state,cfgNativeAaConfig cfg) of
   (Just assistance,Just native)
-    | cacEnabled assistance && naaSponsorshipEnabled native && naaSubmissionEnabled native && isJust (ngsSigner state) ->
+    | Manifest.releaseChainId == 421614 && cfgPerpsChainId cfg == 421614 && cacEnabled assistance && naaSponsorshipEnabled native && naaSubmissionEnabled native && isJust (ngsSigner state) ->
         object ["enabled" .= True,"chainId" .= (421614 :: Integer),"lens" .= cacLens assistance,
           "lensCodeHash" .= cacCodeHash assistance,"paymasterAddress" .= naaPaymasterAddress native,
           "canaryOwners" .= (if cacGlobal assistance then [] else naaCanaryOwners native)]
@@ -469,10 +472,11 @@ prepareNativeOperationFenced gatewayState cfg nativeCfg pool client manager clie
           let boundIntent profile = encodeHex $ keccak256 $ TE.encodeUtf8 $ Preparation.intentHash intent <> profile
               profile = preparationProfileFingerprint nativeCfg
               previous = T.replace Preparation.gasPolicyVersion "execution-headroom-v2-sepolia-cap2100000-150pct-min100000" profile
+              compatibleIntents = [boundIntent previous | Manifest.releaseChainId == 421614]
           fence <- maybe (throwE databaseUnavailable) pure $ ngsPreparationFence gatewayState
           claim <- timed timing "preparation_claim" $ db $ \conn -> PreparationDb.claimPreparationCompatibleFenced conn fence (naaPreparationEnabled nativeCfg && not (Preparation.piResumeOnly intent)) clientKey
             (Preparation.piSender intent) (Preparation.piIdentifier intent)
-            (boundIntent profile) [boundIntent previous] identifier
+            (boundIntent profile) compatibleIntents identifier
           stored <- case claim of
             PreparationDb.PreparationFenceLost -> throwE $ Legacy.unavailable "PREPARATION_LEASE_LOST" "Retry the same preparation ID"
             PreparationDb.PreparationConflict -> throwE $ Legacy.invalidParams "Preparation ID is bound to another intent"
@@ -592,11 +596,15 @@ deliverPreparation assistance state cfg pool context clientKey owner request ope
         _ -> Legacy.respondFailure (Legacy.rrId request) $ Legacy.unavailable "PREPARATION_DISABLED" "No signed preparation is available"
 
 preparationProfileFingerprint :: NativeAaConfig -> Text
-preparationProfileFingerprint cfg = T.intercalate ":"
+preparationProfileFingerprint cfg = chainPrefix <> T.intercalate ":"
   [naaPaymasterAddress cfg, naaPaymasterCodeHash cfg, naaPolicyId cfg,
    naaSignerAddress cfg, naaAccountCodeHash cfg, aaRpcModeText $ naaRpcMode cfg,
    T.pack $ show (naaVerificationGasLimit cfg, naaPostOpGasLimit cfg, naaMaxCostWei cfg, naaValiditySeconds cfg),
    Preparation.gasPolicyVersion]
+ where
+  -- Keep saved Sepolia attempts resumable; other releases cannot share their namespace.
+  chainPrefix | Manifest.releaseChainId == 421614 = ""
+              | otherwise = "chain:" <> T.pack (show Manifest.releaseChainId) <> ":"
 
 timeContext :: MonadIO m => NativeSecurityContext -> Text -> m a -> m a
 timeContext context stage action = maybe action (\timing -> timed timing stage action) $ nscTiming context
@@ -1236,7 +1244,7 @@ handleOperationless gatewayState primary nativeCfg pool manager clientKey reques
                 respondRecoveryPending requestId
               _ -> forward
           Right (Just locator) -> do
-            let recover client = RecoveryReceipt.recoverReceipt client 421614
+            let recover client = RecoveryReceipt.recoverReceipt client Manifest.releaseChainId
                   (naaPaymasterAddress nativeCfg) operationHash locator
                 secondary = case ngsSecurityClient gatewayState of
                   Just client -> recover client
@@ -1563,7 +1571,7 @@ validateNativeParams request =
     case Legacy.rrParams request of
       [Object operation, String entryPoint, String requestedChain, Object context]
         | normalizeAddress entryPoint == Just nativeEntryPoint
-        , T.toLower requestedChain == "0x66eee"
+        , T.toLower requestedChain == Manifest.releaseChainIdHex
         , KM.null context -> do
             packed <- firstInvalidParams $ Paymaster.parsePackedUserOperation operation
             unless (BS.null $ Paymaster.puoSignature packed) $
@@ -1582,7 +1590,7 @@ validateNativeParams request =
       _ ->
         Left $
           Legacy.invalidParams
-            "paymaster method requires [unsigned UserOperation, approved EntryPoint, Arbitrum Sepolia chain, empty context]"
+            "paymaster method requires [unsigned UserOperation, approved EntryPoint, compiled release chain, empty context]"
 
 relayToAlto
   :: NativeAaConfig
@@ -1868,8 +1876,8 @@ attestRpcChain :: EthClient -> IO (Either Text ())
 attestRpcChain client = do
   result <- rpcCall client "eth_chainId" $ toJSON ([] :: [Value])
   pure $ case result of
-    Right (String chainValue) | T.toLower chainValue == "0x66eee" -> Right ()
-    Right _ -> Left "PERPS_RPC_URL did not attest Arbitrum Sepolia chain id 421614"
+    Right (String chainValue) | T.toLower chainValue == Manifest.releaseChainIdHex -> Right ()
+    Right _ -> Left "PERPS_RPC_URL did not attest the compiled perps release chain ID"
     Left _ -> Left "could not attest PERPS_RPC_URL chain id"
 
 readAgreedSecurityBlock
@@ -2261,7 +2269,7 @@ preparationStatusWithRecovery canRetire cfg pool client manager clientKey reques
       Right Nothing -> Legacy.respondFailure requestId $
         Legacy.ProxyFailure status403 (-32001) "Preparation is unavailable for this client" "PREPARATION_NOT_AUTHORIZED" False
       Right (Just (Object fields, storedOperation)) -> do
-        cursor <- liftDb $ withDb pool $ \conn -> getAaReconcilerCursor conn 421614 (naaPaymasterAddress cfg)
+        cursor <- liftDb $ withDb pool $ \conn -> getAaReconcilerCursor conn Manifest.releaseChainId (naaPaymasterAddress cfg)
         safeTimestamp <- case cursor of
           Right (Just position) -> do
             block <- liftIO $ readSecurityHeader client (Paymaster.canonicalQuantity $ arcSafeBlock position)

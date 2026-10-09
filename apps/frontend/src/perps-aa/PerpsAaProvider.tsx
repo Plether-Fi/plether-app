@@ -13,10 +13,7 @@ import {
 import { isAddressEqual } from 'viem'
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { assertEmbeddedPerpsOwner } from './embeddedOwner'
-import {
-  PERPS_ARBITRUM_SEPOLIA,
-  PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-} from '../contracts/perpsAddresses'
+import { isPerpsManifestForActiveDeployment } from '../contracts/perpsAddresses'
 import { isSepoliaDeployment } from '../utils/deployment'
 import {
   WagmiPerpsIdentityProvider,
@@ -155,6 +152,9 @@ export function PerpsAaProvider({
   >(() => {
     return async ({ ownerAddress, chainId, manifest, signal }) => {
       signal.throwIfAborted()
+      if (!isPerpsManifestForActiveDeployment(manifest)) {
+        throw new Error('Smart-account manifest does not match the active reviewed perps deployment')
+      }
       const nextRuntime = await getRuntime({
         ownerAddress,
         chainId,
@@ -164,7 +164,6 @@ export function PerpsAaProvider({
       if (
         nextRuntime.chainId !== chainId ||
         nextRuntime.chainId !== manifest.chainId ||
-        manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
         !isAddressEqual(nextRuntime.ownerAddress, ownerAddress) ||
         !isAddressEqual(
           nextRuntime.factoryAddress,
@@ -172,19 +171,6 @@ export function PerpsAaProvider({
         ) ||
         nextRuntime.accountVersion !== manifest.smartAccountVersion ||
         nextRuntime.accountIndex !== manifest.smartAccountIndex ||
-        !isAddressEqual(manifest.usdc, PERPS_ARBITRUM_SEPOLIA.usdc) ||
-        !isAddressEqual(
-          manifest.marginClearinghouse,
-          PERPS_ARBITRUM_SEPOLIA.marginClearinghouse
-        ) ||
-        !isAddressEqual(
-          manifest.cfdEngine,
-          PERPS_ARBITRUM_SEPOLIA.cfdEngine
-        ) ||
-        !isAddressEqual(
-          manifest.orderRouter,
-          PERPS_ARBITRUM_SEPOLIA.orderRouter
-        ) ||
         !isAddressEqual(
           nextRuntime.smartAccount.entryPoint,
           manifest.entryPoint

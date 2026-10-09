@@ -11,6 +11,8 @@ const AA_PROXY_PATHS = new Set([
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
 const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
+const FUNDING_PREFIX = '/api/perps/funding';
+const FUNDING_MAX_BODY_BYTES = 16 * 1024;
 const PERPS_AA_MANIFEST_PATH = '/perps-aa-manifest.json';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
 const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
@@ -622,9 +624,114 @@ async function fetchPublicResponse(
     : response;
 }
 
+function fundingError(status, code, message, headers = {}) {
+  return Response.json({ error: { code, message } }, {
+    status,
+    headers: { ...headers, 'Cache-Control': 'no-store' },
+  });
+}
+
+function fundingMethod(path) {
+  if (path === `${FUNDING_PREFIX}/config`) return 'GET';
+  if (path === `${FUNDING_PREFIX}/quotes` || path === `${FUNDING_PREFIX}/intents`) return 'POST';
+  // IDs are opaque, bounded URL-safe identifiers. No arbitrary backend path is
+  // reachable through this proxy, including encoded path separators.
+  if (/^\/api\/perps\/funding\/intents\/[A-Za-z0-9_-]{1,128}$/.test(path)) return 'GET';
+  if (/^\/api\/perps\/funding\/intents\/[A-Za-z0-9_-]{1,128}\/(?:source|retry)$/.test(path)) return 'POST';
+  return undefined;
+}
+
+async function fundingBody(request) {
+  const declaredLength = request.headers.get('Content-Length');
+  if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > FUNDING_MAX_BODY_BYTES)) {
+    return undefined;
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > FUNDING_MAX_BODY_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+async function fetchFunding(request, url, env) {
+  // Funding is a separate production deployment. In particular, BACKEND_URL
+  // and the Perps Sepolia backend must never enable a real-token route.
+  if (!env.PERPS_FUNDING_BACKEND_URL) {
+    return fundingError(503, 'FUNDING_DISABLED', 'Bridge funding is not configured.');
+  }
+  const method = fundingMethod(url.pathname);
+  if (!method) return fundingError(404, 'FUNDING_ROUTE_NOT_FOUND', 'Unknown funding endpoint.');
+  if (request.method !== method) {
+    return fundingError(405, 'FUNDING_METHOD_NOT_ALLOWED', 'Unsupported funding method.', { Allow: method });
+  }
+  if (url.search !== '') return fundingError(400, 'FUNDING_QUERY_NOT_ALLOWED', 'Funding endpoints do not accept query parameters.');
+  let body;
+  if (method === 'POST') {
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type') ?? '')) {
+      return fundingError(415, 'FUNDING_JSON_REQUIRED', 'Funding requests must use application/json.');
+    }
+    if (request.headers.has('Content-Encoding')) {
+      return fundingError(415, 'FUNDING_ENCODING_NOT_ALLOWED', 'Encoded funding request bodies are unsupported.');
+    }
+    body = await fundingBody(request);
+    if (body === undefined) return fundingError(413, 'FUNDING_BODY_TOO_LARGE', 'Funding request exceeds 16 KiB.');
+  }
+
+  const backendUrl = new URL(url.pathname, env.PERPS_FUNDING_BACKEND_URL);
+  const headers = new Headers(request.headers);
+  for (const header of [AA_PROXY_AUTH_HEADER, FAUCET_PROXY_AUTH_HEADER, 'X-Plether-AA-Recovery', 'X-Plether-AA-Preparation-Recovery']) {
+    headers.delete(header);
+  }
+  headers.set('Host', backendUrl.hostname);
+  headers.delete('Origin');
+  headers.delete('Content-Length');
+  headers.delete('If-None-Match');
+  headers.delete('If-Modified-Since');
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Pragma', 'no-cache');
+  const response = await fetch(backendUrl, {
+    method, headers, body,
+    cache: 'no-store',
+    // Never replay user credentials to a provider or redirected host.
+    redirect: 'manual',
+  });
+  const privateResponse = noStoreResponse(response);
+  privateResponse.headers.set('CDN-Cache-Control', 'no-store');
+  privateResponse.headers.set('Cloudflare-CDN-Cache-Control', 'no-store');
+  privateResponse.headers.delete('ETag');
+  privateResponse.headers.delete('Last-Modified');
+  for (const header of [AA_PROXY_AUTH_HEADER, FAUCET_PROXY_AUTH_HEADER, 'X-Plether-AA-Recovery', 'X-Plether-AA-Preparation-Recovery']) {
+    privateResponse.headers.delete(header);
+  }
+  return privateResponse;
+}
+
 const requestHandler = {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    if (url.pathname === FUNDING_PREFIX || url.pathname.startsWith(`${FUNDING_PREFIX}/`)) {
+      return fetchFunding(request, url, env);
+    }
 
     for (const [prefix, envKey] of Object.entries(ROUTES)) {
       if (url.pathname.startsWith(prefix) || url.pathname === prefix.slice(0, -1)) {

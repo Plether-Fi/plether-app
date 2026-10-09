@@ -3,6 +3,7 @@ module Plether.AA.PreparationRecovery
   , PreparationClientRecovery (..), selectPreparationClient
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Monad (unless)
 import Crypto.Hash (Digest, SHA256, hash)
 import Crypto.Random (getRandomBytes)
@@ -22,11 +23,11 @@ parseRecoveryRequest :: Text -> [Text] -> [Value] -> Either Legacy.ProxyFailure 
 parseRecoveryRequest paymaster extra [Object fields] = do
   unless (all (\key -> K.toText key `elem` (["version","chainId","sender","preparationId"] <> extra)) $ KM.keys fields) $
     Left $ Legacy.invalidParams "Unknown recovery field"
-  unless (KM.lookup "version" fields == Just (Number 1) && KM.lookup "chainId" fields == Just (String "0x66eee")) $
+  unless (KM.lookup "version" fields == Just (Number 1) && KM.lookup "chainId" fields == Just (String Manifest.releaseChainIdHex)) $
     Left $ Legacy.invalidParams "Unsupported recovery version or chain"
   sender <- requiredText "sender" 42 fields >>= canonicalHex 20
   identifier <- requiredText "preparationId" 66 fields >>= canonicalHex 32
-  pure (Scope 421614 (T.toLower paymaster) sender identifier, fields)
+  pure (Scope Manifest.releaseChainId (T.toLower paymaster) sender identifier, fields)
  where
   canonicalHex bytes value
     | T.length value == 2+bytes*2 && T.take 2 value == "0x" && T.all (`elem` (['0'..'9'] <> ['a'..'f'])) (T.drop 2 value) = Right value

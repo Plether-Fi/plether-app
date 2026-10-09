@@ -28,7 +28,7 @@ import {
   PERPS_PUBLIC_LENS_ABI,
   PERPS_POSITION_PROTECTION_BOOK_ABI,
 } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_CONTRACTS, PERPS_CHAIN_ID, isPerpsManifestForActiveDeployment } from '../contracts/perpsAddresses'
 import {
   preparePerpsOrderV2,
   PerpsOrderFundingShortfallError,
@@ -111,7 +111,7 @@ interface ExecuteOrderResult {
 }
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
-  Object.values(PERPS_ARBITRUM_SEPOLIA)
+  Object.values(PERPS_CONTRACTS)
     .map((address) => address.toLowerCase())
 )
 const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
@@ -151,7 +151,7 @@ function isPerpsDynamicContractQuery(queryKey: readonly unknown[]): boolean {
   }
   if (
     queryParameters.chainId !== undefined &&
-    queryParameters.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+    queryParameters.chainId !== PERPS_CHAIN_ID
   ) {
     return false
   }
@@ -415,18 +415,18 @@ async function describeCommitFailure({
   try {
     const [pendingOrders, maxPendingOrders, accountView] = await Promise.all([
       client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getPendingOrders',
         args: [address],
       }),
       client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        address: PERPS_CONTRACTS.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'maxPendingOrders',
       }),
       client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getTraderAccount',
         args: [address],
@@ -447,7 +447,7 @@ async function describeCommitFailure({
     if (!isClose) {
       const latestBlock = await client.getBlock({ blockTag: 'latest' })
       const openRevertCode = await client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+        address: PERPS_CONTRACTS.cfdEngineLens,
         abi: PERPS_CFD_ENGINE_LENS_ABI,
         functionName: 'previewOpenRevertCode',
         args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
@@ -459,7 +459,7 @@ async function describeCommitFailure({
       }
     } else {
       const closePreview = await client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+        address: PERPS_CONTRACTS.cfdEngineLens,
         abi: PERPS_CFD_ENGINE_LENS_ABI,
         functionName: 'previewClose',
         args: [address, sizeDelta, oraclePrice],
@@ -478,7 +478,7 @@ async function describeCommitFailure({
   try {
     await client.simulateContract({
       account: address,
-      address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      address: PERPS_CONTRACTS.orderRouter,
       abi: PERPS_ORDER_ROUTER_ABI,
       functionName: 'commitOrder',
       args,
@@ -499,8 +499,8 @@ export function usePerpsTrading() {
   const identity = usePerpsIdentity()
   const address = identity.accountAddress
   const aaRuntime = usePerpsAaRuntime()
-  const { data: walletClient } = useWalletClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
-  const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+  const { data: walletClient } = useWalletClient({ chainId: PERPS_CHAIN_ID })
+  const publicClient = usePublicClient({ chainId: PERPS_CHAIN_ID })
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync } = useWriteContract()
   const queryClient = useQueryClient()
@@ -516,7 +516,7 @@ export function usePerpsTrading() {
       throw new SponsoredPreflightError({
         reason: 'MANIFEST_NOT_CONFIGURED',
         message:
-          'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.',
+          'Perps actions require gas sponsorship. Direct owner-wallet transactions are disabled.',
       })
     }
     if (identity.status !== 'ready' || !identity.accountAddress || !identity.ownerAddress) {
@@ -534,16 +534,7 @@ export function usePerpsTrading() {
         message: 'The reviewed gas-sponsorship manifest is unavailable.',
       })
     }
-    if (
-      identity.manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
-      !isAddressEqual(identity.manifest.usdc, PERPS_ARBITRUM_SEPOLIA.usdc) ||
-      !isAddressEqual(
-        identity.manifest.marginClearinghouse,
-        PERPS_ARBITRUM_SEPOLIA.marginClearinghouse
-      ) ||
-      !isAddressEqual(identity.manifest.cfdEngine, PERPS_ARBITRUM_SEPOLIA.cfdEngine) ||
-      !isAddressEqual(identity.manifest.orderRouter, PERPS_ARBITRUM_SEPOLIA.orderRouter)
-    ) {
+    if (identity.chainId !== PERPS_CHAIN_ID || !isPerpsManifestForActiveDeployment(identity.manifest)) {
       throw new SponsoredPreflightError({
         reason: 'MANIFEST_MISMATCH',
         message:
@@ -562,6 +553,21 @@ export function usePerpsTrading() {
         reason: 'RUNTIME_UNAVAILABLE',
         message:
           'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.',
+      })
+    }
+
+    if (
+      aaRuntime.chainId !== PERPS_CHAIN_ID ||
+      !isAddressEqual(aaRuntime.ownerAddress, identity.ownerAddress) ||
+      !isAddressEqual(aaRuntime.factoryAddress, identity.manifest.smartAccountFactory) ||
+      aaRuntime.accountVersion !== identity.manifest.smartAccountVersion ||
+      aaRuntime.accountIndex !== identity.manifest.smartAccountIndex ||
+      !isAddressEqual(aaRuntime.smartAccount.entryPoint, identity.manifest.entryPoint) ||
+      !isAddressEqual(aaRuntime.smartAccount.accountAddress, identity.accountAddress)
+    ) {
+      throw new SponsoredPreflightError({
+        reason: 'ACCOUNT_NOT_TRUSTED',
+        message: 'The smart-account wallet adapter does not match the reviewed Trading Account. Your action was not sent.',
       })
     }
 
@@ -590,7 +596,7 @@ export function usePerpsTrading() {
       const client = requireClient(publicClient)
       const hash = await writeContractAsync({
         account: sponsored.ownerAddress,
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        chainId: PERPS_CHAIN_ID,
         address: sponsored.manifest.usdc,
         abi: ERC20_ABI,
         functionName: 'transfer',
@@ -839,7 +845,7 @@ export function usePerpsTrading() {
       const sponsored = requireSponsoredExecution()
       const activeOperation = useSponsoredOperationStore
         .getState()
-        .getActiveOperation(sponsored.accountAddress)
+        .getActiveOperation(sponsored.accountAddress, DEFAULT_SPONSORED_OPERATION_LANE, PERPS_CHAIN_ID)
       if (activeOperation?.userOperationHash) {
         throw new Error(activeOperation.includedSuccess === false
           ? 'The previous order failed onchain. Waiting for safe confirmation before reviewing a fresh order.'
@@ -902,7 +908,7 @@ export function usePerpsTrading() {
         marginUsdc,
         oraclePrice,
         isClose,
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        chainId: PERPS_CHAIN_ID,
       })
       if (!address) {
         throw new Error('Confirm the Plether Trading Account before committing an order')
@@ -936,6 +942,10 @@ export function usePerpsTrading() {
       diagnosticClient = client
       debugPerpsCommit('client-ready')
       const sponsored = requireSponsoredExecution()
+      const assisted = preparedOrder.sponsoredClose
+      if (assisted && sponsored.manifest.chainId !== 421614) {
+        throw new Error('Close assistance is only available on Arbitrum Sepolia. Review this close again.')
+      }
       if (
         sponsored.manifest.version !== preparedOrder.manifestVersion ||
         !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
@@ -1010,7 +1020,6 @@ export function usePerpsTrading() {
         isClose,
       })
 
-      const assisted = preparedOrder.sponsoredClose
       const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
         : protection ? buildProtectedOpenAction({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV2Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
@@ -1202,7 +1211,7 @@ export function usePerpsTrading() {
     ) {
       return
     }
-    const active = useSponsoredOperationStore.getState().getActiveOperation(identity.accountAddress)
+    const active = useSponsoredOperationStore.getState().getActiveOperation(identity.accountAddress, DEFAULT_SPONSORED_OPERATION_LANE, PERPS_CHAIN_ID)
     if (active?.nativePreparation) return
     clearDepositAuthorization({
       chainId: identity.manifest.chainId,

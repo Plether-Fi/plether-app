@@ -39,15 +39,16 @@ function bindingClient(override?: { functionName: string; value: Address }) {
     return shouldOverride ? override!.value : bindings[functionName]
   })
   const getBlock = vi.fn(async () => block)
-  const client = { getBlock, readContract } as unknown as PublicClient
-  return { client, getBlock, readContract, releaseForwardBinding }
+  const getChainId = vi.fn(async () => manifest.chainId)
+  const client = { getBlock, readContract, getChainId } as unknown as PublicClient
+  return { client, getBlock, readContract, getChainId, releaseForwardBinding }
 }
 
 describe('verifyPerpsV2DeploymentBindings', () => {
   it('checks the reverse protection binding in parallel at the same block and returns that snapshot', async () => {
     const { client, getBlock, readContract, releaseForwardBinding } = bindingClient()
     const verification = verifyPerpsV2DeploymentBindings(client, manifest)
-    await Promise.resolve()
+    await vi.waitFor(() => expect(readContract).toHaveBeenCalledTimes(14))
 
     expect(readContract).toHaveBeenCalledWith(expect.objectContaining({
       address: manifest.positionProtectionBook,
@@ -82,4 +83,19 @@ describe('verifyPerpsV2DeploymentBindings', () => {
         : 'Router position-protection Book binding mismatch')
     }
   )
+  it('rejects a mismatched manifest before issuing graph reads', async () => {
+    const { client, getBlock, readContract } = bindingClient()
+    await expect(verifyPerpsV2DeploymentBindings(client, { ...manifest, chainId: 42161 }))
+      .rejects.toThrow('manifest does not match')
+    expect(getBlock).not.toHaveBeenCalled()
+    expect(readContract).not.toHaveBeenCalled()
+  })
+
+  it('rejects a mismatched RPC chain before issuing graph reads', async () => {
+    const { client, getChainId, readContract } = bindingClient()
+    getChainId.mockResolvedValueOnce(42161)
+    await expect(verifyPerpsV2DeploymentBindings(client, manifest)).rejects.toThrow('RPC chain')
+    expect(readContract).not.toHaveBeenCalled()
+  })
+
 })

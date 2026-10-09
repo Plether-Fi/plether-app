@@ -3,6 +3,7 @@ module Main (main) where
 import qualified Data.Text as T
 import Plether.Keeper.BroadcastSpec (broadcastSpec)
 import Plether.Keeper.ReliabilitySpec (reliabilitySpec)
+import Plether.Database.AaPreparationRecoveryChainSpec (preparationRecoveryChainSpec)
 import Plether.DatabaseDiagnosticsSpec (databaseDiagnosticsSpec)
 import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
 import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
@@ -10,6 +11,8 @@ import Plether.Keeper.LiquidationMonitoringSpec (liquidationMonitoringSpec)
 import Plether.Keeper.PythCachePairSpec (pythCachePairSpec)
 import Plether.Keeper.LpSettlementDatabaseSpec (lpSettlementDatabaseSpec)
 import Plether.Keeper.LpSettlementWorkerSpec (lpSettlementWorkerSpec)
+import Plether.Perps.Funding.WorkerSpec (fundingWorkerSpec)
+import Plether.Perps.Funding.StoreSpec (fundingStoreSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
 import Plether.Perps.ProtectionExecutionSpec (protectionExecutionSpec)
@@ -26,6 +29,9 @@ main = do
   case databaseUrl of
     Just value ->
       hspec $ do
+        preparationRecoveryChainSpec $ T.pack value
+        fundingStoreSpec $ T.pack value
+        fundingWorkerSpec $ T.pack value
         broadcastSpec $ T.pack value
         reliabilitySpec $ T.pack value
         databaseDiagnosticsSpec $ T.pack value

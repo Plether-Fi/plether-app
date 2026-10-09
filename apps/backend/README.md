@@ -522,12 +522,13 @@ Local URLs:
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
-| `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
+| `PERPS_RPC_URL` | Keeper/faucet | - | RPC endpoint for the configured perps release; AA checks its chain against the compiled artifact |
 | `RPC_AUTH_TOKEN` | No | - | Optional bearer token for `RPC_URL`; keeps provider credentials out of endpoint URLs |
 | `PERPS_RPC_AUTH_TOKEN` | No | - | Optional bearer token for `PERPS_RPC_URL`; intentionally separate from `RPC_AUTH_TOKEN` |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
-| `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `PERPS_CHAIN_ID` | No | Compiled release (`421614` by default) | Positive canonical decimal chain ID; managed/native AA require an exact match with the compiled release |
+| `PLETHER_PERPS_RELEASE_MANIFEST` | Build only | Shipped Arbitrum Sepolia artifact | Complete reviewed release JSON path read during compilation; changing it requires a clean rebuild and has no runtime effect |
 | `VAULT_HISTORY_HOUSE_POOL_ADDRESS` | No | Arbitrum Sepolia HousePool deployment | HousePool identity used to isolate vault-performance snapshots across deployments |
 | `VAULT_HISTORY_SENIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Senior Vault deployment | Senior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
@@ -621,8 +622,14 @@ cabal run plether-provider-preflight
 
 ### Native self-hosted account abstraction
 
-The native Alto + Plether-paymaster path is disabled by default and is
-currently valid only for the reviewed Arbitrum Sepolia (`421614`) canary. It
+The native Alto + Plether-paymaster path is disabled by default and binds to
+the release compiled into the backend, which defaults to Arbitrum Sepolia
+(`421614`). An Arbitrum One (`42161`) binary requires a complete reviewed
+artifact selected with build-time `PLETHER_PERPS_RELEASE_MANIFEST`, a clean
+rebuild, and matching runtime configuration. See
+[backend release selection](../../config/perps/README.md#backend-release-selection)
+for artifact requirements and the remaining Sepolia-only operational gates.
+Changing `PERPS_CHAIN_ID` at runtime cannot switch signing or recovery domains. It
 becomes configured only when all of `AA_ALTO_RPC_URL`,
 `AA_RECONCILER_SECONDARY_RPC_URL`, `AA_PAYMASTER_ADDRESS`,
 `AA_PAYMASTER_CODE_HASH`, `AA_PAYMASTER_POLICY_ID`,
@@ -989,3 +996,59 @@ account count, and a heartbeat. Operations alarms fire at 300 seconds unresolved
 risk, 60 seconds without confirmed progress, 60 seconds without classification,
 and two missing one-minute heartbeat periods. The watchdog uses an additional
 pool connection, does not submit transactions, and is disabled for dry runs.
+
+### Bridge funding
+
+The `/api/perps/funding` routes and `plether-funding-worker` implement Ethereum
+USDC/USDT funding into a reviewed Arbitrum USDC clearinghouse through immutable
+per-intent receivers. They are disabled by default. This feature does not deploy
+contracts or enable mainnet trading/account sponsorship.
+
+Configure `PERPS_FUNDING_DEPLOYMENT_JSON` with the exact release's
+`destinationChainId`, `releaseId`, `clearinghouse`, `token`, `receiverFactory`,
+`factoryCodeHash`, `clearinghouseCodeHash`, `confirmations`, and `startBlock`.
+Both the API and worker verify destination chain, runtime hashes, and contract
+bindings. The API also requires the funding release to match
+`PERPS_CHAIN_ID`, `PERPS_MARGIN_CLEARINGHOUSE`, and `PERPS_USDC`. The Across
+adapter additionally verifies its Arbitrum handler/emitter runtime hashes before
+issuing a quote. Source routes are limited to Ethereum
+USDC/USDT and native Arbitrum USDC; unknown calldata shapes or failed source
+simulations are rejected.
+
+The API requires `ACROSS_API_KEY`, `ACROSS_INTEGRATOR_ID` (a two-byte hex tag),
+`PERPS_FUNDING_SOURCE_RPC_URL` (HTTPS Ethereum RPC), optional
+`PERPS_FUNDING_SOURCE_RPC_AUTH_TOKEN`, PostgreSQL, and explicit
+`PERPS_FUNDING_ENABLED=true`. New quotes require a recent ready executor
+heartbeat. Existing intent lookup, idempotent creation replay, source tracking,
+and recovery remain available when new funding is disabled.
+
+Run `cabal run plether-funding-worker -- --loop` with the same database and
+release configuration. The default observer mode never signs or rebroadcasts.
+Execution additionally requires `PERPS_FUNDING_WORKER_EXECUTE=true`, a dedicated
+`PERPS_FUNDING_KMS_KEY_ID`, and `PERPS_FUNDING_SIGNER_ADDRESS`. The signer must be
+funded with Arbitrum ETH and used only by this worker lane. Readiness requires a
+successful KMS Sign/recovery probe and enough ETH for
+`PERPS_FUNDING_MAX_TX_COST_WEI` (default 0.001 ETH). The worker persists exact signed
+bytes before broadcast, verifies their signer and immutable call bindings on
+restart, and never allocates another signer transaction while an uncertain one
+remains. Rejected broadcasts, uncertain RPC responses, and unexpected returned
+transaction hashes withdraw executor readiness until reconciliation succeeds.
+A permanently unresolved/replaced nonce requires operator investigation;
+no automatic nonce cancellation or fee replacement is implemented.
+
+The database schema is initialized by the API/worker, or can be applied using
+`config/migrations/perps-funding-v1.sql`. Receiver deposits are credited only from
+canonical, sufficiently confirmed clearinghouse `Deposit`/`DepositFor` event
+pairs attributed to that receiver and beneficiary. Provider `filled`/`refunded`
+responses never establish trading credit. `/intents/:id/source` accepts a hash
+only after verifying its actual Ethereum sender, target, calldata, and value
+against the reviewed quote. Source revert evidence includes a canonical block
+hash and at least two confirmations. Destination reorgs retract confirmation and
+resume reconciliation.
+
+The worker combines canonical partial credits with the receiver balance when
+checking the route minimum. After fulfillment it automatically flushes later
+arrivals of at least one USDC; smaller dust can still be flushed permissionlessly
+or recovered by the beneficiary. Every receipt/intent remains bound to its
+original release. Keep a reconciler available for older releases until their
+pending transactions and deposits have been resolved.

@@ -213,14 +213,14 @@ export function useVaultRequests({
   const readController = controller ?? zeroAddress
   const contracts = useMemo(() => [
     ...requestIds.map((requestId) => ({
-      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getLpRequestState' as const,
       args: [isSenior, requestId, readController] as const,
     })),
     ...requestIds.map((requestId) => ({
-      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID as 421614,
+      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
       abi: PERPS_PUBLIC_LENS_ABI,
       functionName: 'getLpDepositCooldownState' as const,

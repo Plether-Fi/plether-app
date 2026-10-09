@@ -43,6 +43,16 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "perps runtime chain configuration" $ do
+    it "rejects malformed explicit chain IDs instead of falling back to the compiled release" $ do
+      mapM_ (\raw -> withEnvironmentVariables
+        [("RPC_URL", Just "https://rpc.example"), ("PERPS_CHAIN_ID", Just raw)] $ do
+          result <- loadConfig
+          case result of
+            Left err -> err `shouldContain` "PERPS_CHAIN_ID"
+            Right _ -> expectationFailure "malformed perps chain was accepted")
+        -- System.Environment.setEnv treats the empty string as unset.
+        ["garbage", "0", "-1", "042161", "42161.0"]
   describe "keeper polling configuration" $ do
     it "accepts an idle cadence at least as long as the active cadence" $ do
       validateKeeperPollSeconds "1" "5" `shouldBe` Right (1, 5)

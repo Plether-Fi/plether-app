@@ -1,5 +1,5 @@
 import { concatHex, numberToHex, type Hex } from 'viem'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PLETHER_PAYMASTER_POLICY_ID,
   PLETHER_PAYMASTER_POST_OP_GAS_LIMIT,
@@ -8,10 +8,19 @@ import {
   PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
   PIMLICO_SINGLETON_PAYMASTER_V8,
   knownSponsorshipValidUntil,
+  manifestSponsorshipValidUntil,
   pletherSponsorshipValidUntil,
   pimlicoSponsorshipValidUntil,
 } from '../paymasterValidity'
 import type { ManagedUserOperation } from '../runtimeContext'
+import { PERPS_ENTRY_POINT_V08, type PerpsAaDeploymentManifestV2 } from '../manifest'
+
+const activeDeployment = vi.hoisted(() => ({ chainId: 421614 }))
+vi.mock('../../contracts/perpsAddresses', () => ({
+  get PERPS_CHAIN_ID() { return activeDeployment.chainId },
+}))
+
+beforeEach(() => { activeDeployment.chainId = 421614 })
 
 const PLETHER_PAYMASTER =
   '0x1234567890123456789012345678901234567890'
@@ -182,4 +191,33 @@ describe('pletherSponsorshipValidUntil', () => {
       )).toBe(3_000n)
     }
   )
+})
+
+describe('manifestSponsorshipValidUntil', () => {
+  it.each([42161, 421614])('binds the reviewed native envelope to active chain %s', chainId => {
+    activeDeployment.chainId = chainId
+    const manifest = {
+      chainId,
+      entryPoint: PERPS_ENTRY_POINT_V08,
+      paymasterAddress: PLETHER_PAYMASTER,
+      paymasterVersion: 'plether-verifying-v1',
+      bundlerRpcUrl: '/api/perps/v1/aa/rpc',
+      paymasterRpcUrl: '/api/perps/v1/aa/rpc',
+    } as PerpsAaDeploymentManifestV2
+    expect(manifestSponsorshipValidUntil(manifest, pletherOperation())).toBe(1_784_869_349n)
+    for (const otherChainId of [chainId === 42161 ? 421614 : 42161, 1]) {
+      expect(manifestSponsorshipValidUntil({ ...manifest, chainId: otherChainId } as PerpsAaDeploymentManifestV2,
+        pletherOperation())).toBeUndefined()
+    }
+    expect(manifestSponsorshipValidUntil({ ...manifest, entryPoint: PLETHER_PAYMASTER },
+      pletherOperation())).toBeUndefined()
+    expect(manifestSponsorshipValidUntil(manifest, {
+      ...pletherOperation(),
+      paymasterData: pletherPaymasterData(1_784_869_349n, { policyId: `0x${'11'.repeat(32)}` }),
+    })).toBeUndefined()
+    expect(manifestSponsorshipValidUntil(manifest, {
+      ...pletherOperation(),
+      paymasterVerificationGasLimit: PLETHER_PAYMASTER_VERIFICATION_GAS_LIMIT + 1n,
+    })).toBeUndefined()
+  })
 })

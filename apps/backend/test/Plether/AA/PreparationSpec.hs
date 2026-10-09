@@ -28,12 +28,13 @@ import Network.HTTP.Client (newManager, defaultManagerSettings)
 import System.Timeout (timeout)
 import Numeric (showHex)
 import Plether.Ethereum.Abi (encodeCall, encodeAddress, encodeUint256)
+import qualified Plether.Perps.Manifest as Manifest
 import Test.Hspec
 
 spec :: Spec
 spec = do
   describe "read-only preparation locators" $ do
-    let locator = KM.fromList [("version",Number 1),("chainId",String "0x66eee"),
+    let locator = KM.fromList [("version",Number 1),("chainId",String Manifest.releaseChainIdHex),
           ("sender",String "0x2222222222222222222222222222222222222222"),
           ("preparationId",String $ "0x" <> T.replicate 64 "a")]
     it "requires a versioned account locator and exactly one original identifier" $ do
@@ -42,6 +43,10 @@ spec = do
         KM.insert "version" (Number 2) locator, KM.insert "chainId" (String "0x1") locator,
         KM.insert "signature" (String "0x") locator] $ \invalid ->
           parsePreparationLocator [Object invalid] `shouldSatisfy` isLeft
+    it "rejects preparation and recovery locators from the other Arbitrum chain" $ do
+      let otherChain = if Manifest.releaseChainId == 42161 then "0x66eee" else "0xa4b1"
+      parsePreparationLocator [Object $ KM.insert "chainId" (String otherChain) locator] `shouldSatisfy` isLeft
+      parsePreparationIntent [Object $ KM.insert "chainId" (String otherChain) fields] `shouldSatisfy` isLeft
     it "keeps the original intent hash for resume-only delivery and rejects malformed switches" $ do
       case (parsePreparationIntent [Object fields], parsePreparationIntent [Object $ KM.insert "resumeOnly" (Bool True) fields]) of
         (Right initial, Right resumed) -> do
@@ -259,7 +264,7 @@ spec = do
                 let identifier = maybe Null id $ KM.lookup "id" fields'
                     method = KM.lookup "method" fields'
                 value <- case method of
-                  Just (String "eth_chainId") -> pure $ String "0x66eee"
+                  Just (String "eth_chainId") -> pure $ String Manifest.releaseChainIdHex
                   Just (String "eth_getBlockByNumber") -> pure $ object
                     ["number" .= ("0x1" :: T.Text),"hash" .= ("0x" <> T.replicate 64 "a"),
                      "timestamp" .= ("0x" <> T.pack (showHex now "")),"baseFeePerGas" .= ("0x1" :: T.Text)]
@@ -336,7 +341,7 @@ spec = do
   callData = encodeCall "execute(address,uint256,bytes)"
     [encodeAddress address, encodeUint256 0, encodeUint256 96, encodeUint256 $ fromIntegral $ BS.length payload, payload <> BS.replicate 28 0]
   fields = case object ["version" .= (1::Int),"preparationId" .= ("0x" <> T.replicate 64 "a"),
-    "chainId" .= ("0x66eee" :: T.Text), "entryPoint" .= ("0x4337084d9e255ff0702461cf8895ce9e3b5ff108" :: T.Text),
+    "chainId" .= Manifest.releaseChainIdHex, "entryPoint" .= ("0x4337084d9e255ff0702461cf8895ce9e3b5ff108" :: T.Text),
     "sender" .= address,"callData" .= hex callData] of Object value -> value; _ -> error "object"
   isRight (Right _) = True
   isRight _ = False

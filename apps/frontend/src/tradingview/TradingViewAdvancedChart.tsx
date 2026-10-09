@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import perpsRelease from '../../../../config/perps/arbitrum-sepolia-v2.json'
+import { PERPS_ACTIVE_DEPLOYMENT, PERPS_DEFAULT_SEPOLIA_DEPLOYMENT } from '../contracts/perpsAddresses'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys, type PerpsCandleIntervalSeconds } from '../api'
 import { Alert } from '../components/ui'
@@ -551,7 +552,9 @@ export function TradingViewAdvancedChart({
   const volumeUnavailable =
     volumeCoverageByInterval[activeCandleInterval] === 'unavailable'
   const releaseStart = perpsRelease.integration.volumeHistoryStartTimestamp
-  const freshDailyVolume = activeCandleInterval === 86400 &&
+  // This historical indexing timestamp describes only the bundled testnet release.
+  const freshDailyVolume = PERPS_ACTIVE_DEPLOYMENT === PERPS_DEFAULT_SEPOLIA_DEPLOYMENT &&
+    activeCandleInterval === 86400 &&
     nowSeconds >= releaseStart &&
     nowSeconds < Math.ceil(releaseStart / 86400) * 86400 + 86400
 

@@ -3,6 +3,8 @@ module Plether.Ethereum.Transaction
   , SignedTransaction (..)
   , deriveAddress
   , signTransaction
+  , signTransactionWithDigestSigner
+  , decodeSignedTransaction
   , rawTransactionHash
   , applyBpsBuffer
   , sameNonceReplacementFees
@@ -159,6 +161,97 @@ signTransaction privateKeyText tx = do
             , signedTransactionHash = txHash
             , signedFrom = from
           }
+
+-- | Sign with an attested external signer (for example AWS KMS). The callback
+-- returns Ethereum r/s/v bytes; recover again against the configured address
+-- before serializing, so a signer cannot silently change transaction identity.
+signTransactionWithDigestSigner
+  :: Text -> (ByteString -> IO (Either Text ByteString)) -> Tx1559
+  -> IO (Either Text SignedTransaction)
+signTransactionWithDigestSigner expectedAddress signDigest tx = do
+  let digest = keccak256 $ BS.cons 0x02 $ unsignedPayload tx
+  result <- signDigest digest
+  case result of
+    Left err -> pure $ Left err
+    Right signature
+      | BS.length signature /= 65 -> pure $ Left "Invalid transaction signature length"
+      | otherwise -> do
+          let compact = BS.take 64 signature
+              v = fromIntegral (BS.last signature) :: Int
+              parity = if v >= 27 then v - 27 else v
+              r = bytesToInteger $ BS.take 32 compact
+              s = bytesToInteger $ BS.drop 32 compact
+              order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
+          if parity < 0 || parity > 1 || r <= 0 || r >= order || s <= 0 || s > order `div` 2
+            then pure $ Left "Invalid canonical transaction signature"
+            else do
+              recovered <- recoverSignerAddress digest compact parity
+              pure $ case recovered of
+                Right address | T.toLower address == T.toLower expectedAddress ->
+                  let raw = BS.cons 0x02 $ signedPayload tx (fromIntegral parity) r s
+                   in Right $ SignedTransaction raw (rawTransactionHash raw) (T.toLower address)
+                _ -> Left "Transaction signature does not match attested signer"
+
+-- | Decode the restricted EIP-1559 envelope emitted by this module and recover
+-- its signer. Re-encoding rejects noncanonical RLP and integer encodings.
+decodeSignedTransaction :: ByteString -> IO (Either Text (Tx1559, Text))
+decodeSignedTransaction raw = case decodeEnvelope of
+  Left err -> pure $ Left err
+  Right (tx, parity, r, s) -> do
+    let digest = keccak256 $ BS.cons 0x02 $ unsignedPayload tx
+        fixed value = BS.pack [fromIntegral $ (value `div` (256 ^ i)) `mod` 256 | i <- [31,30..0 :: Int]]
+    signer <- recoverSignerAddress digest (fixed r <> fixed s) (fromIntegral parity)
+    pure $ (tx,) <$> signer
+  where
+    decodeEnvelope = do
+      if BS.null raw || BS.length raw > 2048 || BS.head raw /= 2 then Left "Invalid persisted transaction envelope" else Right ()
+      (decoded, trailing) <- parseRlp 0 $ BS.tail raw
+      if not (BS.null trailing) then Left "Trailing transaction data" else Right ()
+      case decoded of
+        RlpList [RlpBytes chain,RlpBytes nonce,RlpBytes priority,RlpBytes fee,RlpBytes gas,RlpBytes target,RlpBytes value,RlpBytes calldata,RlpList [],RlpBytes parityBytes,RlpBytes rBytes,RlpBytes sBytes] -> do
+          let parity = bytesToInteger parityBytes
+              r = bytesToInteger rBytes
+              s = bytesToInteger sBytes
+              order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
+              tx = Tx1559 (bytesToInteger chain) (bytesToInteger nonce) (bytesToInteger priority) (bytesToInteger fee)
+                (bytesToInteger gas) ("0x" <> TE.decodeUtf8 (B16.encode target)) (bytesToInteger value) calldata
+          if BS.length target /= 20 || parity > 1 || r <= 0 || r >= order || s <= 0 || s > order `div` 2
+            || any ((> 32) . BS.length) [chain,nonce,priority,fee,gas,value,parityBytes,rBytes,sBytes]
+            || BS.cons 0x02 (signedPayload tx parity r s) /= raw
+            then Left "Noncanonical persisted transaction" else Right (tx,parity,r,s)
+        _ -> Left "Unsupported persisted transaction envelope"
+    parseRlp depth bytes
+      | depth > 3 || BS.null bytes = Left "Invalid transaction RLP"
+      | otherwise =
+          let tag = fromIntegral $ BS.head bytes :: Int
+              rest = BS.tail bytes
+              sized count isList = do
+                if count > BS.length rest then Left "Truncated transaction RLP" else Right ()
+                let (payload, remaining) = BS.splitAt count rest
+                item <- if isList then RlpList <$> children (depth + 1) payload else Right $ RlpBytes payload
+                Right (item,remaining)
+              long offset isList = do
+                let sizeLength = tag - offset
+                if sizeLength > 2 || sizeLength > BS.length rest then Left "Invalid transaction RLP length" else Right ()
+                let count = fromIntegral $ bytesToInteger $ BS.take sizeLength rest
+                (value,remaining) <- parseSized depth isList count $ BS.drop sizeLength rest
+                Right (value,remaining)
+           in if tag < 128 then Right (RlpBytes $ BS.singleton $ BS.head bytes,rest)
+              else if tag <= 183 then sized (tag - 128) False
+              else if tag <= 191 then long 183 False
+              else if tag <= 247 then sized (tag - 192) True
+              else long 247 True
+    parseSized depth isList count bytes
+      | count > BS.length bytes = Left "Truncated transaction RLP"
+      | otherwise = do
+          let (payload,remaining) = BS.splitAt count bytes
+          item <- if isList then RlpList <$> children (depth + 1) payload else Right $ RlpBytes payload
+          Right (item,remaining)
+    children depth bytes
+      | BS.null bytes = Right []
+      | otherwise = do
+          (item,remaining) <- parseRlp depth bytes
+          (item:) <$> children depth remaining
 
 -- | Deterministic EIP-2718 transaction identifier for already-signed bytes.
 -- This is available before broadcast so callers can persist intent first and

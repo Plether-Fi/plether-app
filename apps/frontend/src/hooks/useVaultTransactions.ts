@@ -1,3 +1,4 @@
+import { PERPS_CHAIN } from '../contracts/perpsAddresses'
 import { useCallback } from 'react'
 import { type Address } from 'viem'
 import { getAccount } from '@wagmi/core'
@@ -36,7 +37,7 @@ export function useVaultTransactions({
       throw new Error('The connected wallet account changed. Restart the vault action.')
     }
     if (currentAccount.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID) {
-      throw new Error('Switch to Arbitrum Sepolia before submitting a vault transaction.')
+      throw new Error(`Switch to ${PERPS_CHAIN.name} before submitting a vault transaction.`)
     }
     return { address: currentAccount.address, publicClient }
   }, [config, publicClient])

@@ -1,7 +1,8 @@
+import { PERPS_CHAIN, PERPS_CHAIN_ID } from '../../contracts/perpsAddresses'
 import { Suspense } from 'react'
 import { lazyWithRetry as lazy } from '../../utils/lazyWithRetry'
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
-import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { arbitrum, arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { useLocation } from 'react-router-dom'
 import { anvil, openAppKit } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
@@ -9,7 +10,7 @@ import { useSwitchToArbitrumSepolia } from '../../hooks'
 
 const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperationActivity').then((module) => ({ default: module.SponsoredOperationHistoryButton })))
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrum.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
   'group inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-2 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] sm:gap-2 sm:px-4'
 const SWITCH_NETWORK_BUTTON_CLASS =
@@ -33,6 +34,8 @@ export function ConnectButton() {
         return 'Mainnet'
       case sepolia.id:
         return 'Sepolia'
+      case arbitrum.id:
+        return 'Arbitrum One'
       case arbitrumSepolia.id:
         return 'Arbitrum Sepolia'
       case anvil.id:
@@ -43,12 +46,12 @@ export function ConnectButton() {
   }
 
   const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
-  const isArbitrumSepolia = chainId === arbitrumSepolia.id
+  const isPerpsNetwork = chainId === PERPS_CHAIN_ID
   const isPerpsRoute = location.pathname === '/'
-  const isArbitrumSepoliaRoute = isPerpsRoute
+  const isPerpsNetworkRoute = isPerpsRoute
     || location.pathname === '/vaults'
     || location.pathname.startsWith('/vaults/')
-  const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
+  const shouldShowPerpsNetworkSwitch = isPerpsNetworkRoute && !isPerpsNetwork
 
   if (!isConnected) {
     return (
@@ -90,11 +93,11 @@ export function ConnectButton() {
         {shouldShowPerpsNetworkSwitch ? (
           <button
             type="button"
-            aria-label="Switch wallet network to Arbitrum Sepolia"
+            aria-label={`Switch wallet network to ${PERPS_CHAIN.name}`}
             onClick={() => { void switchToArbitrumSepolia() }}
             disabled={isSwitchingNetwork}
             className={SWITCH_NETWORK_BUTTON_CLASS}
-            title="Switch wallet network to Arbitrum Sepolia"
+            title={`Switch wallet network to ${PERPS_CHAIN.name}`}
           >
             {isSwitchingNetwork ? (
               <>

@@ -1,9 +1,10 @@
+import { PERPS_CHAIN } from '../../contracts/perpsAddresses'
 import { useChainId } from 'wagmi'
-import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { arbitrum, arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrum.id, arbitrumSepolia.id, anvil.id as number]
 
 export function WrongNetworkBanner() {
   const chainId = useChainId()
@@ -20,7 +21,7 @@ export function WrongNetworkBanner() {
           <span className="material-symbols-outlined text-brand-orange">warning</span>
           <div className="space-y-1">
             <p className="text-brand-orange text-sm">
-              Please connect to Ethereum Mainnet, Sepolia, or Arbitrum Sepolia to use Plether.
+              Please connect to Ethereum Mainnet, Arbitrum One, Sepolia, or Arbitrum Sepolia to use Plether.
             </p>
             {switchError ? (
               <p className="max-w-3xl text-xs leading-4 text-[#FFAB96]">
@@ -44,7 +45,7 @@ export function WrongNetworkBanner() {
           ) : (
             <>
               <span className="material-symbols-outlined text-lg">swap_horiz</span>
-              Switch to Arbitrum Sepolia
+              Switch to {PERPS_CHAIN.name}
             </>
           )}
         </button>
