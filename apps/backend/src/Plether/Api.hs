@@ -42,6 +42,7 @@ import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import Plether.Perps.Funding.Http (FundingHttpState, registerFundingRoutes)
 import Plether.Perps.Release
   ( perpsV2CalldataPolicy
   , perpsV2DeploymentBlock
@@ -171,8 +172,8 @@ instance FromJSON TestnetFaucetRequest where
         acceptsAsync = confirmationMode == Just (Aeson.String "async")
     pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> FundingHttpState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState fundingState = do
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -209,6 +210,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
               _ -> status status400 >> json (Aeson.object ["error" .= ("Invalid diagnostic" :: Text)])
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
+  registerFundingRoutes fundingState perpsClient mPool
 
   case mPool of
     Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager

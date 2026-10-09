@@ -23,7 +23,7 @@ const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as Hex
 const CONFIG_HASH = `0x${'34'.repeat(32)}` as Hex
 const REVIEWED_BLOCK_HASH = `0x${'56'.repeat(32)}` as Hex
-const ORDER_LIFECYCLE_BOOK = '0x1111111111111111111111111111111111111111' as Address
+const ORDER_LIFECYCLE_BOOK = PERPS_ARBITRUM_SEPOLIA.orderLifecycleBook
 
 const mocks = vi.hoisted(() => ({
   identityReady: false,
@@ -89,9 +89,9 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
     cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
     orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-    orderLifecycleBook: '0x1111111111111111111111111111111111111111',
+    orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
     positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
-    policyEvaluator: '0x2222222222222222222222222222222222222222',
+    policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:

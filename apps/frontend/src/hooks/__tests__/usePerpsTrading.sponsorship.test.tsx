@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PERPS_DEFAULT_SEPOLIA_DEPLOYMENT } from '../../contracts/perpsAddresses'
 import type { Address, Hex } from 'viem'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
@@ -10,6 +11,8 @@ const USER_OPERATION_HASH = `0x${'77'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 
 const mocks = vi.hoisted(() => ({
+  manifestOverrides: {} as Record<string, unknown>,
+  runtimeOverrides: {} as Record<string, unknown>,
   executeSponsoredPerpsAction: vi.fn(),
   trackSponsoredOperationPreflightFailure: vi.fn(),
   writeContractAsync: vi.fn(),
@@ -68,10 +71,10 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       status: 'ready',
       ownerAddress: '0x1111111111111111111111111111111111111111',
       accountAddress: '0x2222222222222222222222222222222222222222',
-      chainId: 421614,
+      chainId: Number(mocks.manifestOverrides.chainId ?? 421614),
       isAaManifestConfigured: true,
       sponsorshipEnabled: true,
-      manifest,
+      manifest: { ...manifest, ...mocks.manifestOverrides },
       identity: null,
       proposedIdentity: null,
       changedIdentityFields: [],
@@ -89,6 +92,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
         accountAddress: '0x2222222222222222222222222222222222222222',
         entryPoint: '0x3333333333333333333333333333333333333333',
       },
+      ...mocks.runtimeOverrides,
     }),
   }
 })
@@ -110,6 +114,8 @@ function wrapper({ children }: { children: ReactNode }) {
 describe('usePerpsTrading sponsorship route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.manifestOverrides = {}
+    mocks.runtimeOverrides = {}
     mocks.executeSponsoredPerpsAction.mockResolvedValue({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -119,6 +125,85 @@ describe('usePerpsTrading sponsorship route', () => {
       status: 'success',
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+    vi.resetModules()
+  })
+
+  it('uses the active mainnet release for funding and excludes Sepolia close assistance', async () => {
+    vi.stubEnv('VITE_PERPS_DEPLOYMENT_JSON', JSON.stringify({
+      ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT,
+      chainId: 42161,
+      closePreview: { ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT.closePreview, chainId: 42161 },
+    }))
+    mocks.manifestOverrides = { chainId: 42161 }
+    mocks.runtimeOverrides = { chainId: 42161 }
+    vi.resetModules()
+    const { usePerpsTrading: useActivePerpsTrading } = await import('../usePerpsTrading')
+    const { result } = renderHook(() => useActivePerpsTrading(), { wrapper })
+    await expect(result.current.fundTradingAccount(25_000_000n)).resolves.toBe(TRANSACTION_HASH)
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      chainId: 42161, address: PERPS_DEFAULT_SEPOLIA_DEPLOYMENT.contracts.usdc,
+      args: [ACCOUNT, 25_000_000n],
+    }))
+    const prepareOrder = vi.spyOn(await import('../../contracts/preparePerpsOrderV2'), 'preparePerpsOrderV2')
+      .mockResolvedValue({} as never)
+    const closeAssistance = vi.spyOn(await import('../../perps-aa/sponsoredClose'), 'loadCloseAssistanceConfig')
+    const close = { direction: 'short' as const, notionalUsdc: 100_000_000n, sizeDelta: 100n * 10n ** 18n,
+      marginUsdc: 0n, oraclePrice: 100_000_000n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 20_000 }
+    await result.current.prepareOrder(close)
+    expect(prepareOrder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ chainId: 42161 }),
+      expect.objectContaining({ closeAssistance: undefined }))
+    expect(closeAssistance).not.toHaveBeenCalled()
+    await expect(result.current.commitOrder({ ...close, preparedOrder: {
+      account: ACCOUNT, request: { side: 1, sizeDelta: close.sizeDelta, isClose: true, marginDelta: 0n },
+      sponsoredClose: { amountUsdc: 100_000n },
+    } as never })).rejects.toThrow('Close assistance is only available on Arbitrum Sepolia')
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it.each(['usdc', 'marginClearinghouse', 'cfdEngine', 'orderRouter', 'orderLifecycleBook', 'policyEvaluator', 'positionProtectionBook'])(
+    'rejects a mismatched %s before funding or requesting sponsorship', async key => {
+      mocks.manifestOverrides = { [key]: '0x9999999999999999999999999999999999999999' }
+      const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+      await expect(result.current.fundTradingAccount(25_000_000n)).rejects.toMatchObject({
+        cause: expect.objectContaining({ reason: 'MANIFEST_MISMATCH' }),
+      })
+      await expect(result.current.depositMargin(25_000_000n, 0n)).rejects.toMatchObject({
+        cause: expect.objectContaining({ reason: 'MANIFEST_MISMATCH' }),
+      })
+      expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+      expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    })
+
+  it('rejects a manifest on a different chain even when all contract addresses match', async () => {
+    mocks.manifestOverrides = { chainId: 42161 }
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.fundTradingAccount(25_000_000n)).rejects.toMatchObject({
+      cause: expect.objectContaining({ reason: 'MANIFEST_MISMATCH' }),
+    })
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { chainId: 42161 },
+    { ownerAddress: '0x9999999999999999999999999999999999999999' },
+    { factoryAddress: '0x9999999999999999999999999999999999999999' },
+    { accountVersion: 'unreviewed' },
+    { accountIndex: '1' },
+    { smartAccount: { accountAddress: '0x9999999999999999999999999999999999999999', entryPoint: '0x3333333333333333333333333333333333333333' } },
+    { smartAccount: { accountAddress: ACCOUNT, entryPoint: '0x9999999999999999999999999999999999999999' } },
+  ])('rejects stale runtime identity before any wallet funding write: %j', async runtimeOverrides => {
+    mocks.runtimeOverrides = runtimeOverrides
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current.fundTradingAccount(25_000_000n)).rejects.toMatchObject({
+      cause: expect.objectContaining({ reason: 'ACCOUNT_NOT_TRUSTED' }),
+    })
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
   it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {

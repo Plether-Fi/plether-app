@@ -1,3 +1,4 @@
+import { PERPS_CHAIN } from '../contracts/perpsAddresses'
 import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
 import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
 import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
@@ -528,7 +529,7 @@ function fallbackMessage(action: PerpsAction): string {
     case 'approve':
       return 'USDC approval failed. Check the wallet message and retry.'
     case 'fund':
-      return 'Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and Arbitrum Sepolia ETH for gas.'
+      return `Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and ${PERPS_CHAIN.name} ETH for gas.`
     case 'deposit':
       return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
     case 'withdraw':
@@ -629,7 +630,7 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
     return 'Gas price was below the current base fee. Retry; the app will request a higher gas fee.'
   }
   if (lower.includes('insufficient funds')) {
-    return 'Not enough ETH for gas on Arbitrum Sepolia.'
+    return `Not enough ETH for gas on ${PERPS_CHAIN.name}.`
   }
   if (
     lower.includes('could not fetch pyth update data from the backend') ||

@@ -1,3 +1,4 @@
+import { PERPS_CHAIN } from '../contracts/perpsAddresses'
 import {
   useEffect,
   useLayoutEffect,
@@ -2572,7 +2573,7 @@ export function OverviewTab({
             <DetailRow label="Asset" value="USDC" />
             <DetailRow label="Vault share symbol" value={<TokenLabel token={tranche.token} />} />
             <DetailRow label="Processing" value="Every hour" />
-            <DetailRow label="Network" value="Arbitrum Sepolia" />
+            <DetailRow label="Network" value={PERPS_CHAIN.name} />
             <DetailRow label="Deposits" value={depositMode} />
             <DetailRow label="Submission deadline" value="5 minutes before each hour" />
             <DetailRow
@@ -3623,7 +3624,7 @@ export function ActivityTab({
 
                     {isWrongNetwork ? (
                       <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onSwitchNetwork}>
-                        Switch to Arbitrum Sepolia
+                        Switch to {PERPS_CHAIN.name}
                       </Button>
                     ) : (
                       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
@@ -3797,7 +3798,7 @@ export function ActivityTab({
 
                     {isWrongNetwork ? (
                       <Button type="button" variant="secondary" className="shrink-0" onClick={onSwitchNetwork}>
-                        Switch to Arbitrum Sepolia
+                        Switch to {PERPS_CHAIN.name}
                       </Button>
                     ) : (
                       <div className="flex shrink-0 flex-wrap gap-3">
@@ -4773,7 +4774,7 @@ function VaultActionPanel({
     : isWrongNetwork
       ? isSwitchingNetwork
         ? 'Switching network...'
-        : 'Switch to Arbitrum Sepolia'
+        : `Switch to ${PERPS_CHAIN.name}`
       : mode === 'deposit' ? 'Review deposit' : 'Review withdrawal'
 
   async function handlePrimaryAction() {

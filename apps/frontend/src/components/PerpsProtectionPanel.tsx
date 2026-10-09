@@ -14,6 +14,7 @@ import { PERPS_TERMINAL_REASON_LABELS } from '../contracts/perpsOrderV2'
 import { Button, TokenAmount } from './ui'
 import { usePerpsIdentity } from '../perps-aa'
 import { getExplorerTxUrl } from '../utils/explorer'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
 interface ProtectionPanelProps {
   protection?: PositionProtection
@@ -293,7 +294,7 @@ export function ProtectionHistoryRow({ row, events, pending, error, more, onTogg
     <p className="mt-3 text-xs text-content-secondary">TP {row.takeProfitTriggerPrice === '0' ? 'not set' : <TokenAmount amount={protectionPrice(BigInt(row.takeProfitTriggerPrice), 200_000_000n)} />} · SL {row.stopLossTriggerPrice === '0' ? 'not set' : <TokenAmount amount={protectionPrice(BigInt(row.stopLossTriggerPrice), 200_000_000n)} />}</p>
     {pending ? <p className="mt-3 text-xs">Loading activity…</p> : error ? <p className="mt-3 text-xs text-content-secondary">Event details are temporarily unavailable.</p> : <ol className="mt-4 space-y-3 border-l border-brand-border/30 pl-4">
       {events?.map(event => <li key={`${event.blockHash}:${event.logIndex}`} className="text-xs">
-        <a className="text-content-primary underline decoration-brand-border/40 underline-offset-4 hover:text-[#FFAB96]" href={getExplorerTxUrl(421614, event.transactionHash)} target="_blank" rel="noopener noreferrer">{event.event === 'PositionProtectionTerminal' ? `TP/SL ${protectionStatusLabel(Number(event.args.status ?? row.status)).toLowerCase()}` : event.event === 'PositionProtectionTriggered' ? `${Number(event.args.leg ?? row.triggeredLeg) === 1 ? 'Take profit' : 'Stop loss'} reached` : labels[event.event] ?? 'TP/SL update'} ↗</a>
+        <a className="text-content-primary underline decoration-brand-border/40 underline-offset-4 hover:text-[#FFAB96]" href={getExplorerTxUrl(PERPS_CHAIN_ID, event.transactionHash)} target="_blank" rel="noopener noreferrer">{event.event === 'PositionProtectionTerminal' ? `TP/SL ${protectionStatusLabel(Number(event.args.status ?? row.status)).toLowerCase()}` : event.event === 'PositionProtectionTriggered' ? `${Number(event.args.leg ?? row.triggeredLeg) === 1 ? 'Take profit' : 'Stop loss'} reached` : labels[event.event] ?? 'TP/SL update'} ↗</a>
         <p className="mt-1 text-content-secondary">{event.args.linkedOrderId && event.args.linkedOrderId !== '0' ? `Close #${String(event.args.linkedOrderId)} · ` : ''}Block {event.blockNumber}</p>
         {event.args.reason !== undefined ? <p className="mt-1 text-content-secondary">{PERPS_TERMINAL_REASON_LABELS[Number(event.args.reason)] ?? 'Execution needs review'}{event.args.relatched === true ? ' · the original trigger remained binding after this attempt' : ''}</p> : null}
       </li>)}

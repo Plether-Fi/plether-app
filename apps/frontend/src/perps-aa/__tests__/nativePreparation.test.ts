@@ -1,10 +1,15 @@
 import { concatHex, numberToHex, type Hex } from 'viem'
 import { getUserOperationHash } from 'viem/account-abstraction'
-import { describe, expect, it, vi } from 'vitest'
-import { preparationIdentifier, validateNativePreparation, SEPOLIA_NATIVE_EXECUTION_GAS_CAP } from '../nativePreparation'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { preparationIdentifier, validateNativePreparation, NATIVE_EXECUTION_GAS_CAP } from '../nativePreparation'
 import { PERPS_ENTRY_POINT_V08, type PerpsAaDeploymentManifestV2 } from '../manifest'
 import { PLETHER_PAYMASTER_POLICY_ID, PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH } from '../paymasterValidity'
 import type { ManagedUserOperation } from '../runtimeContext'
+
+const activeDeployment = vi.hoisted(() => ({ chainId: 421614 }))
+vi.mock('../../contracts/perpsAddresses', () => ({
+  get PERPS_CHAIN_ID() { return activeDeployment.chainId },
+}))
 
 const manifest = { chainId: 421614, entryPoint: PERPS_ENTRY_POINT_V08, version: 'perps-aa-arbitrum-sepolia-v2',
   paymasterAddress: '0x1234567890123456789012345678901234567890', paymasterVersion: 'plether-verifying-v1',
@@ -12,27 +17,29 @@ const manifest = { chainId: 421614, entryPoint: PERPS_ENTRY_POINT_V08, version: 
 } as PerpsAaDeploymentManifestV2
 const expected = { sender: '0x2222222222222222222222222222222222222222' as const, callData: '0x1234' as const }
 
-function fixture(callGasLimit = 100000n, signedCeiling?: bigint) {
+function fixture(callGasLimit = 100000n, signedCeiling?: bigint, deployment = manifest) {
   const now = BigInt(Math.floor(Date.now() / 1000))
   const op: ManagedUserOperation = { ...expected, nonce: 3n, signature: '0x', callGasLimit,
     verificationGasLimit: 100000n, preVerificationGas: 50000n, maxFeePerGas: 1000000n, maxPriorityFeePerGas: 1n,
-    paymaster: manifest.paymasterAddress, paymasterVerificationGasLimit: 100000n, paymasterPostOpGasLimit: 0n,
+    paymaster: deployment.paymasterAddress, paymasterVerificationGasLimit: 100000n, paymasterPostOpGasLimit: 0n,
     paymasterData: concatHex([numberToHex(now + 300n, { size: 6 }), numberToHex(now - 30n, { size: 6 }),
       numberToHex(signedCeiling ?? (callGasLimit + 250000n) * 1000000n, { size: 16 }), PLETHER_PAYMASTER_POLICY_ID, PLETHER_SIMPLE_ACCOUNT_PROXY_CODE_HASH,
       `0x${'44'.repeat(65)}` as Hex]),
   }
   const wire = Object.fromEntries(Object.entries(op).filter(([key]) => key !== 'signature')
     .map(([key, value]) => [key, typeof value === 'bigint' ? numberToHex(value) : value]))
-  return { version: 1, entryPoint: manifest.entryPoint.toLowerCase(), operation: wire,
-    userOperationHash: getUserOperationHash({ userOperation: op, chainId: 421614, entryPointAddress: manifest.entryPoint, entryPointVersion: '0.8' }) }
+  return { version: 1, entryPoint: deployment.entryPoint.toLowerCase(), operation: wire,
+    userOperationHash: getUserOperationHash({ userOperation: op, chainId: deployment.chainId, entryPointAddress: deployment.entryPoint, entryPointVersion: '0.8' }) }
 }
 
 describe('native preparation response binding', () => {
-  it.each([2_000_000n, 2_023_995n, SEPOLIA_NATIVE_EXECUTION_GAS_CAP])('accepts the approved Sepolia envelope at %s gas with its exact hash', callGas => {
+  beforeEach(() => { activeDeployment.chainId = 421614 })
+
+  it.each([2_000_000n, 2_023_995n, NATIVE_EXECUTION_GAS_CAP])('accepts the approved envelope at %s gas with its exact hash', callGas => {
     expect(validateNativePreparation(fixture(callGas), expected, manifest).callGasLimit).toBe(callGas)
   })
   it('rejects one gas over the cap even with a matching hash and enough authorization', () => {
-    expect(() => validateNativePreparation(fixture(SEPOLIA_NATIVE_EXECUTION_GAS_CAP + 1n), expected, manifest)).toThrow('exceeds bounds')
+    expect(() => validateNativePreparation(fixture(NATIVE_EXECUTION_GAS_CAP + 1n), expected, manifest)).toThrow('exceeds bounds')
   })
   it('does not widen the paymaster liability allowance', () => {
     expect(() => validateNativePreparation(fixture(2_023_995n, 350000000000n), expected, manifest)).toThrow('economic ceiling')
@@ -43,8 +50,23 @@ describe('native preparation response binding', () => {
     response.operation.preVerificationGas = numberToHex(900_001n)
     expect(() => validateNativePreparation(response, expected, manifest)).toThrow('aggregate gas limit')
   })
-  it('does not enable native preparation for mainnet', () => {
-    expect(() => validateNativePreparation(fixture(2_023_995n), expected, { ...manifest, chainId: 42161 } as unknown as PerpsAaDeploymentManifestV2)).toThrow('restricted to Arbitrum Sepolia')
+  it.each([42161, 421614])('accepts native preparation only for active chain %s', chainId => {
+    activeDeployment.chainId = chainId
+    const deployment = { ...manifest, chainId } as PerpsAaDeploymentManifestV2
+    expect(validateNativePreparation(fixture(NATIVE_EXECUTION_GAS_CAP, undefined, deployment), expected, deployment)
+      .callGasLimit).toBe(NATIVE_EXECUTION_GAS_CAP)
+    for (const otherChainId of [chainId === 42161 ? 421614 : 42161, 1]) {
+      const otherDeployment = { ...deployment, chainId: otherChainId } as PerpsAaDeploymentManifestV2
+      expect(() => validateNativePreparation(fixture(100000n, undefined, otherDeployment), expected, otherDeployment))
+        .toThrow('active deployment chain')
+    }
+    expect(() => validateNativePreparation(fixture(NATIVE_EXECUTION_GAS_CAP + 1n, undefined, deployment), expected, deployment))
+      .toThrow('exceeds bounds')
+  })
+  it('rejects a mainnet response carrying the Sepolia operation hash', () => {
+    activeDeployment.chainId = 42161
+    const deployment = { ...manifest, chainId: 42161 } as PerpsAaDeploymentManifestV2
+    expect(() => validateNativePreparation(fixture(), expected, deployment)).toThrow('hash mismatch')
   })
   it('accepts a correctly bound native operation and reproducible hash', () => {
     expect(validateNativePreparation(fixture(), expected, manifest)).toMatchObject({ ...expected, nonce: 3n, signature: '0x' })

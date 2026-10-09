@@ -1,35 +1,14 @@
-import type { Address } from 'viem'
+import { arbitrum, arbitrumSepolia } from 'viem/chains'
 import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
+import release from '../../../../config/perps/arbitrum-sepolia-v2.json'
+import {
+  isPerpsManifestForDeployment, parsePerpsDeployment, resolvePerpsDeployment,
+  type PerpsContractAddresses, type PerpsDeploymentManifestBindings,
+} from './perpsDeployment'
 
-/** Additive review dependency; never replaces the execution evaluator. */
-export const PERPS_CLOSE_PREVIEW_ADDRESS = closePreview.contracts.cfdClosePreview.address as Address
+export type { PerpsContractAddresses, PerpsDeployment, PerpsChainId } from './perpsDeployment'
 
-export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614
-export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = 307_397_196
-
-export interface PerpsContractAddresses {
-  pyth: Address
-  usdc: Address
-  perpsPublicLens: Address
-  marginClearinghouse: Address
-  orderRouter: Address
-  orderRouterAdmin: Address
-  cfdEngine: Address
-  cfdEnginePlanner: Address
-  cfdEngineSettlementSidecar: Address
-  cfdEngineAdmin: Address
-  housePool: Address
-  seniorVault: Address
-  juniorVault: Address
-  pletherOracle: Address
-  cfdEngineLens: Address
-  cfdEngineAccountLens: Address
-  orderLifecycleBook: Address
-  policyEvaluator: Address
-  positionProtectionBook: Address
-}
-
-export const PERPS_ARBITRUM_SEPOLIA = {
+const DEFAULT_SEPOLIA_CONTRACTS = {
   pyth: '0x0B73614636C855Bf23F342F307FB981A3e47f42B',
   usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
   perpsPublicLens: '0x63a6ee8ef44cf13d0d1f393a1e9f8d25da1abfb4',
@@ -50,3 +29,47 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
   positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
 } satisfies PerpsContractAddresses
+
+/** The shipped testnet release remains the default until a full reviewed override is provided. */
+export const PERPS_DEFAULT_SEPOLIA_DEPLOYMENT = parsePerpsDeployment({
+  schemaVersion: 1,
+  releaseId: 'arbitrum-sepolia-v1.2.3',
+  chainId: release.network.chainId,
+  deploymentBlock: release.release.deploymentBlock,
+  contracts: DEFAULT_SEPOLIA_CONTRACTS,
+  runtimeCodeHashes: {
+    orderRouter: release.contracts.orderRouter.runtimeCodeHash,
+    orderLifecycleBook: release.contracts.orderLifecycleBook.runtimeCodeHash,
+    positionProtectionBook: release.contracts.positionProtectionBook.runtimeCodeHash,
+  },
+  closePreview: {
+    address: closePreview.contracts.cfdClosePreview.address,
+    runtimeCodeHash: closePreview.contracts.cfdClosePreview.runtimeCodeHash,
+    chainId: closePreview.network.chainId,
+    cfdEngine: closePreview.existingProtocol.engine,
+    orderRouter: closePreview.existingProtocol.router,
+    policyEvaluator: closePreview.existingProtocol.policyEvaluator,
+  },
+})
+
+export const PERPS_ACTIVE_DEPLOYMENT = resolvePerpsDeployment(
+  import.meta.env.VITE_PERPS_DEPLOYMENT_JSON,
+  PERPS_DEFAULT_SEPOLIA_DEPLOYMENT,
+)
+export const PERPS_CHAIN_ID = PERPS_ACTIVE_DEPLOYMENT.chainId
+export const PERPS_CHAIN = PERPS_CHAIN_ID === arbitrum.id ? arbitrum : arbitrumSepolia
+export const PERPS_CONTRACTS = PERPS_ACTIVE_DEPLOYMENT.contracts
+export const PERPS_DEPLOYMENT_BLOCK = PERPS_ACTIVE_DEPLOYMENT.deploymentBlock
+/** Additive review dependency from the same release; never the execution evaluator. */
+export const PERPS_CLOSE_PREVIEW_ADDRESS = PERPS_ACTIVE_DEPLOYMENT.closePreview.address
+
+export function isPerpsManifestForActiveDeployment(manifest: PerpsDeploymentManifestBindings): boolean {
+  return isPerpsManifestForDeployment(manifest, PERPS_ACTIVE_DEPLOYMENT)
+}
+
+/** @deprecated Compatibility names resolve to the active deployment, which may be mainnet. */
+export const PERPS_ARBITRUM_SEPOLIA = PERPS_CONTRACTS
+/** @deprecated Use PERPS_CHAIN_ID. This alias resolves to the active deployment chain. */
+export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = PERPS_CHAIN_ID
+/** @deprecated Use PERPS_DEPLOYMENT_BLOCK. This alias resolves to the active deployment. */
+export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = PERPS_DEPLOYMENT_BLOCK

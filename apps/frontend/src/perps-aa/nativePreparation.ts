@@ -4,8 +4,11 @@ import { getUserOperationHash } from 'viem/account-abstraction'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
 import { manifestSponsorshipValidUntil } from './paymasterValidity'
 import type { ManagedUserOperation } from './runtimeContext'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
-export const SEPOLIA_NATIVE_EXECUTION_GAS_CAP = 3_000_000n
+export const NATIVE_EXECUTION_GAS_CAP = 3_000_000n
+/** @deprecated The reviewed gas bound applies to the active deployment. */
+export const SEPOLIA_NATIVE_EXECUTION_GAS_CAP = NATIVE_EXECUTION_GAS_CAP
 
 export interface PreparationBinding {
   sender: Address
@@ -27,7 +30,7 @@ function record(value: unknown): Record<string, unknown> {
 export function validateNativePreparation(
   value: unknown, expected: PreparationBinding, manifest: PerpsAaDeploymentManifestV2,
 ): ManagedUserOperation {
-  if (manifest.chainId !== 421614) throw new Error('Native preparation is restricted to Arbitrum Sepolia')
+  if (manifest.chainId !== PERPS_CHAIN_ID) throw new Error('Native preparation does not match the active deployment chain')
   const response = record(value)
   if (Object.keys(response).some(key => !['version', 'entryPoint', 'operation', 'userOperationHash'].includes(key))
     || response.version !== 1 || response.entryPoint !== manifest.entryPoint.toLowerCase()) {
@@ -61,7 +64,7 @@ export function validateNativePreparation(
     || op.factoryData?.toLowerCase() !== expected.factoryData?.toLowerCase()
     || op.paymaster?.toLowerCase() !== manifest.paymasterAddress.toLowerCase()
     || op.nonce < 0n || op.nonce >= 1n << 64n
-    || op.callGasLimit < 1n || op.callGasLimit > SEPOLIA_NATIVE_EXECUTION_GAS_CAP
+    || op.callGasLimit < 1n || op.callGasLimit > NATIVE_EXECUTION_GAS_CAP
     || op.verificationGasLimit < 1n || op.verificationGasLimit > 1_000_000n
     || op.preVerificationGas < 1n || op.preVerificationGas > 1_000_000n
     || op.maxFeePerGas < 1n || op.maxFeePerGas > 10_000_000_000n

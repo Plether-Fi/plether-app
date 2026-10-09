@@ -5,6 +5,7 @@ module Plether.Database.AaPreparationRecovery
   , fenceValid, bindDeployment, linkAuthorization, deliveryActive, retirePreparation
   , matchingPreparations, bindHistoricalAuthorizations, operationOutcomes, registryRetired, retirementReason, saveChallenge, saveChallengeAt, readChallenge
   , consumeChallenge, sessionOwner, sessionSubmissionClient
+  , ensurePreparationRecoveryChainScope
   ) where
 
 import Control.Monad (void, forM_, when)
@@ -31,6 +32,19 @@ recoveryLock conn = do
   void $ execute_ conn "SET LOCAL lock_timeout='5s'"
   void $ execute_ conn "SET LOCAL statement_timeout='15s'"
   void (query_ conn "SELECT 1::int FROM pg_advisory_xact_lock(4338008421614)" :: IO [Only Int])
+
+-- | Permit the two supported Arbitrum chains without changing historical
+-- Sepolia attribution, leases or retirement records. The v1 recovery migration
+-- remains operator-applied: instances without that optional schema are left
+-- untouched. Keep this adjustment in sync with the additive chain-scope SQL
+-- migration, which must be applied after aa-preparation-recovery-v1.sql.
+ensurePreparationRecoveryChainScope :: Connection -> IO ()
+ensurePreparationRecoveryChainScope conn = withTransaction conn $ do
+  recoveryLock conn
+  exists <- query_ conn "SELECT to_regclass('aa_preparation_registry') IS NOT NULL" :: IO [Only Bool]
+  when (exists == [Only True]) $ do
+    void $ execute_ conn "ALTER TABLE aa_preparation_registry DROP CONSTRAINT IF EXISTS aa_preparation_registry_chain_id_check"
+    void $ execute_ conn "ALTER TABLE aa_preparation_registry ADD CONSTRAINT aa_preparation_registry_chain_id_check CHECK (chain_id IN (42161,421614))"
 
 ensureRegistry :: Connection -> Scope -> IO ()
 ensureRegistry conn scope = void $ execute conn

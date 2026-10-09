@@ -19,6 +19,7 @@ import {
   parseAbi,
   parseAbiItem,
   size,
+  toHex,
   type Account,
   type Address,
   type Chain,
@@ -34,7 +35,7 @@ import {
   type PaymasterActions,
   type UserOperationReceipt,
 } from 'viem/account-abstraction'
-import { arbitrumSepolia } from 'viem/chains'
+import { PERPS_CHAIN, PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   bundlerRpcUrlForManifest,
   isPerpsAaManifestV2 as isNativePaymasterManifest,
@@ -324,10 +325,12 @@ export async function createManagedAaRuntime({
   walletClient,
   publicClient,
 }: CreateManagedAaRuntimeInput): Promise<PerpsAaSmartAccountRuntime> {
+  // Recovery can use a journaled prior release on this chain. New-action hooks
+  // additionally validate every protocol address against the active deployment.
   if (
-    manifest.chainId !== arbitrumSepolia.id
+    manifest.chainId !== PERPS_CHAIN_ID
   ) {
-    throw new Error('The manifest does not describe the supported account stack')
+    throw new Error('The manifest does not match the active Perps chain')
   }
   if (
     publicClient.chain?.id !== manifest.chainId ||
@@ -396,12 +399,12 @@ export async function createManagedAaRuntime({
     // operation therefore forwards the exact journalled payload instead of
     // preparing, re-sponsoring, or re-signing it a second time.
     const bundlerClient = createBundlerClient({
-      chain: arbitrumSepolia,
+      chain: PERPS_CHAIN,
       transport: recoveryHttp(bundlerRpcUrl),
     })
     const smartAccountClient = createSmartAccountClient({
       account: smartAccount,
-      chain: arbitrumSepolia,
+      chain: PERPS_CHAIN,
       client: publicClient,
       bundlerTransport: recoveryHttp(bundlerRpcUrl),
       paymaster: unsignedPaymasterClient,
@@ -431,10 +434,10 @@ export async function createManagedAaRuntime({
             ...preparationRecovery?.headers(preparationId),
             ...(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(preparationId) ? { 'X-Plether-Attempt-Id': preparationId } : {}),
           } } : undefined,
-        }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
+        }, bundlerRpcUrl)({ chain: PERPS_CHAIN }).request({
           method: 'plether_prepareUserOperation',
           params: [{ version: 1, preparationId: preparationIdentifier(preparationId ?? crypto.randomUUID()),
-            chainId: '0x66eee', entryPoint: manifest.entryPoint.toLowerCase(), ...binding, ...(preparedOperation ? { resumeOnly: true } : {}) }],
+            chainId: toHex(manifest.chainId), entryPoint: manifest.entryPoint.toLowerCase(), ...binding, ...(preparedOperation ? { resumeOnly: true } : {}) }],
         })
         const prepared = validateNativePreparation(response, binding, manifest)
         if (preparationId) preparationRecovery?.bindOperation(preparationId, getUserOperationHash({
@@ -457,7 +460,7 @@ export async function createManagedAaRuntime({
       // Keep submission policy separate from polling, including when no
       // preparation-recovery headers are available (legacy/reloaded records).
       const submissionClient = createBundlerClient({
-        chain: arbitrumSepolia,
+        chain: PERPS_CHAIN,
         transport: submissionHttp(bundlerRpcUrl, headers),
       })
       return submissionClient.sendUserOperation({ ...operation, entryPointAddress: manifest.entryPoint })
@@ -472,7 +475,7 @@ export async function createManagedAaRuntime({
       bundlerClient.getUserOperationReceipt({ hash: userOperationHash })
   } else {
     const pimlicoClient = createPimlicoClient({
-      chain: arbitrumSepolia,
+      chain: PERPS_CHAIN,
       entryPoint: {
         address: manifest.entryPoint,
         version: manifest.entryPointVersion,
@@ -481,7 +484,7 @@ export async function createManagedAaRuntime({
     })
     const smartAccountClient = createSmartAccountClient({
       account: smartAccount,
-      chain: arbitrumSepolia,
+      chain: PERPS_CHAIN,
       client: publicClient,
       bundlerTransport: http(bundlerRpcUrl),
       paymaster: pimlicoClient,
@@ -659,8 +662,8 @@ export async function createManagedAaRuntime({
             if ('phase' in recovered) return recovered
             throw new PreparationRecoveryError(recovered.reason)
           }
-          return parsePreparationStatus(await recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl)({ chain: arbitrumSepolia }).request({
-            method: 'plether_getPreparationStatus', params: [{ version: 1, chainId: '0x66eee', sender: accountAddress,
+          return parsePreparationStatus(await recoveryHttp(paymasterRpcUrl, { retryCount: 0 }, bundlerRpcUrl)({ chain: PERPS_CHAIN }).request({
+            method: 'plether_getPreparationStatus', params: [{ version: 1, chainId: toHex(manifest.chainId), sender: accountAddress,
               ...('preparationId' in locator ? { preparationId: preparationIdentifier(locator.preparationId) } : locator) }],
           }))
         },

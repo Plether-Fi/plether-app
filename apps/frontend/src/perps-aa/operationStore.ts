@@ -30,6 +30,7 @@ import {
 import { SponsoredOperationLockedError } from './operationLockError'
 import type { ManagedUserOperation } from './runtimeContext'
 import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
+import { PERPS_CHAIN_ID } from '../contracts/perpsAddresses'
 
 export { SponsoredOperationLockedError } from './operationLockError'
 
@@ -209,7 +210,7 @@ interface SponsoredOperationState {
   cancelOperation: (id: string) => void
   releaseLane: (id: string) => void
   cleanupOperations: () => void
-  getActiveOperation: (accountAddress: Address, lane?: string) => SponsoredOperation | undefined
+  getActiveOperation: (accountAddress: Address, lane?: string, chainId?: number) => SponsoredOperation | undefined
 }
 
 export const SPONSORED_OPERATION_STORAGE_NAME =
@@ -236,9 +237,13 @@ export const SPONSORED_OPERATION_STALE_RECOVERY_AGE_MS =
 
 function laneKey(
   accountAddress: Address,
+  chainId: number,
   lane = DEFAULT_SPONSORED_OPERATION_LANE
 ): string {
-  return `${accountAddress.toLowerCase()}:${lane}`
+  const accountLane = `${accountAddress.toLowerCase()}:${lane}`
+  // Retain the historical Sepolia key for existing tabs and consumers. Every
+  // other chain has its own namespace, even for the same smart-account address.
+  return chainId === 421614 ? accountLane : `${chainId.toString()}:${accountLane}`
 }
 
 function updateOperation(
@@ -603,18 +608,21 @@ export function migrateSponsoredOperationState(
   const operationById = new Map(
     operations.map((operation) => [operation.id, operation])
   )
-  const activeLanes = Object.fromEntries(
-    Object.entries(persisted.activeLanes).filter(([, operationId]) => {
-      const operation = operationById.get(operationId)
-      return operation !== undefined &&
-        isSponsoredOperationLaneBlocking(operation)
-    })
-  )
+  const activeLanes: Record<string, string> = {}
+  // A legacy key carries no chain identity. Rebuild it from its operation,
+  // preserving the existing active selection before adding recovery locks.
+  for (const operationId of Object.values(persisted.activeLanes)) {
+    const operation = operationById.get(operationId)
+    if (operation && isSponsoredOperationLaneBlocking(operation)) {
+      const key = laneKey(operation.accountAddress, operation.chainId, operation.lane)
+      activeLanes[key] ??= operation.id
+    }
+  }
   const relockCandidates = operations
     .filter((operation) => relockIds.has(operation.id))
     .sort((left, right) => right.updatedAt - left.updatedAt)
   for (const operation of relockCandidates) {
-    const key = laneKey(operation.accountAddress, operation.lane)
+    const key = laneKey(operation.accountAddress, operation.chainId, operation.lane)
     activeLanes[key] ??= operation.id
   }
 
@@ -841,7 +849,7 @@ function activeLanesForOperations(
     .filter(isSponsoredOperationLaneBlocking)
     .sort((left, right) => right.updatedAt - left.updatedAt)
   for (const operation of blocking) {
-    const key = laneKey(operation.accountAddress, operation.lane)
+    const key = laneKey(operation.accountAddress, operation.chainId, operation.lane)
     activeLanes[key] ??= operation.id
   }
   return activeLanes
@@ -2400,7 +2408,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
 
         beginOperation: (input) => {
           const lane = input.lane ?? DEFAULT_SPONSORED_OPERATION_LANE
-          const key = laneKey(input.accountAddress, lane)
+          const key = laneKey(input.accountAddress, input.chainId, lane)
           const activeOperationId = get().activeLanes[key]
           if (activeOperationId) {
             throw new SponsoredOperationLockedError(activeOperationId)
@@ -3284,11 +3292,13 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
 
         getActiveOperation: (
           accountAddress,
-          lane = DEFAULT_SPONSORED_OPERATION_LANE
+          lane = DEFAULT_SPONSORED_OPERATION_LANE,
+          chainId = PERPS_CHAIN_ID
         ) => {
           const state = get()
-          const id = state.activeLanes[laneKey(accountAddress, lane)]
-          return state.operations.find((operation) => operation.id === id)
+          const id = state.activeLanes[laneKey(accountAddress, chainId, lane)]
+          return state.operations.find((operation) => operation.id === id &&
+            operationMatchesLane(operation, { accountAddress, chainId, lane }))
         },
       }),
       {

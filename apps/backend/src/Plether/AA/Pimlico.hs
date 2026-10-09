@@ -145,10 +145,10 @@ simpleAccountImplementation :: Text
 simpleAccountImplementation = "0x28426d752372d68d34340bd94390950dce3c9ec3"
 
 pimlicoRpcUrl :: String
-pimlicoRpcUrl = "https://api.pimlico.io/v2/421614/rpc"
+pimlicoRpcUrl = "https://api.pimlico.io/v2/" <> show Manifest.releaseChainId <> "/rpc"
 
-arbitrumSepoliaHexChainId :: Text
-arbitrumSepoliaHexChainId = "0x66eee"
+releaseHexChainId :: Text
+releaseHexChainId = Manifest.releaseChainIdHex
 
 dummySignature :: Text
 dummySignature =
@@ -336,7 +336,7 @@ handleAuthenticatedRequest
   -> RpcRequest
   -> ActionM ()
 handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager mPool now trustedIp rpcRequest
-  | cfgPerpsChainId cfg /= 421614 =
+  | cfgPerpsChainId cfg /= Manifest.releaseChainId =
       respondFailure (rrId rpcRequest) $
         unavailable "SPONSOR_UNAVAILABLE" "The backend Perps chain is not supported"
   | isSponsorshipIssuanceMethod (rrMethod rpcRequest) && not (aaSponsorshipEnabled aaCfg) =
@@ -555,12 +555,12 @@ validateMethodParams request =
       case rrParams request of
         [Object operation, String entryPoint, String chainId, _]
           | normalizeAddress entryPoint == Just entryPointAddress
-              && T.toLower chainId == arbitrumSepoliaHexChainId ->
+              && T.toLower chainId == releaseHexChainId ->
               Just <$> parseUserOperation (rrMethod request) operation
         _ ->
           Left $
             invalidParams
-              "paymaster method requires [userOperation, EntryPoint, Arbitrum Sepolia chain, context]"
+              "paymaster method requires [userOperation, EntryPoint, compiled release chain, context]"
     operationParams =
       case rrParams request of
         [Object operation, String entryPoint]

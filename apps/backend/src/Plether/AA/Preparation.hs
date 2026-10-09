@@ -3,6 +3,7 @@ module Plether.AA.Preparation
   , PreparationLocator (..), parsePreparationLocator, preparationStatusResponse
   , gasPolicyVersion, sepoliaExecutionGasCap, executionGasWithHeadroom ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, encode, (.=))
 import qualified Data.Aeson.Key as Key
@@ -26,10 +27,12 @@ data PreparationIntent = PreparationIntent
 -- Changing this identifier requires a new reviewed preparation, never a rewrite
 -- of a persisted/signed operation or its reservation.
 gasPolicyVersion :: Text
-gasPolicyVersion = "execution-headroom-v3-sepolia-cap3000000-150pct-min100000"
+gasPolicyVersion
+  | Manifest.releaseChainId == 421614 = "execution-headroom-v3-sepolia-cap3000000-150pct-min100000"
+  | otherwise = "execution-headroom-v3-chain" <> T.pack (show Manifest.releaseChainId) <> "-cap3000000-150pct-min100000"
 
--- Native issuance is restricted to Arbitrum Sepolia. All action classes share
--- this ceiling; the separate wei liability and verification-gas caps do not move.
+-- All release-bound native actions share this ceiling. The legacy export name
+-- remains compatible; the separate wei liability and verification-gas caps do not move.
 sepoliaExecutionGasCap :: Integer
 sepoliaExecutionGasCap = 3_000_000
 
@@ -47,7 +50,7 @@ parsePreparationIntent [Object fields] = do
   unless (all (`elem` ["version","preparationId","chainId","entryPoint","sender","callData","factory","factoryData","resumeOnly"]) $ KM.keys fields) $
     Left $ Legacy.invalidParams "Preparation contains unsupported fields"
   unless (KM.lookup "version" fields == Just (Number 1)
-    && KM.lookup "chainId" fields == Just (String "0x66eee")
+    && KM.lookup "chainId" fields == Just (String Manifest.releaseChainIdHex)
     && fmap lower (KM.lookup "entryPoint" fields) == Just (String entryPoint)) $
     Left $ Legacy.invalidParams "Unsupported preparation version, chain or EntryPoint"
   resumeOnly <- case KM.lookup "resumeOnly" fields of
@@ -112,7 +115,7 @@ parsePreparationLocator :: [Value] -> Either Legacy.ProxyFailure PreparationLoca
 parsePreparationLocator [Object fields] = do
   unless (all (`elem` ["version","chainId","sender","preparationId","userOperationHash"]) $ KM.keys fields) $
     Left $ Legacy.invalidParams "Preparation status contains unsupported fields"
-  unless (KM.lookup "version" fields == Just (Number 1) && KM.lookup "chainId" fields == Just (String "0x66eee")) $
+  unless (KM.lookup "version" fields == Just (Number 1) && KM.lookup "chainId" fields == Just (String Manifest.releaseChainIdHex)) $
     Left $ Legacy.invalidParams "Unsupported preparation status locator"
   sender <- requiredHex fields "sender" (Just 20)
   case (KM.member "preparationId" fields, KM.member "userOperationHash" fields) of

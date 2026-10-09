@@ -632,7 +632,7 @@ loadConfig = do
         fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       mPerpsRpcAuthToken <- lookupEnv "PERPS_RPC_AUTH_TOKEN"
-      perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
+      perpsChainIdStr <- fromMaybe (show Manifest.releaseChainId) <$> lookupEnv "PERPS_CHAIN_ID"
       mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
       mPerpsUsdc <- lookupEnv "PERPS_USDC"
       mPerpsOrderRouter <- lookupEnv "PERPS_ORDER_ROUTER"
@@ -724,7 +724,7 @@ loadConfig = do
           pythBackfillDays = fromMaybe 7 (readMaybe pythBackfillDaysStr)
           pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
-          perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
+          perpsChainId = fromMaybe Manifest.releaseChainId (readMaybe perpsChainIdStr)
           perpsAccountLens = fromMaybe julyPerpsAccountLens mPerpsAccountLens
           perpsUsdc = fromMaybe julyPerpsUsdc mPerpsUsdc
           perpsOrderRouter = fromMaybe julyPerpsOrderRouter mPerpsOrderRouter
@@ -779,11 +779,11 @@ loadConfig = do
                       perpsMarginClearinghouse
                       || septemberAaReleaseAccepted ->
                     Left
-                      "Managed AA sponsorship requires the reviewed Arbitrum Sepolia \
+                      "Managed AA sponsorship requires the compiled release \
                       \PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
                       \PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
-                | perpsChainId /= 421614 ->
-                    Left "Managed AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                | perpsChainId /= Manifest.releaseChainId ->
+                    Left "Managed AA sponsorship PERPS_CHAIN_ID must match the compiled perps release"
                 | Left releaseFailure <-
                     validatePerpsV2ReleaseConfig
                       perpsChainId
@@ -888,8 +888,8 @@ loadConfig = do
                     maxSafeLag <- parseDecimalBetween "AA_RECONCILER_MAX_SAFE_LAG_SECONDS" 60 (aaSafeLagCeiling perpsChainId) nativeAaSafeLagStr
                     validateAaSafeLag perpsChainId globalRolloutEnabled canaryOwners maxSafeLag
                     unlessEither
-                      (perpsChainId == 421614)
-                      "Native AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                      (perpsChainId == Manifest.releaseChainId)
+                      "Native AA sponsorship PERPS_CHAIN_ID must match the compiled perps release"
                     unlessEither
                       ( validAaDeploymentAddresses
                           perpsUsdc
@@ -897,7 +897,7 @@ loadConfig = do
                           perpsCfdEngine
                           perpsMarginClearinghouse
                       )
-                      "Native AA sponsorship requires the reviewed Arbitrum Sepolia PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
+                      "Native AA sponsorship requires the compiled release PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
                     unlessEither
                       (isJust mDatabaseUrl)
                       "DATABASE_URL is required whenever native AA is configured"
@@ -1166,7 +1166,9 @@ loadConfig = do
               Left _ -> False
 
       case
-          ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
+          ( do
+              _ <- parsePositiveDecimal "PERPS_CHAIN_ID" perpsChainIdStr
+              validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
           , aaConfig
           , nativeAaConfig
           , candleConfig

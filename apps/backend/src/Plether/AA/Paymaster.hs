@@ -6,7 +6,9 @@ module Plether.AA.Paymaster
   , makeSponsorshipEnvelope
   , decodeSponsorshipEnvelope
   , sponsorshipDigest
+  , sponsorshipDigestForChain
   , userOperationHash
+  , userOperationHashForChain
   , maximumUserOperationCost
   , paymasterAndData
   , paymasterDataHex
@@ -28,13 +30,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.Config (NativeAaConfig (..))
 import Plether.Ethereum.Abi (encodeAddress, encodeUint256, keccak256)
+import qualified Plether.Perps.Manifest as Manifest
 import Numeric (showHex)
 
 entryPointAddress :: Text
 entryPointAddress = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
-
-chainId :: Integer
-chainId = 421614
 
 data PackedUserOperation = PackedUserOperation
   { puoObject :: KM.KeyMap Value
@@ -242,8 +242,13 @@ maximumUserOperationCost operation envelope =
     * puoMaxFeePerGas operation
 
 sponsorshipDigest :: PackedUserOperation -> SponsorshipEnvelope -> ByteString
-sponsorshipDigest operation envelope =
-  keccak256 $ BS.pack [0x19, 0x01] <> domainSeparator envelope <> structHash
+sponsorshipDigest = sponsorshipDigestForChain Manifest.releaseChainId
+
+-- | Explicit domain for cross-chain compatibility checks. Production issuance
+-- uses 'sponsorshipDigest', whose chain is fixed by the compiled release.
+sponsorshipDigestForChain :: Integer -> PackedUserOperation -> SponsorshipEnvelope -> ByteString
+sponsorshipDigestForChain chainId operation envelope =
+  keccak256 $ BS.pack [0x19, 0x01] <> domainSeparator chainId envelope <> structHash
  where
   structHash =
     keccak256 $
@@ -265,10 +270,14 @@ sponsorshipDigest operation envelope =
         <> encodeAddress entryPointAddress
 
 userOperationHash :: PackedUserOperation -> ByteString
-userOperationHash operation =
+userOperationHash = userOperationHashForChain Manifest.releaseChainId
+
+-- | Explicit EntryPoint domain for cross-chain compatibility checks.
+userOperationHashForChain :: Integer -> PackedUserOperation -> ByteString
+userOperationHashForChain chainId operation =
   keccak256 $
     BS.pack [0x19, 0x01]
-      <> entryPointDomainSeparator
+      <> entryPointDomainSeparator chainId
       <> packedHash
  where
   packedHash =
@@ -285,8 +294,8 @@ userOperationHash operation =
 
 -- EntryPoint v0.8 hashes PackedUserOperation as EIP-712 data.  This domain is
 -- deliberately separate from the verifying-paymaster sponsorship domain.
-entryPointDomainSeparator :: ByteString
-entryPointDomainSeparator =
+entryPointDomainSeparator :: Integer -> ByteString
+entryPointDomainSeparator chainId =
   keccak256 $
     eip712DomainTypeHash
       <> keccak256 "ERC4337"
@@ -308,8 +317,8 @@ dummyPaymasterSignature = BS.replicate 65 0
 canonicalQuantity :: Integer -> Text
 canonicalQuantity value = "0x" <> T.pack (showHex value "")
 
-domainSeparator :: SponsorshipEnvelope -> ByteString
-domainSeparator envelope =
+domainSeparator :: Integer -> SponsorshipEnvelope -> ByteString
+domainSeparator chainId envelope =
   keccak256 $
     eip712DomainTypeHash
       <> keccak256 "PletherVerifyingPaymaster"

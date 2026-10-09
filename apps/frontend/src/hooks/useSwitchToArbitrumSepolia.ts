@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useSwitchChain } from 'wagmi'
-import { arbitrumSepolia } from 'wagmi/chains'
+import { PERPS_CHAIN } from '../contracts/perpsAddresses'
 import { openAppKit, switchAppKitToArbitrumSepolia } from '../config/wagmi'
 
 function getErrorText(error: unknown): string {
@@ -27,16 +27,17 @@ function getSwitchHelpMessage(error: unknown): string {
   const errorText = getErrorText(error).toLowerCase()
 
   if (errorText.includes('wallet_addethereumchain') || errorText.includes('missing or invalid')) {
-    return 'Your wallet did not add Arbitrum Sepolia automatically. Open the wallet network selector and choose Arbitrum Sepolia, or add it manually.'
+    return `Your wallet did not add ${PERPS_CHAIN.name} automatically. Open the wallet network selector and choose ${PERPS_CHAIN.name}, or add it manually.`
   }
 
   if (errorText.includes('user rejected') || errorText.includes('rejected the request')) {
-    return 'Network switch was rejected in the wallet. Confirm the request, or choose Arbitrum Sepolia manually.'
+    return `Network switch was rejected in the wallet. Confirm the request, or choose ${PERPS_CHAIN.name} manually.`
   }
 
-  return 'Could not switch automatically. Choose Arbitrum Sepolia in your wallet or the network selector.'
+  return `Could not switch automatically. Choose ${PERPS_CHAIN.name} in your wallet or the network selector.`
 }
 
+/** Compatibility name: switches to the active reviewed perps deployment network. */
 export function useSwitchToArbitrumSepolia() {
   const { switchChainAsync, isPending } = useSwitchChain()
   const [isOpeningFallback, setIsOpeningFallback] = useState(false)
@@ -49,7 +50,8 @@ export function useSwitchToArbitrumSepolia() {
     setIsOpeningFallback(true)
 
     try {
-      await switchChainAsync({ chainId: arbitrumSepolia.id })
+      await switchChainAsync({ chainId: PERPS_CHAIN.id })
+      setIsOpeningFallback(false)
       return true
     } catch (switchChainError) {
       lastError = switchChainError
@@ -58,6 +60,7 @@ export function useSwitchToArbitrumSepolia() {
 
     try {
       await switchAppKitToArbitrumSepolia()
+      setIsOpeningFallback(false)
       return true
     } catch (appKitError) {
       lastError = appKitError

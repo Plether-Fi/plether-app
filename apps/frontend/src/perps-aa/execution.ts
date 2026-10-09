@@ -386,7 +386,7 @@ export async function executeSponsoredPerpsAction(
       || resumed.ownerAddress.toLowerCase() !== input.ownerAddress.toLowerCase()
       || resumed.chainId !== input.manifest.chainId
       || JSON.stringify(resumed.nativePreparation.action) !== JSON.stringify(persistReviewedAction(input.action))
-      || useSponsoredOperationStore.getState().getActiveOperation(resumed.accountAddress, lane)?.id !== resumed.id)) {
+      || useSponsoredOperationStore.getState().getActiveOperation(resumed.accountAddress, lane, resumed.chainId)?.id !== resumed.id)) {
       throw new Error('The original preparation is no longer available for resume')
     }
     const activeTracker = beginSponsoredOperationTracking({

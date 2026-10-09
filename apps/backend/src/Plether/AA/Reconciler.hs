@@ -13,6 +13,7 @@ module Plether.AA.Reconciler
   , validateDeploymentAnchor
   ) where
 
+import qualified Plether.Perps.Manifest as Manifest
 import Control.Concurrent (threadDelay)
 import Control.Monad (foldM, forever, unless, when)
 import Data.Aeson (Value (..), object, toJSON, (.=))
@@ -143,7 +144,7 @@ loadAaReconcilerConfig = do
     fromMaybe "600" <$> lookupEnv "AA_RECONCILER_MAX_SAFE_LAG_SECONDS"
   pure $ do
     chain <- maybe (Left "PERPS_CHAIN_ID is required") (parseDecimal "PERPS_CHAIN_ID") mChainId
-    unless (chain == 421614) $ Left "AA reconciler supports only PERPS_CHAIN_ID=421614"
+    unless (chain == Manifest.releaseChainId) $ Left "AA reconciler PERPS_CHAIN_ID must match the compiled perps release"
     paymaster <- maybe (Left "AA_PAYMASTER_ADDRESS is required") (parseAddress . T.pack) mPaymaster
     paymasterCodeHash <- maybe (Left "AA_PAYMASTER_CODE_HASH is required") (parseHash "AA_PAYMASTER_CODE_HASH" . T.pack) mPaymasterCodeHash
     startBlock <- maybe (Left "AA_RECONCILER_START_BLOCK is required") (parseDecimal "AA_RECONCILER_START_BLOCK") mStartBlock

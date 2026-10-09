@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { HttpRequestError } from 'viem'
+import { HttpRequestError, type Address } from 'viem'
+import { PERPS_ACTIVE_DEPLOYMENT } from '../../contracts/perpsAddresses'
+import type { FundingAccountDepositDestination } from '../../perps-funding/types'
 import { getPerpsErrorMessage } from '../../utils/perpsErrors'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const identityMocks = vi.hoisted(() => ({
   isAaManifestConfigured: false,
   usdcSupportsEip3009: false,
+  ownerAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as Address,
+  accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as Address,
 }))
 
 const maxQuoteMocks = vi.hoisted(() => ({
@@ -26,20 +30,22 @@ vi.mock('../../perps-aa', async () => {
     BundlerRequestError,
     findBundlerRequestError,
   } = await import('../../perps-aa/errors')
-  const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+  const { PERPS_ACTIVE_DEPLOYMENT: deployment } = await import('../../contracts/perpsAddresses')
   return {
     BundlerRequestError,
     findBundlerRequestError,
     useSponsoredOperationStore,
     usePerpsIdentity: () => ({
       status: 'ready',
-      ownerAddress: address,
-      accountAddress: address,
+      ownerAddress: identityMocks.ownerAddress,
+      accountAddress: identityMocks.accountAddress,
       chainId: 421614,
       isAaManifestConfigured: identityMocks.isAaManifestConfigured,
       sponsorshipEnabled: identityMocks.isAaManifestConfigured,
       manifest: identityMocks.isAaManifestConfigured
         ? {
+            ...deployment.contracts,
+            chainId: deployment.chainId,
             smartAccountMode: 'simple',
             usdcSupportsEip3009: identityMocks.usdcSupportsEip3009,
             userOperationExplorerUrlTemplate:
@@ -67,6 +73,28 @@ import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../../co
 import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 import type { PerpsOrderReceiptEconomics } from '../../hooks/usePerpsHistory'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
+
+const fundingMocks = vi.hoisted(() => ({
+  onDepositAccount: undefined as ((destination: FundingAccountDepositDestination) => void) | undefined,
+}))
+
+vi.mock('../../perps-funding/AddFunds', () => ({
+  AddFunds: ({ onDepositAccount }: { onDepositAccount?: (destination: FundingAccountDepositDestination) => void }) => {
+    fundingMocks.onDepositAccount = onDepositAccount
+    return <button type="button" onClick={() => { onDepositAccount?.(accountDepositDestination()) }}>Review returned account funds</button>
+  },
+}))
+
+function accountDepositDestination(): FundingAccountDepositDestination {
+  return {
+    owner: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+    beneficiary: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+    destinationChainId: PERPS_ACTIVE_DEPLOYMENT.chainId,
+    token: PERPS_ACTIVE_DEPLOYMENT.contracts.usdc,
+    clearinghouse: PERPS_ACTIVE_DEPLOYMENT.contracts.marginClearinghouse,
+    releaseId: PERPS_ACTIVE_DEPLOYMENT.releaseId,
+  }
+}
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
 
@@ -200,6 +228,9 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
     identityMocks.usdcSupportsEip3009 = false
+    identityMocks.ownerAddress = V2_ACCOUNT
+    identityMocks.accountAddress = V2_ACCOUNT
+    fundingMocks.onDepositAccount = undefined
     wagmiMocks.readContractsData = undefined
     useSponsoredOperationStore.setState({
       operations: [],
@@ -1665,6 +1696,95 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.queryByText('Resulting leverage')).not.toBeInTheDocument()
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
+  })
+
+
+  it('deposits returned USDC from the Trading Account even when owner authorization is supported', async () => {
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.usdcSupportsEip3009 = true
+    perpsTradingMocks.depositMargin.mockResolvedValue('0xdeposit')
+    render(<PerpsTradeTicket enableLiveTrading ownerWalletUsdcRaw={0n} tradingAccountUsdcRaw={25_000_000n} marginAllowanceUsdc={7n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review returned account funds' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Margin' })
+    expect(within(dialog).getByText('Trading Account USDC available to deposit')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Authorize USDC from the Owner Wallet/)).not.toBeInTheDocument()
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '25' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Deposit' }))
+    await waitFor(() => expect(perpsTradingMocks.depositMargin).toHaveBeenCalledWith(25_000_000n, 7n, 'account'))
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+  })
+
+  it('limits returned-funds deposits to the current account balance instead of the historical return or owner wallet', () => {
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.usdcSupportsEip3009 = true
+    const view = render(<PerpsTradeTicket enableLiveTrading ownerWalletUsdcRaw={100_000_000n} tradingAccountUsdcRaw={5_000_000n} />)
+    // The trigger represents a past 99 USDC return, but only 5 USDC remains now.
+    fireEvent.click(screen.getByRole('button', { name: 'Review returned account funds' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Margin' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Max:/ }))
+    expect(within(dialog).getByRole('textbox')).toHaveValue('5')
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '99' } })
+    expect(within(dialog).getByRole('button', { name: 'Deposit' })).toBeDisabled()
+    expect(within(dialog).queryByRole('button', { name: 'Transfer & Deposit' })).not.toBeInTheDocument()
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '5' } })
+    view.rerender(<PerpsTradeTicket enableLiveTrading ownerWalletUsdcRaw={100_000_000n} tradingAccountUsdcRaw={2_000_000n} />)
+    expect(within(dialog).getByRole('button', { name: 'Deposit' })).toBeDisabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: /Max:/ }))
+    expect(within(dialog).getByRole('textbox')).toHaveValue('2')
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 0n])('blocks a returned-funds deposit when current account balance is %s', (balance) => {
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.usdcSupportsEip3009 = true
+    render(<PerpsTradeTicket enableLiveTrading ownerWalletUsdcRaw={100_000_000n} tradingAccountUsdcRaw={balance} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review returned account funds' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Margin' })
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '1' } })
+    expect(within(dialog).getByRole('button', { name: 'Deposit' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: /Max:/ })).toBeDisabled()
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+  })
+
+  it.each(['owner', 'beneficiary', 'releaseId'] as const)('rejects a returned-funds callback for a different %s', (field) => {
+    identityMocks.isAaManifestConfigured = true
+    render(<PerpsTradeTicket enableLiveTrading tradingAccountUsdcRaw={25_000_000n} />)
+    const wrong = { ...accountDepositDestination(), [field]: field === 'releaseId' ? 'unreviewed-release' : '0x9999999999999999999999999999999999999999' }
+    expect(() => act(() => { fundingMocks.onDepositAccount?.(wrong as FundingAccountDepositDestination) })).toThrow('Return to the original Trading Account')
+    expect(screen.queryByRole('dialog', { name: 'Deposit Margin' })).not.toBeInTheDocument()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+  })
+
+  it.each(['ownerAddress', 'accountAddress'] as const)('rechecks the pinned %s before submitting a returned-funds deposit', (field) => {
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.usdcSupportsEip3009 = true
+    const view = render(<PerpsTradeTicket enableLiveTrading tradingAccountUsdcRaw={25_000_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review returned account funds' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Margin' })
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '25' } })
+    identityMocks[field] = '0x9999999999999999999999999999999999999999'
+    view.rerender(<PerpsTradeTicket enableLiveTrading tradingAccountUsdcRaw={25_000_000n} />)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Deposit' }))
+    expect(within(dialog).getByText('Return to the original Trading Account and reviewed destination release before depositing these funds.')).toBeInTheDocument()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
+  })
+
+  it('restores the ordinary owner-funded deposit after closing the returned-funds review', async () => {
+    identityMocks.isAaManifestConfigured = true
+    identityMocks.usdcSupportsEip3009 = true
+    perpsTradingMocks.depositMargin.mockResolvedValue('0xdeposit')
+    render(<PerpsTradeTicket enableLiveTrading ownerWalletUsdcRaw={100_000_000n} tradingAccountUsdcRaw={5_000_000n} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review returned account funds' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Deposit Margin' })).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Margin' })
+    expect(within(dialog).getByText(/Authorize USDC from the Owner Wallet/)).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '25' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Deposit' }))
+    await waitFor(() => expect(perpsTradingMocks.depositMargin).toHaveBeenCalledWith(25_000_000n, undefined, 'owner'))
+    expect(perpsTradingMocks.fundTradingAccount).not.toHaveBeenCalled()
   })
 
   it('combines owner and Trading Account USDC in the supported deposit flow', () => {

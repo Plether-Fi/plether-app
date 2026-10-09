@@ -1,5 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PERPS_DEFAULT_SEPOLIA_DEPLOYMENT } from '../../contracts/perpsAddresses'
+import type { PerpsAaDeploymentManifest } from '../../perps-aa/manifest'
 import { usePerpsAccount } from '../usePerpsAccount'
 
 const ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
@@ -10,6 +12,8 @@ type ContractResult =
 
 const mocks = vi.hoisted(() => ({
   invalidated: false,
+  chainId: 421614,
+  manifest: null as PerpsAaDeploymentManifest | null,
   invalidateSnapshot: vi.fn(),
   dynamicError: undefined as Error | undefined,
   account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
@@ -36,10 +40,10 @@ vi.mock('../../perps-aa', () => ({
     status: 'ready',
     ownerAddress: ACCOUNT,
     accountAddress: mocks.account,
-    chainId: 421614,
+    chainId: mocks.chainId,
     isAaManifestConfigured: true,
     sponsorshipEnabled: true,
-    manifest: null,
+    manifest: mocks.manifest,
     identity: null,
     proposedIdentity: null,
     changedIdentityFields: [],
@@ -162,6 +166,8 @@ describe('usePerpsAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.invalidated = false
+    mocks.chainId = 421614
+    mocks.manifest = null
     mocks.dynamicError = undefined
     mocks.account = ACCOUNT
     mocks.primaryData = primaryData()
@@ -221,6 +227,49 @@ describe('usePerpsAccount', () => {
         refetch: vi.fn(),
       }
     })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('pins every account read to the active mainnet chain', async () => {
+    vi.stubEnv('VITE_PERPS_DEPLOYMENT_JSON', JSON.stringify({
+      ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT,
+      chainId: 42161,
+      closePreview: { ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT.closePreview, chainId: 42161 },
+    }))
+    mocks.chainId = 42161
+    vi.resetModules()
+    const { usePerpsAccount: useActivePerpsAccount } = await import('../usePerpsAccount')
+    renderHook(() => useActivePerpsAccount())
+    const reads = mocks.useReadContracts.mock.calls.flatMap(([options]) => options.contracts ?? [])
+    expect(reads.length).toBeGreaterThan(20)
+    expect(reads.every(read => read.chainId === 42161)).toBe(true)
+    expect(reads).toContainEqual(expect.objectContaining({
+      functionName: 'getCurrentBlockTimestamp', chainId: 42161,
+    }))
+  })
+
+  it('disables account reads for an identity on another chain', () => {
+    mocks.chainId = 42161
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(mocks.useReadContracts.mock.calls.every(([options]) => options.query.enabled === false)).toBe(true)
+    expect(result.current.accountAddress).toBeUndefined()
+    expect(result.current.snapshotStatus).toBe('unavailable')
+  })
+
+  it('does not read a lifecycle book from a different deployment', () => {
+    mocks.manifest = {
+      ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT.contracts, chainId: 421614,
+      orderLifecycleBook: '0x9999999999999999999999999999999999999999',
+    } as unknown as PerpsAaDeploymentManifest
+    const { result } = renderHook(() => usePerpsAccount())
+    expect(mocks.useReadContracts.mock.calls.every(([options]) => options.query.enabled === false)).toBe(true)
+    const reads = mocks.useReadContracts.mock.calls.flatMap(([options]) => options.contracts ?? [])
+    expect(reads.some(read => read.address === mocks.manifest?.orderLifecycleBook)).toBe(false)
+    expect(result.current.snapshotStatus).toBe('unavailable')
   })
 
   it('polls dynamic account state but refreshes timelocked config only on lifecycle boundaries', async () => {

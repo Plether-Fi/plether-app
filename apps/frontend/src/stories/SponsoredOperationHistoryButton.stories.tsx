@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createConfig, WagmiProvider } from 'wagmi'
-import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { arbitrum, arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { custom } from 'viem'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, waitFor, within } from 'storybook/test'
@@ -506,12 +506,13 @@ const recoveryPreviewTransport = custom({
   },
 }, { retryCount: 0 })
 const recoveryTradeConfig = createConfig({
-  chains: [mainnet, sepolia, arbitrumSepolia, anvil],
+  chains: [mainnet, sepolia, arbitrumSepolia, arbitrum, anvil],
   storage: null,
   transports: {
     [mainnet.id]: recoveryPreviewTransport,
     [sepolia.id]: recoveryPreviewTransport,
     [arbitrumSepolia.id]: recoveryPreviewTransport,
+    [arbitrum.id]: recoveryPreviewTransport,
     [anvil.id]: recoveryPreviewTransport,
   },
 })

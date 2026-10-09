@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useChainId, useSwitchChain } from 'wagmi'
-import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { arbitrum, arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { Modal } from '../ui'
 
@@ -14,11 +14,12 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   const { switchChainAsync } = useSwitchChain()
   const [isPending, setIsPending] = useState(false)
 
-  type SupportedChainId = typeof mainnet.id | typeof sepolia.id | typeof arbitrumSepolia.id | typeof anvil.id
+  type SupportedChainId = typeof mainnet.id | typeof arbitrum.id | typeof sepolia.id | typeof arbitrumSepolia.id | typeof anvil.id
 
   const networks = [
     { chain: mainnet, name: 'Ethereum Mainnet', icon: 'diamond' },
     { chain: sepolia, name: 'Sepolia Testnet', icon: 'science' },
+    { chain: arbitrum, name: 'Arbitrum One', icon: 'hub' },
     { chain: arbitrumSepolia, name: 'Arbitrum Sepolia', icon: 'hub' },
     { chain: anvil, name: 'Anvil (Local)', icon: 'terminal' },
   ] as const

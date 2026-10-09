@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 import { parseGlobalHeaders } from './src/config/devServerHeaders';
+import { parsePerpsDeploymentJson } from './src/contracts/perpsDeployment';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 const AA_PROXY_PATHS = new Set([
@@ -91,6 +92,32 @@ function apiProxyConfig(
   };
 }
 
+function fundingProxyConfig(env: RuntimeEnv): ProxyOptions {
+  return {
+    target: env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
+    changeOrigin: true,
+    // The funding backend owns this full namespace; unlike v1 product APIs it
+    // must not be rewritten to /api. No AA or faucet origin secret applies.
+    followRedirects: false,
+    configure(proxy) {
+      proxy.on('proxyReq', (proxyRequest) => {
+        for (const header of [AA_PROXY_AUTH_HEADER, FAUCET_PROXY_AUTH_HEADER, 'X-Plether-AA-Recovery', 'X-Plether-AA-Preparation-Recovery']) {
+          proxyRequest.removeHeader(header);
+        }
+        proxyRequest.removeHeader('If-None-Match');
+        proxyRequest.removeHeader('If-Modified-Since');
+        proxyRequest.setHeader('Cache-Control', 'no-store');
+        proxyRequest.setHeader('Pragma', 'no-cache');
+      });
+      proxy.on('proxyRes', (response) => {
+        response.headers['cache-control'] = 'no-store';
+        response.headers['cdn-cache-control'] = 'no-store';
+        response.headers['cloudflare-cdn-cache-control'] = 'no-store';
+      });
+    },
+  };
+}
+
 function pythHermesProxyConfig(env: RuntimeEnv): ProxyOptions {
   return {
     target: env.VITE_PYTH_HERMES_PROXY_TARGET ?? 'https://hermes.pyth.network',
@@ -119,6 +146,9 @@ export default defineConfig(({ mode }) => {
     ...loadEnv(mode, dirname, ''),
     ...process.env,
   };
+  if (env.VITE_PERPS_DEPLOYMENT_JSON !== undefined) {
+    parsePerpsDeploymentJson(env.VITE_PERPS_DEPLOYMENT_JSON);
+  }
 
   return {
   define: {
@@ -138,6 +168,7 @@ export default defineConfig(({ mode }) => {
     proxy: {
       '/api/spot/v1': apiProxyConfig(env),
       '/api/perps/v1': apiProxyConfig(env, true),
+      '^/api/perps/funding(?:/|$)': fundingProxyConfig(env),
       '/pyth-hermes': pythHermesProxyConfig(env),
     },
   },

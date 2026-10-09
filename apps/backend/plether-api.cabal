@@ -9,6 +9,9 @@ maintainer:         dev@plether.io
 category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
+                    test/fixtures/across-direct-actions-v1.json
+                    config/migrations/perps-funding-v1.sql
+                    config/migrations/aa-preparation-recovery-chain-scope-v1.sql
                     config/migrations/insights-integrity-epoch-v1.sql
                     config/migrations/insights-snapshot-deferred-fk-v1.sql
                     config/migrations/insights-integrity-indexes-v1.sql
@@ -121,6 +124,13 @@ library
         Plether.Pyth.History
         Plether.Pyth.Prefetch
         Plether.Pyth.RevealPayload
+        Plether.Perps.Funding.Types
+        Plether.Perps.Funding.Store
+        Plether.Perps.Funding.Chain
+        Plether.Perps.Funding.Source
+        Plether.Perps.Funding.Across
+        Plether.Perps.Funding.Http
+        Plether.Perps.Funding.Worker
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.CandleFinalizerProbe
@@ -207,6 +217,22 @@ executable plether-api
     default-language: GHC2021
     default-extensions:
         OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable plether-funding-worker
+    import:           warnings
+    main-is:          FundingWorker.hs
+    build-depends:
+        http-client >= 0.7,
+        http-client-tls >= 0.3,
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
 executable plether-aa-reconciler
@@ -422,6 +448,9 @@ test-suite plether-api-test
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
         Plether.Perps.CandleFinalizerProbeSpec
+        Plether.Perps.Funding.ChainSpec
+        Plether.Perps.Funding.SourceSpec
+        Plether.Perps.Funding.AcrossSpec
         Plether.Perps.ClosedPriceGapSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
@@ -482,6 +511,9 @@ test-suite plether-api-integration-test
         Plether.Keeper.BroadcastSpec
         Plether.Keeper.ReliabilitySpec
         Plether.DatabaseDiagnosticsSpec
+        Plether.Database.AaPreparationRecoveryChainSpec
+        Plether.Perps.Funding.StoreSpec
+        Plether.Perps.Funding.WorkerSpec
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec

@@ -5,6 +5,7 @@ import type {
   PerpsAaDeploymentManifestV2,
 } from '../manifest'
 import type { ManagedUserOperation } from '../runtimeContext'
+import { PERPS_DEFAULT_SEPOLIA_DEPLOYMENT } from '../../contracts/perpsAddresses'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -159,6 +160,73 @@ describe('createManagedPimlicoRuntime', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it.each([42161, 421614])('binds managed clients and native RPC requests to active chain %i', async chainId => {
+    vi.stubEnv('VITE_PERPS_DEPLOYMENT_JSON', JSON.stringify({
+      ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT,
+      chainId,
+      closePreview: { ...PERPS_DEFAULT_SEPOLIA_DEPLOYMENT.closePreview, chainId },
+    }))
+    vi.resetModules()
+    const { createManagedAaRuntime } = await import('../managedPimlicoRuntime')
+    const sign = vi.fn()
+    mocks.toSimpleSmartAccount.mockResolvedValue({ address: ACCOUNT, signUserOperation: sign,
+      encodeCalls: vi.fn(async () => '0x1234'), getFactoryArgs: vi.fn(async () => ({})) })
+    const requests: { method: string; params: unknown[] }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      requests.push(body)
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id,
+        error: { code: -32001, message: 'Preparation unavailable' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const clients = {
+      ownerAddress: OWNER,
+      walletClient: { chain: { id: chainId }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: chainId } } as never,
+    }
+    const runtime = await createManagedAaRuntime({ ...clients,
+      manifest: { ...v2Manifest, chainId, preparationRpcVersion: 1,
+        paymasterRpcUrl: 'http://localhost:5173/api/perps/v1/aa/rpc' },
+    })
+    await expect(runtime.smartAccount.prepareUserOperation({
+      calls: [{ to: ACCOUNT, value: 0n, data: '0x1234' }], preparationId: 'active-chain-attempt',
+    })).rejects.toThrow('Preparation unavailable')
+    await expect(runtime.smartAccount.getPreparationStatus!({ userOperationHash: HASH }))
+      .rejects.toThrow('Preparation unavailable')
+    expect(requests).toEqual([
+      expect.objectContaining({ method: 'plether_prepareUserOperation', params: [expect.objectContaining({ chainId: `0x${chainId.toString(16)}` })] }),
+      expect.objectContaining({ method: 'plether_getPreparationStatus', params: [expect.objectContaining({ chainId: `0x${chainId.toString(16)}` })] }),
+    ])
+    await runtime.smartAccount.sendUserOperation(operation)
+    await createManagedAaRuntime({ ...clients, manifest: { ...manifest, chainId } })
+    for (const clientFactory of [mocks.createSmartAccountClient, mocks.createBundlerClient, mocks.createPimlicoClient]) {
+      expect(clientFactory).toHaveBeenCalled()
+      expect(clientFactory.mock.calls.every(([options]) => options.chain.id === chainId)).toBe(true)
+    }
+    expect(runtime.chainId).toBe(chainId)
+    expect(sign).not.toHaveBeenCalled()
+  })
+
+  it.each([42161, 1])('rejects inactive or unsupported manifest chain %i before account construction', async chainId => {
+    await expect(createManagedPimlicoRuntime({
+      manifest: { ...manifest, chainId }, ownerAddress: OWNER,
+      walletClient: { chain: { id: chainId }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: chainId } } as never,
+    })).rejects.toThrow('active Perps chain')
+    expect(mocks.toSimpleSmartAccount).not.toHaveBeenCalled()
+  })
+
+  it.each(['wallet', 'public'] as const)('rejects a %s client on another chain before account construction', async mismatch => {
+    await expect(createManagedPimlicoRuntime({
+      manifest, ownerAddress: OWNER,
+      walletClient: { chain: { id: mismatch === 'wallet' ? 42161 : 421614 }, account: { address: OWNER } } as never,
+      publicClient: { chain: { id: mismatch === 'public' ? 42161 : 421614 } } as never,
+    })).rejects.toThrow('connected wallet is not ready on the manifest chain')
+    expect(mocks.toSimpleSmartAccount).not.toHaveBeenCalled()
   })
 
   it.each([manifest, v2Manifest])('resolves and signs with an embedded wallet without rediscovering accounts ($version)', async (deployment) => {

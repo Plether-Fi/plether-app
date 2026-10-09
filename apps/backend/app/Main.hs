@@ -12,6 +12,7 @@ import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Diagnostics (startDbDiagnostics)
+import Plether.Database.AaPreparationRecovery (ensurePreparationRecoveryChainScope)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Protection (ensureProtectionSchema)
@@ -25,6 +26,8 @@ import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
+import Plether.Perps.Funding.Http (newFundingHttpState)
+import Plether.Perps.Funding.Store (ensureFundingSchema)
 import Plether.Perps.Release (verifyPerpsV2ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
 import Plether.Server (apiServerOptions)
@@ -82,9 +85,11 @@ main = do
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureProtectionSchema
           withDb pool ensureTestnetFaucetSchema
+          withDb pool ensureFundingSchema
           withDb pool ensureVaultPerformanceSchema
           withDb pool ensureVaultActivitySchema
           withDb pool ensureAaSponsorshipSchema
+          withDb pool ensurePreparationRecoveryChainScope
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
@@ -192,6 +197,7 @@ main = do
             "Native AA startup attestation failed; affected methods remain fail-closed"
             [field "failure_class" ("startup-attestation" :: String)]
         Nothing -> pure ()
+      fundingState <- newFundingHttpState manager cfg
       requestLogging <- newRequestLoggingMiddleware
       logInfo
         "api_started"
@@ -203,4 +209,4 @@ main = do
         ]
       scottyOpts (apiServerOptions $ cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState
+        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState fundingState

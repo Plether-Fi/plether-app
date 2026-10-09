@@ -21,6 +21,7 @@ import Plether.AA.Pimlico (ProxyFailure (..))
 import qualified Plether.AA.Pimlico as Proxy
 import Plether.Config (NativeAaConfig (..), AaRpcMode (..))
 import Plether.Ethereum.Abi (keccak256)
+import qualified Plether.Perps.Manifest as Manifest
 import Test.Hspec
 
 spec :: Spec
@@ -35,8 +36,38 @@ spec = do
               1_900_000_000
               1_000_000_000_000_000
               (BS.replicate 65 0)
-      hex (sponsorshipDigest operation envelope)
+      hex (sponsorshipDigestForChain 421614 operation envelope)
         `shouldBe` "0xd92042495de3ae32c76391a73aeb6bfaf515af2dd3da45c9a8921b5310cde1ea"
+
+    it "isolates sponsorship signatures and EntryPoint hashes across Arbitrum chains" $ do
+      operation <- parseFixture
+      let envelope =
+            makeSponsorshipEnvelope fixtureConfig 1_800_000_000 1_900_000_000
+              1_000_000_000_000_000 (BS.replicate 65 0)
+      -- Independent viem 2.45.2 EIP-712 vectors use the same sender, calldata,
+      -- nonce, gas, paymaster and envelope on each chain.
+      hex (sponsorshipDigestForChain 42161 operation envelope)
+        `shouldBe` "0x73b407299e71dac0f2a22d2e50540ab8b73d382aebc7022189aa771f99db6f27"
+      hex (userOperationHashForChain 42161 operation)
+        `shouldBe` "0x72b1c76b12b2d0fdbfbaf2cc020256ad68cd4a33c8b805a6e0fe1d7dbb1e7e7e"
+      sponsorshipDigestForChain 42161 operation envelope
+        `shouldNotBe` sponsorshipDigestForChain 421614 operation envelope
+      userOperationHashForChain 42161 operation
+        `shouldNotBe` userOperationHashForChain 421614 operation
+      let sponsored = applyPaymasterEnvelope operation envelope
+      userOperationHashForChain 42161 sponsored
+        `shouldNotBe` userOperationHashForChain 421614 sponsored
+
+    it "binds production signing and operation hashes to the compiled release chain" $ do
+      operation <- parseFixture
+      let envelope = makeSponsorshipEnvelope fixtureConfig 10 100 10_000 (BS.replicate 65 1)
+          otherChain = if Manifest.releaseChainId == 42161 then 421614 else 42161
+      sponsorshipDigest operation envelope
+        `shouldBe` sponsorshipDigestForChain Manifest.releaseChainId operation envelope
+      sponsorshipDigest operation envelope
+        `shouldNotBe` sponsorshipDigestForChain otherChain operation envelope
+      userOperationHash operation `shouldBe` userOperationHashForChain Manifest.releaseChainId operation
+      userOperationHash operation `shouldNotBe` userOperationHashForChain otherChain operation
 
     it "encodes and decodes the exact 157-byte paymasterData envelope" $ do
       operation <- parseFixture
@@ -76,14 +107,14 @@ spec = do
 
     it "matches viem 2.45.2 for the EntryPoint v0.8 EIP-712 UserOperation hash" $ do
       operation <- parseFixture
-      hex (userOperationHash operation)
+      hex (userOperationHashForChain 421614 operation)
         `shouldBe` "0x601c358f5253f485c0f347dd89325784d77e8341db4ef05d99c9d22152949939"
 
     it "matches the live EntryPoint v0.8 hash with the full paymaster signature" $ do
       operation <- parseFixture
       let envelope =
             makeSponsorshipEnvelope fixtureConfig 10 100 10_000 (BS.replicate 65 1)
-      hex (userOperationHash $ applyPaymasterEnvelope operation envelope)
+      hex (userOperationHashForChain 421614 $ applyPaymasterEnvelope operation envelope)
         `shouldBe` "0xa339c78eccd42a781c1436f05396b969959c8bc0e713f44da9c84ca3b7c54c58"
 
     it "reserves the EntryPoint v0.8 maximum gas liability and rejects inflated fields" $ do

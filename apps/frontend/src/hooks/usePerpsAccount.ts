@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { multicall3Abi, zeroAddress } from 'viem'
-import { arbitrumSepolia } from 'viem/chains'
 import { parsePositionProtection } from '../contracts/positionProtection'
 import { useReadContracts } from 'wagmi'
 import {
@@ -13,7 +12,7 @@ import {
   PERPS_ORDER_ROUTER_ABI,
   PERPS_PUBLIC_LENS_ABI,
 } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_CHAIN, PERPS_CONTRACTS, PERPS_CHAIN_ID, isPerpsManifestForActiveDeployment } from '../contracts/perpsAddresses'
 import { usePerpsIdentity } from '../perps-aa'
 import { findLiquidationThreshold, projectCarry, type LiquidationThreshold } from '../utils/perpsRisk'
 import { useInvalidatePerpsSnapshot, usePerpsSnapshotInvalidated } from './usePerpsSnapshotInvalidated'
@@ -31,8 +30,8 @@ const PERPS_CONFIG_GC_TIME_MS = Number.POSITIVE_INFINITY
 
 function sideCarryContracts(side: bigint) {
   const engine = {
-    chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-    address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+    chainId: PERPS_CHAIN_ID,
+    address: PERPS_CONTRACTS.cfdEngine,
     abi: PERPS_CFD_ENGINE_ABI,
     args: [side],
   } as const
@@ -188,10 +187,17 @@ function readPendingCarryUsdc(data: readonly ContractResult[] | undefined): bigi
 export function usePerpsAccount(markPrice?: bigint) {
   const {
     ownerAddress,
-    accountAddress,
+    accountAddress: identityAccountAddress,
+    chainId: identityChainId,
     status: identityStatus,
     manifest,
   } = usePerpsIdentity()
+  const matchesActiveDeployment = identityChainId === PERPS_CHAIN_ID &&
+    (manifest == null || isPerpsManifestForActiveDeployment(manifest))
+  const accountAddress = matchesActiveDeployment ? identityAccountAddress : undefined
+  const orderLifecycleBook = manifest && isPerpsManifestForActiveDeployment(manifest)
+    ? PERPS_CONTRACTS.orderLifecycleBook
+    : undefined
   const isConnected = ownerAddress !== undefined
   const account = accountAddress ?? zeroAddress
   const owner = ownerAddress ?? zeroAddress
@@ -212,131 +218,131 @@ export function usePerpsAccount(markPrice?: bigint) {
     batchSize: 0,
     contracts: [
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getTraderAccount',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getPosition',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getPendingOrders',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.usdc,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.usdc,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [owner],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.usdc,
         abi: ERC20_ABI,
         functionName: 'allowance',
-        args: [account, PERPS_ARBITRUM_SEPOLIA.marginClearinghouse],
+        args: [account, PERPS_CONTRACTS.marginClearinghouse],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.marginClearinghouse,
         abi: PERPS_MARGIN_CLEARINGHOUSE_ABI,
         functionName: 'getFreeBuyingPowerUsdc',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngineAccountLens,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngineAccountLens,
         abi: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
         functionName: 'getAccountLedgerSnapshot',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'isFadWindow',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'positions',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.perpsPublicLens,
         abi: PERPS_PUBLIC_LENS_ABI,
         functionName: 'getActivePositionProtection',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'positionCarryState',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'unsettledCarryUsdc',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'riskParams',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.housePool,
         abi: PERPS_HOUSE_POOL_ABI,
         functionName: 'totalAssets',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: arbitrumSepolia.contracts.multicall3.address,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CHAIN.contracts.multicall3.address,
         abi: multicall3Abi,
         functionName: 'getCurrentBlockTimestamp',
       },
       ...sideCarryContracts(0n),
       ...sideCarryContracts(1n),
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'positionEntryCostUsdcAtoms',
         args: [account],
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'lastMarkPrice',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.marginClearinghouse,
         abi: PERPS_MARGIN_CLEARINGHOUSE_ABI,
         functionName: 'vpiRebateReserveUsdc',
         args: [account],
@@ -362,14 +368,14 @@ export function usePerpsAccount(markPrice?: bigint) {
   } = useReadContracts({
     contracts: [
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'riskParams',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'executionFeeBps',
       },
@@ -391,20 +397,20 @@ export function usePerpsAccount(markPrice?: bigint) {
   } = useReadContracts({
     contracts: [
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'minOpenNotionalUsdc',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'maxPendingOrders',
       },
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'maxOrderAge',
       },
@@ -425,8 +431,8 @@ export function usePerpsAccount(markPrice?: bigint) {
   } = useReadContracts({
     contracts: [
       {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        chainId: PERPS_CHAIN_ID,
+        address: PERPS_CONTRACTS.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'CAP_PRICE',
       },
@@ -466,8 +472,8 @@ export function usePerpsAccount(markPrice?: bigint) {
 
   const { data: pendingOrderViewsData, isLoading: pendingOrderViewsLoading } = useReadContracts({
     contracts: basicPendingOrders.map((order) => ({
-      chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-      address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      chainId: PERPS_CHAIN_ID,
+      address: PERPS_CONTRACTS.orderRouter,
       abi: PERPS_ORDER_ROUTER_ABI,
       functionName: 'getPendingOrderView',
       args: [order.orderId],
@@ -481,10 +487,10 @@ export function usePerpsAccount(markPrice?: bigint) {
     data: pendingOrderPoliciesData,
     isLoading: pendingOrderPoliciesLoading,
   } = useReadContracts({
-    contracts: manifest?.orderLifecycleBook
+    contracts: orderLifecycleBook
       ? basicPendingOrders.map((order) => ({
-          chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-          address: manifest.orderLifecycleBook,
+          chainId: PERPS_CHAIN_ID,
+          address: orderLifecycleBook,
           abi: PERPS_ORDER_LIFECYCLE_BOOK_ABI,
           functionName: 'pendingPolicy',
           args: [order.orderId],
@@ -493,7 +499,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     query: {
       enabled: isConnected &&
         accountAddress !== undefined &&
-        manifest?.orderLifecycleBook !== undefined &&
+        orderLifecycleBook !== undefined &&
         basicPendingOrders.length > 0,
       refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
     },
@@ -528,7 +534,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     const pendingCarryUsdc = readPendingCarryUsdc(dynamicContractData)
     const entryCostUsdcAtoms = readResult(dynamicContractData, 22) as bigint | undefined
     const vpiReserveUsdc = readResult(dynamicContractData, 24) as bigint | undefined
-    const snapshotCurrent = !snapshotInvalidated && !dynamicContractsError
+    const snapshotCurrent = accountAddress !== undefined && !snapshotInvalidated && !dynamicContractsError
     const riskReady = snapshotCurrent && accountView !== undefined && accountLedgerSnapshot !== undefined &&
       accountMarkPrice !== undefined && accountMarkPrice > 0n && capPrice !== undefined && isFadWindow !== undefined &&
       maintenanceMarginBps !== undefined && entryCostUsdcAtoms !== undefined &&
@@ -557,7 +563,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
       const pendingPolicy = readResult(pendingOrderPoliciesData, index)
       const policyValidUntil = readBigInt(pendingPolicy, 0, 'validUntil')
-      const expiryTime = manifest?.orderLifecycleBook
+      const expiryTime = orderLifecycleBook
         ? policyValidUntil
         : commitTime !== undefined && maxOrderAge !== undefined
           ? commitTime + maxOrderAge
@@ -638,7 +644,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
       },
     }
-  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, manifest?.orderLifecycleBook, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
+  }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, orderLifecycleBook, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return
