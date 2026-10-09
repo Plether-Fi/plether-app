@@ -243,7 +243,7 @@ function laneKey(
   const accountLane = `${accountAddress.toLowerCase()}:${lane}`
   // Retain the historical Sepolia key for existing tabs and consumers. Every
   // other chain has its own namespace, even for the same smart-account address.
-  return chainId === 421614 ? accountLane : `${chainId}:${accountLane}`
+  return chainId === 421614 ? accountLane : `${chainId.toString()}:${accountLane}`
 }
 
 function updateOperation(

@@ -165,8 +165,8 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it.each(['usdc', 'marginClearinghouse', 'cfdEngine', 'orderRouter', 'orderLifecycleBook', 'policyEvaluator', 'positionProtectionBook'])
-    ('rejects a mismatched %s before funding or requesting sponsorship', async key => {
+  it.each(['usdc', 'marginClearinghouse', 'cfdEngine', 'orderRouter', 'orderLifecycleBook', 'policyEvaluator', 'positionProtectionBook'])(
+    'rejects a mismatched %s before funding or requesting sponsorship', async key => {
       mocks.manifestOverrides = { [key]: '0x9999999999999999999999999999999999999999' }
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
       await expect(result.current.fundTradingAccount(25_000_000n)).rejects.toMatchObject({
