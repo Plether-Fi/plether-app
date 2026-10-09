@@ -15,7 +15,10 @@ export interface FundingSource {
 /** A separately reviewed release; no production or testnet route is inferred. */
 export interface FundingManifest {
   clearinghouseCodeHash: Hex
-  factoryCodeHash: Hex
+  multicallHandlerCodeHash: Hex
+  destinationSpokePoolCodeHash: Hex
+  destinationSpokePoolImplementation: Address
+  destinationSpokePoolImplementationCodeHash: Hex
   confirmations: number
   startBlock: number
   releaseId: string
@@ -23,23 +26,31 @@ export interface FundingManifest {
   destinationChainId: number
   token: Address
   clearinghouse: Address
-  receiverFactory: Address
+  multicallHandler: Address
+  destinationSpokePool: Address
   sources: FundingSource[]
 }
 
-export interface FundingDestination {
+export interface FundingAccountDepositDestination {
   owner: Address
   beneficiary: Address
   destinationChainId: number
   token: Address
   clearinghouse: Address
-  receiverFactory: Address
   releaseId: string
+}
+
+export interface FundingDestination extends FundingAccountDepositDestination {
+  multicallHandler: Address
+  destinationSpokePool: Address
 }
 
 export interface FundingConfig {
   clearinghouseCodeHash?: Hex
-  factoryCodeHash?: Hex
+  multicallHandlerCodeHash?: Hex
+  destinationSpokePoolCodeHash?: Hex
+  destinationSpokePoolImplementation?: Address
+  destinationSpokePoolImplementationCodeHash?: Hex
   confirmations?: number
   startBlock?: number
   enabled: boolean
@@ -49,7 +60,8 @@ export interface FundingConfig {
   releaseId?: string
   clearinghouse?: Address
   token?: Address
-  receiverFactory?: Address
+  multicallHandler?: Address
+  destinationSpokePool?: Address
 }
 
 export interface SourceTransaction {
@@ -61,10 +73,11 @@ export interface SourceTransaction {
 }
 
 export interface FundingQuote {
-  intentSalt: Hex
   ownerAddress: Address
-  receiverFactory: Address
-  quoteId: string
+  multicallHandler: Address
+  destinationSpokePool: Address
+  quoteId: Hex
+  destinationMessage: Hex
   expiresAt: number
   provider: string
   sourceChainId: number
@@ -74,14 +87,13 @@ export interface FundingQuote {
   token: Address
   beneficiary: Address
   clearinghouse: Address
-  receiver: Address
   releaseId: string
   estimatedAmount: string
   minimumAmount: string
   sourceTransactions: SourceTransaction[]
 }
 
-export type FundingStatus = 'awaiting-source' | 'bridging' | 'received' | 'depositing' | 'confirmed' | 'retryable' | 'failed'
+export type FundingStatus = 'awaiting-source' | 'bridging' | 'received' | 'depositing' | 'confirmed' | 'needs-deposit' | 'failed'
 
 export interface FundingIntent extends FundingQuote {
   intentId: string
@@ -91,6 +103,10 @@ export interface FundingIntent extends FundingQuote {
   depositBlockNumber?: string
   depositBlockHash?: Hex
   creditedAmount?: string
+  fallbackTxHash?: Hex
+  fallbackBlockNumber?: string
+  fallbackBlockHash?: Hex
+  fallbackAmount?: string
   reason?: string
   bridgeStatus?: 'pending' | 'filled' | 'expired' | 'refunded'
   sourceStatus?: 'pending' | 'confirmed' | 'reverted'

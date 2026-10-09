@@ -3,7 +3,7 @@ module Plether.Perps.Funding.Types
   ( FundingDeployment (..), QuoteRequest (..), SourceTransaction (..)
   , ProviderQuote (..), FundingProvider (..)
   , validateFundingReleaseBinding, deploymentReadinessKey, loadFundingDeployment, validateAddress, validateAmount, validateHash
-  , fieldText, fieldInteger, setFields, publicIntent, newIdentifier, intentFromQuote
+  , fieldText, fieldInteger, setFields, publicIntent, publicObservedIntent, newIdentifier, intentFromQuote
   ) where
 
 import Crypto.Random (getRandomBytes)
@@ -22,10 +22,12 @@ import qualified Data.Text.Encoding as TE
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
--- Immutable release bindings, validated again on chain before quoting/signing.
+-- Immutable release bindings, validated again on chain before quoting and observing.
 data FundingDeployment = FundingDeployment
   { fdChainId :: Integer, fdReleaseId :: Text, fdClearinghouse :: Text
-  , fdToken :: Text, fdFactory :: Text, fdFactoryCodeHash :: Text
+  , fdToken :: Text, fdDestinationSpokePool :: Text, fdDestinationSpokePoolCodeHash :: Text
+  , fdDestinationSpokePoolImplementation :: Text, fdDestinationSpokePoolImplementationCodeHash :: Text
+  , fdMulticallHandler :: Text, fdMulticallHandlerCodeHash :: Text
   , fdConfirmations :: Integer, fdStartBlock :: Integer, fdClearinghouseCodeHash :: Text
   } deriving stock (Eq, Show)
 instance FromJSON FundingDeployment where
@@ -34,19 +36,27 @@ instance FromJSON FundingDeployment where
     release <- v .: "releaseId"
     ch <- v .: "clearinghouse" >>= validAddress
     token <- v .: "token" >>= validAddress
-    factory <- v .: "receiverFactory" >>= validAddress
-    codeHash <- v .: "factoryCodeHash" >>= validHash
+    spokePool <- v .: "destinationSpokePool" >>= validAddress
+    spokePoolHash <- v .: "destinationSpokePoolCodeHash" >>= validHash
+    implementation <- v .: "destinationSpokePoolImplementation" >>= validAddress
+    implementationHash <- v .: "destinationSpokePoolImplementationCodeHash" >>= validHash
+    handler <- v .: "multicallHandler" >>= validAddress
+    handlerHash <- v .: "multicallHandlerCodeHash" >>= validHash
     confirmations <- v .: "confirmations"
     start <- v .: "startBlock"
     clearinghouseCodeHash <- v .: "clearinghouseCodeHash" >>= validHash
     if chain <= 0 || T.null release || T.length release > 128 || confirmations < 1 || confirmations > 1000 || start < 0
       then fail "Invalid funding deployment bounds"
-      else pure $ FundingDeployment chain release ch token factory codeHash confirmations start clearinghouseCodeHash
+      else pure $ FundingDeployment chain release ch token spokePool spokePoolHash implementation implementationHash handler handlerHash confirmations start clearinghouseCodeHash
 instance ToJSON FundingDeployment where
   toJSON FundingDeployment {..} = object
     ["destinationChainId" .= fdChainId, "releaseId" .= fdReleaseId
-    ,"clearinghouse" .= fdClearinghouse, "token" .= fdToken, "receiverFactory" .= fdFactory
-    ,"factoryCodeHash" .= fdFactoryCodeHash, "clearinghouseCodeHash" .= fdClearinghouseCodeHash, "confirmations" .= fdConfirmations, "startBlock" .= fdStartBlock]
+    ,"clearinghouse" .= fdClearinghouse, "token" .= fdToken
+    ,"destinationSpokePool" .= fdDestinationSpokePool,"destinationSpokePoolCodeHash" .= fdDestinationSpokePoolCodeHash
+    ,"destinationSpokePoolImplementation" .= fdDestinationSpokePoolImplementation
+    ,"destinationSpokePoolImplementationCodeHash" .= fdDestinationSpokePoolImplementationCodeHash
+    ,"multicallHandler" .= fdMulticallHandler,"multicallHandlerCodeHash" .= fdMulticallHandlerCodeHash
+    ,"clearinghouseCodeHash" .= fdClearinghouseCodeHash, "confirmations" .= fdConfirmations, "startBlock" .= fdStartBlock]
 
 validateFundingReleaseBinding :: Integer -> Text -> Text -> FundingDeployment -> Either Text FundingDeployment
 validateFundingReleaseBinding chain clearinghouse token deployment
@@ -85,11 +95,11 @@ instance ToJSON SourceTransaction where
 
 data ProviderQuote = ProviderQuote
   { pqExpiresAt :: Integer, pqEstimatedAmount :: Text, pqMinimumAmount :: Text
-  , pqTransactions :: [SourceTransaction], pqProviderReference :: Text
+  , pqTransactions :: [SourceTransaction], pqProviderReference :: Text, pqDestinationMessage :: Text
   } deriving stock (Eq, Show)
 
 -- A provider must produce an executable source-wallet route whose destination
--- is exactly the supplied receiver/token. There is no generic passthrough URL.
+-- is exactly the pinned clearinghouse/beneficiary/token. There is no generic passthrough URL.
 data FundingProvider = FundingProvider
   { fpName :: Text, fpUnavailableReason :: Maybe Text
   , fpQuote :: FundingDeployment -> QuoteRequest -> Text -> IO (Either Text ProviderQuote)
@@ -121,8 +131,18 @@ setFields fields (Object value) = Object $ foldr (\(key,item) -> KM.insert (Key.
 setFields _ value = value
 publicIntent :: Value -> Value
 publicIntent (Object value) = Object $ foldr KM.delete value
-  ["signedRawTransaction", "sender", "nonce", "providerReference"]
+  ["providerReference"]
 publicIntent value = value
+-- Every intent endpoint applies the same freshness rule, including idempotent
+-- create/source/retry responses. Historical proof cannot advertise live credit.
+publicObservedIntent :: Integer -> Bool -> Value -> Value
+publicObservedIntent now observerReady intent = publicIntent $
+  if stale && fieldText "status" intent `elem` [Just "confirmed",Just "needs-deposit"]
+    then setFields [("status",String "bridging"),("creditedAmount",String "0")
+      ,("lastError",String "DESTINATION_OBSERVER_UNAVAILABLE")] intent
+    else intent
+  where
+    stale = not observerReady || maybe True (\checked -> checked > now || now-checked > 60) (fieldInteger "lastCheckedAt" intent)
 newIdentifier :: IO Text
 newIdentifier = do
   entropy <- getRandomBytes 32 :: IO ByteString

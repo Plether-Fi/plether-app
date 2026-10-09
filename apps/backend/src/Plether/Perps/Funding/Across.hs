@@ -3,7 +3,7 @@
 -- bindings before exposing a source-wallet transaction. Unknown route shapes fail
 -- closed rather than treating a successful simulation as proof of the recipient.
 module Plether.Perps.Funding.Across
-  ( acrossProvider, acrossSourceAssets, parseAcrossQuote
+  ( acrossProvider, acrossSourceAssets, parseAcrossQuote, buildAcrossActions, buildAcrossDestinationMessage
   , acrossTransferStatus, parseAcrossTransferStatus ) where
 
 import Control.Exception (try)
@@ -11,6 +11,7 @@ import Control.Monad (foldM, unless)
 import Data.Aeson
 import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Char (isHexDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -19,6 +20,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import Network.HTTP.Client
 import Network.HTTP.Types (statusCode, renderQuery)
 import Numeric (readHex, showHex)
+import Plether.Ethereum.Abi (keccak256)
 import Plether.Perps.Funding.Types
 import System.Environment (lookupEnv)
 import System.Timeout (timeout)
@@ -105,22 +107,23 @@ validIntegrator ident = T.length ident == 6 && T.isPrefixOf "0x" ident
   && T.all isHexDigit (T.drop 2 ident)
 
 quote :: Manager -> Text -> Text -> FundingDeployment -> QuoteRequest -> Text -> IO (Either Text ProviderQuote)
-quote manager apiKey integrator deployment request receiver =
-  case validateRoute deployment request receiver of
+quote manager apiKey integrator deployment request quoteId =
+  case validateRoute deployment request quoteId of
     Left err -> pure $ Left err
     Right () -> do
       initial <- parseRequest "https://app.across.to/api/swap/approval"
       let upstream = initial
-            { method = "GET", redirectCount = 0
+            { method = "POST", redirectCount = 0
+            , requestBody = RequestBodyLBS $ encode $ buildAcrossActions deployment request quoteId
             , responseTimeout = responseTimeoutMicro 15_000_000
             , checkResponse = \_ _ -> pure ()
-            , requestHeaders = [("Authorization", "Bearer " <> TE.encodeUtf8 apiKey),("Accept","application/json")]
+            , requestHeaders = [("Authorization", "Bearer " <> TE.encodeUtf8 apiKey),("Accept","application/json"),("Content-Type","application/json")]
             , queryString = renderQuery True $ map (\(k,v) -> (k,Just $ TE.encodeUtf8 v))
               [ ("tradeType","exactInput"), ("strictTradeType","true")
               , ("originChainId","1"), ("destinationChainId","42161")
               , ("inputToken",T.toLower $ qrSourceToken request), ("outputToken",arbUsdc)
               , ("amount",qrSourceAmount request), ("depositor",qrSourceOwner request)
-              , ("recipient",receiver), ("refundAddress",qrSourceOwner request)
+              , ("recipient",qrBeneficiary request), ("refundAddress",qrSourceOwner request)
               , ("refundOnOrigin","true"), ("skipOriginTxEstimation","false")
               , ("slippage","0.005"), ("integratorId",integrator) ] }
       -- Bound total wall time as well as response inactivity and total decoded bytes.
@@ -136,7 +139,7 @@ quote manager apiKey integrator deployment request receiver =
           Left _ -> pure $ Left "ACROSS_INVALID_JSON"
           Right payload -> do
             now <- floor <$> getPOSIXTime
-            pure $ parseAcrossQuote now integrator deployment request receiver payload
+            pure $ parseAcrossQuote now integrator deployment request quoteId payload
 
 readBounded :: BodyReader -> IO (Either Text BS.ByteString)
 readBounded = readBoundedLimit 262144
@@ -151,8 +154,9 @@ readBoundedLimit limit = go 0 []
       else go (total + BS.length chunk) (chunk:chunks) reader
 
 validateRoute :: FundingDeployment -> QuoteRequest -> Text -> Either Text ()
-validateRoute deployment request receiver = do
-  _ <- validateAddress receiver
+validateRoute deployment request quoteId = do
+  _ <- validateHash quoteId
+  unless (fdMulticallHandler deployment == multicallHandler) $ Left "ACROSS_UNSUPPORTED_HANDLER"
   _ <- validateAddress $ qrSourceOwner request
   _ <- validateAddress $ qrBeneficiary request
   _ <- validateAmount $ qrSourceAmount request
@@ -163,14 +167,15 @@ validateRoute deployment request receiver = do
 -- | Parse an independently captured API response, using the current time and the
 -- configured integrator ID. Exact ABI layouts are deliberate compatibility gates.
 parseAcrossQuote :: Integer -> Text -> FundingDeployment -> QuoteRequest -> Text -> Value -> Either Text ProviderQuote
-parseAcrossQuote now integrator deployment request receiver payload = do
-  validateRoute deployment request receiver
+parseAcrossQuote now integrator deployment request quoteId payload = do
+  validateRoute deployment request quoteId
   unless (validIntegrator integrator) $ Left "ACROSS_INVALID_INTEGRATOR"
   either (Left . ("ACROSS_QUOTE_REJECTED: " <>) . T.pack) Right $ parseEither parseQuote payload
  where
   token = T.toLower $ qrSourceToken request
   owner = T.toLower $ qrSourceOwner request
-  recipient = T.toLower receiver
+  recipient = T.toLower $ fdMulticallHandler deployment
+  beneficiary = T.toLower $ qrBeneficiary request
   parseQuote = withObject "Across quote" $ \v -> do
     exactText v "amountType" "exactInput"
     let direct = token == ethUsdc
@@ -215,7 +220,7 @@ parseAcrossQuote now integrator deployment request receiver payload = do
     encoded <- hexData calldata
     apiExpiry <- v .: "quoteExpiryTimestamp"
     ensure (apiExpiry > now && apiExpiry <= now + 7200) "expired or unbounded API quote"
-    expiry <- if direct then checkDeposit amount minimumOutput encoded
+    (expiry,message) <- if direct then checkDeposit amount minimumOutput encoded
       else checkSwap amount minimumOutput encoded
     let expiresAt = minimum [apiExpiry,expiry,now+180]
     ensure (expiresAt > now + 30) "quote expires too soon"
@@ -229,7 +234,7 @@ parseAcrossQuote now integrator deployment request receiver payload = do
           | token == ethUsdt && available > 0 = [resetApproval,exactApproval]
           | otherwise = [exactApproval]
     pure $ ProviderQuote expiresAt (decimal expected) (decimal minimumOutput)
-      (sourceApprovals <> [SourceTransaction 1 "bridge" target (T.toLower calldata) "0"]) reference
+      (sourceApprovals <> [SourceTransaction 1 "bridge" target (T.toLower calldata) "0"]) reference ("0x" <> message)
 
   checkApproval target = withObject "approval" $ \approval -> do
     approval .: "chainId" >>= equals (1 :: Integer) "approval chain mismatch"
@@ -255,9 +260,10 @@ parseAcrossQuote now integrator deployment request receiver payload = do
     wordNumber args 192 >>= equals (42161 :: Integer) "destination chain mismatch"
     expiry <- checkTimes args 224
     wordNumber args 352 >>= equals (384 :: Integer) "noncanonical message offset"
-    wordNumber args 384 >>= equals (0 :: Integer) "destination calls unsupported"
-    checkTrailer args 416
-    pure expiry
+    (message,messageEnd) <- bytesAt args 384
+    checkDestinationMessage message
+    checkTrailer args messageEnd
+    pure (expiry,message)
 
   checkSwap amount minimumOutput encoded = do
     ensure (T.take 8 encoded == "110560ad") "unsupported periphery method"
@@ -297,10 +303,8 @@ parseAcrossQuote now integrator deployment request receiver payload = do
     expiry <- checkTimes deposit 192
     wordNumber deposit 320 >>= equals (352 :: Integer) "noncanonical swap message offset"
     (message,messageEnd) <- bytesAt deposit 352
-    if T.null message then ensure (destination == recipient) "swap recipient mismatch"
-      else do
-        ensure (destination == multicallHandler) "unsupported destination handler"
-        checkDestinationMessage message
+    ensure (destination == recipient) "unsupported destination handler"
+    checkDestinationMessage message
     ensure (routerOffset == fromIntegral (384+messageEnd)) "noncanonical router offset"
     (routerCalldata,routerEnd) <- bytesAt tuple (fromInteger routerOffset)
     ensure (T.length routerCalldata >= 8 &&
@@ -309,20 +313,24 @@ parseAcrossQuote now integrator deployment request receiver payload = do
         else T.take 8 routerCalldata `elem` ["24856bc3","3593564c"])
       "unsupported source router method"
     checkTrailer tuple routerEnd
-    pure expiry
+    pure (expiry,message)
 
-  -- The published handler executes arbitrary calls, so permit only this exact
-  -- ABI-canonical transfer-and-log recipe. Its runtime and the immutable emitter
-  -- runtime must also be pinned by release/chain validation before quoting.
+  -- The shared handler has no per-user custody. Require the reviewed atomic
+  -- recipe, an immutable quote marker, and beneficiary fallback. Optional
+  -- provider bookkeeping may only drain this USDC to that same beneficiary or
+  -- emit inert metadata from the already pinned Across emitter.
   checkDestinationMessage message = do
     wordNumber message 0 >>= equals (32 :: Integer) "noncanonical instructions tuple"
     wordNumber message 32 >>= equals (64 :: Integer) "noncanonical calls offset"
-    wordNumber message 64 >>= equals (0 :: Integer) "destination fallback unsupported"
-    wordNumber message 96 >>= equals (4 :: Integer) "unsupported destination call count"
+    wordAddress message 64 >>= equals beneficiary "destination fallback mismatch"
+    count <- wordNumber message 96
+    ensure (count `elem` [4,8]) "unsupported destination call count"
     let calls = T.drop (128*2) message
-    end <- foldM (checkCall calls) 128 [0 :: Int,1,2,3]
+        indices = [0 .. fromInteger count-1]
+    end <- foldM (checkCall calls) (fromInteger count*32) indices
     ensure (T.length message == (128+end)*2) "unexpected destination data"
    where
+    expectedCalls = directCalls deployment request quoteId
     checkCall calls expectedOffset index = do
       actualOffset <- wordNumber calls (index*32)
       ensure (actualOffset == fromIntegral expectedOffset) "noncanonical destination call offset"
@@ -331,16 +339,19 @@ parseAcrossQuote now integrator deployment request receiver payload = do
       wordNumber call 32 >>= equals (96 :: Integer) "noncanonical destination calldata offset"
       wordNumber call 64 >>= equals (0 :: Integer) "unexpected destination native value"
       (callData,end) <- bytesAt call 96
-      if index < 2 then do
-        ensure (target == multicallHandler) "unexpected destination transfer target"
-        ensure (callData == "ef8738d3" <> T.replicate 24 "0" <> T.drop 2 arbUsdc
-          <> T.replicate 24 "0" <> T.drop 2 recipient) "destination token or recipient mismatch"
+      if index < 4 then do
+        ensure ((target,callData) == expectedCalls !! index) "destination funding action mismatch"
+       else if index < 6 then do
+        ensure (target == multicallHandler) "unexpected destination drain target"
+        ensure (callData == "ef8738d3" <> addressWord arbUsdc <> addressWord beneficiary)
+          "destination drain mismatch"
        else do
         ensure (target == eventEmitter && T.take 8 callData == "d836083e") "unsupported destination metadata target"
         let logArgs = T.drop 8 callData
         wordNumber logArgs 0 >>= equals (32 :: Integer) "noncanonical event calldata"
         (metadata,logEnd) <- bytesAt logArgs 32
-        ensure (not (T.null metadata) && T.length logArgs == logEnd*2) "invalid event metadata"
+        ensure (not (T.null metadata) && T.length metadata <= 8192 && T.length logArgs == logEnd*2)
+          "invalid event metadata"
       pure $ expectedOffset+end
 
   -- Absolute timestamps only: relative deadlines require separate policy review.
@@ -361,6 +372,62 @@ parseAcrossQuote now integrator deployment request receiver payload = do
     ensure (T.length args >= end*2 && suffix `elem`
       ["", "73c0de", "1dc0de" <> T.drop 2 (T.toLower integrator) <> "73c0de"])
       "unexpected calldata suffix"
+
+-- | Documented POST /swap/approval action body. The API must return a message
+-- whose nonzero fallback is the beneficiary; no refund/address default is trusted.
+-- A successful POST is not evidence until parseAcrossQuote accepts its calldata.
+buildAcrossActions :: FundingDeployment -> QuoteRequest -> Text -> Value
+buildAcrossActions deployment request quoteId = object ["actions" .=
+  [ action (fdToken deployment) "function approve(address,uint256)"
+      [static $ fdClearinghouse deployment,dynamic]
+  , action (fdClearinghouse deployment) "function depositFor(address,uint256)"
+      [static $ qrBeneficiary request,dynamic]
+  , action (fdToken deployment) "function approve(address,uint256)"
+      [static $ fdClearinghouse deployment,static "0"]
+  , action eventEmitter "function emitData(bytes)" [static quoteId]
+  ]]
+ where
+  static :: Text -> Value
+  static value = object ["value" .= value,"populateDynamically" .= False]
+  dynamic = object ["value" .= ("0" :: Text),"populateDynamically" .= True,"balanceSourceToken" .= fdToken deployment]
+  action target signature args = object ["target" .= target,"functionSignature" .= (signature :: Text),"args" .= args
+    ,"value" .= ("0" :: Text),"isNativeTransfer" .= False,"populateCallValueDynamically" .= False]
+
+-- | Canonical instructions used by the offline deployed-runtime integration
+-- proof. The quote API may append bounded bookkeeping, but cannot alter these
+-- four calls, the quote marker, or the beneficiary fallback.
+buildAcrossDestinationMessage :: FundingDeployment -> QuoteRequest -> Text -> Text
+buildAcrossDestinationMessage deployment request quoteId = "0x" <> uintWord 32 <> uintWord 64
+  <> addressWord (qrBeneficiary request) <> uintWord 4 <> T.concat offsets <> T.concat calls
+ where
+  calls = [addressWord target <> uintWord 96 <> uintWord 0 <> dynamicBytes callData
+    | (target,callData) <- directCalls deployment request quoteId]
+  offsets = map uintWord $ take 4 $ scanl (+) 128 $ map (fromIntegral . (`div` 2) . T.length) calls
+
+directCalls :: FundingDeployment -> QuoteRequest -> Text -> [(Text,Text)]
+directCalls deployment request quoteId =
+  [ (handler,balanceCall token $ selector "approve(address,uint256)" <> addressWord clearinghouse <> uintWord 0)
+  , (handler,balanceCall clearinghouse $ selector "depositFor(address,uint256)" <> addressWord beneficiary <> uintWord 0)
+  , (token,selector "approve(address,uint256)" <> addressWord clearinghouse <> uintWord 0)
+  , (eventEmitter,selector "emitData(bytes)" <> uintWord 32 <> dynamicBytes (T.drop 2 quoteId))
+  ]
+ where
+  token = T.toLower $ fdToken deployment
+  handler = T.toLower $ fdMulticallHandler deployment
+  clearinghouse = T.toLower $ fdClearinghouse deployment
+  beneficiary = T.toLower $ qrBeneficiary request
+  balanceCall target callData = selector "makeCallWithBalance(address,bytes,uint256,(address,uint256)[])"
+    <> addressWord target <> uintWord 128 <> uintWord 0
+    <> uintWord (128 + fromIntegral (T.length (dynamicBytes callData) `div` 2))
+    <> dynamicBytes callData <> uintWord 1 <> addressWord token <> uintWord 36
+
+selector :: Text -> Text
+selector = TE.decodeUtf8 . B16.encode . BS.take 4 . keccak256 . TE.encodeUtf8
+addressWord :: Text -> Text
+addressWord value = T.replicate 24 "0" <> T.toLower (T.drop 2 value)
+dynamicBytes :: Text -> Text
+dynamicBytes value = uintWord (fromIntegral $ T.length value `div` 2) <> value
+  <> T.replicate ((64 - T.length value `mod` 64) `mod` 64) "0"
 
 checkToken :: Integer -> Text -> Value -> Parser ()
 checkToken chain token = withObject "token" $ \v -> do

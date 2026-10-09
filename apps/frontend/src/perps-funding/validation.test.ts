@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fundingManifestUrl, fetchFundingManifest } from './manifest'
 import { amount, assertDestination, assertFundingConfig, parseFundingConfig, parseFundingIntent, parseFundingManifest, parseFundingQuote, parseSourceTransaction } from './validation'
-import { OTHER_ADDRESS, destinationFixture, intentFixture, quoteFixture, releaseFixture, terminalSourceIntentFixture } from './testFixtures'
-import { fundingSourceFailed } from './state'
+import { OTHER_ADDRESS, destinationFixture, intentFixture, needsDepositIntentFixture, quoteFixture, releaseFixture, terminalSourceIntentFixture } from './testFixtures'
+import { fundingNeedsDeposit, fundingSourceFailed } from './state'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -23,7 +23,9 @@ describe('explicit funding release gate', () => {
 
   it.each([
     { destinationChainId: 421614 }, { destinationChainId: 1 }, { token: OTHER_ADDRESS },
-    { receiverFactory: null }, { factoryCodeHash: null }, { clearinghouse: null },
+    { multicallHandler: null }, { multicallHandlerCodeHash: null }, { clearinghouse: null },
+    { destinationSpokePool: null }, { destinationSpokePoolCodeHash: null },
+    { destinationSpokePoolImplementation: null }, { destinationSpokePoolImplementationCodeHash: null },
     { clearinghouseCodeHash: undefined }, { clearinghouseCodeHash: null }, { clearinghouseCodeHash: '0x1234' },
     { confirmations: 0 }, { confirmations: 1.5 }, { confirmations: 1001 },
     { startBlock: -1 }, { startBlock: '123456' }, { releaseId: '' },
@@ -38,7 +40,9 @@ describe('explicit funding release gate', () => {
     for (const drift of [
       { enabled: false }, { provider: 'privy' }, { destinationChainId: 421614 },
       { releaseId: 'new-release' }, { token: OTHER_ADDRESS }, { clearinghouse: OTHER_ADDRESS },
-      { receiverFactory: OTHER_ADDRESS }, { factoryCodeHash: `0x${'55'.repeat(32)}` },
+      { multicallHandler: OTHER_ADDRESS }, { multicallHandlerCodeHash: `0x${'55'.repeat(32)}` },
+      { destinationSpokePool: OTHER_ADDRESS }, { destinationSpokePoolCodeHash: `0x${'55'.repeat(32)}` },
+      { destinationSpokePoolImplementation: OTHER_ADDRESS }, { destinationSpokePoolImplementationCodeHash: `0x${'55'.repeat(32)}` },
       { clearinghouseCodeHash: `0x${'77'.repeat(32)}` },
       { confirmations: 13 }, { startBlock: 123457 },
     ]) expect(() => assertFundingConfig(manifest, parseFundingConfig({ ...config, ...drift }))).toThrow()
@@ -66,13 +70,15 @@ describe('funding response validation', () => {
   it.each([
     { expiresAt: '2000000000' }, { expiresAt: 2_000_000_000_000 },
     { sourceAmount: '100.0' }, { status: 'delivered' }, { intentId: undefined },
-    { intentSalt: undefined }, { intentSalt: null }, { intentSalt: '0x1234' },
+    { quoteId: undefined }, { quoteId: null }, { quoteId: 'quote-test-1' }, { quoteId: '0x1234' },
+    { destinationMessage: undefined }, { destinationMessage: null }, { destinationMessage: '0x123' },
+    { multicallHandler: undefined }, { destinationSpokePool: undefined },
     { depositBlockNumber: 123500 }, { depositBlockHash: '0x1234' },
   ])('rejects malformed quote or canonical receipt fields', (override) => {
     expect(() => parseFundingIntent({ ...intentFixture(), ...override })).toThrow()
   })
 
-  it.each(['ownerAddress', 'beneficiary', 'receiverFactory', 'clearinghouse', 'token'] as const)('pins %s independently of the connected source network', (field) => {
+  it.each(['ownerAddress', 'beneficiary', 'multicallHandler', 'destinationSpokePool', 'clearinghouse', 'token'] as const)('pins %s independently of the connected source network', (field) => {
     expect(() => assertDestination({ ...quoteFixture(), [field]: OTHER_ADDRESS }, destinationFixture())).toThrow()
   })
 
@@ -100,4 +106,28 @@ describe('funding response validation', () => {
     expect(fundingSourceFailed(parseFundingIntent({ ...terminalSourceIntentFixture(), sourceTerminal: 'true' }))).toBe(false)
     expect(fundingSourceFailed(parseFundingIntent({ ...terminalSourceIntentFixture(), sourceStatus: 'provider-failed' }))).toBe(false)
   })
+})
+
+describe('fallback receipt response validation', () => {
+  it('retains canonical fallback evidence with decimal-string quantities', () => {
+    const fallback = needsDepositIntentFixture()
+    const parsed = parseFundingIntent(fallback)
+    expect(parsed).toMatchObject({ status: 'needs-deposit', fallbackTxHash: fallback.fallbackTxHash, fallbackBlockHash: fallback.fallbackBlockHash, fallbackBlockNumber: '123500', fallbackAmount: '99000000' })
+    expect(fundingNeedsDeposit(parsed)).toBe(true)
+  })
+
+  it.each([
+    { fallbackTxHash: '0x1234' }, { fallbackBlockHash: '0x1234' },
+    { fallbackBlockNumber: 123500 }, { fallbackBlockNumber: '-1' }, { fallbackBlockNumber: '001' },
+    { fallbackAmount: 99000000 }, { fallbackAmount: '-1' }, { fallbackAmount: '1.5' },
+  ])('rejects malformed canonical fallback fields', override => {
+    expect(() => parseFundingIntent({ ...needsDepositIntentFixture(), ...override })).toThrow()
+  })
+
+  it.each(['fallbackTxHash', 'fallbackBlockNumber', 'fallbackBlockHash', 'fallbackAmount'] as const)(
+    'does not enable deposit recovery when the backend omits %s', field => {
+      const parsed = parseFundingIntent({ ...needsDepositIntentFixture(), [field]: undefined })
+      expect(fundingNeedsDeposit(parsed)).toBe(false)
+    },
+  )
 })

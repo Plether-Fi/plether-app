@@ -10,6 +10,7 @@ export const ACROSS_ETHEREUM_SPOKE_POOL: Address = '0x5c7bcd6e7de5423a257d81b442
 export const ACROSS_PERIPHERY: Address = '0x97ccdbea4632140639ad5ea9b944aa034eb15fd4'
 export const ACROSS_ARBITRUM_HANDLER: Address = '0x0f7ae28de1c8532170ad4ee566b5801485c13a0e'
 export const ACROSS_ARBITRUM_LOGGER: Address = '0xbf75133b48b0a42ab9374027902e83c5e2949034'
+export const ACROSS_ARBITRUM_LOGGER_CODE_HASH = '0x833b49ceddf001f197603e23297ddc21147b7d9e61adbe812e1167b3a7fe2fe5' as const
 const ZERO_EXCHANGE: Address = '0x0000000000001ff3684f28c67538d4d072c22734'
 export const FUNDING_SOURCES: FundingSource[] = [ETHEREUM_USDC, ETHEREUM_USDT].map((token, i) => ({
   chainId: 1, name: 'Ethereum', token, symbol: i === 0 ? 'USDC' : 'USDT', decimals: 6,

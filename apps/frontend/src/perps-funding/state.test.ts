@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { archiveCompletedFunding, assertSameQuote, fundingReady, fundingSourceFailed, fundingStatusLabel, fundingStorageKey, reconcileFunding, restoreFunding, saveFunding } from './state'
-import { BLOCK_HASH, OTHER_ADDRESS, OWNER, SOURCE_HASH, confirmedIntentFixture, intentFixture, memoryStorage, savedFixture, terminalSourceIntentFixture } from './testFixtures'
+import { archiveCompletedFunding, assertSameQuote, fundingNeedsDeposit, fundingReady, fundingSourceFailed, fundingStatusLabel, fundingStorageKey, reconcileFunding, restoreFunding, saveFunding } from './state'
+import { BLOCK_HASH, OTHER_ADDRESS, OWNER, SOURCE_HASH, confirmedIntentFixture, intentFixture, memoryStorage, needsDepositIntentFixture, savedFixture, terminalSourceIntentFixture } from './testFixtures'
 import type { FundingIntent } from './types'
 
 describe('canonical funding readiness', () => {
@@ -15,7 +15,7 @@ describe('canonical funding readiness', () => {
     expect(fundingReady({ ...confirmed, creditedAmount: confirmed.minimumAmount })).toBe(true)
   })
 
-  it.each(['awaiting-source', 'bridging', 'received', 'depositing', 'retryable', 'failed'] as const)(
+  it.each(['awaiting-source', 'bridging', 'received', 'depositing', 'needs-deposit', 'failed'] as const)(
     'does not report readiness from %s, even with old deposit evidence', (status) => {
       const intent = { ...confirmedIntentFixture(), status }
       expect(fundingReady(intent)).toBe(false)
@@ -52,7 +52,7 @@ describe('funding intent identity and persistence', () => {
     const restored = restoreFunding(storage, OWNER, saved.destination.releaseId)!
     expect(restored).toMatchObject({
       version: 1,
-      destination: { owner: OWNER, beneficiary: saved.destination.beneficiary, destinationChainId: 42161, receiverFactory: saved.destination.receiverFactory },
+      destination: { owner: OWNER, beneficiary: saved.destination.beneficiary, destinationChainId: 42161, multicallHandler: saved.destination.multicallHandler, destinationSpokePool: saved.destination.destinationSpokePool },
       sourceSubmissionPending: true,
       sourceTxHash: SOURCE_HASH,
     })
@@ -71,9 +71,9 @@ describe('funding intent identity and persistence', () => {
   })
 
   it.each([
-    ['intentId', 'different-intent'], ['quoteId', 'different-quote'], ['intentSalt', BLOCK_HASH],
+    ['intentId', 'different-intent'], ['quoteId', BLOCK_HASH], ['destinationMessage', '0x1234'],
     ['ownerAddress', OTHER_ADDRESS], ['beneficiary', OTHER_ADDRESS],
-    ['receiver', OTHER_ADDRESS], ['receiverFactory', OTHER_ADDRESS],
+    ['destinationSpokePool', OTHER_ADDRESS], ['multicallHandler', OTHER_ADDRESS],
     ['clearinghouse', OTHER_ADDRESS], ['token', OTHER_ADDRESS],
     ['sourceToken', OTHER_ADDRESS], ['sourceChainId', 10],
     ['destinationChainId', 421614], ['sourceAmount', '100000001'],
@@ -116,6 +116,8 @@ describe('funding intent identity and persistence', () => {
     { destination: { ...savedFixture().destination, owner: OTHER_ADDRESS } },
     { destination: { ...savedFixture().destination, releaseId: 'different-release' } },
     { destination: { ...savedFixture().destination, beneficiary: OTHER_ADDRESS } },
+    { destination: { ...savedFixture().destination, multicallHandler: OTHER_ADDRESS } },
+    { destination: { ...savedFixture().destination, destinationSpokePool: OTHER_ADDRESS } },
     { intent: { ...intentFixture(), status: 'ready-from-provider' } },
     { sourceTxHash: '0x1234' },
   ])('fails closed on an invalid saved identity or transaction', (corruption) => {
@@ -194,5 +196,85 @@ describe('definitive source failure evidence', () => {
     expect(fundingSourceFailed(intent)).toBe(false)
     expect(fundingReady(intent)).toBe(false)
     expect(() => archiveCompletedFunding(memoryStorage(), savedFixture(intent))).toThrow()
+  })
+})
+
+describe('canonical fallback evidence', () => {
+  it('allows a manual deposit only after canonical fallback transfer evidence, without reporting margin credit', () => {
+    const fallback = needsDepositIntentFixture()
+    expect(fundingNeedsDeposit(fallback)).toBe(true)
+    expect(fundingReady(fallback)).toBe(false)
+    expect(fundingStatusLabel(fallback, true)).not.toBe('Ready to trade')
+    for (const field of ['fallbackTxHash', 'fallbackBlockHash', 'fallbackBlockNumber', 'fallbackAmount'] as const) {
+      expect(fundingNeedsDeposit({ ...fallback, [field]: undefined }), field).toBe(false)
+    }
+    expect(fundingNeedsDeposit({ ...fallback, fallbackAmount: '0' })).toBe(false)
+  })
+
+  it.each(['awaiting-source', 'bridging', 'received', 'depositing', 'failed', 'confirmed'] as const)(
+    'does not reuse old fallback evidence while the current state is %s', status => {
+      expect(fundingNeedsDeposit({ ...needsDepositIntentFixture(), status })).toBe(false)
+    },
+  )
+
+  it('does not promote an uncredited fallback even when stale margin receipt fields remain', () => {
+    const fallback = { ...confirmedIntentFixture(), ...needsDepositIntentFixture() }
+    expect(fundingNeedsDeposit(fallback)).toBe(true)
+    expect(fundingReady(fallback)).toBe(false)
+    expect(() => archiveCompletedFunding(memoryStorage(), savedFixture(fallback))).not.toThrow()
+  })
+
+  it('restores the complete fallback proof for a fresh API check without treating it as ready', () => {
+    const storage = memoryStorage()
+    const saved = savedFixture(needsDepositIntentFixture())
+    saveFunding(storage, saved)
+    const restored = restoreFunding(storage, OWNER, saved.destination.releaseId)!
+    expect(restored.intent).toMatchObject({ status: 'needs-deposit', fallbackTxHash: saved.intent.fallbackTxHash, fallbackBlockHash: saved.intent.fallbackBlockHash, fallbackBlockNumber: '123500', fallbackAmount: '99000000' })
+    expect(fundingStatusLabel(restored.intent, false)).toBe('Checking saved transfer')
+    expect(fundingReady(restored.intent)).toBe(false)
+    expect(restoreFunding(storage, OWNER, saved.destination.releaseId)?.intent.intentId).toBe(saved.intent.intentId)
+  })
+
+  it('archives a canonical fallback delivery with its complete history without claiming margin credit', () => {
+    const storage = memoryStorage()
+    const saved = savedFixture(needsDepositIntentFixture())
+    saveFunding(storage, saved)
+    archiveCompletedFunding(storage, saved)
+    expect(restoreFunding(storage, OWNER, saved.destination.releaseId)).toBeNull()
+    const key = `${fundingStorageKey(OWNER, saved.destination.releaseId)}:history:${saved.intent.intentId}`
+    const archived = JSON.parse(storage.getItem(key)!)
+    expect(archived).toEqual(saved)
+    expect(fundingReady(archived.intent)).toBe(false)
+    expect(archived.intent).toMatchObject({ status: 'needs-deposit', sourceTxHash: SOURCE_HASH, fallbackTxHash: saved.intent.fallbackTxHash, fallbackBlockHash: BLOCK_HASH, fallbackBlockNumber: '123500', fallbackAmount: '99000000' })
+  })
+
+  it.each(['fallbackTxHash', 'fallbackBlockHash', 'fallbackBlockNumber', 'fallbackAmount'] as const)(
+    'retains an active fallback delivery if canonical proof omits %s', field => {
+      const storage = memoryStorage()
+      const saved = savedFixture({ ...needsDepositIntentFixture(), [field]: undefined })
+      saveFunding(storage, saved)
+      expect(fundingReady(saved.intent)).toBe(false)
+      expect(() => archiveCompletedFunding(storage, saved)).toThrow()
+      expect(restoreFunding(storage, OWNER, saved.destination.releaseId)?.intent.intentId).toBe(saved.intent.intentId)
+      expect(storage.getItem(`${fundingStorageKey(OWNER, saved.destination.releaseId)}:history:${saved.intent.intentId}`)).toBeNull()
+    },
+  )
+
+  it('refuses to archive zero-value fallback evidence', () => {
+    const saved = savedFixture({ ...needsDepositIntentFixture(), fallbackAmount: '0' })
+    expect(fundingReady(saved.intent)).toBe(false)
+    expect(() => archiveCompletedFunding(memoryStorage(), saved)).toThrow()
+  })
+
+  it('withdraws fallback eligibility after a canonical reorg and accepts a later credit', () => {
+    const saved = savedFixture(needsDepositIntentFixture())
+    const reorged = reconcileFunding(saved, intentFixture({ status: 'bridging', sourceTxHash: SOURCE_HASH }))
+    expect(reorged.intent.fallbackBlockHash).toBeUndefined()
+    expect(fundingNeedsDeposit(reorged.intent)).toBe(false)
+    expect(fundingReady(reorged.intent)).toBe(false)
+    const credited = reconcileFunding(saved, { ...saved.intent, ...confirmedIntentFixture() })
+    expect(fundingReady(credited.intent)).toBe(true)
+    expect(fundingNeedsDeposit(credited.intent)).toBe(false)
+    expect(credited.intent.fallbackTxHash).toBe(saved.intent.fallbackTxHash)
   })
 })

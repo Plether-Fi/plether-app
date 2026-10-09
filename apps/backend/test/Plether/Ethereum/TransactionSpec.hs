@@ -2,7 +2,6 @@ module Plether.Ethereum.TransactionSpec (spec) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Data.Either (isLeft)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Plether.Ethereum.Contracts.Perps
@@ -16,8 +15,6 @@ import Plether.Ethereum.Transaction
   , rawTransactionHash
   , sameNonceReplacementFees
   , signTransaction
-  , signTransactionWithDigestSigner
-  , decodeSignedTransaction
   )
 import Test.Hspec
 
@@ -50,26 +47,6 @@ spec = do
           signedRawTransaction signed `shouldBe` expectedRaw
           signedTransactionHash signed `shouldBe` transactionHashVector
           rawTransactionHash expectedRaw `shouldBe` transactionHashVector
-
-  describe "external transaction signing and persisted recovery" $ do
-    it "serializes the same transaction from an attested digest signer" $ do
-      signature <- decodeHex "48aeac63d786d61a53995aa7ce8ea6e2c58d542eb6ffda4d2f2919e880f42c755942cfbde0f5579eb1302acc4808798f1d6c2ba35aeb630c04d16d869ed4ca051b"
-      result <- signTransactionWithDigestSigner "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf" (\_ -> pure $ Right signature) sampleTx
-      fmap signedTransactionHash result `shouldBe` Right transactionHashVector
-    it "rejects a signature recovered to another signer" $ do
-      signature <- decodeHex "48aeac63d786d61a53995aa7ce8ea6e2c58d542eb6ffda4d2f2919e880f42c755942cfbde0f5579eb1302acc4808798f1d6c2ba35aeb630c04d16d869ed4ca051b"
-      result <- signTransactionWithDigestSigner "0x1111111111111111111111111111111111111111" (\_ -> pure $ Right signature) sampleTx
-      result `shouldSatisfy` isLeft
-    it "decodes canonical persisted raw bytes and recovers their signer" $ do
-      raw <- decodeHex rawTransactionVector
-      decodeSignedTransaction raw `shouldReturn` Right (sampleTx,"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf")
-    it "rejects trailing, truncated, non-1559, and oversized raw data" $ do
-      raw <- decodeHex rawTransactionVector
-      mapM_ (\bytes -> decodeSignedTransaction bytes >>= (`shouldSatisfy` isLeft))
-        [raw <> "x",BS.take 20 raw,BS.cons 1 $ BS.tail raw,BS.replicate 2049 2]
-    it "propagates denied KMS Sign permission without producing a transaction" $
-      signTransactionWithDigestSigner "0x1111111111111111111111111111111111111111" (\_ -> pure $ Left "denied") sampleTx
-        `shouldReturn` Left "denied"
 
   describe "sameNonceReplacementFees" $ do
     it "beats both old fee fields by at least 12.5 percent" $

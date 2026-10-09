@@ -1,18 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, pad, parseAbiParameters, zeroAddress, type Hex } from 'viem'
 import fixture from './acrossQuote.fixture.json'
+import { buildFundingDestinationMessage } from './destinationActions'
 import { ACROSS_FUNDING_ABI } from './acrossAbi'
 import { prepareFundingTransactions, sendFundingTransactions, type FundingWallet } from './provider'
 import { ACROSS_ETHEREUM_SPOKE_POOL, ACROSS_PERIPHERY, ETHEREUM_USDT } from './sources'
 import { parseFundingManifest } from './validation'
-import { destinationFixture, quoteFixture, releaseFixture, OWNER, RECEIVER, SOURCE_HASH, OTHER_ADDRESS } from './testFixtures'
+import { destinationFixture, quoteFixture, releaseFixture, OWNER, SOURCE_HASH, OTHER_ADDRESS } from './testFixtures'
 import type { FundingQuote, SourceTransaction } from './types'
 
 const manifest = parseFundingManifest(releaseFixture())
 const destination = destinationFixture()
 function directQuote(): FundingQuote {
-  const quote = quoteFixture()
-  const data = encodeFunctionData({ abi: ACROSS_FUNDING_ABI, functionName: 'depositV3', args: [OWNER, RECEIVER, quote.sourceToken, quote.token, BigInt(quote.sourceAmount), BigInt(quote.minimumAmount), 42161n, zeroAddress, quote.expiresAt - 180, quote.expiresAt + 300, 0, '0x'] })
+  const quote = { ...quoteFixture(), destinationMessage: buildFundingDestinationMessage(destination, quoteFixture().quoteId) }
+  const data = encodeFunctionData({ abi: ACROSS_FUNDING_ABI, functionName: 'depositV3', args: [OWNER, destination.multicallHandler, quote.sourceToken, quote.token, BigInt(quote.sourceAmount), BigInt(quote.minimumAmount), 42161n, zeroAddress, quote.expiresAt - 180, quote.expiresAt + 300, 0, quote.destinationMessage] })
   return { ...quote, sourceTransactions: [
     { kind: 'approval', chainId: 1, to: quote.sourceToken, value: '0', data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ACROSS_ETHEREUM_SPOKE_POOL, 2n ** 256n - 1n] }) },
     { kind: 'bridge', chainId: 1, to: ACROSS_ETHEREUM_SPOKE_POOL, data, value: '0' },
@@ -23,20 +24,24 @@ function reviewedQuote() {
   const decoded = decodeFunctionData({ abi: ACROSS_FUNDING_ABI, data: tx.data })
   if (decoded.functionName !== 'swapAndBridge') throw new Error('Unexpected fixture selector')
   const d = { ...destination, owner: decoded.args[0].depositData.depositor }
-  const quote: FundingQuote = { ...quoteFixture(), ownerAddress: d.owner, receiver: '0x0000000000000000000000000000000000000002', sourceToken: ETHEREUM_USDT, sourceAmount: fixture.inputAmount, expiresAt: Math.min(fixture.quoteExpiryTimestamp, decoded.args[0].depositData.quoteTimestamp + 180), minimumAmount: fixture.minOutputAmount, estimatedAmount: fixture.expectedOutputAmount, sourceTransactions: [tx] }
-  return { quote, destination: d, decoded, now: (quote.expiresAt - 10) * 1000 }
+  const message = buildFundingDestinationMessage(d, quoteFixture().quoteId)
+  const data = encodeFunctionData({ abi: ACROSS_FUNDING_ABI, functionName: 'swapAndBridge', args: [{ ...decoded.args[0], depositData: { ...decoded.args[0].depositData, recipient: pad(d.multicallHandler), message } }] })
+  const quote: FundingQuote = { ...quoteFixture(), ownerAddress: d.owner, destinationMessage: message, sourceToken: ETHEREUM_USDT, sourceAmount: fixture.inputAmount, expiresAt: Math.min(fixture.quoteExpiryTimestamp, decoded.args[0].depositData.quoteTimestamp + 180), minimumAmount: fixture.minOutputAmount, estimatedAmount: fixture.expectedOutputAmount, sourceTransactions: [{ ...tx, data }] }
+  const updated = decodeFunctionData({ abi: ACROSS_FUNDING_ABI, data })
+  if (updated.functionName !== 'swapAndBridge') throw new Error('Unexpected fixture selector')
+  return { quote, destination: d, decoded: updated, now: (quote.expiresAt - 10) * 1000 }
 }
 
 describe('Across source signing boundary', () => {
-  it('accepts the actual read-only USDT swap quote with exact destination transfer-and-log recipe', () => {
+  it('validates the generated direct-action message inside a historical source swap shape without claiming a live quote', () => {
     const { quote, destination, now } = reviewedQuote()
     expect(prepareFundingTransactions(quote, destination, manifest, now)).toEqual(quote.sourceTransactions)
   })
-  it('rejects a destination message that drains to anyone other than the quoted receiver', () => {
+  it('rejects a quote with a changed beneficiary', () => {
     const { quote, destination, now } = reviewedQuote()
-    expect(() => prepareFundingTransactions({ ...quote, receiver: RECEIVER }, destination, manifest, now)).toThrow()
+    expect(() => prepareFundingTransactions({ ...quote, beneficiary: OTHER_ADDRESS }, destination, manifest, now)).toThrow()
   })
-  it('rejects extra destination calls even at the reviewed handler', () => {
+  it('rejects a source message that omits the reviewed destination actions', () => {
     const { quote, destination, now, decoded } = reviewedQuote()
     const abi = parseAbiParameters('((address target,bytes callData,uint256 value)[] calls,address fallbackRecipient)')
     const swap = decoded.args[0]
@@ -49,6 +54,20 @@ describe('Across source signing boundary', () => {
     expect(decodeFunctionData({ abi: erc20Abi, data: prepared[0].data }).args).toEqual([getAddress(ACROSS_ETHEREUM_SPOKE_POOL), 100000000n])
     quote.sourceTransactions[0].data = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [OTHER_ADDRESS, 1n] })
     expect(() => prepareFundingTransactions(quote, destination, manifest, 1_999_999_999_000)).toThrow()
+  })
+  it('preserves a USDT allowance reset and uses only the quoted amount for its following approval', () => {
+    const { quote, destination, now } = reviewedQuote()
+    const approval = (amount: bigint): SourceTransaction => ({ kind: 'approval', chainId: 1, to: ETHEREUM_USDT, value: '0', data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [ACROSS_PERIPHERY, amount] }) })
+    quote.sourceTransactions = [approval(0n), approval(2n ** 256n - 1n), ...quote.sourceTransactions]
+    const prepared = prepareFundingTransactions(quote, destination, manifest, now)
+    expect(prepared.slice(0, 2).map(tx => decodeFunctionData({ abi: erc20Abi, data: tx.data }).args)).toEqual([[getAddress(ACROSS_PERIPHERY), 0n], [getAddress(ACROSS_PERIPHERY), BigInt(quote.sourceAmount)]])
+    expect(prepared[2]).toEqual(quote.sourceTransactions[2])
+  })
+  it('rejects a swapped shared handler recipient even when its destination action message is unchanged', () => {
+    const { quote, destination, now, decoded } = reviewedQuote()
+    const swap = decoded.args[0]
+    const data = encodeFunctionData({ abi: ACROSS_FUNDING_ABI, functionName: 'swapAndBridge', args: [{ ...swap, depositData: { ...swap.depositData, recipient: pad(OTHER_ADDRESS) } }] })
+    expect(() => prepareFundingTransactions({ ...quote, sourceTransactions: [{ ...quote.sourceTransactions[0], data }] }, destination, manifest, now)).toThrow()
   })
   it('rejects expired quotes, positive native value, changed destination and wrong source chain', () => {
     const quote = directQuote()

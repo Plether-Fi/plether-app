@@ -999,56 +999,84 @@ pool connection, does not submit transactions, and is disabled for dry runs.
 
 ### Bridge funding
 
-The `/api/perps/funding` routes and `plether-funding-worker` implement Ethereum
-USDC/USDT funding into a reviewed Arbitrum USDC clearinghouse through immutable
-per-intent receivers. They are disabled by default. This feature does not deploy
-contracts or enable mainnet trading/account sponsorship.
+The `/api/perps/funding` routes and `plether-funding-worker` support an Across
+Ethereum USDC/USDT to native Arbitrum USDC route. The destination message uses
+Across's existing MulticallHandler to approve the configured clearinghouse and
+call `depositFor` for the user's verified trading account using the handler's
+actual USDC balance, clear the allowance, and emit the unique 32-byte quote ID
+through the pinned Across EventEmitter. The explicit nonzero fallback recipient
+is that same trading account. There are no per-intent receivers, factory
+deployments, or bridge signing/flush transactions.
 
-Configure `PERPS_FUNDING_DEPLOYMENT_JSON` with the exact release's
-`destinationChainId`, `releaseId`, `clearinghouse`, `token`, `receiverFactory`,
-`factoryCodeHash`, `clearinghouseCodeHash`, `confirmations`, and `startBlock`.
-Both the API and worker verify destination chain, runtime hashes, and contract
-bindings. The API also requires the funding release to match
-`PERPS_CHAIN_ID`, `PERPS_MARGIN_CLEARINGHOUSE`, and `PERPS_USDC`. The Across
-adapter additionally verifies its Arbitrum handler/emitter runtime hashes before
-issuing a quote. Source routes are limited to Ethereum
-USDC/USDT and native Arbitrum USDC; unknown calldata shapes or failed source
-simulations are rejected.
+Funding stays disabled without a reviewed compatible release. No live
+clearinghouse with the required API or successful end-to-end bridge transfer is
+asserted by the checked-in configuration. An existing immutable clearinghouse
+cannot gain `depositFor` through configuration; active V3 trading and account
+abstraction compatibility require separate release verification.
+
+`PERPS_FUNDING_DEPLOYMENT_JSON` contains the reviewed release's JSON text, not a
+filename. It includes `destinationChainId`, `releaseId`, `clearinghouse`, `token`,
+`clearinghouseCodeHash`, `destinationSpokePool`, `destinationSpokePoolCodeHash`,
+`destinationSpokePoolImplementation`,
+`destinationSpokePoolImplementationCodeHash`, `multicallHandler`,
+`multicallHandlerCodeHash`, `confirmations`, and `startBlock`. Verify the complete
+release artifact and real third-party `depositFor` probe with the core
+repository's funding release tooling before supplying this runtime profile.
+API and worker recheck the destination identities and the SpokePool's EIP-1967
+implementation pin. The funding chain, clearinghouse, and token must match the
+active application release. The backend also checks the known EventEmitter's
+runtime hash. Proxy implementation upgrades require review again.
+
+The adapter sends `POST /api/swap/approval` with four actions: dynamic USDC
+`approve(clearinghouse,balance)`, dynamic `depositFor(beneficiary,balance)`,
+`approve(clearinghouse,0)`, then `emitData(quoteId)`. The returned destination
+message must encode those four calls in order, either alone or followed by two
+same-USDC/same-beneficiary drains and two bounded metadata calls to the known
+emitter. Runtime calldata validation rejects any other recipe or fallback.
+
+An authentic response containing that recipient/fallback encoding has not been
+captured. The live POST attempt returned HTTP 403, and no Across API key or
+integrator ID was available for verification. The documented action request and
+local runtime tests do not prove the API will return this exact message. Funding
+remains disabled until an authentic captured quote and real compatible
+clearinghouse establish the integration; even an HTTP-successful quote is
+rejected unless its calldata passes the mandatory validator.
 
 The API requires `ACROSS_API_KEY`, `ACROSS_INTEGRATOR_ID` (a two-byte hex tag),
 `PERPS_FUNDING_SOURCE_RPC_URL` (HTTPS Ethereum RPC), optional
 `PERPS_FUNDING_SOURCE_RPC_AUTH_TOKEN`, PostgreSQL, and explicit
-`PERPS_FUNDING_ENABLED=true`. New quotes require a recent ready executor
-heartbeat. Existing intent lookup, idempotent creation replay, source tracking,
-and recovery remain available when new funding is disabled.
+`PERPS_FUNDING_ENABLED=true`. The destination uses the backend's normal
+`PERPS_RPC_URL` and optional RPC authentication. New quotes require release,
+provider, source RPC, database, and destination reconciler readiness. Each quote
+must match the reviewed source route, exact destination calls, nonzero
+beneficiary fallback, amounts, and allowlists before a source signature is
+requested. A quoted minimum below 1 USDC is rejected. Provider progress never
+establishes destination margin credit.
 
 Run `cabal run plether-funding-worker -- --loop` with the same database and
-release configuration. The default observer mode never signs or rebroadcasts.
-Execution additionally requires `PERPS_FUNDING_WORKER_EXECUTE=true`, a dedicated
-`PERPS_FUNDING_KMS_KEY_ID`, and `PERPS_FUNDING_SIGNER_ADDRESS`. The signer must be
-funded with Arbitrum ETH and used only by this worker lane. Readiness requires a
-successful KMS Sign/recovery probe and enough ETH for
-`PERPS_FUNDING_MAX_TX_COST_WEI` (default 0.001 ETH). The worker persists exact signed
-bytes before broadcast, verifies their signer and immutable call bindings on
-restart, and never allocates another signer transaction while an uncertain one
-remains. Rejected broadcasts, uncertain RPC responses, and unexpected returned
-transaction hashes withdraw executor readiness until reconciliation succeeds.
-A permanently unresolved/replaced nonce requires operator investigation;
-no automatic nonce cancellation or fee replacement is implemented.
+release configuration and HTTPS source RPC, or use `--once` for one pass. The worker records canonical
+fill and credit/fallback evidence; it never signs or broadcasts transactions and
+needs no KMS key, funded executor, or bridge gas-budget setting. The backend's
+existing AA signing configuration is independent of this observer. The funding
+schema is initialized by the API/worker and is also available in
+`config/migrations/perps-funding-v1.sql`.
 
-The database schema is initialized by the API/worker, or can be applied using
-`config/migrations/perps-funding-v1.sql`. Receiver deposits are credited only from
-canonical, sufficiently confirmed clearinghouse `Deposit`/`DepositFor` event
-pairs attributed to that receiver and beneficiary. Provider `filled`/`refunded`
-responses never establish trading credit. `/intents/:id/source` accepts a hash
-only after verifying its actual Ethereum sender, target, calldata, and value
-against the reviewed quote. Source revert evidence includes a canonical block
-hash and at least two confirmations. Destination reorgs retract confirmation and
-resume reconciliation.
+Registering a source hash verifies its actual Ethereum sender, target, calldata,
+and native value against the persisted quote. After two canonical source
+confirmations, source evidence binds a unique relay to the intent. Destination
+reconciliation matches that relay's fill, the unique quote marker, and the
+confirmed clearinghouse `Deposit`/`DepositFor` pair within its callback interval,
+with the handler as payer and intended beneficiary, token, and amount. The two
+clearinghouse events represent one credit. An unrelated deposit or provider
+`filled` response is insufficient. Reorgs invalidate confirmation evidence; the
+API hides confirmed credit/fallback status while observer readiness or evidence
+is stale.
 
-The worker combines canonical partial credits with the receiver balance when
-checking the route minimum. After fulfillment it automatically flushes later
-arrivals of at least one USDC; smaller dust can still be flushed permissionlessly
-or recovered by the beneficiary. Every receipt/intent remains bound to its
-original release. Keep a reconciler available for older releases until their
-pending transactions and deposits have been resolved.
+A destination fallback returns USDC to the trading account's wallet. Matching
+`CallsFailed`, token transfer, and `DrainedTokens` evidence produces
+`needs-deposit`, never trading-ready margin from that transfer alone. A
+separate authenticated account deposit is required. The shared handler is not a
+custody address: do not send it a standalone transfer or plan a later flush.
+Keep each pending intent bound to its original release and retain reconciliation
+while new quote admission is disabled. A delayed status update is not a reason
+to submit the source payment again.

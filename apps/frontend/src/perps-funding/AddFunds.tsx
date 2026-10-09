@@ -7,16 +7,17 @@ import type { PerpsIdentityContextValue } from '../perps-aa/PerpsIdentityContext
 import { Button, Input, Modal } from '../components/ui'
 import { createFundingApi, type FundingApi } from './api'
 import { fetchFundingManifest, fundingManifestUrl } from './manifest'
-import { verifyFundingReceiver } from './receiver'
+import { verifyFundingDeployment } from './deployment'
+import { assertFundingAccountDepositIdentity } from './accountDeposit'
 import { prepareFundingTransactions, sendFundingTransactions, type FundingWallet } from './provider'
-import { archiveCompletedFunding, assertSameQuote, fundingReady, fundingSourceFailed, fundingStatusLabel, fundingStorageKey, reconcileFunding, restoreFunding, saveFunding } from './state'
+import { archiveCompletedFunding, assertSameQuote, fundingReady, fundingNeedsDeposit, fundingSourceFailed, fundingStatusLabel, fundingStorageKey, reconcileFunding, restoreFunding, saveFunding } from './state'
 import { address, assertDestination, assertFundingConfig, hash, sameAddress } from './validation'
-import type { FundingDestination, FundingIntent, FundingManifest, FundingQuote, SavedFunding } from './types'
+import type { FundingAccountDepositDestination, FundingDestination, FundingIntent, FundingManifest, FundingQuote, SavedFunding } from './types'
 
 const api = createFundingApi()
 const configuredManifestUrl = fundingManifestUrl(import.meta.env.VITE_PERPS_FUNDING_MANIFEST_URL)
 
-export function AddFunds({ identity, onAccountRefresh }: { identity: PerpsIdentityContextValue; onAccountRefresh?: () => unknown }) {
+export function AddFunds({ identity, onAccountRefresh, onDepositAccount }: { identity: PerpsIdentityContextValue; onAccountRefresh?: () => unknown; onDepositAccount?: (destination: FundingAccountDepositDestination) => void }) {
   const [releaseState, setReleaseState] = useState<{ manifest: FundingManifest; enabled: boolean } | null>(null)
   useEffect(() => {
     if (!configuredManifestUrl) return
@@ -35,10 +36,10 @@ export function AddFunds({ identity, onAccountRefresh }: { identity: PerpsIdenti
     try { if (!localStorage.getItem(fundingStorageKey(identity.ownerAddress, manifest.releaseId))) return null }
     catch { /* FundingFlow reports unavailable storage without forgetting a transfer. */ }
   }
-  return <ConnectedFundingFlow key={`${identity.ownerAddress.toLowerCase()}:${manifest.releaseId}`} identity={identity} manifest={manifest} onAccountRefresh={onAccountRefresh} />
+  return <ConnectedFundingFlow key={`${identity.ownerAddress.toLowerCase()}:${manifest.releaseId}`} identity={identity} manifest={manifest} onAccountRefresh={onAccountRefresh} onDepositAccount={onDepositAccount} />
 }
 
-function ConnectedFundingFlow(props: { identity: PerpsIdentityContextValue; manifest: FundingManifest; onAccountRefresh?: () => unknown }) {
+function ConnectedFundingFlow(props: { identity: PerpsIdentityContextValue; manifest: FundingManifest; onAccountRefresh?: () => unknown; onDepositAccount?: (destination: FundingAccountDepositDestination) => void }) {
   const { connector } = useAccount()
   const publicClient = usePublicClient({ chainId: 42161 })
   const wallet = async (): Promise<FundingWallet> => {
@@ -46,16 +47,17 @@ function ConnectedFundingFlow(props: { identity: PerpsIdentityContextValue; mani
     if (!provider || typeof provider !== 'object' || !('request' in provider) || typeof provider.request !== 'function') throw new Error('Connect a source wallet to continue.')
     return provider as FundingWallet
   }
-  return <FundingFlow {...props} api={api} wallet={wallet} verifyReceiver={(quote, destination) => verifyFundingReceiver(publicClient, props.manifest, quote, destination)} />
+  return <FundingFlow {...props} api={api} wallet={wallet} verifyDeployment={(quote, destination) => verifyFundingDeployment(publicClient, props.manifest, quote, destination)} />
 }
 
-export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, onAccountRefresh }: {
+export function FundingFlow({ identity, manifest, api, wallet, verifyDeployment, onAccountRefresh, onDepositAccount }: {
   identity: PerpsIdentityContextValue
   manifest: FundingManifest
   api: FundingApi
   wallet: () => Promise<FundingWallet>
-  verifyReceiver: (quote: FundingQuote, destination: FundingDestination) => Promise<void>
+  verifyDeployment: (quote: FundingQuote, destination: FundingDestination) => Promise<void>
   onAccountRefresh?: () => unknown
+  onDepositAccount?: (destination: FundingAccountDepositDestination) => void
 }) {
   const owner = address(identity.ownerAddress)
   const [open, setOpen] = useState(false)
@@ -66,7 +68,7 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
   const [initial] = useState(() => {
     try {
       const restored = restoreFunding(localStorage, owner, manifest.releaseId)
-      if (restored && (restored.destination.destinationChainId !== manifest.destinationChainId || !sameAddress(restored.destination.receiverFactory, manifest.receiverFactory) || !sameAddress(restored.destination.clearinghouse, manifest.clearinghouse) || !sameAddress(restored.destination.token, manifest.token))) throw new Error('Saved release bindings changed.')
+      if (restored && (restored.destination.destinationChainId !== manifest.destinationChainId || !sameAddress(restored.destination.multicallHandler, manifest.multicallHandler) || !sameAddress(restored.destination.destinationSpokePool, manifest.destinationSpokePool) || !sameAddress(restored.destination.clearinghouse, manifest.clearinghouse) || !sameAddress(restored.destination.token, manifest.token))) throw new Error('Saved release bindings changed.')
       return { saved: restored, error: undefined }
     } catch {
       return { saved: null, error: 'Saved funding could not be read. Keep your source transaction hash and contact support before sending again.' }
@@ -81,6 +83,7 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
   const savedRef = useRef<SavedFunding | null>(initial.saved)
   const pendingIntentKey = useRef<string | null>(null)
   const refreshedIntent = useRef<string | null>(null)
+  const observationGeneration = useRef(0)
   const mounted = useRef(true)
   const source = manifest.sources[sourceIndex]
   const ready = saved !== null && refreshed && fundingReady(saved.intent)
@@ -107,10 +110,11 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
     if (!current) throw new Error('The saved funding intent is unavailable.')
     persist(reconcileFunding(current, next, allowSourceReplacement), false, allowSourceReplacement)
     if (mounted.current) setRefreshed(true)
-    if (fundingReady(next) && refreshedIntent.current !== next.intentId) {
-      refreshedIntent.current = next.intentId
+    const refreshedKey = `${next.intentId}:${next.status}:${next.depositTxHash ?? next.fallbackTxHash ?? ''}`
+    if ((fundingReady(next) || fundingNeedsDeposit(next)) && refreshedIntent.current !== refreshedKey) {
+      refreshedIntent.current = refreshedKey
       void Promise.resolve().then(() => onAccountRefresh?.()).catch(() => {
-        if (mounted.current) setError('Deposit confirmed. Refresh your Trading Account to update its displayed balance.')
+        if (mounted.current) setError('Funding evidence updated. Refresh your Trading Account to update its displayed balance.')
       })
     }
   }
@@ -126,10 +130,11 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
     let active = true
     const controller = new AbortController()
     const refresh = () => {
+      const generation = ++observationGeneration.current
       void api.intent(id, controller.signal).then(next => {
-        if (active) accept(next)
+        if (active && generation === observationGeneration.current) accept(next)
       }).catch((e: unknown) => {
-        if (active) { setRefreshed(false); setError(message(e)) }
+        if (active && generation === observationGeneration.current) { setRefreshed(false); setError(message(e)) }
       })
     }
     refresh()
@@ -153,12 +158,13 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
     if (identity.status !== 'ready' || !identity.accountAddress || aa?.chainId !== manifest.destinationChainId || !sameAddress(aa.usdc, manifest.token) || !sameAddress(aa.marginClearinghouse, manifest.clearinghouse)) throw new Error('Return to your reviewed destination Trading Account before starting a new funding intent.')
     if (!/^\d+(\.\d{1,6})?$/.test(inputAmount) || parseUnits(inputAmount, source.decimals) <= 0n) throw new Error('Enter a positive source-token amount with no more than six decimals.')
     assertFundingConfig(manifest, await api.config())
-    const destination: FundingDestination = { owner, beneficiary: identity.accountAddress, destinationChainId: manifest.destinationChainId, token: manifest.token, clearinghouse: manifest.clearinghouse, receiverFactory: manifest.receiverFactory, releaseId: manifest.releaseId }
+    const destination: FundingDestination = { owner, beneficiary: identity.accountAddress, destinationChainId: manifest.destinationChainId, token: manifest.token, clearinghouse: manifest.clearinghouse, multicallHandler: manifest.multicallHandler, destinationSpokePool: manifest.destinationSpokePool, releaseId: manifest.releaseId }
+    assertFundingAccountDepositIdentity(destination, identity)
     const next = await api.quote({ ownerAddress: owner, beneficiary: destination.beneficiary, sourceChainId: source.chainId, sourceToken: source.token, sourceAmount: parseUnits(inputAmount, source.decimals).toString() })
     assertDestination(next, destination)
     if (next.sourceChainId !== source.chainId || !sameAddress(next.sourceToken, source.token) || next.sourceAmount !== parseUnits(inputAmount, source.decimals).toString()) throw new Error('The quote source changed.')
     prepareFundingTransactions(next, destination, manifest)
-    await verifyReceiver(next, destination)
+    await verifyDeployment(next, destination)
     setPinned(destination)
     setQuote(next)
     pendingIntentKey.current = crypto.randomUUID()
@@ -192,7 +198,7 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
     if (current.sourceTxHash || current.intent.sourceTxHash || current.sourceSubmissionPending || current.intent.status !== 'awaiting-source') throw new Error('This transfer has already started. Refresh its status instead of sending again.')
     const active = current
     assertFundingConfig(manifest, await api.config())
-    await verifyReceiver(active.intent, active.destination)
+    await verifyDeployment(active.intent, active.destination)
     try {
       const sourceTxHash = await sendFundingTransactions({
         wallet: await wallet(), destination: active.destination, quote: active.intent, manifest,
@@ -200,7 +206,7 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
         beforeBridge: () => { persist({ ...(savedRef.current ?? active), sourceSubmissionPending: true }); },
         onBridgeHash: txHash => { persist({ ...(savedRef.current ?? active), sourceTxHash: txHash, sourceSubmissionPending: false }); },
       })
-      accept(await api.sourceSubmitted(active.intent.intentId, sourceTxHash))
+      await reportSource(sourceTxHash)
     } catch (e) {
       // Only an explicit wallet rejection proves that a requested send did not broadcast.
       if (typeof e === 'object' && e !== null && 'code' in e && e.code === 4001) persist({ ...(savedRef.current ?? active), sourceSubmissionPending: false }, true)
@@ -210,8 +216,13 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
 
   async function refreshIntent() {
     if (!savedRef.current) return
-    try { accept(await api.intent(savedRef.current.intent.intentId)) }
-    catch (e) { setRefreshed(false); throw e }
+    const generation = ++observationGeneration.current
+    try {
+      const next = await api.intent(savedRef.current.intent.intentId)
+      if (generation === observationGeneration.current) accept(next)
+    } catch (e) {
+      if (generation === observationGeneration.current) { setRefreshed(false); throw e }
+    }
   }
 
   async function reportSource(txHash: Hex) {
@@ -220,19 +231,25 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
     // A manually entered hash is only durable after the API accepts it. A typo or
     // rejected candidate must leave the recovery input editable.
     if (next.sourceTxHash?.toLowerCase() !== txHash.toLowerCase()) throw new Error('The backend did not accept the submitted source transaction.')
-    accept(next, true)
-    persist({ ...savedRef.current, sourceSubmissionPending: false })
+    // Registration proves the source hash, not the freshness of destination
+    // evidence bundled with its response. Invalidate older reads and wait for
+    // the next canonical GET before presenting readiness or archival actions.
+    ++observationGeneration.current
+    persist({ ...reconcileFunding(savedRef.current, next, true), sourceSubmissionPending: false }, true, true)
+    setRefreshed(false)
   }
 
   async function startAnother() {
-    if (!saved || !refreshed || (!ready && !fundingSourceFailed(saved.intent))) return
+    if (!saved || !refreshed || (!ready && !fundingNeedsDeposit(saved.intent) && !fundingSourceFailed(saved.intent))) return
     const release = await acquireSponsoredOperationBrowserLane({ chainId: manifest.destinationChainId, accountAddress: owner, lane: `funding:${manifest.releaseId}` })
     try {
       const latest = restoreFunding(localStorage, owner, manifest.releaseId)
       if (latest?.intent.intentId !== saved.intent.intentId) throw new Error('The active funding intent changed in another tab. Reload to continue.')
       let next: FundingIntent
+      const generation = ++observationGeneration.current
       try { next = await api.intent(latest.intent.intentId) }
-      catch (e) { setRefreshed(false); throw e }
+      catch (e) { if (generation === observationGeneration.current) setRefreshed(false); throw e }
+      if (generation !== observationGeneration.current) throw new Error('A newer funding observation is in progress. Refresh the transfer before archiving.')
       const checked = reconcileFunding(latest, next)
       persist(checked)
       setRefreshed(true)
@@ -276,11 +293,11 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
           <p className="text-sm">Trading Account <code className="break-all">{saved.destination.beneficiary}</code></p>
           <p className="text-xs text-content-secondary">Destination remains Arbitrum (chain {saved.destination.destinationChainId}) when your wallet changes networks.</p>
           <p className="text-xs break-all">Funding reference: {saved.intent.intentId}</p>
-          <p className="text-xs break-all">Receiver: {saved.intent.receiver}</p>
+          <p className="text-xs break-all">Destination handler: {saved.intent.multicallHandler}</p>
           {(saved.sourceTxHash ?? saved.intent.sourceTxHash) && <p className="text-xs break-all">Source transaction: {saved.sourceTxHash ?? saved.intent.sourceTxHash}</p>}
           {saved.intent.depositTxHash && <p className="text-xs break-all">Margin deposit transaction: {saved.intent.depositTxHash}</p>}
           {ready ? <p>{formatUnits(BigInt(saved.intent.creditedAmount ?? '0'), 6)} USDC confirmed in your clearinghouse balance.</p> : <p className="text-sm">Bridged funds are available to trade only after a canonical clearinghouse deposit is confirmed.</p>}
-          <div className="flex gap-2"><Button disabled={busy} onClick={() => void action(returnToTrading)}>Return to Arbitrum</Button>{refreshed && (ready || fundingSourceFailed(saved.intent)) && <Button disabled={busy} variant="secondary" onClick={() => void action(startAnother)}>{ready ? 'Add more funds' : 'Archive failed transfer & start new quote'}</Button>}</div>
+          <div className="flex gap-2"><Button disabled={busy} onClick={() => void action(returnToTrading)}>Return to Arbitrum</Button>{refreshed && (ready || fundingNeedsDeposit(saved.intent) || fundingSourceFailed(saved.intent)) && <Button disabled={busy} variant="secondary" onClick={() => void action(startAnother)}>{ready ? 'Add more funds' : fundingNeedsDeposit(saved.intent) ? 'Archive returned transfer & start new quote' : 'Archive failed transfer & start new quote'}</Button>}</div>
           {saved.intent.sourceStatus === 'reverted' && !ready && <p className="text-sm">The source transaction reverted. That source transaction did not bridge funds; source gas may still have been spent. Keep this funding reference and verify the transaction in your source wallet.</p>}
           {saved.intent.bridgeStatus === 'expired' && !ready && <p className="text-sm">The provider reports the bridge deadline has passed. Keep your source transaction hash and check the source wallet for refund progress before starting another transfer.</p>}
           {saved.intent.bridgeStatus === 'refunded' && !ready && <p className="text-sm">The provider reports a refund to your source wallet. This does not credit your margin balance. Verify the refund in your source wallet.</p>}
@@ -288,13 +305,21 @@ export function FundingFlow({ identity, manifest, api, wallet, verifyReceiver, o
           {saved.intent.status === 'awaiting-source' && !saved.sourceSubmissionPending && !saved.sourceTxHash && !saved.intent.sourceTxHash && <div className="flex gap-2"><Button disabled={busy} onClick={() => void action(fund)}>Continue in wallet</Button><Button disabled={busy} variant="secondary" onClick={() => { void action(dismissUnsent) }}>New quote</Button></div>}
           {(!ready && ((saved.sourceSubmissionPending === true && !saved.sourceTxHash) || (saved.sourceTxHash !== undefined && !saved.intent.sourceTxHash) || saved.intent.sourceStatus === 'pending')) && <div className="space-y-2"><p className="text-sm">{saved.sourceSubmissionPending && !saved.sourceTxHash ? 'A wallet request was interrupted. Check wallet history before sending again. Paste the existing source transaction hash to resume tracking.' : 'If your wallet replaced the source transaction, enter the replacement hash after it is visible on Ethereum. The backend verifies that it sends the same reviewed bridge call.'}</p><Input label="Source transaction hash" value={manualSourceHash} onChange={e => { setManualSourceHash(e.target.value); }} /><Button disabled={busy} onClick={() => void action(() => reportSource(hash(manualSourceHash)))}>Track existing transfer</Button></div>}
           {saved.sourceTxHash && !saved.intent.sourceTxHash && <Button disabled={busy} onClick={() => void action(() => reportSource(hash(saved.sourceTxHash)))}>Resume transfer tracking</Button>}
-          {saved.intent.status === 'retryable' && <Button disabled={busy} onClick={() => void action(async () => { accept(await api.retry(saved.intent.intentId)); })}>Retry margin deposit</Button>}
-          {(saved.intent.status === 'failed' || saved.intent.status === 'retryable') && <p className="text-sm text-content-secondary">Retrying deposits funds already at the receiver; it does not send a second bridge transfer. Only the destination Trading Account can recover tokens from its receiver. Keep the funding reference and transaction hashes for support.</p>}
+          {refreshed && fundingNeedsDeposit(saved.intent) && <div className="space-y-2">
+            <p className="text-sm">The destination action failed. {formatUnits(BigInt(saved.intent.fallbackAmount ?? '0'), 6)} USDC was returned to your Trading Account in transaction <code className="break-all">{saved.intent.fallbackTxHash}</code>. That return did not credit margin; these tokens may since have been spent or deposited.</p>
+            {onDepositAccount && <Button disabled={busy} onClick={() => void action(async () => {
+              assertFundingAccountDepositIdentity(saved.destination, identity)
+              await onAccountRefresh?.()
+              onDepositAccount(saved.destination)
+              setOpen(false)
+            })}>Review Trading Account deposit</Button>}
+            <p className="text-sm text-content-secondary">Return to Arbitrum and review the account's current USDC balance in Deposit. Archiving this returned transfer keeps its history and does not deposit these tokens or make them ready to trade.</p>
+          </div>}
           <Button variant="secondary" disabled={busy} onClick={() => void action(refreshIntent)}>Refresh transfer status</Button>
         </> : <>
           <label className="block text-sm">Source asset<select aria-label="Source asset" className="mt-1 w-full rounded border bg-app-bg p-2" value={sourceIndex} onChange={e => { setSourceIndex(Number(e.target.value)); setQuote(null) }} disabled={busy || Boolean(initial.error)}>{manifest.sources.map((s, i) => <option key={`${s.chainId.toString()}:${s.token}`} value={i}>{s.name} {s.symbol}</option>)}</select></label>
           <Input label={`Amount (${source.symbol})`} disabled={busy || Boolean(initial.error)} value={inputAmount} onChange={e => { setInputAmount(e.target.value); setQuote(null) }} />
-          {quote && pinned ? <><p className="text-sm">Estimated arrival: {formatUnits(BigInt(quote.estimatedAmount), 6)} USDC<br />Minimum arrival: {formatUnits(BigInt(quote.minimumAmount), 6)} USDC</p><p className="text-xs break-all">Trading Account: {pinned.beneficiary}<br />Receiver: {quote.receiver}<br />Quote expires: {new Date(quote.expiresAt * 1000).toLocaleTimeString()}</p><Button disabled={busy} onClick={() => void action(fund)}>{busy ? step || 'Preparing transfer' : 'Approve & send from wallet'}</Button></> : <Button disabled={busy} onClick={() => void action(requestQuote)}>{busy ? 'Finding route' : 'Review funding quote'}</Button>}
+          {quote && pinned ? <><p className="text-sm">Estimated arrival: {formatUnits(BigInt(quote.estimatedAmount), 6)} USDC<br />Minimum arrival: {formatUnits(BigInt(quote.minimumAmount), 6)} USDC</p><p className="text-xs break-all">Trading Account: {pinned.beneficiary}<br />Destination handler: {quote.multicallHandler}<br />Quote expires: {new Date(quote.expiresAt * 1000).toLocaleTimeString()}</p><Button disabled={busy} onClick={() => void action(fund)}>{busy ? step || 'Preparing transfer' : 'Approve & send from wallet'}</Button></> : <Button disabled={busy} onClick={() => void action(requestQuote)}>{busy ? 'Finding route' : 'Review funding quote'}</Button>}
         </>}
         {(error ?? initial.error) && <p role="alert" className="text-sm text-brand-orange">{error ?? initial.error}</p>}
       </div>

@@ -11,5 +11,5 @@
   "expectedOutputAmount": "99925012",
   "minOutputAmount": "99427873",
   "quoteExpiryTimestamp": 1791467039,
-  "source": "Across /api/swap/approval read-only Ethereum USDT to Arbitrum USDC quote; no source transaction broadcast or simulation attestation."
+  "source": "Historical read-only Across source swap shape. Provider tests replace its destination message with generated direct-action calldata. This is not a live direct-action quote, simulation, or completed transfer."
 }

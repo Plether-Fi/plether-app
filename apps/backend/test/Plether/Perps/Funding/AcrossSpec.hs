@@ -2,10 +2,11 @@ module Plether.Perps.Funding.AcrossSpec (spec) where
 
 import Data.Aeson
 import qualified Data.Aeson.KeyMap as KM
+import Data.Aeson.Types (parseEither)
 import Data.Either (isLeft)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Numeric (showHex)
+import Numeric (showHex, readHex)
 import Plether.Perps.Funding.Across
 import Plether.Perps.Funding.Types
 import Test.Hspec
@@ -29,7 +30,7 @@ spec = describe "Across stablecoin funding route validation" $ do
           ("0x095ea7b3" <> address spoke <> uint amount) "0"
     fmap pqTransactions (parse False $ fixture False)
       `shouldBe` Right [expectedApproval,SourceTransaction 1 "bridge" spoke (calldata False) "0"]
-  it "accepts a strictly decoded USDT swap and four-call USDC transfer recipe" $ do
+  it "accepts a strictly decoded USDT swap and four-call margin-deposit recipe" $ do
     fmap pqMinimumAmount (parse True $ fixture True) `shouldBe` Right (decimal minimumOutput)
   it "uses a zero reset before exact USDT approval when an insufficient nonzero allowance exists" $ do
     let payload = edit ["checks","allowance","actual"] (String "1") $ fixture True
@@ -82,28 +83,63 @@ spec = describe "Across stablecoin funding route validation" $ do
   it "rejects forged USDT refund recipient, exchange and unbounded input" $
     mapM_ (\(index,word) -> parse True (withSwapData $ replaceWord index word $ calldata True) `shouldSatisfy` isLeft)
       [(5,address attacker),(7,uint $ amount+1),(16,address attacker),(17,address attacker)]
-  it "rejects USDT drain recipient/token tampering even when the summary output still matches" $ do
-    let drain = "ef8738d3" <> address arbUsdc <> address receiver
-    parse True (withSwapData $ T.replace drain ("ef8738d3" <> address arbUsdc <> address attacker) $ calldata True)
-      `shouldSatisfy` isLeft
-    parse True (withSwapData $ T.replace drain ("ef8738d3" <> address ethUsdc <> address receiver) $ calldata True)
-      `shouldSatisfy` isLeft
-  it "rejects extra destination calls or arbitrary logger targets and methods" $ do
-    parse True (withSwapData $ T.replace (address logger) (address attacker) $ calldata True) `shouldSatisfy` isLeft
-    parse True (withSwapData $ T.replace "d836083e" "a9059cbb" $ calldata True) `shouldSatisfy` isLeft
-    -- Message starts at outer word25; its array length is word28.
-    parse True (withSwapData $ replaceWord 28 (uint 5) $ calldata True) `shouldSatisfy` isLeft
+  it "matches the independently viem-encoded message byte for byte" $ do
+    decoded <- eitherDecodeFileStrict' "test/fixtures/across-direct-actions-v1.json" :: IO (Either String Value)
+    fixtureValue <- either fail pure decoded
+    message <- either fail pure $ parseEither (withObject "message vector" (.: "destinationMessage")) fixtureValue
+    buildAcrossDestinationMessage deployment (request False) quoteId `shouldBe` message
+  it "persists the exact verified destination message for source/fill correlation" $
+    fmap pqDestinationMessage (parse False $ fixture False) `shouldBe` Right ("0x" <> destinationMessage)
+  it "rejects zero, owner and arbitrary destination fallbacks on both routes" $
+    mapM_ (\swap -> mapM_ (\fallback -> parse swap (withRouteData swap $
+      calldataWithMessage (replaceMessageWord 2 fallback destinationMessage) swap) `shouldSatisfy` isLeft)
+      [uint 0,address owner,address attacker]) [False,True]
+  it "rejects an empty destination message on both routes" $
+    mapM_ (\swap -> parse swap (withRouteData swap $ calldataWithMessage "" swap) `shouldSatisfy` isLeft) [False,True]
+  it "rejects changes to targets, amounts, dynamic offsets, beneficiary, cleanup and quote marker" $
+    mapM_ (\(before,after) -> parse True (withSwapData $ calldataWithMessage
+      (T.replace before after destinationMessage) True) `shouldSatisfy` isLeft)
+      [(address clearinghouse,address attacker),(address arbUsdc,address ethUsdc)
+      ,(address beneficiary,address attacker),(uint 36,uint 68)
+      ,("c41e8295","3a5be8cb"),("2f4f21e2","a9059cbb")
+      ,("095ea7b3" <> address clearinghouse <> uint 0,"095ea7b3" <> address clearinghouse <> uint 1)
+      ,(T.drop 2 quoteId,T.replicate 64 "8"),(address logger,address attacker)]
+  it "binds otherwise identical quotes to distinct source transaction messages" $ do
+    let anotherQuote = "0x" <> T.replicate 64 "8"
+    parseAcrossQuote now "0xdead" deployment (request False) anotherQuote (fixture False) `shouldSatisfy` isLeft
+  it "rejects noncanonical nested destination offsets and extra unparsed data" $ do
+    parse True (withSwapData $ calldataWithMessage (replaceMessageWord 4 (uint 160) destinationMessage) True) `shouldSatisfy` isLeft
+    parse True (withSwapData $ calldataWithMessage (destinationMessage <> uint 0) True) `shouldSatisfy` isLeft
+  it "requires all four destination actions including cleanup and quote correlation" $
+    parse True (withSwapData $ calldataWithMessage (replaceMessageWord 3 (uint 3) destinationMessage) True) `shouldSatisfy` isLeft
+  it "builds four documented POST actions and commits the quote ID in the final one" $ do
+    let expectedMarker = object ["target" .= logger,"functionSignature" .= ("function emitData(bytes)" :: Text)
+          ,"args" .= [object ["value" .= quoteId,"populateDynamically" .= False]]
+          ,"value" .= ("0" :: Text),"isNativeTransfer" .= False,"populateCallValueDynamically" .= False]
+    actions <- either fail pure $ parseEither (withObject "actions" (.: "actions")) $
+      buildAcrossActions deployment (request False) quoteId
+    length (actions :: [Value]) `shouldBe` 4
+    last actions `shouldBe` expectedMarker
+  it "accepts the bounded provider bookkeeping suffix on either source route" $
+    mapM_ (\swap -> parse swap (withRouteData swap $ calldataWithMessage withBookkeeping swap)
+      `shouldSatisfy` either (const False) (const True)) [False,True]
+  it "rejects bookkeeping that drains to another address or calls another contract" $ do
+    let drain = "ef8738d3" <> address arbUsdc <> address beneficiary
+    parse True (withSwapData $ calldataWithMessage
+      (T.replace drain ("ef8738d3" <> address arbUsdc <> address attacker) withBookkeeping) True) `shouldSatisfy` isLeft
+    parse True (withSwapData $ calldataWithMessage
+      (T.replace (address logger) (address attacker) withBookkeeping) True) `shouldSatisfy` isLeft
   it "rejects routing to a different destination release or unsupported source chain/token" $ do
-    parseAcrossQuote now "0xdead" (deployment {fdChainId=421614}) (request False) receiver (fixture False) `shouldSatisfy` isLeft
-    parseAcrossQuote now "0xdead" deployment ((request False) {qrSourceChainId=10}) receiver (fixture False) `shouldSatisfy` isLeft
-    parseAcrossQuote now "0xdead" deployment ((request False) {qrSourceToken=attacker}) receiver (fixture False) `shouldSatisfy` isLeft
+    parseAcrossQuote now "0xdead" (deployment {fdChainId=421614}) (request False) quoteId (fixture False) `shouldSatisfy` isLeft
+    parseAcrossQuote now "0xdead" deployment ((request False) {qrSourceChainId=10}) quoteId (fixture False) `shouldSatisfy` isLeft
+    parseAcrossQuote now "0xdead" deployment ((request False) {qrSourceToken=attacker}) quoteId (fixture False) `shouldSatisfy` isLeft
 
 now, amount, minimumOutput :: Integer
 now = 1791464000
 amount = 100000000
 minimumOutput = 99400000
 
-ethUsdc, ethUsdt, arbUsdc, spoke, periphery, handler, logger, owner, receiver, attacker :: Text
+ethUsdc, ethUsdt, arbUsdc, spoke, periphery, handler, logger, owner, beneficiary, clearinghouse, attacker, quoteId :: Text
 ethUsdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 ethUsdt = "0xdac17f958d2ee523a2206206994597c13d831ec7"
 arbUsdc = "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
@@ -112,18 +148,23 @@ periphery = "0x97ccdbea4632140639ad5ea9b944aa034eb15fd4"
 handler = "0x0f7ae28de1c8532170ad4ee566b5801485c13a0e"
 logger = "0xbf75133b48b0a42ab9374027902e83c5e2949034"
 owner = "0x1111111111111111111111111111111111111111"
-receiver = "0x2222222222222222222222222222222222222222"
-attacker = "0x3333333333333333333333333333333333333333"
+beneficiary = "0x2222222222222222222222222222222222222222"
+clearinghouse = "0x3333333333333333333333333333333333333333"
+quoteId = "0x" <> T.replicate 64 "7"
+attacker = "0x4444444444444444444444444444444444444444"
 
 deployment :: FundingDeployment
 deployment = FundingDeployment
-  { fdChainId=42161,fdReleaseId="release",fdClearinghouse=owner,fdToken=arbUsdc,fdFactory=receiver
-  , fdFactoryCodeHash="0x" <> T.replicate 64 "1",fdConfirmations=12,fdStartBlock=0
-  , fdClearinghouseCodeHash="0x" <> T.replicate 64 "2" }
+  { fdChainId=42161,fdReleaseId="release",fdClearinghouse=clearinghouse,fdToken=arbUsdc
+  , fdDestinationSpokePool="0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",fdDestinationSpokePoolCodeHash=dummyHash
+  , fdDestinationSpokePoolImplementation=attacker,fdDestinationSpokePoolImplementationCodeHash=dummyHash
+  , fdMulticallHandler=handler,fdMulticallHandlerCodeHash=dummyHash,fdConfirmations=12,fdStartBlock=0
+  , fdClearinghouseCodeHash=dummyHash }
+ where dummyHash = "0x" <> T.replicate 64 "1"
 request :: Bool -> QuoteRequest
-request swap = QuoteRequest receiver owner 1 (if swap then ethUsdt else ethUsdc) (decimal amount)
+request swap = QuoteRequest beneficiary owner 1 (if swap then ethUsdt else ethUsdc) (decimal amount)
 parse :: Bool -> Value -> Either Text ProviderQuote
-parse swap = parseAcrossQuote now "0xdead" deployment (request swap) receiver
+parse swap = parseAcrossQuote now "0xdead" deployment (request swap) quoteId
 withData, withSwapData :: Text -> Value
 withData value = edit ["swapTx","data"] (String value) $ fixture False
 withSwapData value = edit ["swapTx","data"] (String value) $ fixture True
@@ -151,25 +192,43 @@ fixture swap = object
     ["chainId" .= (chain :: Integer),"address" .= tokenAddress,"decimals" .= (6 :: Int)]
 
 calldata :: Bool -> Text
-calldata False = "0xad5425c6" <> T.concat
-  [address owner,address receiver,address ethUsdc,address arbUsdc,uint amount,uint minimumOutput
-  ,uint 42161,uint 0,uint now,uint (now+7200),uint 0,uint 384,uint 0] <> "1dc0dedead73c0de"
-calldata True = "0x110560ad" <> uint 32 <> T.concat
+calldata = calldataWithMessage destinationMessage
+
+calldataWithMessage :: Text -> Bool -> Text
+calldataWithMessage message False = "0xad5425c6" <> T.concat
+  [address owner,address handler,address ethUsdc,address arbUsdc,uint amount,uint minimumOutput
+  ,uint 42161,uint 0,uint now,uint (now+7200),uint 0,uint 384] <> bytes message <> "1dc0dedead73c0de"
+calldataWithMessage message True = "0x110560ad" <> uint 32 <> T.concat
   [uint 0,uint 0,uint 384,address ethUsdt,address "0x66a9893cc07d91d95644aedd05d03f95e1dba8af"
   ,uint 1,uint amount,uint amount,uint (384 + fromIntegral (T.length deposit `div` 2))
   ,uint 1,address spoke,uint 0] <> deposit <> bytes "24856bc3" <> "1dc0dedead73c0de"
  where
   deposit = T.concat [address ethUsdc,address arbUsdc,uint minimumOutput,address owner,address handler
-    ,uint 42161,uint 0,uint now,uint (now+7200),uint 0,uint 352] <> bytes destinationMessage
+    ,uint 42161,uint 0,uint now,uint (now+7200),uint 0,uint 352] <> bytes message
 
 destinationMessage :: Text
-destinationMessage = uint 32 <> uint 64 <> uint 0 <> uint 4 <> T.concat offsets <> T.concat calls
+destinationMessage = T.drop 2 $ buildAcrossDestinationMessage deployment (request False) quoteId
+
+-- Append the four harmless bookkeeping calls observed on the existing provider
+-- transfer route. This is a generated action fixture, not a live POST quote.
+withBookkeeping :: Text
+withBookkeeping = uint 32 <> uint 64 <> address beneficiary <> uint 8 <> T.concat offsets <> T.concat calls
  where
-  drain = call handler $ "ef8738d3" <> address arbUsdc <> address receiver
-  logCall = call logger $ "d836083e" <> uint 32 <> bytes "abcd"
-  calls = [drain,drain,logCall,logCall]
-  offsets = map uint $ take 4 $ scanl (+) 128 $ map (fromIntegral . (`div` 2) . T.length) calls
+  baseOffsets = [128 + parseWord (4+i) destinationMessage | i <- [0..3]] <> [T.length destinationMessage `div` 2]
+  baseCalls = zipWith (\start end -> T.take ((end-start)*2) $ T.drop (start*2) destinationMessage) baseOffsets (tail baseOffsets)
+  drain = call handler $ "ef8738d3" <> address arbUsdc <> address beneficiary
+  metadata = call logger $ "d836083e" <> uint 32 <> bytes "abcd"
+  calls = baseCalls <> [drain,drain,metadata,metadata]
+  offsets = map uint $ take 8 $ scanl (+) 256 $ map (fromIntegral . (`div` 2) . T.length) calls
   call target callData = address target <> uint 96 <> uint 0 <> bytes callData
+  parseWord index value = case readHex $ T.unpack $ T.take 64 $ T.drop (index*64) value of
+    [(number,"")] -> number
+    _ -> error "Invalid generated fixture"
+
+withRouteData :: Bool -> Text -> Value
+withRouteData swap value = edit ["swapTx","data"] (String value) $ fixture swap
+replaceMessageWord :: Int -> Text -> Text -> Text
+replaceMessageWord index replacement value = T.take (64*index) value <> replacement <> T.drop (64*(index+1)) value
 
 address :: Text -> Text
 address value = T.replicate 24 "0" <> T.drop 2 value

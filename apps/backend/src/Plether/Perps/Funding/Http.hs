@@ -18,6 +18,7 @@ import Plether.Config (Config (..))
 import Plether.Database
 import Plether.Ethereum.Client (EthClient,ethBlockNumber,newClientWithOptions,RpcClientOptions (..))
 import Plether.Ethereum.Rpc (ethChainId)
+import Plether.Ethereum.Abi (keccak256)
 import Plether.Perps.Funding.Across
 import Plether.Perps.Funding.Chain
 import Plether.Perps.Funding.Source
@@ -65,13 +66,12 @@ registerFundingRoutes FundingHttpState {fhConfigured = configured, fhEnabled = e
         case (deployment,maybePool) of
           (Just release,Just pool) -> do
             executor <- liftIO $ withDb pool $ \conn -> isWorkerReady conn (deploymentReadinessKey release) (fdChainId release)
-            unless executor $ failRequest status503 "DESTINATION_EXECUTOR_UNAVAILABLE"
+            unless executor $ failRequest status503 "DESTINATION_OBSERVER_UNAVAILABLE"
             source <- maybe (failRequest status503 "SOURCE_RPC_NOT_CONFIGURED") pure sourceClient
             sourceChain <- liftIO (ethChainId source) >>= either (const $ failRequest status503 "SOURCE_RPC_UNAVAILABLE") pure
             unless (sourceChain == 1) $ failRequest status503 "SOURCE_CHAIN_MISMATCH"
             proof <- liftIO $ verifyFundingDeployment client release
             either (failRequest status503) pure proof
-            liftIO (verifyAcrossDestinations client) >>= either (failRequest status503) pure
             pure (release,pool)
           _ -> failRequest status503 "FUNDING_NOT_CONFIGURED"
       findStored = do
@@ -91,7 +91,7 @@ registerFundingRoutes FundingHttpState {fhConfigured = configured, fhEnabled = e
       Just source -> liftIO $ (== Right 1) <$> ethChainId source
     let reason = case unavailable of
           Just value -> Just value
-          Nothing | not executor -> Just "DESTINATION_EXECUTOR_UNAVAILABLE"
+          Nothing | not executor -> Just "DESTINATION_OBSERVER_UNAVAILABLE"
           Nothing | not sourceReady -> Just "SOURCE_RPC_UNAVAILABLE"
           _ -> Nothing
         base = maybe (object []) toJSON deployment
@@ -107,19 +107,21 @@ registerFundingRoutes FundingHttpState {fhConfigured = configured, fhEnabled = e
     unless permitted $ failRequest status429 "FUNDING_QUOTE_RATE_LIMITED"
     input <- boundedJson
     identifier <- liftIO newIdentifier
-    receiver <- liftIO (predictReceiver client release (qrBeneficiary input) identifier) >>= either (failRequest status503) pure
-    quoted <- liftIO (fpQuote provider release input receiver) >>= either (failRequest status503) pure
+    quoted <- liftIO (fpQuote provider release input identifier) >>= either (failRequest status503) pure
     when (pqExpiresAt quoted <= now || pqExpiresAt quoted > now + 600 || null (pqTransactions quoted)) $
       failRequest status503 "INVALID_PROVIDER_QUOTE"
     minimumAmount <- either (const $ failRequest status503 "INVALID_PROVIDER_AMOUNT") pure $ validateAmount $ pqMinimumAmount quoted
     estimate <- either (const $ failRequest status503 "INVALID_PROVIDER_AMOUNT") pure $ validateAmount $ pqEstimatedAmount quoted
     unless (estimate >= minimumAmount && minimumAmount >= 1_000_000) $ failRequest status400 "FUNDING_AMOUNT_BELOW_MINIMUM"
     block <- liftIO (ethBlockNumber client) >>= either (const $ failRequest status503 "DESTINATION_RPC_UNAVAILABLE") pure
+    destinationMessage <- either (const $ failRequest status503 "INVALID_PROVIDER_MESSAGE") pure $ decodeHex $ pqDestinationMessage quoted
     let quote = setFields
-          [("quoteId",String identifier),("intentSalt",String identifier)
+          [("quoteId",String identifier)
           ,("beneficiary",String $ qrBeneficiary input),("ownerAddress",String $ qrSourceOwner input)
           ,("sourceChainId",toJSON $ qrSourceChainId input),("sourceToken",String $ qrSourceToken input)
-          ,("sourceAmount",String $ qrSourceAmount input),("receiver",String receiver)
+          ,("sourceAmount",String $ qrSourceAmount input)
+          ,("destinationMessage",String $ pqDestinationMessage quoted)
+          ,("destinationMessageHash",String $ encodeHex $ keccak256 destinationMessage)
           ,("expiresAt",toJSON $ pqExpiresAt quoted),("estimatedAmount",String $ pqEstimatedAmount quoted)
           ,("minimumAmount",String $ pqMinimumAmount quoted),("provider",String $ fpName provider)
           ,("providerReference",String $ pqProviderReference quoted),("sourceTransactions",toJSON $ pqTransactions quoted)
@@ -137,20 +139,20 @@ registerFundingRoutes FundingHttpState {fhConfigured = configured, fhEnabled = e
       failRequest status400 "INVALID_IDEMPOTENCY_KEY"
     previous <- liftIO $ withDb pool $ \conn -> findIntentByIdempotencyKey conn key
     case previous of
-      Just intent | fieldText "quoteId" intent == Just quoteId -> json (envelope $ publicIntent intent) >> finish
+      Just intent | fieldText "quoteId" intent == Just quoteId -> respondStored pool intent >> finish
       Just _ -> failRequest status409 "IDEMPOTENCY_CONFLICT"
       Nothing -> pure ()
     _ <- requireLive
     quote <- liftIO (withDb pool $ \conn -> findQuote conn quoteId) >>= maybe (failRequest status404 "QUOTE_NOT_FOUND") pure
     identifier <- liftIO newIdentifier
     result <- liftIO $ withDb pool $ \conn -> createIntent conn key identifier quoteId $ intentFromQuote identifier quote
-    either (failRequest status409) (json . envelope . publicIntent) result
+    either (failRequest status409) (respondStored pool) result
   get "/api/perps/funding/intents/:id" $ do
     (pool,identifier) <- findStored
     setHeader "Cache-Control" "no-store"
     intent <- liftIO (withDb pool $ \conn -> getIntent conn identifier) >>= maybe (failRequest status404 "INTENT_NOT_FOUND") pure
     refreshed <- liftIO $ refreshProviderStatus manager sourceClient pool identifier intent
-    json $ envelope $ publicIntent refreshed
+    respondStored pool refreshed
   post "/api/perps/funding/intents/:id/source" $ do
     (pool,identifier) <- findStored
     input <- boundedJson
@@ -158,22 +160,34 @@ registerFundingRoutes FundingHttpState {fhConfigured = configured, fhEnabled = e
     original <- liftIO (withDb pool $ \conn -> getIntent conn identifier) >>= maybe (failRequest status404 "INTENT_NOT_FOUND") pure
     source <- maybe (failRequest status503 "SOURCE_RPC_NOT_CONFIGURED") pure sourceClient
     liftIO (validateSourceTransaction source original hash) >>= either (failRequest status409) pure
-    result <- liftIO $ withDb pool $ \conn -> withFundingWorkerLock conn $ getIntent conn identifier >>= \case
+    result <- liftIO $ withDb pool $ \conn -> withFundingStateLock conn $ getIntent conn identifier >>= \case
       Nothing -> pure $ Left "INTENT_NOT_FOUND"
       Just old -> do
-        let next = setFields [("sourceTxHash",String hash),("sourceStatus",String "pending"),("sourceTerminal",Bool False),("sourceBlockNumber",Null),("sourceBlockHash",Null),("sourceConfirmations",toJSON (0 :: Integer)),("bridgeStatus",Null),("providerCheckedAt",toJSON (0 :: Integer)),("status",String $ if fieldText "status" old == Just "awaiting-source" then "bridging" else fromMaybe "bridging" $ fieldText "status" old)] old
-        updateIntent conn identifier next
-        pure $ Right next
-    either (failRequest status409) (json . envelope . publicIntent) result
+        relay <- getSourceRelay conn identifier
+        if isJust relay then pure $ if fieldText "sourceTxHash" old == Just hash then Right old else Left "SOURCE_RELAY_ALREADY_BOUND" else do
+         let next = setFields [("sourceTxHash",String hash),("sourceStatus",String "pending"),("sourceTerminal",Bool False),("sourceBlockNumber",Null),("sourceBlockHash",Null),("sourceConfirmations",toJSON (0 :: Integer)),("bridgeStatus",Null),("providerCheckedAt",toJSON (0 :: Integer)),("status",String $ if fieldText "status" old == Just "awaiting-source" then "bridging" else fromMaybe "bridging" $ fieldText "status" old)] old
+         updateIntent conn identifier next
+         pure $ Right next
+    either (failRequest status409) (respondStored pool) result
   post "/api/perps/funding/intents/:id/retry" $ do
     (pool,identifier) <- findStored
-    result <- liftIO $ withDb pool $ \conn -> withFundingWorkerLock conn $ getIntent conn identifier >>= \case
+    result <- liftIO $ withDb pool $ \conn -> withFundingStateLock conn $ getIntent conn identifier >>= \case
       Nothing -> pure Nothing
       Just old -> do
         let next = if fieldText "status" old == Just "retryable" then setFields [("lastError",Null),("status",String "bridging")] old else old
         updateIntent conn identifier next
         pure $ Just next
-    maybe (failRequest status404 "INTENT_NOT_FOUND") (json . envelope . publicIntent) result
+    maybe (failRequest status404 "INTENT_NOT_FOUND") (respondStored pool) result
+
+-- Use the stored release identity so historical intents cannot borrow the
+-- current release's heartbeat, while a retained old observer can serve them.
+respondStored :: DbPool -> Value -> ActionM ()
+respondStored pool intent = do
+  now <- liftIO $ floor <$> getPOSIXTime
+  ready <- case fromJSON intent :: Result FundingDeployment of
+    Success release -> liftIO $ withDb pool $ \conn -> isWorkerReady conn (deploymentReadinessKey release) (fdChainId release)
+    Error _ -> pure False
+  json $ envelope $ publicObservedIntent now ready intent
 
 envelope :: Value -> Value
 envelope value = object ["data" .= value]
@@ -198,7 +212,7 @@ boundedJson = do
 refreshProviderStatus :: Manager -> Maybe EthClient -> DbPool -> Text -> Value -> IO Value
 refreshProviderStatus manager sourceClient pool identifier original = do
   now <- floor <$> getPOSIXTime
-  poll <- withDb pool $ \conn -> withFundingWorkerLock conn $ do
+  poll <- withDb pool $ \conn -> withFundingStateLock conn $ do
     current <- getIntent conn identifier
     case current of
       Just value | Just hash <- fieldText "sourceTxHash" value
@@ -218,11 +232,13 @@ refreshProviderStatus manager sourceClient pool identifier original = do
         Right evidence | fieldText "sourceStatus" evidence == Just "reverted" -> pure $ Left "SOURCE_TRANSACTION_REVERTED"
         Left reason -> pure $ Left reason
         _ -> acrossTransferStatus manager hash
-      withDb pool $ \conn -> withFundingWorkerLock conn $ do
+      withDb pool $ \conn -> withFundingStateLock conn $ do
         current <- fromMaybe original <$> getIntent conn identifier
         if fieldText "sourceTxHash" current /= Just hash then pure current else do
-          let fields = either (const [("sourceTerminal",Bool False),("sourceBlockHash",Null),("sourceBlockNumber",Null),("sourceConfirmations",toJSON (0 :: Integer))])
-                (\value -> case value of Object fields -> [(Key.toText key,item) | (key,item) <- KM.toList fields]; _ -> []) sourceStatus
+          claim <- getSourceRelay conn identifier
+          let sourceFields = either (const [("sourceTerminal",Bool False),("sourceBlockHash",Null),("sourceBlockNumber",Null),("sourceConfirmations",toJSON (0 :: Integer))])
+                (\value -> case value of Object sourceData -> [(Key.toText key,item) | (key,item) <- KM.toList sourceData]; _ -> []) sourceStatus
+              fields = (if isJust claim then filter (\(key,_) -> key `elem` ["sourceStatus","sourceTerminal","sourceConfirmations"]) sourceFields else sourceFields)
                 <> either (const []) (\value -> [("bridgeStatus",String value)]) observation
               next = setFields fields current
           updateIntent conn identifier next

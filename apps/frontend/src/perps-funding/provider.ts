@@ -1,5 +1,6 @@
-import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, pad, parseAbi, parseAbiParameters, toHex, zeroAddress, type Address, type Hex } from 'viem'
-import { ACROSS_ARBITRUM_HANDLER, ACROSS_ARBITRUM_LOGGER, ACROSS_PERIPHERY, ETHEREUM_USDC } from './sources'
+import { decodeFunctionData, encodeFunctionData, erc20Abi, pad, toHex, zeroAddress, type Address, type Hex } from 'viem'
+import { ACROSS_PERIPHERY, ETHEREUM_USDC } from './sources'
+import { validateFundingDestinationMessage } from './destinationActions'
 import { ACROSS_FUNDING_ABI } from './acrossAbi'
 import { assertDestination, hash, sameAddress } from './validation'
 import type { FundingDestination, FundingManifest, FundingQuote, FundingSource, SourceTransaction } from './types'
@@ -11,34 +12,6 @@ export interface FundingWallet {
 function allowed(addresses: Address[], candidate: string): boolean { return addresses.some(a => sameAddress(a, candidate)) }
 function requireCondition(ok: boolean): asserts ok {
   if (!ok) throw new Error('The funding transaction does not match the reviewed route. No funds were sent.')
-}
-
-const INSTRUCTIONS_ABI = parseAbiParameters('( (address target, bytes callData, uint256 value)[] calls, address fallbackRecipient)')
-const DESTINATION_ABI = parseAbi(['function drainLeftoverTokens(address token,address destination)', 'function emitData(bytes data)'])
-
-/** Only the reviewed transfer-and-log message may execute at the destination. */
-function validateDestination(recipient: Hex, message: Hex, quote: FundingQuote, destination: FundingDestination) {
-  if (message === '0x') {
-    requireCondition(recipient.toLowerCase() === pad(quote.receiver).toLowerCase())
-    return
-  }
-  requireCondition(recipient.toLowerCase() === pad(ACROSS_ARBITRUM_HANDLER).toLowerCase())
-  const decoded = decodeAbiParameters(INSTRUCTIONS_ABI, message)
-  requireCondition(encodeAbiParameters(INSTRUCTIONS_ABI, decoded).toLowerCase() === message.toLowerCase())
-  const instructions = decoded[0]
-  requireCondition(instructions.fallbackRecipient === zeroAddress && instructions.calls.length === 4)
-  instructions.calls.forEach((call, index) => {
-    requireCondition(call.value === 0n)
-    const decodedCall = decodeFunctionData({ abi: DESTINATION_ABI, data: call.callData })
-    if (index < 2) {
-      requireCondition(sameAddress(call.target, ACROSS_ARBITRUM_HANDLER) && decodedCall.functionName === 'drainLeftoverTokens')
-      requireCondition(sameAddress(decodedCall.args[0], destination.token) && sameAddress(decodedCall.args[1], quote.receiver))
-      requireCondition(encodeFunctionData({ abi: DESTINATION_ABI, functionName: 'drainLeftoverTokens', args: decodedCall.args }).toLowerCase() === call.callData.toLowerCase())
-    } else {
-      requireCondition(sameAddress(call.target, ACROSS_ARBITRUM_LOGGER) && decodedCall.functionName === 'emitData' && decodedCall.args[0] !== '0x')
-      requireCondition(encodeFunctionData({ abi: DESTINATION_ABI, functionName: 'emitData', args: decodedCall.args }).toLowerCase() === call.callData.toLowerCase())
-    }
-  })
 }
 
 /** Decode the bridge's economic destination, not just its outer transaction target. */
@@ -57,12 +30,14 @@ export function validateAcrossBridge(tx: SourceTransaction, quote: FundingQuote,
     requireCondition(sameAddress(tx.to, ACROSS_PERIPHERY) && sameAddress(swap.swapToken, quote.sourceToken) && swap.swapTokenAmount === BigInt(quote.sourceAmount) && swap.submissionFees.amount === 0n && swap.submissionFees.recipient === zeroAddress && (swap.transferType === 0 || swap.transferType === 1) && allowed(source.swapExchanges, swap.exchange) && allowed(source.spokePools, swap.spokePool) && swap.minExpectedInputTokenAmount >= BigInt(quote.minimumAmount) && swap.minExpectedInputTokenAmount <= BigInt(quote.sourceAmount) * 105n / 100n && swap.enableProportionalAdjustment && swap.nonce === 0n && swap.routerCalldata.length >= 10)
     requireCondition(sameAddress(deposit.inputToken, ETHEREUM_USDC) && sameAddress(deposit.depositor, destination.owner) && deposit.outputToken.toLowerCase() === pad(destination.token).toLowerCase() && deposit.destinationChainId === BigInt(destination.destinationChainId) && deposit.outputAmount === BigInt(quote.minimumAmount))
     checkTimes(deposit.quoteTimestamp, deposit.fillDeadline)
-    validateDestination(deposit.recipient, deposit.message, quote, destination)
+    requireCondition(deposit.recipient.toLowerCase() === pad(destination.multicallHandler).toLowerCase())
+    validateFundingDestinationMessage(deposit.message, quote, destination)
   } else {
     const [depositor, recipient, inputToken, outputToken, inputAmount, outputAmount, destinationChainId, , quoteTimestamp, fillDeadline, , message] = decoded.args
     const match = decoded.functionName === 'deposit' ? (a: string, b: string) => a.toLowerCase() === pad(b as Address).toLowerCase() : sameAddress
-    requireCondition(allowed(source.spokePools, tx.to) && match(depositor, destination.owner) && match(recipient, quote.receiver) && match(inputToken, source.token) && match(outputToken, destination.token) && inputAmount === BigInt(quote.sourceAmount) && outputAmount === BigInt(quote.minimumAmount) && destinationChainId === BigInt(destination.destinationChainId) && message === '0x')
+    requireCondition(allowed(source.spokePools, tx.to) && match(depositor, destination.owner) && match(recipient, destination.multicallHandler) && match(inputToken, source.token) && match(outputToken, destination.token) && inputAmount === BigInt(quote.sourceAmount) && outputAmount === BigInt(quote.minimumAmount) && destinationChainId === BigInt(destination.destinationChainId) && sameAddress(source.token, ETHEREUM_USDC))
     checkTimes(quoteTimestamp, fillDeadline)
+    validateFundingDestinationMessage(message, quote, destination)
   }
 }
 

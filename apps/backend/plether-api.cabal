@@ -9,6 +9,7 @@ maintainer:         dev@plether.io
 category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
+                    test/fixtures/across-direct-actions-v1.json
                     config/migrations/perps-funding-v1.sql
                     config/migrations/aa-preparation-recovery-chain-scope-v1.sql
                     config/migrations/insights-integrity-epoch-v1.sql
