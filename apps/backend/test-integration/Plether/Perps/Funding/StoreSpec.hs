@@ -153,8 +153,8 @@ fundingStoreSpec databaseUrl = around withStore $ describe "durable perps fundin
       void $ execute_ conn "SET search_path=perps_funding_store_spec"
       ensureFundingSchema conn
       action conn
-    unlessTest [Only name] | "_test" `T.isSuffixOf` name = pure ()
-    unlessTest _ = fail "Funding store integration tests require a database ending in _test"
+    unlessTest [Only name] | "_test" `T.isSuffixOf` name || name == "plether_critical_path" = pure ()
+    unlessTest _ = fail "Funding store integration tests require a database ending in _test or named plether_critical_path"
 
 identifier :: Char -> Text
 identifier character = "0x" <> T.replicate 64 (T.singleton character)
