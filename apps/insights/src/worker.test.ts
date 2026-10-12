@@ -28,6 +28,11 @@ afterEach(() => {
 })
 
 describe('Cloudflare Pages Worker', () => {
+  it('serves the mutable Divisions publication without retaining browser caches', async () => {
+    const response = await worker.fetch(new Request('https://insights.plether.com/divisions/current.json'), { ASSETS: assets })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.status).toBe(200)
+  })
   it('returns a controlled error when the backend binding is missing', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

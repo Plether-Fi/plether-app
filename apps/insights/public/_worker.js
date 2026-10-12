@@ -136,7 +136,7 @@ function applyResponseHeaders(response, pathname) {
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (pathname === '/favicon.svg') {
     headers.set('Cache-Control', 'public, max-age=86400');
-  } else if (pathname === `${API_PREFIX}/competitions/current`) {
+  } else if (pathname === '/divisions/current.json' || pathname === `${API_PREFIX}/competitions/current`) {
     headers.set('Cache-Control', 'no-store');
   } else if (isRegistrationPath(pathname)) {
     // Registration responses may contain session state or rotate an HttpOnly

@@ -1,29 +1,73 @@
-# Plether Insights
+# Plether Insights — Divisions
 
-Public competition standings, wallet activity, and first-party competition registration for `insights.plether.com`.
+The homepage is **Plether Divisions**, a weekly testnet ranking program launching
+12 October 2026. The first trading window is Sunday 11 October at 21:00 UTC
+through Friday 16 October at 21:00 UTC; first badges publish Monday 19 October.
 
-Overall rank includes every registered participant. Prize places include only
-participants who meet the P&L and active-day thresholds and are marked eligible
-after integrity review. Exact final-P&L ties split the combined awards for their
-occupied paid places equally; wallet address only stabilizes display order.
+Weekly returns use cash-flow-adjusted equity, after incurred fees. Two distinct
+active FX-session days and strictly positive profit qualify a wallet. Earned
+tiers persist across weeks, with one-step promotions and one-step demotions after
+two consecutive non-qualifying weeks. The complete rules are in
+[`specs/plether-divisions.md`](../../specs/plether-divisions.md).
 
-The September leaderboard indexes **plether-core v1.3.1** on Arbitrum Sepolia,
-using the backend's shared `config/perps/arbitrum-sepolia-v3.json` manifest and
-deployment block **318398363**. Account activity is indexed across the release;
-competition scoring starts **September 13, 2026 at 21:00 UTC** for the registered
-roster, using the account state immediately before that time as its baseline.
-The UI consumes the Insights API; it does not
-select contracts or index the chain itself. Backend release binding requires
-both the `sepolia-core-v1.3.1.tfvars.json` and
-`sepolia-insights-v1.3.1.tfvars.json` Terraform overlays. See
-[the operations runbook](../../specs/insights-operations-runbook.md#september-release-manifest)
-for activation prerequisites, including the binding deadline.
+## Ranking and publication
+
+`src/divisions/engine.ts` is a pure, deterministic weekly ranking engine. It
+consumes complete account snapshots, includes inactive previously ranked wallets,
+and emits tier state, standings, and weekly announcement data. It uses exact
+integer ratios to rank percentage returns, without floating-point rounding.
+
+The UI reads `/divisions/current.json`. It never uses September's cumulative
+P&L or 100,000-USDC baseline to calculate weekly Divisions results. Before a
+publication exists, it shows the launch and awaiting-publication state.
+
+Use Node **22.18+** to run the publisher (native TypeScript support):
+
+```sh
+# First week
+npm run divisions:publish -- /path/to/week-2026-10-11.json public/divisions
+
+# Next week: supply the immediately preceding publication
+npm run divisions:publish -- /path/to/week-2026-10-18.json public/divisions \
+  public/divisions/weeks/2026-10-11.json
+```
+
+The input shape is `WeeklyInput` in `src/divisions/types.ts`. Every wallet that has
+traded must be supplied each week, whether active or inactive. A wallet with no
+trading history (`hasTraded: false`) is excluded. Amounts are six-decimal USDC
+integer strings. Supply full opening and closing economic values, verified
+external deposits/withdrawals, and timestamps of successfully executed nonzero
+voluntary position changes. The exporter must verify event emitter, asset,
+canonicality, finalized boundary blocks, and complete wallet coverage. Retain
+source inputs and their block hashes privately for replay/audit.
+
+**Integration boundary:** this change implements the UI and the snapshot-input
+ranking engine. It does not collect new weekly snapshots from the existing
+Haskell indexer. Its September snapshot worker and participant roster cannot be
+used as a Divisions feed. A complete weekly exporter for all traded accounts is
+required to supply production inputs. Discord linking, role assignment, and
+posting to X/Discord are deferred; the engine only prepares announcement data.
+
+The publisher refuses premature/future publication, skipped weeks, duplicate
+wallets, missing snapshots, rewriting a published week's results, and
+replacement of an unexpected current week. It writes an immutable weekly
+archive and atomically replaces `current.json`; exact retries are idempotent.
+Run one publisher at a time. Publish the resulting assets through the normal
+Insights deployment; generating files alone does not deploy them. No sample or
+synthetic standings are included in production assets.
+
+## September archive
+
+September's historical standings, wallet breakdowns, and approved fee-share
+exceptions remain available at `/archive/september-2026`, with their original
+rules at `/archive/september-2026/methodology`. Public registration routes now
+redirect to Divisions rules or the archive. Historical API and backend records
+are preserved. Divisions does not reuse competition cash-prize eligibility.
 
 ## Local development
 
 ```sh
 npm ci
-npm run dev:registration
 npm run dev
 ```
 
@@ -44,9 +88,8 @@ site key and the trading frontend's public WalletConnect project ID when those
 variables are absent. Production builds do not use the Turnstile fallback, and
 the deployment workflow requires both variables explicitly.
 
-The registration route is `/competitions/testnet-trading-2026-09/register`
-(`/register` redirects to the current competition). It resumes through the
-secure HttpOnly browser session established by the API.
+The legacy registration components and their tests remain for historical
+maintenance; the public app no longer mounts the September application flow.
 
 ## Validation
 
