@@ -1,5 +1,33 @@
 # Arbitrum Sepolia perps release
 
+## Pending v1.3.0 address configuration
+
+`arbitrum-sepolia-v3.json` contains the exact deployment manifest from
+[Core PR #111](https://github.com/Plether-Fi/plether-core/pull/111), pinned to
+record commit `c9b121702e7228259706e1229a0300605efa8e89`. Its 29 contract
+addresses and runtime hashes target source commit
+`cf86189bcca4813f39d6405a338b77176783eb42`, at L2 deployment blocks
+318367917–318367988. `arbitrum-sepolia-v3.provenance.json` records the manifest
+and build archive checksums separately, preserving the upstream manifest bytes.
+The frontend exposes these bindings through `PERPS_ARBITRUM_SEPOLIA_V3` in
+`perpsV3Addresses.ts`, including the new close preview and recovery sidecar.
+
+This stack is deployed/inactive: trading is disabled, both tranches are unseeded,
+and the guardian is unset. Consumer cutover is pending. The active V2 registry,
+AA manifest, backend embedded manifest, and Terraform bindings still target
+v1.2.3. Do not substitute V3 addresses into those V2 consumers: first migrate
+frontend ABIs and order preparation, keeper/indexer formats, and AA calldata
+policy together. Historical execution requires `getOrderExecutionFee(bytes[])`;
+closes and `depositFor` have changed semantics. The old supplemental close
+preview and sponsored-close lens are specific to v1.2.3 and must not be reused.
+
+Bootstrap and trading activation require their separate release gates. Keep
+sponsorship and bridge funding disabled for the pending stack. Prior positions,
+orders, balances, claims, and vault obligations have no automatic migration.
+No deployment or onchain transaction is performed by this address preparation.
+
+## Current v1.2.3 consumer configuration
+
 `arbitrum-sepolia-v2.json` pins plether-core v1.2.3 (the filename describes the
 bounded V2 order intent protocol). It includes all 27 contract addresses and
 runtime hashes, immutable source provenance, and the original deployment snapshot.
