@@ -67,7 +67,7 @@ jobs:
         working-directory: .
         run: |
           terraform -chdir=infra/terraform init -backend=false -input=false
-          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-core-v1.2.3.tfvars.json -no-color
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-core-v1.3.0.tfvars.json -no-color
 
       - name: Test AA RPC deployment mode guards
         env:

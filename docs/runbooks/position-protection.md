@@ -1,7 +1,13 @@
 # Full-position TP/SL — Arbitrum Sepolia v1.2.1
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 This release supports only the Book deployment pinned in
-`config/perps/arbitrum-sepolia-v2.json`, chain 421614, deployment block
+`config/perps/arbitrum-sepolia-v3.json`, chain 421614, deployment block
 305627052. There is no legacy-contract fallback. The implementation is shipped
 disabled; deploying it does not authorize contract governance or signer funding.
 
@@ -64,14 +70,14 @@ package release; never edit installed package files.
 The protection-worker ABI is generated separately from the deployed Core release bundle:
 
 ```bash
-node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.2.3-arbitrum-sepolia.tar.gz
+node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.3.0-arbitrum-sepolia.tar.gz
 ```
 
 The generator verifies the bundle SHA-256 against
-`config/perps/arbitrum-sepolia-v2.json` before extracting the
+`config/perps/arbitrum-sepolia-v3.json` before extracting the
 PositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.
-Deployment source: `ffe45937b7f38133133ad292c5435828bf99357d`.
-Bundle SHA-256: `5705b875ea07f26b872724d3559a3a686fc0332695e657398a85d2fa65ab7256`.
+Deployment source: `cf86189bcca4813f39d6405a338b77176783eb42`.
+Bundle SHA-256: `eb0033136fac39ccc2de6b44ed113860a266f87d266dc8aa334ee431e4e0e221`.
 The AA package release is independent of this deployment-specific ABI bundle;
 package migration does not regenerate worker artifacts.
 
@@ -85,7 +91,7 @@ and worker apply the same additive, idempotent schema extracted from
 Required environment: `DATABASE_URL`, `PERPS_RPC_URL`; optionally
 `PERPS_RPC_AUTH_TOKEN` for the authenticated RPC. Production PostgreSQL must
 retain certificate-verified TLS. The release manifest defaults to the checked-in
-file; the container uses `/app/config/perps/arbitrum-sepolia-v2.json`.
+file; the container uses `/app/config/perps/arbitrum-sepolia-v3.json`.
 
 The default is observe-only: `PROTECTION_WORKER_EXECUTION_ENABLED=false`.
 Execution requires `PROTECTION_WORKER_PRIVATE_KEY`, a dedicated funded EOA.

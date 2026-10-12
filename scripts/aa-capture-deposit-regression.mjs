@@ -20,7 +20,7 @@ try {
   const expanded = await c.request({ method: 'debug_traceCall', params: [
     { from: tx.to, to: op.sender, data: op.callData, gas: toHex(2_000_000n) }, toHex(tx.blockNumber), { tracer: 'prestateTracer' },
   ] })
-  const manifest = JSON.parse(fs.readFileSync(new URL('../config/perps/arbitrum-sepolia-v2.json', import.meta.url)))
+  const manifest = JSON.parse(fs.readFileSync(new URL('../config/perps/arbitrum-sepolia-v3.json', import.meta.url)))
   const batchAbi = parseAbi(['function executeBatch((address target,uint256 value,bytes data)[] calls)'])
   const deposit = decodeFunctionData({abi:batchAbi,data:op.callData}).args[0]
   const fundingCalls = [

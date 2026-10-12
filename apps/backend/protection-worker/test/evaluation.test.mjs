@@ -20,7 +20,7 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
         isOracleFrozen: frozen, getUpdateFee: 13n,
         getPositionProtection: { protectionId: 7n, account: address, status, side: 0, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, armedAt: 998n, armedBlock: 198n, linkedOrderId: 5n },
         outcome: { reason, status: 3 }, nextExecuteId: head, globalTailOrderId: tail,
-        pendingPolicy: { validUntil: expired ? 999n : 1001n }, maxOrderAge: 60n, pendingOrderCounts: pendingCount,
+        orderTiming: { executionDeadline: expired ? 999n : 1001n }, maxExecutionWindowSeconds: 60n, pendingOrderCounts: pendingCount,
       }
       if (!(functionName in values)) throw new Error(`Unexpected ${functionName}`)
       return values[functionName]
@@ -99,4 +99,10 @@ it('rejects observations from a block that changed during evaluation', async () 
   await assert.rejects(worker.evaluate(), /observation block changed/)
   assert.deepEqual(observations, [])
   assert.deepEqual(calls, [])
+})
+
+it('rejects historical release manifests before reading or executing V3 contracts', async () => {
+  const release = { network: { chainId: 421614 }, release: { deploymentBlock: 100 }, contracts: Object.fromEntries(['positionProtectionBook', 'orderRouter', 'orderLifecycleBook', 'pletherOracle'].map(name => [name, { address: '0x1111111111111111111111111111111111111111' }])) }
+  const worker = new ProtectionWorker({ release })
+  await assert.rejects(worker.verifyDeployment(), /verified V3 release manifest/)
 })

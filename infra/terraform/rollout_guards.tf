@@ -142,7 +142,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
       condition = (
         var.environment != "sepolia"
         || var.perps_order_lifecycle_book == ""
-        || lower(var.perps_order_lifecycle_book) == "0x753eb48305ffb88bb70869ade2c4efa941879221"
+        || lower(var.perps_order_lifecycle_book) == "0xfc22e0532c52101bbfe742e7754a4578af297f68"
       )
       error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
     }
@@ -204,7 +204,7 @@ resource "terraform_data" "lp_settlement_keeper_guard" {
     }
 
     precondition {
-      condition     = lower(var.perps_settlement_monitor_lens) != "0xb13d18d1b30e2c6fce1138f93123136113d0af5b"
+      condition     = lower(var.perps_settlement_monitor_lens) != "0xca44e01506f4463e22a7ca02dbfb0dbbfb77de9b"
       error_message = "The pinned Settlement Monitor sidecar must never be configured as the keeper facade."
     }
 

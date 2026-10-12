@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url))
-const bytes = read('config/perps/arbitrum-sepolia-v3.json')
+const bytes = read('config/perps/evidence/v1.3.0/manifest.json')
 const manifest = JSON.parse(bytes)
 const provenance = JSON.parse(read('config/perps/arbitrum-sepolia-v3.provenance.json'))
 
@@ -26,19 +26,17 @@ test('V3 address manifest matches the checksum published in Core PR 111', () => 
   }
 })
 
-test('pending V3 configuration does not claim activation or consumer compatibility', () => {
-  assert.equal(provenance.consumerCutover, 'pending-v3-migration')
-  assert.equal(provenance.tradingEnabled, false)
-  assert.equal(provenance.sponsorshipEnabled, false)
-  assert.equal(provenance.bridgeFundingEnabled, false)
+test('active consumers all select the replacement V3 deployment', () => {
+  assert.equal(provenance.consumerCutover, 'v1.3.0')
   assert.equal(manifest.verification.seededPhase.passed, false)
   assert.equal(manifest.verification.activePhase.passed, false)
   assert.equal(manifest.release.guardian, '0x0000000000000000000000000000000000000000')
 
-  const active = JSON.parse(read('config/perps/arbitrum-sepolia-v2.json'))
+  const active = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
   const aa = JSON.parse(read('apps/frontend/public/perps-aa-manifest.json'))
-  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.2.3.tfvars.json'))
+  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.0.tfvars.json'))
   assert.equal(aa.orderRouter, active.contracts.orderRouter.address)
   assert.equal(overlay.perps_order_router, active.contracts.orderRouter.address)
-  assert.notEqual(aa.orderRouter, manifest.contracts.orderRouter.address)
+  assert.equal(aa.orderRouter, manifest.contracts.orderRouter.address)
+  assert.equal(aa.orderInterfaceVersion, 3)
 })

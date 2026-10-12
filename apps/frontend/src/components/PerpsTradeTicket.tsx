@@ -16,16 +16,16 @@ import {
   PERPS_FAILED_CONSTRAINT_LABELS,
   PERPS_LIFECYCLE_STATUS,
   PERPS_TERMINAL_REASON_LABELS,
-  type PreparedPerpsOrderV2,
+  type PreparedPerpsOrderV3,
   type PerpsLifecycleOutcomeSnapshot,
-} from '../contracts/perpsOrderV2'
+} from '../contracts/perpsOrderV3'
 import { usePerpsMaxOpenQuote } from '../hooks/usePerpsMaxOpenQuote'
 import { usePerpsOrderPreparation, orderPreparationKey } from '../hooks/usePerpsOrderPreparation'
 import { AccountOperationNotice } from './AccountOperationNotice'
 import { accountOperationGuidance } from '../utils/accountOperationGuidance'
 import { PerpsReviewFooter } from './PerpsReviewFooter'
 import { perpsReviewChanges } from '../utils/perpsReviewChanges'
-import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV2'
+import { PerpsOrderFundingShortfallError, PerpsOrderReviewError } from '../contracts/preparePerpsOrderV3'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type {
@@ -273,8 +273,8 @@ interface PerpsTradeTicketProps {
   closePreviewFixture?: ClosePreviewView
   /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
   validationErrorFixture?: string
-  /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
-  executionProtectionsFixture?: PreparedPerpsOrderV2
+  /** Static V3 protections for deterministic stories and design review. Ignored when live trading is enabled. */
+  executionProtectionsFixture?: PreparedPerpsOrderV3
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -4901,6 +4901,10 @@ export function PerpsTradeTicket({
                           value: 'Set when you confirm',
                         },
                         {
+                          label: 'Execution window',
+                          value: `${String(displayedExecutionProtections.protection.executionWindowSeconds)} seconds after commitment`,
+                        },
+                        {
                           label: 'Pinned regime',
                           value: PERPS_EXECUTION_MODE_LABELS[
                             displayedExecutionProtections.protection.executionMode
@@ -4916,7 +4920,7 @@ export function PerpsTradeTicket({
                         },
                       ]} />
                       <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, deadline, pinned regime, reward maximum, and reviewed protocol configuration still apply.
+                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, submission deadline, execution window, pinned regime, reward maximum, and reviewed protocol configuration still apply.
                       </p>
                     </div>
                   ) : (

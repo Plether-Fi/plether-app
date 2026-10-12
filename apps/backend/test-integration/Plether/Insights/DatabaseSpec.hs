@@ -278,7 +278,7 @@ insightsDatabaseSpec databaseUrl =
 
     it "backfills settlement receipts idempotently without changing activity or scores" $
       withInsightsDatabase databaseUrl $ \pool -> do
-        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/insights-close-waiver.json"
+        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/v3-insights-close-waiver.json"
         fixture <- either fail pure decoded
         receipt <- case fixture of
           Object value | Just (Object receipt) <- KM.lookup "receipt" value -> pure receipt
@@ -293,6 +293,8 @@ insightsDatabaseSpec databaseUrl =
           _ -> fail "Missing logs"
         let finalized = [(entry, oid, account, receiptHash, economics, payload)
               | entry <- logs, Just (ParsedOrderFinalized oid account _ receiptHash _ _ _ _ _ economics payload) <- [parsePerpsLog entry]]
+        -- Fail at the ABI boundary rather than silently seeding an empty database.
+        length finalized `shouldBe` 1
         withDb pool $ \conn -> forM_ finalized $ \(entry, oid, account, receiptHash, economics, payload) -> do
           void $ execute conn
             "INSERT INTO perps_orders (chain_id, order_router, order_id, account, terminal_tx_hash, terminal_block_number, \

@@ -2367,7 +2367,7 @@ refreshPendingOrder cfg client blockNumber order =
     refreshPending lifecycleBook = do
       (viewResult, policyResult) <- runConcurrently $
         (,) <$> Concurrently (Perps.getPendingOrderViewAtBlock client (cfgPerpsOrderRouter cfg) orderId blockNumber)
-            <*> Concurrently (Perps.pendingPolicyValidUntilAtBlock client lifecycleBook orderId blockNumber)
+            <*> Concurrently (Perps.orderExecutionDeadlineAtBlock client lifecycleBook orderId blockNumber)
       case policyResult of
         Left err ->
           pure $
@@ -2519,7 +2519,7 @@ submitIntent cfg conn client dryRun observeCost deadlines intent = do
 intentValue :: Config -> EthClient -> ExecutionIntent -> IO (Either Text Integer)
 intentValue _ _ (CleanupExpired _) = pure $ Right 0
 intentValue cfg client (ExecuteReady orders _ _ updateData) = do
-  feeResult <- Perps.getUpdateFee client (cfgPerpsPletherOracle cfg) updateData
+  feeResult <- Perps.getOrderExecutionFee client (cfgPerpsPletherOracle cfg) updateData
   pure $
     case feeResult of
       Left err -> Left $ rpcErrorText err

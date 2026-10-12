@@ -957,7 +957,7 @@ describe('SponsoredOperationRecovery', () => {
         nonce: 7n,
         sender: ACCOUNT,
         success: false,
-        reason: 'OrderRouter__InvalidValidUntil()',
+        reason: 'OrderRouter__InvalidSubmitBy()',
         userOpHash: USER_OPERATION_HASH,
         receipt: {
           transactionHash: TRANSACTION_HASH,

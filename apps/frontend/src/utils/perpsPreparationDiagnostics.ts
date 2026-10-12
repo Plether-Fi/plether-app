@@ -4,7 +4,7 @@ export type PreparationStage = 'preflight' | 'deployment_verification' | 'contex
   | 'max_size_quote' | 'order_assessment' | 'review_validation' | 'funding_check'
   | 'commit_simulation' | 'preparation_timeout' | 'review_freshness'
 
-export type PreparationFunction = 'maxOrderAge' | 'currentExecutionConfigHash'
+export type PreparationFunction = 'maxExecutionWindowSeconds' | 'currentExecutionConfigHash'
   | 'openOrderExecutionBountyBps' | 'minOpenOrderExecutionBountyUsdc'
   | 'maxOpenOrderExecutionBountyUsdc' | 'closeOrderExecutionBountyUsdc'
   | 'lastMarkPrice' | 'CAP_PRICE' | 'totalAssets' | 'getLatestPrice'

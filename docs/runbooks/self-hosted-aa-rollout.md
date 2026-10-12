@@ -1,12 +1,18 @@
 # Self-hosted Account Abstraction Rollout
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 Current public-Sepolia policy and release procedure:
 [Singapore Sepolia AA release](singapore-sepolia-aa-release.md).
 The owner-approved [Sepolia tracing exception](alto-sepolia-validation-exception-2026-09-12.md)
 supersedes the earlier mandatory-safe-mode requirement only on Arbitrum Sepolia.
 That procedure supersedes the allowlist-only and disabled-safe-mode instructions
 below, which describe the original qualification sequence. Use the reviewed Alto validation policy,
-the bounded 1800-second Sepolia safe-head ceiling and the canonical Core v1.2.3 bindings.
+the bounded 1800-second Sepolia safe-head ceiling and the canonical Core v1.3.0 bindings.
 Historical risk findings remain release-review inputs, not waived safeguards.
 
 This runbook rolls out the Arbitrum Sepolia account-abstraction stack described
@@ -72,9 +78,9 @@ The current operator choices and unapplied overlay are recorded in
 
 ## Fixed deployment identity
 
-Core deployment: **v1.2.3**, source
-`ffe45937b7f38133133ad292c5435828bf99357d`, deployment block `307397196`.
-The bindings below match `config/perps/arbitrum-sepolia-v2.json` and the
+Core deployment: **v1.3.0**, source
+`cf86189bcca4813f39d6405a338b77176783eb42`, deployment block `318367917`.
+The bindings below match `config/perps/arbitrum-sepolia-v3.json` and the
 checked-in public manifest. They are release targets, not evidence that the
 live app or native stack has been deployed or qualified against this release.
 Repeat every attestation and canary gate for these bindings; earlier deployment
@@ -94,14 +100,14 @@ reads disagree with them:
 | Implementation runtime hash | `0x689a90eff03926a12aedad2fc6d4fdbcbdd9ffac86e7d0d70ce6355961305c74` |
 | SimpleAccount proxy runtime hash | `0x41ee894da413cc99e8dec0a1784470eceb736845ad1591e06ff0ecdf0aca26c9` |
 | Reviewed deployed proxy sample | `0x81237a8Fc8D6F616d5F151c69865f365dF5fF052` (factory-derived index zero) |
-| Current checked-in manifest | `perps-aa-arbitrum-sepolia-20260910-v2`, native transport with preparation RPC version 1 |
-| USDC | `0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8` |
-| Order router | `0x6215d36fcbd610ca1525252eebcbfd8b223a6072` |
-| CFD engine | `0xafece93321be41aa73474457e2f47cf7b2fb738f` |
-| Margin clearinghouse | `0xfa6e677ec1062757c1194d411a5e61e1e9644499` |
-| Order lifecycle book | `0x753eb48305ffb88bb70869ade2c4efa941879221` |
-| Policy evaluator | `0x43c93d3028fcd4c1f578a50639750b8fbfdee799` |
-| Position protection book | `0x3204c51cd567d6490c011399ccbaaf67b5d3d768` |
+| Current checked-in manifest | `perps-aa-arbitrum-sepolia-20261012-v2`, native transport with preparation RPC version 1 |
+| USDC | `0x653b0cebe3cda9ec51de171cc2bb9e454a156e45` |
+| Order router | `0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70` |
+| CFD engine | `0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0` |
+| Margin clearinghouse | `0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0` |
+| Order lifecycle book | `0xfc22e0532c52101bbfe742e7754a4578af297f68` |
+| Policy evaluator | `0xec050dde46f13848b4018b304e8609ffcc1997ad` |
+| Position protection book | `0xff43e35ad574fe30e69769741abb0fff3273a812` |
 | Policy ID | `0x8dd77324b94da492342191f762a32cdf99e828a7f24d77c8ed5ace90cf4f5ae3` |
 | `paymasterData` envelope | 157 bytes |
 | Packed v0.8 `paymasterAndData` | 209 bytes (20-byte address + two 16-byte gas fields + envelope) |
@@ -2320,7 +2326,7 @@ require the expected input fingerprint, and watch it to success.
 ## Gate 9: shadow the gateway
 
 Keep the current public
-`perps-aa-arbitrum-sepolia-20260910-v2` Pimlico transport shape active.
+`perps-aa-arbitrum-sepolia-20261012-v2` Pimlico transport shape active.
 Exercise the native route only with controlled requests. The Cloudflare worker
 must add `X-Plether-AA-Proxy-Token` only on the
 exact native and legacy AA paths, strip any client-supplied copy, never cache
@@ -2435,7 +2441,7 @@ Apply a complete saved Terraform plan with an exact, non-empty
 `aa_native_canary_owners` comma-separated allowlist and
 `enable_native_aa_sponsorship=true` and `enable_native_aa_submission=true`
 while keeping `aa_native_global_rollout_enabled=false`, the exact public
-`perps-aa-arbitrum-sepolia-20260910-v2` Pimlico transport shape active, both
+`perps-aa-arbitrum-sepolia-20261012-v2` Pimlico transport shape active, both
 desired counts at one, and all initial wei caps deliberately low. This
 adds narrowly scoped `DescribeKey`,
 `GetPublicKey`, and `Sign` permissions for the single KMS key, with signing
@@ -2549,7 +2555,7 @@ or deposit/executor balance alarm.
 
 Only the exclusive transport field set—not the `-v2` suffix—changes which
 provider prepares new browser operations. The checked-in public manifest is
-already `perps-aa-arbitrum-sepolia-20260910-v2`, using exact
+already `perps-aa-arbitrum-sepolia-20261012-v2`, using exact
 `pimlicoRpcUrl` and no native fields. Because the static manifest has no cohort
 selector, the standard Sepolia frontend must retain that reviewed Pimlico
 shape while Alto runs with `SAFE_MODE=false`. Keep an exact, non-empty canary
@@ -2578,24 +2584,25 @@ field set and adding the paymaster metadata. It must be this strict object:
 
 ```json
 {
-  "version": "perps-aa-arbitrum-sepolia-20260910-v2",
+  "version": "perps-aa-arbitrum-sepolia-20261012-v2",
   "chainId": 421614,
+  "orderInterfaceVersion": 3,
   "entryPoint": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
   "entryPointVersion": "0.8",
   "smartAccountMode": "simple",
   "smartAccountVersion": "permissionless-simple-v0.8",
   "smartAccountIndex": "0",
   "smartAccountFactory": "0x13E9ed32155810FDbd067D4522C492D6f68E5944",
-  "usdc": "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8",
+  "usdc": "0x653b0cebe3cda9ec51de171cc2bb9e454a156e45",
   "usdcSupportsEip3009": false,
   "usdcEip712Name": null,
   "usdcEip712Version": null,
-  "marginClearinghouse": "0xfa6e677ec1062757c1194d411a5e61e1e9644499",
-  "cfdEngine": "0xafece93321be41aa73474457e2f47cf7b2fb738f",
-  "orderRouter": "0x6215d36fcbd610ca1525252eebcbfd8b223a6072",
-  "orderLifecycleBook": "0x753eb48305ffb88bb70869ade2c4efa941879221",
-  "policyEvaluator": "0x43c93d3028fcd4c1f578a50639750b8fbfdee799",
-  "positionProtectionBook": "0x3204c51cd567d6490c011399ccbaaf67b5d3d768",
+  "marginClearinghouse": "0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0",
+  "cfdEngine": "0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0",
+  "orderRouter": "0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70",
+  "orderLifecycleBook": "0xfc22e0532c52101bbfe742e7754a4578af297f68",
+  "policyEvaluator": "0xec050dde46f13848b4018b304e8609ffcc1997ad",
+  "positionProtectionBook": "0xff43e35ad574fe30e69769741abb0fff3273a812",
   "bundlerRpcUrl": "/api/perps/v1/aa/rpc",
   "paymasterRpcUrl": "/api/perps/v1/aa/rpc",
   "paymasterAddress": "0x_REPLACE_WITH_DEPLOYED_ADDRESS",
@@ -2610,7 +2617,7 @@ field set and adding the paymaster metadata. It must be this strict object:
 Replace only the paymaster placeholder with the checksummed deployed address.
 The resulting nonzero address must equal the live attested paymaster, and the
 version must remain exactly
-`perps-aa-arbitrum-sepolia-20260910-v2`. This candidate is native because it
+`perps-aa-arbitrum-sepolia-20261012-v2`. This candidate is native because it
 contains all four validated native fields and no `pimlicoRpcUrl`, not because
 its version ends in `-v2`. The parser permits a v2 version with either the
 exact Pimlico field set or this exact native field set, never a partial or
@@ -2633,23 +2640,23 @@ curl --fail-with-body --silent --show-error \
   https://app.sepolia.plether.com/perps-aa-manifest.json
 rg -i '^cache-control:.*no-store' "$MANIFEST_HEADERS"
 jq -e '
-  .version == "perps-aa-arbitrum-sepolia-20260910-v2" and
+  .version == "perps-aa-arbitrum-sepolia-20261012-v2" and
   .bundlerRpcUrl == "/api/perps/v1/aa/rpc" and
   .paymasterRpcUrl == "/api/perps/v1/aa/rpc" and
   .paymasterAddress == "0x9761091045616A388f5fE1433721B272c78fe31b" and
   .paymasterVersion == "plether-verifying-v1" and
   .preparationRpcVersion == 1 and
-  .usdc == "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8" and
-  .marginClearinghouse == "0xfa6e677ec1062757c1194d411a5e61e1e9644499" and
-  .cfdEngine == "0xafece93321be41aa73474457e2f47cf7b2fb738f" and
-  .orderRouter == "0x6215d36fcbd610ca1525252eebcbfd8b223a6072" and
-  .orderLifecycleBook == "0x753eb48305ffb88bb70869ade2c4efa941879221" and
-  .policyEvaluator == "0x43c93d3028fcd4c1f578a50639750b8fbfdee799" and
-  .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
+  .usdc == "0x653b0cebe3cda9ec51de171cc2bb9e454a156e45" and
+  .marginClearinghouse == "0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0" and
+  .cfdEngine == "0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0" and
+  .orderRouter == "0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70" and
+  .orderLifecycleBook == "0xfc22e0532c52101bbfe742e7754a4578af297f68" and
+  .policyEvaluator == "0xec050dde46f13848b4018b304e8609ffcc1997ad" and
+  .positionProtectionBook == "0xff43e35ad574fe30e69769741abb0fff3273a812" and
   (has("pimlicoRpcUrl") | not)
 ' "$MANIFEST_BODY"
 test "$(shasum -a 256 "$MANIFEST_BODY" | awk '{print $1}')" = \
-  283732f5c3cfd65faeb182bfa72c0edb8e28a94b7e8030e74f6960b2d8cd3926
+  cf1b353a01d95d5d778c339ac27202c2cb239136988e1b74fbdb2d96f20b0e19
 rm -f -- "$MANIFEST_HEADERS" "$MANIFEST_BODY"
 ```
 
@@ -2842,7 +2849,7 @@ ones that may already have escaped.
    `aa_native_global_rollout_enabled=false` and preserve the current cohort
    through drain.
 2. Publish or retain the last reviewed
-   `perps-aa-arbitrum-sepolia-20260910-v2` Pimlico-shape manifest so new public
+   `perps-aa-arbitrum-sepolia-20261012-v2` Pimlico-shape manifest so new public
    clients do not prepare native operations. Rollback changes the exclusive
    transport field set, not the already-v2 suffix.
 3. Keep the native read/status route, database, reconciler, KMS key resource,

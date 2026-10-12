@@ -72,8 +72,8 @@ Read-only checks against the configured primary RPC on chain 421614 at safe
 block `0x12533043`, hash
 `0x3acaea13ceec05554b5b2c1c4ade66439bbe5d36f3e4cbc9dae4275becd2b9ba`,
 confirmed that both Core v1.2.3 `CfdEngine`
-(`0xafece93321be41aa73474457e2f47cf7b2fb738f`) and `MarginClearinghouse`
-(`0xfa6e677ec1062757c1194d411a5e61e1e9644499`) return this address from
+(`0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0`) and `MarginClearinghouse`
+(`0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0`) return this address from
 `owner()`. It also matches the release manifest's owner. These checks used
 one provider only, not the required independent-provider activation proof.
 

@@ -1,5 +1,11 @@
 # Plether Frontend
 
+The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
+publication. See `../../config/perps/ORDER_V3_TIMING.md` for current source provenance and local
+verification. Deployment and published-SDK details below describe the existing
+release; no deployment pins are changed by the V3 source work.
+
+
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
 ## Tech Stack
@@ -88,7 +94,7 @@ Local and hosted testnet deployments use the bundled
 `/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
 override that path. The manifest suffix identifies a deployment generation,
 not the AA provider. The current bundled manifest is
-`perps-aa-arbitrum-sepolia-20260910-v2` and deliberately uses Pimlico through
+`perps-aa-arbitrum-sepolia-20261012-v2` and deliberately uses Pimlico through
 the exact same-origin `pimlicoRpcUrl` field.
 
 Transport is selected only after exact-key validation. A v1 suffix accepts

@@ -6,7 +6,7 @@ import { createPublicClient, http, keccak256, parseUnits } from 'viem'
 
 // Read-only reproduction: calls the deployed pure planner and evaluator with
 // explicitly synthetic account snapshots. Never submits a transaction.
-const release = JSON.parse(fs.readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.json', import.meta.url)))
+const release = JSON.parse(fs.readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v3.json', import.meta.url)))
 const bundle = process.argv[2]
 if (!bundle) throw new Error('Usage: node scripts/reproduce-close-review.mjs <pinned ABI bundle.tar.gz>')
 if (createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('ABI bundle checksum mismatch')

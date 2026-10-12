@@ -6,8 +6,6 @@
   "manifestSha256": "6a27adcadf3a0ffda00d0061559c8820b6932a37a0cc6596e4088c7d0f3a7389",
   "buildArtifact": "deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.0/build.tar.gz",
   "bundleSha256": "eb0033136fac39ccc2de6b44ed113860a266f87d266dc8aa334ee431e4e0e221",
-  "consumerCutover": "pending-v3-migration",
-  "tradingEnabled": false,
-  "sponsorshipEnabled": false,
-  "bridgeFundingEnabled": false
+  "consumerCutover": "v1.3.0",
+  "upstreamManifest": "config/perps/evidence/v1.3.0/manifest.json"
 }

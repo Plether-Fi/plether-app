@@ -121,7 +121,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
         claim={{
           address: '0x18718947c3ef215deeadb501cfded63f95b3a5',
           amount: '100000000000',
-          token: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+          token: '0x653b0cebe3cda9ec51de171cc2bb9e454a156e45',
           txHash: null,
           status: 'already_funded',
         }}
@@ -150,7 +150,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
         claim={{
           address: walletAddress,
           amount: '100000000000',
-          token: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+          token: '0x653b0cebe3cda9ec51de171cc2bb9e454a156e45',
           txHash: pendingTxHash,
           status: 'submitted',
         }}

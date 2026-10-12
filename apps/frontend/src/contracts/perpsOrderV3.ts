@@ -1,3 +1,4 @@
+import type { OrderRequestV3 } from '@plether-fi/perps-aa-client'
 import { bytesToHex, type Address, type Hex } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
 import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
@@ -82,30 +83,8 @@ export type PerpsPendingReason =
 export type PerpsFailedConstraint =
   typeof PERPS_FAILED_CONSTRAINT[keyof typeof PERPS_FAILED_CONSTRAINT]
 
-export interface PerpsExecutionBounds {
-  validUntil: bigint
-  allowedExecutionModes: number
-  expectedConfigHash: Hex
-  maxExecutionBountyUsdc: bigint
-  maxExecutionNotionalUsdc: bigint
-  maxGrossAccountDebitUsdc: bigint
-  maxActionChargeUsdc: bigint
-  maxExplicitFeesUsdc: bigint
-  maxPostPositionSize: bigint
-  minPostSettlementBalanceUsdc: bigint
-  minPostPositionEquityUsdc: bigint
-  maxPostLeverageBps: number
-}
-
-export interface PerpsOrderRequestV2 {
-  clientOrderId: Hex
-  side: number
-  sizeDelta: bigint
-  marginDelta: bigint
-  targetPrice: bigint
-  isClose: boolean
-  bounds: PerpsExecutionBounds
-}
+export type PerpsOrderRequestV3 = OrderRequestV3
+export type PerpsExecutionBounds = OrderRequestV3['bounds']
 
 export interface PerpsExecutionAssessment {
   mode: PerpsExecutionMode
@@ -136,7 +115,8 @@ export interface PerpsClosePreview {
 }
 
 export interface PerpsExecutionProtectionSummary {
-  validUntil: bigint
+  submitBy: bigint
+  executionWindowSeconds: number
   executionMode: PerpsExecutionMode
   executionBountyUsdc: bigint
 }
@@ -170,13 +150,13 @@ export interface PerpsLifecycleOutcomeSnapshot {
   receiptHash: Hex
 }
 
-export interface PreparedPerpsOrderV2 {
+export interface PreparedPerpsOrderV3 {
   sponsoredClose?: SponsoredCloseFunding
   account: Address
   manifestVersion: string
   orderRouter: Address
   orderLifecycleBook: Address
-  request: PerpsOrderRequestV2
+  request: PerpsOrderRequestV3
   executionBountyUsdc: bigint
   reviewedBlockNumber: bigint
   reviewedBlockHash: Hex
@@ -188,9 +168,9 @@ export interface PreparedPerpsOrderV2 {
 }
 
 /** JSON-safe immutable request persisted before any UserOperation signature. */
-export interface PersistedPerpsOrderRequestV2 {
+export interface PersistedPerpsOrderRequestV3 {
   closeAssistance?: { amountUsdc: string; lens: Address; lensCodeHash: Hex; paymasterAddress: Address }
-  version: 2
+  version: 3
   account: Address
   clientOrderId: Hex
   side: number
@@ -198,7 +178,8 @@ export interface PersistedPerpsOrderRequestV2 {
   marginDelta: string
   targetPrice: string
   isClose: boolean
-  validUntil: string
+  submitBy: string
+  executionWindowSeconds: number
   allowedExecutionModes: number
   expectedConfigHash: Hex
   maxExecutionBountyUsdc: string
@@ -250,12 +231,14 @@ export function executionModeFromPinnedMask(mask: number): PerpsExecutionMode {
 }
 
 export function permissivePerpsExecutionBounds(input: {
-  validUntil: bigint
+  submitBy: bigint
+  executionWindowSeconds: number
   expectedConfigHash: Hex
   executionBountyUsdc: bigint
 }): PerpsExecutionBounds {
   return {
-    validUntil: input.validUntil,
+    submitBy: input.submitBy,
+    executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.ALL,
     expectedConfigHash: input.expectedConfigHash,
     maxExecutionBountyUsdc: input.executionBountyUsdc,
@@ -271,18 +254,20 @@ export function permissivePerpsExecutionBounds(input: {
 }
 
 /**
- * Web tickets use the V2 lifecycle identity, deadline, configuration and
+ * Web tickets use the V3 lifecycle identity, deadline, configuration and
  * single-regime pinning, while leaving agent-grade accounting constraints
  * deliberately wide. Price protection remains enforced by targetPrice.
  */
 export function relaxedWebPerpsExecutionBounds(input: {
-  validUntil: bigint
+  submitBy: bigint
+  executionWindowSeconds: number
   expectedConfigHash: Hex
   executionBountyUsdc: bigint
   executionMode: PerpsExecutionMode
 }): PerpsExecutionBounds {
   return {
-    validUntil: input.validUntil,
+    submitBy: input.submitBy,
+    executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: executionModeMask(input.executionMode),
     expectedConfigHash: input.expectedConfigHash,
     maxExecutionBountyUsdc: reviewedExecutionBountyMaximum(input.executionBountyUsdc),
@@ -379,7 +364,8 @@ export function deriveAdditionalPerpsMarginForLeverage(input: {
 }
 
 export function derivePerpsExecutionBounds(input: {
-  validUntil: bigint
+  submitBy: bigint
+  executionWindowSeconds: number
   expectedConfigHash: Hex
   executionBountyUsdc: bigint
   selectedMaxLeverageBps: number
@@ -406,7 +392,8 @@ export function derivePerpsExecutionBounds(input: {
   }
 
   return {
-    validUntil: input.validUntil,
+    submitBy: input.submitBy,
+    executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: executionModeMask(mode),
     expectedConfigHash: input.expectedConfigHash,
     maxExecutionBountyUsdc: input.executionBountyUsdc,
@@ -436,12 +423,12 @@ export function derivePerpsExecutionBounds(input: {
   }
 }
 
-export function persistPerpsOrderRequestV2(
+export function persistPerpsOrderRequestV3(
   account: Address,
-  request: PerpsOrderRequestV2
-): PersistedPerpsOrderRequestV2 {
+  request: PerpsOrderRequestV3
+): PersistedPerpsOrderRequestV3 {
   return {
-    version: 2,
+    version: 3,
     account,
     clientOrderId: request.clientOrderId,
     side: request.side,
@@ -449,7 +436,8 @@ export function persistPerpsOrderRequestV2(
     marginDelta: request.marginDelta.toString(),
     targetPrice: request.targetPrice.toString(),
     isClose: request.isClose,
-    validUntil: request.bounds.validUntil.toString(),
+    submitBy: request.bounds.submitBy.toString(),
+    executionWindowSeconds: request.bounds.executionWindowSeconds,
     allowedExecutionModes: request.bounds.allowedExecutionModes,
     expectedConfigHash: request.bounds.expectedConfigHash,
     maxExecutionBountyUsdc: request.bounds.maxExecutionBountyUsdc.toString(),
@@ -466,9 +454,12 @@ export function persistPerpsOrderRequestV2(
   }
 }
 
-export function restorePerpsOrderRequestV2(
-  persisted: PersistedPerpsOrderRequestV2
-): PerpsOrderRequestV2 {
+export function restorePerpsOrderRequestV3(
+  persisted: Omit<PersistedPerpsOrderRequestV3, 'version'> & { version: number }
+): PerpsOrderRequestV3 {
+  if (persisted.version !== 3 || !Number.isInteger(persisted.executionWindowSeconds) || persisted.executionWindowSeconds <= 0 || persisted.executionWindowSeconds > 0xffff_ffff) {
+    throw new Error('Unsupported or invalid V3 order timing')
+  }
   return {
     clientOrderId: persisted.clientOrderId,
     side: persisted.side,
@@ -477,7 +468,8 @@ export function restorePerpsOrderRequestV2(
     targetPrice: BigInt(persisted.targetPrice),
     isClose: persisted.isClose,
     bounds: {
-      validUntil: BigInt(persisted.validUntil),
+      submitBy: BigInt(persisted.submitBy),
+      executionWindowSeconds: persisted.executionWindowSeconds,
       allowedExecutionModes: persisted.allowedExecutionModes,
       expectedConfigHash: persisted.expectedConfigHash,
       maxExecutionBountyUsdc: BigInt(persisted.maxExecutionBountyUsdc),

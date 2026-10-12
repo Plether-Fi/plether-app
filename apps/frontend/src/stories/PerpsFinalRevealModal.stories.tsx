@@ -15,6 +15,7 @@ const USER_OPERATION_HASH =
 
 const STORY_MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -23,16 +24,16 @@ const STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+  usdc: '0x653b0cebe3cda9ec51de171cc2bb9e454a156e45',
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
-  marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-  cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-  orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
-  policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
-  positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+  marginClearinghouse: '0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0',
+  cfdEngine: '0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0',
+  orderRouter: '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70',
+  orderLifecycleBook: '0xfc22e0532c52101bbfe742e7754a4578af297f68',
+  policyEvaluator: '0xec050dde46f13848b4018b304e8609ffcc1997ad',
+  positionProtectionBook: '0xff43e35ad574fe30e69769741abb0fff3273a812',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:

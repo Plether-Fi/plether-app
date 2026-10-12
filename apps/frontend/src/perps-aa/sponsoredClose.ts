@@ -1,8 +1,6 @@
-import { encodeFunctionData, getAddress, isHex, keccak256, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
+import { getAddress, isHex, keccak256, parseAbi, type Address, type Hex, type PublicClient } from 'viem'
 import type { PerpsActionPlan } from '@plether-fi/perps-aa-client'
-import { CFD_CLOSE_PREVIEW_ABI } from '../contracts/abis/CfdSponsoredClosePreview'
-import type { PerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
-import { buildPlaceOrderV2Action } from './orderActionV2'
+import type { PerpsOrderRequestV3 } from '../contracts/perpsOrderV3'
 import { parsePerpsAaManifest, type PerpsAaDeploymentManifest, type PerpsAaDeploymentManifestV2 } from './manifest'
 
 export interface CloseAssistanceConfig {
@@ -17,12 +15,6 @@ export interface SponsoredCloseFunding {
   commitmentCarryUsdc: bigint
   config: CloseAssistanceConfig
 }
-
-const FUNDING_ABI = parseAbi([
-  'function mint(address to, uint256 amount)',
-  'function approve(address spender, uint256 amount) returns (bool)',
-  'function depositMargin(uint256 amount)',
-])
 
 export async function loadCloseAssistanceConfig(owner?: Address, signal?: AbortSignal): Promise<CloseAssistanceConfig | undefined> {
   const response = await fetch('/api/perps/v1/aa/close-assistance', { signal, cache: 'no-store' })
@@ -56,17 +48,9 @@ export function closeAssistanceManifest(manifest: PerpsAaDeploymentManifest, con
   }) as PerpsAaDeploymentManifestV2
 }
 
-export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, account: Address, request: PerpsOrderRequestV2, funding: SponsoredCloseFunding): PerpsActionPlan {
-  const amount = funding.amountUsdc
-  if (!request.isClose || request.marginDelta !== 0n || amount <= 0n || amount > 200_000n) throw new Error('Invalid close assistance')
-  const call = (to: Address, data: Hex) => Object.freeze({ to, data, value: 0n })
-  return Object.freeze({ kind: 'place-order', account, calls: Object.freeze([
-    call(funding.config.lens, encodeFunctionData({ abi: CFD_CLOSE_PREVIEW_ABI, functionName: 'validateSponsoredClose', args: [manifest.cfdEngine, request, amount] })),
-    call(manifest.usdc, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'mint', args: [account, amount] })),
-    call(manifest.usdc, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'approve', args: [manifest.marginClearinghouse, amount] })),
-    call(manifest.marginClearinghouse, encodeFunctionData({ abi: FUNDING_ABI, functionName: 'depositMargin', args: [amount] })),
-    ...buildPlaceOrderV2Action({ account, orderRouter: manifest.orderRouter, request }).calls,
-  ]) })
+export function buildSponsoredCloseAction(manifest: PerpsAaDeploymentManifest, account: Address, request: PerpsOrderRequestV3, funding: SponsoredCloseFunding): PerpsActionPlan {
+  void manifest; void account; void request; void funding
+  throw new Error('Close assistance is retired for v1.3.0; submit an ordinary pledge-backed close.')
 }
 
 export const SIMPLE_ACCOUNT_BATCH_ABI = parseAbi([

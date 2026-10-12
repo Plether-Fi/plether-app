@@ -5,9 +5,9 @@ import { arbitrumSepolia } from 'viem/chains'
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
 const ADDRESSES = {
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-  pletherOracle: '0x9f4d9ae736b94249b18a85a7e14092bfca0688eb',
-  perpsPublicLens: '0x63a6ee8ef44cf13d0d1f393a1e9f8d25da1abfb4',
+  orderRouter: '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70',
+  pletherOracle: '0x76b6461880be19aba592c16975611be8b6eaf6e5',
+  perpsPublicLens: '0x88cba0d30ff0b1c13ab49f8e54ed22e75745e7c5',
 }
 
 const PYTH_FEED_IDS = [

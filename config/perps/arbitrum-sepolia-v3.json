@@ -23,7 +23,11 @@
     "deploymentEndBlock": 318367988,
     "deploymentGasUsed": 102131829,
     "deploymentGasCostWei": "2080175269437829",
-    "deployedAt": "2026-10-12T09:16:09+00:00"
+    "deployedAt": "2026-10-12T09:16:09+00:00",
+    "sourceRepository": "Plether-Fi/plether-core",
+    "sourceArtifact": "deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.0/manifest.json",
+    "manifestSha256": "6a27adcadf3a0ffda00d0061559c8820b6932a37a0cc6596e4088c7d0f3a7389",
+    "bundleSha256": "eb0033136fac39ccc2de6b44ed113860a266f87d266dc8aa334ee431e4e0e221"
   },
   "contracts": {
     "mockUsdc": {
@@ -391,5 +395,12 @@
     "isTradingActive": false,
     "guardianConfigured": false,
     "seedAmountsInEconomicsArePlannedDefaults": true
+  },
+  "integration": {
+    "aaManifestVersion": "perps-aa-arbitrum-sepolia-20261012-v2",
+    "orderInterfaceVersion": 3,
+    "volumeHistoryStartTimestamp": 1791796620,
+    "deploymentBlockTimestamp": 1791796569,
+    "deploymentBlockHash": "0x953aff238e5fad547e638ae2abb997b0380a4993ecc071d40655597f996db99d"
   }
 }

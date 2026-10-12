@@ -30,6 +30,8 @@ import Plether.AA.Pimlico
   , newPimlicoProxyState
   , parseRpcRequest
   , recordSubmittedOperation
+  , orderSubmissionDeadline
+  , capSponsorshipDeadline
   , validateSubmissionHeadroom
   , capSponsorshipExpiry
   , validateActionSequence
@@ -84,7 +86,7 @@ spec = do
         `shouldBe` Right 2000000200
     it "caps orders with TP/SL at the embedded order deadline" $ do
       let protectedOrder = smartCall (T.toLower Manifest.positionProtectionBookAddress) $
-            encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
+            encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
               [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
       capSponsorshipExpiry 2000000200 (encodeExecute protectedOrder)
         `shouldBe` Right 2000000000
@@ -106,6 +108,19 @@ spec = do
       capSponsorshipExpiry 2000000200 (encodeExecute $ orderCall
         { smartCallData = BS.take 4 $ smartCallData orderCall }) `shouldSatisfy` isLeft
   describe "submission time reserve" $ do
+    it "extracts submitBy for ordinary and protected orders, never their execution duration" $ do
+      orderSubmissionDeadline (encodeExecute orderCall) `shouldBe` Right (Just 2000000000)
+      let protected = smartCall Manifest.positionProtectionBookAddress $
+            selector "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
+              <> BS.drop 4 (smartCallData orderCall) <> encodeUint256 70000000 <> encodeUint256 90000000
+      orderSubmissionDeadline (encodeExecute protected) `shouldBe` Right (Just 2000000000)
+
+    it "caps stub and final sponsorship to the same signed bound and fails on malformed calldata" $ do
+      capSponsorshipDeadline 2000000100 (encodeExecute orderCall) `shouldBe` Right 2000000000
+      capSponsorshipDeadline 1999999990 (encodeExecute orderCall) `shouldBe` Right 1999999990
+      capSponsorshipDeadline 2000000100 (encodeExecute addMarginCall) `shouldBe` Right 2000000100
+      capSponsorshipDeadline 2000000100 "invalid" `shouldSatisfy` isLeft
+
     it "accepts exactly thirty seconds but rejects a late approval" $ do
       validateSubmissionHeadroom 1999999970 2000000100 (encodeExecute orderCall) `shouldSatisfy` isRight
       validateSubmissionHeadroom 1999999971 2000000100 (encodeExecute orderCall) `shouldSatisfy` isLeft
@@ -353,7 +368,7 @@ spec = do
           create = smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]
           replace = smartCall book $ encodeCall "replacePositionProtection(uint64,(uint256,uint256))" [encodeUint256 42, encodeUint256 0, encodeUint256 92000000]
           cancel = smartCall book $ encodeCall "cancelPositionProtection(uint64)" [encodeUint256 42]
-          protectedOpen = smartCall book $ encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))" [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
+          protectedOpen = smartCall book $ encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))" [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
           disabledConfig = testConfig { cfgAaConfig = Just testAaConfig { aaProtectionCommitsEnabled = False } }
       mapM_ (\call -> validate [call] `shouldSatisfy` isRight) [create, replace, cancel, protectedOpen]
       validateActionSequence disabledConfig sender owner [create] `shouldSatisfy` isLeft
@@ -468,7 +483,7 @@ orderCallWith :: ByteString -> Integer -> SmartCall
 orderCallWith clientOrderId allowedExecutionModes =
   smartCall router $
     encodeCall
-      "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+      "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
       [ clientOrderId
       , encodeUint256 0
       , encodeUint256 100
@@ -476,6 +491,7 @@ orderCallWith clientOrderId allowedExecutionModes =
       , encodeUint256 1234
       , encodeUint256 0
       , encodeUint256 2000000000
+      , encodeUint256 60
       , encodeUint256 allowedExecutionModes
       , BS.replicate 32 0x22
       , encodeUint256 1
@@ -598,8 +614,8 @@ testConfig =
     , cfgPerpsMarginClearinghouse = clearinghouse
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = zeroAddress
-    , cfgPerpsHousePool = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
-    , cfgPerpsSettlementMonitorLens = "0x52f9621446650ab663f2f1665f28817924c96826"
+    , cfgPerpsHousePool = "0xfafdc23a0879b56f580914d594c29423501cbad0"
+    , cfgPerpsSettlementMonitorLens = "0xa2cad103857aed976a063219ee6b8366a758d9ea"
     , cfgPerpsIndexerStartBlock = 0
     , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
     , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
@@ -622,8 +638,8 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementMode = LpSettlementOff
     , cfgLpSettlementPrivateKey = Nothing
-    , cfgLpSettlementSeniorVault = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
-    , cfgLpSettlementJuniorVault = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+    , cfgLpSettlementSeniorVault = "0xd1893d4c3a3e1dc3b3634c59310c8212409c1aaa"
+    , cfgLpSettlementJuniorVault = "0xfbcf57e732a6b2420e22acc0bd976648f4aaf029"
     , cfgLpSettlementPollSeconds = 15
     , cfgLpSettlementMaxDrainTransactions = 4
     , cfgLpSettlementPendingReplacementSeconds = 60
@@ -652,10 +668,10 @@ entryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 sender = "0x1111111111111111111111111111111111111111"
 owner = "0x2222222222222222222222222222222222222222"
 attacker = "0x9999999999999999999999999999999999999999"
-usdc = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
-clearinghouse = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
-router = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
-engine = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
+usdc = "0x653b0cebe3cda9ec51de171cc2bb9e454a156e45"
+clearinghouse = "0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0"
+router = "0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70"
+engine = "0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0"
 simpleAccountFactory = "0x13E9ed32155810FDbd067D4522C492D6f68E5944"
 zeroAddress = "0x0000000000000000000000000000000000000000"
 
@@ -711,8 +727,8 @@ assistedCalls amount recipient =
   let raw = BS.drop 4 $ smartCallData orderCall
       closeRequest = BS.take (3*32) raw <> encodeUint256 0 <> BS.take 32 (BS.drop (4*32) raw)
         <> encodeUint256 1 <> BS.drop (6*32) raw
-      close = smartCall router $ selector "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))" <> closeRequest
-      guard = smartCall attacker $ selector "validateSponsoredClose(address,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),uint256)" <> encodeAddress engine <> closeRequest <> encodeUint256 amount
+      close = smartCall router $ selector "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))" <> closeRequest
+      guard = smartCall attacker $ selector "validateSponsoredClose(address,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),uint256)" <> encodeAddress engine <> closeRequest <> encodeUint256 amount
   in [guard,smartCall usdc $ encodeCall "mint(address,uint256)" [encodeAddress recipient,encodeUint256 amount],
       smartCall usdc $ encodeCall "approve(address,uint256)" [encodeAddress clearinghouse,encodeUint256 amount],
       smartCall clearinghouse $ encodeCall "depositMargin(uint256)" [encodeUint256 amount],close]

@@ -18,7 +18,7 @@ describe('protection trigger and retry policy', () => {
     assert.equal(triggerLeg({ ...long, takeProfitTriggerPrice: 0n }, 68_000_000n, 101n, 11n), 0)
     for (const status of [0, 1, 3, 4, 5, 6, 7, 8]) assert.equal(triggerLeg({ ...long, status }, 68_000_000n, 101n, 11n), 0)
   })
-  const retry = { protection: { status: 8 }, outcome: { status: 3, reason: 2 }, pendingCount: 0n, oracleAvailable: true, queueSize: 45n, maxOrderAge: 60n, keeperBatchSize: 5, keeperPollSeconds: 5 }
+  const retry = { protection: { status: 8 }, outcome: { status: 3, reason: 2 }, pendingCount: 0n, oracleAvailable: true, queueSize: 45n, maxExecutionWindowSeconds: 60n, keeperBatchSize: 5, keeperPollSeconds: 5 }
   it('retries only expiry within a conservatively projected FIFO window', () => {
     assert.equal(retryDecision(retry), 'retry')
     assert.equal(retryDecision({ ...retry, queueSize: 46n }), 'queue-congested')

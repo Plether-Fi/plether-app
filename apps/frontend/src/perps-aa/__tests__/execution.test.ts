@@ -90,8 +90,8 @@ const AUTHORIZATION_NONCE = `0x${'ab'.repeat(32)}` as Hex
 const SPONSORSHIP_VALID_UNTIL = BigInt(Math.floor(Date.now() / 1000) + 3600)
 const ORDER_CLIENT_ID = `0x${'cd'.repeat(32)}` as Hex
 
-const orderRequestV2 = {
-  version: 2 as const,
+const orderRequestV3 = {
+  version: 3 as const,
   account: ACCOUNT,
   clientOrderId: ORDER_CLIENT_ID,
   side: 0,
@@ -99,7 +99,8 @@ const orderRequestV2 = {
   marginDelta: '1001500000',
   targetPrice: '100100000',
   isClose: false,
-  validUntil: '2000000060',
+  submitBy: '2000000060',
+  executionWindowSeconds: 60,
   allowedExecutionModes: 1,
   expectedConfigHash: `0x${'12'.repeat(32)}` as Hex,
   maxExecutionBountyUsdc: '200000',
@@ -113,10 +114,10 @@ const orderRequestV2 = {
   maxPostLeverageBps: 50_000,
 }
 
-function paymasterData(): Hex {
+function paymasterData(expiry = SPONSORSHIP_VALID_UNTIL): Hex {
   return concatHex([
     '0x01',
-    numberToHex(SPONSORSHIP_VALID_UNTIL, { size: 6 }),
+    numberToHex(expiry, { size: 6 }),
     numberToHex(0n, { size: 6 }),
     `0x${'11'.repeat(65)}`,
   ])
@@ -127,6 +128,7 @@ function manifest(
 ): PerpsAaDeploymentManifestV1 {
   return {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: ENTRY_POINT,
     entryPointVersion: '0.8',
@@ -164,6 +166,7 @@ function v2Manifest(): PerpsAaDeploymentManifestV2 {
       'version' | 'pimlicoRpcUrl'
     >,
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     bundlerRpcUrl: '/api/perps/v1/aa/rpc',
     paymasterRpcUrl: '/api/perps/v1/aa/rpc',
     paymasterAddress: PLETHER_PAYMASTER,
@@ -341,7 +344,7 @@ describe('executeSponsoredPerpsAction', () => {
     const sendUserOperation = vi.fn(async () => USER_OPERATION_HASH)
     await expect(executeSponsoredPerpsAction({
       manifest: manifest(), ownerAddress: OWNER, action,
-      orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(now / 1000) + 19) },
+      orderRequestV3: { ...orderRequestV3, submitBy: String(Math.floor(now / 1000) + 19) },
       runtime: runtime({ prepareUserOperation, signUserOperation, sendUserOperation }),
     })).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
     expect(prepareUserOperation).not.toHaveBeenCalled()
@@ -356,10 +359,10 @@ describe('executeSponsoredPerpsAction', () => {
     try {
       await expect(executeSponsoredPerpsAction({
         manifest: manifest(), ownerAddress: OWNER, action,
-        orderRequestV2: { ...orderRequestV2, validUntil: String(now / 1000 + 60) },
-        runtime: runtime({ sendUserOperation, signUserOperation: vi.fn(async () => {
+        orderRequestV3: { ...orderRequestV3, submitBy: String(now / 1000 + 60) },
+        runtime: runtime({ sendUserOperation, prepareUserOperation: vi.fn(async () => ({ ...operation(), paymasterData: paymasterData(BigInt(now / 1000 + 60)) })), signUserOperation: vi.fn(async (prepared) => {
           clock.mockReturnValue(now + 51_000)
-          return operation()
+          return prepared
         }) }),
       })).rejects.toMatchObject({ reason: 'DEADLINE_TOO_CLOSE', terminalStatus: 'signed-not-submitted' })
       expect(sendUserOperation).not.toHaveBeenCalled()
@@ -373,7 +376,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(restored.status).toBe('signed-not-submitted')
       const recoveryRuntime = runtime({ sendUserOperation })
       const snapshot = { blockNumber: 123n, accountNonce: operation().nonce,
-        blockTimestamp: SPONSORSHIP_VALID_UNTIL,
+        blockTimestamp: BigInt(now / 1000 + 60),
         userOperationEvidence: { kind: 'not-located' as const } }
       recoveryRuntime.getRecoverySnapshot = vi.fn(async () => snapshot)
       expect(await resolveProtocolOperation({ operation: restored, runtime: recoveryRuntime, userOperationHash: USER_OPERATION_HASH })).toBeUndefined()
@@ -499,7 +502,7 @@ describe('executeSponsoredPerpsAction', () => {
     const prepare = vi.fn().mockRejectedValue(new SponsorRequestError({ reason: 'INVALID_ORDER_DEADLINE', retryable: false, message: 'Deadline rejected' }))
     const managed = runtime({ prepareUserOperation: prepare })
     await expect(executeSponsoredPerpsAction({ manifest: { ...v2Manifest(), preparationRpcVersion: 1 }, ownerAddress: OWNER,
-      action, runtime: managed, orderRequestV2: { ...orderRequestV2, validUntil: String(Math.floor(Date.now() / 1000) + 600) } })).rejects.toThrow('Deadline rejected')
+      action, runtime: managed, orderRequestV3: { ...orderRequestV3, submitBy: String(Math.floor(Date.now() / 1000) + 600) } })).rejects.toThrow('Deadline rejected')
     const saved = useSponsoredOperationStore.getState().getActiveOperation(ACCOUNT)!
     await expect(resumeSponsoredPerpsAction(saved, managed)).rejects.toMatchObject({ reason: 'INVALID_ORDER_DEADLINE' })
     expect(prepare).toHaveBeenCalledOnce()
@@ -696,7 +699,7 @@ describe('executeSponsoredPerpsAction', () => {
         useSponsoredOperationStore.getState().operations[0]!
       expect(pendingOperation).toMatchObject({
         status: 'awaiting-signature',
-        orderRequestV2,
+        orderRequestV3,
       })
       const exactJournal = JSON.parse(
         globalThis.localStorage.getItem(
@@ -708,7 +711,7 @@ describe('executeSponsoredPerpsAction', () => {
         operation: {
           id: pendingOperation.id,
           status: 'awaiting-signature',
-          orderRequestV2,
+          orderRequestV3,
         },
       })
       expect(pendingOperation.userOperationHash).toBeUndefined()
@@ -720,7 +723,7 @@ describe('executeSponsoredPerpsAction', () => {
       ownerAddress: OWNER,
       action: { ...action, kind: 'place-order' },
       runtime: runtime({ signUserOperation }),
-      orderRequestV2,
+      orderRequestV3,
     })).resolves.toMatchObject({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -737,7 +740,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(JSON.parse(globalThis.localStorage.getItem(`${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`)!)).toMatchObject({
         operation: { id: pendingOperation.id, protectionIntent, status: 'awaiting-signature' },
       })
-      expect(pendingOperation.orderRequestV2).toBeUndefined()
+      expect(pendingOperation.orderRequestV3).toBeUndefined()
       return value
     })
     await executeSponsoredPerpsAction({ manifest: manifest(), ownerAddress: OWNER, action: { ...action, kind: 'replace-protection' }, runtime: runtime({ signUserOperation }), protectionIntent })

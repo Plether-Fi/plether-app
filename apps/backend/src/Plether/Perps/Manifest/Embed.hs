@@ -15,8 +15,8 @@ manifestField :: [String] -> Q Value
 manifestField fields = do
   -- Cabal runs from apps/backend locally; Docker copies the same source
   -- manifest beneath its build directory.
-  let repositoryPath = "../../config/perps/arbitrum-sepolia-v2.json"
-      dockerPath = "config/perps/arbitrum-sepolia-v2.json"
+  let repositoryPath = "../../config/perps/arbitrum-sepolia-v3.json"
+      dockerPath = "config/perps/arbitrum-sepolia-v3.json"
   inRepository <- runIO $ doesFileExist repositoryPath
   path <- runIO $ makeAbsolute $ if inRepository then repositoryPath else dockerPath
   addDependentFile path

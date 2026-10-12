@@ -4,7 +4,7 @@ import type { SponsoredOperation } from '../perps-aa/operationStore'
 
 const now = 2_000_000_000_000
 const operation = { status: 'preparation-pending', reason: 'ACCOUNT_DEPLOYMENT_PENDING', createdAt: now - 20 * 60_000,
-  statusTimestamps: {}, orderRequestV2: { validUntil: String(now / 1000 + 60) },
+  statusTimestamps: {}, orderRequestV3: { submitBy: String(now / 1000 + 60) },
 } as SponsoredOperation
 describe('account operation guidance', () => {
   it('uses live confirmation despite the saved historical error', () => {

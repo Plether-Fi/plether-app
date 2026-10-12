@@ -5,8 +5,8 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
   PERPS_EXECUTION_MODE,
   PERPS_EXECUTION_MODE_MASK,
-  type PreparedPerpsOrderV2,
-} from '../contracts/perpsOrderV2'
+  type PreparedPerpsOrderV3,
+} from '../contracts/perpsOrderV3'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import {
@@ -27,6 +27,7 @@ const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 
 const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -38,16 +39,16 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+  usdc: '0x653b0cebe3cda9ec51de171cc2bb9e454a156e45',
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
-  marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-  cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-  orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
-  policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
-  positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+  marginClearinghouse: '0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0',
+  cfdEngine: '0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0',
+  orderRouter: '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70',
+  orderLifecycleBook: '0xfc22e0532c52101bbfe742e7754a4578af297f68',
+  policyEvaluator: '0xec050dde46f13848b4018b304e8609ffcc1997ad',
+  positionProtectionBook: '0xff43e35ad574fe30e69769741abb0fff3273a812',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -122,7 +123,7 @@ const currentLongPosition = {
 const executionProtectionsFixture = {
   account: STORY_TRADING_ACCOUNT,
   manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
-  orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
+  orderRouter: '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70',
   orderLifecycleBook: '0x1111111111111111111111111111111111111111',
   request: {
     clientOrderId: `0x${'12'.repeat(32)}`,
@@ -132,7 +133,7 @@ const executionProtectionsFixture = {
     targetPrice: 98_250_000n,
     isClose: false,
     bounds: {
-      validUntil: 1_788_000_300n,
+      submitBy: 1_788_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: `0x${'34'.repeat(32)}`,
       maxExecutionBountyUsdc: 250_000n,
@@ -151,11 +152,11 @@ const executionProtectionsFixture = {
   reviewedBlockHash: `0x${'56'.repeat(32)}`,
   reviewedPrice: ORACLE_PRICE,
   protection: {
-    validUntil: 1_788_000_300n,
+    submitBy: 1_788_000_300n, executionWindowSeconds: 60,
     executionMode: PERPS_EXECUTION_MODE.LIVE,
     executionBountyUsdc: 250_000n,
   },
-} satisfies PreparedPerpsOrderV2
+} satisfies PreparedPerpsOrderV3
 
 function openPreviewFixture({
   size,
@@ -476,7 +477,7 @@ export const ProtectedOpenReview: Story = {
   parameters: { controls: { disable: true } },
   render: () => <TicketFrame {...OpenLongPreview.args} protectionCapPrice={200_000_000n}
     executionProtectionsFixture={{ ...executionProtectionsFixture, positionProtection: {
-      book: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+      book: '0xff43e35ad574fe30e69769741abb0fff3273a812',
       params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n },
       triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n,
     } }} />,

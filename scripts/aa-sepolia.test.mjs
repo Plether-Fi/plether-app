@@ -23,9 +23,9 @@ const bindings = {
   "vault_history_junior_vault_address": "juniorVault"
 }
 test('Singapore release overlay exactly matches the canonical Core manifest', () => {
-  const release = JSON.parse(read('config/perps/arbitrum-sepolia-v2.json'))
-  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.2.3.tfvars.json'))
-  assert.equal(release.release.version, 'v1.2.3')
+  const release = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
+  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.0.tfvars.json'))
+  assert.equal(release.release.version, 'v1.3.0')
   assert.equal(overlay.perps_indexer_start_block, String(release.release.deploymentBlock))
   assert.equal(overlay.vault_history_deployment_block, String(release.release.deploymentBlock))
   assert.equal(overlay.perps_chain_id, String(release.network.chainId))
