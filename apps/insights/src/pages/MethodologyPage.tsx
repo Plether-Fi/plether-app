@@ -1,63 +1,17 @@
-import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel } from '../components/ui'
-
-function Rule({ number, title, children }: { number: string; title: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-4 border-b border-brand-border/15 px-5 py-6 last:border-b-0 sm:grid-cols-[3rem_1fr] sm:px-7">
-      <span className="font-mono text-sm font-semibold text-brand-orange">{number}</span>
-      <div><h2 className="text-lg font-semibold">{title}</h2><div className="mt-2 space-y-2 text-sm leading-6 text-content-secondary">{children}</div></div>
-    </div>
-  )
-}
+import { TierBadge } from '../divisions/Badge'
+import { TIERS, TIER_REQUIREMENTS } from '../divisions/rules'
 
 export function MethodologyPage() {
-  return (
-    <article className="mx-auto max-w-4xl">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">Transparent by design</p>
-      <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Competition methodology</h1>
-      <p className="mt-4 max-w-3xl text-base leading-7 text-content-secondary">How Plether calculates standings and determines prize eligibility for the 2026 testnet trading competition.</p>
-
-      <Panel className="mt-8">
-        <Rule number="01" title="Starting point">
-          <p>Every registered trader receives exactly <strong className="text-content-primary">100,000.00 mock USDC</strong>, either in the opening baseline or as one official allocation before their first trade. The competition is limited to one verified wallet per trader.</p>
-        </Rule>
-        <Rule number="02" title="Ranking metric">
-          <p>Traders are ranked by final net P&amp;L at the closing snapshot. Open positions are marked using the protocol’s official final mark.</p>
-          <div className="mt-3 border-l-2 border-brand-orange bg-app-bg/60 px-4 py-3 font-mono text-xs leading-6 text-content-primary sm:text-sm">final P&amp;L = closing account value − starting account value − deposits + withdrawals − net VPI rebate</div>
-          <p>Account value includes collateral, marked open-position P&amp;L, incurred fees, carry, and outstanding trader claims. Pending orders that have not executed do not count.</p>
-          <p>The total VPI contribution across competition trades is capped at zero: net rebates are excluded from the score, while net VPI charges still reduce it. Actual account balances and execution breakdowns include rebates as received.</p>
-          <p>Trade-history “realized P&amp;L” and open-position “unrealized P&amp;L” are directional price results before execution fees, VPI, carry, and execution rewards. They can be positive while final net P&amp;L is negative.</p>
-          <p><strong>Protocol fee assessed</strong> is the fee in the executed receipt, including fees deducted from a rebate. VPI is the gross charge or rebate before fees and settlement adjustments. A zero treasury collection does not mean a trade was free.</p>
-          <p>Use <strong>View breakdown</strong> on any open, increase, or close to reconcile directional P&amp;L, assessed fees, VPI, carry, frozen-close spread, execution reward, and confirmed adjustments to the actual account change. Breakdown amounts always show all six USDC decimals. Waived charges reduce costs; fees deducted from rebates reduce the amount paid to the trader. Subtotals are not additional gains.</p>
-          <p>Each position breakdown includes its execution details and the position immediately afterward. It covers one execution; other opens, increases, and closes remain on their own activity rows.</p>
-          <p>Actual account change is the change in settlement balance plus trader claims. Released margin is existing collateral, not profit. For an open or increase, the change covers that execution, not the eventual position return. Unclassified differences appear as Other settlement adjustment; missing evidence never means zero cost.</p>
-          <p>Competition ranking uses account-value snapshots with the net VPI rebate removed. Summing the visible activity rows does not reproduce the competition score: the history may be limited, and open positions and other account adjustments also affect value.</p>
-        </Rule>
-        <Rule number="03" title="Prize eligibility">
-          <p>A trader must finish with at least <strong className="text-positive">+1.00 mock USDC</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
-          <p>The threshold is evaluated at full six-decimal mock-USDC precision.</p>
-        </Rule>
-        <Rule number="04" title="What counts as an active day">
-          <p>An active day contains at least one successfully executed voluntary open, increase, reduction, or close during an FX session.</p>
-          <p>Order submissions, failures, expiries, deposits, withdrawals, margin additions, and liquidation by itself do not qualify. Sessions run from 21:00 UTC on the preceding day to 21:00 UTC; markets close for the weekend in line with tracked FX markets.</p>
-        </Rule>
-        <Rule number="05" title="Timing and prizes">
-          <p>Trading opens on <strong className="text-content-primary">Sunday, 13 September 2026 at 21:00 UTC</strong> and closes on <strong className="text-content-primary">Friday, 25 September 2026 at 21:00 UTC</strong>. There is no close-only period; opening and increasing positions remain available until the cutoff.</p>
-          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top five eligible traders receive <strong className="text-content-primary">600.00 / 500.00 / 400.00 / 300.00 / 200.00 USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
-          <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
-        </Rule>
-        <Rule number="06" title="Integrity review">
-          <p>Standings are provisional until review. Wash trading, wallets under common control, mirrored trading, sybil accounts, circular transfers, outside top-ups, and manufactured qualifying activity may make a participant ineligible.</p>
-          <p>Onchain patterns are evidence, not an automatic verdict; final eligibility decisions are reviewed before prizes are announced.</p>
-        </Rule>
-      </Panel>
-
-      <div className="mt-6 border border-brand-yellow/35 bg-brand-yellow/10 p-5 text-sm leading-6 text-brand-yellow">
-        <strong>Data finality:</strong> Insights uses finalized indexed protocol events. The “indexed through block” indicator shows the newest block included in the public view.
-      </div>
-
-      <Link to="/" className="mt-8 inline-flex border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">View leaderboard</Link>
-    </article>
-  )
+  return <article className="mx-auto max-w-4xl space-y-6">
+    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">Plether Divisions · The rules</p><h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Consistency earns status</h1><p className="mt-4 text-base leading-7 text-content-secondary">Weekly ranks reward profitable testnet trading. Every wallet can climb, whatever its bankroll.</p></div>
+    <Panel className="space-y-4 p-6"><h2 className="text-xl font-semibold">The weekly match</h2><p className="text-sm leading-6 text-content-secondary">The trading week runs from Sunday at 21:00 UTC to Friday at 21:00 UTC. Friday close is the snapshot. Badges are calculated over the weekend and ranks are announced every Monday.</p><p className="text-sm leading-6 text-content-secondary">Divisions launches Monday 12 October 2026. The first trading window opens Sunday 11 October at 21:00 UTC, closes Friday 16 October at 21:00 UTC, and its first badges are published Monday 19 October.</p></Panel>
+    <Panel className="space-y-4 p-6"><h2 className="text-xl font-semibold">Weekly percentage P&amp;L</h2><p className="text-sm leading-6 text-content-secondary">Rank uses percentage profit, so traders with more than 100,000 mock USDC do not gain an advantage from their bankroll alone.</p><div className="overflow-x-auto border-l-2 border-brand-orange bg-app-bg/60 p-4 font-mono text-xs leading-7">adjusted equity = starting equity + deposits − withdrawals<br />weekly P&amp;L = closing equity − adjusted equity<br />weekly return = weekly P&amp;L / adjusted equity × 100%</div><p className="text-sm leading-6 text-content-secondary">Equity includes marked open positions, outstanding trader claims, and all incurred fees and costs. Deposits and withdrawals are external official mock-USDC cash flows; moving margin inside an account is not a cash flow. Hypothetical future closing costs are not deducted.</p><p className="text-sm leading-6 text-content-secondary">Returns are ranked at full precision before display rounding. Equal returns share a rank. Wallet address stabilizes display order. An account with zero or negative adjusted equity has no percentage rank and cannot qualify that week.</p></Panel>
+    <Panel className="space-y-4 p-6"><h2 className="text-xl font-semibold">A qualifying week</h2><p className="text-sm leading-6 text-content-secondary">Finish strictly in profit after fees and trade on at least two distinct active days. This applies to every wallet, every week.</p><p className="text-sm leading-6 text-content-secondary">An active day is a Monday–Friday FX session with a successfully executed, nonzero voluntary open, increase, reduction or close. Sessions begin at 21:00 UTC on the previous calendar day. Pending orders, failed transactions, deposits, withdrawals, margin additions and liquidation alone do not count.</p></Panel>
+    <Panel className="p-6"><h2 className="text-xl font-semibold">The six tiers</h2><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-content-tertiary"><th scope="col" className="pb-3 pr-4">Tier</th><th scope="col" className="pb-3">Finish in a qualifying week</th></tr></thead><tbody>{TIERS.map((tier) => <tr key={tier} className="border-t border-brand-border/15"><td className="py-3 pr-4"><TierBadge tier={tier} showLabel /></td><td className="py-3 text-content-secondary">{TIER_REQUIREMENTS[tier]}</td></tr>)}</tbody></table></div><p className="mt-4 text-sm leading-6 text-content-secondary">The percentile pool includes all profitable traders with valid percentage returns, even those who traded on fewer than two days. Promotion still requires your own qualifying week. Each percentile cutoff rounds up to a whole trader; exact ties share that rank and eligibility.</p></Panel>
+    <Panel className="space-y-4 p-6"><h2 className="text-xl font-semibold">Promotion and demotion</h2><p className="text-sm leading-6 text-content-secondary">Iron is automatic on your first trade. You can move up one tier per qualifying week when your finish meets the next tier’s requirement. A top-5% finish in your first week earns Bronze. Diamond takes at least five qualifying weeks.</p><p className="text-sm leading-6 text-content-secondary">Two consecutive non-qualifying weeks drop you one tier, down to a minimum of Iron. An inactive week counts. A qualifying week resets your streak, even when you hold your tier. After a demotion, the streak resets; two more non-qualifying weeks cause the next demotion.</p></Panel>
+    <Panel className="space-y-4 p-6"><h2 className="text-xl font-semibold">Leaderboard and Discord</h2><p className="text-sm leading-6 text-content-secondary">Earned tier badges appear beside trader names on the leaderboard. Matching Discord roles will use a wallet-linked role tool. One wallet per Discord account and one Discord account per wallet. Wallets without a linked Discord still appear on the leaderboard but receive no role. Role linking is coming.</p><p className="text-sm leading-6 text-content-secondary">Monday’s announcement on X and in Discord’s dedicated #ranked channel will include Traders of the Week (the top three weekly percentage returns), named promotions into Gold, Platinum and Diamond, and the current Diamond roster.</p></Panel>
+    <Link to="/" className="inline-flex border border-brand-orange bg-brand-orange px-5 py-3 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">View Divisions</Link>
+  </article>
 }

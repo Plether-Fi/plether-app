@@ -2,7 +2,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { PropsWithChildren } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useLeaderboard, useWallet } from './queries'
+import { useArchivedCompetition, useLeaderboard, useWallet } from './queries'
 
 const mocks = vi.hoisted(() => ({ getLeaderboard: vi.fn(), getWallet: vi.fn() }))
 vi.mock('./client', () => mocks)
@@ -23,6 +23,19 @@ function useTestWallet() {
 }
 
 describe('standings refresh', () => {
+  it('loads archive metadata by its explicit slug, independently of the current competition', async () => {
+    vi.useFakeTimers()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    const competition = { slug: 'testnet-trading-2026-09', name: 'September archive' }
+    mocks.getLeaderboard.mockResolvedValue({ competition, standings: [], nextCursor: null })
+    const { result, unmount } = renderHook(() => useArchivedCompetition('testnet-trading-2026-09'), { wrapper })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(result.current.data).toEqual(competition)
+    expect(mocks.getLeaderboard).toHaveBeenCalledWith('testnet-trading-2026-09', expect.objectContaining({ limit: 1 }))
+    unmount()
+    client.clear()
+  })
   it.each([
     ['leaderboard', useTestLeaderboard, mocks.getLeaderboard],
     ['wallet', useTestWallet, mocks.getWallet],

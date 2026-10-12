@@ -27,7 +27,7 @@ function statusLabel(status: Competition['status']): string {
   return labels[status]
 }
 
-export function CompetitionHero({ competition }: { competition: Competition }) {
+export function CompetitionHero({ competition, archived = false }: { competition: Competition; archived?: boolean }) {
   const now = useUtcNow()
   const target = competition.status === 'scheduled' ? competition.startsAt : competition.tradingCutoffAt
   const countdown = formatCountdown(target, now)
@@ -59,7 +59,7 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
           <p className="mt-4 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">
             Follow every registered trader’s performance, activity, and prize eligibility from finalized onchain data.
           </p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          {archived ? null : <div className="mt-5 flex flex-wrap items-center gap-3">
             <Link
               to={`/competitions/${encodeURIComponent(competition.slug)}/register`}
               className={`border border-brand-orange px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-brand-peach hover:text-app-bg ${registrationOpen ? 'bg-brand-orange text-content-primary' : 'bg-brand-orange/10 text-brand-peach'}`}
@@ -67,7 +67,7 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
               {registrationOpen ? 'Enter competition' : 'Competition application'}
             </Link>
             <span className="text-xs text-content-tertiary">{registrationStatus}</span>
-          </div>
+          </div>}
         </div>
         <div className="min-w-64 border-l-2 border-brand-orange pl-4 lg:text-right">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">
