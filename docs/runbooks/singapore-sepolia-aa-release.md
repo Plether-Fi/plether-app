@@ -64,7 +64,7 @@ approval for another. Mainnet policy is unchanged.
    release bindings. Do not restore another database over the active database.
    Compare a saved plan: reject unexpected delete/replace actions on existing
    VPC, RDS, ALB, IAM, SSM or services. New AA resources require explicit review.
-3. Apply sepolia-core-v1.3.0.tfvars.json only as part of the coordinated release,
+3. Apply sepolia-core-v1.3.1.tfvars.json only as part of the coordinated release,
    after verifying it still matches the canonical manifest. Stop new old-release
    orders, drain outstanding orders, and retain old deployment-scoped history.
    Do not relabel old positions, checkpoints, competition data or journal rows

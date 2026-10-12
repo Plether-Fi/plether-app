@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 import release from '../../../../config/perps/arbitrum-sepolia-v3.json'
 
-/** Active perps graph, pinned to the deployed v1.3.0 release. */
+/** Active perps graph, pinned to the deployed v1.3.1 release. */
 export const PERPS_CLOSE_PREVIEW_ADDRESS = release.contracts.cfdClosePreview.address as Address
 
 export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614 as const

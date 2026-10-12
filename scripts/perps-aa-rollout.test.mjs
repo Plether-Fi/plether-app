@@ -72,7 +72,7 @@ test('rollout identity and public artifact checksum match the deployment', () =>
   assert.ok(runbook.includes(`Core deployment: **${release.version}**`))
   assert.ok(runbook.includes(`deployment block \`${release.deploymentBlock}\``))
   assert.ok(runbook.includes(`\`${release.sourceCommit}\``))
-  const versions = [...runbook.matchAll(/perps-aa-arbitrum-sepolia-\d{8}-v2/g)].map(match => match[0])
+  const versions = [...runbook.matchAll(/perps-aa-arbitrum-sepolia-\d{8}-v131-v2/g)].map(match => match[0])
   assert.ok(versions.length > 0)
   assert.deepEqual([...new Set(versions)], [manifest.version])
   const checksum = createHash('sha256').update(manifestText).digest('hex')

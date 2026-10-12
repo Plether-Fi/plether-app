@@ -7,15 +7,15 @@ participants who meet the P&L and active-day thresholds and are marked eligible
 after integrity review. Exact final-P&L ties split the combined awards for their
 occupied paid places equally; wallet address only stabilizes display order.
 
-The September leaderboard indexes **plether-core v1.3.0** on Arbitrum Sepolia,
+The September leaderboard indexes **plether-core v1.3.1** on Arbitrum Sepolia,
 using the backend's shared `config/perps/arbitrum-sepolia-v3.json` manifest and
-deployment block **318367917**. Account activity is indexed across the release;
+deployment block **318398363**. Account activity is indexed across the release;
 competition scoring starts **September 13, 2026 at 21:00 UTC** for the registered
 roster, using the account state immediately before that time as its baseline.
 The UI consumes the Insights API; it does not
 select contracts or index the chain itself. Backend release binding requires
-both the `sepolia-core-v1.3.0.tfvars.json` and
-`sepolia-insights-v1.3.0.tfvars.json` Terraform overlays. See
+both the `sepolia-core-v1.3.1.tfvars.json` and
+`sepolia-insights-v1.3.1.tfvars.json` Terraform overlays. See
 [the operations runbook](../../specs/insights-operations-runbook.md#september-release-manifest)
 for activation prerequisites, including the binding deadline.
 

@@ -20,9 +20,9 @@ import Plether.Perps.HistoryIndexer
 import Test.Hspec
 
 engine, clearinghouse, housePool :: Text
-engine = "0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0"
-clearinghouse = "0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0"
-housePool = "0xfafdc23a0879b56f580914d594c29423501cbad0"
+engine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+clearinghouse = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
+housePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
 
 validReleaseConfig :: Either Text ()
 validReleaseConfig =
@@ -42,7 +42,7 @@ spec =
       validReleaseConfig `shouldSatisfy` isRight
 
     it "pins the first whole minute after the deployment block for volume history" $
-      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1791796620
+      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1791804360
 
     it "rejects a missing LifecycleBook" $
       validatePerpsV2ReleaseConfig

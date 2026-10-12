@@ -60,20 +60,20 @@ const manifest: PerpsAaDeploymentManifestV1 = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0x653b0cebe3cda9ec51de171cc2bb9e454a156e45' as Address,
+  usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0' as Address,
+    '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7' as Address,
   cfdEngine:
-    '0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0' as Address,
+    '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb' as Address,
   orderRouter:
-    '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70' as Address,
+    '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8' as Address,
   orderLifecycleBook:
-    '0xfc22e0532c52101bbfe742e7754a4578af297f68' as Address,
+    '0x519f57a34fb440c42bfd2d8328d2f80349af3872' as Address,
   policyEvaluator:
-    '0xec050dde46f13848b4018b304e8609ffcc1997ad' as Address,
+    '0xf550cada6b7d477b23069c8b4f254d19088f28c8' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:

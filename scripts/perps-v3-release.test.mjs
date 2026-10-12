@@ -4,19 +4,19 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url))
-const bytes = read('config/perps/evidence/v1.3.0/manifest.json')
+const bytes = read('config/perps/evidence/v1.3.1/manifest.json')
 const manifest = JSON.parse(bytes)
 const provenance = JSON.parse(read('config/perps/arbitrum-sepolia-v3.provenance.json'))
 
-test('V3 address manifest matches the checksum published in Core PR 111', () => {
+test('V3 address manifest matches the checksum published in Core PR 112', () => {
   assert.equal(createHash('sha256').update(bytes).digest('hex'), provenance.manifestSha256)
-  assert.equal(provenance.manifestSha256, '6a27adcadf3a0ffda00d0061559c8820b6932a37a0cc6596e4088c7d0f3a7389')
-  assert.equal(provenance.recordCommit, 'c9b121702e7228259706e1229a0300605efa8e89')
+  assert.equal(provenance.manifestSha256, '843c8b0fae594d8e4de63e6b22c62e23750866164c700d2deefcf588df0f40b7')
+  assert.equal(provenance.recordCommit, '22f4b70ba97ebed98a2c821958caf25313771faf')
   assert.equal(manifest.release.sourceCommit, 'cf86189bcca4813f39d6405a338b77176783eb42')
-  assert.equal(manifest.release.version, 'v1.3.0')
+  assert.equal(manifest.release.version, 'v1.3.1')
   assert.equal(manifest.network.chainId, 421614)
-  assert.equal(manifest.release.deploymentBlock, 318367917)
-  assert.equal(manifest.release.deploymentEndBlock, 318367988)
+  assert.equal(manifest.release.deploymentBlock, 318398363)
+  assert.equal(manifest.release.deploymentEndBlock, 318398657)
   assert.equal(Object.keys(manifest.contracts).length, 29)
   const addresses = Object.values(manifest.contracts).map(contract => contract.address.toLowerCase())
   assert.equal(new Set(addresses).size, 29)
@@ -27,14 +27,14 @@ test('V3 address manifest matches the checksum published in Core PR 111', () => 
 })
 
 test('active consumers all select the replacement V3 deployment', () => {
-  assert.equal(provenance.consumerCutover, 'v1.3.0')
-  assert.equal(manifest.verification.seededPhase.passed, false)
-  assert.equal(manifest.verification.activePhase.passed, false)
+  assert.equal(provenance.consumerCutover, 'v1.3.1')
+  assert.equal(manifest.verification.seededPhase.passed, true)
+  assert.equal(manifest.verification.activePhase.passed, true)
   assert.equal(manifest.release.guardian, '0x0000000000000000000000000000000000000000')
 
   const active = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
   const aa = JSON.parse(read('apps/frontend/public/perps-aa-manifest.json'))
-  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.0.tfvars.json'))
+  const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.1.tfvars.json'))
   assert.equal(aa.orderRouter, active.contracts.orderRouter.address)
   assert.equal(overlay.perps_order_router, active.contracts.orderRouter.address)
   assert.equal(aa.orderRouter, manifest.contracts.orderRouter.address)

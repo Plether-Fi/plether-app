@@ -8,7 +8,7 @@ import {
 
 const manifest = {
   chainId: 421_614,
-  orderRouter: '0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70',
+  orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
 }
 const healthyGeneration = DATASET_PRICE_GENERATION_FACTOR + 2 * 5 + 1
 

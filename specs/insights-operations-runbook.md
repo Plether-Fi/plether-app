@@ -54,11 +54,11 @@ insights_competition_release_id  = ""
 ```
 
 The September leaderboard targets **plether-core v1.2.3**, pinned in
-`config/perps/arbitrum-sepolia-v3.json`, starting at block **318367917**.
+`config/perps/arbitrum-sepolia-v3.json`, starting at block **318398363**.
 Use both checked-in Terraform overlays, after the environment's base variables:
 
 ```text
--var-file=sepolia-core-v1.3.0.tfvars.json
+-var-file=sepolia-core-v1.3.1.tfvars.json
 -var-file=sepolia-insights-v1.2.3.tfvars.json
 ```
 
@@ -95,7 +95,7 @@ must bind before competition start. No existing bound release can be replaced.
 
 Before activating, verify archive RPC access to the original baseline and
 retain the registration roster; do not reset the competition or move its start
-time. The indexer retains history from deployment block 318367917 so funding
+time. The indexer retains history from deployment block 318398363 so funding
 provenance and the pre-start account state remain available. Leaderboard scoring
 starts at the competition's configured timestamp, not the deployment block.
 The configured backend RPC was verified on September 14, 2026: block

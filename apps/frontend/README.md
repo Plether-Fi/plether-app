@@ -94,7 +94,7 @@ Local and hosted testnet deployments use the bundled
 `/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
 override that path. The manifest suffix identifies a deployment generation,
 not the AA provider. The current bundled manifest is
-`perps-aa-arbitrum-sepolia-20261012-v2` and deliberately uses Pimlico through
+`perps-aa-arbitrum-sepolia-20261012-v131-v2` and deliberately uses Pimlico through
 the exact same-origin `pimlicoRpcUrl` field.
 
 Transport is selected only after exact-key validation. A v1 suffix accepts

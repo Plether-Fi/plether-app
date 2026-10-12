@@ -9,7 +9,7 @@ import { getPreparationFailureProperties } from '../../utils/perpsPreparationDia
 
 vi.mock('../verifyPerpsV3Bindings', () => ({
   verifyPerpsV3DeploymentBindings: vi.fn(),
-  verifyClosePreviewDeployment: vi.fn(async () => '0x041b37223268f098eebfa77a78d250ef1f49b1a6'),
+  verifyClosePreviewDeployment: vi.fn(async () => '0x4a1d87466d272be9ebb643cd386883d94f0eb59b'),
   verifyProtectionDeployment: vi.fn(),
 }))
 
@@ -273,7 +273,7 @@ describe('reviewed leverage validation', () => {
     expect(calls).toHaveLength(6)
     expect(new Set(calls.map(call => call.args?.[4])).size).toBe(3)
     for (const call of calls) {
-      expect(call).toMatchObject({ address: '0x041b37223268f098eebfa77a78d250ef1f49b1a6', blockNumber: block.number })
+      expect(call).toMatchObject({ address: '0x4a1d87466d272be9ebb643cd386883d94f0eb59b', blockNumber: block.number })
       expect(call.args).toHaveLength(6)
       expect(call.args?.[0]).toBe(manifest.cfdEngine)
       expect(call.args?.[1]).toBe(account)

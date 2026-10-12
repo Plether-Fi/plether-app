@@ -19,7 +19,7 @@ const response: ApiResponse<VaultActivity> = {
       housePool: PERPS_ARBITRUM_SEPOLIA.housePool,
       seniorVault: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       juniorVault: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-      deploymentBlock: 318_367_917,
+      deploymentBlock: 318_398_363,
     },
     coverage: {
       confirmedThroughBlock: 318_500_000,

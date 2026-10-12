@@ -1529,13 +1529,13 @@ jobs:
               and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
               and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
             def valid_bounded_v3_release($env):
-              (($env.PERPS_USDC // "") | ascii_downcase) == "0x653b0cebe3cda9ec51de171cc2bb9e454a156e45"
-              and (($env.PERPS_ORDER_ROUTER // "") | ascii_downcase) == "0x5e6b97a9b8f9fd43ad098462d5cc5852a74ddc70"
-              and (($env.PERPS_ORDER_LIFECYCLE_BOOK // "") | ascii_downcase) == "0xfc22e0532c52101bbfe742e7754a4578af297f68"
-              and (($env.PERPS_CFD_ENGINE // "") | ascii_downcase) == "0x95462ce6a0088170ffabc0f93b2f93b17ba2c8b0"
-              and (($env.PERPS_MARGIN_CLEARINGHOUSE // "") | ascii_downcase) == "0x3c1f9fdd4882fef4650ee03dcc4703860dd8d1c0"
-              and (($env.PERPS_HOUSE_POOL // "") | ascii_downcase) == "0xfafdc23a0879b56f580914d594c29423501cbad0"
-              and $env.PERPS_INDEXER_START_BLOCK == "318367917";
+              (($env.PERPS_USDC // "") | ascii_downcase) == "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+              and (($env.PERPS_ORDER_ROUTER // "") | ascii_downcase) == "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
+              and (($env.PERPS_ORDER_LIFECYCLE_BOOK // "") | ascii_downcase) == "0x519f57a34fb440c42bfd2d8328d2f80349af3872"
+              and (($env.PERPS_CFD_ENGINE // "") | ascii_downcase) == "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+              and (($env.PERPS_MARGIN_CLEARINGHOUSE // "") | ascii_downcase) == "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
+              and (($env.PERPS_HOUSE_POOL // "") | ascii_downcase) == "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+              and $env.PERPS_INDEXER_START_BLOCK == "318398363";
             def valid_registration_only_manifest($env):
               $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
               and (($env.INSIGHTS_COMPETITION_RELEASE_ID // "") == "");

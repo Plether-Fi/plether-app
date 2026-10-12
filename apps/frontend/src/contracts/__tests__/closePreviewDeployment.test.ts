@@ -22,7 +22,7 @@ describe('supplemental close preview deployment', () => {
     const bytes = readFileSync('../../config/perps/close-preview/CfdClosePreview.abi.json')
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(pin.contracts.cfdClosePreview.abiSha256)
     expect(PERPS_CFD_CLOSE_PREVIEW_ABI).toEqual(sourceAbis.PERPS_CFD_CLOSE_PREVIEW_ABI.filter(item => item.type === 'error' || item.name === 'previewClose'))
-    expect(pin.contracts.cfdClosePreview.runtimeCodeHash).toBe('0xbd5c725f179af0b7ed7be18cfbe945ddce1bce3f28e3f821ae1403572579ba9f')
+    expect(pin.contracts.cfdClosePreview.runtimeCodeHash).toBe('0x0c76040939a8dc6670fb38e7d812fb66f5b0bede6eb519148bc49fcdbc696369')
     expect(pin.existingProtocol.policyEvaluator.toLowerCase()).toBe(manifest.policyEvaluator.toLowerCase())
     expect(pin.contracts.cfdClosePreview.address.toLowerCase()).not.toBe(manifest.policyEvaluator.toLowerCase())
   })

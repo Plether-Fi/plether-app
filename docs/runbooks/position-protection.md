@@ -70,7 +70,7 @@ package release; never edit installed package files.
 The protection-worker ABI is generated separately from the deployed Core release bundle:
 
 ```bash
-node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.3.0-arbitrum-sepolia.tar.gz
+node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.3.1-arbitrum-sepolia.tar.gz
 ```
 
 The generator verifies the bundle SHA-256 against

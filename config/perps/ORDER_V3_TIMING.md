@@ -1,9 +1,10 @@
-# V3 order timing — source release, not activated
+# V3 order timing
 
-The active deployment is the complete v1.3.0 graph recorded in Core PR #111.
+The active deployment is the complete v1.3.1 graph recorded in Core PR #112.
 The public manifest and deployment pins select that graph with
 `orderInterfaceVersion: 3`; source and runtime hashes are pinned in
-`arbitrum-sepolia-v3.json`. This update does not broadcast contract activation.
+`arbitrum-sepolia-v3.json`. Core has seeded and activated this graph; the
+application address update does not broadcast contract activation.
 
 Confirmation fixes `submitBy = confirmationBlock.timestamp + 120` and
 `executionWindowSeconds = 60`. The existing 45-second signing and 30-second
