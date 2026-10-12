@@ -148,7 +148,8 @@ describe('local V3 signed approval → sponsorship → commitment → execution 
     expect(await read(stack.clearinghouse, 'getFreeBuyingPowerUsdc', [stack.account.address])).toBe(0n)
     const prepared = await preparePerpsOrderV3(client, manifest, { account: stack.account.address, direction: 'long', side: 0,
       sizeDelta: units * 10n ** 18n, marginDelta: 0n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 60_000 })
-    expect(prepared.reviewSummary.requiredFundingUsdc).toBe(0n)
+    expect(prepared.reviewSummary).toBeDefined()
+    expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(0n)
     expect(prepared.sponsoredClose).toBeUndefined()
     expect(actionFor(prepared.request).calls).toHaveLength(1)
     await run(prepared.request, runtime(prepared.request))
