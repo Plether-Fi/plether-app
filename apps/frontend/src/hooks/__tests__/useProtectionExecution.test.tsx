@@ -6,7 +6,7 @@ import { useProtectionExecution } from '../useProtectionHistory'
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as string | undefined,
-  book: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768', fetch: vi.fn(),
+  book: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312', fetch: vi.fn(),
 }))
 vi.mock('../../perps-aa', () => ({ usePerpsIdentity: () => ({ accountAddress: mocks.account, manifest: { positionProtectionBook: mocks.book } }) }))
 function wrapper({ children }: PropsWithChildren) {

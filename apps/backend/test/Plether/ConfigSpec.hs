@@ -544,16 +544,16 @@ spec = do
 
     it "pins native action targets to the reviewed Arbitrum Sepolia deployment" $ do
       validAaDeploymentAddresses
-        "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
-        "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
-        "0xafece93321be41aa73474457e2f47cf7b2fb738f"
-        "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
+        "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+        "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
+        "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+        "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
         `shouldBe` True
       validAaDeploymentAddresses
         "0x1111111111111111111111111111111111111111"
-        "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
-        "0xafece93321be41aa73474457e2f47cf7b2fb738f"
-        "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
+        "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
+        "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+        "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
         `shouldBe` False
 
     it "rejects native action targets from the previous deployment" $ do

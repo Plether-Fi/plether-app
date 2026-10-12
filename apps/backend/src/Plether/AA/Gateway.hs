@@ -968,10 +968,10 @@ issueSponsorship assistance gatewayState nativeCfg pool securityContext clientKe
               Paymaster.makeSponsorshipEnvelope
                 nativeCfg validAfter validUntil (naaMaxCostWei nativeCfg) BS.empty
             maxCost = Paymaster.maximumUserOperationCost operation provisional
-        if maxCost <= 0 || maxCost > naaMaxCostWei nativeCfg
+        if validUntil <= now || maxCost <= 0 || maxCost > naaMaxCostWei nativeCfg
           then
             Legacy.respondFailure requestId $
-              Legacy.policyDenied "UserOperation maximum gas liability exceeds the sponsorship ceiling"
+              Legacy.policyDenied "Submission window expired or UserOperation maximum gas liability exceeds the sponsorship ceiling"
           else do
             let unsignedEnvelope =
                   Paymaster.makeSponsorshipEnvelope

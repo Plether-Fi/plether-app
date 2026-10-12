@@ -905,9 +905,9 @@ hexText bytes =
   "0x" <> Text.decodeUtf8 (Base16.encode bytes)
 
 orderRouter, engine, settlementSidecar, pletherOracle, externalAccount, helperContract :: Text
-orderRouter = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
-engine = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
-settlementSidecar = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
-pletherOracle = "0x9f4d9ae736b94249b18a85a7e14092bfca0688eb"
+orderRouter = "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
+engine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
+settlementSidecar = "0x174b1231edbd6379877706c06898a20a5475ae73"
+pletherOracle = "0x04a1455d19960a624bbe41511fc8018a0ffdd494"
 externalAccount = "0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"
 helperContract = "0x7b42000000000000000000000000000000000000"

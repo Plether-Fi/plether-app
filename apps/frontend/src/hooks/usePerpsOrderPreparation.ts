@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
-import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../contracts/perpsOrderV3'
 import { reportTransactionFailure } from '../analytics/transactionErrors'
 import { captureAnalyticsEvent } from '../analytics/client'
 import { getPreparationFailureProperties, preparationFailure } from '../utils/perpsPreparationDiagnostics'
@@ -32,15 +32,15 @@ interface Options<T> {
   contextKey?: string
   reviewValid?: boolean
   mode: Mode
-  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV2>
+  prepare: (input: T, signal?: AbortSignal) => Promise<PreparedPerpsOrderV3>
 }
 interface PreparationState {
   key?: string
   identityKey?: string
   contextKey?: string
   status: 'idle' | 'pending' | 'ready' | 'error'
-  result?: PreparedPerpsOrderV2
-  previous?: PreparedPerpsOrderV2
+  result?: PreparedPerpsOrderV3
+  previous?: PreparedPerpsOrderV3
   error?: unknown
   supportReference?: string
   startedAt: number
@@ -171,7 +171,7 @@ class PreparationController<T> {
         surface: 'perps', reason_code: reason, duration_ms: performance.now() - (recoveryStartedAt ?? performance.now()),
       })
     }
-    const finish = (result?: PreparedPerpsOrderV2, error?: unknown) => {
+    const finish = (result?: PreparedPerpsOrderV3, error?: unknown) => {
       if (finished) return
       finished = true
       releaseBackground()

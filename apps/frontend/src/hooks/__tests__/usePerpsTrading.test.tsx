@@ -7,11 +7,11 @@ import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../../contracts/perpsAddresses'
-import type { PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../../contracts/perpsOrderV3'
 import { usePerpsTrading } from '../usePerpsTrading'
-import * as orderV2 from '../../contracts/perpsOrderV2'
-import * as orderPreparation from '../../contracts/preparePerpsOrderV2'
-import * as deploymentBindings from '../../contracts/verifyPerpsV2Bindings'
+import * as orderV2 from '../../contracts/perpsOrderV3'
+import * as orderPreparation from '../../contracts/preparePerpsOrderV3'
+import * as deploymentBindings from '../../contracts/verifyPerpsV3Bindings'
 import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
 import { SponsorRequestError } from '../../perps-aa/errors'
@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   resolvedOrderId: 0n,
   protectionParent: 42n,
   getBlock: vi.fn(),
+  getContractEvents: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock('wagmi', () => ({
   useWalletClient: () => ({ data: undefined }),
   usePublicClient: () => ({
     getBlock: mocks.getBlock,
+    getContractEvents: mocks.getContractEvents,
     readContract: mocks.readContract,
     simulateContract: mocks.simulateContract,
     waitForTransactionReceipt: mocks.waitForTransactionReceipt,
@@ -74,6 +76,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,
@@ -82,15 +85,15 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+    usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
     usdcEip712Version: null,
-    marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-    cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-    orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
+    marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
+    cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
+    orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
     orderLifecycleBook: '0x1111111111111111111111111111111111111111',
-    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
     policyEvaluator: '0x2222222222222222222222222222222222222222',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
@@ -190,7 +193,7 @@ function sponsoredResult() {
   }
 }
 
-function preparedOrder(): PreparedPerpsOrderV2 {
+function preparedOrder(): PreparedPerpsOrderV3 {
   const request = {
     clientOrderId: CLIENT_ORDER_ID,
     side: 0,
@@ -199,7 +202,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     targetPrice: 98_398_300n,
     isClose: false,
     bounds: {
-      validUntil: 1_700_000_300n,
+      submitBy: 1_700_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: 1,
       expectedConfigHash: CONFIG_HASH,
       maxExecutionBountyUsdc: 10_000n,
@@ -224,7 +227,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
     reviewedBlockHash: REVIEWED_BLOCK_HASH,
     reviewedPrice: 98_300_000n,
     protection: {
-      validUntil: request.bounds.validUntil,
+      submitBy: request.bounds.submitBy, executionWindowSeconds: 60,
       executionMode: 1,
       executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
     },
@@ -263,8 +266,8 @@ describe('usePerpsTrading', () => {
     )
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
       switch (functionName) {
-        case 'maxOrderAge':
-          return 300n
+        case 'maxExecutionWindowSeconds':
+          return 60n
         case 'getPendingOrders':
           return []
         case 'maxPendingOrders':
@@ -298,7 +301,7 @@ describe('usePerpsTrading', () => {
 
     beforeEach(() => {
       mocks.identityReady = true
-      vi.spyOn(deploymentBindings, 'verifyPerpsV2DeploymentBindings').mockResolvedValue({
+      vi.spyOn(deploymentBindings, 'verifyPerpsV3DeploymentBindings').mockResolvedValue({
         positionProtectionBook: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook,
         blockNumber: 123n,
         block: { number: 123n, timestamp: 1_700_000_000n, hash: REVIEWED_BLOCK_HASH },
@@ -417,7 +420,7 @@ describe('usePerpsTrading', () => {
     input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n, protectionId: 7n })
-    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, validUntil: 1_700_000_900n } }
+    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
     expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ address: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, functionName: 'commitOpenOrderWithProtection', args: [finalized, input.preparedOrder.positionProtection.params] }))
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({ action: expect.objectContaining({ kind: 'place-protected-order' }), protectionIntent: expect.objectContaining({ takeProfitTriggerPrice: '90000000', stopLossTriggerPrice: '110000000' }) }))
   })
@@ -463,7 +466,7 @@ describe('usePerpsTrading', () => {
 
   it('passes explicit Max intent and cancellation to the review', async () => {
     mocks.identityReady = true
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(preparedOrder())
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(preparedOrder())
     const maxSize = true
     const signal = new AbortController().signal
     try {
@@ -480,7 +483,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const reviewSummary = { worstPostLeverageBps: 50_001n } as orderV2.PerpsOrderReviewSummary
     const error = new orderPreparation.PerpsOrderReviewError(reviewSummary, new Error('Leverage limit exceeded'))
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockRejectedValue(error)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockRejectedValue(error)
     try {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
       await expect(result.current.prepareOrder(commitInput())).rejects.toBe(error)
@@ -493,7 +496,7 @@ describe('usePerpsTrading', () => {
   it('blocks stale reviews while a failed submission is unresolved, then prepares a fresh order', async () => {
     mocks.identityReady = true
     const fresh = preparedOrder()
-    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV2').mockResolvedValue(fresh)
+    const prepare = vi.spyOn(orderPreparation, 'preparePerpsOrderV3').mockResolvedValue(fresh)
     const store = useSponsoredOperationStore.getState()
     globalThis.localStorage.clear()
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
@@ -502,8 +505,8 @@ describe('usePerpsTrading', () => {
         id: 'expired-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2',
         action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...fresh.request, bounds: { ...fresh.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...fresh.request, bounds: { ...fresh.request.bounds, submitBy: 1n },
         }),
       })
       store.recordUserOperationHash('expired-order', USER_OPERATION_HASH)
@@ -535,8 +538,8 @@ describe('usePerpsTrading', () => {
       store.beginOperation({
         id: 'unsigned-order', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
-        orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, {
-          ...original.request, bounds: { ...original.request.bounds, validUntil: 1n },
+        orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, {
+          ...original.request, bounds: { ...original.request.bounds, submitBy: 1n },
         }),
       })
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
@@ -555,7 +558,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     const unalignedSizeDelta = 100_000_000_000_000_000_001n
     const basePreparedOrder = preparedOrder()
-    const closePreparedOrder: PreparedPerpsOrderV2 = {
+    const closePreparedOrder: PreparedPerpsOrderV3 = {
       ...basePreparedOrder,
       request: {
         ...basePreparedOrder.request,
@@ -621,6 +624,12 @@ describe('usePerpsTrading', () => {
       failedConstraint: 2,
       receiptHash: `0x${'46'.repeat(32)}`,
     })
+    mocks.getContractEvents.mockResolvedValueOnce([{
+      blockNumber: 11_604_786n,
+      args: { account: ACCOUNT, terminalTime: 1_788_167_807n, receiptHash: `0x${'46'.repeat(32)}`,
+        receipt: { account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, status: 3, reason: 8, executionMode: 1,
+          executionPrice: 98_750_341n, failure: { constraint: 2 } } },
+    }])
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
@@ -639,9 +648,9 @@ describe('usePerpsTrading', () => {
     expect(mocks.readContract).toHaveBeenCalledWith(
       expect.objectContaining({
         address: ORDER_LIFECYCLE_BOOK,
-        functionName: 'outcome',
+        functionName: 'terminalOutcome',
         args: [12n],
-        blockTag: 'safe',
+        blockNumber: 123n,
       })
     )
   })
@@ -765,18 +774,18 @@ describe('usePerpsTrading', () => {
     input.preparedOrder.request.isClose = isClose
     if (isClose) input.preparedOrder.request.marginDelta = 0n
     const reviewed = structuredClone(input.preparedOrder)
-    const expected = { ...reviewed.request, bounds: { ...reviewed.request.bounds, validUntil: 1_700_000_900n } }
+    const expected = { ...reviewed.request, bounds: { ...reviewed.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await result.current.commitOrder(input)
 
     expect(mocks.getBlock).toHaveBeenCalledExactlyOnceWith({ blockTag: 'latest' })
     expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
-      address: reviewed.orderRouter, functionName: 'maxOrderAge', blockNumber: 456n,
+      address: reviewed.orderRouter, functionName: 'maxExecutionWindowSeconds', blockNumber: 456n,
     }))
     expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'commitOrder', args: [expected] }))
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(expect.objectContaining({
-      orderRequestV2: orderV2.persistPerpsOrderRequestV2(ACCOUNT, expected),
+      orderRequestV3: orderV2.persistPerpsOrderRequestV3(ACCOUNT, expected),
     }))
     expect(input.preparedOrder).toEqual(reviewed)
     expect(mocks.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getLatestPrice' }))
@@ -789,15 +798,15 @@ describe('usePerpsTrading', () => {
     const input = commitInput()
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).rejects.toThrow()
-    const first = mocks.executeSponsoredPerpsAction.mock.calls[0][0].orderRequestV2
+    const first = mocks.executeSponsoredPerpsAction.mock.calls[0][0].orderRequestV3
     mocks.getBlock.mockResolvedValue({ number: 789n, timestamp: 1_700_001_200n })
 
     await result.current.commitOrder(input)
 
     expect(mocks.getBlock).toHaveBeenCalledOnce()
-    expect(mocks.executeSponsoredPerpsAction.mock.calls[1][0].orderRequestV2).toEqual(first)
+    expect(mocks.executeSponsoredPerpsAction.mock.calls[1][0].orderRequestV3).toEqual(first)
     expect(mocks.readContract).toHaveBeenLastCalledWith(expect.objectContaining({
-      functionName: 'resolveClientIntent', args: [ACCOUNT, orderV2.restorePerpsOrderRequestV2(first)],
+      functionName: 'resolveClientIntent', args: [ACCOUNT, orderV2.restorePerpsOrderRequestV3(first)],
     }))
   })
 
@@ -821,7 +830,7 @@ describe('usePerpsTrading', () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(commitInput())).rejects.toThrow()
     expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
-      args: [expect.objectContaining({ bounds: expect.objectContaining({ validUntil: 1_700_000_900n }) })],
+      args: [expect.objectContaining({ bounds: expect.objectContaining({ submitBy: 1_700_000_720n, executionWindowSeconds: 60 }) })],
     }))
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
@@ -831,13 +840,13 @@ describe('usePerpsTrading', () => {
     globalThis.localStorage.clear()
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
     const input = commitInput()
-    const persisted = orderV2.persistPerpsOrderRequestV2(ACCOUNT, input.preparedOrder.request)
+    const persisted = orderV2.persistPerpsOrderRequestV3(ACCOUNT, input.preparedOrder.request)
     const store = useSponsoredOperationStore.getState()
     try {
       store.beginOperation({
         id: 'recorded-confirmation', ownerAddress: OWNER, accountAddress: ACCOUNT,
         chainId: 421614, accountMode: 'simple', manifestVersion: 'v2', action: 'place-order',
-        orderRequestV2: persisted,
+        orderRequestV3: persisted,
       })
       if (submitted) store.recordUserOperationHash('recorded-confirmation', USER_OPERATION_HASH)
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
@@ -845,7 +854,7 @@ describe('usePerpsTrading', () => {
       expect(mocks.getBlock).not.toHaveBeenCalled()
       expect(mocks.simulateContract).not.toHaveBeenCalled()
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
-      expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === 'recorded-confirmation')?.orderRequestV2).toEqual(persisted)
+      expect(useSponsoredOperationStore.getState().operations.find(operation => operation.id === 'recorded-confirmation')?.orderRequestV3).toEqual(persisted)
     } finally {
       globalThis.localStorage.clear()
       useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })

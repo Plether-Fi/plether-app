@@ -34,6 +34,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const manifest = {
     version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
     entryPointVersion: '0.8' as const,
@@ -42,16 +43,16 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+    usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
     usdcEip712Version: null,
-    marginClearinghouse: '0xfa6e677ec1062757c1194d411a5e61e1e9644499',
-    cfdEngine: '0xafece93321be41aa73474457e2f47cf7b2fb738f',
-    orderRouter: '0x6215d36fcbd610ca1525252eebcbfd8b223a6072',
-    orderLifecycleBook: '0x753eb48305ffb88bb70869ade2c4efa941879221',
-    policyEvaluator: '0x43c93d3028fcd4c1f578a50639750b8fbfdee799',
-    positionProtectionBook: '0x3204c51cd567d6490c011399ccbaaf67b5d3d768',
+    marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
+    cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
+    orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
+    orderLifecycleBook: '0x519f57a34fb440c42bfd2d8328d2f80349af3872',
+    policyEvaluator: '0xf550cada6b7d477b23069c8b4f254d19088f28c8',
+    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -131,7 +132,7 @@ describe('usePerpsTrading sponsorship route', () => {
       expect.objectContaining({
         account: OWNER,
         chainId: 421614,
-        address: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8',
+        address: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
         functionName: 'transfer',
         args: [ACCOUNT, 25_000_000n],
       })

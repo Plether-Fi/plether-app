@@ -28,22 +28,22 @@ interface PinnedRelease {
 
 const repositoryRoot = path.resolve(process.cwd(), '../..')
 const pinnedRelease = JSON.parse(readFileSync(
-  path.join(repositoryRoot, 'config/perps/arbitrum-sepolia-v2.json'),
+  path.join(repositoryRoot, 'config/perps/arbitrum-sepolia-v3.json'),
   'utf8'
 )) as PinnedRelease
 
-describe('pinned bounded-V2 Sepolia release', () => {
+describe('pinned bounded-V3 Sepolia release', () => {
   it('retains authoritative plether-core provenance and runtime hashes', () => {
     expect(pinnedRelease).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       network: { chainId: 421614 },
       release: {
         sourceRepository: 'Plether-Fi/plether-core',
-        sourceArtifact: 'arbitrum-sepolia-perps-v1.2.3.json',
-        tag: 'v1.2.3',
-        manifestSha256: 'babbde1a4f21c39879ece66e314187f61d22eeff5cc213c0c07461d92629fe02',
-        sourceCommit: 'ffe45937b7f38133133ad292c5435828bf99357d',
-        deploymentBlock: 307397196,
+        sourceArtifact: 'deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.1/manifest.json',
+        version: 'v1.3.1',
+        manifestSha256: '843c8b0fae594d8e4de63e6b22c62e23750866164c700d2deefcf588df0f40b7',
+        sourceCommit: 'cf86189bcca4813f39d6405a338b77176783eb42',
+        deploymentBlock: 318398363,
       },
     })
     for (const contract of Object.values(pinnedRelease.contracts)) {
@@ -54,7 +54,7 @@ describe('pinned bounded-V2 Sepolia release', () => {
   it('keeps the frontend registry and public manifest on the same release', () => {
     expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(pinnedRelease.release.deploymentBlock)
     expect(publicManifest).toMatchObject({
-      version: 'perps-aa-arbitrum-sepolia-20260910-v2',
+      version: 'perps-aa-arbitrum-sepolia-20261012-v131-v2',
       chainId: pinnedRelease.network.chainId,
       orderRouter: pinnedRelease.contracts.orderRouter.address,
       orderLifecycleBook: pinnedRelease.contracts.orderLifecycleBook.address,
@@ -74,7 +74,7 @@ describe('pinned bounded-V2 Sepolia release', () => {
     })
   })
 
-  it('keeps Terraform and deployment workflows fail-closed on V2', () => {
+  it('keeps Terraform and deployment workflows fail-closed on V3', () => {
     const terraformExample = readFileSync(
       path.join(repositoryRoot, 'infra/terraform/terraform.tfvars.sepolia.example'),
       'utf8'
@@ -167,6 +167,6 @@ describe('pinned bounded-V2 Sepolia release', () => {
       integration: { aaManifestVersion: publicManifest.version },
     })
     expect(frontendWorkflow).toContain('/api/aa/status')
-    expect(frontendWorkflow).toContain('calldataPolicy == "bounded-v2"')
+    expect(frontendWorkflow).toContain('calldataPolicy == "bounded-v3"')
   })
 })

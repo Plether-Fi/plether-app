@@ -1,7 +1,7 @@
 # Sepolia faucet signer isolation and nonce recovery
 
 The Arbitrum Sepolia mock USDC deployed at
-`0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8` has unrestricted `mint(address,uint256)`.
+`0x4b44312d1f94d3d79a36a875691d768dd6c0575f` has unrestricted `mint(address,uint256)`.
 It has no owner/minter-role requirement. The faucet needs a dedicated EOA and
 Arbitrum Sepolia ETH for gas. Do not transfer token ownership or reuse the keeper
 key. Other deployments must have their mint permissions verified separately.

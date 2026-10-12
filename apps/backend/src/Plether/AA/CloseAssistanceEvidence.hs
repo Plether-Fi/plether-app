@@ -49,7 +49,7 @@ verifyCloseAssistanceReceipt grant operationHash tx blockNumber blockHash eventI
         && word (rlData l) == Just (carAmountUsdc grant)) scoped
       intents = filter (\l -> rlAddress l == T.toLower Manifest.orderLifecycleBookAddress && length (rlTopics l) == 4
         && take 1 (rlTopics l) == [intentTopic] && drop 2 (rlTopics l) == [accountTopic,T.toLower $ carClientOrderId grant]
-        && BS.length (rlData l) == 20 * 32 && hex (keccak256 $ BS.drop 64 $ rlData l) == T.toLower (carRequestHash grant)) scoped
+        && BS.length (rlData l) == 25 * 32 && hex (keccak256 $ BS.take (19 * 32) $ BS.drop 64 $ rlData l) == T.toLower (carRequestHash grant)) scoped
   unless (length matching == 1) $ Left "Assistance UserOperation boundary is missing or ambiguous"
   case (mints,deposits,intents) of
     ([mint],[deposit],[intent]) -> do
@@ -85,7 +85,7 @@ entryPoint = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
 
 operationTopic, intentTopic, zeroTopic :: Text
 operationTopic = topic "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)"
-intentTopic = topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+intentTopic = topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 zeroTopic = "0x" <> T.replicate 64 "0"
 
 topic :: Text -> Text

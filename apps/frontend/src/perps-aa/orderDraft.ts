@@ -27,7 +27,7 @@ export function restoredOrderDraft(operation: SponsoredOperation): { draft: Part
     && typeof saved.protection.takeProfit === 'string' && typeof saved.protection.stopLoss === 'string') {
     return { draft: saved, incomplete: false }
   }
-  const order = operation.orderRequestV2
+  const order = operation.orderRequestV3
   return { draft: order ? {
     direction: order.side === 0 ? 'long' : order.side === 1 ? 'short' : undefined,
     orderQuantity: /^\d+$/.test(order.sizeDelta) ? formatUnits(BigInt(order.sizeDelta), 18) : '',

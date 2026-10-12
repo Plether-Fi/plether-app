@@ -26,6 +26,7 @@ export type PerpsAaManifestVersion =
 export type PerpsPaymasterVersion = 'plether-verifying-v1'
 
 interface PerpsAaDeploymentManifestBase {
+  orderInterfaceVersion: 3
   chainId: number
   entryPoint: Address
   entryPointVersion: PerpsEntryPointVersion
@@ -90,6 +91,7 @@ const COMMON_MANIFEST_KEYS = [
   'cfdEngine',
   'orderRouter',
   'orderLifecycleBook',
+  'orderInterfaceVersion',
   'positionProtectionBook',
   'policyEvaluator',
   'userOperationExplorerUrlTemplate',
@@ -387,6 +389,8 @@ export function parsePerpsAaManifest(
     invalid('preparationRpcVersion', 'must equal 1 when present')
   }
 
+  if (value.orderInterfaceVersion !== 3) invalid('orderInterfaceVersion', 'must equal 3')
+
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
   const usdcSupportsEip3009 = parseBoolean(
@@ -455,6 +459,7 @@ export function parsePerpsAaManifest(
       value.marginClearinghouse,
       'marginClearinghouse'
     ),
+    orderInterfaceVersion: 3 as const,
     cfdEngine: parseAddress(value.cfdEngine, 'cfdEngine'),
     orderRouter: parseAddress(value.orderRouter, 'orderRouter'),
     positionProtectionBook: parsePinnedAddress(value.positionProtectionBook, 'positionProtectionBook', PERPS_ARBITRUM_SEPOLIA.positionProtectionBook),

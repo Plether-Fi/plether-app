@@ -51,6 +51,7 @@ import { asSponsorRequestError, sponsorReasonMessage } from '../errors'
 
 const manifest: PerpsAaDeploymentManifestV1 = {
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   chainId: 421614,
   entryPoint: ENTRY_POINT,
   entryPointVersion: '0.8' as const,
@@ -59,20 +60,20 @@ const manifest: PerpsAaDeploymentManifestV1 = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8' as Address,
+  usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0xfa6e677ec1062757c1194d411a5e61e1e9644499' as Address,
+    '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7' as Address,
   cfdEngine:
-    '0xafece93321be41aa73474457e2f47cf7b2fb738f' as Address,
+    '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb' as Address,
   orderRouter:
-    '0x6215d36fcbd610ca1525252eebcbfd8b223a6072' as Address,
+    '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8' as Address,
   orderLifecycleBook:
-    '0x753eb48305ffb88bb70869ade2c4efa941879221' as Address,
+    '0x519f57a34fb440c42bfd2d8328d2f80349af3872' as Address,
   policyEvaluator:
-    '0x43c93d3028fcd4c1f578a50639750b8fbfdee799' as Address,
+    '0xf550cada6b7d477b23069c8b4f254d19088f28c8' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -92,6 +93,7 @@ const v2Manifest: PerpsAaDeploymentManifestV2 = {
     'version' | 'pimlicoRpcUrl'
   >,
   version: 'perps-aa-arbitrum-sepolia-v2',
+    orderInterfaceVersion: 3,
   bundlerRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterRpcUrl: '/api/perps/v1/aa/rpc',
   paymasterAddress:

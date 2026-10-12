@@ -1,58 +1,60 @@
 # Arbitrum Sepolia perps release
 
-`arbitrum-sepolia-v2.json` pins plether-core v1.2.3 (the filename describes the
-bounded V2 order intent protocol). It includes all 27 contract addresses and
-runtime hashes, immutable source provenance, and the original deployment snapshot.
-The frontend and backend target this stack; indexers start at block 307397196.
-The first full volume-history minute is 1789038420, derived from that block's
-onchain timestamp (1789038416, block hash
-`0x602f96ab814dab7cef750a28f929dd5dd2feb177ac81fa09206ddecc57b87dd5`).
+`arbitrum-sepolia-v3.json` selects the replacement plether-core v1.3.1 deployment
+from [Core PR #112](https://github.com/Plether-Fi/plether-core/pull/112). The active
+frontend registry, public AA manifest, backend embedded manifest, worker runtime
+hashes, Docker build inputs, Terraform bindings, and deployment guards all target
+this graph. All 29 contract addresses and runtime hashes come from source commit
+`cf86189bcca4813f39d6405a338b77176783eb42` at L2 blocks 318398363–318398657.
 
-Source: https://github.com/Plether-Fi/plether-core/releases/tag/v1.2.3
+The exact upstream manifest is retained under `evidence/v1.3.1/manifest.json`.
+`arbitrum-sepolia-v3.provenance.json` records its SHA-256 and the immutable build
+archive checksum, pinned to release-record commit
+`22f4b70ba97ebed98a2c821958caf25313771faf`. The application manifest adds source
+provenance and indexing metadata without altering the upstream deployment state.
+The first full volume-history minute is 1791804360, derived from deployment block
+timestamp 1791804328 and hash
+`0x6f47679ab4d34b543ce1099a6a67cdcf2fea90f79daf01f69e15e25218af9d9e`.
 
-The original release manifest predates seeding and guardian configuration. Its
-`release`, `economics`, and `verification` fields remain the published snapshot,
-including the standard 1-USDC seed defaults. The checksum-pinned evidence files
-under `evidence/v1.2.3/` record subsequent operations: both tranches received
-**0.01 mock USDC** (10000 raw units) each, and the guardian was set to
-`0x6b72fe6cc52201a1eb7892a813c6c10cce62745c`. Trading was still inactive at the
-last recorded verification, block 307407614. Do not seed initialized tranches again.
-Before consumer cutover, verify live state against these actual seed amounts,
-verify activation and oracle/pause state, and arrange servicing of old-stack
-positions, orders, protections, balances, claims, and LP obligations. This is a
-fresh stack with no live-state migration. Never combine multiple deployments
-within one competition.
+This source update replaces the app's protocol target. It does not deploy app
+services or broadcast bootstrap/activation transactions. At the recorded release
+checkpoint, contracts are trading active, Senior is permanently seeded with
+10M mock USDC, Junior with 500M, and the guardian is unset.
+Old positions, orders, balances, claims, and vault obligations do not migrate
+automatically; preserve the old deployment's servicing and signed-operation
+reconciliation. Never mix deployment identities in an existing competition.
+The v1.2.3 and v1.3.0 manifests remain historical records.
 
-Order intents remain `PletherOrderIntentV2`; receipts and execution configuration
-use `PletherOrderReceiptV3` and `PletherExecutionConfigV3`. The AA manifest keeps
-its required `-v2` suffix and changes its deployment date to invalidate prior
-identity bindings. Position protection has no separate activation switch;
-normal pause, position, margin, and oracle checks still apply. Triggering a
-protection queues a close and does not guarantee execution.
-This repository update does not deploy services or activate contracts.
+## Consumer interfaces
 
-The frontend ABI subset is checked against the checksum-verified release bundle,
-including the new clearinghouse `getOrderReservation` FIFO tuple and lens
-`quoteMaxOpen` view. The latter is a planner-valid bound; Router and terminal-book
-gates still apply. Existing AA client actions remain wire-compatible. Carry now
-consumes active position margin first, then free settlement; price-risk estimates
-use the remaining margin and claims cannot pay residual carry.
+The app consumes V3 requests with a submission deadline and a separate execution
+window. AA manifest transport identity retains its `-v2` suffix, with the fresh
+20261012 date, `v131` deployment marker and explicit `orderInterfaceVersion: 3`. The backend calldata
+policy is `bounded-v3`. The pinned SDK is built from the deployed Core revision;
+registry publication is independent of this checked-in artifact.
 
-Regenerate the protection worker ABI from the pinned release archive:
+Frontend ABI subsets and protection-worker ABIs come from the checksum-verified
+v1.3.0 `build.tar.gz`, reused unchanged by v1.3.1. Lifecycle receipts include close economics, commitment,
+bounty disposition, and timing. The V5 book's `terminalOutcome` stores a compact
+summary; full UI execution evidence comes from the canonical `OrderFinalized`
+event. Canonical indexing supplies economics omitted by the compact summary.
+Historical order execution quotes `getOrderExecutionFee(bytes[])`, while mark
+refreshes retain `getUpdateFee(bytes[])`.
+
+The close preview is deployed with this graph and uses the request-taking
+`previewClose` overload. A successful prospective preview validates bounty
+backing from free settlement and eligible position pledge. Closes do not require
+an additional free-settlement deposit or a subsidy batch. New subsidy issuance
+is disabled; the September sponsored-close lens remains archived with its old
+engine/router bindings. Bridge funding remains independently gated.
+
+Regenerate protection-worker ABIs with:
 
 ```sh
-node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.2.3-arbitrum-sepolia.tar.gz
+node scripts/generate-protection-worker-abi.mjs /path/to/build.tar.gz
 ```
 
-The backend embeds the manifest at compile time through `Plether.Perps.Manifest`.
-Missing fields fail the build, and Cabal tracks the JSON as a build dependency.
-Environment variables still configure runtime addresses; release validation and
-keeper code-hash checks compare them with the embedded manifest. Docker copies
-the same JSON into its build context. Edit the manifest when changing releases,
-then rebuild; do not add deployed addresses or hashes to Haskell modules.
-
-Indexer format names are defined in `Plether.Perps.IndexerFormat`, independently
-of addresses. The configured lifecycle-book protocol selects the worker format;
-current competition queries use bounded V2. The archived July competition retains
-its original V1 format. Every cursor and lock remains scoped to one competition's
-immutable chain and router.
+The backend embeds `arbitrum-sepolia-v3.json` at compile time. Cabal tracks it as a
+build dependency, and Docker copies the same file. Runtime environment bindings
+must match the embedded release and deployment anchor. Rebuild consumers after
+changing the release file; do not duplicate deployed addresses in Haskell code.

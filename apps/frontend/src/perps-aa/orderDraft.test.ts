@@ -10,8 +10,8 @@ describe('editable order restoration', () => {
     expect(restoredOrderDraft({ orderDraft: draft } as SponsoredOperation)).toEqual({ draft, incomplete: false })
   })
   it('restores only known legacy inputs without carrying old execution bounds', () => {
-    const operation = { orderRequestV2: { side: 1, sizeDelta: '125250000000000000000', isClose: true,
-      validUntil: '1', clientOrderId: 'old-id', targetPrice: '999' } } as SponsoredOperation
+    const operation = { orderRequestV3: { side: 1, sizeDelta: '125250000000000000000', isClose: true,
+      submitBy: '1', executionWindowSeconds: 60, clientOrderId: 'old-id', targetPrice: '999' } } as SponsoredOperation
     expect(restoredOrderDraft(operation)).toEqual({ draft: { direction: 'short', orderQuantity: '125.25', reduceOnly: true }, incomplete: true })
   })
   it('handles missing or malformed optional draft metadata', () => {

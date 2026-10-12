@@ -1,10 +1,10 @@
 import { formatUnits } from 'viem'
-import type { PreparedPerpsOrderV2 } from '../contracts/perpsOrderV2'
-import { PERPS_EXECUTION_MODE_LABELS } from '../contracts/perpsOrderV2'
+import type { PreparedPerpsOrderV3 } from '../contracts/perpsOrderV3'
+import { PERPS_EXECUTION_MODE_LABELS } from '../contracts/perpsOrderV3'
 
 export interface PerpsReviewChange { label: string; before: string; after: string }
 /** Show full precision here so a one-unit change cannot appear unchanged. */
-export function perpsReviewChanges(before?: PreparedPerpsOrderV2, after?: PreparedPerpsOrderV2): PerpsReviewChange[] {
+export function perpsReviewChanges(before?: PreparedPerpsOrderV3, after?: PreparedPerpsOrderV3): PerpsReviewChange[] {
   if (!before || !after) return []
   const changes: PerpsReviewChange[] = []
   const add = (label: string, a: bigint | number | string | undefined, b: typeof a, format = (v: NonNullable<typeof a>) => String(v)) => {

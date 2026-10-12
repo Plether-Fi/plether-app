@@ -1,0 +1,11 @@
+{
+  "sourceRepository": "Plether-Fi/plether-core",
+  "sourcePullRequest": "https://github.com/Plether-Fi/plether-core/pull/112",
+  "recordCommit": "22f4b70ba97ebed98a2c821958caf25313771faf",
+  "sourceArtifact": "deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.1/manifest.json",
+  "manifestSha256": "843c8b0fae594d8e4de63e6b22c62e23750866164c700d2deefcf588df0f40b7",
+  "buildArtifact": "deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.1/build.tar.gz",
+  "bundleSha256": "eb0033136fac39ccc2de6b44ed113860a266f87d266dc8aa334ee431e4e0e221",
+  "consumerCutover": "v1.3.1",
+  "upstreamManifest": "config/perps/evidence/v1.3.1/manifest.json"
+}

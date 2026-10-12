@@ -9,6 +9,6 @@ export function createOracleSyncError(legacyAbi = false, data: Hex = ORACLE_SYNC
   const cause = new ContractFunctionRevertedError({ abi, data, functionName: 'getLatestPrice' })
   return new ContractFunctionExecutionError(cause, {
     abi, args: [], functionName: 'getLatestPrice',
-    contractAddress: '0x9f4d9ae736b94249b18a85a7e14092bfca0688eb',
+    contractAddress: '0x04a1455d19960a624bbe41511fc8018a0ffdd494',
   })
 }

@@ -3108,7 +3108,7 @@ markPerpsKeeperOrderExecuted conn orderRouter orderId txHash blockNumber executi
     \status = 'executed', \
     \execution_tx_hash = ?, \
     \execution_block = ?, \
-    \execution_price = ?, \
+    \execution_price = COALESCE(?, execution_price), \
     \last_error = NULL, \
     \updated_at = NOW() \
     \WHERE order_router = ? AND order_id = ?"
@@ -3145,14 +3145,14 @@ reconcilePerpsKeeperOrderExecuted
   -> Text    -- order_router
   -> Integer -- order_id
   -> Integer -- terminal_block
-  -> Integer -- execution_price
+  -> Maybe Integer -- execution_price; V5 summaries omit economics
   -> IO ()
 reconcilePerpsKeeperOrderExecuted conn orderRouter orderId blockNumber executionPrice = do
   _ <- execute conn
     "UPDATE perps_keeper_orders SET \
     \status = 'executed', \
     \execution_block = ?, \
-    \execution_price = ?, \
+    \execution_price = COALESCE(?, execution_price), \
     \last_error = NULL, \
     \updated_at = NOW() \
     \WHERE order_router = ? AND order_id = ?"

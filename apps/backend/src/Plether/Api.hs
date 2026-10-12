@@ -242,6 +242,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
         , "deploymentBlock" .= perpsV2DeploymentBlock
         , "usdc" .= cfgPerpsUsdc cfg
         , "orderRouter" .= cfgPerpsOrderRouter cfg
+        , "orderInterfaceVersion" .= (3 :: Int)
         , "orderLifecycleBook" .= cfgPerpsOrderLifecycleBook cfg
         , "cfdEngine" .= cfgPerpsCfdEngine cfg
         , "marginClearinghouse" .= cfgPerpsMarginClearinghouse cfg

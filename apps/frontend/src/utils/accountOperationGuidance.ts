@@ -25,7 +25,7 @@ export function accountOperationGuidance(operation: SponsoredOperation, now: num
       attention: false,
       title: 'Trading Account confirmed',
       description: 'Your account is ready. Open this saved attempt to resume it. No transaction will be sent automatically.',
-      action: operation.orderRequestV2 ? 'Resume order' : 'View saved transaction',
+      action: operation.orderRequestV3 ? 'Resume order' : 'View saved transaction',
     }
     if (confirmation === 'check-unavailable') return {
       attention: true,

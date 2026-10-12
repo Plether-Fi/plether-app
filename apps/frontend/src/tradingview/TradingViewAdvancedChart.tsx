@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import perpsRelease from '../../../../config/perps/arbitrum-sepolia-v2.json'
+import perpsRelease from '../../../../config/perps/arbitrum-sepolia-v3.json'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys, type PerpsCandleIntervalSeconds } from '../api'
 import { Alert } from '../components/ui'

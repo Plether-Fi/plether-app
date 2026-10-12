@@ -278,7 +278,7 @@ insightsDatabaseSpec databaseUrl =
 
     it "backfills settlement receipts idempotently without changing activity or scores" $
       withInsightsDatabase databaseUrl $ \pool -> do
-        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/insights-close-waiver.json"
+        decoded <- eitherDecodeFileStrict' "../../scripts/fixtures/v3-insights-close-waiver.json"
         fixture <- either fail pure decoded
         receipt <- case fixture of
           Object value | Just (Object receipt) <- KM.lookup "receipt" value -> pure receipt
@@ -293,6 +293,8 @@ insightsDatabaseSpec databaseUrl =
           _ -> fail "Missing logs"
         let finalized = [(entry, oid, account, receiptHash, economics, payload)
               | entry <- logs, Just (ParsedOrderFinalized oid account _ receiptHash _ _ _ _ _ economics payload) <- [parsePerpsLog entry]]
+        -- Fail at the ABI boundary rather than silently seeding an empty database.
+        length finalized `shouldBe` 1
         withDb pool $ \conn -> forM_ finalized $ \(entry, oid, account, receiptHash, economics, payload) -> do
           void $ execute conn
             "INSERT INTO perps_orders (chain_id, order_router, order_id, account, terminal_tx_hash, terminal_block_number, \
@@ -377,21 +379,21 @@ insightsDatabaseSpec databaseUrl =
         markers `shouldBe` [(Nothing, Nothing), (Nothing, Nothing)]
         getCompetitionWalletActivity conn competitionSlug walletA 20 `shouldReturn` []
 
-    it "binds pending v1.2.3 during trading without changing the roster or schedule" $
+    it "rejects the replacement deployment during September late binding without changing the roster or schedule" $
       withPendingV123Competition databaseUrl $ \conn rules -> do
         insertParticipant conn walletA "existing-registration"
         before <- requireCompetition conn competitionSlug
-        seedRelease conn rules september2026ReleaseManifest
+        -- The late-binding exception is exclusive to v1.2.3. Switching the
+        -- active app manifest must not bind the replacement to September.
+        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
         after <- requireCompetition conn competitionSlug
-        icrReleaseReady after `shouldBe` True
-        icrReleaseRouter after `shouldBe` crmOrderRouter september2026ReleaseManifest
-        icrStartTimestamp after `shouldBe` icrStartTimestamp before
-        icrScoreCutoffTimestamp after `shouldBe` icrScoreCutoffTimestamp before
+        after `shouldBe` before
+        icrReleaseReady after `shouldBe` False
         rows <- query conn
           "SELECT wallet, trader_reference FROM insights_competition_participants WHERE competition_slug = ?"
           (Only competitionSlug) :: IO [(Text, Text)]
         rows `shouldBe` [(walletA, "existing-registration")]
-        seedRelease conn rules september2026ReleaseManifest
+        seedRelease conn rules september2026ReleaseManifest `shouldThrow` anyIOException
         requireCompetition conn competitionSlug `shouldReturn` after
 
     it "rejects a different release during late binding" $

@@ -59,7 +59,8 @@ const PERPS_ERROR_ABI = parseAbi([
   'error OrderRouter__PredictableOpenInvalid(uint8 code)',
   'error OrderRouter__ZeroClientOrderId()',
   'error OrderRouter__ZeroTargetPrice()',
-  'error OrderRouter__InvalidValidUntil()',
+  'error OrderRouter__InvalidSubmitBy()',
+  'error OrderRouter__InvalidExecutionWindow()',
   'error OrderRouter__InvalidExecutionModeMask()',
   'error OrderRouter__ExecutionConfigMismatch(bytes32 expectedConfigHash,bytes32 currentConfigHash)',
   'error OrderRouter__ZeroPostLeverageBound()',
@@ -100,7 +101,7 @@ const PERPS_ERROR_ABI = parseAbi([
   'error CfdEngine__WithdrawBlockedByOpenPosition()',
   'error CfdEngine__MarkPriceStale()',
   'error CfdEngine__MarkPriceOutOfOrder()',
-  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableFreeSettlementUsdc,uint256 unpaidCarryUsdc)',
+  'error CfdEngine__InsufficientCloseOrderBountyBacking(uint256 requiredBountyUsdc,uint256 availableBackingUsdc,uint256 unpaidCarryUsdc)',
 ])
 
 const ALL_PERPS_ERROR_ABI = [
@@ -397,9 +398,9 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       if (args?.length === 3 && args.every(value => typeof value === 'bigint' && value >= 0n)) {
         const [required, available, unpaid] = args as readonly bigint[]
         const shortfall = required > available ? required - available : 0n
-        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is free after carry. Free settlement is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
+        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is backed by free settlement and eligible position margin after carry. Backing is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
       }
-      return 'Free settlement after carry cannot fund the close execution reserve. Refresh the account and review again.'
+      return 'Free settlement and eligible position margin after carry cannot fund the close execution reserve. Refresh the account and review again.'
     case 'CfdOrderPolicyEvaluator__InsufficientBountyBacking':
       return 'The protocol returned inconsistent execution-bounty accounting. Refresh the review; contact support if this persists.'
     case 'CfdEngine__PartialCloseUnhealthy':
@@ -429,7 +430,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Order integrity error: this client order ID is already bound to different deadline, bounds, or trade fields.'
     case 'OrderRouter__ZeroTargetPrice':
       return 'A bounded V2 order requires a nonzero target price.'
-    case 'OrderRouter__InvalidValidUntil':
+    case 'OrderRouter__InvalidExecutionWindow':
+    case 'OrderRouter__InvalidSubmitBy':
       return 'The reviewed order deadline expired or is outside the current maximum order age. Review a fresh order.'
     case 'OrderRouter__InvalidExecutionModeMask':
       return 'The reviewed execution regime is invalid. Review the order again.'

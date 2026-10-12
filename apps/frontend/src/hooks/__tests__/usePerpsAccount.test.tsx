@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   immutableData: [] as ContractResult[],
   riskParamsData: [] as ContractResult[],
   pendingDetailsLoading: false,
+  timingData: undefined as ContractResult[] | undefined,
   refetchDynamic: vi.fn(),
   refetchConfiguration: vi.fn(),
   refetchRiskParams: vi.fn(),
@@ -39,7 +40,7 @@ vi.mock('../../perps-aa', () => ({
     chainId: 421614,
     isAaManifestConfigured: true,
     sponsorshipEnabled: true,
-    manifest: null,
+    manifest: { orderLifecycleBook: '0x1111111111111111111111111111111111111111' },
     identity: null,
     proposedIdentity: null,
     changedIdentityFields: [],
@@ -172,6 +173,7 @@ describe('usePerpsAccount', () => {
     ]
     mocks.immutableData = [failure('cap price unavailable')]
     mocks.riskParamsData = [failure('risk params unavailable'), success(15n)]
+    mocks.timingData = undefined
     mocks.pendingDetailsLoading = true
     mocks.useReadContracts.mockImplementation((parameters: {
       contracts?: { functionName?: string }[]
@@ -205,6 +207,8 @@ describe('usePerpsAccount', () => {
         }
       }
 
+      if (firstFunctionName === 'orderTiming') return { data: mocks.timingData, isLoading: false, error: undefined, refetch: vi.fn() }
+
       if (firstFunctionName === 'CAP_PRICE') {
         return {
           data: mocks.immutableData,
@@ -221,6 +225,23 @@ describe('usePerpsAccount', () => {
         refetch: vi.fn(),
       }
     })
+  })
+
+  it('uses the committed deadline even when submitBy and the configured maximum differ', () => {
+    mocks.timingData = [success({ submitBy: 1120n, executionWindowSeconds: 60, commitTimestamp: 1100n, executionDeadline: 1160n })]
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.pendingOrders[0].expiryTime).toBe(1160n)
+  })
+
+  it('treats an unknown zero timing record as unavailable', () => {
+    mocks.timingData = [success({ submitBy: 0n, executionWindowSeconds: 0, commitTimestamp: 0n, executionDeadline: 0n })]
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.pendingOrders[0].expiryTime).toBeUndefined()
+  })
+
+  it('does not invent a deadline when canonical timing is unavailable', () => {
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    expect(result.current.pendingOrders[0].expiryTime).toBeUndefined()
   })
 
   it('polls dynamic account state but refreshes timelocked config only on lifecycle boundaries', async () => {
@@ -276,7 +297,7 @@ describe('usePerpsAccount', () => {
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'minOpenNotionalUsdc',
       'maxPendingOrders',
-      'maxOrderAge',
+      'maxExecutionWindowSeconds',
     ])
     expect(configurationCall?.query).toMatchObject({
       staleTime: 300_000,
@@ -292,7 +313,7 @@ describe('usePerpsAccount', () => {
       refetchOnReconnect: false,
     })
     expect(result.current.maxPendingOrders).toBe(10n)
-    expect(result.current.maxOrderAge).toBe(300n)
+    expect(result.current.maxExecutionWindowSeconds).toBe(300n)
 
     await act(async () => {
       await result.current.refetchDynamic()

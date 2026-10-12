@@ -25,7 +25,7 @@ import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
-import Plether.Perps.Release (verifyPerpsV2ReleaseBindings)
+import Plether.Perps.Release (verifyPerpsV3ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
 import Plether.Server (apiServerOptions)
 import Plether.Vaults.PerformanceIndexer
@@ -54,7 +54,7 @@ main = do
       case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
         (421614, Just _) -> do
           releaseVerification <-
-            verifyPerpsV2ReleaseBindings
+            verifyPerpsV3ReleaseBindings
               perpsClient
               (cfgPerpsChainId cfg)
               (cfgPerpsOrderRouter cfg)

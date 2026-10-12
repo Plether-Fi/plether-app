@@ -164,7 +164,7 @@ jobs:
           test -s dist/perps-aa-manifest.json
           jq -e '
             def common_keys:
-              ["version", "chainId", "entryPoint", "entryPointVersion",
+              ["version", "chainId", "orderInterfaceVersion", "entryPoint", "entryPointVersion",
                "smartAccountMode", "smartAccountVersion", "smartAccountIndex",
                "smartAccountFactory", "usdc", "usdcSupportsEip3009",
                "usdcEip712Name", "usdcEip712Version", "marginClearinghouse",
@@ -186,10 +186,10 @@ jobs:
               .smartAccountVersion == "permissionless-simple-v0.8" and
               .smartAccountIndex == "0" and
               (.smartAccountFactory | ascii_downcase) == "0x13e9ed32155810fdbd067d4522c492d6f68e5944" and
-              .orderRouter == "0x6215d36fcbd610ca1525252eebcbfd8b223a6072" and
-              .orderLifecycleBook == "0x753eb48305ffb88bb70869ade2c4efa941879221" and
-              .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
-              .policyEvaluator == "0x43c93d3028fcd4c1f578a50639750b8fbfdee799" and
+              .orderRouter == "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8" and
+              .orderLifecycleBook == "0x519f57a34fb440c42bfd2d8328d2f80349af3872" and
+              .positionProtectionBook == "0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312" and
+              .policyEvaluator == "0xf550cada6b7d477b23069c8b4f254d19088f28c8" and
               .sponsorshipEnabled == true;
             def pimlico_transport:
               exact_keys(common_keys + ["pimlicoRpcUrl"]) and
@@ -207,7 +207,8 @@ jobs:
               .preparationRpcVersion == 1 and
               (has("pimlicoRpcUrl") | not);
             common_profile and
-            .version == "perps-aa-arbitrum-sepolia-20260910-v2" and
+            .version == "perps-aa-arbitrum-sepolia-20261012-v131-v2" and
+            .orderInterfaceVersion == 3 and
             (pimlico_transport or native_transport)
           ' dist/perps-aa-manifest.json >/dev/null
 
@@ -252,17 +253,17 @@ jobs:
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and
-              .deploymentBlock == 307397196 and
+              .deploymentBlock == 318398363 and
               .usdc == $manifest[0].usdc and
               .orderRouter == $manifest[0].orderRouter and
               .orderLifecycleBook == $manifest[0].orderLifecycleBook and
               .cfdEngine == $manifest[0].cfdEngine and
               .marginClearinghouse == $manifest[0].marginClearinghouse and
-              .housePool == "0x87622630fb1941fe02731d4a9fcdec0388efd78b" and
+              .housePool == "0x587c9863bb46fd5282a4ca2ea99589e3e8543962" and
               .policyEvaluator == $manifest[0].policyEvaluator and
-              .positionProtectionBook == "0x3204c51cd567d6490c011399ccbaaf67b5d3d768" and
-              .perpsPublicLens == "0x63a6ee8ef44cf13d0d1f393a1e9f8d25da1abfb4" and
-              .calldataPolicy == "bounded-v2" and
+              .positionProtectionBook == "0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312" and
+              .perpsPublicLens == "0x5502e241ddde4fd00313947e1d2f941764c92959" and
+              .calldataPolicy == "bounded-v3" and
               .bindingsVerified == true and
               .sponsorshipEnabled == true
             ' aa-status.json >/dev/null

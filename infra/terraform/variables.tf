@@ -1157,7 +1157,7 @@ variable "perps_chain_id" {
 
 variable "vault_history_house_pool_address" {
   type        = string
-  default     = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+  default     = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
   description = "HousePool deployment whose Senior and Junior vault performance and canonical events are indexed."
 
   validation {
@@ -1168,7 +1168,7 @@ variable "vault_history_house_pool_address" {
 
 variable "vault_history_senior_vault_address" {
   type        = string
-  default     = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+  default     = "0xee755754319be980dd0f7df77107720485fe9d20"
   description = "Senior TrancheVault deployment whose performance, holders, and requests are indexed."
 
   validation {
@@ -1179,7 +1179,7 @@ variable "vault_history_senior_vault_address" {
 
 variable "vault_history_junior_vault_address" {
   type        = string
-  default     = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+  default     = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
   description = "Junior TrancheVault deployment whose performance, holders, and requests are indexed."
 
   validation {
@@ -1190,7 +1190,7 @@ variable "vault_history_junior_vault_address" {
 
 variable "vault_history_deployment_block" {
   type        = string
-  default     = "307397196"
+  default     = "318398363"
   description = "First Arbitrum block eligible for the configured vault deployment's performance and event history."
 
   validation {
@@ -1212,17 +1212,17 @@ variable "vault_history_confirmations" {
 
 variable "perps_usdc" {
   type    = string
-  default = "0xf7cbfcc74f2d9eb6fa7dc11941b3bef9fd7f8eb8"
+  default = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x6215d36fcbd610ca1525252eebcbfd8b223a6072"
+  default = "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
 }
 
 variable "perps_house_pool" {
   type        = string
-  default     = "0x87622630fb1941fe02731d4a9fcdec0388efd78b"
+  default     = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
   description = "HousePool bound to the configured settlement monitor."
 
   validation {
@@ -1236,7 +1236,7 @@ variable "perps_house_pool" {
 
 variable "perps_senior_vault" {
   type        = string
-  default     = "0x970ac2cfe9a19d4318806812719a5c291711b33a"
+  default     = "0xee755754319be980dd0f7df77107720485fe9d20"
   description = "Senior TrancheVault bound to the configured HousePool settlement release."
 
   validation {
@@ -1250,7 +1250,7 @@ variable "perps_senior_vault" {
 
 variable "perps_junior_vault" {
   type        = string
-  default     = "0x2075a46921fc5fbcf5fca808e3a2c66c6f812d79"
+  default     = "0x1d4beed4d594cadfe4c3c5bdc8174b0fbfc4aaf0"
   description = "Junior TrancheVault bound to the configured HousePool settlement release."
 
   validation {
@@ -1264,14 +1264,14 @@ variable "perps_junior_vault" {
 
 variable "perps_settlement_monitor_lens" {
   type        = string
-  default     = "0x52f9621446650ab663f2f1665f28817924c96826"
+  default     = "0xb80b72b6517d53ed6387c9873ea4b61d0c97ade8"
   description = "Settlement Monitor facade used by the keeper. Never configure the sidecar address here."
 
   validation {
     condition = (
       can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
       && lower(var.perps_settlement_monitor_lens) != "0x0000000000000000000000000000000000000000"
-      && lower(var.perps_settlement_monitor_lens) != "0xb13d18d1b30e2c6fce1138f93123136113d0af5b"
+      && lower(var.perps_settlement_monitor_lens) != "0x022af8e4461c313e194b020b2af5a8cc583421ee"
     )
     error_message = "perps_settlement_monitor_lens must be the facade, never the pinned monitor sidecar."
   }
@@ -1296,37 +1296,37 @@ variable "perps_order_lifecycle_book" {
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0x9f4d9ae736b94249b18a85a7e14092bfca0688eb"
+  default = "0x04a1455d19960a624bbe41511fc8018a0ffdd494"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0xafece93321be41aa73474457e2f47cf7b2fb738f"
+  default = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
 }
 
 variable "perps_cfd_engine_settlement_sidecar" {
   type    = string
-  default = "0x69dc8489dc12bcfd74b4f453f59ec7381822f5bb"
+  default = "0x174b1231edbd6379877706c06898a20a5475ae73"
 }
 
 variable "perps_cfd_engine_lens" {
   type    = string
-  default = "0x8fe702213241482d6e94327f9e70195ad183d1ad"
+  default = "0xfffd7ef10a3cdd70a9f4d21a8349f70ce059dd7e"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0xfa6e677ec1062757c1194d411a5e61e1e9644499"
+  default = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
 }
 
 variable "perps_account_lens" {
   type    = string
-  default = "0x29fd3b5faf8de6c84405d28e1aac371e46a104c6"
+  default = "0xf520133a4f757a68a523c704512af24b1f5b7762"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "307397196"
+  default = "318398363"
 }
 
 variable "perps_indexer_confirmations" {

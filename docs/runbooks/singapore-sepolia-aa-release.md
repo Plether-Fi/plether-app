@@ -2,7 +2,7 @@
 
 Target: account 932542905614, ap-southeast-1, existing plether-sepolia cluster
 and state key plether/sepolia/terraform.tfstate. Core is the existing v1.2.3
-deployment in config/perps/arbitrum-sepolia-v2.json. No new Core contracts.
+deployment in config/perps/arbitrum-sepolia-v3.json. No new Core contracts.
 This document prepares a release; it is not deployment or spending approval.
 
 ## Policy and merge boundary
@@ -64,7 +64,7 @@ approval for another. Mainnet policy is unchanged.
    release bindings. Do not restore another database over the active database.
    Compare a saved plan: reject unexpected delete/replace actions on existing
    VPC, RDS, ALB, IAM, SSM or services. New AA resources require explicit review.
-3. Apply sepolia-core-v1.2.3.tfvars.json only as part of the coordinated release,
+3. Apply sepolia-core-v1.3.1.tfvars.json only as part of the coordinated release,
    after verifying it still matches the canonical manifest. Stop new old-release
    orders, drain outstanding orders, and retain old deployment-scoped history.
    Do not relabel old positions, checkpoints, competition data or journal rows
