@@ -531,7 +531,7 @@ function PositionView({
               analyticsId="close_position_from_panel"
               analyticsProperties={{ direction: position.direction }}
               onClick={onClosePosition}
-              disabled={positionProtection !== undefined}
+              disabled={positionProtection !== undefined && positionProtection.status !== 2}
             >
               Close position
             </Button>
@@ -588,7 +588,7 @@ function PositionView({
           </div>
           <Button size="sm" variant="secondary" onClick={onManageProtection}>{positionProtection ? 'Manage TP/SL' : 'Add TP/SL'}</Button>
         </div>
-        {positionProtection ? <p className="text-xs leading-5 text-content-secondary">{[3, 8].includes(positionProtection.status) ? 'A TP/SL close has triggered. Open TP/SL to see its progress.' : 'To close manually, remove TP/SL first.'}</p> : null}
+        {positionProtection ? <p className="text-xs leading-5 text-content-secondary">{[3, 8].includes(positionProtection.status) ? 'A TP/SL close has triggered. Open TP/SL to see its progress.' : 'Close position will guide you through removing TP/SL first.'}</p> : null}
       </div> : null}
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>

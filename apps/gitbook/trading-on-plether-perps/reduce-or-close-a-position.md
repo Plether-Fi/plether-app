@@ -35,7 +35,7 @@ Changing direction requires closing the existing position before opening exposur
 
 ### Before you start
 
-If your position has untriggered TP/SL, remove it in the **TP/SL** tab and wait for confirmation before submitting a discretionary reduction or close. Removing TP/SL leaves the position open. If protection is **Close queued** or **Close delayed**, its triggered exit remains binding and cannot be edited or removed; you can still add margin. See [Take profit and stop loss](take-profit-and-stop-loss.md).
+If your position has untriggered TP/SL, the reduction or close flow starts with **Remove TP/SL**. Select **Remove TP/SL and continue**, authorize the removal, and wait for confirmation. The flow then prepares a fresh close preview for you to review and confirm. Removing TP/SL leaves the position open without triggers until the close fills, including if you cancel the flow or the close fails. If protection is **Close queued** or **Close delayed**, its triggered exit remains binding and cannot be edited or removed; you can still add margin. See [Take profit and stop loss](take-profit-and-stop-loss.md).
 
 Selecting **Reduce only** hides the trade-ticket TP/SL checkbox. That checkbox attaches triggers to new positions; it does not attach partial exits to a reduction.
 
@@ -57,7 +57,7 @@ Risk-reducing close orders remain available during normal trading, FAD-only[^fad
 
 ### 1. Choose the amount in the trade ticket
 
-Use the Position panel to review the exposure you currently hold. For a full close, select `Close position` to fill the available position quantity and open **Commit Preview**. Review and wallet authorization are still required before the close is submitted; earlier pending reductions can affect the amount available, as explained below.
+Use the Position panel to review the exposure you currently hold. For a full close, select `Close position` to fill the available position quantity and open the close flow. If TP/SL is active, remove it in the first step before proceeding to **Commit Preview**. Review and wallet authorization are still required before the close is submitted; earlier pending reductions can affect the amount available, as explained below.
 
 For a partial reduction, or to set up the exit manually, use the trade ticket:
 

@@ -107,7 +107,7 @@ export type TradeLifecycleState =
   | 'selfExecuteFailed'
   | 'executed'
   | 'failed'
-type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
+type OrderLifecycleStep = 'removeProtection' | 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
@@ -293,6 +293,7 @@ interface PerpsTradeTicketProps {
   ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
   activePositionProtectionId?: bigint
+  activePositionProtectionStatus?: number
   protectionConfiguration?: ProtectionConfiguration
   protectionCapPrice?: bigint
   maxPendingOrders?: bigint
@@ -1283,23 +1284,24 @@ function buildOrderSummary({
 
 function OrderLifecycleSteps({
   currentStep,
+  includeProtectionRemoval = false,
 }: {
   currentStep: OrderLifecycleStep
+  includeProtectionRemoval?: boolean
 }) {
-  const currentIndex = ORDER_LIFECYCLE_STEPS.findIndex((step) => step.id === currentStep)
+  const steps = includeProtectionRemoval
+    ? [{ id: 'removeProtection' as const, label: 'Remove TP/SL' }, ...ORDER_LIFECYCLE_STEPS]
+    : ORDER_LIFECYCLE_STEPS
+  const currentIndex = steps.findIndex((step) => step.id === currentStep)
 
   return (
     <div className="relative">
-      <div
-        className="absolute top-[7px] h-px bg-brand-border/35"
-        style={{ left: 'calc(16.666667% + 0.5rem)', width: 'calc(33.333333% - 1rem)' }}
-      />
-      <div
-        className="absolute top-[7px] h-px bg-brand-border/35"
-        style={{ left: 'calc(50% + 0.5rem)', width: 'calc(33.333333% - 1rem)' }}
-      />
-      <ol className="relative grid grid-cols-3 gap-2">
-        {ORDER_LIFECYCLE_STEPS.map((step, index) => {
+      {steps.slice(1).map((step, index) => (
+        <div key={step.id} className="absolute top-[7px] h-px bg-brand-border/35"
+          style={{ left: `calc(${((index + 0.5) * 100 / steps.length).toString()}% + 0.5rem)`, width: `calc(${(100 / steps.length).toString()}% - 1rem)` }} />
+      ))}
+      <ol className={`relative grid gap-2 ${includeProtectionRemoval ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        {steps.map((step, index) => {
           const isCurrent = step.id === currentStep
           const isFuture = index > currentIndex
           const dotClass = isCurrent
@@ -1797,6 +1799,7 @@ export function PerpsTradeTicket({
   ordersIndexedThroughBlockRaw,
   pendingOrderCount,
   activePositionProtectionId = 0n,
+  activePositionProtectionStatus,
   protectionConfiguration,
   protectionCapPrice,
   maxPendingOrders,
@@ -1828,6 +1831,7 @@ export function PerpsTradeTicket({
     withdrawMargin,
     prepareOrder,
     commitOrder,
+    managePositionProtection,
     readOrderLifecycleOutcome,
     executeOrder,
     cleanupExpiredOrder,
@@ -1860,6 +1864,8 @@ export function PerpsTradeTicket({
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
   const [reviewSnapshot, setReviewSnapshot] = useState<PerpsOrderReviewSnapshot | undefined>()
+  const [protectionRemovalStatus, setProtectionRemovalStatus] = useState<'idle' | 'pending' | 'confirmed'>('idle')
+  const protectionRemovalPendingRef = useRef(false)
   const [protectionDraft, setProtectionDraft] = useState(EMPTY_PROTECTION_DRAFT)
   const [isProtectionEnabled, setIsProtectionEnabled] = useState(false)
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
@@ -2865,6 +2871,10 @@ export function PerpsTradeTicket({
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
+  const canRemoveProtectionForClose = enableLiveTrading && isReducingCurrentPosition &&
+    activePositionProtectionId > 0n && activePositionProtectionStatus === 2
+  const isProtectionRemovalStep = lifecycleState === 'preview' && (canRemoveProtectionForClose ||
+    protectionRemovalStatus === 'pending' || (protectionRemovalStatus === 'confirmed' && activePositionProtectionId > 0n))
   const canAttachProtection = !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
   const protectionPriceContext = {
     direction: effectiveOrderDirection,
@@ -2902,7 +2912,7 @@ export function PerpsTradeTicket({
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
     if (protectionInput.error) return protectionInput.error
-    if (activePositionProtectionId > 0n) {
+    if (activePositionProtectionId > 0n && !canRemoveProtectionForClose) {
       return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
     }
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
@@ -3017,6 +3027,7 @@ export function PerpsTradeTicket({
   useEffect(() => {
     if (reviewIdentityRef.current === preparationIdentityKey) return
     reviewIdentityRef.current = preparationIdentityKey
+    setProtectionRemovalStatus('idle')
     setReviewSnapshot(undefined)
     if (lifecycleState === 'preview') setIsReviewOpen(false)
   }, [preparationIdentityKey, lifecycleState])
@@ -3052,7 +3063,7 @@ export function PerpsTradeTicket({
   [isReviewOpen, reviewSnapshot, slippageNumber, draftSnapshot])
   const frozenPreparationKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
   const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber])
-  const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
+  const canPrepare = enableLiveTrading && activePositionProtectionId === 0n && protectionRemovalStatus !== 'pending' && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
     (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation &&
     typeof prepareOrder === 'function'
   const preparation = usePerpsOrderPreparation({
@@ -3415,7 +3426,7 @@ export function PerpsTradeTicket({
     [isPreviewExpanded, sidePanelPreviewRows]
   )
 
-  const currentLifecycleStep = lifecycleStep(lifecycleState)
+  const currentLifecycleStep = isProtectionRemovalStep ? 'removeProtection' : lifecycleStep(lifecycleState)
   const displayOrderId = orderId === undefined ? (enableLiveTrading ? '--' : ORDER_ID) : orderId.toString()
   const executedOrderHistoryRow = orderId === undefined
     ? undefined
@@ -3766,7 +3777,41 @@ export function PerpsTradeTicket({
     }
   }
 
+  async function refreshAfterProtectionRemoval() {
+    setFlowError(undefined)
+    try {
+      await onAccountRefresh?.()
+    } catch (error) {
+      setFlowError(error instanceof Error ? error.message : 'Could not refresh your account. Please try again.')
+    }
+  }
+
+  async function handleRemoveProtectionForClose() {
+    if (protectionRemovalPendingRef.current || !canRemoveProtectionForClose ||
+      liveValidationError || activeAccountOperation || protectionRemovalStatus === 'confirmed') return
+    const removalIdentityKey = preparationIdentityKey
+    protectionRemovalPendingRef.current = true
+    setProtectionRemovalStatus('pending')
+    setFlowError(undefined)
+    try {
+      await managePositionProtection({ action: 'cancel', protectionId: activePositionProtectionId })
+      if (reviewIdentityRef.current !== removalIdentityKey) return
+      setProtectionRemovalStatus('confirmed')
+      // Prepare the close only after refreshed account reads show no active TP/SL.
+      setReviewSnapshot(undefined)
+    } catch (error) {
+      if (reviewIdentityRef.current !== removalIdentityKey) return
+      setProtectionRemovalStatus('idle')
+      setFlowError(error instanceof Error ? error.message : 'Could not remove TP/SL. Please try again.')
+      return
+    } finally {
+      protectionRemovalPendingRef.current = false
+    }
+    await refreshAfterProtectionRemoval()
+  }
+
   async function handleConfirmCommit() {
+    if (isProtectionRemovalStep || activePositionProtectionId > 0n || protectionRemovalPendingRef.current) return
     if (enableLiveTrading && (!preparation.ready || !preparedOrder ||
       document.visibilityState === 'hidden' || preparedOrder.account.toLowerCase() !== address?.toLowerCase())) {
       setFlowError('Wait for a fresh order review before confirming.')
@@ -4081,6 +4126,7 @@ export function PerpsTradeTicket({
     rejectedTerminalRef.current = undefined
     executionEvidencePollRef.current = undefined
     setLifecycleState('preview')
+    setProtectionRemovalStatus('idle')
     setOrderId(undefined)
     setCommitTxHash(undefined)
     setExecuteTxHash(undefined)
@@ -4146,6 +4192,7 @@ export function PerpsTradeTicket({
   }
 
   function closeReviewModal() {
+    if (protectionRemovalPendingRef.current) return
     const shouldResetSize = lifecycleState === 'executed'
     resetReviewLifecycle()
     if (shouldResetSize) {
@@ -4653,14 +4700,23 @@ export function PerpsTradeTicket({
       <Modal
         isOpen={isReviewOpen}
         onClose={closeReviewModal}
-        headerContent={<OrderLifecycleSteps currentStep={currentLifecycleStep} />}
+        headerContent={<OrderLifecycleSteps currentStep={currentLifecycleStep} includeProtectionRemoval={isProtectionRemovalStep || protectionRemovalStatus === 'confirmed'} />}
         showCloseButton={false}
         size="lg"
         analyticsId="trade_review"
         analyticsProperties={commonAnalyticsProperties}
         initialFocus="dialog"
         footer={
-          lifecycleState === 'preview' ? (
+          isProtectionRemovalStep ? (
+            <div className="flex gap-3">
+              <Button variant="secondary" className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`} disabled={protectionRemovalStatus === 'pending'} onClick={closeReviewModal}>Cancel</Button>
+              {protectionRemovalStatus === 'confirmed' ? (
+                <Button className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`} onClick={() => { void refreshAfterProtectionRemoval() }}>Refresh account</Button>
+              ) : (
+                <Button className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`} isLoading={protectionRemovalStatus === 'pending'} disabled={Boolean(liveValidationError) || Boolean(activeAccountOperation)} onClick={() => { void handleRemoveProtectionForClose() }}>Remove TP/SL and continue</Button>
+              )}
+            </div>
+          ) : lifecycleState === 'preview' ? (
             <PerpsReviewFooter
               sponsoredCloseUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.amountUsdc, 6) : undefined}
               depositCarryUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.depositCarryUsdc, 6) : undefined}
@@ -4862,8 +4918,18 @@ export function PerpsTradeTicket({
         }
       >
         <div className="space-y-5">
-          {lifecycleState === 'preview' ? (
+          {isProtectionRemovalStep ? (
+            <section className="space-y-4 text-content-primary">
+              <h3 className="text-xl font-semibold">Remove TP/SL before closing</h3>
+              <p>Your take-profit and stop-loss orders must be removed before you can submit this close order.</p>
+              <p className="text-sm text-content-secondary">After removal is confirmed, review and confirm your close order. Your position stays open without TP/SL until the close fills, even if you cancel or the close fails.</p>
+              {protectionRemovalStatus === 'pending' ? <p role="status">Confirm TP/SL removal in your wallet, then wait for confirmation.</p> : null}
+              {protectionRemovalStatus === 'confirmed' ? <p role="status">TP/SL removed. Waiting for your account to refresh before preparing the close.</p> : null}
+              {liveValidationError || flowError ? <p role="alert" className="text-sm text-brand-orange">{flowError ?? liveValidationError}</p> : null}
+            </section>
+          ) : lifecycleState === 'preview' ? (
             <>
+              {protectionRemovalStatus === 'confirmed' ? <p role="status" className="text-sm text-content-secondary">TP/SL removed. Review and confirm your close order below.</p> : null}
               <p className="px-1 py-2 text-xl font-semibold leading-7 text-content-primary">
                 {orderSummary}
               </p>
