@@ -29,6 +29,7 @@ module Plether.Ethereum.Contracts.Perps
   , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
   , getPendingOrderViewAtBlock
+  , queueBoundsAtBlock
   , orderExecutionDeadline
   , orderExecutionDeadlineAtBlock
   , lifecycleStatus
@@ -506,6 +507,13 @@ getPendingOrderViewAtBlock :: EthClient -> Text -> Integer -> Integer -> IO (Eit
 getPendingOrderViewAtBlock client orderRouter orderId blockNumber = do
   result <- ethCallAtBlock client (CallParams orderRouter (getPendingOrderViewCall orderId)) blockNumber
   pure $ fmap decodePendingOrderView result
+
+-- Read both bounds at the same block; nextExecuteId can be 1 on an empty deployment.
+queueBoundsAtBlock :: EthClient -> Text -> Integer -> IO (Either RpcError (Integer, Integer))
+queueBoundsAtBlock client router blockNumber = do
+  headResult <- ethCallAtBlock client (CallParams router $ encodeCall "nextExecuteId()" []) blockNumber
+  nextResult <- ethCallAtBlock client (CallParams router $ encodeCall "nextCommitId()" []) blockNumber
+  pure $ (,) <$> fmap decodeUint256 headResult <*> fmap decodeUint256 nextResult
 
 orderExecutionDeadline :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
 orderExecutionDeadline client lifecycleBook orderId = do

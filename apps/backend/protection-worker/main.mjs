@@ -49,6 +49,7 @@ async function main() {
       confirmations: BigInt(positive('PROTECTION_WORKER_CONFIRMATIONS', 12)),
       candidateBatch: positive('PROTECTION_WORKER_CANDIDATE_BATCH', 50),
       maxPayloadAge: positive('PROTECTION_WORKER_MAX_PAYLOAD_AGE_SECONDS', 15),
+      maxTxCostWei: BigInt(process.env.PROTECTION_WORKER_MAX_TX_COST_WEI ?? '0'),
       keeperBatchSize: positive('KEEPER_MAX_BATCH_SIZE', 5), keeperPollSeconds: positive('KEEPER_POLL_SECONDS', 5),
     })
     await worker.verifyDeployment()

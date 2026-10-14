@@ -26,6 +26,8 @@ import Plether.Keeper
   , isLpSettlementObservationConsistent
   , isLpSettlementObservationSafe
   , isOrderPastValidUntil
+  , isCanonicalQueueHead
+  , keeperSpendAllowed
   , isOrderRevealReady
   , keeperPollDelayMicros
   , isSameBlockMevGuardError
@@ -199,6 +201,22 @@ spec = do
         `shouldSatisfy` isLeft
       validateLpSettlementCost LpSettlementExecute 1_000 1_000 1_000
         `shouldBe` Right ()
+
+  describe "keeper spending boundary" $ do
+    it "requires an explicit positive budget and includes equality" $ do
+      keeperSpendAllowed 0 1 `shouldBe` False
+      keeperSpendAllowed 100 100 `shouldBe` True
+      keeperSpendAllowed 100 101 `shouldBe` False
+      keeperSpendAllowed 100 (-1) `shouldBe` False
+
+  describe "canonical unpaid queue heads" $ do
+    it "does not execute the initial empty sentinel or an uncommitted echoed ID" $ do
+      isCanonicalQueueHead 1 1 1 `shouldBe` False
+      isCanonicalQueueHead 2 2 2 `shouldBe` False
+      isCanonicalQueueHead 0 0 3 `shouldBe` False
+    it "requires the actual FIFO head irrespective of reward" $ do
+      isCanonicalQueueHead 7 7 9 `shouldBe` True
+      isCanonicalQueueHead 8 7 9 `shouldBe` False
 
   describe "isOrderPastValidUntil" $ do
     it "does not expire at the immutable deadline boundary" $ do

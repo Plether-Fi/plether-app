@@ -203,11 +203,11 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
-  it('never exposes direct payable order finalization for a sponsored account', async () => {
+  it('requires an owner wallet for native finalization without falling back to sponsorship', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.executeOrder(1n)).rejects.toThrow(
-      'keeper-operated'
+      'Wallet client is not ready'
     )
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()

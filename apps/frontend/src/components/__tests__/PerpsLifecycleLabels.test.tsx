@@ -1,3 +1,4 @@
+import { NativeQueueBlockedError } from '../../perps-aa/nativeClose'
 import { useState } from 'react'
 import { HttpRequestError } from 'viem'
 import { getPerpsErrorMessage } from '../../utils/perpsErrors'
@@ -190,6 +191,17 @@ vi.mock('../../hooks', () => ({
 }))
 
 describe('perps lifecycle labels', () => {
+  it('keeps same-account manual execution available and explicitly processes a preceding head', async () => {
+    identityMocks.isAaManifestConfigured = true
+    perpsTradingMocks.executeOrder.mockRejectedValueOnce(new NativeQueueBlockedError(62n)).mockResolvedValueOnce({ hash: '0xabc' })
+    render(<PerpsTradeTicket enableLiveTrading initialLifecycleState="selfExecuteAvailable" initialReviewOpen initialOrderId={63n} initialOrderQuantity="1 000" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Finalize Trade' }))
+    const preceding = await screen.findByRole('button', { name: 'Process preceding order #62' })
+    fireEvent.click(preceding)
+    await waitFor(() => expect(perpsTradingMocks.executeOrder).toHaveBeenLastCalledWith(62n))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalize Trade' })).toBeVisible())
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+  })
   beforeEach(() => {
     maxQuoteMocks.value = {
       quote: { maxSizeDelta: 400n * 10n ** 18n, preview: { valid: true } },
@@ -2440,7 +2452,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('button', { name: 'Finalize Trade' })).toBeInTheDocument()
   })
 
-  it('keeps manual finalization disabled for sponsored Trading Accounts', async () => {
+  it('exposes owner-paid finalization after the keeper grace period for Trading Accounts', async () => {
     vi.useFakeTimers()
     identityMocks.isAaManifestConfigured = true
 
@@ -2462,12 +2474,8 @@ describe('perps lifecycle labels', () => {
 
     expect(
       screen.queryByRole('button', { name: 'Finalize Trade' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('progressbar', {
-        name: 'Price finalization progress',
-      })
-    ).toHaveAttribute('aria-valuenow', '100')
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Your owner wallet can pay native gas/)).toBeInTheDocument()
   })
 
   it('shows the 20-second finalization progress circle in story mode without backend waiting', async () => {

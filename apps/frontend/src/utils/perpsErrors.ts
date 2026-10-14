@@ -336,10 +336,10 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
-      return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
+      return 'Not enough available collateral after carry and existing reservations.'
     case 'OrderRouter__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
-      return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
+      return 'Not enough available collateral after carry and existing reservations.'
     case 'MarginClearinghouse__InsufficientUsdcForSettlement':
       return 'The margin account does not have enough USDC settlement balance.'
     case 'OrderRouter__ZeroSize':
@@ -555,7 +555,7 @@ function messageForRawError(lowerMessage: string): string | undefined {
     return 'You already have too many pending orders. Execute or let existing orders expire/clean up before committing a new order.'
   }
   if (lowerMessage.includes('orderrouter__insufficientfreeequity')) {
-    return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
+    return 'Not enough available collateral after carry and existing reservations.'
   }
   if (lowerMessage.includes('orderrouter__closeonlywindow')) {
     return 'The market is close-only right now. You can reduce or close positions, but not open new risk.'

@@ -522,7 +522,7 @@ export function PerpsIdentityProvider({
         changedIdentityFields: [],
         error: {
           code: 'SPONSORSHIP_MANIFEST_REQUIRED',
-          message: 'Perps is sponsorship-only on testnet. A reviewed gas-sponsorship manifest is required before any Trading Account action can be used.',
+          message: 'A reviewed deployment manifest is required before any Trading Account action can be used.',
         },
         confirmIdentityAfterContinuityCheck,
         reloadIdentity,

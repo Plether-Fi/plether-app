@@ -148,7 +148,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
           changedIdentityFields: [],
           error: {
             code: 'SPONSORSHIP_MANIFEST_REQUIRED',
-            message: 'Perps is sponsorship-only on testnet.',
+            message: 'A reviewed Trading Account deployment is required.',
           },
           confirmIdentityAfterContinuityCheck: () => false,
           reloadIdentity: () => undefined,
@@ -601,13 +601,13 @@ describe('usePerpsTrading', () => {
     expect(mocks.simulateContract).not.toHaveBeenCalled()
   })
 
-  it('keeps manual finalization and cleanup keeper-only', async () => {
+  it('requires a reviewed account deployment for native execution and cleanup', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.executeOrder(42n))
-      .rejects.toThrow('Order finalization is keeper-operated')
+      .rejects.toThrow('reviewed Trading Account deployment')
     await expect(result.current.cleanupExpiredOrder(42n))
-      .rejects.toThrow('Expired-order cleanup is keeper-operated')
+      .rejects.toThrow('reviewed Trading Account deployment')
   })
 
   it('reads terminal constraint evidence directly from the lifecycle book', async () => {

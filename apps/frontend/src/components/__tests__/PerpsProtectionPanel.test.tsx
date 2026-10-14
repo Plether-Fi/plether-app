@@ -5,8 +5,8 @@ import type { ProtectionHistoryRecord } from '../../hooks/useProtectionHistory'
 import type { PositionProtection } from '../../contracts/positionProtection'
 import type { PerpsPosition } from '../../hooks/usePerpsAccount'
 
-const mocks = vi.hoisted(() => ({ manage: vi.fn(), refetch: vi.fn(), history: [] as ProtectionHistoryRecord[] }))
-vi.mock('../../hooks/usePerpsTrading', () => ({ usePerpsTrading: () => ({ managePositionProtection: mocks.manage }) }))
+const mocks = vi.hoisted(() => ({ manage: vi.fn(), native: vi.fn(), execute: vi.fn(), refetch: vi.fn(), history: [] as ProtectionHistoryRecord[] }))
+vi.mock('../../hooks/usePerpsTrading', () => ({ usePerpsTrading: () => ({ managePositionProtection: mocks.manage, manageNativeProtection: mocks.native, executeOrder: mocks.execute }) }))
 vi.mock('../../perps-aa', () => ({ usePerpsIdentity: () => ({ accountAddress: '0x1111111111111111111111111111111111111111' }) }))
 vi.mock('../../hooks/useProtectionHistory', () => ({
   useProtectionHistory: () => ({ isPending: false, isError: false, data: { pages: [{ protections: mocks.history }] }, refetch: mocks.refetch }),
@@ -247,4 +247,20 @@ describe('position protection management', () => {
     await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith({ action: 'cancel', protectionId: 7n }))
   })
 
+})
+
+describe('protection native gas fallback', () => {
+  it.each([[2, 'Remove TP/SL with native gas', 'cancel'], [8, 'Retry protected close with native gas', 'retry']] as const)('supports status %s without sponsorship', async (status, label, action) => {
+    mocks.native.mockResolvedValue({ hash: '0xabc' })
+    render(<PerpsProtectionPanel {...props} protection={{ ...protection, status, executionBountyUsdc: 0n }} />)
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    await waitFor(() => expect(mocks.native).toHaveBeenCalledWith(7n, action))
+  })
+  it('finalizes the linked protected attempt and surfaces an unavailable predecessor', async () => {
+    mocks.execute.mockRejectedValue(new Error('Order 4 is ahead in the FIFO queue'))
+    render(<PerpsProtectionPanel {...props} protection={{ ...protection, status: 3, linkedOrderId: 19n, executionBountyUsdc: 0n }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Finalize protected close with native gas' }))
+    await waitFor(() => expect(mocks.execute).toHaveBeenCalledWith(19n))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Order 4 is ahead')
+  })
 })
