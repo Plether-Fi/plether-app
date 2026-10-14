@@ -2,8 +2,6 @@ import { commitNativeClose, executeNativeOrder, nativeProtectionAction } from '.
 import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
-import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
-import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
@@ -857,9 +855,7 @@ export function usePerpsTrading() {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
-      const closeAssistance = undefined
       return await preparePerpsOrderV3(client, sponsored.manifest, {
-        closeAssistance,
         account: sponsored.accountAddress,
         direction,
         side: directionToPerpsSide(direction),
@@ -1019,7 +1015,7 @@ export function usePerpsTrading() {
       })
 
       if (nativeGas) {
-        if (!isClose || protection || preparedOrder.sponsoredClose) throw new Error('Native fallback only supports an ordinary close.')
+        if (!isClose || protection) throw new Error('Native fallback only supports an ordinary close.')
         const result = await commitNativeClose({ client, wallet: requireClient(walletClient), manifest: sponsored.manifest, account: address, owner: sponsored.ownerAddress }, request)
         diagnosticHash = result.hash
         onIncluded?.(result)
@@ -1027,23 +1023,9 @@ export function usePerpsTrading() {
         return result
       }
       if (!sponsored.runtime) throw new Error('The sponsored runtime is unavailable.')
-      const assisted = preparedOrder.sponsoredClose
-      const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
-        : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+      const action = protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
-      let executionManifest = sponsored.manifest
-      let executionRuntime = sponsored.runtime
-      if (assisted) {
-        const live = await loadCloseAssistanceConfig(sponsored.ownerAddress)
-        if (!live || !isAddressEqual(live.lens, assisted.config.lens) || live.lensCodeHash !== assisted.config.lensCodeHash
-          || !isAddressEqual(live.paymasterAddress, assisted.config.paymasterAddress)) throw new Error('Close assistance changed. Review again.')
-        if (!walletClient) throw new Error('Connect the owner wallet before signing the sponsored close')
-        await client.simulateContract({ account: sponsored.ownerAddress, address,
-          abi: SIMPLE_ACCOUNT_BATCH_ABI, functionName: 'executeBatch',
-          args: [action.calls.map(call => ({ target: call.to, value: call.value, data: call.data }))] })
-        executionManifest = closeAssistanceManifest(sponsored.manifest, live)
-        executionRuntime = await createManagedAaRuntime({ manifest: executionManifest, ownerAddress: sponsored.ownerAddress, walletClient, publicClient: client })
-      } else if (protection) {
+      if (protection) {
         if (!isAddressEqual(protection.book, sponsored.manifest.positionProtectionBook)) throw new Error('The reviewed protection deployment changed')
         await client.simulateContract({ account: address, address: protection.book, abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName: 'commitOpenOrderWithProtection', args: [request, protection.params] })
       } else await client.simulateContract({
@@ -1062,14 +1044,12 @@ export function usePerpsTrading() {
         positionProtectionBook: protection?.book,
       }
       const result = await executeSponsoredPerpsAction({
-        manifest: executionManifest,
+        manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
-        runtime: executionRuntime,
+        runtime: sponsored.runtime,
         orderDraft,
-        orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
-          closeAssistance: assisted ? { amountUsdc: assisted.amountUsdc.toString(), lens: assisted.config.lens,
-            lensCodeHash: assisted.config.lensCodeHash, paymasterAddress: assisted.config.paymasterAddress } : undefined },
+        orderRequestV3: persistPerpsOrderRequestV3(address, request),
         protectionIntent: protection ? persistProtectionIntent(protection.book, protection.params) : undefined,
         onStatus,
         onIncluded: (includedResult) => {

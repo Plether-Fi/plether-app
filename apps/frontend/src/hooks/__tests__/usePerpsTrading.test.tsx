@@ -12,7 +12,7 @@ import { usePerpsTrading } from '../usePerpsTrading'
 import * as orderV2 from '../../contracts/perpsOrderV3'
 import * as orderPreparation from '../../contracts/preparePerpsOrderV3'
 import * as deploymentBindings from '../../contracts/verifyPerpsV3Bindings'
-import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
+import { PERPS_ORDER_ROUTER_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
 import { SponsorRequestError } from '../../perps-aa/errors'
 
@@ -789,6 +789,35 @@ describe('usePerpsTrading', () => {
     }))
     expect(input.preparedOrder).toEqual(reviewed)
     expect(mocks.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getLatestPrice' }))
+  })
+
+  it('sponsors a zero-bounty close as one Router call without USDC assistance', async () => {
+    mocks.identityReady = true
+    const input = commitInput()
+    input.isClose = true
+    input.preparedOrder.request.isClose = true
+    input.preparedOrder.request.marginDelta = 0n
+    input.preparedOrder.request.bounds.maxExecutionBountyUsdc = 0n
+    input.preparedOrder.executionBountyUsdc = 0n
+    input.preparedOrder.protection.executionBountyUsdc = 0n
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n })
+
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
+    const submitted = mocks.executeSponsoredPerpsAction.mock.calls[0][0]
+    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, submitBy: 1_700_000_120n } }
+    expect(submitted.action.account).toBe(ACCOUNT)
+    expect(submitted.action.calls).toEqual([{
+      to: getAddress(PERPS_ARBITRUM_SEPOLIA.orderRouter), value: 0n,
+      data: encodeFunctionData({ abi: PERPS_ORDER_ROUTER_ABI, functionName: 'commitOrder', args: [finalized] }),
+    }])
+    expect(submitted.orderRequestV3).toEqual(orderV2.persistPerpsOrderRequestV3(ACCOUNT, finalized))
+    expect(submitted.orderRequestV3).not.toHaveProperty('closeAssistance')
+    expect(mocks.simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      account: ACCOUNT, functionName: 'commitOrder', args: [finalized],
+    }))
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
   it('preserves the finalized request when confirmation is retried after a failed attempt', async () => {

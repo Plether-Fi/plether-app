@@ -4,6 +4,20 @@ This release accompanies plether-core `codex/zero-close-bounties`, based on core
 
 Close execution rewards are permanently zero in the new stack. Open/increase execution rewards, the one-time protection trigger reward, liquidation rewards and trading charges remain. There is no prepaid close credit, automatic protocol subsidy contract or LP-backed keeper expense.
 
+## Close submission and historical sponsorship recovery
+
+New close reviews use the ordinary `previewClose` interface, disclose commitment carry, and submit one Router `commitOrder` call. The normal gas sponsor pays UserOperation gas; no USDC assistance grant, subsidy deposit, alternate assistance lens or assistance-specific paymaster is selected. The native fallback remains independent of sponsorship. The new core preview contract removes `previewSponsoredClose` and `validateSponsoredClose`; old deployed contracts and their archived ABIs remain historical evidence.
+
+Persisted operations retain their historical `closeAssistance` metadata and sponsorship authority. Recovery selects the journaled authority and validates the original account, owner, chain and EntryPoint; native preparation records also retain their recorded deployment profile. Current issuance flags do not decide whether an old operation can recover. Backend historical grant reconciliation, grant-aware PnL and explicitly supported older-deployment issuance remain unchanged. Do not erase these records or redirect unresolved operations to a new account or paymaster.
+
+Cleanup validation on 2026-10-14, relative to `5e29eb48`: 175 focused frontend tests passed, covering ordinary
+review/submission, gas sponsorship, native fallback, historical recovery and journal rehydration. Frontend lint,
+production build and final TypeScript check passed. Full CI is delegated to GitHub; no local audit campaign was run.
+The tested frontend `.ts`/`.tsx` source fingerprint is
+`18eacfeb6e805aa1d79f3b9806dd42ed1535f95da608a1fadd2459a158ea8fe7` (SHA-256 of sorted tracked/untracked
+nonignored source paths and file bytes, each followed by NUL; removed files omitted). Historical backend accounting
+and archived deployment artifacts are unchanged.
+
 ## Required operator configuration
 
 Set a positive `KEEPER_MAX_TX_COST_WEI` for the Haskell keeper and `PROTECTION_WORKER_MAX_TX_COST_WEI` for the protection worker. **Both default to zero and therefore refuse new signed transactions until configured**, including if this service code is deployed against an older stack. Budget is a per-transaction cap on native value plus gas limit times maximum gas price, not a daily allowance. Existing journals still reconcile/rebroadcast previously signed bytes. Fund independent primary/standby native wallets and retain wallet-runway alerts. The contract never checks this operating budget when admitting a close.

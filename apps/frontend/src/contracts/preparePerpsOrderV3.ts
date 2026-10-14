@@ -1,6 +1,5 @@
 import { refreshDeadlineClock } from '../perps-aa/deadlineClock'
-import { parseAbi, type Address, type Hex, type PublicClient } from 'viem'
-import { buildSponsoredCloseAction, verifyCloseAssistanceLens, SIMPLE_ACCOUNT_BATCH_ABI, type CloseAssistanceConfig, type SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
+import type { Address, Hex, PublicClient } from 'viem'
 import {
   PERPS_CFD_CLOSE_PREVIEW_ABI,
   PERPS_CFD_ENGINE_ABI,
@@ -40,7 +39,6 @@ const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
 const ZERO_HASH = `0x${'0'.repeat(64)}`
 
 export interface PreparePerpsOrderV3Input {
-  closeAssistance?: CloseAssistanceConfig
   account: Address
   direction: PerpsDirection
   side: number
@@ -387,7 +385,6 @@ async function reviewPerpsOrderWithContext(
     isClose: input.isClose,
   }
   const clientOrderId = input.clientOrderId ?? generatePerpsClientOrderId()
-  let sponsoredClose: SponsoredCloseFunding | undefined
   const prices = assessmentPrices(context.currentPrice, targetPrice)
   let commitmentCarryUsdc: bigint | undefined
   const assessAtReviewedPrices = async (bounds = permissiveBounds) => {
@@ -403,17 +400,15 @@ async function reviewPerpsOrderWithContext(
               manifest.orderRouter, price, blockTimestamp], blockNumber,
           }), { chainId: manifest.chainId, address: closePreviewAddress, account: input.account, blockNumber, blockHash, samplePrice: price,
             assessmentPoint: price === context.currentPrice ? 'current' : price === targetPrice ? 'limit' : 'midpoint' }))
-          return { ...preview, funding: undefined as SponsoredCloseFunding | undefined }
+          return preview
       }))
       input.signal?.throwIfAborted()
       const current = previews[0]
       if (previews.some(preview => preview.executionBountyUsdc !== context.closeBounty ||
-        preview.commitmentCarryUsdc !== current.commitmentCarryUsdc ||
-        preview.funding?.amountUsdc !== current.funding?.amountUsdc || preview.funding?.depositCarryUsdc !== current.funding?.depositCarryUsdc) ||
+        preview.commitmentCarryUsdc !== current.commitmentCarryUsdc) ||
         (commitmentCarryUsdc !== undefined && commitmentCarryUsdc !== current.commitmentCarryUsdc)) {
         throw preparationFailure(new Error('Close review changed at the reviewed block. Refresh and try again.'), 'order_assessment', 'previewClose')
       }
-      sponsoredClose = current.funding
       executionBountyUsdc = current.executionBountyUsdc
       commitmentCarryUsdc = current.commitmentCarryUsdc
       return previews.map(preview => preview.assessment)
@@ -478,7 +473,6 @@ async function reviewPerpsOrderWithContext(
 
   const finalAssessments = await assessAtReviewedPrices(bounds)
   const reviewSummary: PerpsOrderReviewSummary = {
-    sponsoredClose,
     ...(input.isClose ? { commitmentCarryUsdc } : {}),
     requiredMarginUsdc: reviewedMarginDelta,
     executionBountyUsdc,
@@ -514,7 +508,6 @@ async function reviewPerpsOrderWithContext(
     ), 'leverage')
   }
   const preparedOrder: PreparedPerpsOrderV3 = {
-    sponsoredClose,
     account: input.account,
     manifestVersion: manifest.version,
     orderRouter: manifest.orderRouter,
@@ -558,9 +551,7 @@ export async function reviewPerpsOrderV3(
     }
   }
   if (input.isClose) {
-    context.closePreviewAddress = input.closeAssistance
-      ? (await verifyCloseAssistanceLens(client, input.closeAssistance, context.blockNumber), input.closeAssistance.lens)
-      : await withPreparationStep('deployment_verification', undefined, () => verifyClosePreviewDeployment(client, manifest, context.blockNumber))
+    context.closePreviewAddress = await withPreparationStep('deployment_verification', undefined, () => verifyClosePreviewDeployment(client, manifest, context.blockNumber))
     input.signal?.throwIfAborted()
   }
   let protection: PreparedPerpsOrderV3['positionProtection']
@@ -638,22 +629,8 @@ export async function reviewPerpsOrderV3(
 
 export async function simulateReviewedPerpsOrderV3(
   client: PublicClient,
-  reviewedOrder: ReviewedPerpsOrderV3,
-  manifest?: PerpsAaDeploymentManifest
+  reviewedOrder: ReviewedPerpsOrderV3
 ): Promise<void> {
-  const funding = reviewedOrder.preparedOrder.sponsoredClose
-  if (funding) {
-    if (!manifest) throw new Error('Sponsored close deployment is unavailable')
-    const account = reviewedOrder.preparedOrder.account
-    const blockNumber = reviewedOrder.reviewSummary.reviewedBlockNumber
-    const owner = await client.readContract({ address: account, abi: parseAbi(['function owner() view returns (address)']), functionName: 'owner', blockNumber })
-    const action = buildSponsoredCloseAction(manifest, account, reviewedOrder.preparedOrder.request, funding)
-    await withPreparationStep('commit_simulation', 'executeBatch', () => client.simulateContract({
-      account: owner, address: account, abi: SIMPLE_ACCOUNT_BATCH_ABI, functionName: 'executeBatch',
-      args: [action.calls.map(call => ({ target: call.to, value: call.value, data: call.data }))], blockNumber,
-    }))
-    return
-  }
   const protection = reviewedOrder.preparedOrder.positionProtection
   if (protection) {
     await withPreparationStep('commit_simulation', 'commitOpenOrderWithProtection', () => client.simulateContract({
@@ -694,6 +671,6 @@ export async function preparePerpsOrderV3(
     ), 'funding_check')
   }
   input.signal?.throwIfAborted()
-  await simulateReviewedPerpsOrderV3(client, reviewedOrder, manifest)
+  await simulateReviewedPerpsOrderV3(client, reviewedOrder)
   return reviewedOrder.preparedOrder
 }
