@@ -150,7 +150,7 @@ describe('local V3 signed approval → sponsorship → commitment → execution 
       sizeDelta: units * 10n ** 18n, marginDelta: 0n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 60_000 })
     expect(prepared.reviewSummary).toBeDefined()
     expect(prepared.reviewSummary?.requiredFundingUsdc).toBe(0n)
-    expect(prepared.sponsoredClose).toBeUndefined()
+    expect(prepared).not.toHaveProperty('sponsoredClose')
     expect(actionFor(prepared.request).calls).toHaveLength(1)
     await run(prepared.request, runtime(prepared.request))
     await stack.execute(2n, (await timing(2n)).commitTimestamp + 1n)
