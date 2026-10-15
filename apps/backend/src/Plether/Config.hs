@@ -127,6 +127,7 @@ data Config = Config
   , cfgKeeperMaxBatchSize :: Int
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
+  , cfgKeeperMaxTxCostWei :: Integer
   , cfgKeeperFeeBufferBps :: Integer
   , cfgLpSettlementMode :: LpSettlementMode
   , cfgLpSettlementPrivateKey :: Maybe Text
@@ -697,6 +698,7 @@ loadConfig = do
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
+      keeperMaxTxCostWeiStr <- fromMaybe "0" <$> lookupEnv "KEEPER_MAX_TX_COST_WEI"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
       mLpSettlementMode <- lookupEnv "LP_SETTLEMENT_MODE"
       mLpSettlementEnabled <- lookupEnv "LP_SETTLEMENT_ENABLED"
@@ -747,6 +749,7 @@ loadConfig = do
           keeperMaxBatchSize = fromMaybe 20 (readMaybe keeperMaxBatchSizeStr)
           keeperConfirmations = fromMaybe 1 (readMaybe keeperConfirmationsStr)
           keeperGasBufferBps = fromMaybe 2000 (readMaybe keeperGasBufferBpsStr)
+          keeperMaxTxCostWei = fromMaybe 0 (readMaybe keeperMaxTxCostWeiStr)
           keeperFeeBufferBps = fromMaybe 2500 (readMaybe keeperFeeBufferBpsStr)
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"
@@ -1287,6 +1290,7 @@ loadConfig = do
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
+                , cfgKeeperMaxTxCostWei = max 0 keeperMaxTxCostWei
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
                 , cfgLpSettlementMode = lpsMode
                 , cfgLpSettlementPrivateKey = lpsPrivateKey

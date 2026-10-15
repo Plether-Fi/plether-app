@@ -1,7 +1,7 @@
 import type { OrderRequestV3 } from '@plether-fi/perps-aa-client'
 import { bytesToHex, type Address, type Hex } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
-import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
+import type { HistoricalCloseAssistance } from '../perps-aa/historicalSponsorship'
 
 export const PERPS_CLIENT_ORDER_ID_RESERVED_PREFIX =
   '0x504c455448455221' as const
@@ -122,7 +122,6 @@ export interface PerpsExecutionProtectionSummary {
 }
 
 export interface PerpsOrderReviewSummary {
-  sponsoredClose?: SponsoredCloseFunding
   /** Close commitment debit, separate from execution economics. Absent in older summaries. */
   commitmentCarryUsdc?: bigint
   requiredMarginUsdc: bigint
@@ -151,7 +150,6 @@ export interface PerpsLifecycleOutcomeSnapshot {
 }
 
 export interface PreparedPerpsOrderV3 {
-  sponsoredClose?: SponsoredCloseFunding
   account: Address
   manifestVersion: string
   orderRouter: Address
@@ -169,7 +167,8 @@ export interface PreparedPerpsOrderV3 {
 
 /** JSON-safe immutable request persisted before any UserOperation signature. */
 export interface PersistedPerpsOrderRequestV3 {
-  closeAssistance?: { amountUsdc: string; lens: Address; lensCodeHash: Hex; paymasterAddress: Address }
+  /** Historical grant metadata is read only during recovery; new requests never set it. */
+  closeAssistance?: HistoricalCloseAssistance
   version: 3
   account: Address
   clientOrderId: Hex

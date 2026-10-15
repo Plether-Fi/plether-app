@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ProtectionWorker } from '../worker.mjs'
 
 const address = '0x1111111111111111111111111111111111111111'
-function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n, expired = false, source = 'backend_hermes_latest_v2', pendingCount = 0n, executionEnabled = true } = {}) {
+function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n, expired = false, terminalStatus, source = 'backend_hermes_latest_v2', pendingCount = 0n, executionEnabled = true } = {}) {
   const calls = []
   const logs = []
   const observations = []
@@ -19,7 +19,7 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
       const values = {
         isOracleFrozen: frozen, getUpdateFee: 13n,
         getPositionProtection: { protectionId: 7n, account: address, status, side: 0, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, armedAt: 998n, armedBlock: 198n, linkedOrderId: 5n },
-        outcome: { reason, status: 3 }, nextExecuteId: head, globalTailOrderId: tail,
+        outcome: { reason, status: 3 }, terminalOutcome: { reason, status: terminalStatus ?? (status === 8 ? 3 : 1) }, nextExecuteId: head, globalTailOrderId: tail,
         orderTiming: { executionDeadline: expired ? 999n : 1001n }, maxExecutionWindowSeconds: 60n, pendingOrderCounts: pendingCount,
       }
       if (!(functionName in values)) throw new Error(`Unexpected ${functionName}`)
@@ -50,7 +50,7 @@ it('retries a latched expiry using the permissionless zero-value path while the 
 it('prunes a sole expired head separately before considering another retry', async () => {
   const { worker, calls } = fixture({ status: 8, head: 8n, tail: 8n, expired: true })
   await worker.evaluate()
-  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'executeOrder', [8n, []]]])
+  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'expireOrder', [8n]]])
 })
 it('does not retry into a FIFO whose projected drain exceeds the expiry safety window', async () => {
   const { worker, calls, logs } = fixture({ status: 8, tail: 100n })
@@ -105,4 +105,38 @@ it('rejects historical release manifests before reading or executing V3 contract
   const release = { network: { chainId: 421614 }, release: { deploymentBlock: 100 }, contracts: Object.fromEntries(['positionProtectionBook', 'orderRouter', 'orderLifecycleBook', 'pletherOracle'].map(name => [name, { address: '0x1111111111111111111111111111111111111111' }])) }
   const worker = new ProtectionWorker({ release })
   await assert.rejects(worker.verifyDeployment(), /verified V3 release manifest/)
+})
+
+it('cleans an expired head separately with later orders and no oracle', async () => {
+  const { worker, calls } = fixture({ status: 8, head: 8n, tail: 100n, expired: true, source: 'unknown' })
+  await worker.evaluate()
+  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'expireOrder', [8n]]])
+})
+it('continues monitoring a triggered unpaid close', async () => {
+  const { worker, calls, observations } = fixture({ status: 3, source: 'unknown' })
+  await worker.evaluate()
+  assert.deepEqual(calls, [])
+  assert.equal(observations.at(-1).reason, 'awaiting-close-execution')
+})
+it('expires the actual linked triggered attempt without price data', async () => {
+  const { worker, calls } = fixture({ status: 3, expired: true, frozen: true, source: 'unknown' })
+  await worker.evaluate()
+  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'expireOrder', [5n]]])
+})
+it('does not resubmit a terminal triggered attempt while indexing catches up', async () => {
+  const { worker, calls, observations } = fixture({ status: 3, expired: true, terminalStatus: 2 })
+  await worker.evaluate()
+  assert.deepEqual(calls, [])
+  assert.equal(observations.at(-1).reason, 'terminal-awaiting-index')
+})
+
+it('an oracle fee failure cannot block expiry cleanup of an unpaid linked close', async () => {
+  const { worker, calls, publicClient } = fixture({ status: 3, expired: true })
+  const read = publicClient.readContract
+  publicClient.readContract = async call => {
+    if (call.functionName === 'getUpdateFee') throw new Error('Oracle unavailable')
+    return read(call)
+  }
+  await worker.evaluate()
+  assert.deepEqual(calls, [['prune', 7n, address, 'OrderRouter', 'expireOrder', [5n]]])
 })

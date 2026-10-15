@@ -1,7 +1,7 @@
-import { withCloseAssistanceRecovery } from './closeAssistanceRecovery'
+import { withSponsorshipRecovery } from './sponsorshipRecovery'
 import { lazyWithRetry as lazy } from '../utils/lazyWithRetry'
 import { useSponsoredOperationStore } from './operationStore'
-import { closeAssistanceManifest } from './sponsoredClose'
+import { historicalSponsorshipManifest } from './historicalSponsorship'
 import {
   Suspense,
   useCallback,
@@ -114,10 +114,10 @@ export function PerpsAaProvider({
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
         const promise = import('./managedPimlicoRuntime').then(
-          async ({ createManagedAaRuntime }) => withCloseAssistanceRecovery(
+          async ({ createManagedAaRuntime }) => withSponsorshipRecovery(
             await createManagedAaRuntime({ manifest, ownerAddress, walletClient, publicClient }),
             () => useSponsoredOperationStore.getState().operations,
-            config => createManagedAaRuntime({ manifest: closeAssistanceManifest(manifest, config), ownerAddress, walletClient, publicClient }),
+            config => createManagedAaRuntime({ manifest: historicalSponsorshipManifest(manifest, config), ownerAddress, walletClient, publicClient }),
             preparedManifest => createManagedAaRuntime({ manifest: preparedManifest, ownerAddress, walletClient, publicClient }),
           )
         )

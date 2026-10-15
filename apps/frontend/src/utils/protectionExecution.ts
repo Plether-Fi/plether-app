@@ -1,6 +1,6 @@
 import type { PositionProtection } from '../contracts/positionProtection'
 
-export const PROTECTION_EXECUTION_REASONS = ['monitoring', 'trigger-ready', 'retry-ready', 'oracle-frozen', 'oracle-unavailable', 'pending-orders', 'queue-congested', 'queue-cleanup', 'operator-required', 'execution-disabled', 'check-failed', 'inactive'] as const
+export const PROTECTION_EXECUTION_REASONS = ['awaiting-close-execution', 'terminal-awaiting-index', 'monitoring', 'trigger-ready', 'retry-ready', 'oracle-frozen', 'oracle-unavailable', 'pending-orders', 'queue-congested', 'queue-cleanup', 'operator-required', 'execution-disabled', 'check-failed', 'inactive'] as const
 export type ProtectionExecutionReason = typeof PROTECTION_EXECUTION_REASONS[number]
 export const PROTECTION_EXECUTION_MAX_AGE_SECONDS = 60
 export interface ProtectionExecutionObservation {
@@ -51,6 +51,7 @@ export function currentProtectionObservation(report: ProtectionExecutionReport |
   if (row?.protectionId !== protection.protectionId.toString() ||
       row.account.toLowerCase() !== protection.account.toLowerCase() || row.linkedOrderId !== protection.linkedOrderId.toString() ||
       row.protectionStatus !== protection.status || row.ageSeconds + Math.max(0, now - report.receivedAt) / 1000 >= PROTECTION_EXECUTION_MAX_AGE_SECONDS) return undefined
+  if (protection.status !== 3 && ['awaiting-close-execution', 'terminal-awaiting-index'].includes(row.reason)) return undefined
   if (protection.status === 8 && ['monitoring', 'trigger-ready', 'oracle-frozen', 'inactive'].includes(row.reason)) return undefined
   if (protection.status === 2 && ['retry-ready', 'pending-orders', 'queue-congested', 'queue-cleanup', 'operator-required', 'inactive'].includes(row.reason)) return undefined
   return row
@@ -59,6 +60,8 @@ export function currentProtectionObservation(report: ProtectionExecutionReport |
 export const PROTECTION_EXECUTION_COPY: Record<ProtectionExecutionReason, { title: string; body: string }> = {
   monitoring: { title: 'Watching your trigger prices', body: 'The worker checked the market and did not find an eligible TP/SL trigger at its last check.' },
   'trigger-ready': { title: 'Preparing the close', body: 'A trigger was reached. The worker is preparing a close transaction; it is not confirmed yet.' },
+  'awaiting-close-execution': { title: 'Close is queued', body: 'The trigger has fired. The keeper is monitoring the unpaid close; you can also finalize with native gas.' },
+  'terminal-awaiting-index': { title: 'Close attempt finalized', body: 'The on-chain result is available and indexed protection history is catching up.' },
   'retry-ready': { title: 'Preparing a retry', body: 'The last close expired and the retry checks passed. A new close is not confirmed yet.' },
   'oracle-frozen': { title: 'Waiting for live prices', body: 'New TP/SL triggers are paused while the oracle is frozen. Your existing trigger prices remain set.' },
   'oracle-unavailable': { title: 'Waiting for a usable oracle price', body: 'The worker cannot proceed without an accepted oracle update. It will check again automatically.' },

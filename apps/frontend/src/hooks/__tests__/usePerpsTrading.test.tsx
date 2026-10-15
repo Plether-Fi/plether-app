@@ -12,7 +12,7 @@ import { usePerpsTrading } from '../usePerpsTrading'
 import * as orderV2 from '../../contracts/perpsOrderV3'
 import * as orderPreparation from '../../contracts/preparePerpsOrderV3'
 import * as deploymentBindings from '../../contracts/verifyPerpsV3Bindings'
-import { PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
+import { PERPS_ORDER_ROUTER_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../../contracts/abis'
 import { useSponsoredOperationStore } from '../../perps-aa'
 import { SponsorRequestError } from '../../perps-aa/errors'
 
@@ -148,7 +148,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
           changedIdentityFields: [],
           error: {
             code: 'SPONSORSHIP_MANIFEST_REQUIRED',
-            message: 'Perps is sponsorship-only on testnet.',
+            message: 'A reviewed Trading Account deployment is required.',
           },
           confirmIdentityAfterContinuityCheck: () => false,
           reloadIdentity: () => undefined,
@@ -601,13 +601,13 @@ describe('usePerpsTrading', () => {
     expect(mocks.simulateContract).not.toHaveBeenCalled()
   })
 
-  it('keeps manual finalization and cleanup keeper-only', async () => {
+  it('requires a reviewed account deployment for native execution and cleanup', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.executeOrder(42n))
-      .rejects.toThrow('Order finalization is keeper-operated')
+      .rejects.toThrow('reviewed Trading Account deployment')
     await expect(result.current.cleanupExpiredOrder(42n))
-      .rejects.toThrow('Expired-order cleanup is keeper-operated')
+      .rejects.toThrow('reviewed Trading Account deployment')
   })
 
   it('reads terminal constraint evidence directly from the lifecycle book', async () => {
@@ -789,6 +789,35 @@ describe('usePerpsTrading', () => {
     }))
     expect(input.preparedOrder).toEqual(reviewed)
     expect(mocks.readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: 'getLatestPrice' }))
+  })
+
+  it('sponsors a zero-bounty close as one Router call without USDC assistance', async () => {
+    mocks.identityReady = true
+    const input = commitInput()
+    input.isClose = true
+    input.preparedOrder.request.isClose = true
+    input.preparedOrder.request.marginDelta = 0n
+    input.preparedOrder.request.bounds.maxExecutionBountyUsdc = 0n
+    input.preparedOrder.executionBountyUsdc = 0n
+    input.preparedOrder.protection.executionBountyUsdc = 0n
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n })
+
+    expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
+    const submitted = mocks.executeSponsoredPerpsAction.mock.calls[0][0]
+    const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, submitBy: 1_700_000_120n } }
+    expect(submitted.action.account).toBe(ACCOUNT)
+    expect(submitted.action.calls).toEqual([{
+      to: getAddress(PERPS_ARBITRUM_SEPOLIA.orderRouter), value: 0n,
+      data: encodeFunctionData({ abi: PERPS_ORDER_ROUTER_ABI, functionName: 'commitOrder', args: [finalized] }),
+    }])
+    expect(submitted.orderRequestV3).toEqual(orderV2.persistPerpsOrderRequestV3(ACCOUNT, finalized))
+    expect(submitted.orderRequestV3).not.toHaveProperty('closeAssistance')
+    expect(mocks.simulateContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      account: ACCOUNT, functionName: 'commitOrder', args: [finalized],
+    }))
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
   it('preserves the finalized request when confirmation is retried after a failed attempt', async () => {

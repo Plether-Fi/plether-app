@@ -3,8 +3,8 @@ import abi from './abi.mjs'
 import { admittedPayload, json, protectionSnapshot, retryDecision, triggerLeg } from './policy.mjs'
 
 export class ProtectionWorker {
-  constructor({ db, publicClient, walletClient, account, release, executionEnabled = false, log, batchBlocks = 2000n, confirmations = 12n, candidateBatch = 50, maxPayloadAge = 15, keeperBatchSize = 5, keeperPollSeconds = 5 }) {
-    Object.assign(this, { db, publicClient, walletClient, account, release, executionEnabled, log, batchBlocks, confirmations, candidateBatch, maxPayloadAge, keeperBatchSize, keeperPollSeconds })
+  constructor({ db, publicClient, walletClient, account, release, executionEnabled = false, log, batchBlocks = 2000n, confirmations = 12n, candidateBatch = 50, maxPayloadAge = 15, keeperBatchSize = 5, keeperPollSeconds = 5, maxTxCostWei = 0n }) {
+    Object.assign(this, { db, publicClient, walletClient, account, release, executionEnabled, log, batchBlocks, confirmations, candidateBatch, maxPayloadAge, keeperBatchSize, keeperPollSeconds, maxTxCostWei })
     this.chainId = release.network.chainId
     this.book = release.contracts.positionProtectionBook.address.toLowerCase()
     this.router = release.contracts.orderRouter.address
@@ -127,6 +127,12 @@ export class ProtectionWorker {
     if (!this.executionEnabled) { this.log('info', 'protection_would_submit', { action, protectionId: protectionId.toString() }); return false }
     const request = await this.walletClient.prepareTransactionRequest({ account: this.account, to: address, data: encodeFunctionData({ abi: abi[contract], functionName, args }), value })
     request.gas = request.gas * 125n / 100n
+    const feeCap = request.maxFeePerGas ?? request.gasPrice
+    const cost = typeof feeCap === 'bigint' ? request.gas * feeCap + value : undefined
+    if (this.maxTxCostWei <= 0n || cost === undefined || cost > this.maxTxCostWei) {
+      this.log('error', 'protection_spend_limit', { action, protectionId: protectionId.toString(), cost: cost?.toString() })
+      throw new Error('Protection transaction exceeds configured native spending limit')
+    }
     const raw = await this.walletClient.signTransaction(request)
     const hash = keccak256(raw)
     await this.db.query(`INSERT INTO perps_protection_transactions(chain_id,book,transaction_hash,raw_transaction,protection_id,action,linked_order_id)
@@ -154,7 +160,7 @@ export class ProtectionWorker {
   async evaluate() {
     if (await this.reconcileTransaction()) return
     const block = await this.publicClient.getBlock({ blockTag: 'latest' })
-    const candidates = (await this.db.query("SELECT protection_id FROM (SELECT DISTINCT ON (protection_id) protection_id,snapshot FROM perps_protection_events WHERE chain_id=$1 AND book=$2 ORDER BY protection_id,block_number DESC,log_index DESC) latest WHERE (snapshot->>'status')::int IN (2,8) ORDER BY (protection_id>$3) DESC,protection_id LIMIT $4", [this.chainId, this.book, this.candidateCursor.toString(), this.candidateBatch])).rows
+    const candidates = (await this.db.query("SELECT protection_id FROM (SELECT DISTINCT ON (protection_id) protection_id,snapshot FROM perps_protection_events WHERE chain_id=$1 AND book=$2 ORDER BY protection_id,block_number DESC,log_index DESC) latest WHERE (snapshot->>'status')::int IN (2,3,8) ORDER BY (protection_id>$3) DESC,protection_id LIMIT $4", [this.chainId, this.book, this.candidateCursor.toString(), this.candidateBatch])).rows
     if (!candidates.length) return
     const payload = (await this.db.query("SELECT source,min_publish_time,max_publish_time,update_data FROM perps_pyth_update_payloads WHERE source='backend_hermes_latest_v2' ORDER BY max_publish_time DESC LIMIT 1")).rows[0]
     const freshPayload = admittedPayload(payload, Number(block.timestamp), this.maxPayloadAge)
@@ -162,8 +168,8 @@ export class ProtectionWorker {
     let snapshot
     let fee = 0n
     if (freshPayload) {
-      fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [payload.update_data], block.number)
       try {
+        fee = await this.read(this.oracle, 'PletherOracle', 'getUpdateFee', [payload.update_data], block.number)
         // Simulate the same neutral MarkRefresh policy against the exact admitted Pyth bytes.
         snapshot = (await this.publicClient.simulateContract({ account: this.account, address: this.oracle, abi: abi.PletherOracle, functionName: 'updatePrice', args: [this.account.address, payload.update_data, 1], value: fee, blockNumber: block.number })).result
       } catch { this.log('warn', 'protection_oracle_unavailable', {}) }
@@ -175,24 +181,42 @@ export class ProtectionWorker {
       let protection
       try {
         protection = await this.read(this.book, 'PositionProtectionBook', 'getPositionProtection', [id], block.number)
-        if (![2, 8].includes(protection.status)) { await this.observe(block, protection, 'inactive'); continue }
+        if (![2, 3, 8].includes(protection.status)) { await this.observe(block, protection, 'inactive'); continue }
         if (!this.executionEnabled) { await this.observe(block, protection, 'execution-disabled'); continue }
+        if (protection.status === 3) {
+          // Trigger payment is not completion. Observe the actual linked attempt
+          // until a canonical terminal receipt or strict expiry cleanup exists.
+          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'terminalOutcome', [protection.linkedOrderId], block.number)
+          if (outcome.status === 2 || outcome.status === 3) {
+            await this.observe(block, protection, 'terminal-awaiting-index', { outcomeReason: outcome.reason })
+            continue
+          }
+          const timing = await this.read(this.lifecycle, 'OrderLifecycleBook', 'orderTiming', [protection.linkedOrderId], block.number)
+          if (timing.executionDeadline > 0n && block.timestamp > timing.executionDeadline) {
+            await this.observe(block, protection, 'queue-cleanup')
+            if (await this.submit('prune', id, this.router, 'OrderRouter', 'expireOrder', [protection.linkedOrderId])) return
+          } else {
+            await this.observe(block, protection, 'awaiting-close-execution')
+            this.log('warn', 'protection_close_pending', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), deadline: timing.executionDeadline.toString() })
+          }
+          continue
+        }
         if (!frozen && snapshot && triggerLeg(protection, snapshot.markPrice, snapshot.publishTime, block.number)) {
           await this.observe(block, protection, 'trigger-ready')
           if (await this.submit('trigger', id, this.book, 'PositionProtectionBook', 'triggerPositionProtection', [id, payload.update_data], fee)) return
         } else if (protection.status === 8) {
-          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'outcome', [protection.linkedOrderId], block.number)
+          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'terminalOutcome', [protection.linkedOrderId], block.number)
           if (outcome.reason !== 2 || outcome.status !== 3) {
             await this.observe(block, protection, 'operator-required', { outcomeReason: outcome.reason })
             this.log('error', 'protection_operator_required', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), reason: outcome.reason, failureSelector: outcome.failureSelector, revertDataHash: outcome.revertDataHash }); continue
           }
           const head = await this.read(this.router, 'OrderRouter', 'nextExecuteId', [], block.number)
           const tail = await this.read(this.router, 'OrderRouter', 'globalTailOrderId', [], block.number)
-          if (tail !== 0n && head === tail) {
+          if (tail !== 0n && head > 0n && head <= tail) {
             const policy = await this.read(this.lifecycle, 'OrderLifecycleBook', 'orderTiming', [head], block.number)
             if (policy.executionDeadline > 0n && block.timestamp > policy.executionDeadline) {
               await this.observe(block, protection, 'queue-cleanup', { outcomeReason: outcome.reason })
-              if (await this.submit('prune', id, this.router, 'OrderRouter', 'executeOrder', [head, []])) return
+              if (await this.submit('prune', id, this.router, 'OrderRouter', 'expireOrder', [head])) return
               continue // Re-read protection and receipt after the separate cleanup transaction.
             }
           }

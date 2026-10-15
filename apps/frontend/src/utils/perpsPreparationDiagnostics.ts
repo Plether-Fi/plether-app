@@ -10,7 +10,7 @@ export type PreparationFunction = 'maxExecutionWindowSeconds' | 'currentExecutio
   | 'lastMarkPrice' | 'CAP_PRICE' | 'totalAssets' | 'getLatestPrice'
   | 'activePositionProtectionId' | 'getPendingOrders' | 'maxPendingOrders'
   | 'getFreeBuyingPowerUsdc' | 'positionProtectionTriggerBountyUsdc' | 'getPosition'
-  | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose' | 'previewSponsoredClose' | 'executeBatch'
+  | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose'
   | 'commitOrder' | 'commitOpenOrderWithProtection'
 
 export interface PreparationDebugContext {

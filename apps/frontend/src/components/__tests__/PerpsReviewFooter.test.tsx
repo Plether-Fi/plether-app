@@ -25,6 +25,11 @@ describe('commit review feedback', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm updated order' }))
     expect(onConfirm).toHaveBeenCalledOnce()
   })
+  it('keeps commitment carry visible on an ordinary close review', () => {
+    render(<PerpsReviewFooter {...props} preparing={false} canConfirm commitmentCarryUsdc="1.250000" />)
+    expect(screen.getByText('Carry collected when the order is committed: 1.250000 USDC.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+  })
   it('keeps failed reviews disabled and exposes retry beside the error', () => {
     const onRetry = vi.fn()
     render(<PerpsReviewFooter {...props} preparing={false} error="Order checks failed." onRetry={onRetry} />)

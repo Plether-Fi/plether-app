@@ -1,3 +1,4 @@
+import { NativeQueueBlockedError } from '../perps-aa/nativeClose'
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
@@ -1837,6 +1838,8 @@ export function PerpsTradeTicket({
   const savedConfirmation = useSavedOperationConfirmation(activeAccountOperation)
   const orderReviewRequest = usePerpsUiStore(state => state.orderReviewRequest)
   const [reviewGeneration, setReviewGeneration] = useState(0)
+  const [nativeCloseGas, setNativeCloseGas] = useState(false)
+  const [blockingOrderId, setBlockingOrderId] = useState<bigint>()
   const [restoredDraftNotice, setRestoredDraftNotice] = useState<string>()
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
@@ -2050,7 +2053,7 @@ export function PerpsTradeTicket({
 
     const timeout = window.setTimeout(() => {
       setKeeperRevealNowMs(Date.now())
-      if (!isSponsoredAccountConfigured) {
+      {
         setLifecycleState((currentState) => (
           currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
         ))
@@ -2063,18 +2066,6 @@ export function PerpsTradeTicket({
       window.clearTimeout(timeout)
     }
   }, [enableLiveTrading, isSponsoredAccountConfigured, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
-
-  useEffect(() => {
-    if (
-      isSponsoredAccountConfigured &&
-      (
-        lifecycleState === 'selfExecuteAvailable' ||
-        lifecycleState === 'selfExecutePending'
-      )
-    ) {
-      setLifecycleState('revealPending')
-    }
-  }, [isSponsoredAccountConfigured, lifecycleState])
 
   const applyTerminalOrder = useCallback((
     order: PerpsOrderHistoryRow,
@@ -2861,10 +2852,9 @@ export function PerpsTradeTicket({
     ? undefined
     : Number(firstPendingOrderExpiryTime) - nowSeconds
   const canCleanupOldestPendingOrder = enableLiveTrading &&
-    !isSponsoredAccountConfigured &&
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
-    oldestPendingOrderSecondsToExpiry <= 0
+    oldestPendingOrderSecondsToExpiry < 0
   const canAttachProtection = !isReduceOnly && !currentPosition?.exists && !isReducingCurrentPosition && activePositionProtectionId === 0n
   const protectionPriceContext = {
     direction: effectiveOrderDirection,
@@ -2980,7 +2970,7 @@ export function PerpsTradeTicket({
     ) {
       const expiryContext = oldestPendingOrderSecondsToExpiry === undefined
         ? 'Waiting for expiry data.'
-        : oldestPendingOrderSecondsToExpiry <= 0
+        : oldestPendingOrderSecondsToExpiry < 0
           ? Math.abs(oldestPendingOrderSecondsToExpiry) <= 1
             ? 'Oldest pending order expires now.'
             : `Oldest pending order expired ${formatDuration(Math.abs(oldestPendingOrderSecondsToExpiry))} ago.`
@@ -3460,7 +3450,6 @@ export function PerpsTradeTicket({
   const isKeeperRevealGraceActive = shouldShowFinalizationProgress &&
     lifecycleState === 'revealPending' &&
     (
-      isSponsoredAccountConfigured ||
       keeperRevealDeadlineMs === undefined ||
       keeperRevealNowMs < keeperRevealDeadlineMs
     )
@@ -3921,6 +3910,7 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
+        nativeGas: isReducingCurrentPosition && nativeCloseGas,
         selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
         preparedOrder,
         orderDraft: { version: 1, direction, orderQuantity, leverage: activeLeverage, slippage,
@@ -4034,6 +4024,21 @@ export function PerpsTradeTicket({
     }
   }
 
+  async function handlePrecedingOrder() {
+    if (blockingOrderId === undefined) return
+    setLifecycleState('selfExecutePending')
+    try {
+      await executeOrder(blockingOrderId)
+      setBlockingOrderId(undefined)
+      setFlowError(undefined)
+      setLifecycleState('selfExecuteAvailable')
+    } catch (error) {
+      if (error instanceof NativeQueueBlockedError) setBlockingOrderId(error.orderId)
+      setFlowError(error instanceof Error ? error.message : 'Preceding order remains pending')
+      setLifecycleState('selfExecuteAvailable')
+    }
+  }
+
   async function handleSelfExecute() {
     if (!enableLiveTrading) {
       trackPerpsOrderLifecycle('reveal_started', commonAnalyticsProperties)
@@ -4059,9 +4064,10 @@ export function PerpsTradeTicket({
       setExecuteTxHash(result.hash)
       trackPerpsOrderLifecycle('reveal_succeeded', commonAnalyticsProperties)
     } catch (error) {
+      if (error instanceof NativeQueueBlockedError) setBlockingOrderId(error.orderId)
       const message = error instanceof Error ? error.message : 'Self-execute transaction failed'
       setFlowError(message)
-      setLifecycleState(isRetryableSelfExecuteMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
+      setLifecycleState(error instanceof NativeQueueBlockedError || isRetryableSelfExecuteMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
       trackPerpsOrderLifecycle('reveal_failed', {
         ...commonAnalyticsProperties,
         error_category: perpsErrorCategory(error),
@@ -4071,6 +4077,7 @@ export function PerpsTradeTicket({
   }
 
   const resetReviewLifecycle = useCallback(() => {
+    setBlockingOrderId(undefined)
     commitAttemptIdRef.current += 1
     includedCommitAttemptRef.current = undefined
     includedCommitIdentityRef.current = undefined
@@ -4662,8 +4669,6 @@ export function PerpsTradeTicket({
         footer={
           lifecycleState === 'preview' ? (
             <PerpsReviewFooter
-              sponsoredCloseUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.amountUsdc, 6) : undefined}
-              depositCarryUsdc={displayedExecutionProtections?.sponsoredClose ? formatPerpsUsdc(displayedExecutionProtections.sponsoredClose.depositCarryUsdc, 6) : undefined}
               commitmentCarryUsdc={displayedExecutionProtections?.reviewSummary?.commitmentCarryUsdc ? formatPerpsUsdc(displayedExecutionProtections.reviewSummary.commitmentCarryUsdc, 6) : undefined}
               preparing={isExecutionProtectionsLoading}
               recoveringOracle={preparation.recoveringOracle}
@@ -5076,6 +5081,13 @@ export function PerpsTradeTicket({
             </>
           ) : null}
 
+          {isReducingCurrentPosition && lifecycleState === 'preview' ? (
+            <label className="block border border-brand-border/20 p-3 text-sm">
+              <input type="checkbox" checked={nativeCloseGas} onChange={event => { setNativeCloseGas(event.target.checked) }} />{' '}
+              Pay native gas from my owner wallet to close without sponsorship. The position stays in my Trading Account.
+            </label>
+          ) : null}
+
           {lifecycleState === 'revealPending' ? (
             <>
               <PendingStateCard
@@ -5120,6 +5132,10 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'selfExecuteAvailable' ? (
             <>
+              {blockingOrderId !== undefined ? <div className="space-y-2 border border-brand-border/20 p-3 text-sm">
+                <p>Order #{blockingOrderId.toString()} is ahead of yours. You may pay native gas and oracle costs to process it; this will not finalize your own order.</p>
+                <Button onClick={() => void handlePrecedingOrder()}>Process preceding order #{blockingOrderId.toString()}</Button>
+              </div> : null}
               <PendingStateCard
                 title={
                   flowError && isHermesRateLimitMessage(flowError)
@@ -5135,7 +5151,7 @@ export function PerpsTradeTicket({
                 description={
                   flowError && isPythExpiryMessage(flowError)
                     ? flowError
-                    : 'Automatic finalization has not completed yet. You can submit the finalization transaction now; the order status check will confirm the result.'
+                    : 'Automatic finalization has not completed yet. Your owner wallet can pay native gas and any oracle fee to execute this existing order. Your Trading Account stays the same. The wallet shows the transaction cost before you confirm.'
                 }
               />
 
