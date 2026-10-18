@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
 import { createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
 const feeds = { pyth: `0x${'11'.repeat(20)}`, feedIds: Array.from({ length: 6 }, (_, i) => `0x${String(i + 1).padStart(64, '0')}`) }
@@ -91,6 +92,56 @@ test('simulation failure sends nothing and a concurrent mark advancement is re-e
   assert.equal((await f.iterate()).status, 'waiting_for_payload')
   f.state.publishes.fill(995)
   assert.equal((await f.iterate()).status, 'synchronized')
+})
+const confidenceErrorAbi = parseAbi(['error PletherOracle__BasketConfidenceTooWide(uint8 mode, uint256 basketConfidence, uint256 basketPrice, uint256 maxConfidenceBps)'])
+function confidenceRevert(abi = confidenceErrorAbi) {
+  return new ContractFunctionExecutionError(new ContractFunctionRevertedError({
+    abi, functionName: 'updateMarkPrice', data: encodeErrorResult({
+      abi: confidenceErrorAbi, errorName: 'PletherOracle__BasketConfidenceTooWide',
+      args: [1, 150_000n, 100_000_000n, 10n],
+    }),
+  }), { abi, functionName: 'updateMarkPrice', args: [['0xabcd']] })
+}
+test('wide confidence waits without submitting, logs the decoded ratio and recovers with a narrower payload', async () => {
+  const f = fixture()
+  let rejected = true
+  f.publicClient.simulateContract = async input => {
+    if (rejected) throw confidenceRevert(input.abi)
+    return { request: input }
+  }
+  assert.equal((await f.iterate()).status, 'confidence_too_wide')
+  assert.equal(f.state.writes, 0)
+  const warning = f.state.logs.find(args => args[2] === 'oracle_update_confidence_too_wide')
+  assert.equal(warning[0], 60)
+  assert.equal(warning[1], 'WARN')
+  assert.equal(warning[4].confidence_ratio_bps, 15)
+  assert.equal(warning[4].max_confidence_bps, 10n)
+  assert.equal(warning[4].basket_price, 100_000_000n)
+  const reads = f.state.reads.length
+  f.state.now += 4999
+  assert.equal((await f.iterate()).status, 'backoff')
+  assert.equal(f.state.reads.length, reads)
+  rejected = false
+  f.state.now++
+  f.state.publishes.fill(995)
+  assert.equal((await f.iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
+})
+test('confidence-like error text is not treated as a decoded contract rejection', async () => {
+  const f = fixture()
+  f.state.simulationError = new Error('RPC failed: PletherOracle__BasketConfidenceTooWide')
+  await assert.rejects(f.iterate(), /RPC failed/)
+  assert.equal(f.state.writes, 0)
+})
+test('a receipt error is still reconciled before another submission even when it contains a confidence revert', async () => {
+  const f = fixture()
+  f.state.waitError = confidenceRevert()
+  await assert.rejects(f.iterate(), ContractFunctionExecutionError)
+  await assert.rejects(f.iterate(), ContractFunctionExecutionError)
+  assert.equal(f.state.writes, 1)
+  f.state.waitError = undefined
+  assert.equal((await f.iterate()).status, 'synchronized')
+  assert.equal(f.state.writes, 1)
 })
 test('receipt timeout retains the hash and reconciles before sending anything else', async () => {
   const f = fixture(); f.state.waitError = new Error('receipt timeout')
