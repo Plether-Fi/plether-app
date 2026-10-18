@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url'
-import { createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
+import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, formatEther, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
@@ -48,6 +48,7 @@ const PLETHER_ORACLE_ABI = [
 ]
 
 const ORDER_ROUTER_ABI = [
+  ...parseAbi(['error PletherOracle__BasketConfidenceTooWide(uint8 mode, uint256 basketConfidence, uint256 basketPrice, uint256 maxConfidenceBps)']),
   {
     type: 'function',
     name: 'updateMarkPrice',
@@ -326,8 +327,26 @@ export function createOracleWorker({ account, backendUrl, dryRun = false, maxPay
       if (rejection) return { status: rejection }
       repair = before.lag > 0n
       const markTime = before.status.lastMarkTime
-      const { request } = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+      let request
+      try {
+        const simulation = await publicClient.simulateContract({ account, address: ADDRESSES.orderRouter,
+          abi: ORDER_ROUTER_ABI, functionName: 'updateMarkPrice', args: [payload.updateData], value: fee })
+        request = simulation.request
+      } catch (error) {
+        const reverted = error instanceof BaseError
+          ? error.walk(cause => cause instanceof ContractFunctionRevertedError)
+          : undefined
+        if (!(reverted instanceof ContractFunctionRevertedError) ||
+            reverted.data?.errorName !== 'PletherOracle__BasketConfidenceTooWide') throw error
+        const [mode, basketConfidence, basketPrice, maxConfidenceBps] = reverted.data.args
+        deferRetry()
+        logEvery(60, 'WARN', 'oracle_update_confidence_too_wide', 'Pyth basket confidence exceeds the contract limit; waiting for a narrower payload', {
+          price_mode: mode, basket_confidence: basketConfidence, basket_price: basketPrice,
+          confidence_ratio_bps: Number(basketConfidence) * 10_000 / Number(basketPrice),
+          max_confidence_bps: maxConfidenceBps, min_publish_time: minPublishTime, max_publish_time: maxPublishTime,
+        })
+        return { status: 'confidence_too_wide' }
+      }
       const hash = await walletClient.writeContract(request)
       nextRefreshAt = now() + pollSeconds * 1000
       failures = 0
