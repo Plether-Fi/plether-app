@@ -346,6 +346,12 @@ export default {
     }
 
     let response = await env.ASSETS.fetch(request);
+    // Pages serves index.html with 200 for missing assets. A missing weekly
+    // publication must be a 404 so the UI can show its awaiting state.
+    if (url.pathname === '/divisions/current.json' && response.ok &&
+      response.headers.get('Content-Type')?.toLowerCase().includes('text/html')) {
+      response = new Response(null, { status: 404 });
+    }
     if (response.status === 404 && !url.pathname.includes('.')) {
       response = await env.ASSETS.fetch(new URL('/', request.url));
     }
