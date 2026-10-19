@@ -23,24 +23,24 @@ describe('Divisions leaderboard', () => {
   it('shows launch rules without pretending September scores are weekly results', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Plether Divisions' })).toBeInTheDocument()
-    expect(screen.getByText('First badges scheduled for Monday 19 October 2026')).toBeInTheDocument()
     expect(screen.getByText('All traded wallets')).toBeInTheDocument()
-    expect(screen.getByText(/2\+ active days/)).toBeInTheDocument()
+    expect(screen.getByText(/Follow trading activity across every traded wallet/)).toBeInTheDocument()
+    expect(screen.queryByText(/2\+ active days/)).not.toBeInTheDocument()
     expect(screen.queryByText('Total prize pool')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Enter competition/ })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Link Discord and wallet' })).toHaveAttribute('href', '/register')
     expect(screen.getByText(/Discord role assignment is coming/)).toBeInTheDocument()
   })
-  it('shows all traded wallets while weekly scoring awaits a snapshot', () => {
+  it('leads with all traded wallets when weekly rankings are unpublished', () => {
     clock.now = Date.parse('2026-10-19T12:00:00Z')
     walletsQuery.mockReturnValue({ data: { indexedThroughBlock: '320000000', traders: [
       { address: '0x0000000000000000000000000000000000000001', executedTrades: 3, lastTradeAt: '2026-10-18T20:00:00Z' },
       { address: '0x0000000000000000000000000000000000000002', executedTrades: 1, lastTradeAt: '2026-10-17T20:00:00Z' },
     ] }, isLoading: false, isError: false })
     show()
-    expect(screen.getByText('Awaiting the first weekly publication')).toBeInTheDocument()
-    expect(screen.getByText(/Weekly returns and badges are pending/)).toBeInTheDocument()
-    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'All traded wallets' })).toBeInTheDocument()
+    expect(screen.queryByText('Awaiting the first weekly publication')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Weekly leaderboard' })).not.toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
@@ -77,10 +77,10 @@ describe('Divisions leaderboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(refetch).toHaveBeenCalledOnce()
   })
-  it('shows a blocking failure if no publication can be read', () => {
+  it('keeps the live wallet list available if no publication can be read', () => {
     query.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
     show()
-    expect(screen.getByText('offline')).toBeInTheDocument()
-    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'All traded wallets' })).toBeInTheDocument()
+    expect(screen.queryByText('offline')).not.toBeInTheDocument()
   })
 })

@@ -19,7 +19,8 @@ integer ratios to rank percentage returns, without floating-point rounding.
 
 The UI reads `/divisions/current.json`. It never uses September's cumulative
 P&L or 100,000-USDC baseline to calculate weekly Divisions results. Before a
-publication exists, it shows the launch and awaiting-publication state.
+publication exists, it shows the live traded-wallet roster without a ranking
+placeholder or unpublished badges.
 
 Use Node **22.18+** to run the publisher (native TypeScript support):
 
