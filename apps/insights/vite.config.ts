@@ -9,6 +9,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '^/api/insights/v1/divisions/registrations(?:/|$)': {
+        target: registrationApiTarget,
+        changeOrigin: true,
+      },
       '^/api/insights/v1/competitions/[^/]+/registrations(?:/|$)': {
         target: registrationApiTarget,
         changeOrigin: true,

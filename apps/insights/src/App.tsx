@@ -6,6 +6,7 @@ import { MethodologyPage } from './pages/MethodologyPage'
 import { CompetitionArchivePage } from './pages/CompetitionArchivePage'
 import { CompetitionMethodologyPage } from './pages/CompetitionMethodologyPage'
 import { WalletPage } from './pages/WalletPage'
+import { DivisionsRegistrationPage } from './pages/DivisionsRegistrationPage'
 
 function LegacyWalletRedirect() {
   const { address = '' } = useParams()
@@ -18,7 +19,7 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<LeaderboardPage />} />
-          <Route path="/register" element={<Navigate to="/methodology" replace />} />
+          <Route path="/register" element={<DivisionsRegistrationPage />} />
           <Route path="/competitions/:slug/register" element={<Navigate to="/archive/september-2026" replace />} />
           <Route path="/archive/september-2026" element={<CompetitionArchivePage />} />
           <Route path="/archive/september-2026/methodology" element={<CompetitionMethodologyPage />} />

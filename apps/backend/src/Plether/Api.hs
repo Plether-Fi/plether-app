@@ -106,6 +106,7 @@ import Plether.Handlers.Insights
   , getInsightsDataStatusResponse
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
+import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
 import Plether.Database (DbPool)
 import Plether.Database.VaultActivity (VaultActivityDeployment (..))
 import Plether.Handlers.VaultActivity
@@ -171,8 +172,8 @@ instance FromJSON TestnetFaucetRequest where
         acceptsAsync = confirmationMode == Just (Aeson.String "async")
     pure $ TestnetFaucetRequest address acceptsAsync
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> ScottyM ()
-app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -211,7 +212,9 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   middleware $ corsMiddleware cfg
 
   case mPool of
-    Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager
+    Just pool -> do
+      registerInsightsRegistrationRoutes pool perpsClient cfg manager
+      registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig
     Nothing -> pure ()
 
   get "/api/health" $ do

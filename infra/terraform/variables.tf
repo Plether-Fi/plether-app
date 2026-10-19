@@ -311,6 +311,40 @@ variable "enable_insights_registration" {
   description = "Permit the one-way persisted activation of first-party Insights registration after its secrets, competition, and public edge proxy are ready. Setting false does not pause or close an already activated database window."
 }
 
+variable "enable_divisions_registration" {
+  type        = bool
+  default     = false
+  description = "Enable Discord identity and owner-wallet linking for Plether Divisions. Rankings remain open to unlinked wallets."
+}
+
+variable "discord_oauth_client_id" {
+  type        = string
+  default     = ""
+  description = "Discord application client ID used for Divisions identity linking."
+  validation {
+    condition     = var.discord_oauth_client_id == "" || can(regex("^[0-9]{17,22}$", var.discord_oauth_client_id))
+    error_message = "discord_oauth_client_id must be a numeric Discord application ID."
+  }
+}
+
+variable "discord_oauth_callback_url" {
+  type        = string
+  default     = "https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback"
+  description = "Exact Discord OAuth redirect URI registered for Divisions."
+}
+
+variable "insights_divisions_rules_version" {
+  type        = string
+  default     = "divisions-2026-10"
+  description = "Version of the Divisions rules accepted during account linking."
+}
+
+variable "insights_divisions_privacy_version" {
+  type        = string
+  default     = "divisions-2026-10"
+  description = "Version of the Divisions linking privacy notice."
+}
+
 variable "insights_registration_public_origin" {
   type        = string
   default     = "https://insights.plether.com"

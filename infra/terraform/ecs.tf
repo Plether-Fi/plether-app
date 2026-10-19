@@ -201,6 +201,15 @@ locals {
     ] : []
   ) : []
 
+  discord_oauth_client_secret_parameter_arn = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${local.deployment_name}/discord-oauth-client-secret"
+
+  divisions_registration_secrets = var.enable_divisions_registration ? [
+    {
+      name      = "DISCORD_OAUTH_CLIENT_SECRET"
+      valueFrom = local.discord_oauth_client_secret_parameter_arn
+    }
+  ] : []
+
   insights_registration_environment = [
     { name = "INSIGHTS_REGISTRATION_PROVISIONED", value = tostring(var.provision_insights_registration) },
     { name = "INSIGHTS_REGISTRATION_ENABLED", value = tostring(var.enable_insights_registration) },
@@ -217,6 +226,14 @@ locals {
     { name = "INSIGHTS_REGISTRATION_SESSION_RATE_LIMIT_PER_MINUTE", value = tostring(var.insights_registration_session_rate_limit_per_minute) },
     { name = "INSIGHTS_REGISTRATION_RULES_VERSION", value = var.insights_registration_rules_version },
     { name = "INSIGHTS_REGISTRATION_PRIVACY_VERSION", value = var.insights_registration_privacy_version },
+  ]
+
+  divisions_registration_environment = [
+    { name = "INSIGHTS_DIVISIONS_REGISTRATION_ENABLED", value = tostring(var.enable_divisions_registration) },
+    { name = "DISCORD_OAUTH_CLIENT_ID", value = var.discord_oauth_client_id },
+    { name = "DISCORD_OAUTH_CALLBACK_URL", value = var.discord_oauth_callback_url },
+    { name = "INSIGHTS_DIVISIONS_RULES_VERSION", value = var.insights_divisions_rules_version },
+    { name = "INSIGHTS_DIVISIONS_PRIVACY_VERSION", value = var.insights_divisions_privacy_version },
   ]
 
   insights_competition_environment = concat(
@@ -403,7 +420,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets)
+    ], local.rpc_auth_token_secret, local.perps_rpc_auth_token_secret, local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.insights_registration_secrets, local.divisions_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -435,7 +452,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.insights_competition_environment)
+    ], local.pyth_environment, local.perps_candle_environment, local.native_aa_environment, local.insights_registration_environment, local.divisions_registration_environment, local.insights_competition_environment)
   }, merge(local.otel_log_router_container, { image = local.aa_observability_log_router_image })])
 
   lifecycle {
@@ -534,6 +551,16 @@ resource "aws_ecs_task_definition" "api" {
         && var.x_oauth_callback_url == "${var.insights_registration_public_origin}/api/insights/v1/competitions/testnet-trading-2026-09/registrations/x/callback"
       )
       error_message = "Provisioned Insights registration is Sepolia-only and requires non-placeholder, domain-separated credentials plus the canonical Turnstile action, origin/hostname, X target, callback, active email key, and stable email HMAC."
+    }
+
+    precondition {
+      condition = !var.enable_divisions_registration || (
+        var.environment == "sepolia"
+        && var.provision_insights_registration
+        && can(regex("^[0-9]{17,22}$", var.discord_oauth_client_id))
+        && var.discord_oauth_callback_url == "${var.insights_registration_public_origin}/api/insights/v1/divisions/registrations/discord/callback"
+      )
+      error_message = "Divisions registration requires provisioned Insights registration, a Discord application ID, and the exact canonical callback. Provision the Discord client secret as an external SSM SecureString."
     }
 
     precondition {

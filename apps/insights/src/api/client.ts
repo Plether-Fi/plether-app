@@ -221,7 +221,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   return parseResponse<T>(response)
 }
 
-async function registrationRequest<T>(
+export async function registrationRequest<T>(
   path: string,
   options: {
     method?: 'GET' | 'POST'

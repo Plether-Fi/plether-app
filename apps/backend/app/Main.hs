@@ -20,6 +20,7 @@ import Plether.Database.VaultActivity (ensureVaultActivitySchema)
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (RpcClientOptions (..), newClientWithOptions)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
+import Plether.Handlers.DivisionsRegistration (ensureDivisionsSchema, loadDiscordConfig)
 import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
@@ -33,6 +34,7 @@ import Plether.Vaults.PerformanceIndexer
   , startVaultPerformanceIndexer
   )
 import System.Exit (exitFailure)
+import System.Environment (lookupEnv)
 import Web.Scotty (middleware, scottyOpts)
 
 main :: IO ()
@@ -201,6 +203,19 @@ main = do
         , field "perps_chain_id" $ cfgPerpsChainId cfg
         , field "history_enabled" $ maybe False (const True) mPool
         ]
+      discordConfig <- case cfgRegistrationConfig cfg of
+        Nothing -> do
+          divisionsEnabled <- lookupEnv "INSIGHTS_DIVISIONS_REGISTRATION_ENABLED"
+          when (divisionsEnabled == Just "true") $
+            ioError $ userError "Divisions registration requires provisioned Insights registration configuration"
+          pure Nothing
+        Just registrationConfig -> do
+          configured <- loadDiscordConfig registrationConfig
+          either (ioError . userError) pure configured
+      case (mPool, discordConfig) of
+        (Just pool, Just _) -> withDb pool ensureDivisionsSchema
+        (Nothing, Just _) -> ioError $ userError "Divisions registration requires DATABASE_URL"
+        _ -> pure ()
       scottyOpts (apiServerOptions $ cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState
+        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig

@@ -248,9 +248,9 @@ resource "aws_iam_role_policy" "github_deploy_self_hosted_aa" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InspectAaRpcParameterMetadata"
-        Effect   = "Allow"
-        Action   = "ssm:DescribeParameters"
+        Sid    = "InspectAaRpcParameterMetadata"
+        Effect = "Allow"
+        Action = "ssm:DescribeParameters"
         # This metadata-only list API does not support parameter resource ARNs.
         Resource = "*"
         Condition = {
@@ -463,6 +463,7 @@ resource "aws_iam_role_policy" "api_execution_ssm" {
         [for secret in local.faucet_proxy_origin_secret : secret.valueFrom],
         [for secret in local.aa_proxy_secrets : secret.valueFrom],
         [for secret in local.insights_registration_secrets : secret.valueFrom],
+        [for secret in local.divisions_registration_secrets : secret.valueFrom],
       )))
     }]
   })

@@ -26,7 +26,8 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByText(/2\+ active days/)).toBeInTheDocument()
     expect(screen.queryByText('Total prize pool')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Enter competition/ })).not.toBeInTheDocument()
-    expect(screen.getByText(/Discord role linking is coming/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Link Discord and wallet' })).toHaveAttribute('href', '/register')
+    expect(screen.getByText(/Discord role assignment is coming/)).toBeInTheDocument()
   })
   it('shows an awaiting state after the scheduled first publication when no snapshot exists', () => {
     clock.now = Date.parse('2026-10-19T12:00:00Z')

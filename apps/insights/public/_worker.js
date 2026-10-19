@@ -1,8 +1,8 @@
 const API_PREFIX = '/api/insights/v1';
 const REGISTRATION_PATH_PATTERN =
-  /^\/api\/insights\/v1\/competitions\/[^/]+\/registrations(?:\/|$)/;
+  /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations|divisions\/registrations)(?:\/|$)/;
 const REGISTRATION_CALLBACK_PATH_PATTERN =
-  /^\/api\/insights\/v1\/competitions\/[^/]+\/registrations\/x\/callback$/;
+  /^\/api\/insights\/v1\/(?:competitions\/[^/]+\/registrations\/x|divisions\/registrations\/discord)\/callback$/;
 const REGISTRATION_ORIGIN_HEADER = 'X-Plether-Registration-Origin';
 
 const SECURITY_HEADERS = {
@@ -178,6 +178,19 @@ function registrationOriginError(pathname) {
 
 function registrationRedirectAllowed(response, pathname, publicOrigin) {
   if (response.status < 300 || response.status >= 400) return true;
+
+  if (pathname === `${API_PREFIX}/divisions/registrations/discord/callback`) {
+    const location = response.headers.get('Location');
+    if (response.status !== 303 || !location) return false;
+    try {
+      const target = new URL(location);
+      return target.origin === publicOrigin && target.username === '' &&
+        target.password === '' && target.pathname === '/register' &&
+        target.search === '' && target.hash === '';
+    } catch {
+      return false;
+    }
+  }
 
   const callbackMatch = pathname.match(
     /^\/api\/insights\/v1\/competitions\/([^/]+)\/registrations\/x\/callback$/,
