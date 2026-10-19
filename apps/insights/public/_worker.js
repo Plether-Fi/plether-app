@@ -32,6 +32,10 @@ function resolvePublicApiCacheTtl(method, pathname) {
     return API_CACHE_TTLS.status;
   }
 
+  if (apiPath === '/divisions/traders') {
+    return API_CACHE_TTLS.leaderboard;
+  }
+
   if (/^\/competitions\/[^/]+\/leaderboard$/.test(apiPath)) {
     return API_CACHE_TTLS.leaderboard;
   }

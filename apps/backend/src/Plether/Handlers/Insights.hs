@@ -3,6 +3,7 @@ module Plether.Handlers.Insights
   , getCompetitionLeaderboardResponse
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
+  , getDivisionsTradersResponse
   , competitionRowToJson
   , leaderboardRowToJson
   , prizeEligibleAfterIntegrityReview
@@ -13,11 +14,12 @@ module Plether.Handlers.Insights
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Maybe (catMaybes)
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, query)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
   , ReadWriteMode (ReadOnly)
@@ -38,6 +40,8 @@ import Plether.Database.Insights
   , getCurrentCompetition
   , getInsightsDataStatus
   )
+import Plether.Database.Schema (PerpsIndexerStatusRow (..), getPerpsIndexerStatus)
+import Plether.Perps.HistoryIndexer (perpsIndexerNameForLifecycleBook)
 import Plether.Insights.Competition
   ( CompetitionRegistrationState (..)
   , CompetitionRules (..)
@@ -181,6 +185,54 @@ getInsightsDataStatusResponse pool cfg = do
                 , "scoringVersion" .= icrScoringVersion competition
                 , "provisional" .= not (icrFinalized competition)
                 ]
+
+-- The Divisions roster starts at its first trading window and spans every
+-- indexed release. A router migration must not erase the preceding week's
+-- traders. Discord links and September registration are not consulted.
+getDivisionsTradersResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getDivisionsTradersResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
+    cursor <- getPerpsIndexerStatus conn (cfgPerpsChainId cfg)
+      (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
+      (cfgPerpsOrderRouter cfg)
+    rows <- case cursor of
+      Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _ } ->
+        query conn
+          "SELECT LOWER(a.account), COUNT(*)::BIGINT, MAX(a.timestamp)::BIGINT \
+          \FROM perps_account_activity a \
+          \WHERE a.chain_id = ? AND a.timestamp >= ? \
+          \AND a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 \
+          \AND EXISTS (SELECT 1 FROM perps_indexer_state i \
+          \  WHERE i.chain_id = a.chain_id AND i.release_router = a.release_router \
+          \  AND i.indexer_name IN (('perps-history-costs-v1:' || a.release_router), \
+          \    ('perps-history-costs-v2:finalized-abi3:' || a.release_router)) \
+          \  AND i.last_indexed_block_hash IS NOT NULL \
+          \  AND a.block_number >= COALESCE(i.configured_start_block, 0) \
+          \  AND a.block_number <= i.last_indexed_block) \
+          \GROUP BY LOWER(a.account) ORDER BY MAX(a.timestamp) DESC, LOWER(a.account) ASC"
+          (cfgPerpsChainId cfg, 1791752400 :: Integer)
+      _ -> pure []
+    pure (cursor, rows :: [(Text, Int64, Int64)])
+  pure $ case mCursor of
+    Just PerpsIndexerStatusRow { pisLastIndexedBlock = safeBlock, pisLastIndexedBlockHash = Just safeHash } -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
+      object
+        [ "traders" .=
+            [ object
+                [ "address" .= address
+                , "executedTrades" .= count
+                , "lastTradeAt" .= isoTimestamp (fromIntegral lastTrade)
+                ]
+            | (address, count, lastTrade) <- traders
+            ]
+        , "indexedThroughBlock" .= show safeBlock
+        , "indexedThroughBlockHash" .= safeHash
+        , "generatedAt" .= isoTimestamp now
+        ]
+    _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
 
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =
