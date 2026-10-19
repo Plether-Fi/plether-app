@@ -186,9 +186,8 @@ getInsightsDataStatusResponse pool cfg = do
                 , "provisional" .= not (icrFinalized competition)
                 ]
 
--- The Divisions roster starts at its first trading window and spans every
--- indexed release. A router migration must not erase the preceding week's
--- traders. Discord links and September registration are not consulted.
+-- The Divisions roster contains executed trades on the configured current
+-- release only. Discord links and September registration are not consulted.
 getDivisionsTradersResponse
   :: DbPool
   -> Config
@@ -200,11 +199,11 @@ getDivisionsTradersResponse pool cfg = do
       (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
       (cfgPerpsOrderRouter cfg)
     rows <- case cursor of
-      Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _ } ->
+      Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _, pisReleaseRouter = releaseRouter } ->
         query conn
           "SELECT LOWER(a.account), COUNT(*)::BIGINT, MAX(a.timestamp)::BIGINT \
           \FROM perps_account_activity a \
-          \WHERE a.chain_id = ? AND a.timestamp >= ? \
+          \WHERE a.chain_id = ? AND a.release_router = ? \
           \AND a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 \
           \AND EXISTS (SELECT 1 FROM perps_indexer_state i \
           \  WHERE i.chain_id = a.chain_id AND i.release_router = a.release_router \
@@ -214,11 +213,11 @@ getDivisionsTradersResponse pool cfg = do
           \  AND a.block_number >= COALESCE(i.configured_start_block, 0) \
           \  AND a.block_number <= i.last_indexed_block) \
           \GROUP BY LOWER(a.account) ORDER BY MAX(a.timestamp) DESC, LOWER(a.account) ASC"
-          (cfgPerpsChainId cfg, 1791752400 :: Integer)
+          (cfgPerpsChainId cfg, releaseRouter)
       _ -> pure []
     pure (cursor, rows :: [(Text, Int64, Int64)])
   pure $ case mCursor of
-    Just PerpsIndexerStatusRow { pisLastIndexedBlock = safeBlock, pisLastIndexedBlockHash = Just safeHash } -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
+    Just PerpsIndexerStatusRow { pisReleaseRouter = releaseRouter, pisLastIndexedBlock = safeBlock, pisLastIndexedBlockHash = Just safeHash } -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
       object
         [ "traders" .=
             [ object
@@ -228,6 +227,7 @@ getDivisionsTradersResponse pool cfg = do
                 ]
             | (address, count, lastTrade) <- traders
             ]
+        , "releaseRouter" .= releaseRouter
         , "indexedThroughBlock" .= show safeBlock
         , "indexedThroughBlockHash" .= safeHash
         , "generatedAt" .= isoTimestamp now

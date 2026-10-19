@@ -25,6 +25,7 @@ export interface TradedWallet {
 
 export interface TradedWallets {
   traders: TradedWallet[]
+  releaseRouter: string
   indexedThroughBlock: string
 }
 
@@ -35,6 +36,8 @@ export async function getTradedWallets(signal?: AbortSignal): Promise<TradedWall
   if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('Traded wallet feed is invalid')
   const data = body.data
   if (typeof data !== 'object' || data === null || !('traders' in data) || !Array.isArray(data.traders)
+    || !('releaseRouter' in data) || typeof data.releaseRouter !== 'string'
+    || !/^0x[0-9a-fA-F]{40}$/.test(data.releaseRouter)
     || !('indexedThroughBlock' in data) || typeof data.indexedThroughBlock !== 'string'
     || !/^\d+$/.test(data.indexedThroughBlock)
     || !data.traders.every((row: unknown) => typeof row === 'object' && row !== null

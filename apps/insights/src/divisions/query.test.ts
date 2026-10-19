@@ -40,7 +40,7 @@ describe('Divisions publications', () => {
 
 describe('all traded wallets', () => {
   it('reads wallets independently of registration or weekly publication', async () => {
-    const data = { indexedThroughBlock: '320518230', traders: [
+    const data = { releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '320518230', traders: [
       { address: '0x0000000000000000000000000000000000000001', executedTrades: 2, lastTradeAt: '2026-10-18T20:00:00Z' },
     ] }
     const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
@@ -49,7 +49,7 @@ describe('all traded wallets', () => {
     expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/traders', expect.objectContaining({ headers: { Accept: 'application/json' } }))
   })
   it('rejects malformed wallet rows instead of hiding missing traders', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { indexedThroughBlock: '1', traders: [{ address: 'bad', executedTrades: 1, lastTradeAt: 'yesterday' }] } })))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '1', traders: [{ address: 'bad', executedTrades: 1, lastTradeAt: 'yesterday' }] } })))
     await expect(getTradedWallets()).rejects.toThrow('Traded wallet feed is invalid')
   })
 })

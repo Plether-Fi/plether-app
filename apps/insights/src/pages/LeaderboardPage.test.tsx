@@ -14,7 +14,7 @@ vi.mock('../hooks/useUtcNow', () => ({ useUtcNow: () => clock.now }))
 beforeEach(() => {
   clock.now = Date.parse('2026-10-12T12:00:00Z')
   query.mockReturnValue({ data: null, isLoading: false, isError: false })
-  walletsQuery.mockReturnValue({ data: { traders: [], indexedThroughBlock: '1' }, isLoading: false, isError: false })
+  walletsQuery.mockReturnValue({ data: { traders: [], releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '1' }, isLoading: false, isError: false })
 })
 
 function show() { render(<MemoryRouter><LeaderboardPage /></MemoryRouter>) }
@@ -23,36 +23,36 @@ describe('Divisions leaderboard', () => {
   it('shows launch rules without pretending September scores are weekly results', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Plether Divisions' })).toBeInTheDocument()
-    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
-    expect(screen.getByText(/Follow trading activity across every traded wallet/)).toBeInTheDocument()
+    expect(screen.getByText('Current release wallets')).toBeInTheDocument()
+    expect(screen.getByText(/Follow trading activity across every wallet on the current Sepolia perps release/)).toBeInTheDocument()
     expect(screen.queryByText(/2\+ active days/)).not.toBeInTheDocument()
     expect(screen.queryByText('Total prize pool')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Enter competition/ })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Link Discord and wallet' })).toHaveAttribute('href', '/register')
     expect(screen.getByText(/Discord role assignment is coming/)).toBeInTheDocument()
   })
-  it('leads with all traded wallets when weekly rankings are unpublished', () => {
+  it('leads with current-release wallets when weekly rankings are unpublished', () => {
     clock.now = Date.parse('2026-10-19T12:00:00Z')
-    walletsQuery.mockReturnValue({ data: { indexedThroughBlock: '320000000', traders: [
+    walletsQuery.mockReturnValue({ data: { releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '320000000', traders: [
       { address: '0x0000000000000000000000000000000000000001', executedTrades: 3, lastTradeAt: '2026-10-18T20:00:00Z' },
       { address: '0x0000000000000000000000000000000000000002', executedTrades: 1, lastTradeAt: '2026-10-17T20:00:00Z' },
     ] }, isLoading: false, isError: false })
     show()
-    expect(screen.getByRole('heading', { name: 'All traded wallets' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Current release wallets' })).toBeInTheDocument()
     expect(screen.queryByText('Awaiting the first weekly publication')).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Weekly leaderboard' })).not.toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
   it('pages through the complete traded-wallet roster', () => {
-    walletsQuery.mockReturnValue({ data: { indexedThroughBlock: '320000000', traders: Array.from({ length: 101 }, (_, index) => ({
+    walletsQuery.mockReturnValue({ data: { releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '320000000', traders: Array.from({ length: 101 }, (_, index) => ({
       address: `0x${(index + 1).toString(16).padStart(40, '0')}`, executedTrades: 1, lastTradeAt: '2026-10-18T20:00:00Z',
     })) }, isLoading: false, isError: false })
     show()
-    expect(screen.getByText('101 traded wallets · Page 1 of 2')).toBeInTheDocument()
+    expect(screen.getByText('101 current-release wallets · Page 1 of 2')).toBeInTheDocument()
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(101)
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByText('101 traded wallets · Page 2 of 2')).toBeInTheDocument()
+    expect(screen.getByText('101 current-release wallets · Page 2 of 2')).toBeInTheDocument()
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2)
   })
   it('shows earned badges beside traders and filters the full published ranking', () => {
@@ -80,7 +80,7 @@ describe('Divisions leaderboard', () => {
   it('keeps the live wallet list available if no publication can be read', () => {
     query.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
     show()
-    expect(screen.getByRole('heading', { name: 'All traded wallets' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Current release wallets' })).toBeInTheDocument()
     expect(screen.queryByText('offline')).not.toBeInTheDocument()
   })
 })
