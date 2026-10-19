@@ -16,6 +16,12 @@ module Plether.Handlers.InsightsRegistration
   , xAccountAgeEligible
   , XFollowFailureDisposition (..)
   , xFollowFailureDisposition
+  , TradingAccountProof (..)
+  , verifyOwnedTradingAccount
+  , registrationHeaders
+  , respondError
+  , safeRegistrationIO
+  , trustedClientIp
   ) where
 
 import Control.Exception

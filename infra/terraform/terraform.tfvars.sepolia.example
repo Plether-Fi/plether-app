@@ -32,6 +32,15 @@ provision_insights_registration = true
 # INSIGHTS_REGISTRATION_ORIGIN_TOKEN GitHub Actions secret for Pages. The
 # competition contract release may be bound later.
 enable_insights_registration                    = false
+# Register the callback URL below in a Discord application before enabling.
+# This links Discord IDs and owner wallets for future Divisions roles; it does
+# not restrict leaderboard participation or assign roles.
+enable_divisions_registration = false
+discord_oauth_client_id        = ""
+# Provision /plether/sepolia/discord-oauth-client-secret as an SSM SecureString outside Terraform.
+discord_oauth_callback_url     = "https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback"
+insights_divisions_rules_version   = "divisions-2026-10"
+insights_divisions_privacy_version = "divisions-2026-10"
 insights_registration_public_origin             = "https://insights.plether.com"
 insights_registration_origin_token              = "REPLACE_WITH_A_RANDOM_32_BYTE_OR_LONGER_TOKEN"
 # Optional rotation overlap token. Keep empty outside an active rotation and

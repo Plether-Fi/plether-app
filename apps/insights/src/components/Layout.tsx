@@ -27,6 +27,7 @@ function Header() {
         <nav className="flex items-center gap-1" aria-label="Primary navigation">
           <NavLink to="/" end className={navClass}>Leaderboard</NavLink>
           <NavLink to="/methodology" className={navClass}>Methodology</NavLink>
+          <NavLink to="/register" className={navClass}>Link Discord</NavLink>
           <a href="https://app.sepolia.plether.com" className={navClass({ isActive: false })}>Trade ↗</a>
         </nav>
       </div>

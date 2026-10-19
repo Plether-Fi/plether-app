@@ -285,6 +285,50 @@ describe('Cloudflare Pages Worker', () => {
     expect(options.headers?.get('x-forwarded-proto')).toBe('https')
   })
 
+  it('proxies Divisions registration with the same origin protection', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ registration: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = 'https://insights.plether.com/api/insights/v1/divisions/registrations/session'
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      INSIGHTS_REGISTRATION_PUBLIC_ORIGIN: 'https://insights.plether.com',
+      INSIGHTS_REGISTRATION_ORIGIN_TOKEN: 'trusted-pages-secret',
+      ASSETS: assets,
+    }
+    const response = await worker.fetch(new Request(url, {
+      method: 'POST', headers: { Origin: 'https://insights.plether.com' },
+    }), env)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('private, no-store, max-age=0')
+    expect(proxiedFetchOptions(fetchMock).headers?.get('x-plether-registration-origin')).toBe('trusted-pages-secret')
+
+    fetchMock.mockClear()
+    const rejected = await worker.fetch(new Request(url, {
+      method: 'POST', headers: { Origin: 'https://app.sepolia.plether.com' },
+    }), env)
+    expect(rejected.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('permits only the canonical Discord callback redirect', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, {
+      status: 303, headers: { Location: 'https://insights.plether.com/register' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url = 'https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback?code=provider-code&state=opaque'
+    const env = {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      INSIGHTS_REGISTRATION_PUBLIC_ORIGIN: 'https://insights.plether.com',
+      INSIGHTS_REGISTRATION_ORIGIN_TOKEN: 'trusted-pages-secret',
+      ASSETS: assets,
+    }
+    expect((await worker.fetch(new Request(url, { headers: { 'Sec-Fetch-Site': 'cross-site' } }), env)).status).toBe(303)
+    fetchMock.mockResolvedValue(new Response(null, {
+      status: 303, headers: { Location: 'https://insights.plether.com/register?code=leaked' },
+    }))
+    expect((await worker.fetch(new Request(url), env)).status).toBe(502)
+  })
+
   it.each([
     ['a sibling Plether origin', { Origin: 'https://app.sepolia.plether.com' }],
     ['an opaque origin', { Origin: 'null' }],

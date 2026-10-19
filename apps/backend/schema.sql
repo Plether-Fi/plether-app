@@ -2447,6 +2447,38 @@ CREATE INDEX IF NOT EXISTS idx_insights_registration_sessions_wallet_expires
     ON insights_registration_sessions(wallet_expires_at)
     WHERE wallet_expires_at IS NOT NULL;
 
+-- Discord identity and owner wallet linking for Plether Divisions. This is
+-- separate from the completed September competition registration roster.
+CREATE TABLE IF NOT EXISTS insights_divisions_links (
+    discord_id TEXT PRIMARY KEY CHECK (discord_id ~ '^[0-9]{17,22}$'),
+    discord_username TEXT NOT NULL,
+    owner_wallet TEXT NOT NULL UNIQUE CHECK (owner_wallet ~ '^0x[0-9a-f]{40}$'),
+    trading_account TEXT NOT NULL UNIQUE CHECK (trading_account ~ '^0x[0-9a-f]{40}$'),
+    rules_version TEXT NOT NULL,
+    privacy_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions (
+    session_digest BYTEA PRIMARY KEY CHECK (octet_length(session_digest) = 32),
+    expires_at TIMESTAMPTZ NOT NULL,
+    oauth_state_digest BYTEA CHECK (oauth_state_digest IS NULL OR octet_length(oauth_state_digest) = 32),
+    oauth_expires_at TIMESTAMPTZ,
+    discord_id TEXT,
+    discord_username TEXT,
+    owner_wallet TEXT,
+    trading_account TEXT,
+    challenge_message TEXT,
+    challenge_owner TEXT,
+    challenge_expires_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (num_nonnulls(oauth_state_digest, oauth_expires_at) IN (0, 2)),
+    CHECK (num_nonnulls(challenge_message, challenge_owner, challenge_expires_at) IN (0, 3))
+);
+CREATE INDEX IF NOT EXISTS idx_insights_divisions_link_sessions_expiry
+    ON insights_divisions_link_sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS insights_registration_rate_limits (
     scope_digest BYTEA NOT NULL,
     window_epoch_minute BIGINT NOT NULL,

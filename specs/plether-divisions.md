@@ -82,10 +82,12 @@ immediate first-trade badges require the future live account feed.
 Leaderboard badges show earned persistent tiers, not the tier implied by one
 week's percentile. Wallets may rank without Discord.
 
-Matching Discord roles will require a linked wallet. Enforce unique Discord
-account ↔ owner wallet mapping in both directions, including the owner's trading
-account mapping. Guild.xyz or Collab.Land selection and production connection are
-deferred. UI copy must not imply role linking is already available.
+Matching Discord roles will require a linked wallet. The `/register` flow links
+one Discord account to one owner wallet and its deterministic Trading Account,
+with unique constraints on all three identities. It uses Discord OAuth with the
+`identify` scope, Turnstile, and a signed one-time wallet challenge. Guild.xyz or
+Collab.Land selection, role assignment, and production connection are deferred.
+The UI must not imply roles are already assigned. This link does not gate ranking.
 
 The ranking engine prepares:
 
@@ -100,8 +102,8 @@ Preparing data is not authorization to post it.
 
 ## Delivery boundary
 
-The implementation is in `apps/insights/src/divisions`: a pure engine, validation,
-publication client, and tier badges. `scripts/publish-divisions.mjs` consumes a
+The ranking implementation is in `apps/insights/src/divisions`: a pure engine,
+validation, publication client, and tier badges. `scripts/publish-divisions.mjs` consumes a
 complete finalized `WeeklyInput`, retains source boundary block identifiers in
 the publication, and writes `weeks/YYYY-MM-DD.json` plus `current.json`.
 

@@ -221,7 +221,7 @@ makeApiApplication manager pool config rpcUrl = do
       (RpcClientOptions rpcUrl Nothing "integration-api-perps")
   nativeGatewayState <- newNativeGatewayState manager config perpsClient
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState
+    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState nativeGatewayState Nothing
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =

@@ -41,12 +41,12 @@ voluntary position changes. The exporter must verify event emitter, asset,
 canonicality, finalized boundary blocks, and complete wallet coverage. Retain
 source inputs and their block hashes privately for replay/audit.
 
-**Integration boundary:** this change implements the UI and the snapshot-input
-ranking engine. It does not collect new weekly snapshots from the existing
-Haskell indexer. Its September snapshot worker and participant roster cannot be
-used as a Divisions feed. A complete weekly exporter for all traded accounts is
-required to supply production inputs. Discord linking, role assignment, and
-posting to X/Discord are deferred; the engine only prepares announcement data.
+**Integration boundary:** the ranking UI and snapshot-input engine do not collect
+new weekly snapshots from the existing Haskell indexer. Its September snapshot
+worker and participant roster cannot be used as a Divisions feed. A complete
+weekly exporter for all traded accounts is required to supply production inputs.
+Discord account and wallet linking is implemented separately. Role assignment
+and posting to X/Discord are deferred; the engine only prepares announcement data.
 
 The publisher refuses premature/future publication, skipped weeks, duplicate
 wallets, missing snapshots, rewriting a published week's results, and
@@ -60,21 +60,24 @@ synthetic standings are included in production assets.
 
 September's historical standings, wallet breakdowns, and approved fee-share
 exceptions remain available at `/archive/september-2026`, with their original
-rules at `/archive/september-2026/methodology`. Public registration routes now
-redirect to Divisions rules or the archive. Historical API and backend records
-are preserved. Divisions does not reuse competition cash-prize eligibility.
+rules at `/archive/september-2026/methodology`. Its registration route redirects
+to the archive. The new `/register` route links a Discord account to one owner
+wallet for future Divisions roles. Linking does not gate rankings or assign a
+role yet. Historical API and backend records are preserved. Divisions does not
+reuse competition cash-prize eligibility.
 
 ## Local development
 
 ```sh
 npm ci
+npm run dev:registration # separate terminal for the local registration API
 npm run dev
 ```
 
 Vite proxies `/api/insights/v1` to `VITE_API_PROXY_TARGET` (default `http://127.0.0.1:3001`) without rewriting the path.
 Registration requests are routed first to the local test backend at
 `VITE_REGISTRATION_API_PROXY_TARGET` (default `http://127.0.0.1:3003`). This
-development-only service mocks X and chain activity checks, but still creates
+development-only service mocks X, Discord, and chain activity checks, but still creates
 an HttpOnly session with CSRF protection and verifies the connected wallet's
 signed challenge. It is not used by production builds or the Pages Worker.
 
@@ -90,6 +93,15 @@ the deployment workflow requires both variables explicitly.
 
 The legacy registration components and their tests remain for historical
 maintenance; the public app no longer mounts the September application flow.
+The Divisions link uses the same first-party proxy and Turnstile configuration.
+The backend additionally requires `INSIGHTS_DIVISIONS_REGISTRATION_ENABLED=true`,
+`DISCORD_OAUTH_CLIENT_ID`, `DISCORD_OAUTH_CLIENT_SECRET`, and the exact callback
+`https://insights.plether.com/api/insights/v1/divisions/registrations/discord/callback`.
+Register that URI in the Discord application. Only the `identify` scope is
+requested; Discord email and posting permissions are not used. Store the client
+secret outside Terraform as `/plether/sepolia/discord-oauth-client-secret` in
+SSM Parameter Store. Terraform keeps the new flow disabled until the application
+ID, secret, and callback are provisioned.
 
 ## Validation
 

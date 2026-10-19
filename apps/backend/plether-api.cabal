@@ -145,6 +145,7 @@ library
         Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.InsightsRegistration
+        Plether.Handlers.DivisionsRegistration
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
