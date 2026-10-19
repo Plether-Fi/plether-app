@@ -60,13 +60,13 @@ main = do
               workerStarted <- getCurrentTime
               progress <- newIORef initialSnapshotProgress
               forever $ do
+                divisionsResult <- try @SomeException $
+                  runDivisionsLiveCycle client pool cfg multicallSize
+                either logSnapshotCycleException pure divisionsResult
                 result <-
                   try @SomeException $
                     runInsightsSnapshotCycle client pool cfg multicallSize (2 * pollSeconds) integrityEnabled
                 either logSnapshotCycleException pure result
-                divisionsResult <- try @SomeException $
-                  runDivisionsLiveCycle client pool cfg multicallSize
-                either logSnapshotCycleException pure divisionsResult
                 -- Read committed publication state even after a rejection or an
                 -- RPC skip; returning normally does not prove a snapshot exists.
                 health <- try @SomeException $ withDb pool $ \conn ->
