@@ -10,11 +10,15 @@ describe('Divisions publications', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
     expect(await getDivisions()).toBeNull()
   })
-  it('never accepts the old competition response or a SPA HTML fallback', async () => {
+  it('treats a Pages HTML fallback as a missing publication', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>SPA</html>', { headers: { 'Content-Type': 'text/html; charset=utf-8' } })))
+    await expect(getDivisions()).resolves.toBeNull()
+  })
+  it('rejects invalid publication data without exposing a JSON parser error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ competition: {}, standings: [] })))
     await expect(getDivisions()).rejects.toThrow(/invalid/)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>SPA</html>')))
-    await expect(getDivisions()).rejects.toThrow()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{bad json', { headers: { 'Content-Type': 'application/json' } })))
+    await expect(getDivisions()).rejects.toThrow('Divisions publication is invalid')
   })
   it('rejects a publication timestamp in the future', async () => {
     vi.useFakeTimers()

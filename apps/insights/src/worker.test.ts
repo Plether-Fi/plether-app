@@ -33,6 +33,13 @@ describe('Cloudflare Pages Worker', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.status).toBe(200)
   })
+  it('returns 404 when Pages serves the SPA for a missing Divisions publication', async () => {
+    const htmlAssets = { fetch: vi.fn().mockResolvedValue(new Response('<html>SPA</html>', { headers: { 'Content-Type': 'text/html; charset=utf-8' } })) }
+    const response = await worker.fetch(new Request('https://insights.plether.com/divisions/current.json'), { ASSETS: htmlAssets })
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(htmlAssets.fetch).toHaveBeenCalledTimes(1)
+  })
   it('returns a controlled error when the backend binding is missing', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
