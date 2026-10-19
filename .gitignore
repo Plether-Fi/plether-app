@@ -63,7 +63,7 @@ screenshots/
 tasks/
 
 # Divisions wallet rankings are served from the backend, never committed.
-apps/insights/public/divisions/current.json
+apps/insights/public/divisions/*.json
 apps/insights/public/divisions/weeks/
 
 # Terraform secrets

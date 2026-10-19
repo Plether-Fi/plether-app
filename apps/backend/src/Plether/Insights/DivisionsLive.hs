@@ -86,6 +86,7 @@ ensureDivisionsLiveSchema conn = do
   pure ()
 
 runDivisionsLiveCycle :: EthClient -> DbPool -> Config -> Int -> IO ()
+runDivisionsLiveCycle _ _ cfg _ | cfgPerpsChainId cfg /= 421614 = pure ()
 runDivisionsLiveCycle client pool cfg multicallSize = do
   -- Scores need the event-complete history cursor, not the lifecycle cursor.
   -- A newer RPC block can contain account changes whose funding/trades have
