@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDivisions } from './query'
+import { getDivisions, getTradedWallets } from './query'
 import { publishWeek } from './engine'
 import { input } from '../test/divisions'
 
@@ -35,5 +35,21 @@ describe('Divisions publications', () => {
     const signal = new AbortController().signal
     expect(await getDivisions(signal)).toEqual(publication)
     expect(fetcher).toHaveBeenCalledWith('/divisions/current.json', expect.objectContaining({ cache: 'no-store', signal }))
+  })
+})
+
+describe('all traded wallets', () => {
+  it('reads wallets independently of registration or weekly publication', async () => {
+    const data = { indexedThroughBlock: '320518230', traders: [
+      { address: '0x0000000000000000000000000000000000000001', executedTrades: 2, lastTradeAt: '2026-10-18T20:00:00Z' },
+    ] }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getTradedWallets()).toEqual(data)
+    expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/traders', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+  it('rejects malformed wallet rows instead of hiding missing traders', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { indexedThroughBlock: '1', traders: [{ address: 'bad', executedTrades: 1, lastTradeAt: 'yesterday' }] } })))
+    await expect(getTradedWallets()).rejects.toThrow('Traded wallet feed is invalid')
   })
 })

@@ -107,6 +107,11 @@ validation, publication client, and tier badges. `scripts/publish-divisions.mjs`
 complete finalized `WeeklyInput`, retains source boundary block identifiers in
 the publication, and writes `weeks/YYYY-MM-DD.json` plus `current.json`.
 
+The live `/api/insights/v1/divisions/traders` roster lists every account with
+an indexed nonzero executed position change in the configured release, including
+accounts with no Discord link. It shows recent trade activity while weekly
+returns and earned tiers wait for the complete weekly publication.
+
 An upstream all-account weekly exporter is required for production data. The
 existing September API, registered roster and frozen snapshots cannot provide
 this feed. The publisher checks format and sequence; it does not independently

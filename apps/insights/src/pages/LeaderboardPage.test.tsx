@@ -6,13 +6,15 @@ import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
 const query = vi.hoisted(() => vi.fn())
+const walletsQuery = vi.hoisted(() => vi.fn())
 const clock = vi.hoisted(() => ({ now: Date.parse('2026-10-12T12:00:00Z') }))
-vi.mock('../divisions/query', () => ({ useDivisions: query }))
+vi.mock('../divisions/query', () => ({ useDivisions: query, useTradedWallets: walletsQuery }))
 vi.mock('../hooks/useUtcNow', () => ({ useUtcNow: () => clock.now }))
 
 beforeEach(() => {
   clock.now = Date.parse('2026-10-12T12:00:00Z')
   query.mockReturnValue({ data: null, isLoading: false, isError: false })
+  walletsQuery.mockReturnValue({ data: { traders: [], indexedThroughBlock: '1' }, isLoading: false, isError: false })
 })
 
 function show() { render(<MemoryRouter><LeaderboardPage /></MemoryRouter>) }
@@ -22,19 +24,25 @@ describe('Divisions leaderboard', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Plether Divisions' })).toBeInTheDocument()
     expect(screen.getByText('First badges scheduled for Monday 19 October 2026')).toBeInTheDocument()
-    expect(screen.getByText('The first climb starts here')).toBeInTheDocument()
+    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
     expect(screen.getByText(/2\+ active days/)).toBeInTheDocument()
     expect(screen.queryByText('Total prize pool')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Enter competition/ })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Link Discord and wallet' })).toHaveAttribute('href', '/register')
     expect(screen.getByText(/Discord role assignment is coming/)).toBeInTheDocument()
   })
-  it('shows an awaiting state after the scheduled first publication when no snapshot exists', () => {
+  it('shows all traded wallets while weekly scoring awaits a snapshot', () => {
     clock.now = Date.parse('2026-10-19T12:00:00Z')
+    walletsQuery.mockReturnValue({ data: { indexedThroughBlock: '320000000', traders: [
+      { address: '0x0000000000000000000000000000000000000001', executedTrades: 3, lastTradeAt: '2026-10-18T20:00:00Z' },
+      { address: '0x0000000000000000000000000000000000000002', executedTrades: 1, lastTradeAt: '2026-10-17T20:00:00Z' },
+    ] }, isLoading: false, isError: false })
     show()
     expect(screen.getByText('Awaiting the first weekly publication')).toBeInTheDocument()
-    expect(screen.getByText('Awaiting the first published snapshot')).toBeInTheDocument()
-    expect(screen.getByText('Weekly results will appear here once the verified snapshot is published.')).toBeInTheDocument()
+    expect(screen.getByText(/Weekly returns and badges are pending/)).toBeInTheDocument()
+    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
+    expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
+    expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
   it('shows earned badges beside traders and filters the full published ranking', () => {
     const publication = publishWeek(input(0, [account(1, { displayName: 'Alice' }), account(2, { displayName: 'Bob' })]), null)
@@ -62,6 +70,6 @@ describe('Divisions leaderboard', () => {
     query.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
     show()
     expect(screen.getByText('offline')).toBeInTheDocument()
-    expect(screen.queryByText('The first climb starts here')).not.toBeInTheDocument()
+    expect(screen.getByText('All traded wallets')).toBeInTheDocument()
   })
 })

@@ -3,6 +3,7 @@ module Plether.Handlers.Insights
   , getCompetitionLeaderboardResponse
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
+  , getDivisionsTradersResponse
   , competitionRowToJson
   , leaderboardRowToJson
   , prizeEligibleAfterIntegrityReview
@@ -13,11 +14,12 @@ module Plether.Handlers.Insights
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Maybe (catMaybes)
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, query)
 import Database.PostgreSQL.Simple.Transaction
   ( IsolationLevel (RepeatableRead)
   , ReadWriteMode (ReadOnly)
@@ -37,6 +39,7 @@ import Plether.Database.Insights
   , getCompetitionWalletActivity
   , getCurrentCompetition
   , getInsightsDataStatus
+  , getLatestIndexedSafeBlock
   )
 import Plether.Insights.Competition
   ( CompetitionRegistrationState (..)
@@ -48,6 +51,7 @@ import Plether.Insights.Competition
   , minimumProfitUsdc
   , participantEligibilityFromText
   , prizeAllocation
+  , september2026CompetitionSlug
   )
 import Plether.Insights.Registration.Config (RegistrationConfig)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
@@ -181,6 +185,47 @@ getInsightsDataStatusResponse pool cfg = do
                 , "scoringVersion" .= icrScoringVersion competition
                 , "provisional" .= not (icrFinalized competition)
                 ]
+
+-- The Divisions roster comes from canonical indexed position changes. Discord
+-- links and September competition registration are deliberately not consulted.
+getDivisionsTradersResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getDivisionsTradersResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
+    cursor <- getLatestIndexedSafeBlock conn september2026CompetitionSlug
+      (cfgPerpsChainId cfg) (cfgPerpsOrderRouter cfg)
+    rows <- case cursor of
+      Just (safeBlock, Just _) ->
+        query conn
+          "SELECT LOWER(account), COUNT(*)::BIGINT, MAX(timestamp)::BIGINT \
+          \FROM perps_account_activity \
+          \WHERE chain_id = ? AND release_router = LOWER(?) \
+          \AND contract_address = LOWER(?) AND block_number >= ? AND block_number <= ? \
+          \AND activity_type IN ('Open', 'Close') AND COALESCE(size_delta, 0) <> 0 \
+          \GROUP BY LOWER(account) ORDER BY MAX(timestamp) DESC, LOWER(account) ASC"
+          (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, cfgPerpsCfdEngine cfg,
+            cfgPerpsIndexerStartBlock cfg, safeBlock)
+      _ -> pure []
+    pure (cursor, rows :: [(Text, Int64, Int64)])
+  pure $ case mCursor of
+    Just (safeBlock, Just safeHash) -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
+      object
+        [ "traders" .=
+            [ object
+                [ "address" .= address
+                , "executedTrades" .= count
+                , "lastTradeAt" .= isoTimestamp (fromIntegral lastTrade)
+                ]
+            | (address, count, lastTrade) <- traders
+            ]
+        , "indexedThroughBlock" .= show safeBlock
+        , "indexedThroughBlockHash" .= safeHash
+        , "generatedAt" .= isoTimestamp now
+        ]
+    _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
 
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =
