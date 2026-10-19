@@ -105,6 +105,7 @@ import Plether.Handlers.Insights
   , getCurrentCompetitionResponse
   , getInsightsDataStatusResponse
   , getDivisionsTradersResponse
+  , getDivisionsLiveResponse
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Handlers.DivisionsRegistration (DiscordConfig, registerDivisionsRegistrationRoutes)
@@ -450,6 +451,11 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   get "/api/insights/v1/divisions/traders" $
     case mPool of
       Just pool -> liftIO (getDivisionsTradersResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/live" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsLiveResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
 
   case mPool of

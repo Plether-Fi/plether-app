@@ -14,6 +14,7 @@ import Plether.Database (newDbPool, withDb)
 import Plether.Database.Diagnostics (startDbDiagnostics)
 import Plether.Database.AaSponsorship (ensureAaSponsorshipSchema)
 import Plether.Database.Insights (ensureInsightsSchema)
+import Plether.Insights.DivisionsLive (ensureDivisionsLiveSchema)
 import Plether.Database.Protection (ensureProtectionSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Database.VaultActivity (ensureVaultActivitySchema)
@@ -82,6 +83,7 @@ main = do
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
+          withDb pool ensureDivisionsLiveSchema
           withDb pool ensureProtectionSchema
           withDb pool ensureTestnetFaucetSchema
           withDb pool ensureVaultPerformanceSchema

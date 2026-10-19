@@ -52,3 +52,49 @@ export async function getTradedWallets(signal?: AbortSignal): Promise<TradedWall
 export function useTradedWallets() {
   return useQuery({ queryKey: ['insights', 'divisions', 'traded-wallets'], queryFn: ({ signal }) => getTradedWallets(signal), staleTime: 30_000, refetchInterval: 60_000 })
 }
+
+export interface LiveStanding {
+  address: string
+  rank: number | null
+  weeklyReturnBps: number | null
+  activeDays: number
+}
+
+export interface LiveDivisions {
+  status: 'pending' | 'ready'
+  weekStartsAt: string
+  snapshotAt?: string
+  snapshotBlock?: string
+  walletCount?: number
+  standings?: LiveStanding[]
+}
+
+export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisions> {
+  const response = await fetch('/api/insights/v1/divisions/live', { signal, headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error(`Live Divisions are unavailable (${String(response.status)})`)
+  const body: unknown = await response.json().catch(() => { throw new Error('Live Divisions response is invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('Live Divisions response is invalid')
+  const data = body.data
+  if (typeof data !== 'object' || data === null || !('status' in data) || !('weekStartsAt' in data)
+    || typeof data.weekStartsAt !== 'string' || !Number.isFinite(Date.parse(data.weekStartsAt))) {
+    throw new Error('Live Divisions response is invalid')
+  }
+  if (data.status === 'pending') return data as LiveDivisions
+  if (data.status !== 'ready' || !('snapshotAt' in data) || typeof data.snapshotAt !== 'string'
+    || !Number.isFinite(Date.parse(data.snapshotAt)) || !('snapshotBlock' in data) || typeof data.snapshotBlock !== 'string'
+    || !/^\d+$/.test(data.snapshotBlock) || !('walletCount' in data) || typeof data.walletCount !== 'number'
+    || !Number.isSafeInteger(data.walletCount) || data.walletCount < 0 || !('standings' in data)
+    || !Array.isArray(data.standings) || data.standings.length !== data.walletCount
+    || !data.standings.every((row: unknown) => typeof row === 'object' && row !== null
+      && 'address' in row && typeof row.address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.address)
+      && 'rank' in row && (row.rank === null || typeof row.rank === 'number' && Number.isSafeInteger(row.rank) && row.rank > 0)
+      && 'weeklyReturnBps' in row && (row.weeklyReturnBps === null || typeof row.weeklyReturnBps === 'number' && Number.isSafeInteger(row.weeklyReturnBps))
+      && 'activeDays' in row && typeof row.activeDays === 'number' && Number.isSafeInteger(row.activeDays) && row.activeDays >= 0)) {
+    throw new Error('Live Divisions response is invalid')
+  }
+  return data as LiveDivisions
+}
+
+export function useLiveDivisions() {
+  return useQuery({ queryKey: ['insights', 'divisions', 'live'], queryFn: ({ signal }) => getLiveDivisions(signal), staleTime: 30_000, refetchInterval: 60_000 })
+}

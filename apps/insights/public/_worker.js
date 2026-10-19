@@ -32,7 +32,7 @@ function resolvePublicApiCacheTtl(method, pathname) {
     return API_CACHE_TTLS.status;
   }
 
-  if (apiPath === '/divisions/traders') {
+  if (apiPath === '/divisions/traders' || apiPath === '/divisions/live') {
     return API_CACHE_TTLS.leaderboard;
   }
 

@@ -16,6 +16,7 @@ import Plether.Insights.SnapshotWorker
   ( parseSnapshotMulticallSize
   , runInsightsSnapshotCycle
   )
+import Plether.Insights.DivisionsLive (ensureDivisionsLiveSchema, runDivisionsLiveCycle)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -35,6 +36,7 @@ main = do
               pool <- newDbPool databaseUrl
               withDb pool ensurePerpsHistorySchema
               withDb pool ensureTestnetFaucetSchema
+              withDb pool ensureDivisionsLiveSchema
               withDb pool $ \conn ->
                 ensureInsightsSchema
                   conn
@@ -58,6 +60,9 @@ main = do
               workerStarted <- getCurrentTime
               progress <- newIORef initialSnapshotProgress
               forever $ do
+                divisionsResult <- try @SomeException $
+                  runDivisionsLiveCycle client pool cfg multicallSize
+                either logSnapshotCycleException pure divisionsResult
                 result <-
                   try @SomeException $
                     runInsightsSnapshotCycle client pool cfg multicallSize (2 * pollSeconds) integrityEnabled

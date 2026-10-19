@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDivisions, getTradedWallets } from './query'
+import { getDivisions, getLiveDivisions, getTradedWallets } from './query'
 import { publishWeek } from './engine'
 import { input } from '../test/divisions'
 
@@ -51,5 +51,23 @@ describe('all traded wallets', () => {
   it('rejects malformed wallet rows instead of hiding missing traders', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '1', traders: [{ address: 'bad', executedTrades: 1, lastTradeAt: 'yesterday' }] } })))
     await expect(getTradedWallets()).rejects.toThrow('Traded wallet feed is invalid')
+  })
+})
+
+describe('live Divisions rankings', () => {
+  it('reads a complete provisional snapshot from the backend', async () => {
+    const data = { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 1, standings: [
+      { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 125, activeDays: 1 },
+    ] }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getLiveDivisions()).toEqual(data)
+    expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/live', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+  it('rejects a partial snapshot whose declared wallet count differs', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: {
+      status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [],
+    } })))
+    await expect(getLiveDivisions()).rejects.toThrow('Live Divisions response is invalid')
   })
 })

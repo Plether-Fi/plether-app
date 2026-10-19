@@ -108,10 +108,18 @@ complete finalized `WeeklyInput`, retains source boundary block identifiers in
 the publication, and writes `weeks/YYYY-MM-DD.json` plus `current.json`.
 
 The live `/api/insights/v1/divisions/traders` roster lists every account with
-an indexed nonzero executed position change since the first Divisions window,
-across release migrations and including accounts with no Discord link. It shows
-recent trade activity while weekly
-returns and earned tiers wait for the complete weekly publication.
+an indexed nonzero executed position change on the currently configured perps
+release, including accounts with no Discord link. The backend Insights worker
+captures complete current-week account values at finalized, indexed blocks,
+checks external funding against USDC transfers, and stores a provisional ranked
+snapshot in its database. `/api/insights/v1/divisions/live` serves wallet ranks,
+rounded weekly returns, active-day counts, and snapshot timing without exposing
+balances or exact P&L. Insights refreshes this view every minute. A new release
+starts a new roster; a wallet does not need a Discord link to rank.
+
+Live ranks can change until Friday close. Earned tiers, promotions, and weekly
+announcements still require the finalized weekly publication. Ranking JSON is
+not committed to the public repository.
 
 An upstream all-account weekly exporter is required for production data. The
 existing September API, registered roster and frozen snapshots cannot provide

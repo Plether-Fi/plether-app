@@ -1,6 +1,7 @@
 module Plether.Insights.SnapshotWorkerSpec (spec) where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), object, (.=))
+import Data.Text (Text)
 import Data.Time (UTCTime, addUTCTime)
 import Plether.Insights.SnapshotObservability
 import qualified Data.Aeson.Key as Key
@@ -27,10 +28,23 @@ import Plether.Insights.SnapshotWorker
   , ledgerToEquity
   , inferPendingCarry
   )
+import Plether.Insights.DivisionsLive (LiveScore (..), rankDivisions)
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "Divisions live ranking" $ do
+    it "compares exact returns, shares tied ranks, and leaves zero adjusted equity unranked" $ do
+      let address :: Text -> Text
+          address n = "0x000000000000000000000000000000000000000" <> n
+          scores = [LiveScore (address "1") 100 10 2, LiveScore (address "2") 200 20 1,
+                    LiveScore (address "3") 101 11 2, LiveScore (address "4") 0 5 0]
+      rankDivisions scores `shouldBe`
+        [ object ["address" .= address "3", "rank" .= Just (1 :: Int), "weeklyReturnBps" .= Just (1089 :: Integer), "activeDays" .= (2 :: Int)]
+        , object ["address" .= address "1", "rank" .= Just (2 :: Int), "weeklyReturnBps" .= Just (1000 :: Integer), "activeDays" .= (2 :: Int)]
+        , object ["address" .= address "2", "rank" .= Just (2 :: Int), "weeklyReturnBps" .= Just (1000 :: Integer), "activeDays" .= (1 :: Int)]
+        , object ["address" .= address "4", "rank" .= (Nothing :: Maybe Int), "weeklyReturnBps" .= (Nothing :: Maybe Integer), "activeDays" .= (0 :: Int)]
+        ]
   describe "snapshot progress" $ do
     let started = read "2026-09-18 00:00:00 UTC" :: UTCTime
         at n = addUTCTime n started
