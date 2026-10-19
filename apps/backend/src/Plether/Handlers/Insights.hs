@@ -39,8 +39,9 @@ import Plether.Database.Insights
   , getCompetitionWalletActivity
   , getCurrentCompetition
   , getInsightsDataStatus
-  , getLatestIndexedSafeBlock
   )
+import Plether.Database.Schema (PerpsIndexerStatusRow (..), getPerpsIndexerStatus)
+import Plether.Perps.HistoryIndexer (perpsIndexerNameForLifecycleBook)
 import Plether.Insights.Competition
   ( CompetitionRegistrationState (..)
   , CompetitionRules (..)
@@ -51,7 +52,6 @@ import Plether.Insights.Competition
   , minimumProfitUsdc
   , participantEligibilityFromText
   , prizeAllocation
-  , september2026CompetitionSlug
   )
 import Plether.Insights.Registration.Config (RegistrationConfig)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
@@ -186,8 +186,9 @@ getInsightsDataStatusResponse pool cfg = do
                 , "provisional" .= not (icrFinalized competition)
                 ]
 
--- The Divisions roster comes from canonical indexed position changes. Discord
--- links and September competition registration are deliberately not consulted.
+-- The Divisions roster starts at its first trading window and spans every
+-- indexed release. A router migration must not erase the preceding week's
+-- traders. Discord links and September registration are not consulted.
 getDivisionsTradersResponse
   :: DbPool
   -> Config
@@ -195,23 +196,29 @@ getDivisionsTradersResponse
 getDivisionsTradersResponse pool cfg = do
   now <- floor <$> getPOSIXTime
   (mCursor, traders) <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
-    cursor <- getLatestIndexedSafeBlock conn september2026CompetitionSlug
-      (cfgPerpsChainId cfg) (cfgPerpsOrderRouter cfg)
+    cursor <- getPerpsIndexerStatus conn (cfgPerpsChainId cfg)
+      (perpsIndexerNameForLifecycleBook $ cfgPerpsOrderLifecycleBook cfg)
+      (cfgPerpsOrderRouter cfg)
     rows <- case cursor of
-      Just (safeBlock, Just _) ->
+      Just PerpsIndexerStatusRow { pisLastIndexedBlockHash = Just _ } ->
         query conn
-          "SELECT LOWER(account), COUNT(*)::BIGINT, MAX(timestamp)::BIGINT \
-          \FROM perps_account_activity \
-          \WHERE chain_id = ? AND release_router = LOWER(?) \
-          \AND contract_address = LOWER(?) AND block_number >= ? AND block_number <= ? \
-          \AND activity_type IN ('Open', 'Close') AND COALESCE(size_delta, 0) <> 0 \
-          \GROUP BY LOWER(account) ORDER BY MAX(timestamp) DESC, LOWER(account) ASC"
-          (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, cfgPerpsCfdEngine cfg,
-            cfgPerpsIndexerStartBlock cfg, safeBlock)
+          "SELECT LOWER(a.account), COUNT(*)::BIGINT, MAX(a.timestamp)::BIGINT \
+          \FROM perps_account_activity a \
+          \WHERE a.chain_id = ? AND a.timestamp >= ? \
+          \AND a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0 \
+          \AND EXISTS (SELECT 1 FROM perps_indexer_state i \
+          \  WHERE i.chain_id = a.chain_id AND i.release_router = a.release_router \
+          \  AND i.indexer_name IN (('perps-history-costs-v1:' || a.release_router), \
+          \    ('perps-history-costs-v2:finalized-abi3:' || a.release_router)) \
+          \  AND i.last_indexed_block_hash IS NOT NULL \
+          \  AND a.block_number >= COALESCE(i.configured_start_block, 0) \
+          \  AND a.block_number <= i.last_indexed_block) \
+          \GROUP BY LOWER(a.account) ORDER BY MAX(a.timestamp) DESC, LOWER(a.account) ASC"
+          (cfgPerpsChainId cfg, 1791752400 :: Integer)
       _ -> pure []
     pure (cursor, rows :: [(Text, Int64, Int64)])
   pure $ case mCursor of
-    Just (safeBlock, Just safeHash) -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
+    Just PerpsIndexerStatusRow { pisLastIndexedBlock = safeBlock, pisLastIndexedBlockHash = Just safeHash } -> Right $ mkResponse safeBlock (cfgPerpsChainId cfg) $
       object
         [ "traders" .=
             [ object

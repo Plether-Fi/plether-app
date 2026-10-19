@@ -44,6 +44,17 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
+  it('pages through the complete traded-wallet roster', () => {
+    walletsQuery.mockReturnValue({ data: { indexedThroughBlock: '320000000', traders: Array.from({ length: 101 }, (_, index) => ({
+      address: `0x${(index + 1).toString(16).padStart(40, '0')}`, executedTrades: 1, lastTradeAt: '2026-10-18T20:00:00Z',
+    })) }, isLoading: false, isError: false })
+    show()
+    expect(screen.getByText('101 traded wallets · Page 1 of 2')).toBeInTheDocument()
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(101)
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('101 traded wallets · Page 2 of 2')).toBeInTheDocument()
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2)
+  })
   it('shows earned badges beside traders and filters the full published ranking', () => {
     const publication = publishWeek(input(0, [account(1, { displayName: 'Alice' }), account(2, { displayName: 'Bob' })]), null)
     query.mockReturnValue({ data: publication })
