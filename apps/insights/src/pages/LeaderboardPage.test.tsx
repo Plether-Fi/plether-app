@@ -101,6 +101,8 @@ describe('Divisions leaderboard', () => {
     const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
     expect(table).toHaveTextContent('+12.50%')
     expect(table).toHaveTextContent('0x0000…0002')
+    expect(within(table).getByRole('link', { name: 'View 0x0000000000000000000000000000000000000001 on Arbiscan' })).toHaveAttribute('href', 'https://sepolia.arbiscan.io/address/0x0000000000000000000000000000000000000001')
+    expect(within(table).getByRole('link', { name: 'View 0x0000000000000000000000000000000000000001 on Arbiscan' })).toHaveAttribute('target', '_blank')
     expect(screen.getByText(/2 wallets/)).toBeInTheDocument()
   })
 })
