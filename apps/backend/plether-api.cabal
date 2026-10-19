@@ -112,6 +112,7 @@ library
         Plether.Insights.Registration.Types
         Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
+        Plether.Insights.DivisionsLive
         Plether.Insights.SnapshotObservability
         Plether.Vaults.PerformanceIndexer
         Plether.Vaults.ActivityIndexer

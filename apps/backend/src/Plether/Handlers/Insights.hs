@@ -4,6 +4,7 @@ module Plether.Handlers.Insights
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
   , getDivisionsTradersResponse
+  , getDivisionsLiveResponse
   , competitionRowToJson
   , leaderboardRowToJson
   , prizeEligibleAfterIntegrityReview
@@ -12,11 +13,13 @@ module Plether.Handlers.Insights
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Maybe (catMaybes)
 import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
 import Database.PostgreSQL.Simple (Connection, query)
@@ -233,6 +236,47 @@ getDivisionsTradersResponse pool cfg = do
         , "generatedAt" .= isoTimestamp now
         ]
     _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
+
+getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsLiveResponse pool cfg = do
+  now <- floor <$> getPOSIXTime
+  let firstStart = 1791752400 :: Integer
+      weekStart = firstStart + max 0 ((now - firstStart) `div` (7 * 86400)) * (7 * 86400)
+  rows <- withDb pool $ \conn -> query conn
+    "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, s.standings::text, \
+    \EXTRACT(EPOCH FROM s.captured_at)::BIGINT FROM divisions_live_snapshots s \
+    \WHERE s.chain_id=? AND s.release_router=? AND s.week_start=? \
+    \AND s.captured_at > NOW() - INTERVAL '5 minutes' \
+    \AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id=s.chain_id \
+    \AND i.release_router=s.release_router AND i.indexer_name IN \
+    \('perps-history-costs-v1:' || s.release_router, \
+    \ 'perps-history-costs-v2:finalized-abi3:' || s.release_router) \
+    \AND i.last_indexed_block_hash IS NOT NULL \
+    \AND (i.last_indexed_block>s.snapshot_block OR \
+    \(i.last_indexed_block=s.snapshot_block AND LOWER(i.last_indexed_block_hash)=LOWER(s.snapshot_hash)))) \
+    \LIMIT 1"
+    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, weekStart)
+  pure $ case (rows :: [(Integer, Text, Integer, Int, Text, Integer)]) of
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+      [ "status" .= ("pending" :: Text)
+      , "weekStartsAt" .= isoTimestamp weekStart
+      , "generatedAt" .= isoTimestamp now
+      ]
+    (block, blockHash, timestamp, walletCount, encodedStandings, capturedAt) : _ ->
+      case Aeson.decodeStrict' (TE.encodeUtf8 encodedStandings) of
+        Nothing -> Left $ E.internalError "Divisions live snapshot is invalid"
+        Just (standings :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+          [ "status" .= ("ready" :: Text)
+          , "weekStartsAt" .= isoTimestamp weekStart
+          , "snapshotAt" .= isoTimestamp timestamp
+          , "snapshotBlock" .= show block
+          , "snapshotBlockHash" .= blockHash
+          , "capturedAt" .= isoTimestamp capturedAt
+          , "walletCount" .= walletCount
+          , "releaseRouter" .= cfgPerpsOrderRouter cfg
+          , "standings" .= standings
+          , "provisional" .= True
+          ]
 
 withInsightsReadSnapshot :: Connection -> IO value -> IO value
 withInsightsReadSnapshot =

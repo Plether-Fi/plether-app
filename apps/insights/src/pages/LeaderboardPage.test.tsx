@@ -7,13 +7,15 @@ import { publishWeek } from '../divisions/engine'
 
 const query = vi.hoisted(() => vi.fn())
 const walletsQuery = vi.hoisted(() => vi.fn())
+const liveQuery = vi.hoisted(() => vi.fn())
 const clock = vi.hoisted(() => ({ now: Date.parse('2026-10-12T12:00:00Z') }))
-vi.mock('../divisions/query', () => ({ useDivisions: query, useTradedWallets: walletsQuery }))
+vi.mock('../divisions/query', () => ({ useDivisions: query, useTradedWallets: walletsQuery, useLiveDivisions: liveQuery }))
 vi.mock('../hooks/useUtcNow', () => ({ useUtcNow: () => clock.now }))
 
 beforeEach(() => {
   clock.now = Date.parse('2026-10-12T12:00:00Z')
   query.mockReturnValue({ data: null, isLoading: false, isError: false })
+  liveQuery.mockReturnValue({ data: { status: 'pending', weekStartsAt: '2026-10-11T21:00:00Z' }, isLoading: false, isError: false })
   walletsQuery.mockReturnValue({ data: { traders: [], releaseRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8', indexedThroughBlock: '1' }, isLoading: false, isError: false })
 })
 
@@ -24,7 +26,7 @@ describe('Divisions leaderboard', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Plether Divisions' })).toBeInTheDocument()
     expect(screen.getByText('Current release wallets')).toBeInTheDocument()
-    expect(screen.getByText(/Follow trading activity across every wallet on the current Sepolia perps release/)).toBeInTheDocument()
+    expect(screen.getByText(/Live weekly returns include every wallet/)).toBeInTheDocument()
     expect(screen.queryByText(/2\+ active days/)).not.toBeInTheDocument()
     expect(screen.queryByText('Total prize pool')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Enter competition/ })).not.toBeInTheDocument()
@@ -82,5 +84,16 @@ describe('Divisions leaderboard', () => {
     show()
     expect(screen.getByRole('heading', { name: 'Current release wallets' })).toBeInTheDocument()
     expect(screen.queryByText('offline')).not.toBeInTheDocument()
+  })
+  it('shows provisional current-release ranks before any weekly publication', () => {
+    liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-11T21:00:00Z', snapshotAt: '2026-10-12T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [
+      { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 1250, activeDays: 2 },
+      { address: '0x0000000000000000000000000000000000000002', rank: null, weeklyReturnBps: null, activeDays: 1 },
+    ] }, isLoading: false, isError: false })
+    show()
+    const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
+    expect(table).toHaveTextContent('+12.50%')
+    expect(table).toHaveTextContent('0x0000…0002')
+    expect(screen.getByText(/2 wallets/)).toBeInTheDocument()
   })
 })
