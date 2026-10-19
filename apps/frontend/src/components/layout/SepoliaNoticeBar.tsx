@@ -11,15 +11,15 @@ export function SepoliaNoticeBar() {
           You are on Arbitrum Sepolia testnet. Try trading with mock funds.{' '}
         </span>
         <strong className="font-bold">
-          Registration for the September trading competition is now open 🎉
-        </strong>.{' '}
+          Climb the weekly ranks in Plether Divisions and earn badges. Show them off on Discord.
+        </strong>{' '}
         <a
-          href="https://insights.plether.com/competitions/testnet-trading-2026-09/register"
+          href="https://insights.plether.com/register"
           target="_blank"
           rel="noopener noreferrer"
           className="font-bold underline underline-offset-4"
         >
-          Register now 🏆
+          Link your wallet ↗
         </a>
       </span>
       <button
