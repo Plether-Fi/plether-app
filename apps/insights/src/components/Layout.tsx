@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-import { useInsightsStatus } from '../api'
+import { useLiveDivisions } from '../divisions/query'
 import { formatUtc } from '../utils/format'
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -36,10 +36,8 @@ function Header() {
 }
 
 function Footer() {
-  const status = useInsightsStatus()
-  const statusData = status.data
-  const indexedAt = statusData?.latestIndexedAt
-  const isLive = statusData?.healthy === true && !status.isError
+  const live = useLiveDivisions()
+  const snapshot = live.data?.status === 'ready' ? live.data : null
 
   return (
     <footer className="mt-auto border-t border-brand-border/20 bg-app-bg-deep/40">
@@ -49,13 +47,13 @@ function Footer() {
           <Link to="/methodology" className="text-content-secondary hover:text-brand-peach">Scoring methodology</Link>
           <a href="https://app.sepolia.plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether testnet ↗</a>
         </div>
-        <div className="flex items-center gap-2" title={indexedAt ? `Indexed ${formatUtc(indexedAt)}` : undefined}>
-          <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-positive' : status.isLoading ? 'bg-brand-yellow' : 'bg-brand-orange'}`} />
-          {status.isLoading
-            ? 'Checking indexer'
-            : isLive
-              ? `Indexed through block ${statusData.latestIndexedBlock?.toLocaleString() ?? '—'}`
-              : 'Indexer status unavailable'}
+        <div className="flex items-center gap-2" title={snapshot ? `Snapshot ${formatUtc(snapshot.snapshotAt ?? '')}` : undefined}>
+          <span className={`h-2 w-2 rounded-full ${snapshot ? 'bg-positive' : live.isLoading ? 'bg-brand-yellow' : 'bg-brand-orange'}`} />
+          {live.isLoading
+            ? 'Checking live rankings'
+            : snapshot
+              ? `Live rankings through block ${Number(snapshot.snapshotBlock).toLocaleString()}`
+              : live.isError ? 'Live rankings unavailable' : 'Preparing live rankings'}
         </div>
       </div>
     </footer>
