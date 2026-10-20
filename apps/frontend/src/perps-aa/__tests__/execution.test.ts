@@ -48,6 +48,7 @@ const authorizationMocks = vi.hoisted(() => ({
 const analyticsMocks = vi.hoisted(() => ({
   trackPerpsSponsoredOperation: vi.fn(),
 }))
+const readinessMocks = vi.hoisted(() => ({ blocker: vi.fn() }))
 
 vi.mock('../authorizationStore', () => ({
   clearDepositAuthorization: authorizationMocks.clearDepositAuthorization,
@@ -57,7 +58,7 @@ vi.mock('../authorizationStore', () => ({
 
 vi.mock('../readiness', () => ({
   refreshReadiness: vi.fn(async () => {}), currentReadiness: () => undefined,
-  readinessBlocker: () => undefined, readinessMessage: () => '',
+  readinessBlocker: readinessMocks.blocker, readinessMessage: () => 'Gas sponsorship is temporarily paused.',
 }))
 
 vi.mock('../../analytics/perps', async (importOriginal) => {
@@ -390,6 +391,7 @@ describe('executeSponsoredPerpsAction', () => {
     } finally { clock.mockRestore() }
   })
   beforeEach(() => {
+    readinessMocks.blocker.mockReset()
     authorizationMocks.clearDepositAuthorization.mockReset()
     authorizationMocks.clearLegacyDepositAuthorization.mockReset()
     analyticsMocks.trackPerpsSponsoredOperation.mockReset()
@@ -418,9 +420,24 @@ describe('executeSponsoredPerpsAction', () => {
     serverTime: String(Math.floor(Date.now() / 1000)), safeBlockTimestamp: null, phase: 'prepared' as const, reason: 'RESUMABLE',
     recoverable: true, freshReviewAllowed: true, userOperationHash: USER_OPERATION_HASH, transactionHash: null }
 
+  it('rejects a known pause before preparing, signing, submitting or journaling a new operation', async () => {
+    readinessMocks.blocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
+    const prepare = vi.fn(async () => pletherOperation())
+    const sign = vi.fn(async () => SIGNATURE)
+    const send = vi.fn(async () => USER_OPERATION_HASH)
+    await expect(executeSponsoredPerpsAction({
+      manifest: v2Manifest(), ownerAddress: OWNER, action,
+      runtime: runtime({ prepareUserOperation: prepare, signUserOperation: sign, sendUserOperation: send }),
+    })).rejects.toMatchObject({ reason: 'PAYMASTER_PAUSED' })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(0)
+  })
+
   it.each(['deposit', 'withdraw', 'withdraw-to-owner', 'place-order', 'place-protected-order', 'cancel-order',
     'create-protection', 'replace-protection', 'cancel-protection', 'add-margin', 'settle-claim'] as const)(
-    'resumes a rejected native %s with the original preparation after reload', async kind => {
+    'resumes a rejected native %s with the original preparation after reload even when new issuance is paused', async kind => {
       const prepare = vi.fn(async () => pletherOperation())
       const sign = vi.fn(async (value: ManagedUserOperation) => value)
       sign.mockRejectedValueOnce({ code: 4001 })
@@ -440,6 +457,7 @@ describe('executeSponsoredPerpsAction', () => {
       expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
       await useSponsoredOperationStore.persist.rehydrate()
       const saved = useSponsoredOperationStore.getState().operations[0]
+      readinessMocks.blocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
       await resumeSponsoredPerpsAction(saved, managed)
       expect(prepare.mock.calls).toHaveLength(2)
       expect(prepare).toHaveBeenNthCalledWith(1, expect.objectContaining({ preparationId: declined.id }))

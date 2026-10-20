@@ -9,6 +9,13 @@ import { DOCS_LINKS } from '../../config/docs'
 import type { PerpsOrderReceiptEconomics } from '../../hooks'
 import { closeOrder14Receipt } from '../../utils/__fixtures__/closeOrder14'
 import { closeSettlementAdjustmentReceipt } from '../../utils/__fixtures__/closeSettlementAdjustment'
+import type { ReadinessSnapshot } from '../../perps-aa/readiness'
+
+const readinessFixture = vi.hoisted(() => ({ snapshot: undefined as ReadinessSnapshot | undefined }))
+vi.mock('../../perps-aa/readiness', async importOriginal => ({
+  ...await importOriginal<typeof import('../../perps-aa/readiness')>(),
+  useTradingReadiness: () => readinessFixture.snapshot,
+}))
 
 vi.mock('../../hooks/usePerpsMaxOpenQuote', () => ({
   usePerpsMaxOpenQuote: () => ({ quote: undefined, marginDelta: undefined, isPending: false, isFetching: false }),
@@ -399,6 +406,7 @@ describe('perps ticket oracle regime matrix', () => {
   })
 
   beforeEach(() => {
+    readinessFixture.snapshot = undefined
     identityFixture.isAaManifestConfigured = false
     useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
     usePerpsUiStore.setState({ activityRequest: null, orderReviewRequest: null })
@@ -406,6 +414,26 @@ describe('perps ticket oracle regime matrix', () => {
       status: 'success',
       result: closePreviewTuple(),
     }]
+  })
+
+  it('shows a pause before entering an amount and disables review and deposit, then clears it on recovery', () => {
+    identityFixture.isAaManifestConfigured = true
+    const checks = [{ component: 'sponsorship', status: 'blocked' as const, reason: 'PAYMASTER_PAUSED' }]
+    readinessFixture.snapshot = {
+      version: 1, enforcementEnabled: false, observedAt: Date.now(), expiresAt: Date.now() + 15_000,
+      actions: { open: checks, close: checks, deposit: checks, protection: checks },
+    }
+    const view = render(<PerpsTradeTicket enableLiveTrading />)
+    expect(screen.getByText(/Gas sponsorship is temporarily paused/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/Gas sponsorship is temporarily paused/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Deposit' })).toBeDisabled()
+    readinessFixture.snapshot = undefined
+    view.rerender(<PerpsTradeTicket enableLiveTrading />)
+    expect(screen.queryByText(/Gas sponsorship is temporarily paused/)).not.toBeInTheDocument()
+    expect(perpsTradingMocks.depositMargin).not.toHaveBeenCalled()
   })
 
   function seedActiveOperation(status: SponsoredOperationStatus) {

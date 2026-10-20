@@ -54,6 +54,17 @@ describe('trading readiness', () => {
     expect(readinessChecks(sample(), 'deposit', 110_000)[0].status).toBe('ready')
     expect(readinessChecks(sample(), 'close', 110_000)[0].status).toBe('unknown')
   })
+  it.each(['sponsorship', 'paymaster'])('blocks a fresh %s pause even when readiness enforcement is off', component => {
+    const paused = sample()
+    paused.enforcementEnabled = false
+    paused.actions.deposit = [{ component, status: 'blocked', reason: 'PAYMASTER_PAUSED' }]
+    expect(readinessBlocker(paused, 'deposit', 110_000)?.reason).toBe('PAYMASTER_PAUSED')
+    expect(readinessBlocker(paused, 'deposit', 115_000)).toBeUndefined()
+    paused.actions.deposit[0].status = 'unknown'
+    expect(readinessBlocker(paused, 'deposit', 110_000)).toBeUndefined()
+    paused.actions.deposit = [{ component, status: 'ready', reason: 'READY' }]
+    expect(readinessBlocker(paused, 'deposit', 110_000)).toBeUndefined()
+  })
   it('rejects malformed, future-dated and overlong snapshots', () => {
     expect(parseReadiness(sample(), 110_000)).toEqual(sample())
     expect(() => parseReadiness({ ...sample(), expiresAt: 116_000 }, 110_000)).toThrow()

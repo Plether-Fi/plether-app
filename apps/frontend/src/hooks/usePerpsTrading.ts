@@ -1,5 +1,7 @@
 import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import { reportedTransactionError } from '../analytics/transactionErrors'
+import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from '../perps-aa/readiness'
+import { SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
 import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
 import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
@@ -588,6 +590,9 @@ export function usePerpsTrading() {
       }
 
       const sponsored = requireSponsoredExecution()
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const client = requireClient(publicClient)
       const hash = await writeContractAsync({
         account: sponsored.ownerAddress,
@@ -635,6 +640,9 @@ export function usePerpsTrading() {
       }
 
       const sponsored = requireSponsoredExecution()
+      await refreshReadiness()
+      const blocker = readinessBlocker(currentReadiness(), 'deposit')
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
       const useOwnerAuthorization = source === 'owner' || (
         source === undefined &&
         sponsored.manifest.usdcSupportsEip3009

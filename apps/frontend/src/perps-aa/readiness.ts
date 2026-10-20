@@ -63,7 +63,13 @@ export function readinessChecks(snapshot: ReadinessSnapshot | undefined, action:
     : snapshot.actions[action]
 }
 export function readinessBlocker(snapshot: ReadinessSnapshot | undefined, action: ReadinessAction, now = readinessNow(snapshot)): ReadinessCheck | undefined {
-  return snapshot?.enforcementEnabled ? readinessChecks(snapshot, action, now).find(c => c.status === 'blocked') : undefined
+  // A confirmed sponsorship pause is authoritative even while broader worker
+  // readiness remains observation-only. Unknown/stale observations never block.
+  return readinessChecks(snapshot, action, now).find(c => c.status === 'blocked' && (
+    snapshot?.enforcementEnabled === true ||
+    ((c.component === 'sponsorship' || c.component === 'paymaster') &&
+      (c.reason === 'PAYMASTER_PAUSED' || c.reason === 'SPONSORSHIP_DISABLED'))
+  ))
 }
 export function readinessWorkers(snapshot: ReadinessSnapshot | undefined, now = readinessNow(snapshot)): ReadinessCheck[] {
   return !snapshot || snapshot.expiresAt <= now || snapshot.observedAt > now+5_000 ? [] : snapshot.workers ?? []
@@ -121,7 +127,7 @@ const messages: Record<string, string> = {
   AUTHORIZATION_EXPIRED: 'The unused gas sponsorship expired and was safely reconciled. Recover and discard the saved attempt before preparing a new action.',
   PREPARATION_UNUSABLE: 'The saved preparation can no longer be signed. Check recovery to discard it when available.',
   SPONSORSHIP_DISABLED: 'Gas sponsorship is temporarily disabled.',
-  PAYMASTER_PAUSED: 'Gas sponsorship is paused.',
+  PAYMASTER_PAUSED: 'Gas sponsorship is temporarily paused. New sponsored transactions are unavailable until service resumes.',
   RECONCILIATION_STALE: 'Sponsorship accounting is catching up.',
   BUNDLER_UNAVAILABLE: 'Transaction submission could not be verified.',
   KEEPER_INSUFFICIENT_FUNDS: 'The trade execution worker needs funding.',
