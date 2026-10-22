@@ -588,15 +588,15 @@ jobs:
                 '
                 def array: if type == "array" then . else [.] end;
                 def statement($sid): [.PolicyDocument.Statement[] | select(.Sid == $sid)];
-                .PolicyDocument.Version == "2012-10-17"
+                (statement("ReadPaymasterSignerPublicKey")[0]) as $metadata
+                | (statement("SignFixedAttestationDigest")[0]) as $sign
+                | (statement("WriteFireLensCloudWatchCopy")[0]) as $log
+                | .PolicyDocument.Version == "2012-10-17"
                 and (.PolicyDocument.Statement | length) == 3
                 and (statement("ReadPaymasterSignerPublicKey") | length) == 1
                 and (statement("SignFixedAttestationDigest") | length) == 1
                 and (statement("WriteFireLensCloudWatchCopy") | length) == 1
-                and (statement("ReadPaymasterSignerPublicKey")[0]) as $metadata
-                | (statement("SignFixedAttestationDigest")[0]) as $sign
-                | (statement("WriteFireLensCloudWatchCopy")[0]) as $log
-                | $metadata.Effect == "Allow"
+                  and $metadata.Effect == "Allow"
                   and ($metadata.Action | array | sort)
                       == (["kms:DescribeKey", "kms:GetPublicKey"] | sort)
                   and ($metadata.Resource | array) == [$kms]
@@ -671,7 +671,13 @@ jobs:
                 ($definition.environment // []) | map({key: .name, value: .value}) | from_entries;
               def secrets($definition):
                 ($definition.secrets // []) | map({key: .name, value: .valueFrom}) | from_entries;
-              .taskDefinition.family == $family
+              (containers($app)[0]) as $main
+              | (containers($tmp)[0]) as $init
+              | (containers($router)[0]) as $log_router
+              | (envmap($main)) as $environment
+              | (secrets($main)) as $secret_map
+              | (envmap($log_router)) as $router_environment
+              | .taskDefinition.family == $family
               and .taskDefinition.status == "ACTIVE"
               and .taskDefinition.networkMode == "awsvpc"
               and (.taskDefinition.requiresCompatibilities | index("FARGATE") != null)
@@ -696,13 +702,7 @@ jobs:
                     "ManagedBy":"terraform",
                     "Project":"plether"
                   })
-              and (containers($app)[0]) as $main
-              | (containers($tmp)[0]) as $init
-              | (containers($router)[0]) as $log_router
-              | (envmap($main)) as $environment
-              | (secrets($main)) as $secret_map
-              | (envmap($log_router)) as $router_environment
-              | $main.essential == true
+                and $main.essential == true
                 and $main.readonlyRootFilesystem == true
                 and $main.user == "65534:65534"
                 and $main.stopTimeout == 120

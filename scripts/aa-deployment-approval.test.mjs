@@ -261,46 +261,87 @@ for (const [, filter, name] of taskFilters) {
   })
 }
 
-test('AA admin topology accepts ECS omitted-disabled fault injection and rejects unsafe drift', () => {
+test('AA admin KMS policy gate preserves document checks alongside statement bindings', () => {
   const source = readFileSync(new URL('.github/workflows/aa-admin.yml', root), 'utf8')
-  const filter = source.match(/'\n(\s+def containers\(\$name\):[\s\S]*?)'\s+\\\n\s+"\$source_file"/)?.[1]
-  assert.ok(filter, 'execute the complete actual capability topology gate')
-  const fixture = JSON.parse(readFileSync(new URL('scripts/fixtures/aa-admin-kms-topology.json', root), 'utf8'))
-  const args = {
-    action: 'attest-kms', family: fixture.taskDefinition.family,
-    execution_role: fixture.taskDefinition.executionRoleArn,
-    task_role: fixture.taskDefinition.taskRoleArn,
-    capability: 'fixed-digest-kms-attestation', app: 'plether-aa-admin',
-    tmp: 'aa-admin-tmp-init', router: 'otel-log-router',
-    kms: 'arn:aws:kms:ap-southeast-1:123456789012:key/00000000-0000-4000-8000-000000000001',
-    database: 'arn:aws:ssm:ap-southeast-1:123456789012:parameter/plether/sepolia/database-url',
-    log_parameter: 'arn:aws:ssm:ap-southeast-1:123456789012:parameter/plether/sepolia/posthog-otlp-authorization-header',
-  }
-  const cases = [
-    ['omitted disabled field', () => {}, true],
-    ['explicit false', value => { value.taskDefinition.enableFaultInjection = false }, true],
-    ...[true, null, 'false', 0, {}, []].map(field => [
-      `invalid fault injection ${JSON.stringify(field)}`,
-      value => { value.taskDefinition.enableFaultInjection = field }, false,
-    ]),
-    ['wrong role', value => { value.taskDefinition.taskRoleArn += '-other' }, false],
-    ['wrong family', value => { value.taskDefinition.family += '-other' }, false],
-    ['unexpected tag', value => { value.tags.push({key: 'Other', value: 'yes'}) }, false],
-    ['root main process', value => { value.taskDefinition.containerDefinitions[0].user = '0' }, false],
-    ['extra secret', value => { value.taskDefinition.containerDefinitions[0].secrets.push({name: 'DATABASE_URL', valueFrom: args.database}) }, false],
-    ['extra container', value => { value.taskDefinition.containerDefinitions.push({name: 'unexpected'}) }, false],
-    ['wrong signer', value => { value.taskDefinition.containerDefinitions[0].environment.find(item => item.name === 'AA_PAYMASTER_SIGNER_ADDRESS').value = '0x' + '0'.repeat(40) }, false],
-  ]
-  for (const [label, mutate, expected] of cases) {
-    const value = structuredClone(fixture)
-    mutate(value)
-    const result = spawnSync('jq', ['--exit-status', ...Object.entries(args).flatMap(([key, value]) => ['--arg', key, value]), filter], {
-      input: JSON.stringify(value), encoding: 'utf8', env: {...process.env, AWS_REGION: 'ap-southeast-1'},
-    })
+  const filter = source.match(/'(\s+def array:[^\n]*\n\s+def statement\(\$sid\):[\s\S]*?)' "\$task_policy_file"/)?.[1]
+  assert.ok(filter, 'execute the actual KMS role policy gate')
+  const kms = 'arn:aws:kms:ap-southeast-1:123456789012:key/test'
+  const logs = 'arn:aws:logs:ap-southeast-1:123456789012:log-group:/ecs/plether-sepolia:log-stream:*'
+  const fixture = {PolicyDocument: {Version: '2012-10-17', Statement: [
+    {Sid: 'ReadPaymasterSignerPublicKey', Effect: 'Allow', Action: ['kms:DescribeKey', 'kms:GetPublicKey'], Resource: kms},
+    {Sid: 'SignFixedAttestationDigest', Effect: 'Allow', Action: 'kms:Sign', Resource: kms, Condition: {StringEquals: {'kms:SigningAlgorithm': 'ECDSA_SHA_256'}}},
+    {Sid: 'WriteFireLensCloudWatchCopy', Effect: 'Allow', Action: ['logs:CreateLogStream', 'logs:DescribeLogStreams', 'logs:PutLogEvents'], Resource: logs},
+  ]}}
+  for (const [label, mutate, expected] of [
+    ['reviewed policy', () => {}, true],
+    ['wrong version', v => {v.PolicyDocument.Version = 'wrong'}, false],
+    ['extra statement', v => {v.PolicyDocument.Statement.push({Effect: 'Allow', Action: '*', Resource: '*'})}, false],
+    ['unrestricted key', v => {v.PolicyDocument.Statement[1].Resource = '*'}, false],
+    ['missing signing condition', v => {delete v.PolicyDocument.Statement[1].Condition}, false],
+  ]) {
+    const value = structuredClone(fixture); mutate(value)
+    const result = spawnSync('jq', ['--exit-status', '--arg', 'kms', kms, '--arg', 'logs', logs, filter], {input: JSON.stringify(value), encoding: 'utf8'})
     assert.ifError(result.error)
     assert.equal(result.status === 0, expected, `${label}: ${result.stderr}`)
   }
 })
+
+for (const action of ['attest-kms', 'resume-issuance']) {
+  test(`AA admin ${action} topology accepts ECS omitted-disabled fault injection and rejects unsafe drift`, () => {
+    const source = readFileSync(new URL('.github/workflows/aa-admin.yml', root), 'utf8')
+    const filter = source.match(/'\n(\s+def containers\(\$name\):[\s\S]*?)'\s+\\\n\s+"\$source_file"/)?.[1]
+    assert.ok(filter, 'execute the complete actual capability topology gate')
+    const fixture = JSON.parse(readFileSync(new URL('scripts/fixtures/aa-admin-kms-topology.json', root), 'utf8'))
+    const args = {
+      action, family: fixture.taskDefinition.family,
+      execution_role: fixture.taskDefinition.executionRoleArn,
+      task_role: fixture.taskDefinition.taskRoleArn,
+      capability: 'fixed-digest-kms-attestation', app: 'plether-aa-admin',
+      tmp: 'aa-admin-tmp-init', router: 'otel-log-router',
+      kms: 'arn:aws:kms:ap-southeast-1:123456789012:key/00000000-0000-4000-8000-000000000001',
+      database: 'arn:aws:ssm:ap-southeast-1:123456789012:parameter/plether/sepolia/database-url',
+      log_parameter: 'arn:aws:ssm:ap-southeast-1:123456789012:parameter/plether/sepolia/posthog-otlp-authorization-header',
+    }
+    if (action === 'resume-issuance') {
+      args.family = fixture.taskDefinition.family = 'plether-sepolia-aa-admin-resume-issuance'
+      args.capability = 'issuance-control'
+      fixture.tags.find(tag => tag.key === 'Capability').value = args.capability
+      const main = fixture.taskDefinition.containerDefinitions.find(container => container.name === args.app)
+      main.command = ['/usr/local/bin/plether-aa-admin', 'resume-issuance', '--expected-reason', '__WORKFLOW_REQUIRED__', '--operator-note', '__WORKFLOW_REQUIRED__']
+      main.environment = [{name: 'HOME', value: '/tmp'}, {name: 'TMPDIR', value: '/tmp'}]
+      main.secrets = [{name: 'DATABASE_URL', valueFrom: args.database}]
+    }
+    const cases = [
+      ['omitted disabled field', () => {}, true],
+      ['explicit false', value => { value.taskDefinition.enableFaultInjection = false }, true],
+      ...[true, null, 'false', 0, {}, []].map(field => [
+        `invalid fault injection ${JSON.stringify(field)}`,
+        value => { value.taskDefinition.enableFaultInjection = field }, false,
+      ]),
+      ['wrong role', value => { value.taskDefinition.taskRoleArn += '-other' }, false],
+      ['wrong family', value => { value.taskDefinition.family += '-other' }, false],
+      ['unexpected tag', value => { value.tags.push({key: 'Other', value: 'yes'}) }, false],
+      ['root main process', value => { value.taskDefinition.containerDefinitions[0].user = '0' }, false],
+      ['extra secret', value => { value.taskDefinition.containerDefinitions[0].secrets.push({name: 'EXTRA_SECRET', valueFrom: args.database}) }, false],
+      ['extra container', value => { value.taskDefinition.containerDefinitions.push({name: 'unexpected'}) }, false],
+      ...(action === 'attest-kms' ? [
+        ['wrong signer', value => { value.taskDefinition.containerDefinitions[0].environment.find(item => item.name === 'AA_PAYMASTER_SIGNER_ADDRESS').value = '0x' + '0'.repeat(40) }, false],
+      ] : [
+        ['missing database secret', value => { value.taskDefinition.containerDefinitions[0].secrets = [] }, false],
+        ['unexpected command', value => { value.taskDefinition.containerDefinitions[0].command = ['/bin/sh'] }, false],
+      ]),
+    ]
+    for (const [label, mutate, expected] of cases) {
+      const value = structuredClone(fixture)
+      mutate(value)
+      const result = spawnSync('jq', ['--exit-status', ...Object.entries(args).flatMap(([key, value]) => ['--arg', key, value]), filter], {
+        input: JSON.stringify(value), encoding: 'utf8', env: {...process.env, AWS_REGION: 'ap-southeast-1'},
+      })
+      assert.ifError(result.error)
+      assert.equal(result.status === 0, expected, `${label}: ${result.stderr}`)
+    }
+  })
+}
 
 test('frontend health gate supports the exact legacy wrapper without accepting unhealthy bodies', () => {
   const source = readFileSync(new URL('.github/workflows/deploy-frontend.yml', root), 'utf8')
