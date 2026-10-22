@@ -357,6 +357,16 @@ export async function executeSponsoredPerpsAction(
       })
     }
 
+    // Check before journaling a new preparation or requesting sponsorship.
+    // Recovery of an existing operation keeps its own authorization checks.
+    if (isPerpsAaManifestV2(input.manifest) && !input.resumeOperationId) {
+      failureStep = 'readiness_check'
+      await refreshReadiness()
+      const action = input.orderRequestV3 ? input.orderRequestV3.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
+      const blocker = readinessBlocker(currentReadiness(), action)
+      if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })
+    }
+
     releaseBrowserLane = await acquireSponsoredOperationBrowserLane({
       chainId: input.manifest.chainId,
       accountAddress: input.runtime.smartAccount.accountAddress,
@@ -499,7 +509,7 @@ export async function executeSponsoredPerpsAction(
     }
     activeTracker.signal.throwIfAborted()
     failureStep = 'readiness_check'
-    if (isPerpsAaManifestV2(input.manifest)) {
+    if (isPerpsAaManifestV2(input.manifest) && (!resumed || currentReadiness()?.enforcementEnabled)) {
       const action = input.orderRequestV3 ? input.orderRequestV3.isClose ? 'close' : 'open' : input.protectionIntent ? 'protection' : 'deposit'
       const blocker = readinessBlocker(currentReadiness(), action)
       if (blocker) throw new SponsorRequestError({ reason: blocker.reason, message: readinessMessage(blocker.reason), retryable: true })

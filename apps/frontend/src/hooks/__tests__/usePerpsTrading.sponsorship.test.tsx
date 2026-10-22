@@ -15,6 +15,14 @@ const mocks = vi.hoisted(() => ({
   writeContractAsync: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
+  readinessBlocker: vi.fn(),
+}))
+
+vi.mock('../../perps-aa/readiness', () => ({
+  refreshReadiness: vi.fn(async () => {}),
+  currentReadiness: () => undefined,
+  readinessBlocker: mocks.readinessBlocker,
+  readinessMessage: () => 'Gas sponsorship is temporarily paused.',
 }))
 
 vi.mock('wagmi', () => ({
@@ -111,6 +119,7 @@ function wrapper({ children }: { children: ReactNode }) {
 describe('usePerpsTrading sponsorship route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.readinessBlocker.mockReset()
     mocks.executeSponsoredPerpsAction.mockResolvedValue({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -120,6 +129,14 @@ describe('usePerpsTrading sponsorship route', () => {
       status: 'success',
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it.each(['fundTradingAccount', 'depositMargin'] as const)('blocks %s before a transfer or sponsorship when paused', async method => {
+    mocks.readinessBlocker.mockReturnValue({ component: 'sponsorship', status: 'blocked', reason: 'PAYMASTER_PAUSED' })
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+    await expect(result.current[method](25_000_000n)).rejects.toThrow()
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
   it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {

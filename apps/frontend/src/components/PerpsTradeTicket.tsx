@@ -1,6 +1,7 @@
 import { getPerpsErrorMessage } from '../utils/perpsErrors'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { useSavedOperationConfirmation } from '../perps-aa/useSavedOperationRuntime'
+import { readinessBlocker, readinessMessage, useTradingReadiness } from '../perps-aa/readiness'
 import { restoredOrderDraft } from '../perps-aa/orderDraft'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SponsoredExecutionStatus } from '@plether-fi/perps-aa-client'
@@ -1819,6 +1820,11 @@ export function PerpsTradeTicket({
   const address = identity.accountAddress
   const isConnected = identity.ownerAddress !== undefined
   const isSponsoredAccountConfigured = identity.isAaManifestConfigured
+  const tradingReadiness = useTradingReadiness(enableLiveTrading && isSponsoredAccountConfigured)
+  const sponsorshipBlocker = enableLiveTrading && isSponsoredAccountConfigured
+    ? readinessBlocker(tradingReadiness, 'deposit')
+    : undefined
+  const sponsorshipPauseMessage = sponsorshipBlocker ? readinessMessage(sponsorshipBlocker.reason) : undefined
   const chainId = useChainId()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const {
@@ -2901,6 +2907,7 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (sponsorshipPauseMessage) return sponsorshipPauseMessage
     if (protectionInput.error) return protectionInput.error
     if (activePositionProtectionId > 0n) {
       return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
@@ -3053,7 +3060,7 @@ export function PerpsTradeTicket({
   const frozenPreparationKey = isReviewOpen && reviewSnapshot?.preparationKey ? reviewSnapshot.preparationKey : draftPreparationKey
   const candidateKey = orderPreparationKey([frozenPreparationKey, slippageNumber])
   const canPrepare = enableLiveTrading && (!isReviewOpen || !reviewSnapshot?.identityKey || reviewSnapshot.identityKey === preparationIdentityKey) && lifecycleState === 'preview' && isConnected && isCorrectChain &&
-    (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation &&
+    (!isSponsoredAccountConfigured || identity.status === 'ready') && !activeAccountOperation && !sponsorshipPauseMessage &&
     typeof prepareOrder === 'function'
   const preparation = usePerpsOrderPreparation({
     candidate: { key: candidateKey, input: candidateSnapshot },
@@ -3101,7 +3108,7 @@ export function PerpsTradeTicket({
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
     : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
-  const reviewFooterError = executionProtectionsError
+  const reviewFooterError = sponsorshipPauseMessage ?? executionProtectionsError
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
   const accountBlockReason = pendingOperationGuidance
@@ -3634,6 +3641,7 @@ export function PerpsTradeTicket({
   const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isAwaitingAccountConfirmation || isMarginActionPending
+    || Boolean(sponsorshipPauseMessage)
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
   const orderDxyExposureNumber = usdcRawToNumber(orderDxyExposureUsdc)
   const commonAnalyticsProperties = useMemo<PerpsAnalyticsProperties>(() => ({
@@ -3696,6 +3704,7 @@ export function PerpsTradeTicket({
 
   async function handleMarginActionSubmit() {
     if (!marginAction) return
+    if (sponsorshipPauseMessage) return
     if (enableLiveTrading && !isConnected) {
       void openAppKit()
       return
@@ -4537,9 +4546,14 @@ export function PerpsTradeTicket({
         </div>
 
         {restoredDraftNotice && <p role="status" className="mb-3 text-sm text-content-secondary">{restoredDraftNotice}</p>}
+        {sponsorshipPauseMessage && (
+          <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+            {sponsorshipPauseMessage}
+          </p>
+        )}
         {enableLiveTrading && activeAccountOperation && isConnected && isCorrectChain ? (
           <AccountOperationNotice confirmation={savedConfirmation} operation={activeAccountOperation} now={nowSeconds * 1000} onOpen={openRecoveryActivity} />
-        ) : displayedValidationError && !isZeroSize &&
+        ) : displayedValidationError && displayedValidationError !== sponsorshipPauseMessage && !isZeroSize &&
         (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
             {displayedValidationError}
@@ -4675,7 +4689,7 @@ export function PerpsTradeTicket({
               canConfirm={!isAwaitingAccountConfirmation && !reviewValidationError && (!enableLiveTrading || preparation.ready)}
               onCancel={closeReviewModal}
               onConfirm={() => { void handleConfirmCommit() }}
-              onRetry={reviewFundingShortfallUsdc === undefined ? retryExecutionProtections : undefined}
+              onRetry={!sponsorshipPauseMessage && reviewFundingShortfallUsdc === undefined ? retryExecutionProtections : undefined}
               analyticsProperties={commonAnalyticsProperties}
             />
           ) : lifecycleState === 'commitPending' ? (
@@ -5499,6 +5513,11 @@ export function PerpsTradeTicket({
         }
       >
         <div className="space-y-5">
+          {sponsorshipPauseMessage && (
+            <p role="status" className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+              {sponsorshipPauseMessage}
+            </p>
+          )}
           <p className="text-sm leading-6 text-content-secondary">
             {marginAction === 'withdraw'
               ? isSponsoredAccountConfigured
