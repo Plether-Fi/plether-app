@@ -43,15 +43,33 @@ const ACTION_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-app-bg enabled:hover
 const STATE_CHANGED = 'Your account, position, or TP/SL changed. Go back and review it again.'
 
 export function PerpsProtectionPanel(props: ProtectionPanelProps) {
-  const { managePositionProtection } = usePerpsTrading()
+  const { managePositionProtection, manageNativeProtection, executeOrder } = usePerpsTrading()
+  const [fallbackError, setFallbackError] = useState<string>()
+  const [fallbackPending, setFallbackPending] = useState(false)
   const { accountAddress } = usePerpsIdentity()
-  const execution = useProtectionExecution(props.protection?.protectionId, [2, 8].includes(props.protection?.status ?? 0))
-  return <PositionProtectionManager {...props} accountAddress={accountAddress}
+  const execution = useProtectionExecution(props.protection?.protectionId, [2, 3, 8].includes(props.protection?.status ?? 0))
+  const fallback = async () => {
+    if (!props.protection) return
+    setFallbackPending(true); setFallbackError(undefined)
+    try {
+      if (props.protection.status === 3) await executeOrder(props.protection.linkedOrderId)
+      else await manageNativeProtection(props.protection.protectionId, props.protection.status === 8 ? 'retry' : 'cancel')
+      props.onRefresh()
+    } catch (error) { setFallbackError(error instanceof Error ? error.message : 'Native protection action failed') }
+    finally { setFallbackPending(false) }
+  }
+  return <><PositionProtectionManager {...props} accountAddress={accountAddress}
     executionReport={execution.data} executionLoading={execution.isFetching && !execution.data} executionError={execution.isError}
     onRefreshExecution={() => { void execution.refetch() }}
     onManage={async request => { await managePositionProtection(request); props.onRefresh() }}
     history={<ProtectionHistory activeProtectionId={props.protection?.protectionId} />}
   />
+    {props.protection && [1, 2, 3, 8].includes(props.protection.status) ? <div className="mt-3 space-y-2 text-sm">
+      <p>Keeper or sponsorship unavailable? Your owner wallet can pay native gas. Removing armed TP/SL leaves the position open; a retry queues a new close with the same protection.</p>
+      <Button disabled={fallbackPending} onClick={() => void fallback()}>{props.protection.status === 3 ? 'Finalize protected close with native gas' : props.protection.status === 8 ? 'Retry protected close with native gas' : 'Remove TP/SL with native gas'}</Button>
+      {fallbackError ? <p role="alert">{fallbackError}</p> : null}
+    </div> : null}
+  </>
 }
 
 /** The same stateful UI is used by the app and the transaction-free Storybook demo. */
@@ -191,7 +209,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </div>
         </> : view === 'edit' ? <>
           <ProtectionInputs value={draft} onChange={setDraft} disabled={pending || targetChanged} {...priceContext} />
-          <p className="text-xs text-content-secondary">{protection ? 'Your current triggers stay in place until the update is confirmed.' : 'The execution reserve pays for triggering and executing the close. It is reserved from free margin when you add TP/SL.'}</p>
+          <p className="text-xs text-content-secondary">{protection ? 'Your current triggers stay in place until the update is confirmed.' : 'The trigger reward is reserved from free settlement when you add TP/SL. Close execution has no keeper bounty on the new deployment.'}</p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" className={ACTION_CLASS} disabled={pending || targetChanged || Boolean(fundingError) || !configuration.enabled || (!draft.takeProfit && !draft.stopLoss)} onClick={reviewChanges}>Review TP/SL</Button>
             <Button size="sm" variant="secondary" onClick={() => { setView('overview'); setError(undefined) }}>Back</Button>

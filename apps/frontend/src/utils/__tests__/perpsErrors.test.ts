@@ -240,7 +240,7 @@ describe('getPerpsErrorMessage', () => {
     ['EnforcedPause', [], 'router is paused'],
     ['MarginClearinghouse__ZeroAmount', [], 'greater than zero'],
     ['MarginClearinghouse__InsufficientBalance', [], 'balance is too low'],
-    ['MarginClearinghouse__InsufficientFreeEquity', [], 'Not enough free margin'],
+    ['MarginClearinghouse__InsufficientFreeEquity', [], 'Not enough available collateral'],
     ['MarginClearinghouse__InsufficientUsdcForSettlement', [], 'does not have enough USDC settlement'],
 
     ['OrderRouter__ZeroSize', [], 'Order size must be greater than zero'],

@@ -2,13 +2,13 @@ import { isAddressEqual, type Hex } from 'viem'
 import type { SponsoredOperation } from './operationStore'
 import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
 import type { PerpsAaDeploymentManifestV2 } from './manifest'
-import type { CloseAssistanceConfig } from './sponsoredClose'
+import type { HistoricalCloseAssistance } from './historicalSponsorship'
 
 /** Recovery uses the journaled authority, independently of today's issuance flag. */
-export function withCloseAssistanceRecovery(
+export function withSponsorshipRecovery(
   base: PerpsAaSmartAccountRuntime,
   operations: () => SponsoredOperation[],
-  nativeRuntime: (config: Pick<CloseAssistanceConfig, 'paymasterAddress'>) => Promise<PerpsAaSmartAccountRuntime>,
+  nativeRuntime: (config: Pick<HistoricalCloseAssistance, 'paymasterAddress'>) => Promise<PerpsAaSmartAccountRuntime>,
   preparedRuntime?: (manifest: PerpsAaDeploymentManifestV2) => Promise<PerpsAaSmartAccountRuntime>,
 ): PerpsAaSmartAccountRuntime {
   const cache = new Map<string, Promise<PerpsAaSmartAccountRuntime>>()
@@ -47,7 +47,7 @@ export function withCloseAssistanceRecovery(
     const authority = funding ?? operation.sponsorshipAuthority
     if (!authority) return base
     if (!operation.sponsorshipAuthority || !isAddressEqual(operation.sponsorshipAuthority.paymasterAddress, authority.paymasterAddress)) {
-      throw new Error('Sponsored close recovery authority does not match its reviewed funding')
+      throw new Error('Sponsorship recovery authority does not match its journal')
     }
     const key = authority.paymasterAddress.toLowerCase()
     let pending = cache.get(key)
@@ -56,7 +56,7 @@ export function withCloseAssistanceRecovery(
         if (runtime.chainId !== base.chainId || !isAddressEqual(runtime.ownerAddress, base.ownerAddress)
           || !isAddressEqual(runtime.smartAccount.accountAddress, base.smartAccount.accountAddress)
           || !isAddressEqual(runtime.smartAccount.entryPoint, base.smartAccount.entryPoint)) {
-          throw new Error('Sponsored close recovery account changed')
+          throw new Error('Sponsorship recovery account changed')
         }
         return runtime
       }).catch((error: unknown) => { cache.delete(key); throw error })

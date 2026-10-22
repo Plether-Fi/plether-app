@@ -17,6 +17,8 @@ module Plether.Keeper
   , validateLpSettlementCost
   , lpSettlementRequiredBalance
   , isOrderPastValidUntil
+  , isCanonicalQueueHead
+  , keeperSpendAllowed
   , isOrderRevealReady
   , isFrozenClosePayloadReady
   , isSameBlockMevGuardError
@@ -2181,6 +2183,27 @@ decideExecution cfg conn client dryRun observeCost pending headOrder settlementW
           executeReadyHead (drop 1 pending) freshHead freshHeadIsClose fpoValidUntil
   where
     executeReadyHead remainingPending freshHead freshHeadIsClose validUntil = do
+      bounds <- Perps.queueBoundsAtBlock client (cfgPerpsOrderRouter cfg) latestBlock
+      case bounds of
+        Right (headId, nextId) | isCanonicalQueueHead (pkorOrderId freshHead) headId nextId ->
+          executeCanonicalHead remainingPending freshHead freshHeadIsClose validUntil
+        _ -> logWarnEvery 60 "keeper_canonical_queue_gap"
+          "Indexed head is not the canonical pending head; reconcile indexing before execution"
+          [field "order_id" $ pkorOrderId freshHead]
+
+    executeCanonicalHead remainingPending freshHead freshHeadIsClose validUntil = do
+      -- Risk-off and pinned-config cleanup need no oracle bytes. Probe a single
+      -- head and submit separately: later oracle preparation must not undo it.
+      -- There is deliberately no bounty/profitability filter for live closes.
+      cleanup <- preflightV2OrderTransaction cfg client 0
+        (SingleOrderCall $ pkorOrderId freshHead)
+        (Perps.executeOrderCall (pkorOrderId freshHead) []) (\_ _ -> pure ())
+      case cleanup of
+        Right (V2PreflightReady _) ->
+          submitIntent cfg conn client dryRun observeCost [(pkorOrderId freshHead, validUntil)] $ CleanupExpired freshHead
+        _ -> executePricedHead remainingPending freshHead freshHeadIsClose validUntil
+
+    executePricedHead remainingPending freshHead freshHeadIsClose validUntil = do
       frozenCloseResult <- tryFrozenClosePayload freshHead freshHeadIsClose
       case frozenCloseResult of
         Left err -> do
@@ -2711,19 +2734,23 @@ submitKeeperTransactionTo cfg client target value callData gasLimitOverride obse
                       , txValue = value
                       , txData = callData
                       }
-              observeCost $ value + gasLimit * maxFee
-              signResult <- signTransaction privateKey tx
-              case signResult of
-                Left err -> pure $ Left (False, err)
-                Right signed -> do
-                  beforeBroadcast signed
-                  sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
-                  case sendResult of
-                    Left err -> pure $ Left (False, rpcErrorText err)
-                    Right txHash -> do
-                      unless (T.toLower txHash == T.toLower (signedTransactionHash signed)) $ fail "Keeper RPC returned a different transaction hash"
-                      receiptResult <- waitForReceipt client txHash
-                      pure $ either (\err -> Left (True, err)) Right receiptResult
+              let maximumCost = value + gasLimit * maxFee
+              observeCost maximumCost
+              if not (keeperSpendAllowed (cfgKeeperMaxTxCostWei cfg) maximumCost)
+                then pure $ Left (False, "KEEPER_SPEND_LIMIT: configure/review KEEPER_MAX_TX_COST_WEI; unpaid orders remain actionable")
+                else do
+                  signResult <- signTransaction privateKey tx
+                  case signResult of
+                    Left err -> pure $ Left (False, err)
+                    Right signed -> do
+                      beforeBroadcast signed
+                      sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
+                      case sendResult of
+                        Left err -> pure $ Left (False, rpcErrorText err)
+                        Right txHash -> do
+                          unless (T.toLower txHash == T.toLower (signedTransactionHash signed)) $ fail "Keeper RPC returned a different transaction hash"
+                          receiptResult <- waitForReceipt client txHash
+                          pure $ either (\err -> Left (True, err)) Right receiptResult
             _ ->
               pure $
                 Left
@@ -2889,6 +2916,14 @@ assessLifecycleRefresh = \case
   0 -> Left "lifecycle book reports that the indexed order is unused"
   status -> Left $ "lifecycle book returned unsupported status " <> T.pack (show status)
 
+-- An explicit operator limit gates signing, never contract admission or queue observation.
+keeperSpendAllowed :: Integer -> Integer -> Bool
+keeperSpendAllowed limit cost = limit > 0 && cost >= 0 && cost <= limit
+
+isCanonicalQueueHead :: Integer -> Integer -> Integer -> Bool
+isCanonicalQueueHead orderId headId nextId =
+  headId > 0 && headId < nextId && orderId == headId
+
 isOrderPastValidUntil :: Integer -> Integer -> Bool
 isOrderPastValidUntil chainNow validUntil =
   validUntil > 0 && chainNow > validUntil
@@ -2940,7 +2975,7 @@ intentOrders = \case
 
 describeIntent :: ExecutionIntent -> String
 describeIntent = \case
-  CleanupExpired order -> "expired-order cleanup for " <> show (pkorOrderId order)
+  CleanupExpired order -> "oracle-independent head execution/cleanup for " <> show (pkorOrderId order)
   ExecuteReady [order] _ _ _ -> "single-order execution for " <> show (pkorOrderId order)
   ExecuteReady orders _ _ _ ->
     "batch execution through order "

@@ -31,6 +31,7 @@ import {
 } from '../operationStore'
 import { createSponsorshipAuthority } from '../paymasterValidity'
 import type { ManagedUserOperation } from '../runtimeContext'
+import { persistPerpsOrderRequestV3, permissivePerpsExecutionBounds } from '../../contracts/perpsOrderV3'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -1333,6 +1334,40 @@ describe('sponsored operation store', () => {
       })
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
       [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('preserves historical grant metadata and authority through journal persistence and hydration', async () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const sponsorshipAuthority = createSponsorshipAuthority({ paymasterAddress: PLETHER_PAYMASTER, validUntil: 1_000n })
+    const closeAssistance = { amountUsdc: '198000', lens: ACCOUNT,
+      lensCodeHash: `0x${'45'.repeat(32)}` as Hex, paymasterAddress: PLETHER_PAYMASTER }
+    const orderRequestV3 = { ...persistPerpsOrderRequestV3(ACCOUNT, {
+      clientOrderId: `0x${'34'.repeat(32)}`, side: 0, sizeDelta: 100n * 10n ** 18n,
+      marginDelta: 0n, targetPrice: 100_000_000n, isClose: true,
+      bounds: permissivePerpsExecutionBounds({ submitBy: 2_000_000_000n, executionWindowSeconds: 60,
+        expectedConfigHash: `0x${'56'.repeat(32)}`, executionBountyUsdc: 200_000n }),
+    }), closeAssistance }
+    useSponsoredOperationStore.getState().beginOperation({
+      id: 'historical-close', ownerAddress: OWNER, accountAddress: ACCOUNT, chainId: 421614,
+      accountMode: 'simple', manifestVersion: 'v1', action: 'place-order', orderRequestV3,
+    })
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash('historical-close', userOperationHash, {
+      signedUserOperation: signedPletherOperation(), sponsorshipAuthority,
+    })).toBe(true)
+    expect(JSON.parse(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}historical-close`
+    )!)).toMatchObject({ version: 1, operation: { orderRequestV3, sponsorshipAuthority, userOperationHash } })
+
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().operations).toHaveLength(1)
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+      id: 'historical-close', ownerAddress: OWNER, accountAddress: ACCOUNT, chainId: 421614,
+      userOperationHash, orderRequestV3, sponsorshipAuthority,
+    })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'historical-close',
     })
   })
 

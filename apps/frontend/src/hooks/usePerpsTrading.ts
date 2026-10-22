@@ -1,10 +1,9 @@
+import { commitNativeClose, executeNativeOrder, nativeProtectionAction } from '../perps-aa/nativeClose'
 import { buildProtectedOpenV3Action } from '../perps-aa/orderActionV3'
 import { reportedTransactionError } from '../analytics/transactionErrors'
 import { currentReadiness, readinessBlocker, readinessMessage, refreshReadiness } from '../perps-aa/readiness'
 import { SponsorRequestError } from '../perps-aa/errors'
 import type { SavedOrderDraft } from '../perps-aa/orderDraft'
-import { loadCloseAssistanceConfig, closeAssistanceManifest, buildSponsoredCloseAction, SIMPLE_ACCOUNT_BATCH_ABI } from '../perps-aa/sponsoredClose'
-import { createManagedAaRuntime } from '../perps-aa/managedPimlicoRuntime'
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
@@ -90,6 +89,7 @@ interface PrepareOrderInput {
 }
 
 interface CommitOrderInput extends PrepareOrderInput {
+  nativeGas?: boolean
   orderDraft?: SavedOrderDraft
   preparedOrder: PreparedPerpsOrderV3
   onStatus?: (status: SponsoredExecutionStatus) => void
@@ -514,12 +514,12 @@ export function usePerpsTrading() {
     })
   }, [queryClient])
 
-  const requireSponsoredExecution = useCallback(() => {
+  const requireAccountIdentity = useCallback(() => {
     if (!identity.isAaManifestConfigured) {
       throw new SponsoredPreflightError({
         reason: 'MANIFEST_NOT_CONFIGURED',
         message:
-          'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.',
+          'A reviewed Trading Account deployment is required before submitting this action.',
       })
     }
     if (identity.status !== 'ready' || !identity.accountAddress || !identity.ownerAddress) {
@@ -553,6 +553,11 @@ export function usePerpsTrading() {
           'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.',
       })
     }
+    return { manifest: identity.manifest, ownerAddress: identity.ownerAddress, accountAddress: identity.accountAddress }
+  }, [identity])
+
+  const requireSponsoredExecution = useCallback(() => {
+    const verified = requireAccountIdentity()
     if (!identity.sponsorshipEnabled) {
       throw new SponsoredPreflightError({
         reason: 'SPONSORSHIP_DISABLED',
@@ -569,12 +574,10 @@ export function usePerpsTrading() {
     }
 
     return {
-      manifest: identity.manifest,
-      ownerAddress: identity.ownerAddress,
-      accountAddress: identity.accountAddress,
+      ...verified,
       runtime: aaRuntime,
     }
-  }, [aaRuntime, identity])
+  }, [aaRuntime, identity.sponsorshipEnabled, requireAccountIdentity])
 
   const approveUsdcForMargin = useCallback(async (amount: bigint) => {
     void amount
@@ -845,7 +848,7 @@ export function usePerpsTrading() {
         throw new Error('Order size must use 100 plDXY increments')
       }
       const sizeDelta = requestedSizeDelta
-      const sponsored = requireSponsoredExecution()
+      const sponsored = isClose ? requireAccountIdentity() : requireSponsoredExecution()
       const activeOperation = useSponsoredOperationStore
         .getState()
         .getActiveOperation(sponsored.accountAddress)
@@ -860,9 +863,7 @@ export function usePerpsTrading() {
         throw new Error('A Trading Account action is still in progress. Finish or cancel it in account activity before reviewing a fresh order.')
       }
       const client = requireClient(publicClient)
-      const closeAssistance = undefined
       return await preparePerpsOrderV3(client, sponsored.manifest, {
-        closeAssistance,
         account: sponsored.accountAddress,
         direction,
         side: directionToPerpsSide(direction),
@@ -881,7 +882,7 @@ export function usePerpsTrading() {
       if (sponsorError) throw reportedTransactionError(error, sponsorReasonMessage(sponsorError), { surface: 'perps', action: 'review' })
       throw new Error(getPerpsErrorMessage(error, 'review'), { cause: error })
     }
-  }, [address, publicClient, requireSponsoredExecution])
+  }, [address, publicClient, requireSponsoredExecution, requireAccountIdentity])
 
   const commitOrder = useCallback(async ({
     direction,
@@ -892,6 +893,7 @@ export function usePerpsTrading() {
     isClose,
     preparedOrder,
     orderDraft,
+    nativeGas = false,
     onStatus,
     onIncluded,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
@@ -944,7 +946,7 @@ export function usePerpsTrading() {
       const client = requireClient(publicClient)
       diagnosticClient = client
       debugPerpsCommit('client-ready')
-      const sponsored = requireSponsoredExecution()
+      const sponsored = nativeGas ? { ...requireAccountIdentity(), runtime: aaRuntime } : requireSponsoredExecution()
       if (
         sponsored.manifest.version !== preparedOrder.manifestVersion ||
         !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
@@ -1020,23 +1022,18 @@ export function usePerpsTrading() {
         isClose,
       })
 
-      const assisted = preparedOrder.sponsoredClose
-      const action = assisted ? buildSponsoredCloseAction(sponsored.manifest, address, request, assisted)
-        : protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
+      if (nativeGas) {
+        if (!isClose || protection) throw new Error('Native fallback only supports an ordinary close.')
+        const result = await commitNativeClose({ client, wallet: requireClient(walletClient), manifest: sponsored.manifest, account: address, owner: sponsored.ownerAddress }, request)
+        diagnosticHash = result.hash
+        onIncluded?.(result)
+        invalidatePerpsReads()
+        return result
+      }
+      if (!sponsored.runtime) throw new Error('The sponsored runtime is unavailable.')
+      const action = protection ? buildProtectedOpenV3Action({ account: address, book: protection.book, request, params: protection.params })
         : buildPlaceOrderV3Action({ account: address, orderRouter: sponsored.manifest.orderRouter, request })
-      let executionManifest = sponsored.manifest
-      let executionRuntime = sponsored.runtime
-      if (assisted) {
-        const live = await loadCloseAssistanceConfig(sponsored.ownerAddress)
-        if (!live || !isAddressEqual(live.lens, assisted.config.lens) || live.lensCodeHash !== assisted.config.lensCodeHash
-          || !isAddressEqual(live.paymasterAddress, assisted.config.paymasterAddress)) throw new Error('Close assistance changed. Review again.')
-        if (!walletClient) throw new Error('Connect the owner wallet before signing the sponsored close')
-        await client.simulateContract({ account: sponsored.ownerAddress, address,
-          abi: SIMPLE_ACCOUNT_BATCH_ABI, functionName: 'executeBatch',
-          args: [action.calls.map(call => ({ target: call.to, value: call.value, data: call.data }))] })
-        executionManifest = closeAssistanceManifest(sponsored.manifest, live)
-        executionRuntime = await createManagedAaRuntime({ manifest: executionManifest, ownerAddress: sponsored.ownerAddress, walletClient, publicClient: client })
-      } else if (protection) {
+      if (protection) {
         if (!isAddressEqual(protection.book, sponsored.manifest.positionProtectionBook)) throw new Error('The reviewed protection deployment changed')
         await client.simulateContract({ account: address, address: protection.book, abi: PERPS_POSITION_PROTECTION_BOOK_ABI, functionName: 'commitOpenOrderWithProtection', args: [request, protection.params] })
       } else await client.simulateContract({
@@ -1055,14 +1052,12 @@ export function usePerpsTrading() {
         positionProtectionBook: protection?.book,
       }
       const result = await executeSponsoredPerpsAction({
-        manifest: executionManifest,
+        manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
-        runtime: executionRuntime,
+        runtime: sponsored.runtime,
         orderDraft,
-        orderRequestV3: { ...persistPerpsOrderRequestV3(address, request),
-          closeAssistance: assisted ? { amountUsdc: assisted.amountUsdc.toString(), lens: assisted.config.lens,
-            lensCodeHash: assisted.config.lensCodeHash, paymasterAddress: assisted.config.paymasterAddress } : undefined },
+        orderRequestV3: persistPerpsOrderRequestV3(address, request),
         protectionIntent: protection ? persistProtectionIntent(protection.book, protection.params) : undefined,
         onStatus,
         onIncluded: (includedResult) => {
@@ -1119,20 +1114,20 @@ export function usePerpsTrading() {
 
       throw reportedTransactionError(error, message, { surface: 'perps', action: 'commit' })
     }
-  }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, walletClient])
+  }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution, requireAccountIdentity, aaRuntime, walletClient])
 
   const executeOrder = useCallback(async (orderId: bigint): Promise<ExecuteOrderResult> => {
-    void orderId
-    throw new Error(
-      'Order finalization is keeper-operated for sponsored Trading Accounts and never asks the owner wallet for native gas.'
-    )
-  }, [])
+    const verified = requireAccountIdentity()
+    const result = await executeNativeOrder({ client: requireClient(publicClient), wallet: requireClient(walletClient), manifest: verified.manifest, account: verified.accountAddress, owner: verified.ownerAddress }, orderId)
+    invalidatePerpsReads()
+    return result
+  }, [publicClient, walletClient, requireAccountIdentity, invalidatePerpsReads])
 
   const readOrderLifecycleOutcome = useCallback(async (
     orderId: bigint
   ): Promise<PerpsLifecycleOutcomeSnapshot | undefined> => {
     const client = requireClient(publicClient)
-    const sponsored = requireSponsoredExecution()
+    const sponsored = requireAccountIdentity()
     const safe = await client.getBlock({ blockTag: 'safe' })
     const terminal = await client.readContract({
       address: sponsored.manifest.orderLifecycleBook,
@@ -1181,16 +1176,16 @@ export function usePerpsTrading() {
       failedConstraint: outcome.failedConstraint as PerpsFailedConstraint,
       receiptHash: outcome.receiptHash,
     }
-  }, [publicClient, requireSponsoredExecution])
+  }, [publicClient, requireAccountIdentity])
 
   const cleanupExpiredOrder = useCallback(async (
     orderId: bigint
   ): Promise<CleanupExpiredOrderResult> => {
-    void orderId
-    throw new Error(
-      'Expired-order cleanup is keeper-operated for sponsored Trading Accounts and never submits from the owner wallet.'
-    )
-  }, [])
+    const verified = requireAccountIdentity()
+    const result = await executeNativeOrder({ client: requireClient(publicClient), wallet: requireClient(walletClient), manifest: verified.manifest, account: verified.accountAddress, owner: verified.ownerAddress }, orderId, true)
+    invalidatePerpsReads()
+    return result
+  }, [publicClient, walletClient, requireAccountIdentity, invalidatePerpsReads])
 
   const settleTraderClaim = useCallback(async () => {
     try {
@@ -1236,6 +1231,13 @@ export function usePerpsTrading() {
       token: identity.manifest.usdc,
     })
   }, [identity.accountAddress, identity.manifest, identity.ownerAddress])
+
+  const manageNativeProtection = useCallback(async (protectionId: bigint, action: 'cancel' | 'retry') => {
+    const verified = requireAccountIdentity()
+    const result = await nativeProtectionAction({ client: requireClient(publicClient), wallet: requireClient(walletClient), manifest: verified.manifest, account: verified.accountAddress, owner: verified.ownerAddress }, protectionId, action)
+    invalidatePerpsReads()
+    return result
+  }, [publicClient, walletClient, requireAccountIdentity, invalidatePerpsReads])
 
   const managePositionProtection = useCallback(async (input: {
     action: 'create' | 'replace' | 'cancel'
@@ -1286,6 +1288,7 @@ export function usePerpsTrading() {
   }, [invalidatePerpsReads, publicClient, requireSponsoredExecution])
 
   return {
+    manageNativeProtection,
     managePositionProtection,
     approveUsdcForMargin,
     fundTradingAccount,

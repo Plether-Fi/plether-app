@@ -22,8 +22,8 @@ function fixture() {
     sendRawTransaction: async ({ serializedTransaction }) => { calls.push(['send', serializedTransaction]); throw new Error('Network response lost') },
     getTransactionReceipt: async () => { const e = new Error(); e.name = 'TransactionReceiptNotFoundError'; throw e },
   }
-  const walletClient = { prepareTransactionRequest: async () => { calls.push(['prepare']); return { gas: 100n } }, signTransaction: async () => raw }
-  const worker = new ProtectionWorker({ db, publicClient, walletClient, account: { address: book }, release, executionEnabled: true, log: () => {} })
+  const walletClient = { prepareTransactionRequest: async () => { calls.push(['prepare']); return { gas: 100n, maxFeePerGas: 1n } }, signTransaction: async () => raw }
+  const worker = new ProtectionWorker({ db, publicClient, walletClient, account: { address: book }, release, executionEnabled: true, maxTxCostWei: 125n, log: () => {} })
   return { worker, calls, publicClient, db }
 }
 
@@ -69,4 +69,11 @@ describe('durable protection transactions', () => {
     assert.equal(calls.filter(call => call[0] === 'prepare').length, 1)
     assert.equal(calls.some(call => call[0] === 'sql' && call[1].startsWith('UPDATE')), false)
   })
+})
+
+it('does not sign, journal or send above the operator spending cap', async () => {
+  const { worker, calls } = fixture()
+  worker.maxTxCostWei = 124n
+  await assert.rejects(worker.submit('retry', 1n, book, 'PositionProtectionBook', 'retryPositionProtectionClose', [1n]), /spending limit/)
+  assert.equal(calls.some(c => c[0] === 'send' || c[0] === 'sql' && c[1].startsWith('INSERT')), false)
 })
