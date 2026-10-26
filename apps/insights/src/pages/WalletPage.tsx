@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
 import { EligibilityBadge, EmptyState, ErrorState, LoadingState, Panel, Pnl, IntegrityNotice } from '../components/ui'
 import { eligibilityPresentation } from '../utils/eligibility'
-import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
+import { formatCompactAssets, formatPrice, formatRoi, formatAssets, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { TradeFee, TradeVpi, TradeNotice } from '../components/TradeBreakdown'
 import { PositionBreakdown } from '../components/PositionBreakdown'
 import { calculatePnlBreakdown } from '../utils/pnl'
@@ -33,8 +33,8 @@ function PositionPanel({ position }: { position: WalletPosition | null }) {
         <dl className="grid grid-cols-2 divide-x divide-y divide-brand-border/15 sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
           <Metric label="Market">{position.market}</Metric>
           <Metric label="Side">{position.side ? <span className={position.side === 'long' ? 'text-positive' : 'text-brand-orange'}>{position.side.toUpperCase()}</span> : '—'}</Metric>
-          <Metric label="Entry notional">{formatCompactUsdc(position.size)}</Metric>
-          <Metric label="Margin">{formatUsdc(position.margin)}</Metric>
+          <Metric label="Entry notional">{formatCompactAssets(position.size)}</Metric>
+          <Metric label="Margin">{formatAssets(position.margin)}</Metric>
           <Metric label="plDXY entry">{formatPrice(position.entryPrice)}</Metric>
           <Metric label="Directional unrealized P&L"><Pnl value={position.unrealizedPnl} /></Metric>
         </dl>
@@ -79,7 +79,7 @@ function ActivityTable({ activity, activityStatus }: {
                   <td className="whitespace-nowrap px-5 py-4 text-xs text-content-secondary">{formatUtc(item.occurredAt)}</td>
                   <td className="px-3 py-4"><div className="text-sm font-semibold">{activityLabel(item.type)}</div>{item.txHash ? <a href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-xs text-brand-peach hover:underline">{shortAddress(item.txHash)} ↗</a> : null}</td>
                   <td className="px-3 py-4 text-sm">{item.market ?? '—'}{item.side ? <span className={`ml-2 text-xs uppercase ${item.side === 'long' ? 'text-positive' : 'text-brand-orange'}`}>{item.side}</span> : null}</td>
-                  <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactUsdc(item.size) : '—'}</td>
+                  <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactAssets(item.size) : '—'}</td>
                   <td className="px-3 py-4 text-right text-sm tabular-nums">{formatPrice(item.price)}</td>
                   <td className="px-3 py-4 text-right text-sm tabular-nums text-brand-orange">{showTradeCosts ? <><TradeFee item={item} /><TradeNotice item={item} /></> : '—'}</td>
                   <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <TradeVpi item={item} /> : '—'}</td>
@@ -98,7 +98,7 @@ function ActivityTable({ activity, activityStatus }: {
           return (
             <div key={item.id} className="px-4 py-4">
               <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{activityLabel(item.type)}</p><p className="mt-1 text-xs text-content-tertiary">{formatUtc(item.occurredAt)}</p></div><Pnl value={item.pnl} className="text-sm font-semibold" /></div>
-              <div className="mt-3 flex items-center justify-between text-xs text-content-secondary"><span>{item.market ?? 'Account'}{item.side ? ` · ${item.side}` : ''}</span><span>{item.size ? formatCompactUsdc(item.size) : ''}</span></div>
+              <div className="mt-3 flex items-center justify-between text-xs text-content-secondary"><span>{item.market ?? 'Account'}{item.side ? ` · ${item.side}` : ''}</span><span>{item.size ? formatCompactAssets(item.size) : ''}</span></div>
               {showTradeCosts ? (
                 <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-brand-border/15 pt-3 text-xs">
                   <div><dt className="text-content-tertiary">Protocol fee assessed</dt><dd className="mt-1 font-semibold tabular-nums text-brand-orange"><TradeFee item={item} /><TradeNotice item={item} /></dd></div>
@@ -227,10 +227,10 @@ export function WalletPage() {
         </Panel>
       ) : null}
 
-      {wallet.prizeAmountUsdc !== null ? (
+      {wallet.prizeAmountAssets !== null ? (
         <div className="border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow">
           <strong>{wallet.prizePlaces.length > 1 ? `Tied prize places ${wallet.prizePlaces.join('–')}` : `Prize place #${String(wallet.prizePlace ?? '—')}`}:</strong>{' '}
-          {formatUsdc(wallet.prizeAmountUsdc)}
+          {formatAssets(wallet.prizeAmountAssets)}
         </div>
       ) : null}
 
@@ -244,8 +244,8 @@ export function WalletPage() {
         <dl className="grid grid-cols-2 divide-x divide-y divide-brand-border/15 sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
           <Metric label="Net competition P&L"><Pnl value={wallet.pnl} /></Metric>
           <Metric label="Net return"><span className={wallet.roiBps !== null && wallet.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}>{formatRoi(wallet.roiBps)}</span></Metric>
-          <Metric label="Current net equity">{formatUsdc(wallet.equity)}</Metric>
-          <Metric label="Volume">{formatCompactUsdc(wallet.volume)}</Metric>
+          <Metric label="Current net equity">{formatAssets(wallet.equity)}</Metric>
+          <Metric label="Volume">{formatCompactAssets(wallet.volume)}</Metric>
           <Metric label="Trades">{wallet.trades}</Metric>
           <Metric label={`Active days / ${String(competition.minActiveDays)}`}>{wallet.activeDays}</Metric>
         </dl>

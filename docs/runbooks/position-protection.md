@@ -1,20 +1,16 @@
-# Full-position TP/SL — Arbitrum Sepolia v1.2.1
+# Full-position TP/SL — canonical MockUSDG source
 
-The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
-publication. See `config/perps/ORDER_V3_TIMING.md` for current source provenance and local
-verification. Deployment and published-SDK details below describe the existing
-release; no deployment pins are changed by the V3 source work.
-
-
-This release supports only the Book deployment pinned in
-`config/perps/arbitrum-sepolia-v3.json`, chain 421614, deployment block
-305627052. There is no legacy-contract fallback. The implementation is shipped
-disabled; deploying it does not authorize contract governance or signer funding.
+The current source uses SDK 0.4.0 and `config/perps/mock-usdg-prepared.json`.
+Its null pins keep protection consumers unavailable until a verified new deployment
+exists. See `config/perps/ORDER_V3_TIMING.md` and the MockUSDG integration runbook.
+Historical Book addresses and SDKs are not compatible with current consumers.
 
 ## User behavior
 
 - A flat-account opening order can atomically attach TP, SL, or both. The
   protection is `PendingOpen` until that exact parent executes, then `Armed`.
+  Every protection intent includes explicit close financial limits; the current
+  web ticket uses uint256-max bounds and does not claim finite cost protection.
 - An existing position with no pending orders can create protection. Pending
   and armed records can be replaced or cancelled. Replacement retains its ID
   and reward reserve. Cancelling a pending protection does **not** cancel its
@@ -26,9 +22,9 @@ disabled; deploying it does not authorize contract governance or signer funding.
 - UI prices use `CAP_PRICE - rawPrice`; contract prices are the raw inverse
   basket price. Percentages mean unlevered movement from the current displayed
   mark, not leveraged PnL. Zero disables a leg; both legs cannot be zero.
-- Funding includes the parent order requirement plus the live trigger and
-  close-execution USDC reserves. The keeper's native ETH value is only the
-  oracle update fee, **not** either USDC reserve.
+- Funding includes the parent order requirement plus the
+  separate trigger bounty in settlement assets. Ordinary/protected closes have
+  zero execution bounty. The keeper's native ETH value covers the oracle fee.
 - `Latched` means a close failed but its original trigger remains binding.
   Expired attempts may be retried automatically; other terminal reasons need
   operator review. History preserves all attempts and transaction links.
@@ -60,38 +56,31 @@ does not add a manual or sponsored retry action.
 
 ## Build provenance
 
-The Book ABI and all four protection action builders are published with native
-sponsorship support in [@plether-fi/perps-aa-client@0.1.0](https://github.com/Plether-Fi/plether-core/releases/tag/perps-aa-client-v0.1.0).
-Source: [reviewed Core commit](https://github.com/Plether-Fi/plether-core/blob/f9e29c1b3ac5937e0519108cebffb4d09048de36/packages/perps-aa-client), PR: https://github.com/Plether-Fi/plether-core/pull/94.
-`config/perps-aa-client-release.json` and the frontend lockfile record the
-package commit, version, tag, and integrity. Upgrade through a reviewed immutable
-package release; never edit installed package files.
-
-The protection-worker ABI is generated separately from the deployed Core release bundle:
+The SDK package record and frontend lockfile pin the immutable 0.4.0 artifact.
+Current frontend and worker ABIs are generated together from compiled canonical
+Core sources, not a historical deployment bundle:
 
 ```bash
-node scripts/generate-protection-worker-abi.mjs /path/to/perps-v1.3.1-arbitrum-sepolia.tar.gz
+node scripts/generate-perps-consumer-abis.mjs --artifacts-dir /path/to/plether-core/packages/perps/out --source-root /path/to/plether-core/packages/perps
 ```
 
-The generator verifies the bundle SHA-256 against
-`config/perps/arbitrum-sepolia-v3.json` before extracting the
-PositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.
-Deployment source: `cf86189bcca4813f39d6405a338b77176783eb42`.
-Bundle SHA-256: `eb0033136fac39ccc2de6b44ed113860a266f87d266dc8aa334ee431e4e0e221`.
-The AA package release is independent of this deployment-specific ABI bundle;
-package migration does not regenerate worker artifacts.
+Use `--check` to verify reproducibility. Generated provenance identifies the
+source and artifact hashes without claiming deployed addresses. Never edit
+installed SDK files or generated ABIs by hand.
 
 ## Worker and history
 
 `apps/backend/protection-worker/main.mjs` runs independently of the existing
 order keeper. The order keeper still executes the linked closes. Both the API
 and worker apply the same additive, idempotent schema extracted from
-`apps/backend/schema.sql`.
+`apps/backend/schema.sql`. The breaking token-neutral SQL migration must be
+reviewed and applied separately; it has not been run. Current startup rejects the
+old perps schema before additive setup.
 
 Required environment: `DATABASE_URL`, `PERPS_RPC_URL`; optionally
 `PERPS_RPC_AUTH_TOKEN` for the authenticated RPC. Production PostgreSQL must
 retain certificate-verified TLS. The release manifest defaults to the checked-in
-file; the container uses `/app/config/perps/arbitrum-sepolia-v3.json`.
+file; the container uses `/app/config/perps/mock-usdg-prepared.json`.
 
 The default is observe-only: `PROTECTION_WORKER_EXECUTION_ENABLED=false`.
 Execution requires `PROTECTION_WORKER_PRIVATE_KEY`, a dedicated funded EOA.
@@ -157,10 +146,10 @@ active protection. Both log identity and event payloads remain durable.
    propose the **complete existing RouterConfig**, changing only the intended
    protection fields, via `OrderRouterAdmin.proposeRouterConfig`. Respect the
    48-hour timelock and finalize through `finalizeRouterConfig`. Re-read the
-   Router flag and live USDC rewards; never overwrite unrelated queue/risk
+   Router flag and live settlement-asset trigger bounty; never overwrite unrelated queue/risk
    settings with defaults.
 6. Set `aa_protection_commits_enabled=true`, deploy the backend and verify the
-   strict four-action sponsorship allowlist. Cancellation remains sponsored
+   current protection-action sponsorship allowlist. Cancellation remains sponsored
    even when this flag is false; trigger/retry worker calls are never sponsored
    by the frontend proxy.
 7. Set repository variable `VITE_PERPS_POSITION_PROTECTION_ENABLED_SEPOLIA=true`

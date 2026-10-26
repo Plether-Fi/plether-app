@@ -24,7 +24,7 @@ data TrancheVaultSnapshot = TrancheVaultSnapshot
 
 -- A large notional avoids losing economically relevant precision to the
 -- ERC-4626 integer conversion. The deployed tranche tokens use 9 decimals and
--- their USDC asset uses 6 decimals.
+-- their settlement asset uses 6 decimals.
 vaultSharePriceProbe :: Integer
 vaultSharePriceProbe = 10 ^ (27 :: Integer)
 
@@ -48,7 +48,7 @@ vaultDecimalsCalls asset seniorVault juniorVault =
   ]
 
 -- | The WAD normalization below is valid only for the reviewed deployment's
--- six-decimal USDC asset and nine-decimal tranche shares. Fail closed if a
+-- six-decimal settlement asset and nine-decimal tranche shares. Fail closed if a
 -- configured redeployment changes either invariant.
 decodeVaultDecimalsResults :: [CallResult] -> Either Text ()
 decodeVaultDecimalsResults results =
@@ -148,15 +148,15 @@ decodeResult tranche method CallResult {..}
           <> " bytes; expected 32"
   | otherwise = Right $ decodeUint256 resultData
 
--- convertToAssets(1e27) returns raw six-decimal USDC for 1e27 raw nine-decimal
--- shares. Normalizing that ratio to 18-decimal USDC-per-share WAD simplifies
+-- convertToAssets(1e27) returns raw six-decimal settlement asset for 1e27 raw nine-decimal
+-- shares. Normalizing that ratio to 18-decimal settlement asset-per-share WAD simplifies
 -- to division by 1e6. Integer division deliberately rounds down, matching the
 -- vault conversion's conservative ERC-4626 rounding direction.
 sharePriceWadFromConvertedAssets :: Integer -> Integer
-sharePriceWadFromConvertedAssets convertedAssets = convertedAssets `div` usdcScale
+sharePriceWadFromConvertedAssets convertedAssets = convertedAssets `div` assetScale
 
-usdcScale :: Integer
-usdcScale = 10 ^ (6 :: Integer)
+assetScale :: Integer
+assetScale = 10 ^ (6 :: Integer)
 
 abiWordLength :: Int
 abiWordLength = 32

@@ -3,42 +3,42 @@ const BPS = 10_000n
 const SECONDS_PER_YEAR = 365n * 24n * 60n * 60n
 
 /** Mirrors PositionRiskAccountingLib's integer rounding using one onchain snapshot. */
-export function calculatePendingCarryUsdc({
-  unsettledCarryUsdc,
-  borrowBaseUsdc,
+export function calculatePendingCarryAssets({
+  unsettledCarryAssets,
+  borrowBaseAssets,
   lastCarryIndex,
   sideCarryIndex,
   sideCarryTimestamp,
-  sideBorrowBaseUsdc,
-  poolAssetsUsdc,
+  sideBorrowBaseAssets,
+  poolAssets,
   baseCarryBps,
   blockTimestamp,
 }: {
-  unsettledCarryUsdc?: bigint
-  borrowBaseUsdc?: bigint
+  unsettledCarryAssets?: bigint
+  borrowBaseAssets?: bigint
   lastCarryIndex?: bigint
   sideCarryIndex?: bigint
   sideCarryTimestamp?: bigint
-  sideBorrowBaseUsdc?: bigint
-  poolAssetsUsdc?: bigint
+  sideBorrowBaseAssets?: bigint
+  poolAssets?: bigint
   baseCarryBps?: bigint
   blockTimestamp?: bigint
 }): bigint | undefined {
   if (
-    unsettledCarryUsdc === undefined || borrowBaseUsdc === undefined ||
+    unsettledCarryAssets === undefined || borrowBaseAssets === undefined ||
     lastCarryIndex === undefined || sideCarryIndex === undefined ||
-    sideCarryTimestamp === undefined || sideBorrowBaseUsdc === undefined ||
-    poolAssetsUsdc === undefined || baseCarryBps === undefined || blockTimestamp === undefined
+    sideCarryTimestamp === undefined || sideBorrowBaseAssets === undefined ||
+    poolAssets === undefined || baseCarryBps === undefined || blockTimestamp === undefined
   ) return undefined
 
-  const rawUtilizationBps = sideBorrowBaseUsdc === 0n
+  const rawUtilizationBps = sideBorrowBaseAssets === 0n
     ? 0n
-    : poolAssetsUsdc === 0n ? BPS : sideBorrowBaseUsdc * BPS / poolAssetsUsdc
+    : poolAssets === 0n ? BPS : sideBorrowBaseAssets * BPS / poolAssets
   const utilizationBps = rawUtilizationBps > BPS ? BPS : rawUtilizationBps
   const elapsed = blockTimestamp > sideCarryTimestamp ? blockTimestamp - sideCarryTimestamp : 0n
   const currentIndex = sideCarryIndex +
     baseCarryBps * utilizationBps * CARRY_INDEX_SCALE * elapsed / (SECONDS_PER_YEAR * BPS * BPS)
   const indexDelta = currentIndex > lastCarryIndex ? currentIndex - lastCarryIndex : 0n
 
-  return unsettledCarryUsdc + borrowBaseUsdc * indexDelta / CARRY_INDEX_SCALE
+  return unsettledCarryAssets + borrowBaseAssets * indexDelta / CARRY_INDEX_SCALE
 }

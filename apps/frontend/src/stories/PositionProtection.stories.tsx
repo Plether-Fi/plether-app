@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, fireEvent, userEvent, within } from 'storybook/test'
@@ -38,8 +39,7 @@ function protectionFixture(scenario: PreviewProps['scenario'], direction: Previe
     protectionId: 7n, parentOrderId: 12n, linkedOrderId: triggered ? 19n : 0n,
     account, side: direction === 'long' ? 0 : 1, size: 2_000n * 10n ** 18n,
     takeProfitTriggerPrice, stopLossTriggerPrice,
-    triggerBountyUsdc: triggered || terminal ? 0n : 200_000n,
-    executionBountyUsdc: terminal || scenario === 'queued' ? 0n : 200_000n,
+    triggerBountyAssets: triggered || terminal ? 0n : 200_000n,
     armedAt: scenario === 'pending' || scenario === 'failed' ? 0n : 1700000000n,
     armedBlock: scenario === 'pending' || scenario === 'failed' ? 0n : 100n,
     triggerMarkPrice: triggered ? (stopLossTriggerPrice || takeProfitTriggerPrice) : 0n,
@@ -52,7 +52,7 @@ function historyRecord(protection: PositionProtection): ProtectionHistoryRecord 
     ...protection, protectionId: protection.protectionId.toString(), parentOrderId: protection.parentOrderId.toString(),
     linkedOrderId: protection.linkedOrderId.toString(), size: protection.size.toString(),
     takeProfitTriggerPrice: protection.takeProfitTriggerPrice.toString(), stopLossTriggerPrice: protection.stopLossTriggerPrice.toString(),
-    triggerBountyUsdc: protection.triggerBountyUsdc.toString(), executionBountyUsdc: protection.executionBountyUsdc.toString(),
+    triggerBountyAssets: protection.triggerBountyAssets.toString(),
     armedAt: protection.armedAt.toString(), armedBlock: protection.armedBlock.toString(), triggerMarkPrice: protection.triggerMarkPrice.toString(),
     triggerPublishTime: protection.triggerPublishTime.toString(), statusName: '', triggeredLegName: '', updatedBlock: '120',
   }
@@ -85,19 +85,19 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
   }, [])
   const position: PerpsPosition = {
     exists: !['pending', 'closed', 'failed', 'liquidated'].includes(scenario), side: direction === 'long' ? 0 : 1, direction,
-    size: 2_000n * 10n ** 18n, entryPrice: 101_000_000n, marginUsdc: 400_000_000n,
-    unrealizedPnlUsdc: 20_000_000n, maintenanceMarginUsdc: 2_000_000n, liquidatable: false,
-    estimatedNotionalUsdc: 2_000_000_000n, liquidationPrice: direction === 'long' ? 120_000_000n : 80_000_000n, pendingCarryUsdc: 600_000n,
+    size: 2_000n * 10n ** 18n, entryPrice: 101_000_000n, marginAssets: 400_000_000n,
+    unrealizedPnlAssets: 20_000_000n, maintenanceMarginAssets: 2_000_000n, liquidatable: false,
+    estimatedNotionalAssets: 2_000_000_000n, liquidationPrice: direction === 'long' ? 120_000_000n : 80_000_000n, pendingCarryAssets: 600_000n,
     ...(percentageExample !== 'none' ? {
-      size: 10_000n * 10n ** 18n, entryPrice: 99_500_000n, marginUsdc: 250_000_000n,
-      unrealizedPnlUsdc: 0n, estimatedNotionalUsdc: 9_950_000_000n, liquidationPrice: 97_000_000n,
+      size: 10_000n * 10n ** 18n, entryPrice: 99_500_000n, marginAssets: 250_000_000n,
+      unrealizedPnlAssets: 0n, estimatedNotionalAssets: 9_950_000_000n, liquidationPrice: 97_000_000n,
     } : {}),
   }
   async function manage(request: ProtectionManagementRequest) {
     if (managementOutcome === 'rejected') throw new Error('Wallet request rejected. Your existing TP/SL is unchanged.')
     if (managementOutcome === 'pending') await new Promise<void>(() => undefined)
     if (request.action === 'cancel') {
-      if (protection) setHistorical({ ...protection, status: 6, triggerBountyUsdc: 0n, executionBountyUsdc: 0n })
+      if (protection) setHistorical({ ...protection, status: 6, triggerBountyAssets: 0n })
       setProtection(undefined)
       return
     }
@@ -124,8 +124,8 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
   }
   const content = <PositionProtectionManager
     protection={protection} position={position} accountAddress={account} rawMark={percentageExample !== 'none' ? 99_500_000n : 100_000_000n} cap={200_000_000n}
-    configuration={{ enabled: commitsEnabled, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }}
-    availableFreeSettlementUsdc={funding === 'unavailable' ? undefined : funding === 'insufficient' ? 2_000n : 1_200_000_000n}
+    configuration={{ enabled: commitsEnabled, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }}
+    availableFreeSettlementAssets={funding === 'unavailable' ? undefined : funding === 'insufficient' ? 2_000n : 1_200_000_000n}
     pendingOrders={scenario === 'pending' ? 1 : 0} onManage={manage}
     executionReport={executionState === 'loading' ? undefined : executionReport} executionLoading={executionState === 'loading'} executionError={executionState === 'error'}
     onRefreshExecution={() => { setCheckedAt(Date.now()) }}
@@ -139,7 +139,7 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
         <PerpsAccountPanel
           initialTab={showPosition ? 'position' : 'protections'} position={position} positionProtection={protection}
           protectionCapPrice={200_000_000n} protectionContent={content} pendingOrders={[]} orderHistory={[]} tradeHistory={[]}
-          isConnected equityUsdc={420_000_000n} freeBuyingPowerUsdc={1_200_000_000n}
+          isConnected equityAssets={420_000_000n} freeBuyingPowerAssets={1_200_000_000n}
         />
       </div>
     </main>
@@ -208,7 +208,7 @@ export const LeveragedLoss: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Add TP/SL' }))
     fireEvent.change(canvas.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
-    await expect(canvas.getByLabelText('Stop loss (USDC)')).toHaveValue('1.0275')
+    await expect(canvas.getByLabelText(`Stop loss (${PERPS_SETTLEMENT_TOKEN_LABEL})`)).toHaveValue('1.0275')
     await expect(canvas.getByText('Liquidation price')).toHaveTextContent('1.0300')
   },
 }
@@ -227,7 +227,7 @@ export const Review: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Edit TP/SL' }))
-    const takeProfit = canvas.getByLabelText('Take profit (USDC)')
+    const takeProfit = canvas.getByLabelText(`Take profit (${PERPS_SETTLEMENT_TOKEN_LABEL})`)
     await userEvent.clear(takeProfit)
     await userEvent.type(takeProfit, '1.12')
     await userEvent.click(canvas.getByRole('button', { name: 'Review TP/SL' }))

@@ -18,19 +18,19 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "prizeAllocation" $ do
-    let prizes = map (* usdcScale) [600, 500, 400, 300, 200]
+    let prizes = map (* assetScale) [600, 500, 400, 300, 200]
 
     it "assigns an untied eligible participant its occupied prize" $ do
       prizeAllocation prizes (Just 2) (Just 1)
-        `shouldBe` Just (PrizeAllocation 2 [2] $ 500 * usdcScale)
+        `shouldBe` Just (PrizeAllocation 2 [2] $ 500 * assetScale)
 
     it "splits the combined occupied prizes equally across an exact tie" $ do
       prizeAllocation prizes (Just 1) (Just 2)
-        `shouldBe` Just (PrizeAllocation 1 [1, 2] $ 550 * usdcScale)
+        `shouldBe` Just (PrizeAllocation 1 [1, 2] $ 550 * assetScale)
 
     it "shares the last paid place across a tie that extends beyond the awards" $ do
       prizeAllocation prizes (Just 5) (Just 2)
-        `shouldBe` Just (PrizeAllocation 5 [5] $ 100 * usdcScale)
+        `shouldBe` Just (PrizeAllocation 5 [5] $ 100 * assetScale)
 
     it "does not create an award outside the paid places" $ do
       prizeAllocation prizes (Just 6) (Just 1) `shouldBe` Nothing
@@ -89,11 +89,11 @@ spec = do
         `shouldBe` UTCTime (fromGregorian 2026 8 3) (secondsToDiffTime $ 16 * 60 * 60)
       crScoreCutoffAt july2026Competition
         `shouldBe` addUTCTime (14 * 24 * 60 * 60) (crStartAt july2026Competition)
-      crStartingBalanceUsdc july2026Competition `shouldBe` 100_000_000_000
-      minimumProfitUsdc july2026Competition `shouldBe` 1_000_000_000
+      crStartingBalanceAssets july2026Competition `shouldBe` 100_000_000_000
+      minimumProfitAssets july2026Competition `shouldBe` 1_000_000_000
       crMinimumActiveDays july2026Competition `shouldBe` 5
       fxSessionBoundaryUtcText july2026Competition `shouldBe` "22:00"
-      crPrizeUsdc july2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
+      crPrizeAssets july2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
       crPaymentDeadlineAt july2026Competition
         `shouldBe` UTCTime (fromGregorian 2026 8 10) (secondsToDiffTime $ 16 * 60 * 60)
 
@@ -113,10 +113,10 @@ spec = do
         `shouldBe` UTCTime (fromGregorian 2026 10 3) 0
 
     it "retains the bankroll and qualification thresholds with the expanded prize pool" $ do
-      crStartingBalanceUsdc september2026Competition `shouldBe` 100_000_000_000
-      minimumProfitUsdc september2026Competition `shouldBe` 1_000_000
+      crStartingBalanceAssets september2026Competition `shouldBe` 100_000_000_000
+      minimumProfitAssets september2026Competition `shouldBe` 1_000_000
       crMinimumActiveDays september2026Competition `shouldBe` 5
-      crPrizeUsdc september2026Competition
+      crPrizeAssets september2026Competition
         `shouldBe` [600_000_000, 500_000_000, 400_000_000, 300_000_000, 200_000_000]
       crScoringVersion september2026Competition `shouldBe` "cash-flow-adjusted-v1"
       crScoringVersion july2026Competition `shouldBe` "account-value-v1"
@@ -189,7 +189,7 @@ spec = do
 
     it "normalizes deployment addresses before persistence and comparison" $ do
       csmReleaseRouter expected `shouldBe` "0xaa00000000000000000000000000000000000001"
-      csmUsdcAddress expected `shouldBe` "0xbb00000000000000000000000000000000000002"
+      csmSettlementTokenAddress expected `shouldBe` "0xbb00000000000000000000000000000000000002"
       csmMarginClearinghouseAddress expected `shouldBe` "0xcc00000000000000000000000000000000000003"
       csmAccountLensAddress expected `shouldBe` "0xdd00000000000000000000000000000000000004"
 
@@ -215,9 +215,9 @@ spec = do
             "0xCc00000000000000000000000000000000000003"
             "0xDd00000000000000000000000000000000000004"
             fixtureManifest
-          stored = septemberExpected {csmFifthPrizeUsdc = 100_000_000}
+          stored = septemberExpected {csmFifthPrizeAssets = 100_000_000}
       competitionSeedMismatches septemberExpected stored
-        `shouldBe` [CompetitionSeedMismatch "fifth_prize_usdc" "100000000" "200000000"]
+        `shouldBe` [CompetitionSeedMismatch "fifth_prize_assets" "100000000" "200000000"]
 
     it "recognizes only the exact pre-launch payout-deadline correction" $ do
       let legacy = expected {csmPaymentDeadlineTimestamp = 1_786_319_999}
@@ -249,10 +249,10 @@ spec = do
             "0xDd00000000000000000000000000000000000004"
             fixtureManifest
           legacyPrizes = septemberExpected
-            { csmSecondPrizeUsdc = 300_000_000
-            , csmThirdPrizeUsdc = 100_000_000
-            , csmFourthPrizeUsdc = 0
-            , csmFifthPrizeUsdc = 0
+            { csmSecondPrizeAssets = 300_000_000
+            , csmThirdPrizeAssets = 100_000_000
+            , csmFourthPrizeAssets = 0
+            , csmFifthPrizeAssets = 0
             }
       isLegacySeptemberPrizeOnlyMismatch septemberExpected legacyPrizes
         `shouldBe` True
@@ -301,10 +301,10 @@ spec = do
             fixtureManifest
           legacy = septemberExpected
             { csmMinimumXAccountAgeDays = Just 90
-            , csmSecondPrizeUsdc = 300_000_000
-            , csmThirdPrizeUsdc = 100_000_000
-            , csmFourthPrizeUsdc = 0
-            , csmFifthPrizeUsdc = 0
+            , csmSecondPrizeAssets = 300_000_000
+            , csmThirdPrizeAssets = 100_000_000
+            , csmFourthPrizeAssets = 0
+            , csmFifthPrizeAssets = 0
             }
       isLegacySeptemberPrizeAndXAccountAgeMismatch septemberExpected legacy
         `shouldBe` True
@@ -351,7 +351,7 @@ spec = do
   describe "calculateScore" $ do
     it "keeps the close bounty as a cost when exact assistance funds it" $ do
       let start = snapshot False 0 100_000_000_000 0
-          score value deposit = sbFinalPnlUsdc $ calculateScore $ ScoreInput start (snapshot False 0 value 0) deposit 0 0
+          score value deposit = sbFinalPnlAssets $ calculateScore $ ScoreInput start (snapshot False 0 value 0) deposit 0 0
           selfFunded = score (100_000_000_000 - 200_000) 0
           assisted = score (100_000_000_000 - 200_000 + 198_000) 198_000
       assisted `shouldBe` selfFunded
@@ -362,43 +362,43 @@ spec = do
             ScoreInput
               { siStartingSnapshot = snapshot False 0 100_000_000_000 0
               , siCurrentSnapshot = snapshot False 0 111_500_000_000 0
-              , siDepositsSinceStartUsdc = 10_000_000_000
-              , siWithdrawalsSinceStartUsdc = 500_000_000
-              , siManualAdjustmentsUsdc = 250_000_000
+              , siDepositsSinceStartAssets = 10_000_000_000
+              , siWithdrawalsSinceStartAssets = 500_000_000
+              , siManualAdjustmentsAssets = 250_000_000
               }
-      sbFinalPnlUsdc score `shouldBe` 2_250_000_000
+      sbFinalPnlAssets score `shouldBe` 2_250_000_000
 
     it "scores a prefunded bankroll and one official post-baseline allocation identically" $ do
       let prefunded = calculateScore $
             ScoreInput
               { siStartingSnapshot = snapshot False 0 100_000_000_000 0
               , siCurrentSnapshot = snapshot False 0 105_000_000_000 0
-              , siDepositsSinceStartUsdc = 0
-              , siWithdrawalsSinceStartUsdc = 0
-              , siManualAdjustmentsUsdc = 0
+              , siDepositsSinceStartAssets = 0
+              , siWithdrawalsSinceStartAssets = 0
+              , siManualAdjustmentsAssets = 0
               }
           allocatedAfterBaseline = calculateScore $
             ScoreInput
               { siStartingSnapshot = snapshot False 0 0 0
               , siCurrentSnapshot = snapshot False 0 105_000_000_000 0
-              , siDepositsSinceStartUsdc = 100_000_000_000
-              , siWithdrawalsSinceStartUsdc = 0
-              , siManualAdjustmentsUsdc = 0
+              , siDepositsSinceStartAssets = 100_000_000_000
+              , siWithdrawalsSinceStartAssets = 0
+              , siManualAdjustmentsAssets = 0
               }
-      sbFinalPnlUsdc prefunded `shouldBe` 5_000_000_000
-      sbFinalPnlUsdc allocatedAfterBaseline `shouldBe` sbFinalPnlUsdc prefunded
+      sbFinalPnlAssets prefunded `shouldBe` 5_000_000_000
+      sbFinalPnlAssets allocatedAfterBaseline `shouldBe` sbFinalPnlAssets prefunded
 
     it "scores a legitimate complete zero terminal state instead of freezing an older snapshot" $ do
       let score = calculateScore $
             ScoreInput
               { siStartingSnapshot = snapshot False 0 100_000_000_000 0
               , siCurrentSnapshot = snapshot False 0 0 0
-              , siDepositsSinceStartUsdc = 0
-              , siWithdrawalsSinceStartUsdc = 0
-              , siManualAdjustmentsUsdc = 0
+              , siDepositsSinceStartAssets = 0
+              , siWithdrawalsSinceStartAssets = 0
+              , siManualAdjustmentsAssets = 0
               }
-      sbCurrentAccountValueUsdc score `shouldBe` 0
-      sbFinalPnlUsdc score `shouldBe` (-100_000_000_000)
+      sbCurrentAccountValueAssets score `shouldBe` 0
+      sbFinalPnlAssets score `shouldBe` (-100_000_000_000)
 
   describe "fundingCapacityContribution" $ do
     it "excludes verified assistance from bankroll capacity, but retains other deposits and withdrawals" $ do
@@ -456,7 +456,7 @@ spec = do
       qMeetsProfitRequirement (qualification july2026Competition EligibilityEligible 999_999_999 5)
         `shouldBe` False
 
-    it "uses the exact +1.00 USDC threshold for September" $ do
+    it "uses the exact +1.00 settlement asset threshold for September" $ do
       qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 1_000_000 5)
         `shouldBe` True
       qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 999_999 5)
@@ -525,7 +525,7 @@ fixtureManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "fixture-release"
     , crmChainId = 421_614
-    , crmUsdc = "0xa200000000000000000000000000000000000002"
+    , crmSettlementToken = "0xa200000000000000000000000000000000000002"
     , crmOrderRouter = "0xa100000000000000000000000000000000000001"
     , crmMarginClearinghouse = "0xa300000000000000000000000000000000000003"
     , crmAccountLens = "0xa400000000000000000000000000000000000004"

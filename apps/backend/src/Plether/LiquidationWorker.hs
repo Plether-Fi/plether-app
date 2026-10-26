@@ -513,7 +513,7 @@ freshLiquidationRisky FreshLiquidationRiskInputs {..} snapshot
     signedPnl
       | positionProfits = unsignedPnl
       | otherwise = negate unsignedPnl
-    baseEquity = alsNetEquityUsdc snapshot - alsUnrealizedPnlUsdc snapshot
+    baseEquity = alsNetEquityAssets snapshot - alsUnrealizedPnlAssets snapshot
     freshEquity = baseEquity + signedPnl
     currentNotional = alsSize snapshot * adversePrice `div` tokenPriceScale
     maintenanceRequirement =

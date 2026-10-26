@@ -17,7 +17,7 @@ const client = createPublicClient({ chain: arbitrumSepolia, transport: http(rpcU
 const wallet = createWalletClient({ chain: arbitrumSepolia, transport: http(rpcUrl) })
 const rpc = (method, params = []) => client.request({ method, params })
 if (!(await rpc('web3_clientVersion')).toLowerCase().includes('anvil') || await client.getChainId() !== 421614) throw new Error('Expected isolated Anvil fork on port 18545')
-const release = JSON.parse(fs.readFileSync('../../config/perps/arbitrum-sepolia-v3.json', 'utf8'))
+const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/mock-usdg-prepared.json', 'utf8'))
 const manifest = JSON.parse(fs.readFileSync('public/perps-aa-manifest.json', 'utf8'))
 const token = settlementContract(release)
 const addresses = Object.fromEntries(Object.entries(release.contracts).map(([k, v]) => [k, v.address]))
@@ -29,7 +29,7 @@ const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified active release tar.gz')
 if (createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('Expected the checksum-pinned active release ABI bundle')
 const loadAbi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
-const abis = { settlementToken: loadAbi(token.artifact?.split(':').at(-1) ?? 'MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), cfdEngineAccountLens: loadAbi('CfdEngineAccountLens'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
+const abis = { settlementToken: loadAbi(token.artifact?.split(':').at(-1) ?? 'MockUSDG'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), cfdEngineAccountLens: loadAbi('CfdEngineAccountLens'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
 const log = []
 const note = (action, tx) => { log.unshift({ action, tx, time: new Date().toISOString() }); log.splice(40); console.log(action, tx ?? '') }
 const read = (key, functionName, args = [], blockNumber) => client.readContract({ address: addresses[key], abi: abis[key], functionName, args, blockNumber })
@@ -96,26 +96,26 @@ async function state() {
   const readSnapshot = (key, functionName, args = []) => read(key, functionName, args, block.number)
   const [protocol, position, account, activeId, configuration, reservations] = await Promise.all([
     readSnapshot('perpsPublicLens', 'getProtocolStatus'), readSnapshot('perpsPublicLens', 'getPosition', [trader]), readSnapshot('perpsPublicLens', 'getTraderAccount', [trader]), readSnapshot('positionProtectionBook', 'activePositionProtectionId', [trader]),
-    Promise.all(['positionProtectionTriggerBountyUsdc', 'closeOrderExecutionBountyUsdc'].map(n => readSnapshot('orderRouter', n))), readSnapshot('orderRouter', 'getAccountReservations', [trader]),
+    Promise.all([readSnapshot('orderRouter', 'positionProtectionTriggerBountyAssets'), Promise.resolve(0n)]), readSnapshot('orderRouter', 'getAccountReservations', [trader]),
   ])
-  const [ledger, carryState, unsettledCarryUsdc, riskParams, poolAssetsUsdc, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseUsdc] = await Promise.all([
+  const [ledger, carryState, unsettledCarryAssets, riskParams, poolAssets, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseAssets] = await Promise.all([
     readSnapshot('cfdEngineAccountLens', 'getAccountLedgerSnapshot', [trader]),
-    readSnapshot('cfdEngine', 'positionCarryState', [trader]), readSnapshot('cfdEngine', 'unsettledCarryUsdc', [trader]),
+    readSnapshot('cfdEngine', 'positionCarryState', [trader]), readSnapshot('cfdEngine', 'unsettledCarryAssets', [trader]),
     readSnapshot('cfdEngine', 'riskParams'), readSnapshot('housePool', 'totalAssets'),
-    ...['sideCarryIndex', 'sideCarryTimestamp', 'sideBorrowBaseUsdc'].map(name => readSnapshot('cfdEngine', name, [position.side])),
+    ...['sideCarryIndex', 'sideCarryTimestamp', 'sideBorrowBaseAssets'].map(name => readSnapshot('cfdEngine', name, [position.side])),
   ])
-  const [{ calculatePendingCarryUsdc }, { projectCarry }] = await Promise.all([
+  const [{ calculatePendingCarryAssets }, { projectCarry }] = await Promise.all([
     vite.ssrLoadModule('/src/utils/perpsCarry.ts'), vite.ssrLoadModule('/src/utils/perpsRisk.ts'),
   ])
-  const pendingCarryUsdc = calculatePendingCarryUsdc({
-    borrowBaseUsdc: carryState.borrowBaseUsdc ?? carryState[0], lastCarryIndex: carryState.lastCarryIndex ?? carryState[1],
-    unsettledCarryUsdc, baseCarryBps: riskParams.baseCarryBps ?? riskParams[5], poolAssetsUsdc,
-    blockTimestamp: block.timestamp, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseUsdc,
+  const pendingCarryAssets = calculatePendingCarryAssets({
+    borrowBaseAssets: carryState.borrowBaseAssets ?? carryState[0], lastCarryIndex: carryState.lastCarryIndex ?? carryState[1],
+    unsettledCarryAssets, baseCarryBps: riskParams.baseCarryBps ?? riskParams[5], poolAssets,
+    blockTimestamp: block.timestamp, sideCarryIndex, sideCarryTimestamp, sideBorrowBaseAssets,
   })
-  const availableFreeSettlementUsdc = pendingCarryUsdc === undefined ? undefined : projectCarry(position.marginUsdc, ledger.freeSettlementUsdc, pendingCarryUsdc).freeSettlementUsdc
+  const availableFreeSettlementAssets = pendingCarryAssets === undefined ? undefined : projectCarry(position.marginAssets, ledger.freeSettlementAssets, pendingCarryAssets).freeSettlementAssets
   if (activeId) lastProtectionId = activeId
   const protection = lastProtectionId ? await readSnapshot('positionProtectionBook', 'getPositionProtection', [lastProtectionId]) : undefined
-  return { protocol, position: { ...position, direction: position.side === 0 ? 'long' : 'short' }, account, trader, protection, cap: 200_000_000n, configuration: { enabled: true, triggerBountyUsdc: configuration[0], executionBountyUsdc: configuration[1] }, pendingOrders: Number(reservations.pendingOrderCount), availableFreeSettlementUsdc, autoExecute, log, startBlock }
+  return { protocol, position: { ...position, direction: position.side === 0 ? 'long' : 'short' }, account, trader, protection, cap: 200_000_000n, configuration: { enabled: true, triggerBountyAssets: configuration[0], executionBountyAssets: configuration[1] }, pendingOrders: Number(reservations.pendingOrderCount), availableFreeSettlementAssets, autoExecute, log, startBlock }
 }
 async function tick() {
   await write('orderRouter', 'updateMarkPrice', [['0x00']])

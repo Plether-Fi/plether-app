@@ -7,17 +7,12 @@ import { prepareRelease, validateCoreRelease, writeCandidate, terraformBindings 
 
 const read = name => JSON.parse(fs.readFileSync(new URL(`../${name}`, import.meta.url)))
 const legacy = read('config/perps/arbitrum-sepolia-v3.json')
-const activeAa = read('apps/frontend/public/perps-aa-manifest.json')
+const activeAa = read('apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-aa.json')
 const sha = 'a'.repeat(64)
 const profile = () => ({ integration: { orderInterfaceVersion: 3, aaManifestVersion: 'perps-aa-arbitrum-sepolia-mock-usdg-v2', volumeHistoryStartTimestamp: 1800000000 }, bundleSha256: sha, aa: activeAa })
 function mockRelease() {
   // Pure unit-test data. No invented address is emitted to an active release.
-  const release = structuredClone(legacy)
-  release.schemaVersion = 4
-  release.contracts.settlementToken = { ...release.contracts.mockUsdc, artifact: 'script/DeployPerpsArbitrumSepolia.s.sol:MockUSDG', address: `0x${'1'.repeat(40)}`, runtimeCodeHash: `0x${'2'.repeat(64)}` }
-  delete release.contracts.mockUsdc
-  release.settlementToken = { name: 'Mock USDG', symbol: 'USDG', decimals: 6, isMock: true, supportsReceiveWithAuthorization: false, supportsBridgeFunding: false }
-  release.rewards = { status: 'not_applicable', holdingContracts: ['marginClearinghouse', 'housePool'], payoutAddress: null, payoutController: null }
+  const release = read('apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-release.json')
   return release
 }
 
@@ -26,11 +21,11 @@ test('one canonical token binds frontend AA, backend, indexer and Terraform cand
   const before = JSON.stringify(manifest)
   const candidates = prepareRelease(manifest, profile(), sha)
   const token = manifest.contracts.settlementToken
-  assert.equal(candidates['perps-aa-manifest.json'].usdc, token.address)
-  assert.equal(candidates['perps-core.tfvars.json'].perps_usdc, token.address)
-  assert.equal(candidates['perps-backend.env.json'].PERPS_USDC, token.address)
+  assert.equal(candidates['perps-aa-manifest.json'].settlementToken, token.address)
+  assert.equal(candidates['perps-core.tfvars.json'].perps_settlement_token, token.address)
+  assert.equal(candidates['perps-backend.env.json'].PERPS_SETTLEMENT_TOKEN, token.address)
   assert.equal(candidates['activation-review.json'].settlementToken.runtimeCodeHash, token.runtimeCodeHash)
-  const app = candidates['arbitrum-sepolia-v3.json']
+  const app = candidates['mock-usdg-prepared.json']
   assert.deepEqual(app.contracts, manifest.contracts)
   assert.equal(app.release.manifestSha256, sha)
   assert.equal(app.release.bundleSha256, sha)
@@ -45,21 +40,17 @@ test('one canonical token binds frontend AA, backend, indexer and Terraform cand
 
 test('candidate AA funding stays approve/deposit only and sponsorship stays disabled', () => {
   const aa = prepareRelease(mockRelease(), profile(), sha)['perps-aa-manifest.json']
-  assert.equal(aa.usdcSupportsEip3009, false)
-  assert.equal(aa.usdcEip712Name, null)
-  assert.equal(aa.usdcEip712Version, null)
+  assert.equal(aa.settlementTokenSupportsEip3009, false)
+  assert.equal(aa.settlementTokenEip712Name, null)
+  assert.equal(aa.settlementTokenEip712Version, null)
   assert.equal(aa.testnetFaucet, null)
   assert.equal(aa.sponsorshipEnabled, false)
   assert.equal(aa.pimlicoRpcUrl, undefined)
 })
 
-test('historical mockUsdc manifests continue to resolve the original token', () => {
-  assert.deepEqual(validateCoreRelease(legacy).settlementToken, legacy.contracts.mockUsdc)
-  assert.equal(prepareRelease(legacy, profile(), sha)['perps-aa-manifest.json'].usdc, legacy.contracts.mockUsdc.address)
-  const relabeled = structuredClone(legacy); relabeled.contracts.settlementToken = relabeled.contracts.mockUsdc
-  assert.throws(() => validateCoreRelease(relabeled), /Historical/)
-  delete relabeled.contracts.settlementToken; relabeled.settlementToken = mockRelease().settlementToken
-  assert.throws(() => validateCoreRelease(relabeled), /Historical/)
+test('historical manifests cannot be consumed by current release tooling', () => {
+  assert.throws(() => validateCoreRelease(legacy), /schema 4/)
+  assert.throws(() => prepareRelease(legacy, profile(), sha), /schema 4/)
 })
 
 test('prepared, missing, unverified, or mismatched deployment data cannot be staged', () => {
@@ -79,7 +70,7 @@ test('prepared, missing, unverified, or mismatched deployment data cannot be sta
     release => { release.settlementToken.supportsReceiveWithAuthorization = true },
     release => { release.settlementToken.supportsBridgeFunding = true },
     release => { release.settlementToken.decimals = 18 },
-    release => { release.rewards.payoutAddress = activeAa.usdc },
+    release => { release.rewards.payoutAddress = activeAa.settlementToken },
     release => { release.contracts.orderRouter.address = null },
     release => { release.contracts.cfdEnginePlanner.runtimeCodeHash = null },
     release => { release.release.pyth = null },
@@ -107,7 +98,7 @@ test('profile template cannot accidentally inherit old AA infrastructure', () =>
     assert.throws(() => prepareRelease(mockRelease(), invalid, sha), /orderInterfaceVersion 3/)
   }
   const incompleteGraph = mockRelease(); delete incompleteGraph.contracts.cfdClosePreview
-  assert.throws(() => prepareRelease(incompleteGraph, profile(), sha), /cfdClosePreview/)
+  assert.throws(() => prepareRelease(incompleteGraph, profile(), sha), /canonical contract graph|cfdClosePreview/)
   const timestamp = profile(); timestamp.integration.volumeHistoryStartTimestamp += 1
   assert.throws(() => prepareRelease(mockRelease(), timestamp, sha), /first whole minute/)
 
@@ -115,7 +106,7 @@ test('profile template cannot accidentally inherit old AA infrastructure', () =>
 
 test('candidate writing refuses existing paths and leaves active release bytes untouched', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'perps-usdg-candidate-test-'))
-  const activePath = new URL('../config/perps/arbitrum-sepolia-v3.json', import.meta.url)
+  const activePath = new URL('../config/perps/mock-usdg-prepared.json', import.meta.url)
   const before = fs.readFileSync(activePath)
   try {
     const target = path.join(temp, 'candidate')

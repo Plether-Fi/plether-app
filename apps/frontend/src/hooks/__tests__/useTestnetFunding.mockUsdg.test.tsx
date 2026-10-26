@@ -9,9 +9,9 @@ const mocks = vi.hoisted(() => ({
     ownerAddress: '0x1111111111111111111111111111111111111111',
     chainId: 421614, status: 'ready', isAaManifestConfigured: true, sponsorshipEnabled: true,
     manifest: {
-      usdc: '0x3333333333333333333333333333333333333333',
+      settlementToken: '0x3333333333333333333333333333333333333333',
       marginClearinghouse: '0x4444444444444444444444444444444444444444',
-      usdcSupportsEip3009: false,
+      settlementTokenSupportsEip3009: false,
     },
   },
 }))
@@ -24,8 +24,9 @@ vi.mock('wagmi', () => ({
   usePublicClient: () => ({ getCode: mocks.code, waitForTransactionReceipt: mocks.receipt, readContract: mocks.balance }),
 }))
 vi.mock('../../contracts/perpsAddresses', () => ({
+  PERPS_RELEASE_IS_DEPLOYED: true,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID: 421614,
-  PERPS_ARBITRUM_SEPOLIA: { usdc: '0x3333333333333333333333333333333333333333', marginClearinghouse: '0x4444444444444444444444444444444444444444' },
+  PERPS_ARBITRUM_SEPOLIA: { settlementToken: '0x3333333333333333333333333333333333333333', marginClearinghouse: '0x4444444444444444444444444444444444444444' },
   PERPS_SETTLEMENT_TOKEN: { name: 'Mock USDG', symbol: 'USDG', decimals: 6, isMock: true, supportsReceiveWithAuthorization: false, supportsBridgeFunding: false },
   PERPS_SETTLEMENT_TOKEN_LABEL: 'Mock USDG',
   PERPS_SETTLEMENT_TOKEN_CONTRACT: { runtimeCodeHash: keccak256('0x1234') },
@@ -50,7 +51,7 @@ describe('MockUSDG testnet funding', () => {
     await act(async () => { await result.current.requestFunds(account) })
     expect(mocks.mint).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       account: mocks.identity.ownerAddress, chainId: 421614,
-      address: mocks.identity.manifest.usdc, functionName: 'mint', args: [account, amount],
+      address: mocks.identity.manifest.settlementToken, functionName: 'mint', args: [account, amount],
     }))
     expect(mocks.receipt).toHaveBeenCalledWith({ hash, timeout: 120_000 })
     expect(mocks.deposit).toHaveBeenCalledExactlyOnceWith(amount, undefined, 'account')
@@ -135,5 +136,37 @@ describe('MockUSDG testnet funding', () => {
     await act(async () => { await result.current.requestFunds(account) })
     expect(mocks.mint).toHaveBeenCalledTimes(2)
     expect(result.current.phase).toBe('deposited')
+  })
+})
+
+
+describe('MockUSDG pending confirmation', () => {
+  it('retries the same unconfirmed mint without sending another mint', async () => {
+    mocks.receipt.mockRejectedValueOnce(new Error('RPC timeout'))
+    const { result } = renderHook(() => useTestnetFunding(account, true))
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(result.current.claim?.status).toBe('submitted')
+    expect(result.current.error).toContain('Your claim is saved')
+    expect(mocks.deposit).not.toHaveBeenCalled()
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(mocks.mint).toHaveBeenCalledTimes(1)
+    expect(mocks.deposit).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['disabled', 'recipient', 'unmount'])('stops automatic deposit after %s while mint confirmation is pending', async change => {
+    let confirm!: (value: { status: string }) => void
+    mocks.receipt.mockReturnValueOnce(new Promise(resolve => { confirm = resolve }))
+    const { result, rerender, unmount } = renderHook(
+      ({ recipient, enabled }) => useTestnetFunding(recipient, enabled),
+      { initialProps: { recipient: account, enabled: true } },
+    )
+    let pending!: Promise<void>
+    await act(async () => { pending = result.current.requestFunds(account) })
+    await act(async () => { await result.current.requestFunds(account) })
+    expect(mocks.mint).toHaveBeenCalledTimes(1)
+    if (change === 'unmount') unmount()
+    else rerender({ recipient: change === 'recipient' ? '0x5555555555555555555555555555555555555555' : account, enabled: change !== 'disabled' })
+    await act(async () => { confirm({ status: 'success' }); await pending })
+    expect(mocks.deposit).not.toHaveBeenCalled()
   })
 })

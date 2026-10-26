@@ -2,15 +2,15 @@
 
 -- | The checked-in release manifest is the single source of deployed identities.
 module Plether.Perps.Manifest
-  ( releaseChainId
+  ( releaseIsDeployed
+  , requireDeployedRelease
+  , releaseChainId
   , releaseVersion
   , releaseDeploymentBlock
   , releaseVolumeHistoryStartTimestamp
   , releaseAaManifestVersion
   , settlementTokenAddress
   , settlementTokenCodeHash
-  , mockUsdcAddress
-  , mockUsdcCodeHash
   , marginClearinghouseAddress
   , marginClearinghouseCodeHash
   , cfdEngineAddress
@@ -46,7 +46,16 @@ module Plether.Perps.Manifest
   ) where
 
 import Data.Text (Text)
-import Plether.Perps.Manifest.Embed (manifestInteger, manifestText, manifestSettlementText)
+import Control.Monad (unless)
+import Plether.Perps.Manifest.Embed (manifestInteger, manifestText, manifestSettlementText, manifestIsDeployed)
+
+-- | Internal pins below are unusable until a deployed release has been verified.
+releaseIsDeployed :: Bool
+releaseIsDeployed = $(manifestIsDeployed)
+
+requireDeployedRelease :: IO ()
+requireDeployedRelease = unless releaseIsDeployed $
+  fail "Perps release is prepared; a verified schema-four deployment is required"
 
 releaseChainId :: Integer
 releaseChainId = $(manifestInteger ["network", "chainId"])
@@ -68,14 +77,6 @@ settlementTokenAddress = $(manifestSettlementText "address")
 
 settlementTokenCodeHash :: Text
 settlementTokenCodeHash = $(manifestSettlementText "runtimeCodeHash")
-
--- Compatibility aliases: public APIs and historical database fields retain
--- their USDC names, but these values always identify the release asset.
-mockUsdcAddress :: Text
-mockUsdcAddress = settlementTokenAddress
-
-mockUsdcCodeHash :: Text
-mockUsdcCodeHash = settlementTokenCodeHash
 
 marginClearinghouseAddress :: Text
 marginClearinghouseAddress = $(manifestText ["contracts", "marginClearinghouse", "address"])

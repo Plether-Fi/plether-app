@@ -24,7 +24,7 @@ describe('protection trigger and retry policy', () => {
     assert.equal(retryDecision({ ...retry, queueSize: 46n }), 'queue-congested')
     assert.equal(retryDecision({ ...retry, pendingCount: 1n }), 'pending-orders')
     assert.equal(retryDecision({ ...retry, oracleAvailable: false }), 'oracle-unavailable')
-    for (const reason of [0, 1, 3, 4, 5, 6, 7, 8, 9]) assert.equal(retryDecision({ ...retry, outcome: { status: 3, reason } }), 'operator-required')
+    for (const reason of [0, 1, 3, 4, 5, 6, 7, 8, 9, 10]) assert.equal(retryDecision({ ...retry, outcome: { status: 3, reason } }), 'operator-required')
   })
   it('accepts only complete, fresh, admitted current payloads', () => {
     const row = { source: 'backend_hermes_latest_v2', min_publish_time: '990', max_publish_time: '991', update_data: ['0x1234'] }

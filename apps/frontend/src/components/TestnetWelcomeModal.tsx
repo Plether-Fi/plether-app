@@ -1,4 +1,4 @@
-import { PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { PERPS_RELEASE_IS_DEPLOYED, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useRef, useState } from 'react'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
@@ -12,7 +12,7 @@ import { useTestnetFunding, type TestnetFundingPhase } from '../hooks/useTestnet
 import { Button, Input, Modal } from './ui'
 
 const DIRECT_MOCK_MINT = PERPS_SETTLEMENT_TOKEN.isMock && PERPS_SETTLEMENT_TOKEN.name === 'Mock USDG'
-const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL === 'USDC' ? 'Mock USDC' : PERPS_SETTLEMENT_TOKEN_LABEL
+const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL
 const MOCK_TOKEN_LABEL_LOWER = MOCK_TOKEN_LABEL.replace(/^Mock /, 'mock ')
 
 interface TestnetWelcomeModalViewProps {
@@ -240,6 +240,10 @@ export function TestnetWelcomeModalView({
 }
 
 export function TestnetWelcomeModal() {
+  return PERPS_RELEASE_IS_DEPLOYED ? <LiveTestnetWelcomeModal /> : null
+}
+
+function LiveTestnetWelcomeModal() {
   const { address: connectedAddress, isConnected } = useAccount()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured

@@ -2,7 +2,7 @@ import { manualFeeShareApproval } from '../feeShareApprovals'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api/types'
-import { formatSignedUsdc, shortAddress, xProfileUrl } from '../utils/format'
+import { formatSignedAssets, shortAddress, xProfileUrl } from '../utils/format'
 import { eligibilityPresentation } from '../utils/eligibility'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -41,13 +41,13 @@ export function IntegrityNotice({ competition }: { competition: Pick<Competition
   )
 }
 
-export function Pnl({ value, className = '', usdcKind }: { value: string | null | undefined; className?: string; usdcKind?: 'real' | 'mock' }) {
+export function Pnl({ value, className = '', assetKind }: { value: string | null | undefined; className?: string; assetKind?: 'real' | 'mock' }) {
   const positive = value != null && /^\+?[1-9]\d*$/.test(value)
   const negative = value?.startsWith('-') === true
-  const formatted = formatSignedUsdc(value)
+  const formatted = formatSignedAssets(value)
   return (
     <span className={`tabular-nums ${positive ? 'text-positive' : negative ? 'text-brand-orange' : 'text-content-primary'} ${className}`}>
-      {usdcKind ? formatted.replace(/ USDC$/, ` ${usdcKind} USDC`) : formatted}
+      {assetKind ? formatted.replace(/ assets$/, ` ${assetKind} assets`) : formatted}
     </span>
   )
 }

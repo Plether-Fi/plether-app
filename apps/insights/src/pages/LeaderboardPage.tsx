@@ -31,7 +31,7 @@ function Standings({ standings }: { standings: DivisionStanding[] }) {
     <thead className="border-b border-brand-border/25 text-xs text-content-tertiary"><tr>{['Rank', 'Trader & division', 'Weekly return', 'Net P&L', 'Active days', 'Weekly outcome'].map((label) => <th key={label} scope="col" className="px-4 py-4">{label}</th>)}</tr></thead>
     <tbody>{standings.map((row) => <tr key={row.address} className="border-b border-brand-border/15 last:border-0">
       <td className="px-4 py-5 font-mono">{row.rank ?? '—'}</td><td className="px-4 py-5"><Trader standing={row} /></td>
-      <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlUsdc, row.adjustedEquityUsdc)}</td><td className="px-4 py-5"><Pnl value={row.weeklyPnlUsdc} usdcKind="mock" /></td><td className="px-4 py-5">{row.activeDays} / 2</td>
+      <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlAssets, row.adjustedEquityAssets)}</td><td className="px-4 py-5"><Pnl value={row.weeklyPnlAssets} assetKind="mock" /></td><td className="px-4 py-5">{row.activeDays} / 2</td>
       <td className="px-4 py-5"><span className={row.movement === 'promoted' ? 'text-positive' : 'text-content-secondary'}>{row.movement === 'promoted' ? `↑ ${row.previousTier} → ${row.tier}` : row.movement === 'demoted' ? `↓ ${row.previousTier} → ${row.tier}` : row.qualifying ? 'Qualified · tier held' : 'Non-qualifying'}</span>{row.nonQualifyingWeeks === 1 ? <p className="mt-1 text-xs text-brand-yellow">1 of 2 non-qualifying weeks</p> : null}</td>
     </tr>)}</tbody>
   </table></div>

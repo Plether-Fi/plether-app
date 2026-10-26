@@ -97,9 +97,9 @@ data BasketCandle = BasketCandle
   , bcRawHighPrice :: Integer
   , bcRawLowPrice :: Integer
   , bcRawClosePrice :: Integer
-  , bcVolumeUsdc :: Maybe Integer
-  , bcLongFlowVolumeUsdc :: Maybe Integer
-  , bcShortFlowVolumeUsdc :: Maybe Integer
+  , bcVolumeAssets :: Maybe Integer
+  , bcLongFlowVolumeAssets :: Maybe Integer
+  , bcShortFlowVolumeAssets :: Maybe Integer
   , bcTradeCount :: Maybe Integer
   , bcSampleCount :: Integer
   , bcQuality :: Text
@@ -117,9 +117,9 @@ instance ToJSON BasketCandle where
       , "rawHighPrice" .= show bcRawHighPrice
       , "rawLowPrice" .= show bcRawLowPrice
       , "rawClosePrice" .= show bcRawClosePrice
-      , "volumeUsdc" .= fmap show bcVolumeUsdc
-      , "longFlowVolumeUsdc" .= fmap show bcLongFlowVolumeUsdc
-      , "shortFlowVolumeUsdc" .= fmap show bcShortFlowVolumeUsdc
+      , "volumeAssets" .= fmap show bcVolumeAssets
+      , "longFlowVolumeAssets" .= fmap show bcLongFlowVolumeAssets
+      , "shortFlowVolumeAssets" .= fmap show bcShortFlowVolumeAssets
       , "tradeCount" .= bcTradeCount
       , "sampleCount" .= bcSampleCount
       , "quality" .= bcQuality
@@ -283,7 +283,7 @@ basketRangeSeconds range =
 data BasketHistoryPoint = BasketHistoryPoint
   { bhpTimestamp :: Integer
   , bhpBasketPrice :: Integer
-  , bhpVolumeUsdc :: Integer
+  , bhpVolumeAssets :: Integer
   , bhpComponents :: Maybe Value
   }
   deriving stock (Show, Generic)
@@ -293,7 +293,7 @@ instance ToJSON BasketHistoryPoint where
     object $
       [ "timestamp" .= bhpTimestamp
       , "basketPrice" .= show bhpBasketPrice
-      , "volumeUsdc" .= show bhpVolumeUsdc
+      , "volumeAssets" .= show bhpVolumeAssets
       ]
         <> maybe [] (\components -> ["components" .= components]) bhpComponents
 

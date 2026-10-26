@@ -1,4 +1,5 @@
-import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { PERPS_RELEASE_IS_DEPLOYED, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { PerpsDeploymentPending } from '../components/PerpsDeploymentPending'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
@@ -23,7 +24,7 @@ function displayValue(value: string | undefined, isLoading: boolean): string {
   return isLoading ? '...' : '--'
 }
 
-function usdcValue(value: string | undefined, isLoading: boolean): ReactNode {
+function assetsValue(value: string | undefined, isLoading: boolean): ReactNode {
   if (value) return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value} />
   return isLoading ? '...' : '--'
 }
@@ -46,6 +47,10 @@ function formatMarkAge(ageSeconds: number): string {
 }
 
 export function Perps() {
+  return PERPS_RELEASE_IS_DEPLOYED ? <LivePerps /> : <PerpsDeploymentPending />
+}
+
+function LivePerps() {
   const perpsIdentity = usePerpsIdentity()
   const perpsMarket = usePerpsMarket()
   const protectionConfiguration = useProtectionConfiguration()
@@ -147,34 +152,34 @@ export function Perps() {
         },
         {
           label: '24h volume',
-          value: usdcValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
+          value: assetsValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
         },
         {
           label: 'Directional limit used',
           directionalLimit: {
             usagePercent: perpsMarket.directionalLimit?.usagePercent,
             side: perpsMarket.directionalLimit?.side,
-            totalExposure: usdcValue(perpsMarket.directionalLimit?.totalExposure, perpsMarket.isLoading),
-            netExposure: usdcValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
-            limit: usdcValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
+            totalExposure: assetsValue(perpsMarket.directionalLimit?.totalExposure, perpsMarket.isLoading),
+            netExposure: assetsValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
+            limit: assetsValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
             isLoading: perpsMarket.isLoading,
           },
         },
         {
           label: 'Free pool liquidity',
-          value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
+          value: assetsValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           hoverDetailsType: 'pool-liquidity',
           hoverDetailsLabel: 'Free pool liquidity details',
           hoverDetails: (
             <PerpsPoolLiquidityDetails
-              poolAssetsUsdc={perpsMarket.raw.poolAssetsUsdc}
-              freeUsdc={perpsMarket.raw.freeUsdc}
-              juniorPrincipal={usdcValue(perpsMarket.poolCapital?.juniorPrincipal, perpsMarket.isLoading)}
-              seniorPrincipal={usdcValue(perpsMarket.poolCapital?.seniorPrincipal, perpsMarket.isLoading)}
+              poolAssets={perpsMarket.raw.poolAssets}
+              freeAssets={perpsMarket.raw.freeAssets}
+              juniorPrincipal={assetsValue(perpsMarket.poolCapital?.juniorPrincipal, perpsMarket.isLoading)}
+              seniorPrincipal={assetsValue(perpsMarket.poolCapital?.seniorPrincipal, perpsMarket.isLoading)}
               juniorSharePercent={perpsMarket.poolCapital?.juniorSharePercent}
               seniorSharePercent={perpsMarket.poolCapital?.seniorSharePercent}
               seniorStatus={perpsMarket.poolCapital?.seniorStatus}
-              seniorImpairment={usdcValue(perpsMarket.poolCapital?.seniorImpairment, perpsMarket.isLoading)}
+              seniorImpairment={assetsValue(perpsMarket.poolCapital?.seniorImpairment, perpsMarket.isLoading)}
               isJuniorExhausted={perpsMarket.poolCapital?.isJuniorExhausted}
               isEmpty={perpsMarket.poolCapital?.isEmpty}
               isLoading={perpsMarket.isLoading}
@@ -208,8 +213,8 @@ export function Perps() {
       perpsMarket.poolCapital,
       perpsMarket.priceChange24h,
       perpsMarket.priceChange24hTone,
-      perpsMarket.raw.poolAssetsUsdc,
-      perpsMarket.raw.freeUsdc,
+      perpsMarket.raw.poolAssets,
+      perpsMarket.raw.freeAssets,
       perpsMarket.volume24h,
       nowSeconds,
     ]
@@ -272,15 +277,15 @@ export function Perps() {
             oracleFreshness={perpsMarket.oracleFreshness}
             oracleFreshnessTooltip={dxyFreshnessTooltip}
             oracleBasketComponents={perpsMarket.raw.basketComponents}
-            availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
+            availableToTradeRaw={perpsAccount.freeBuyingPowerAssets ?? perpsAccount.withdrawableAssets}
             availableToTradeAmount={perpsAccount.display.availableToTrade}
-            settlementBalanceUsdcRaw={perpsAccount.settlementBalanceUsdc}
-            positionEquityUsdcRaw={perpsAccount.positionEquityUsdc}
-            withdrawableUsdcRaw={perpsAccount.withdrawableUsdc}
-            walletUsdcRaw={perpsAccount.walletUsdc}
-            ownerWalletUsdcRaw={perpsAccount.ownerWalletUsdc}
-            tradingAccountUsdcRaw={perpsAccount.tradingAccountUsdc}
-            marginAllowanceUsdc={perpsAccount.marginAllowanceUsdc}
+            settlementBalanceAssetsRaw={perpsAccount.settlementBalanceAssets}
+            positionEquityAssetsRaw={perpsAccount.positionEquityAssets}
+            withdrawableAssetsRaw={perpsAccount.withdrawableAssets}
+            walletAssetsRaw={perpsAccount.walletAssets}
+            ownerWalletAssetsRaw={perpsAccount.ownerWalletAssets}
+            tradingAccountAssetsRaw={perpsAccount.tradingAccountAssets}
+            marginAllowanceAssets={perpsAccount.marginAllowanceAssets}
             currentPosition={perpsAccount.position}
             currentPositionSide={perpsAccount.position?.direction}
             currentPositionAmount={perpsAccount.display.positionNotional}
@@ -295,10 +300,10 @@ export function Perps() {
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
             firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
-            longOpenCapacityUsdc={perpsMarket.raw.longOpenCapacityUsdc}
-            shortOpenCapacityUsdc={perpsMarket.raw.shortOpenCapacityUsdc}
-            minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
-            minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
+            longOpenCapacityAssets={perpsMarket.raw.longOpenCapacityAssets}
+            shortOpenCapacityAssets={perpsMarket.raw.shortOpenCapacityAssets}
+            minOpenNotionalAssets={perpsMarket.raw.minOpenNotionalAssets}
+            minNewPositionNotionalAssets={perpsMarket.raw.minNewPositionNotionalAssets}
             maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
             initialMarginBps={perpsMarket.raw.initialMarginBps}
             executionFeeBps={perpsMarket.raw.executionFeeBps}
@@ -324,11 +329,11 @@ export function Perps() {
           <PerpsAccountPanel
             positionProtection={perpsAccount.activePositionProtection}
             protectionCapPrice={perpsAccount.capPrice}
-            protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} availableFreeSettlementUsdc={perpsAccount.carryProjection?.freeSettlementUsdc} onRefresh={() => void handleAccountRefresh()} /> : undefined}
+            protectionContent={PROTECTION_RELEASE_ENABLED || perpsAccount.activePositionProtection ? <PerpsProtectionPanel protection={perpsAccount.activePositionProtection} position={perpsAccount.position} rawMark={perpsMarket.raw.markPrice} cap={perpsAccount.capPrice} configuration={protectionConfiguration} pendingOrders={perpsAccount.pendingOrders.length} availableFreeSettlementAssets={perpsAccount.carryProjection?.freeSettlementAssets} onRefresh={() => void handleAccountRefresh()} /> : undefined}
             position={perpsAccount.position}
-            equityUsdc={perpsAccount.positionEquityUsdc}
-            freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
-            traderClaimBalanceUsdc={perpsAccount.traderClaimBalanceUsdc}
+            equityAssets={perpsAccount.positionEquityAssets}
+            freeBuyingPowerAssets={perpsAccount.freeBuyingPowerAssets}
+            traderClaimBalanceAssets={perpsAccount.traderClaimBalanceAssets}
             pendingOrders={perpsAccount.pendingOrders}
             orderHistory={perpsHistory.orderHistory}
             tradeHistory={perpsHistory.tradeHistory}

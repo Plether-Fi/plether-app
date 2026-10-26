@@ -1,3 +1,4 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
@@ -51,16 +52,16 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
-    marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
-    cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
-    orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
+    marginClearinghouse: '0x0000000000000000000000000000000000000002',
+    cfdEngine: '0x0000000000000000000000000000000000000003',
+    orderRouter: '0x0000000000000000000000000000000000000017',
     orderLifecycleBook: '0x519f57a34fb440c42bfd2d8328d2f80349af3872',
     policyEvaluator: '0xf550cada6b7d477b23069c8b4f254d19088f28c8',
-    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -139,7 +140,7 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {
+  it('funds the Trading Account with an exact owner-wallet Mock USDG transfer', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.fundTradingAccount(25_000_000n))
@@ -149,7 +150,7 @@ describe('usePerpsTrading sponsorship route', () => {
       expect.objectContaining({
         account: OWNER,
         chainId: 421614,
-        address: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
+        address: '0x0000000000000000000000000000000000000001',
         functionName: 'transfer',
         args: [ACCOUNT, 25_000_000n],
       })

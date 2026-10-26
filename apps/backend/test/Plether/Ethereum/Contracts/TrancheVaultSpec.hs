@@ -62,7 +62,7 @@ spec = do
         `shouldSatisfy` isLeft
 
   describe "sharePriceWadFromConvertedAssets" $ do
-    it "normalizes 6-decimal USDC and 9-decimal shares to 18 decimals" $
+    it "normalizes 6-decimal settlement asset and 9-decimal shares to 18 decimals" $
       sharePriceWadFromConvertedAssets 1_007_500_000_000_000_000_000_000
         `shouldBe` 1_007_500_000_000_000_000
 

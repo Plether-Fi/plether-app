@@ -7,7 +7,7 @@ import { useProtectionEvents, useProtectionHistory, useProtectionExecution, type
 import { usePerpsTrading } from '../hooks/usePerpsTrading'
 import type { ProtectionConfiguration } from '../hooks/useProtectionConfiguration'
 import type { PerpsPosition } from '../hooks/usePerpsAccount'
-import { formatPerpsPositionSize, formatPerpsUsdc, perpsSideToDirection } from '../utils/perps'
+import { formatPerpsPositionSize, formatPerpsAssets, perpsSideToDirection } from '../utils/perps'
 import { protectionPrice, protectionStatusLabel, protectionStateDescription } from '../utils/positionProtection'
 import { ProtectionExecutionNotice } from './ProtectionExecutionNotice'
 import type { ProtectionExecutionReport } from '../utils/protectionExecution'
@@ -24,7 +24,7 @@ interface ProtectionPanelProps {
   configuration: ProtectionConfiguration
   pendingOrders: number
   /** Free settlement remaining after pending carry, excluding position margin. */
-  availableFreeSettlementUsdc: bigint | undefined
+  availableFreeSettlementAssets: bigint | undefined
   onRefresh: () => void
 }
 export interface ProtectionManagementRequest {
@@ -56,7 +56,7 @@ export function PerpsProtectionPanel(props: ProtectionPanelProps) {
 }
 
 /** The same stateful UI is used by the app and the transaction-free Storybook demo. */
-export function PositionProtectionManager({ protection, position, rawMark, cap, configuration, pendingOrders, availableFreeSettlementUsdc, accountAddress, onManage, history, executionReport, executionLoading, executionError, onRefreshExecution }: Omit<ProtectionPanelProps, 'onRefresh'> & {
+export function PositionProtectionManager({ protection, position, rawMark, cap, configuration, pendingOrders, availableFreeSettlementAssets, accountAddress, onManage, history, executionReport, executionLoading, executionError, onRefreshExecution }: Omit<ProtectionPanelProps, 'onRefresh'> & {
   accountAddress?: string
   onManage: (request: ProtectionManagementRequest) => Promise<void>
   history?: ReactNode
@@ -73,7 +73,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
   const [review, setReview] = useState<ProtectionReview>()
   const heading = useRef<HTMLHeadingElement>(null)
   const previousView = useRef(view)
-  const targetKey = [accountAddress, position?.exists, position?.direction, position?.size, position?.entryPrice, position?.marginUsdc, protection?.protectionId, protection?.status, protection?.takeProfitTriggerPrice, protection?.stopLossTriggerPrice].join(':')
+  const targetKey = [accountAddress, position?.exists, position?.direction, position?.size, position?.entryPrice, position?.marginAssets, protection?.protectionId, protection?.status, protection?.takeProfitTriggerPrice, protection?.stopLossTriggerPrice].join(':')
   const [reviewTarget, setReviewTarget] = useState<string>()
   const targetChanged = reviewTarget !== undefined && reviewTarget !== targetKey
   const editable = protection !== undefined && [1, 2].includes(protection.status)
@@ -86,20 +86,20 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
     try { validateProtectionParams(review.params, direction, rawMark ?? 0n, cap ?? 0n, priceContext.liquidationPrice, priceContext.liquidationThreshold) }
     catch (cause) { reviewPriceError = cause instanceof Error ? cause.message : 'Review your TP/SL prices again.' }
   }
-  const reward = (configuration.triggerBountyUsdc ?? 0n) + (configuration.executionBountyUsdc ?? 0n)
-  const rewardKnown = configuration.triggerBountyUsdc !== undefined && configuration.executionBountyUsdc !== undefined
+  const reward = (configuration.triggerBountyAssets ?? 0n) + (configuration.executionBountyAssets ?? 0n)
+  const rewardKnown = configuration.triggerBountyAssets !== undefined && configuration.executionBountyAssets !== undefined
   const fundingError = protection ? undefined : !rewardKnown
     ? 'Waiting for the current TP/SL execution reserve. Please try again.'
-    : availableFreeSettlementUsdc === undefined
+    : availableFreeSettlementAssets === undefined
       ? 'Waiting for your available free margin. Refresh your account if this continues.'
-      : availableFreeSettlementUsdc < reward
-        ? `Deposit at least ${formatUnits(reward - availableFreeSettlementUsdc, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
+      : availableFreeSettlementAssets < reward
+        ? `Deposit at least ${formatUnits(reward - availableFreeSettlementAssets, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
         : undefined
   const reviewChanged = targetChanged || (review?.action === 'create' && (review.reward !== reward || pendingOrders > 0))
   const delayed = protection?.status === 8
   const closing = protection?.status === 3 || delayed
   const currentSize = position?.exists ? position.size : protection?.size
-  const reserve = protection ? protection.triggerBountyUsdc + protection.executionBountyUsdc : reward
+  const reserve = protection ? protection.triggerBountyAssets : reward
 
   useEffect(() => {
     if (previousView.current !== view) heading.current?.focus()
@@ -211,7 +211,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </div>
         </> : view === 'remove' ? <>
           <p className="text-sm leading-6">{protection?.status === 1 ? 'Your opening order will remain committed and can still fill without TP/SL.' : 'Your position will stay open without take-profit or stop-loss triggers.'}</p>
-          <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(reserve)} />.</p>
+          <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reserve)} />.</p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="danger" isLoading={pending} disabled={targetChanged} onClick={() => void submit(true)}>Confirm removal</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
@@ -220,7 +220,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         {!protection && (creatable || view === 'edit' || view === 'review') ? <div className="space-y-2 border-t border-brand-border/20 pt-3 text-xs">
           <dl className="space-y-2">
             {view !== 'review' ? <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve required</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={rewardKnown ? formatUnits(reward, 6) : '—'} /></dd></div> : null}
-            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Available free margin</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={availableFreeSettlementUsdc === undefined ? '—' : formatUnits(availableFreeSettlementUsdc, 6)} /></dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Available free margin</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={availableFreeSettlementAssets === undefined ? '—' : formatUnits(availableFreeSettlementAssets, 6)} /></dd></div>
           </dl>
           {fundingError ? <p role="alert" className="leading-5 text-brand-orange">{fundingError}</p> : null}
         </div> : null}
@@ -233,7 +233,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       {protection && view === 'overview' ? <details className="border-t border-brand-border/20 panel-padding-x py-3 text-xs text-content-secondary">
         <summary className="cursor-pointer hover:text-content-primary">Execution details</summary>
         <dl className="mt-3 space-y-2">
-          <div className="flex flex-wrap justify-between gap-2"><dt>Execution reserve remaining</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(reserve)} /></dd></div>
+          <div className="flex flex-wrap justify-between gap-2"><dt>Execution reserve remaining</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(reserve)} /></dd></div>
           <div className="flex flex-wrap justify-between gap-2"><dt>Protection reference</dt><dd>#{protection.protectionId.toString()}</dd></div>
           {protection.linkedOrderId > 0n ? <div className="flex flex-wrap justify-between gap-2"><dt>Latest close order</dt><dd>#{protection.linkedOrderId.toString()}</dd></div> : null}
         </dl>

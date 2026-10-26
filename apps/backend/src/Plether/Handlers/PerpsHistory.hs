@@ -106,7 +106,7 @@ getPerpsMarketStatsResponse pool cfg = do
       fromTimestamp = now - rangeSeconds
       chainId = perpsMarketStatsChainId cfg
       orderRouter = cfgPerpsOrderRouter cfg
-  volume24hUsdc <- withDb pool $ \conn ->
+  volume24hAssets <- withDb pool $ \conn ->
     getPerpsMarketVolumeSince conn chainId orderRouter fromTimestamp
   pure $
     Right $
@@ -114,7 +114,7 @@ getPerpsMarketStatsResponse pool cfg = do
         object
           [ "rangeSeconds" .= rangeSeconds
           , "generatedAt" .= now
-          , "volume24hUsdc" .= show volume24hUsdc
+          , "volume24hAssets" .= show volume24hAssets
           ]
 
 perpsMarketStatsChainId :: Config -> Integer
@@ -215,8 +215,8 @@ orderRowToJson PerpsOrderRow {..} =
       , ("terminalTimestamp" .=) <$> porTerminalTimestamp
       , Just $ "terminalStatus" .= porTerminalStatus
       , ("executionPrice" .=) . show <$> porExecutionPrice
-      , ("vpiUsdc" .=) . show <$> porExecutionVpiUsdc
-      , ("frozenCloseSpreadUsdc" .=) . show <$> porExecutionFrozenCloseSpreadUsdc
+      , ("vpiAssets" .=) . show <$> porExecutionVpiAssets
+      , ("frozenCloseSpreadAssets" .=) . show <$> porExecutionFrozenCloseSpreadAssets
       , ("executionEconomicsVersion" .=) <$> porExecutionEconomicsVersion
       , ("executionOraclePrice" .=) . show <$> porExecutionOraclePrice
       , ("executionOracleFrozen" .=) <$>
@@ -235,8 +235,8 @@ orderRowToJson PerpsOrderRow {..} =
       , ("activityType" .=) <$> porActivityType
       , ("activitySizeDelta" .=) . show <$> porActivitySizeDelta
       , ("activityPrice" .=) . show <$> porActivityPrice
-      , ("activityVpiUsdc" .=) . show <$> porActivityVpiUsdc
-      , ("activityPnlUsdc" .=) . show <$> porActivityPnlUsdc
+      , ("activityVpiAssets" .=) . show <$> porActivityVpiAssets
+      , ("activityPnlAssets" .=) . show <$> porActivityPnlAssets
       ]
 
 activityRowToJson :: PerpsActivityRow -> Value
@@ -252,8 +252,8 @@ activityRowToJson PerpsActivityRow {..} =
       , ("side" .=) <$> parSide
       , ("price" .=) . show <$> parPrice
       , ("sizeDelta" .=) . show <$> parSizeDelta
-      , ("amountUsdc" .=) . show <$> parAmountUsdc
-      , ("pnlUsdc" .=) . show <$> parPnlUsdc
+      , ("amountAssets" .=) . show <$> parAmountAssets
+      , ("pnlAssets" .=) . show <$> parPnlAssets
       , Just $ "txHash" .= parTxHash
       , Just $ "blockNumber" .= show parBlockNumber
       , Just $ "timestamp" .= parTimestamp

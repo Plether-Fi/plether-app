@@ -1,3 +1,4 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
@@ -67,7 +68,7 @@ describe('useVaultTransactions', () => {
     mocks.writeContractAsync.mockResolvedValue('0xabc')
   })
 
-  it('approves exact USDC before queueing a deposit when allowance is insufficient', async () => {
+  it('approves exact Mock USDG before queueing a deposit when allowance is insufficient', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       allowance: 0n,
@@ -80,14 +81,14 @@ describe('useVaultTransactions', () => {
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('supply')
     const steps = config.buildSteps()
-    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
+    expect(steps.map(({ label }) => label)).toEqual(['Approve Mock USDG', 'Queue deposit'])
 
     await steps[0].action()
     expect(mocks.estimateContractGas).not.toHaveBeenCalled()
     await steps[1].action()
 
     expect(mocks.simulateContract).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      address: PERPS_ARBITRUM_SEPOLIA.usdc,
+      address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
       functionName: 'approve',
       args: [PERPS_ARBITRUM_SEPOLIA.seniorVault, 2_000_000n],
     }))
@@ -210,7 +211,7 @@ describe('useVaultTransactions', () => {
     }
   })
 
-  it('approves exact USDC and submits a queued deposit request', async () => {
+  it('approves exact Mock USDG and submits a queued deposit request', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       allowance: 0n,
@@ -223,7 +224,7 @@ describe('useVaultTransactions', () => {
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('supply')
     const steps = config.buildSteps()
-    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
+    expect(steps.map(({ label }) => label)).toEqual(['Approve Mock USDG', 'Queue deposit'])
 
     await steps[0].action()
     await steps[1].action()
@@ -296,7 +297,7 @@ describe('useVaultTransactions', () => {
   })
 
   it.each([
-    ['cancelPendingDeposit', 'Recover USDC', 'withdraw'],
+    ['cancelPendingDeposit', 'Recover Mock USDG', 'withdraw'],
     ['claimDepositShares', 'Claim shares', 'supply'],
   ] as const)('simulates and submits %s for an epoch', async (method, label, type) => {
     const { result } = renderHook(() => useVaultTransactions({

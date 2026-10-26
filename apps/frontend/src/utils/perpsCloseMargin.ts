@@ -4,8 +4,8 @@ import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
 import type { PerpsOrderHistoryRow } from '../hooks/usePerpsHistory'
 
 const marginEvents = parseAbi([
-  'event MarginLocked(address indexed account, uint8 indexed bucket, uint256 amountUsdc)',
-  'event MarginUnlocked(address indexed account, uint8 indexed bucket, uint256 amountUsdc)',
+  'event MarginLocked(address indexed account, uint8 indexed bucket, uint256 amountAssets)',
+  'event MarginUnlocked(address indexed account, uint8 indexed bucket, uint256 amountAssets)',
 ])
 
 /** Net reduction of assigned position collateral in this exact execution interval. */
@@ -38,7 +38,7 @@ export function deriveCloseMarginReleased(
     try {
       const decoded = decodeEventLog({ abi: marginEvents, data: log.data, topics: log.topics })
       if (decoded.args.account.toLowerCase() !== order.account.toLowerCase() || decoded.args.bucket !== 0) continue
-      released += decoded.eventName === 'MarginUnlocked' ? decoded.args.amountUsdc : -decoded.args.amountUsdc
+      released += decoded.eventName === 'MarginUnlocked' ? decoded.args.amountAssets : -decoded.args.amountAssets
     } catch {
       return undefined
     }

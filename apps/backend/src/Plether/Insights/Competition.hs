@@ -23,10 +23,10 @@ module Plether.Insights.Competition
   , defaultCompetitionSlug
   , competitionRules
   , competitionRulesForSlug
-  , usdcScale
+  , assetScale
   , economicAccountValue
   , calculateScore
-  , minimumProfitUsdc
+  , minimumProfitAssets
   , qualification
   , prizeAllocation
   , finalizationBlockers
@@ -62,11 +62,11 @@ import Data.Time
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Plether.Perps.Manifest as Manifest
 
--- | All monetary values in this module are integer USDC base units (six
+-- | All monetary values in this module are integer settlement asset base units (six
 -- decimals). Keeping the scoring core integral makes profit boundaries and ties
 -- exact and reproducible.
-usdcScale :: Integer
-usdcScale = 1_000_000
+assetScale :: Integer
+assetScale = 1_000_000
 
 july2026CompetitionSlug :: Text
 july2026CompetitionSlug = "testnet-trading-2026"
@@ -88,18 +88,18 @@ data CompetitionRules = CompetitionRules
   , crScoreCutoffAt :: UTCTime
   , crResultsAt :: UTCTime
   , crPaymentDeadlineAt :: UTCTime
-  , crStartingBalanceUsdc :: Integer
+  , crStartingBalanceAssets :: Integer
   -- Canonical prize-qualification threshold. This stays in the code-defined
   -- rule set because sub-basis-point amounts cannot be represented exactly by
   -- the legacy persisted percentage metadata below.
-  , crMinimumProfitUsdc :: Integer
+  , crMinimumProfitAssets :: Integer
   , crLegacyMinimumProfitBps :: Integer
   , crMinimumActiveDays :: Int
   , crFxSessionBoundaryUtcMinutes :: Int
   , crRegistrationClosesAt :: Maybe UTCTime
   , crMinimumXAccountAgeDays :: Maybe Int
   , crTargetXHandle :: Maybe Text
-  , crPrizeUsdc :: [Integer]
+  , crPrizeAssets :: [Integer]
   , crScoringVersion :: Text
   , crRulesVersion :: Text
   }
@@ -112,7 +112,7 @@ data CompetitionRules = CompetitionRules
 data CompetitionReleaseManifest = CompetitionReleaseManifest
   { crmReleaseId :: Text
   , crmChainId :: Integer
-  , crmUsdc :: Text
+  , crmSettlementToken :: Text
   , crmOrderRouter :: Text
   , crmMarginClearinghouse :: Text
   , crmAccountLens :: Text
@@ -131,7 +131,7 @@ competitionReleaseManifestText CompetitionReleaseManifest {..} =
     [ "release-manifest-v2"
     , T.strip crmReleaseId
     , T.pack $ show crmChainId
-    , normalize crmUsdc
+    , normalize crmSettlementToken
     , normalize crmOrderRouter
     , normalize crmMarginClearinghouse
     , normalize crmAccountLens
@@ -158,7 +158,7 @@ september2026ReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = september2026CompetitionSlug
     , crmChainId = Manifest.releaseChainId
-    , crmUsdc = Manifest.settlementTokenAddress
+    , crmSettlementToken = Manifest.settlementTokenAddress
     , crmOrderRouter = Manifest.orderRouterAddress
     , crmMarginClearinghouse = Manifest.marginClearinghouseAddress
     , crmAccountLens = Manifest.cfdEngineAccountLensAddress
@@ -194,15 +194,15 @@ july2026Competition =
     , crScoreCutoffAt = utc 2026 8 3 16 0 0
     , crResultsAt = utc 2026 8 5 12 0 0
     , crPaymentDeadlineAt = utc 2026 8 10 16 0 0
-    , crStartingBalanceUsdc = 100_000 * usdcScale
-    , crMinimumProfitUsdc = 1_000 * usdcScale
+    , crStartingBalanceAssets = 100_000 * assetScale
+    , crMinimumProfitAssets = 1_000 * assetScale
     , crLegacyMinimumProfitBps = 100
     , crMinimumActiveDays = 5
     , crFxSessionBoundaryUtcMinutes = 22 * 60
     , crRegistrationClosesAt = Nothing
     , crMinimumXAccountAgeDays = Nothing
     , crTargetXHandle = Nothing
-    , crPrizeUsdc = map (* usdcScale) [600, 300, 100]
+    , crPrizeAssets = map (* assetScale) [600, 300, 100]
     , crScoringVersion = "account-value-v1"
     , crRulesVersion = "2026-07-20"
     }
@@ -220,15 +220,15 @@ september2026Competition =
     , crScoreCutoffAt = utc 2026 9 25 21 0 0
     , crResultsAt = utc 2026 9 28 12 0 0
     , crPaymentDeadlineAt = utc 2026 10 3 0 0 0
-    , crStartingBalanceUsdc = 100_000 * usdcScale
-    , crMinimumProfitUsdc = 1 * usdcScale
+    , crStartingBalanceAssets = 100_000 * assetScale
+    , crMinimumProfitAssets = 1 * assetScale
     , crLegacyMinimumProfitBps = 100
     , crMinimumActiveDays = 5
     , crFxSessionBoundaryUtcMinutes = 21 * 60
     , crRegistrationClosesAt = Just $ utc 2026 9 22 0 0 0
     , crMinimumXAccountAgeDays = Just 30
     , crTargetXHandle = Just "plether_fi"
-    , crPrizeUsdc = map (* usdcScale) [600, 500, 400, 300, 200]
+    , crPrizeAssets = map (* assetScale) [600, 500, 400, 300, 200]
     , crScoringVersion = "cash-flow-adjusted-v1"
     , crRulesVersion = "2026-09-13"
     }
@@ -316,13 +316,13 @@ data ParticipantEligibility
 
 -- | A reviewed, mechanically qualified participant's share of the public
 -- prize table. Exact P&L ties occupy consecutive prize places and split the
--- combined awards for those places. Any indivisible single-micro-USDC dust is
+-- combined awards for those places. Any indivisible single-micro-settlement asset dust is
 -- deliberately left undistributed so every tied participant receives exactly
 -- the same integer amount.
 data PrizeAllocation = PrizeAllocation
   { paPlace :: Integer
   , paPlaces :: [Integer]
-  , paAmountUsdc :: Integer
+  , paAmountAssets :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -347,7 +347,7 @@ prizeAllocation prizes maybePlace maybeTieCount = do
             PrizeAllocation
               { paPlace = place
               , paPlaces = occupiedPlaces
-              , paAmountUsdc = sum occupiedPrizes `div` tieCount
+              , paAmountAssets = sum occupiedPrizes `div` tieCount
               }
 
 -- | Closed-world facts checked immediately before the one-way transition to
@@ -431,49 +431,49 @@ participantEligibilityFromText value =
 -- by the trader but sit outside those ledger values.
 data EquitySnapshot = EquitySnapshot
   { esHasOpenPosition :: Bool
-  , esSignedNetEquityUsdc :: Integer
-  , esTerminalReachableUsdc :: Integer
-  , esTraderClaimsUsdc :: Integer
+  , esSignedNetEquityAssets :: Integer
+  , esTerminalReachableAssets :: Integer
+  , esTraderClaimsAssets :: Integer
   }
   deriving stock (Show, Eq)
 
 economicAccountValue :: EquitySnapshot -> Integer
 economicAccountValue EquitySnapshot {..} =
-  max 0 $ ledgerValue + esTraderClaimsUsdc
+  max 0 $ ledgerValue + esTraderClaimsAssets
   where
     ledgerValue
-      | esHasOpenPosition = esSignedNetEquityUsdc
-      | otherwise = esTerminalReachableUsdc
+      | esHasOpenPosition = esSignedNetEquityAssets
+      | otherwise = esTerminalReachableAssets
 
 data ScoreInput = ScoreInput
   { siStartingSnapshot :: EquitySnapshot
   , siCurrentSnapshot :: EquitySnapshot
-  , siDepositsSinceStartUsdc :: Integer
-  , siWithdrawalsSinceStartUsdc :: Integer
-  , siManualAdjustmentsUsdc :: Integer
+  , siDepositsSinceStartAssets :: Integer
+  , siWithdrawalsSinceStartAssets :: Integer
+  , siManualAdjustmentsAssets :: Integer
   }
   deriving stock (Show, Eq)
 
 data ScoreBreakdown = ScoreBreakdown
-  { sbStartingAccountValueUsdc :: Integer
-  , sbCurrentAccountValueUsdc :: Integer
-  , sbDepositsSinceStartUsdc :: Integer
-  , sbWithdrawalsSinceStartUsdc :: Integer
-  , sbManualAdjustmentsUsdc :: Integer
-  , sbFinalPnlUsdc :: Integer
+  { sbStartingAccountValueAssets :: Integer
+  , sbCurrentAccountValueAssets :: Integer
+  , sbDepositsSinceStartAssets :: Integer
+  , sbWithdrawalsSinceStartAssets :: Integer
+  , sbManualAdjustmentsAssets :: Integer
+  , sbFinalPnlAssets :: Integer
   }
   deriving stock (Show, Eq)
 
 data FundingIntegrityInput = FundingIntegrityInput
-  { fiiBaselineValueUsdc :: Maybe Integer
+  { fiiBaselineValueAssets :: Maybe Integer
   , fiiBaselineHasOpenPosition :: Bool
   , fiiBaselinePendingOrderCount :: Int
-  , fiiRequiredBankrollUsdc :: Integer
+  , fiiRequiredBankrollAssets :: Integer
   , fiiBaselineOfficialAllocations :: [Integer]
-  , fiiBaselineFundingNetUsdc :: Integer
+  , fiiBaselineFundingNetAssets :: Integer
   , fiiOfficialAllocations :: [(Integer, Bool)]
   , fiiUnverifiedDepositCount :: Int
-  , fiiMaximumFundingNetUsdc :: Integer
+  , fiiMaximumFundingNetAssets :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -485,32 +485,32 @@ data FundingIntegrityInput = FundingIntegrityInput
 fundingIntegrityFlags :: FundingIntegrityInput -> [Text]
 fundingIntegrityFlags FundingIntegrityInput {..} =
   concat
-    [ ["baseline_unavailable" | fiiBaselineValueUsdc == Nothing]
+    [ ["baseline_unavailable" | fiiBaselineValueAssets == Nothing]
     , ["baseline_open_position" | fiiBaselineHasOpenPosition]
     , ["baseline_pending_orders" | fiiBaselinePendingOrderCount > 0]
     , [ "invalid_starting_bankroll"
-      | maybe False (`notElem` [0, fiiRequiredBankrollUsdc]) fiiBaselineValueUsdc
+      | maybe False (`notElem` [0, fiiRequiredBankrollAssets]) fiiBaselineValueAssets
       ]
-    , case fiiBaselineValueUsdc of
+    , case fiiBaselineValueAssets of
         Just baseline
-          | baseline == fiiRequiredBankrollUsdc ->
+          | baseline == fiiRequiredBankrollAssets ->
               concat
                 [ ["baseline_official_allocation_count_invalid" | length fiiBaselineOfficialAllocations /= 1]
                 , [ "baseline_official_allocation_amount_invalid"
                   | [amount] <- [fiiBaselineOfficialAllocations]
-                  , amount /= fiiRequiredBankrollUsdc
+                  , amount /= fiiRequiredBankrollAssets
                   ]
-                , ["baseline_funding_flow_mismatch" | fiiBaselineFundingNetUsdc /= fiiRequiredBankrollUsdc]
+                , ["baseline_funding_flow_mismatch" | fiiBaselineFundingNetAssets /= fiiRequiredBankrollAssets]
                 , ["unexpected_official_deposit" | not $ null fiiOfficialAllocations]
                 ]
           | baseline == 0 ->
               concat
                 [ ["unexpected_prebaseline_official_allocation" | not $ null fiiBaselineOfficialAllocations]
-                , ["zero_baseline_funding_flow_mismatch" | fiiBaselineFundingNetUsdc /= 0]
+                , ["zero_baseline_funding_flow_mismatch" | fiiBaselineFundingNetAssets /= 0]
                 , ["official_allocation_count_invalid" | length fiiOfficialAllocations /= 1]
                 , [ "official_allocation_amount_invalid"
                   | [(amount, _)] <- [fiiOfficialAllocations]
-                  , amount /= fiiRequiredBankrollUsdc
+                  , amount /= fiiRequiredBankrollAssets
                   ]
                 , [ "official_allocation_not_before_trading"
                   | [(_, beforeFirstTrade)] <- [fiiOfficialAllocations]
@@ -519,30 +519,30 @@ fundingIntegrityFlags FundingIntegrityInput {..} =
                 ]
         _ -> []
     , ["unverified_deposit_provenance" | fiiUnverifiedDepositCount > 0]
-    , ["funding_capacity_exceeded" | fiiMaximumFundingNetUsdc > fiiRequiredBankrollUsdc]
+    , ["funding_capacity_exceeded" | fiiMaximumFundingNetAssets > fiiRequiredBankrollAssets]
     ]
 
 calculateScore :: ScoreInput -> ScoreBreakdown
 calculateScore ScoreInput {..} =
   ScoreBreakdown
-    { sbStartingAccountValueUsdc = startingValue
-    , sbCurrentAccountValueUsdc = currentValue
-    , sbDepositsSinceStartUsdc = siDepositsSinceStartUsdc
-    , sbWithdrawalsSinceStartUsdc = siWithdrawalsSinceStartUsdc
-    , sbManualAdjustmentsUsdc = siManualAdjustmentsUsdc
-    , sbFinalPnlUsdc =
+    { sbStartingAccountValueAssets = startingValue
+    , sbCurrentAccountValueAssets = currentValue
+    , sbDepositsSinceStartAssets = siDepositsSinceStartAssets
+    , sbWithdrawalsSinceStartAssets = siWithdrawalsSinceStartAssets
+    , sbManualAdjustmentsAssets = siManualAdjustmentsAssets
+    , sbFinalPnlAssets =
         currentValue
           - startingValue
-          - siDepositsSinceStartUsdc
-          + siWithdrawalsSinceStartUsdc
-          + siManualAdjustmentsUsdc
+          - siDepositsSinceStartAssets
+          + siWithdrawalsSinceStartAssets
+          + siManualAdjustmentsAssets
     }
   where
     startingValue = economicAccountValue siStartingSnapshot
     currentValue = economicAccountValue siCurrentSnapshot
 
-minimumProfitUsdc :: CompetitionRules -> Integer
-minimumProfitUsdc = crMinimumProfitUsdc
+minimumProfitAssets :: CompetitionRules -> Integer
+minimumProfitAssets = crMinimumProfitAssets
 
 data Qualification = Qualification
   { qMeetsProfitRequirement :: Bool
@@ -558,7 +558,7 @@ qualification
   -> Integer
   -> Int
   -> Qualification
-qualification rules reviewStatus pnlUsdc activeDayCount =
+qualification rules reviewStatus pnlAssets activeDayCount =
   Qualification
     { qMeetsProfitRequirement = profitOk
     , qMeetsActiveDaysRequirement = daysOk
@@ -569,7 +569,7 @@ qualification rules reviewStatus pnlUsdc activeDayCount =
           && reviewStatus == EligibilityEligible
     }
   where
-    profitOk = pnlUsdc >= minimumProfitUsdc rules
+    profitOk = pnlAssets >= minimumProfitAssets rules
     daysOk = activeDayCount >= crMinimumActiveDays rules
 
 fxSessionBoundaryUtcText :: CompetitionRules -> Text

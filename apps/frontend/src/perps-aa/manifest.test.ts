@@ -1,5 +1,6 @@
+vi.mock('../contracts/perpsAddresses', async () => (await import('../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { describe, expect, it, vi } from 'vitest'
-import publicManifest from '../../public/perps-aa-manifest.json'
+import publicManifest from '../contracts/__tests__/fixtures/perps-canonical-aa.json'
 import {
   PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
   PERPS_AA_LEGACY_RPC_PATH,
@@ -25,15 +26,15 @@ function validManifest(): Record<string, unknown> {
     smartAccountVersion: 'permissionless-simple-v0.8',
     smartAccountIndex: '0',
     smartAccountFactory: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
-    usdc: '0x7777777777777777777777777777777777777777',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
+    settlementToken: publicManifest.settlementToken,
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
     marginClearinghouse: '0x8888888888888888888888888888888888888888',
     cfdEngine: '0x9999999999999999999999999999999999999999',
     orderRouter: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
+    positionProtectionBook: publicManifest.positionProtectionBook,
     policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
@@ -75,12 +76,12 @@ describe('parsePerpsAaManifest', () => {
   it('validates an explicitly versioned V3 manifest', () => {
     const manifest = parsePerpsAaManifest({ ...publicManifest, orderInterfaceVersion: 3 })
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20261012-v131-v2')
+    expect(manifest.version).toBe(publicManifest.version)
     expect(manifest.chainId).toBe(421614)
     expect(isPerpsAaManifestV2(manifest)).toBe(true)
     expect(manifest).toMatchObject({
       preparationRpcVersion: 1,
-      paymasterAddress: '0x9761091045616A388f5fE1433721B272c78fe31b',
+      paymasterAddress: publicManifest.paymasterAddress,
     })
     expect(manifest).not.toHaveProperty('pimlicoRpcUrl')
     expect(bundlerRpcUrlForManifest(manifest)).toBe(
@@ -286,7 +287,7 @@ describe('parsePerpsAaManifest', () => {
 
   it('rejects EIP-3009 capability without exact EIP-712 metadata', () => {
     const manifest = validManifest()
-    manifest.usdcSupportsEip3009 = true
+    manifest.settlementTokenSupportsEip3009 = true
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
       /requires both settlement-token EIP-712 name and version/

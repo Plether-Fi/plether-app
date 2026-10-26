@@ -20,8 +20,8 @@ describe('commit review feedback', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Updating review…' }))
     expect(onConfirm).not.toHaveBeenCalled()
     view.rerender(<PerpsReviewFooter {...props} preparing={false} canConfirm onConfirm={onConfirm}
-      changes={[{ label: 'Required margin', before: '20 USDC', after: '20.000001 USDC' }]} />)
-    expect(screen.getByRole('status')).toHaveTextContent('20 USDC → 20.000001 USDC')
+      changes={[{ label: 'Required margin', before: '20 Mock USDG', after: '20.000001 Mock USDG' }]} />)
+    expect(screen.getByRole('status')).toHaveTextContent('20 Mock USDG → 20.000001 Mock USDG')
     fireEvent.click(screen.getByRole('button', { name: 'Confirm updated order' }))
     expect(onConfirm).toHaveBeenCalledOnce()
   })

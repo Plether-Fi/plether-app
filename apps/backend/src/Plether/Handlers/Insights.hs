@@ -52,7 +52,7 @@ import Plether.Insights.Competition
   , PrizeAllocation (..)
   , competitionRulesForSlug
   , competitionRegistrationState
-  , minimumProfitUsdc
+  , minimumProfitAssets
   , participantEligibilityFromText
   , prizeAllocation
   )
@@ -289,10 +289,10 @@ withInsightsReadSnapshot =
       , readWriteMode = ReadOnly
       }
 
-competitionMinimumProfitUsdc :: CompetitionRow -> Integer
-competitionMinimumProfitUsdc competition =
+competitionMinimumProfitAssets :: CompetitionRow -> Integer
+competitionMinimumProfitAssets competition =
   case competitionRulesForSlug $ icrSlug competition of
-    Just rules -> minimumProfitUsdc rules
+    Just rules -> minimumProfitAssets rules
     Nothing -> error $
       "Insights competition rules are not defined in code for slug "
         <> T.unpack (icrSlug competition)
@@ -314,14 +314,14 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , Just $ "paymentDeadlineAt" .= isoTimestamp icrPaymentDeadlineTimestamp
       , ("startBlock" .=) . show <$> icrStartBlock
       , ("scoreCutoffBlock" .=) . show <$> icrScoreCutoffBlock
-      , Just $ "startingBalanceUsdc" .= show icrStartingBalanceUsdc
-      , Just $ "minimumProfitUsdc" .= show minimumProfit
+      , Just $ "startingBalanceAssets" .= show icrStartingBalanceAssets
+      , Just $ "minimumProfitAssets" .= show minimumProfit
       , Just $ "minimumProfitBps" .= minimumProfitBps
       , Just $ "minimumActiveDays" .= icrMinimumActiveDays
       , Just $ "fxSessionBoundaryUtc" .= formatBoundary icrFxSessionBoundaryUtcMinutes
       , Just $
           "prizes"
-            .= [ object ["place" .= place, "amountUsdc" .= show amount]
+            .= [ object ["place" .= place, "amountAssets" .= show amount]
                | (place, amount) <- zip [(1 :: Int) ..] $ competitionPrizeAmounts competition
                ]
       , Just $ "scoringVersion" .= icrScoringVersion
@@ -335,10 +335,10 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , ("registration" .=) <$> registrationMetadata
       ]
   where
-    minimumProfit = competitionMinimumProfitUsdc competition
+    minimumProfit = competitionMinimumProfitAssets competition
     minimumProfitBps
-      | icrStartingBalanceUsdc <= 0 = 0
-      | otherwise = minimumProfit * 10_000 `div` icrStartingBalanceUsdc
+      | icrStartingBalanceAssets <= 0 = 0
+      | otherwise = minimumProfit * 10_000 `div` icrStartingBalanceAssets
     competitionPhase
       | icrFinalized = "final" :: Text
       | now < icrStartTimestamp = "upcoming"
@@ -382,23 +382,23 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       [ ("rank" .=) <$> ilrRank
       , ("prizePlace" .=) . paPlace <$> allocation
       , ("prizePlaces" .=) . paPlaces <$> allocation
-      , ("prizeAmountUsdc" .=) . show . paAmountUsdc <$> allocation
+      , ("prizeAmountAssets" .=) . show . paAmountAssets <$> allocation
       , Just $ "wallet" .= ilrWallet
       , ("alias" .=) <$> ilrAlias
       , Just $ "eligibilityStatus" .= ilrEligibilityStatus
       , ("eligibilityReason" .=) <$> ilrEligibilityReason
-      , ("finalPnlUsdc" .=) . show <$> ilrFinalPnlUsdc
+      , ("finalPnlAssets" .=) . show <$> ilrFinalPnlAssets
       , ("roiBps" .=) <$> ilrRoiBps
-      , ("startingAccountValueUsdc" .=) . show <$> ilrStartingAccountValueUsdc
-      , ("currentAccountValueUsdc" .=) . show <$> ilrCurrentAccountValueUsdc
-      , Just $ "depositsUsdc" .= show ilrDepositsUsdc
-      , Just $ "withdrawalsUsdc" .= show ilrWithdrawalsUsdc
-      , Just $ "manualAdjustmentsUsdc" .= show ilrManualAdjustmentsUsdc
+      , ("startingAccountValueAssets" .=) . show <$> ilrStartingAccountValueAssets
+      , ("currentAccountValueAssets" .=) . show <$> ilrCurrentAccountValueAssets
+      , Just $ "depositsAssets" .= show ilrDepositsAssets
+      , Just $ "withdrawalsAssets" .= show ilrWithdrawalsAssets
+      , Just $ "manualAdjustmentsAssets" .= show ilrManualAdjustmentsAssets
       , Just $ "activeDays" .= ilrActiveDays
-      , Just $ "volumeUsdc" .= show ilrVolumeUsdc
+      , Just $ "volumeAssets" .= show ilrVolumeAssets
       , Just $ "executedTrades" .= ilrExecutedTrades
       , Just $ "liquidations" .= ilrLiquidations
-      , Just $ "realizedPnlUsdc" .= show ilrRealizedPnlUsdc
+      , Just $ "realizedPnlAssets" .= show ilrRealizedPnlAssets
       , ("snapshotBlock" .=) . show <$> ilrLatestSnapshotBlock
       , ("snapshotAt" .=) . isoTimestamp <$> ilrLatestSnapshotTimestamp
       , ("hasOpenPosition" .=) <$> ilrHasOpenPosition
@@ -411,11 +411,11 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       , Just $ "scoreAvailable" .= scoreAvailable
       ]
   where
-    minimumProfit = competitionMinimumProfitUsdc competition
-    meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlUsdc
+    minimumProfit = competitionMinimumProfitAssets competition
+    meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlAssets
     meetsDays = ilrActiveDays >= icrMinimumActiveDays competition
     mechanicallyQualified = meetsProfit && meetsDays
-    scoreAvailable = maybe False (const True) ilrFinalPnlUsdc
+    scoreAvailable = maybe False (const True) ilrFinalPnlAssets
     reviewedEligible =
       participantEligibilityFromText ilrEligibilityStatus == Just EligibilityEligible
     prizeEligible =
@@ -433,11 +433,11 @@ competitionPrizeAmounts :: CompetitionRow -> [Integer]
 competitionPrizeAmounts CompetitionRow {..} =
   filter
     (> 0)
-    [ icrFirstPrizeUsdc
-    , icrSecondPrizeUsdc
-    , icrThirdPrizeUsdc
-    , icrFourthPrizeUsdc
-    , icrFifthPrizeUsdc
+    [ icrFirstPrizeAssets
+    , icrSecondPrizeAssets
+    , icrThirdPrizeAssets
+    , icrFourthPrizeAssets
+    , icrFifthPrizeAssets
     ]
 
 prizeEligibleAfterIntegrityReview :: Bool -> Bool -> Bool -> Bool
@@ -460,9 +460,9 @@ walletPositionToJson LeaderboardRow {..}
           , ("side" .=) <$> positionSide ilrPositionSide
           , ("sideCode" .=) <$> ilrPositionSide
           , ("sizeDelta" .=) <$> ilrPositionSizeDelta
-          , ("marginUsdc" .=) <$> ilrPositionMarginUsdc
+          , ("marginAssets" .=) <$> ilrPositionMarginAssets
           , ("entryPrice" .=) <$> ilrPositionEntryPrice
-          , ("unrealizedPnlUsdc" .=) <$> ilrPositionUnrealizedPnlUsdc
+          , ("unrealizedPnlAssets" .=) <$> ilrPositionUnrealizedPnlAssets
           , ("liquidatable" .=) <$> ilrPositionLiquidatable
           ]
   where
@@ -479,10 +479,10 @@ activityRowToJson InsightsActivityRow {..} =
       , ("side" .=) <$> iarSide
       , ("price" .=) . show <$> iarPrice
       , ("sizeDelta" .=) . show <$> iarSizeDelta
-      , ("amountUsdc" .=) . show <$> iarAmountUsdc
-      , ("pnlUsdc" .=) . show <$> iarPnlUsdc
-      , ("executionFeeUsdc" .=) . show <$> iarExecutionFeeUsdc
-      , ("vpiUsdc" .=) . show <$> iarVpiUsdc
+      , ("amountAssets" .=) . show <$> iarAmountAssets
+      , ("pnlAssets" .=) . show <$> iarPnlAssets
+      , ("executionFeeAssets" .=) . show <$> iarExecutionFeeAssets
+      , ("vpiAssets" .=) . show <$> iarVpiAssets
       , Just $ "txHash" .= iarTxHash
       , Just $ "blockNumber" .= show iarBlockNumber
       , Just $ "timestamp" .= iarTimestamp

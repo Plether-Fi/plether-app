@@ -5,7 +5,8 @@ import fixtures from './fixtures/perpsRisk.v1.2.2.json'
 describe('canonical price risk (unchanged Solidity vectors from v1.2.2)', () => {
   for (const fixture of fixtures.cases) {
     it(`matches Solidity: ${fixture.name}`, () => {
-      const input = Object.fromEntries(Object.entries(fixture.input).map(([key, value]) => [key, key === 'side' ? value : BigInt(value)])) as unknown as PerpsPriceRiskInputs
+      // Preserve the recorded Solidity vectors; adapt their field spelling only at this test boundary.
+      const input = Object.fromEntries(Object.entries(fixture.input).map(([key, value]) => [key.replace('UsdcAtoms', 'AssetAtoms').replace('Usdc', 'Assets'), key === 'side' ? value : BigInt(value)])) as unknown as PerpsPriceRiskInputs
       const result = findLiquidationThreshold(input)
       expect(result).toEqual(fixture.expected.status === 'boundary'
         ? { status: 'boundary', price: BigInt(fixture.expected.price!) }
@@ -29,13 +30,13 @@ describe('canonical price risk (unchanged Solidity vectors from v1.2.2)', () => 
   })
   it('pays carry from position margin before touching free settlement', () => {
     expect(projectCarry(250_000_000n, 750_000_000n, 20_000_000n)).toEqual({
-      positionMarginUsdc: 230_000_000n, freeSettlementUsdc: 750_000_000n, uncoveredCarryUsdc: 0n,
+      positionMarginAssets: 230_000_000n, freeSettlementAssets: 750_000_000n, uncoveredCarryAssets: 0n,
     })
     expect(projectCarry(250n, 750n, 300n)).toEqual({
-      positionMarginUsdc: 0n, freeSettlementUsdc: 700n, uncoveredCarryUsdc: 0n,
+      positionMarginAssets: 0n, freeSettlementAssets: 700n, uncoveredCarryAssets: 0n,
     })
     expect(projectCarry(250n, 750n, 1007n)).toEqual({
-      positionMarginUsdc: 0n, freeSettlementUsdc: 0n, uncoveredCarryUsdc: 7n,
+      positionMarginAssets: 0n, freeSettlementAssets: 0n, uncoveredCarryAssets: 7n,
     })
   })
 })

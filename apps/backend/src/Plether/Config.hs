@@ -97,7 +97,7 @@ data Config = Config
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsRpcAuthToken :: Maybe Text
   , cfgPerpsChainId :: Integer
-  , cfgPerpsUsdc :: Text
+  , cfgPerpsSettlementToken :: Text
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsOrderLifecycleBook :: Maybe Text
   , cfgPerpsCfdEngine :: Text
@@ -410,9 +410,9 @@ loadDeployments = eitherDecodeFileStrict
 defaultPythHermesUrl :: Text
 defaultPythHermesUrl = "https://pyth.dourolabs.app/hermes"
 
-julyPerpsAccountLens, julyPerpsUsdc, julyPerpsOrderRouter, julyPerpsCfdEngine, julyPerpsCfdEngineLens, julyPerpsCfdEngineSettlementSidecar, julyPerpsMarginClearinghouse, julyPerpsPletherOracle :: String
+julyPerpsAccountLens, julyPerpsSettlementToken, julyPerpsOrderRouter, julyPerpsCfdEngine, julyPerpsCfdEngineLens, julyPerpsCfdEngineSettlementSidecar, julyPerpsMarginClearinghouse, julyPerpsPletherOracle :: String
 julyPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
-julyPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+julyPerpsSettlementToken = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
 julyPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
 julyPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
 julyPerpsCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
@@ -439,7 +439,7 @@ validateInsightsCompetitionActivation
   -> Maybe String
   -> Maybe String
   -> Either String CompetitionRules
-validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter maybeCfdEngine maybeCfdEngineLens maybeSettlementSidecar maybeClearinghouse maybeOracle maybeLens maybeIndexerStartBlock = do
+validateInsightsCompetitionActivation slug maybeReleaseId maybeSettlementToken maybeRouter maybeCfdEngine maybeCfdEngineLens maybeSettlementSidecar maybeClearinghouse maybeOracle maybeLens maybeIndexerStartBlock = do
   rules <-
     maybe
       (Left $ "INSIGHTS_ACTIVE_COMPETITION_SLUG is unknown: " <> T.unpack slug)
@@ -451,7 +451,7 @@ validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter 
       then Right rules
     else
       let supplied =
-            [ ("PERPS_USDC", maybeUsdc, julyPerpsUsdc)
+            [ ("PERPS_SETTLEMENT_TOKEN", maybeSettlementToken, julyPerpsSettlementToken)
             , ("PERPS_ORDER_ROUTER", maybeRouter, julyPerpsOrderRouter)
             , ("PERPS_CFD_ENGINE", maybeCfdEngine, julyPerpsCfdEngine)
             , ("PERPS_CFD_ENGINE_LENS", maybeCfdEngineLens, julyPerpsCfdEngineLens)
@@ -603,7 +603,7 @@ validateFaucetGuardConfig maybePrivateKey maybeOriginToken clientLimitRaw global
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
-  registrationConfig <- loadRegistrationConfig
+  registrationConfig <- if Manifest.releaseIsDeployed then loadRegistrationConfig else pure $ Right Nothing
   mRpcUrl <- firstEnv ["RPC_URL", "PERPS_RPC_URL"]
   case mRpcUrl of
     Nothing -> pure $ Left "RPC_URL or PERPS_RPC_URL environment variable not set"
@@ -634,7 +634,7 @@ loadConfig = do
       mPerpsRpcAuthToken <- lookupEnv "PERPS_RPC_AUTH_TOKEN"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
-      mPerpsUsdc <- lookupEnv "PERPS_USDC"
+      mPerpsSettlementToken <- lookupEnv "PERPS_SETTLEMENT_TOKEN"
       mPerpsOrderRouter <- lookupEnv "PERPS_ORDER_ROUTER"
       mPerpsOrderLifecycleBook <- nonBlankText <$> lookupEnv "PERPS_ORDER_LIFECYCLE_BOOK"
       mPerpsCfdEngine <- lookupEnv "PERPS_CFD_ENGINE"
@@ -725,16 +725,16 @@ loadConfig = do
           pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
           perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
-          perpsAccountLens = fromMaybe julyPerpsAccountLens mPerpsAccountLens
-          perpsUsdc = fromMaybe julyPerpsUsdc mPerpsUsdc
-          perpsOrderRouter = fromMaybe julyPerpsOrderRouter mPerpsOrderRouter
-          perpsCfdEngine = fromMaybe julyPerpsCfdEngine mPerpsCfdEngine
-          perpsCfdEngineLens = fromMaybe julyPerpsCfdEngineLens mPerpsCfdEngineLens
+          perpsAccountLens = fromMaybe (T.unpack Manifest.cfdEngineAccountLensAddress) mPerpsAccountLens
+          perpsSettlementToken = fromMaybe (T.unpack Manifest.settlementTokenAddress) mPerpsSettlementToken
+          perpsOrderRouter = fromMaybe (T.unpack Manifest.orderRouterAddress) mPerpsOrderRouter
+          perpsCfdEngine = fromMaybe (T.unpack Manifest.cfdEngineAddress) mPerpsCfdEngine
+          perpsCfdEngineLens = fromMaybe (T.unpack Manifest.cfdEngineLensAddress) mPerpsCfdEngineLens
           perpsCfdEngineSettlementSidecar =
-            fromMaybe julyPerpsCfdEngineSettlementSidecar mPerpsCfdEngineSettlementSidecar
-          perpsMarginClearinghouse = fromMaybe julyPerpsMarginClearinghouse mPerpsMarginClearinghouse
-          perpsPletherOracle = fromMaybe julyPerpsPletherOracle mPerpsPletherOracle
-          perpsIndexerStartBlockStr = fromMaybe julyPerpsIndexerStartBlock mPerpsIndexerStartBlockStr
+            fromMaybe (T.unpack Manifest.cfdEngineSettlementSidecarAddress) mPerpsCfdEngineSettlementSidecar
+          perpsMarginClearinghouse = fromMaybe (T.unpack Manifest.marginClearinghouseAddress) mPerpsMarginClearinghouse
+          perpsPletherOracle = fromMaybe (T.unpack Manifest.pletherOracleAddress) mPerpsPletherOracle
+          perpsIndexerStartBlockStr = fromMaybe (show Manifest.releaseDeploymentBlock) mPerpsIndexerStartBlockStr
           insightsCompetitionSlug =
             case T.strip . T.pack <$> mInsightsCompetitionSlug of
               Just configured | not (T.null configured) -> configured
@@ -754,7 +754,7 @@ loadConfig = do
             421614 -> "config/addresses.arbitrum-sepolia.json"
             31337 -> "config/addresses.local.json"
             _ -> "config/addresses.sepolia.json"
-          aaConfig =
+          aaConfig = if not Manifest.releaseIsDeployed then Right Nothing else
             case
               ( parseBoolStrict aaSponsorshipEnabledStr
               , mAaProxyOriginToken
@@ -773,14 +773,14 @@ loadConfig = do
                     Left "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
                 | not $
                     validAaDeploymentAddresses
-                      perpsUsdc
+                      perpsSettlementToken
                       perpsOrderRouter
                       perpsCfdEngine
                       perpsMarginClearinghouse
                       || septemberAaReleaseAccepted ->
                     Left
                       "Managed AA sponsorship requires the reviewed Arbitrum Sepolia \
-                      \PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
+                      \PERPS_SETTLEMENT_TOKEN, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
                       \PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
                 | perpsChainId /= 421614 ->
                     Left "Managed AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
@@ -813,14 +813,14 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-          faucetGuardConfig =
+          faucetGuardConfig = if not Manifest.releaseIsDeployed then Right Nothing else
             validateFaucetGuardConfig
               mFaucetPrivateKey
               mFaucetProxyOriginToken
               faucetClientRequestsPerHourStr
               faucetGlobalRequestsPerHourStr
 
-          nativeAaConfig = do
+          nativeAaConfig = if not Manifest.releaseIsDeployed then Right Nothing else do
             unlessEither (aaRpcModeStr `elem` ["dual-independent", "single-provider-sepolia"])
               "AA_RPC_MODE must be dual-independent or single-provider-sepolia"
             enabled <-
@@ -892,12 +892,12 @@ loadConfig = do
                       "Native AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
                     unlessEither
                       ( validAaDeploymentAddresses
-                          perpsUsdc
+                          perpsSettlementToken
                           perpsOrderRouter
                           perpsCfdEngine
                           perpsMarginClearinghouse
                       )
-                      "Native AA sponsorship requires the reviewed Arbitrum Sepolia PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
+                      "Native AA sponsorship requires the reviewed Arbitrum Sepolia PERPS_SETTLEMENT_TOKEN, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
                     unlessEither
                       (isJust mDatabaseUrl)
                       "DATABASE_URL is required whenever native AA is configured"
@@ -1022,7 +1022,7 @@ loadConfig = do
               , fromIntegral finalizationGraceSeconds
               )
 
-          vaultHistoryConfig = do
+          vaultHistoryConfig = if not Manifest.releaseIsDeployed then Right (0, 12) else do
             deploymentBlock <-
               parseNonNegativeInteger
                 "VAULT_HISTORY_DEPLOYMENT_BLOCK"
@@ -1044,125 +1044,129 @@ loadConfig = do
               [] ->
                 Right (deploymentBlock, confirmations)
 
-          lpSettlementConfig = do
-            mode <- resolveLpSettlementMode mLpSettlementMode mLpSettlementEnabled
-            validateLpSettlementChainId mode perpsChainIdStr
-            pollSeconds <-
-              parseBoundedWholeNumber
-                "LP_SETTLEMENT_POLL_SECONDS"
-                1
-                3_600
-                lpSettlementPollSecondsStr
-            if mode /= LpSettlementOff && pollSeconds /= 15
-              then Left "LP_SETTLEMENT_POLL_SECONDS must be exactly 15 in observe or execute mode"
-              else Right ()
-            if mode /= LpSettlementOff
-              then do
-                _ <-
-                  parseBoundedWholeNumber
-                    "KEEPER_CONFIRMATIONS"
-                    1
-                    10_000
-                    keeperConfirmationsStr
-                Right ()
-              else Right ()
-            (maxDrainTransactions, pendingReplacementSeconds, maxReplacements, maxTxCostWei) <-
-              parseLpSettlementLimits
-                mode
-                lpSettlementMaxDrainTransactionsStr
-                lpSettlementPendingReplacementSecondsStr
-                lpSettlementMaxReplacementsStr
-                lpSettlementMaxTxCostWeiStr
-            privateKey <-
-              validateLpSettlementPrivateKeyConfig
-                mode
-                (nonBlankText mLpSettlementPrivateKey)
-                (nonBlankText mKeeperPrivateKey)
-            let active = mode /= LpSettlementOff
-                activeAddresses =
-                  [ ("PERPS_HOUSE_POOL", perpsHousePool)
-                  , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
-                  , ("PERPS_ORDER_ROUTER", perpsOrderRouter)
-                  , ("PERPS_CFD_ENGINE", perpsCfdEngine)
-                  , ("PERPS_SENIOR_VAULT", lpSettlementSeniorVault)
-                  , ("PERPS_JUNIOR_VAULT", lpSettlementJuniorVault)
-                  , ("PERPS_PLETHER_ORACLE", perpsPletherOracle)
-                  ]
-            case
-                [ name
-                | (name, address) <-
+          lpSettlementConfig = if not Manifest.releaseIsDeployed
+            then Right $ LpSettlementSettings LpSettlementOff Nothing Manifest.seniorVaultAddress Manifest.juniorVaultAddress 15 4 60 3 0
+            else do
+              mode <- resolveLpSettlementMode mLpSettlementMode mLpSettlementEnabled
+              unlessEither (mode == LpSettlementOff || Manifest.releaseIsDeployed)
+                "Perps release is prepared; LP settlement is unavailable"
+              validateLpSettlementChainId mode perpsChainIdStr
+              pollSeconds <-
+                parseBoundedWholeNumber
+                  "LP_SETTLEMENT_POLL_SECONDS"
+                  1
+                  3_600
+                  lpSettlementPollSecondsStr
+              if mode /= LpSettlementOff && pollSeconds /= 15
+                then Left "LP_SETTLEMENT_POLL_SECONDS must be exactly 15 in observe or execute mode"
+                else Right ()
+              if mode /= LpSettlementOff
+                then do
+                  _ <-
+                    parseBoundedWholeNumber
+                      "KEEPER_CONFIRMATIONS"
+                      1
+                      10_000
+                      keeperConfirmationsStr
+                  Right ()
+                else Right ()
+              (maxDrainTransactions, pendingReplacementSeconds, maxReplacements, maxTxCostWei) <-
+                parseLpSettlementLimits
+                  mode
+                  lpSettlementMaxDrainTransactionsStr
+                  lpSettlementPendingReplacementSecondsStr
+                  lpSettlementMaxReplacementsStr
+                  lpSettlementMaxTxCostWeiStr
+              privateKey <-
+                validateLpSettlementPrivateKeyConfig
+                  mode
+                  (nonBlankText mLpSettlementPrivateKey)
+                  (nonBlankText mKeeperPrivateKey)
+              let active = mode /= LpSettlementOff
+                  activeAddresses =
                     [ ("PERPS_HOUSE_POOL", perpsHousePool)
                     , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                    , ("PERPS_ORDER_ROUTER", perpsOrderRouter)
+                    , ("PERPS_CFD_ENGINE", perpsCfdEngine)
+                    , ("PERPS_SENIOR_VAULT", lpSettlementSeniorVault)
+                    , ("PERPS_JUNIOR_VAULT", lpSettlementJuniorVault)
+                    , ("PERPS_PLETHER_ORACLE", perpsPletherOracle)
                     ]
-                , not $ isCanonicalVaultAddress address
-                ]
-              of
-              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
-              []
-                | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
-                    == (T.toLower Manifest.settlementMonitorLensSidecarAddress) ->
-                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.2 monitor sidecar"
-                | active
-                , invalid : _ <-
-                    [ name
-                    | (name, address) <- activeAddresses
-                    , not $ isNonZeroCanonicalVaultAddress address
-                    ] ->
-                    Left $ invalid <> " must be a valid non-zero Ethereum address"
-                | active
-                , length (nub $ map (T.toLower . T.strip . T.pack . snd) activeAddresses)
-                    /= length activeAddresses ->
-                    Left
-                      "PERPS_HOUSE_POOL, PERPS_SETTLEMENT_MONITOR_LENS, PERPS_ORDER_ROUTER, \
-                      \PERPS_CFD_ENGINE, PERPS_SENIOR_VAULT, PERPS_JUNIOR_VAULT, and \
-                      \PERPS_PLETHER_ORACLE must be distinct"
-                | otherwise ->
-                    Right
-                      LpSettlementSettings
-                        { lpsMode = mode
-                        , lpsPrivateKey = privateKey
-                        , lpsSeniorVault = T.strip $ T.pack lpSettlementSeniorVault
-                        , lpsJuniorVault = T.strip $ T.pack lpSettlementJuniorVault
-                        , lpsPollSeconds = pollSeconds
-                        , lpsMaxDrainTransactions = maxDrainTransactions
-                        , lpsPendingReplacementSeconds = pendingReplacementSeconds
-                        , lpsMaxReplacements = maxReplacements
-                        , lpsMaxTxCostWei = maxTxCostWei
-                        }
-
-          keeperPollConfig =
+              case
+                  [ name
+                  | (name, address) <-
+                      [ ("PERPS_HOUSE_POOL", perpsHousePool)
+                      , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                      ]
+                  , not $ isCanonicalVaultAddress address
+                  ]
+                of
+                invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+                []
+                  | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
+                      == (T.toLower Manifest.settlementMonitorLensSidecarAddress) ->
+                      Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.2 monitor sidecar"
+                  | active
+                  , invalid : _ <-
+                      [ name
+                      | (name, address) <- activeAddresses
+                      , not $ isNonZeroCanonicalVaultAddress address
+                      ] ->
+                      Left $ invalid <> " must be a valid non-zero Ethereum address"
+                  | active
+                  , length (nub $ map (T.toLower . T.strip . T.pack . snd) activeAddresses)
+                      /= length activeAddresses ->
+                      Left
+                        "PERPS_HOUSE_POOL, PERPS_SETTLEMENT_MONITOR_LENS, PERPS_ORDER_ROUTER, \
+                        \PERPS_CFD_ENGINE, PERPS_SENIOR_VAULT, PERPS_JUNIOR_VAULT, and \
+                        \PERPS_PLETHER_ORACLE must be distinct"
+                  | otherwise ->
+                      Right
+                        LpSettlementSettings
+                          { lpsMode = mode
+                          , lpsPrivateKey = privateKey
+                          , lpsSeniorVault = T.strip $ T.pack lpSettlementSeniorVault
+                          , lpsJuniorVault = T.strip $ T.pack lpSettlementJuniorVault
+                          , lpsPollSeconds = pollSeconds
+                          , lpsMaxDrainTransactions = maxDrainTransactions
+                          , lpsPendingReplacementSeconds = pendingReplacementSeconds
+                          , lpsMaxReplacements = maxReplacements
+                          , lpsMaxTxCostWei = maxTxCostWei
+                          }
+          keeperPollConfig = if not Manifest.releaseIsDeployed then Right (3, 15) else
             validateKeeperPollSeconds keeperPollSecondsStr keeperIdlePollSecondsStr
 
-          competitionConfig = do
-            rules <-
-              validateInsightsCompetitionActivation
-                insightsCompetitionSlug
-                mInsightsCompetitionReleaseId
-                mPerpsUsdc
-                mPerpsOrderRouter
-                mPerpsCfdEngine
-                mPerpsCfdEngineLens
-                mPerpsCfdEngineSettlementSidecar
-                mPerpsMarginClearinghouse
-                mPerpsPletherOracle
-                mPerpsAccountLens
-                mPerpsIndexerStartBlockStr
-            if crSlug rules == september2026CompetitionSlug && perpsChainId /= 421614
-              then Left "The September 2026 Insights competition is supported only on PERPS_CHAIN_ID=421614"
-              else do
-                validated@(_, maybeRegistration) <- validateRegistrationConfig rules registrationConfig
-                case (maybeRegistration, nonBlankText mDatabaseUrl) of
-                  (Just _, Nothing) ->
-                    Left "INSIGHTS_REGISTRATION_PROVISIONED=true requires DATABASE_URL"
-                  _ -> Right validated
-
+          competitionConfig = if not Manifest.releaseIsDeployed
+            then maybe (Left "Unknown default competition") (\rules -> Right (rules, Nothing)) (competitionRulesForSlug defaultCompetitionSlug)
+            else do
+              rules <-
+                validateInsightsCompetitionActivation
+                  insightsCompetitionSlug
+                  mInsightsCompetitionReleaseId
+                  mPerpsSettlementToken
+                  mPerpsOrderRouter
+                  mPerpsCfdEngine
+                  mPerpsCfdEngineLens
+                  mPerpsCfdEngineSettlementSidecar
+                  mPerpsMarginClearinghouse
+                  mPerpsPletherOracle
+                  mPerpsAccountLens
+                  mPerpsIndexerStartBlockStr
+              if crSlug rules == september2026CompetitionSlug && perpsChainId /= 421614
+                then Left "The September 2026 Insights competition is supported only on PERPS_CHAIN_ID=421614"
+                else do
+                  validated@(_, maybeRegistration) <- validateRegistrationConfig rules registrationConfig
+                  case (maybeRegistration, nonBlankText mDatabaseUrl) of
+                    (Just _, Nothing) ->
+                      Left "INSIGHTS_REGISTRATION_PROVISIONED=true requires DATABASE_URL"
+                    _ -> Right validated
           septemberAaReleaseAccepted =
             case competitionConfig of
               Right (rules, _) ->
                 crSlug rules == september2026CompetitionSlug
                   && maybe False (not . T.null . T.strip . T.pack) mInsightsCompetitionReleaseId
                   && all (isValidAddress . T.pack)
-                    [perpsUsdc, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
+                    [perpsSettlementToken, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
               Left _ -> False
 
       case
@@ -1240,7 +1244,7 @@ loadConfig = do
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsRpcAuthToken = nonBlankText mPerpsRpcAuthToken
                 , cfgPerpsChainId = perpsChainId
-                , cfgPerpsUsdc = T.pack perpsUsdc
+                , cfgPerpsSettlementToken = T.pack perpsSettlementToken
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsOrderLifecycleBook = mPerpsOrderLifecycleBook
                 , cfgPerpsCfdEngine = T.pack perpsCfdEngine
@@ -1266,7 +1270,7 @@ loadConfig = do
                       { crmReleaseId =
                           T.strip $ T.pack $ fromMaybe defaultReleaseId mInsightsCompetitionReleaseId
                       , crmChainId = perpsChainId
-                      , crmUsdc = T.pack perpsUsdc
+                      , crmSettlementToken = T.pack perpsSettlementToken
                       , crmOrderRouter = T.pack perpsOrderRouter
                       , crmMarginClearinghouse = T.pack perpsMarginClearinghouse
                       , crmAccountLens = T.pack perpsAccountLens
@@ -1280,8 +1284,8 @@ loadConfig = do
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetGuardConfig = resolvedFaucetGuardConfig
                 , cfgNativeAaConfig = resolvedNativeAaConfig
-                , cfgFaucetPrivateKey = nonBlankText mFaucetPrivateKey
-                , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
+                , cfgFaucetPrivateKey = if Manifest.releaseIsDeployed then nonBlankText mFaucetPrivateKey else Nothing
+                , cfgKeeperPrivateKey = if Manifest.releaseIsDeployed then fmap T.pack mKeeperPrivateKey else Nothing
                 , cfgKeeperPollSeconds = keeperPollSeconds
                 , cfgKeeperIdlePollSeconds = keeperIdlePollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
@@ -1814,9 +1818,9 @@ isValidPrivateKeyShape value =
     normalized = normalizePrivateKeyText value
 
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
-validAaDeploymentAddresses usdc router engine clearinghouse =
-  and
-    [ reviewed usdc (T.toLower Manifest.settlementTokenAddress)
+validAaDeploymentAddresses settlementToken router engine clearinghouse =
+  Manifest.releaseIsDeployed && and
+    [ reviewed settlementToken (T.toLower Manifest.settlementTokenAddress)
     , reviewed router (T.toLower Manifest.orderRouterAddress)
     , reviewed engine (T.toLower Manifest.cfdEngineAddress)
     , reviewed clearinghouse (T.toLower Manifest.marginClearinghouseAddress)

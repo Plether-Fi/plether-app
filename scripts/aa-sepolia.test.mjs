@@ -1,42 +1,31 @@
 import test from 'node:test'
-import { settlementContract } from './prepare-perps-release.mjs'
+import { terraformBindings } from './prepare-perps-release.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const read = path => readFileSync(new URL(path, root), 'utf8')
-const bindings = {
-  "perps_usdc": "settlementToken",
-  "perps_order_router": "orderRouter",
-  "perps_order_lifecycle_book": "orderLifecycleBook",
-  "perps_cfd_engine": "cfdEngine",
-  "perps_margin_clearinghouse": "marginClearinghouse",
-  "perps_house_pool": "housePool",
-  "perps_plether_oracle": "pletherOracle",
-  "perps_senior_vault": "seniorVault",
-  "perps_junior_vault": "juniorVault",
-  "perps_settlement_monitor_lens": "settlementMonitorLens",
-  "perps_cfd_engine_settlement_sidecar": "cfdEngineSettlementSidecar",
-  "perps_cfd_engine_lens": "cfdEngineLens",
-  "perps_account_lens": "cfdEngineAccountLens",
-  "vault_history_house_pool_address": "housePool",
-  "vault_history_senior_vault_address": "seniorVault",
-  "vault_history_junior_vault_address": "juniorVault"
-}
-test('Singapore release overlay exactly matches the canonical Core manifest', () => {
+test('prepared canonical release leaves Terraform unbound and activation gated', () => {
+  const release = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
+  assert.equal(release.schemaVersion, 4)
+  assert.equal(release.release.phase, 'prepared')
+  assert.equal(release.release.deploymentBlock, null)
+  const guards = read('infra/terraform/deployment_target.tf')
+  assert.ok(guards.includes('config/perps/mock-usdg-prepared.json'))
+  assert.ok(guards.includes('contains(["active", "seeded", "deployed"], local.sepolia_core.release.phase)'))
+  const variables = read('infra/terraform/variables.tf')
+  for (const [name, contract] of Object.entries(terraformBindings)) {
+    assert.equal(release.contracts[contract].address, null)
+    assert.ok(guards.includes('lower(var.' + name + ') == try(lower(local.sepolia_core.contracts.' + contract + '.address), "")'))
+    assert.match(variables, new RegExp('variable "' + name + '" \\{[^}]*default\\s*= ""', 's'))
+  }
+})
+test('historical overlay remains evidence of the original deployment', () => {
   const release = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
   const overlay = JSON.parse(read('infra/terraform/sepolia-core-v1.3.1.tfvars.json'))
   assert.equal(release.release.version, 'v1.3.1')
+  assert.equal(overlay.perps_usdc, release.contracts.mockUsdc.address)
   assert.equal(overlay.perps_indexer_start_block, String(release.release.deploymentBlock))
-  assert.equal(overlay.vault_history_deployment_block, String(release.release.deploymentBlock))
-  assert.equal(overlay.perps_chain_id, String(release.network.chainId))
-  for (const [name, contract] of Object.entries(bindings)) assert.equal(overlay[name], (contract === 'settlementToken' ? settlementContract(release) : release.contracts[contract]).address)
-  const guards = read('infra/terraform/deployment_target.tf')
-  assert.ok(guards.includes('var.vault_history_deployment_block == tostring(local.sepolia_core.release.deploymentBlock)'))
-  for (const [name, contract] of Object.entries(bindings)) {
-    const key = contract === 'settlementToken' && release.schemaVersion < 4 ? 'mockUsdc' : contract
-    assert.ok(guards.includes('lower(var.' + name + ') == lower(local.sepolia_core.contracts.' + key + '.address)'))
-  }
 })
 test('public overlay stages policy without enabling sponsorship or preparation', () => {
   const overlay = read('infra/terraform/sepolia-aa-public.tfvars')
@@ -99,6 +88,8 @@ test('active Alto gate requires safe mode or the exact Sepolia exception', () =>
 test('backend deployment promotes funding observer and keeps manual approval boundary', () => {
   const workflow=read('.github/workflows/deploy-backend.yml')
   assert.match(workflow,/validate-aa-public-alto\.jq/)
+  assert.ok(!workflow.includes('Patch Sepolia API task definition'))
+  assert.ok(!workflow.includes('upsert_env("INDEXER_START_BLOCK"'))
   assert.match(workflow,/else\s+\.image = \$applicationImage/)
   assert.ok(!workflow.split('jobs:')[0].includes('  push:'))
   assert.match(read('infra/terraform/aa_funding.tf'),/command\s*= \["node", "\/app\/protection\/funding-main.mjs"\]/)

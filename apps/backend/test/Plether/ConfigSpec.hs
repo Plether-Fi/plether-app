@@ -2,6 +2,7 @@ module Plether.ConfigSpec (spec) where
 
 import Control.Exception (bracket)
 import qualified Data.Text as T
+import Data.Maybe (isNothing)
 import Plether.Config
   ( Config (..)
   , FaucetGuardConfig (..)
@@ -43,6 +44,37 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "prepared release spot configuration" $ do
+    it "ignores retained perps credentials without blocking or activating spot startup" $
+      withEnvironmentVariables
+        [ ("RPC_URL", Just "http://127.0.0.1:1")
+        , ("CHAIN_ID", Just "11155111")
+        , ("AA_PROXY_ORIGIN_TOKEN", Just "retained-origin")
+        , ("PIMLICO_API_KEY", Just "retained-key")
+        , ("PIMLICO_SPONSORSHIP_POLICY_ID", Just "retained-policy")
+        , ("AA_SPONSORSHIP_ENABLED", Just "false")
+        , ("AA_PAYMASTER_ADDRESS", Just "retained-address")
+        , ("AA_PAYMASTER_KMS_KEY_ID", Just "retained-key")
+        , ("AA_NATIVE_SPONSORSHIP_ENABLED", Just "false")
+        , ("AA_NATIVE_SUBMISSION_ENABLED", Just "false")
+        , ("INSIGHTS_REGISTRATION_PROVISIONED", Just "true")
+        , ("INSIGHTS_DIVISIONS_REGISTRATION_ENABLED", Just "true")
+        , ("LP_SETTLEMENT_MODE", Just "execute")
+        , ("FAUCET_PRIVATE_KEY", Just "retained-key")
+        , ("KEEPER_PRIVATE_KEY", Just "retained-key")
+        ] $ do
+          result <- loadConfig
+          case result of
+            Left failure -> expectationFailure failure
+            Right cfg -> do
+              cfgAaConfig cfg `shouldSatisfy` isNothing
+              cfgNativeAaConfig cfg `shouldSatisfy` isNothing
+              cfgRegistrationConfig cfg `shouldSatisfy` isNothing
+              cfgFaucetGuardConfig cfg `shouldSatisfy` isNothing
+              cfgFaucetPrivateKey cfg `shouldBe` Nothing
+              cfgKeeperPrivateKey cfg `shouldBe` Nothing
+              cfgLpSettlementMode cfg `shouldBe` LpSettlementOff
+              cfgRpcUrl cfg `shouldBe` "http://127.0.0.1:1"
   describe "keeper polling configuration" $ do
     it "accepts an idle cadence at least as long as the active cadence" $ do
       validateKeeperPollSeconds "1" "5" `shouldBe` Right (1, 5)
@@ -542,13 +574,13 @@ spec = do
         )
         `shouldBe` Right ()
 
-    it "pins native action targets to the reviewed Arbitrum Sepolia deployment" $ do
+    it "rejects archived native action targets while the future release is prepared" $ do
       validAaDeploymentAddresses
         "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
         "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
         "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
         "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-        `shouldBe` True
+        `shouldBe` False
       validAaDeploymentAddresses
         "0x1111111111111111111111111111111111111111"
         "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"

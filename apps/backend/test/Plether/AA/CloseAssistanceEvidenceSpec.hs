@@ -24,7 +24,7 @@ spec = describe "close assistance receipt provenance" $ do
     verify (receipt $ mint otherAccount : drop 1 validLogs) `shouldSatisfy` isLeft
   it "rejects duplicate deposit evidence" $
     verify (receipt $ take 2 validLogs ++ [deposit] ++ drop 2 validLogs) `shouldSatisfy` isLeft
-  it "rejects missing fresh-intent evidence even when USDC was deposited" $
+  it "rejects missing fresh-intent evidence even when settlement asset was deposited" $
     verify (receipt $ take 2 validLogs ++ drop 3 validLogs) `shouldSatisfy` isLeft
   it "excludes validation-phase mints before EntryPoint begins execution" $
     verifyAt 6 (receiptWithoutStart $ validationMint : laterExecutionStart : shiftedLogs) `shouldBe` Right (3,7)
@@ -64,7 +64,7 @@ receiptWithoutStart logs = object ["transactionHash" .= tx,"blockHash" .= blockH
 executionStart, laterExecutionStart, validationMint :: Value
 executionStart = logEntry 0 "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" [topic "BeforeExecution()"] BS.empty
 laterExecutionStart = logEntry 1 "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" [topic "BeforeExecution()"] BS.empty
-validationMint = logEntry 0 Manifest.mockUsdcAddress
+validationMint = logEntry 0 Manifest.settlementTokenAddress
   [topic "Transfer(address,address,uint256)",hex $ BS.replicate 32 0,hex $ encodeAddress account] (encodeUint256 198000)
 
 shiftedLogs :: [Value]
@@ -80,12 +80,12 @@ validLogs :: [Value]
 validLogs = [mint account,deposit,intent,commit,operationEvent 5 opHash]
 
 mint :: Text -> Value
-mint recipient = logEntry 1 Manifest.mockUsdcAddress
+mint recipient = logEntry 1 Manifest.settlementTokenAddress
   [topic "Transfer(address,address,uint256)",hex $ BS.replicate 32 0,hex $ encodeAddress recipient] (encodeUint256 198000)
 
 deposit, intent, commit :: Value
 deposit = logEntry 2 Manifest.marginClearinghouseAddress
-  [topic "Deposit(address,address,uint256)",hex $ encodeAddress account,hex $ encodeAddress Manifest.mockUsdcAddress] (encodeUint256 198000)
+  [topic "Deposit(address,address,uint256)",hex $ encodeAddress account,hex $ encodeAddress Manifest.settlementTokenAddress] (encodeUint256 198000)
 intent = logEntry 3 Manifest.orderLifecycleBookAddress
   [topic "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))",
    hex $ encodeUint256 7,hex $ encodeAddress account,otherHash] (BS.replicate 64 0 <> request <> BS.replicate 128 0)

@@ -1,4 +1,4 @@
-const USDC_DECIMALS = 6
+const ASSET_DECIMALS = 6
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
 const X_USERNAME_PATTERN = /^[A-Za-z0-9_]{1,15}$/
 
@@ -15,30 +15,30 @@ function formatWhole(value: bigint): string {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
 }
 
-export function formatUsdc(value: string | null | undefined): string {
+export function formatAssets(value: string | null | undefined): string {
   if (value == null) return '—'
   const units = parseUnits(value)
   if (units == null) return '—'
 
   const negative = units < 0n
   const absolute = negative ? -units : units
-  const divisor = 10n ** BigInt(USDC_DECIMALS - 2)
+  const divisor = 10n ** BigInt(ASSET_DECIMALS - 2)
   const rounded = (absolute + divisor / 2n) / divisor
   const scale = 100n
   const whole = rounded / scale
   const fraction = rounded % scale
   const fractionText = `.${fraction.toString().padStart(2, '0')}`
-  return `${negative ? '-' : ''}${formatWhole(whole)}${fractionText} USDC`
+  return `${negative ? '-' : ''}${formatWhole(whole)}${fractionText} assets`
 }
 
-export function formatSignedUsdc(value: string | null | undefined): string {
+export function formatSignedAssets(value: string | null | undefined): string {
   const units = value == null ? null : parseUnits(value)
-  const formatted = formatUsdc(value)
+  const formatted = formatAssets(value)
   if (units == null || units <= 0n) return formatted
   return `+${formatted}`
 }
 
-export function formatCompactUsdc(value: string | null | undefined): string {
+export function formatCompactAssets(value: string | null | undefined): string {
   if (value == null) return '—'
   const units = parseUnits(value)
   if (units == null) return '—'
@@ -49,13 +49,13 @@ export function formatCompactUsdc(value: string | null | undefined): string {
     { units: 1_000_000_000n, suffix: 'K' },
   ]
   const threshold = thresholds.find((item) => absolute >= item.units)
-  if (!threshold) return formatUsdc(value)
+  if (!threshold) return formatAssets(value)
 
   const hundredths = (absolute * 100n + threshold.units / 2n) / threshold.units
   const sign = units < 0n ? '-' : ''
   const whole = hundredths / 100n
   const fraction = hundredths % 100n
-  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, '0')}${threshold.suffix} USDC`
+  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, '0')}${threshold.suffix} assets`
 }
 
 export function formatRoi(roiBps: number | null | undefined): string {

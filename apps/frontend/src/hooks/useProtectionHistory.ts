@@ -23,7 +23,7 @@ export function useProtectionExecution(protectionId: bigint | undefined, enabled
 
 export interface ProtectionHistoryRecord {
   protectionId: string; parentOrderId: string; linkedOrderId: string; account: string; side: number; size: string
-  takeProfitTriggerPrice: string; stopLossTriggerPrice: string; triggerBountyUsdc: string; executionBountyUsdc: string
+  takeProfitTriggerPrice: string; stopLossTriggerPrice: string; triggerBountyAssets: string
   armedAt: string; armedBlock: string; triggerMarkPrice: string; triggerPublishTime: string; triggeredLeg: number; status: number
   statusName: string; triggeredLegName: string; updatedBlock: string
 }

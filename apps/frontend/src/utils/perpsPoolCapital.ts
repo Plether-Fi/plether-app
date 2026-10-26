@@ -6,47 +6,47 @@ export interface PerpsPoolCapitalMetrics {
   juniorSharePercent: number
   seniorSharePercent: number
   seniorStatus: PerpsSeniorCapitalStatus
-  seniorImpairmentUsdc: bigint
+  seniorImpairmentAssets: bigint
 }
 
 export function calculatePerpsPoolCapital({
-  juniorPrincipalUsdc,
-  seniorPrincipalUsdc,
-  seniorHighWaterMarkUsdc,
+  juniorPrincipalAssets,
+  seniorPrincipalAssets,
+  seniorHighWaterMarkAssets,
 }: {
-  juniorPrincipalUsdc: bigint | undefined
-  seniorPrincipalUsdc: bigint | undefined
-  seniorHighWaterMarkUsdc: bigint | undefined
+  juniorPrincipalAssets: bigint | undefined
+  seniorPrincipalAssets: bigint | undefined
+  seniorHighWaterMarkAssets: bigint | undefined
 }): PerpsPoolCapitalMetrics | undefined {
   if (
-    juniorPrincipalUsdc === undefined ||
-    seniorPrincipalUsdc === undefined ||
-    seniorHighWaterMarkUsdc === undefined
+    juniorPrincipalAssets === undefined ||
+    seniorPrincipalAssets === undefined ||
+    seniorHighWaterMarkAssets === undefined
   ) {
     return undefined
   }
 
-  const totalPrincipalUsdc = juniorPrincipalUsdc + seniorPrincipalUsdc
-  const isEmpty = totalPrincipalUsdc === 0n
+  const totalPrincipalAssets = juniorPrincipalAssets + seniorPrincipalAssets
+  const isEmpty = totalPrincipalAssets === 0n
   const juniorShareBasisPoints = isEmpty
     ? 0n
-    : (juniorPrincipalUsdc * 10_000n + totalPrincipalUsdc / 2n) / totalPrincipalUsdc
+    : (juniorPrincipalAssets * 10_000n + totalPrincipalAssets / 2n) / totalPrincipalAssets
   const juniorSharePercent = Number(juniorShareBasisPoints) / 100
-  const seniorImpairmentUsdc = seniorHighWaterMarkUsdc > seniorPrincipalUsdc
-    ? seniorHighWaterMarkUsdc - seniorPrincipalUsdc
+  const seniorImpairmentAssets = seniorHighWaterMarkAssets > seniorPrincipalAssets
+    ? seniorHighWaterMarkAssets - seniorPrincipalAssets
     : 0n
-  const seniorStatus: PerpsSeniorCapitalStatus = seniorImpairmentUsdc > 0n
+  const seniorStatus: PerpsSeniorCapitalStatus = seniorImpairmentAssets > 0n
     ? 'impaired'
-    : seniorPrincipalUsdc === seniorHighWaterMarkUsdc
+    : seniorPrincipalAssets === seniorHighWaterMarkAssets
       ? 'at-high-water-mark'
       : 'not-impaired'
 
   return {
     isEmpty,
-    isJuniorExhausted: juniorPrincipalUsdc === 0n,
+    isJuniorExhausted: juniorPrincipalAssets === 0n,
     juniorSharePercent,
     seniorSharePercent: isEmpty ? 0 : 100 - juniorSharePercent,
     seniorStatus,
-    seniorImpairmentUsdc,
+    seniorImpairmentAssets,
   }
 }

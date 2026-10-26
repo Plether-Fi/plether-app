@@ -65,9 +65,9 @@ function primaryData({
     side: 0,
     size: 2_000_000_000_000_000_000_000n,
     entryPrice: 97_500_000n,
-    marginUsdc: 400_000_000n,
-    unrealizedPnlUsdc: 25_000_000n,
-    maintenanceMarginUsdc: 100_000_000n,
+    marginAssets: 400_000_000n,
+    unrealizedPnlAssets: 25_000_000n,
+    maintenanceMarginAssets: 100_000_000n,
     liquidatable: false,
   }),
   enginePositionResult = failure('engine position unavailable'),
@@ -78,10 +78,10 @@ function primaryData({
 } = {}): ContractResult[] {
   return [
     success({
-      equityUsdc: 2_000_000_000n,
-      withdrawableUsdc: 1_500_000_000n,
-      pendingOrderMarginUsdc: 0n,
-      pendingExecutionBountyUsdc: 200_000n,
+      equityAssets: 2_000_000_000n,
+      withdrawableAssets: 1_500_000_000n,
+      pendingOrderMarginAssets: 0n,
+      pendingExecutionBountyAssets: 200_000n,
       hasOpenPosition,
       liquidatable: false,
     }),
@@ -90,7 +90,7 @@ function primaryData({
       orderId: 42n,
       side: 0,
       sizeDelta: 500_000_000_000_000_000_000n,
-      marginDeltaUsdc: 0n,
+      marginDeltaAssets: 0n,
       acceptablePrice: 98_000_000n,
       isReduceOnly: true,
       status: 0,
@@ -114,9 +114,9 @@ function screenshotData(): ContractResult[] {
       side: 0,
       size: 192_000n * 10n ** 18n,
       entryPrice: 99_223_895n,
-      marginUsdc: 38_373_563_531n,
-      unrealizedPnlUsdc: -317_528_915n,
-      maintenanceMarginUsdc: 190_826_610n,
+      marginAssets: 38_373_563_531n,
+      unrealizedPnlAssets: -317_528_915n,
+      maintenanceMarginAssets: 190_826_610n,
       liquidatable: false,
     }),
     enginePositionResult: success([
@@ -125,9 +125,9 @@ function screenshotData(): ContractResult[] {
     ]),
   })
   data[7] = success({
-    liquidationReachableSettlementUsdc: 99_872_022_645n,
-    unrealizedPnlUsdc: -317_528_915n,
-    netEquityUsdc: 38_056_034_616n,
+    liquidationReachableSettlementAssets: 99_872_022_645n,
+    unrealizedPnlAssets: -317_528_915n,
+    netEquityAssets: 38_056_034_616n,
   })
   data.push(
     success([152_136_315_554n, 5_287_315_765_581n, 1_788_797_525n]),
@@ -145,13 +145,13 @@ function screenshotData(): ContractResult[] {
 
 function riskData(side = 0): ContractResult[] {
   const data = screenshotData()
-  data[0] = success({ hasOpenPosition: true, equityUsdc: 250_000_000n, withdrawableUsdc: 750_000_000n, liquidatable: false })
+  data[0] = success({ hasOpenPosition: true, equityAssets: 250_000_000n, withdrawableAssets: 750_000_000n, liquidatable: false })
   data[1] = success({ exists: true, side, size: 10_000n * 10n ** 18n, entryPrice: 100_000_000n,
-    marginUsdc: 250_000_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 10_000_000n, liquidatable: false })
-  data[7] = success({ settlementBalanceUsdc: 1_000_000_000n, freeSettlementUsdc: 750_000_000n,
-    traderClaimBalanceUsdc: 0n, netEquityUsdc: 250_000_000n, liquidationReachableSettlementUsdc: 1_000_000_000n })
+    marginAssets: 250_000_000n, unrealizedPnlAssets: 0n, maintenanceMarginAssets: 10_000_000n, liquidatable: false })
+  data[7] = success({ settlementBalanceAssets: 1_000_000_000n, freeSettlementAssets: 750_000_000n,
+    traderClaimBalanceAssets: 0n, netEquityAssets: 250_000_000n, liquidationReachableSettlementAssets: 1_000_000_000n })
   data[9] = success({ side, vpiAccrued: 0n })
-  data[11] = success({ borrowBaseUsdc: 0n, lastCarryIndex: 0n })
+  data[11] = success({ borrowBaseAssets: 0n, lastCarryIndex: 0n })
   data[12] = success(0n)
   data[22] = success(10_000_000_000n)
   data[23] = success(100_000_000n)
@@ -198,7 +198,7 @@ describe('usePerpsAccount', () => {
         }
       }
 
-      if (firstFunctionName === 'minOpenNotionalUsdc') {
+      if (firstFunctionName === 'minOpenNotionalAssets') {
         return {
           data: mocks.configurationData,
           isLoading: false,
@@ -249,7 +249,7 @@ describe('usePerpsAccount', () => {
     const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)
     const dynamicCall = calls.find((call) => call.contracts?.[0]?.functionName === 'getTraderAccount')
     const riskParamsCall = calls.find((call) => call.contracts?.[0]?.functionName === 'riskParams')
-    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalUsdc')
+    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalAssets')
     const immutableCall = calls.find((call) => call.contracts?.[0]?.functionName === 'CAP_PRICE')
 
     expect(dynamicCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
@@ -259,25 +259,25 @@ describe('usePerpsAccount', () => {
       'balanceOf',
       'balanceOf',
       'allowance',
-      'getFreeBuyingPowerUsdc',
+      'getFreeBuyingPowerAssets',
       'getAccountLedgerSnapshot',
       'isFadWindow',
       'positions',
       'getActivePositionProtection',
       'positionCarryState',
-      'unsettledCarryUsdc',
+      'unsettledCarryAssets',
       'riskParams',
       'totalAssets',
       'getCurrentBlockTimestamp',
       'sideCarryIndex',
       'sideCarryTimestamp',
-      'sideBorrowBaseUsdc',
+      'sideBorrowBaseAssets',
       'sideCarryIndex',
       'sideCarryTimestamp',
-      'sideBorrowBaseUsdc',
-      'positionEntryCostUsdcAtoms',
+      'sideBorrowBaseAssets',
+      'positionEntryCostAssetAtoms',
       'lastMarkPrice',
-      'vpiRebateReserveUsdc',
+      'vpiRebateReserveAssets',
     ])
     expect(dynamicCall?.batchSize).toBe(0)
     expect(dynamicCall?.contracts.slice(16, 22).map((contract: { args: bigint[] }) => contract.args))
@@ -295,7 +295,7 @@ describe('usePerpsAccount', () => {
     })
     expect(riskParamsCall?.query).not.toHaveProperty('refetchInterval')
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
-      'minOpenNotionalUsdc',
+      'minOpenNotionalAssets',
       'maxPendingOrders',
       'maxExecutionWindowSeconds',
     ])
@@ -339,25 +339,25 @@ describe('usePerpsAccount', () => {
 
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
 
-    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+    expect(result.current.position?.pendingCarryAssets).toBe(3_057n)
   })
 
   it('adds checkpointed unpaid carry and uses object-shaped getter results', () => {
     mocks.primaryData = screenshotData()
     mocks.primaryData[9] = success({ side: 0, vpiAccrued: -40_000_000n })
-    mocks.primaryData[11] = success({ borrowBaseUsdc: 152_136_315_554n, lastCarryIndex: 5_287_315_765_581n })
+    mocks.primaryData[11] = success({ borrowBaseAssets: 152_136_315_554n, lastCarryIndex: 5_287_315_765_581n })
     mocks.primaryData[12] = success(7_000_000n)
     mocks.primaryData[13] = success({ baseCarryBps: 500n })
 
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
 
-    expect(result.current.position?.pendingCarryUsdc).toBe(7_003_057n)
+    expect(result.current.position?.pendingCarryAssets).toBe(7_003_057n)
   })
 
   it('selects the new side’s carry inputs when the position direction changes', () => {
     mocks.primaryData = screenshotData()
     const { result, rerender } = renderHook(() => usePerpsAccount(98_000_000n))
-    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+    expect(result.current.position?.pendingCarryAssets).toBe(3_057n)
 
     mocks.primaryData = screenshotData()
     mocks.primaryData[9] = success({ side: 1 })
@@ -367,20 +367,20 @@ describe('usePerpsAccount', () => {
     mocks.primaryData[16] = failure('other side unavailable')
     rerender()
 
-    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+    expect(result.current.position?.pendingCarryAssets).toBe(3_057n)
   })
 
   it.each([9, 11, 12, 13, 14, 15, 16, 17, 18])(
     'leaves carry unavailable when required dynamic read %i fails', (index) => {
       mocks.primaryData = screenshotData()
       const { result, rerender } = renderHook(() => usePerpsAccount(98_000_000n))
-      expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+      expect(result.current.position?.pendingCarryAssets).toBe(3_057n)
 
       mocks.primaryData = screenshotData()
       mocks.primaryData[index] = failure('carry input unavailable')
       rerender()
 
-      expect(result.current.position?.pendingCarryUsdc).toBeUndefined()
+      expect(result.current.position?.pendingCarryAssets).toBeUndefined()
     }
   )
 
@@ -391,7 +391,7 @@ describe('usePerpsAccount', () => {
 
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
 
-    expect(result.current.position?.pendingCarryUsdc).toBe(3_057n)
+    expect(result.current.position?.pendingCarryAssets).toBe(3_057n)
   })
 
   it('keeps position data visible while pending-order details load', () => {
@@ -402,7 +402,7 @@ describe('usePerpsAccount', () => {
     expect(result.current.position).toEqual(expect.objectContaining({
       exists: true,
       size: 2_000_000_000_000_000_000_000n,
-      marginUsdc: 400_000_000n,
+      marginAssets: 400_000_000n,
     }))
   })
 
@@ -412,7 +412,7 @@ describe('usePerpsAccount', () => {
         size: 2_000_000_000_000_000_000_000n,
         margin: 400_000_000n,
         entryPrice: 97_500_000n,
-        maxProfitUsdc: 1_000_000_000n,
+        maxProfitAssets: 1_000_000_000n,
         side: 0,
         lastUpdateTime: 1_700_000_000n,
         vpiAccrued: -40_000_000n,
@@ -436,9 +436,9 @@ describe('usePerpsAccount', () => {
           side: 0,
           size: 1_250_000_000_000_000_000_000n,
           entryPrice: 97_500_000n,
-          marginUsdc: 250_000_000n,
-          unrealizedPnlUsdc: 15_000_000n,
-          maintenanceMarginUsdc: 62_500_000n,
+          marginAssets: 250_000_000n,
+          unrealizedPnlAssets: 15_000_000n,
+          maintenanceMarginAssets: 62_500_000n,
           liquidatable: false,
         }),
       })
@@ -459,7 +459,7 @@ describe('usePerpsAccount', () => {
     expect(result.current.position).toEqual(expect.objectContaining({
       exists: true,
       size: 1_250_000_000_000_000_000_000n,
-      marginUsdc: 250_000_000n,
+      marginAssets: 250_000_000n,
     }))
     expect(result.current.display.positionNotional).toBe(reducedPositionNotional)
   })
@@ -485,39 +485,39 @@ describe('usePerpsAccount', () => {
     mocks.immutableData = [success(200_000_000n)]
     const { result } = renderHook(() => usePerpsAccount(150_000_000n))
     expect(result.current.position?.liquidationThreshold).toEqual({ status: 'boundary', price })
-    expect(result.current.position?.estimatedNotionalUsdc).toBe(10_000_000_000n)
+    expect(result.current.position?.estimatedNotionalAssets).toBe(10_000_000_000n)
     expect(result.current.position?.displayDxyPrice).toBe(100_000_000n)
-    expect(result.current.positionEquityUsdc).toBe(250_000_000n)
-    expect(result.current.settlementBalanceUsdc).toBe(1_000_000_000n)
+    expect(result.current.positionEquityAssets).toBe(250_000_000n)
+    expect(result.current.settlementBalanceAssets).toBe(1_000_000_000n)
     expect(result.current.snapshotStatus).toBe('ready')
   })
 
   it('reduces price backing for carry even with abundant free funds and backed VPI', () => {
     mocks.primaryData = riskData()
     mocks.immutableData = [success(200_000_000n)]
-    mocks.primaryData[7] = success({ settlementBalanceUsdc: 2_000_000_000n, freeSettlementUsdc: 1_750_000_000n,
-      traderClaimBalanceUsdc: 0n, netEquityUsdc: 230_000_000n })
+    mocks.primaryData[7] = success({ settlementBalanceAssets: 2_000_000_000n, freeSettlementAssets: 1_750_000_000n,
+      traderClaimBalanceAssets: 0n, netEquityAssets: 230_000_000n })
     mocks.primaryData[12] = success(20_000_000n)
     mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10_000_000n })
     mocks.primaryData[24] = success(10_000_000n)
     const { result } = renderHook(() => usePerpsAccount())
     expect(result.current.position?.liquidationPrice).toBe(102_197_803n)
-    expect(result.current.position?.uncoveredCarryUsdc).toBe(0n)
+    expect(result.current.position?.uncoveredCarryAssets).toBe(0n)
     expect(result.current.position?.vpiReserveUnderfunded).toBe(false)
   })
 
   it('preserves signed equity and reports non-price liquidation reasons separately', () => {
     mocks.primaryData = riskData()
     mocks.immutableData = [success(200_000_000n)]
-    mocks.primaryData[7] = success({ settlementBalanceUsdc: 250_000_000n, freeSettlementUsdc: 0n,
-      traderClaimBalanceUsdc: 0n, netEquityUsdc: -5n })
-    mocks.primaryData[0] = success({ hasOpenPosition: true, equityUsdc: 0n, liquidatable: true })
+    mocks.primaryData[7] = success({ settlementBalanceAssets: 250_000_000n, freeSettlementAssets: 0n,
+      traderClaimBalanceAssets: 0n, netEquityAssets: -5n })
+    mocks.primaryData[0] = success({ hasOpenPosition: true, equityAssets: 0n, liquidatable: true })
     mocks.primaryData[12] = success(250_000_007n)
     mocks.primaryData[9] = success({ side: 0n, vpiAccrued: -10n })
     const { result } = renderHook(() => usePerpsAccount())
-    expect(result.current.positionEquityUsdc).toBe(-5n)
+    expect(result.current.positionEquityAssets).toBe(-5n)
     expect(result.current.liquidatable).toBe(true)
-    expect(result.current.position?.uncoveredCarryUsdc).toBe(7n)
+    expect(result.current.position?.uncoveredCarryAssets).toBe(7n)
     expect(result.current.position?.vpiReserveUnderfunded).toBe(true)
   })
 
@@ -525,14 +525,14 @@ describe('usePerpsAccount', () => {
     mocks.primaryData = riskData()
     mocks.primaryData[12] = success(250_000_001n)
     const { result } = renderHook(() => usePerpsAccount())
-    expect(result.current.freeSettlementUsdc).toBe(750_000_000n)
-    expect(result.current.carryProjection).toEqual({ positionMarginUsdc: 0n, freeSettlementUsdc: 749_999_999n, uncoveredCarryUsdc: 0n })
+    expect(result.current.freeSettlementAssets).toBe(750_000_000n)
+    expect(result.current.carryProjection).toEqual({ positionMarginAssets: 0n, freeSettlementAssets: 749_999_999n, uncoveredCarryAssets: 0n })
   })
 
   it.each([1, 7, 12])('withholds funding projection when required position, balance or carry read %i fails', index => {
     mocks.primaryData = riskData()
     const { result, rerender } = renderHook(() => usePerpsAccount())
-    expect(result.current.carryProjection?.freeSettlementUsdc).toBe(750_000_000n)
+    expect(result.current.carryProjection?.freeSettlementAssets).toBe(750_000_000n)
     mocks.primaryData = [...mocks.primaryData]
     mocks.primaryData[index] = failure('temporarily unavailable')
     rerender()
@@ -559,7 +559,7 @@ describe('usePerpsAccount', () => {
     const { result } = renderHook(() => usePerpsAccount())
     expect(result.current.snapshotStatus).toBe('unavailable')
     expect(result.current.position?.liquidationThreshold).toEqual({ status: 'unavailable' })
-    expect(result.current.positionEquityUsdc).toBeUndefined()
+    expect(result.current.positionEquityAssets).toBeUndefined()
   })
 
   it.each(['invalidated', 'failed'] as const)('hides cached thresholds during %s refreshes and restores them after success', state => {
@@ -577,7 +577,7 @@ describe('usePerpsAccount', () => {
     mocks.dynamicError = undefined
     rerender()
     expect(result.current.position?.liquidationPrice).toBe(102_397_603n)
-    expect(result.current.carryProjection?.freeSettlementUsdc).toBe(750_000_000n)
+    expect(result.current.carryProjection?.freeSettlementAssets).toBe(750_000_000n)
   })
 
   it('uses current FAD risk parameters despite stale cached configuration', () => {

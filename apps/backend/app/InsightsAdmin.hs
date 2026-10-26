@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Data.Aeson (encode)
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import qualified Data.Text as T
@@ -39,6 +41,7 @@ import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   args <- getArgs
   eConfig <- loadConfig
   case eConfig of
@@ -58,7 +61,7 @@ main = do
               (cfgInsightsCompetitionRules cfg)
               (cfgPerpsChainId cfg)
               (cfgPerpsOrderRouter cfg)
-              (cfgPerpsUsdc cfg)
+              (cfgPerpsSettlementToken cfg)
               (cfgPerpsMarginClearinghouse cfg)
               (cfgPerpsAccountLens cfg)
               (cfgInsightsCompetitionReleaseManifest cfg)

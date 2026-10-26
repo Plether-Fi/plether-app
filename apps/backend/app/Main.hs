@@ -27,6 +27,7 @@ import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
+import qualified Plether.Perps.Manifest as Manifest
 import Plether.Perps.Release (verifyPerpsV3ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
 import Plether.Server (apiServerOptions)
@@ -54,59 +55,62 @@ main = do
       perpsClient <-
         newClientWithOptions $
           RpcClientOptions (cfgPerpsRpcUrl cfg) (cfgPerpsRpcAuthToken cfg) "api-perps"
-      case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
-        (421614, Just _) -> do
-          releaseVerification <-
-            verifyPerpsV3ReleaseBindings
-              perpsClient
-              (cfgPerpsChainId cfg)
-              (cfgPerpsOrderRouter cfg)
-              (cfgPerpsOrderLifecycleBook cfg)
-              (cfgPerpsCfdEngine cfg)
-              (cfgPerpsMarginClearinghouse cfg)
-              (cfgPerpsHousePool cfg)
-              (cfgPerpsIndexerStartBlock cfg)
-          case releaseVerification of
-            Left failure ->
-              ioError $ userError $ "Bounded V2 release verification failed: " <> T.unpack failure
-            Right blockNumber ->
-              logInfo
-                "perps_v2_release_verified"
-                "Bounded V2 contract bindings and runtime hashes are verified"
-                [ field "block_number" blockNumber
-                , field "order_router" $ cfgPerpsOrderRouter cfg
-                , field "order_lifecycle_book" $ cfgPerpsOrderLifecycleBook cfg
-                ]
-        _ -> pure ()
+      when Manifest.releaseIsDeployed $ do
+        case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
+          (421614, Just _) -> do
+            releaseVerification <-
+              verifyPerpsV3ReleaseBindings
+                perpsClient
+                (cfgPerpsChainId cfg)
+                (cfgPerpsOrderRouter cfg)
+                (cfgPerpsOrderLifecycleBook cfg)
+                (cfgPerpsCfdEngine cfg)
+                (cfgPerpsMarginClearinghouse cfg)
+                (cfgPerpsHousePool cfg)
+                (cfgPerpsIndexerStartBlock cfg)
+            case releaseVerification of
+              Left failure ->
+                ioError $ userError $ "Bounded V2 release verification failed: " <> T.unpack failure
+              Right blockNumber ->
+                logInfo
+                  "perps_v2_release_verified"
+                  "Bounded V2 contract bindings and runtime hashes are verified"
+                  [ field "block_number" blockNumber
+                  , field "order_router" $ cfgPerpsOrderRouter cfg
+                  , field "order_lifecycle_book" $ cfgPerpsOrderLifecycleBook cfg
+                  ]
+          _ -> pure ()
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           pool <- newDbPool dbUrl
-          withDb pool ensureBasketSnapshotSchema
-          withDb pool ensurePerpsHistorySchema
-          withDb pool ensureDivisionsLiveSchema
-          withDb pool ensureProtectionSchema
-          withDb pool ensureTestnetFaucetSchema
-          withDb pool ensureVaultPerformanceSchema
-          withDb pool ensureVaultActivitySchema
-          withDb pool ensureAaSponsorshipSchema
-          withDb pool $ \conn ->
-            ensureInsightsSchema
-              conn
-              (cfgInsightsCompetitionRules cfg)
-              (cfgPerpsChainId cfg)
-              (cfgPerpsOrderRouter cfg)
-              (cfgPerpsUsdc cfg)
-              (cfgPerpsMarginClearinghouse cfg)
-              (cfgPerpsAccountLens cfg)
-              (cfgInsightsCompetitionReleaseManifest cfg)
-          registrationInitialization <- initializeInsightsRegistration pool perpsClient cfg
-          either (ioError . userError) pure registrationInitialization
+          when Manifest.releaseIsDeployed $ do
+            withDb pool ensureBasketSnapshotSchema
+            withDb pool ensurePerpsHistorySchema
+            withDb pool ensureDivisionsLiveSchema
+            withDb pool ensureProtectionSchema
+            withDb pool ensureTestnetFaucetSchema
+            withDb pool ensureVaultPerformanceSchema
+            withDb pool ensureVaultActivitySchema
+            withDb pool ensureAaSponsorshipSchema
+            withDb pool $ \conn ->
+              ensureInsightsSchema
+                conn
+                (cfgInsightsCompetitionRules cfg)
+                (cfgPerpsChainId cfg)
+                (cfgPerpsOrderRouter cfg)
+                (cfgPerpsSettlementToken cfg)
+                (cfgPerpsMarginClearinghouse cfg)
+                (cfgPerpsAccountLens cfg)
+                (cfgInsightsCompetitionReleaseManifest cfg)
+            registrationInitialization <- initializeInsightsRegistration pool perpsClient cfg
+            either (ioError . userError) pure registrationInitialization
           _ <- startDbDiagnostics pool dbUrl
-          case cfgRegistrationConfig cfg of
-            Just _ -> do
-              _ <- forkIO $ startRegistrationCleanup pool
-              pure ()
-            Nothing -> pure ()
+          when Manifest.releaseIsDeployed $ do
+            case cfgRegistrationConfig cfg of
+              Just _ -> do
+                _ <- forkIO $ startRegistrationCleanup pool
+                pure ()
+              Nothing -> pure ()
           logInfo
             "api_database_ready"
             "Database schemas are ready"
@@ -120,59 +124,60 @@ main = do
                 , icPollInterval = 12000000
                 }
           _ <- forkIO $ startIndexer manager pool indexerCfg
-          let vaultHistoryCfg =
-                VaultPerformanceIndexerConfig
-                  { vpicChainId = cfgPerpsChainId cfg
-                  , vpicAssetAddress = cfgPerpsUsdc cfg
-                  , vpicHousePoolAddress = cfgVaultHistoryHousePoolAddress cfg
-                  , vpicSeniorVaultAddress = cfgVaultHistorySeniorVaultAddress cfg
-                  , vpicJuniorVaultAddress = cfgVaultHistoryJuniorVaultAddress cfg
-                  , vpicDeploymentBlock = cfgVaultHistoryDeploymentBlock cfg
-                  , vpicConfirmations = cfgVaultHistoryConfirmations cfg
-                  }
-          logInfo
-            "vault_performance_indexer_started"
-            "Vault performance indexer started"
-            [ field "chain_id" $ vpicChainId vaultHistoryCfg
-            , field "house_pool" $ vpicHousePoolAddress vaultHistoryCfg
-            , field "deployment_block" $ vpicDeploymentBlock vaultHistoryCfg
-            , field "confirmations" $ vpicConfirmations vaultHistoryCfg
-            ]
-          vaultIndexerClient <-
-            newClientWithOptions $
-              RpcClientOptions
-                (cfgPerpsRpcUrl cfg)
-                (cfgPerpsRpcAuthToken cfg)
-                "vault-indexer"
-          _ <-
-            forkIO $
-              startVaultPerformanceIndexer
-                vaultIndexerClient
-                vaultIndexerClient
-                pool
-                vaultHistoryCfg
-          when (cfgPythIngestionEnabled cfg) $ do
-            let basketCfg = BasketIngestorConfig
-                  { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
-                  , bicHistoryUrl = cfgPythHistoryUrl cfg
-                  , bicApiKey = cfgPythApiKey cfg
-                  , bicChainId = cfgPerpsChainId cfg
-                  , bicBackfillDays = cfgPythBackfillDays cfg
-                  , bicOwnHistoryTargets = False
-                  , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
-                  , bicPollSeconds = 15 * 60
-                  , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
-                  , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
-                  }
+          when Manifest.releaseIsDeployed $ do
+            let vaultHistoryCfg =
+                  VaultPerformanceIndexerConfig
+                    { vpicChainId = cfgPerpsChainId cfg
+                    , vpicAssetAddress = cfgPerpsSettlementToken cfg
+                    , vpicHousePoolAddress = cfgVaultHistoryHousePoolAddress cfg
+                    , vpicSeniorVaultAddress = cfgVaultHistorySeniorVaultAddress cfg
+                    , vpicJuniorVaultAddress = cfgVaultHistoryJuniorVaultAddress cfg
+                    , vpicDeploymentBlock = cfgVaultHistoryDeploymentBlock cfg
+                    , vpicConfirmations = cfgVaultHistoryConfirmations cfg
+                    }
             logInfo
-              "pyth_history_ingestor_started"
-              "Pyth basket history ingestor started"
-              [ field "backfill_days" $ bicBackfillDays basketCfg
-              , field "sample_interval_seconds" $ bicSampleIntervalSeconds basketCfg
-              , field "poll_seconds" $ bicPollSeconds basketCfg
+              "vault_performance_indexer_started"
+              "Vault performance indexer started"
+              [ field "chain_id" $ vpicChainId vaultHistoryCfg
+              , field "house_pool" $ vpicHousePoolAddress vaultHistoryCfg
+              , field "deployment_block" $ vpicDeploymentBlock vaultHistoryCfg
+              , field "confirmations" $ vpicConfirmations vaultHistoryCfg
               ]
-            _ <- forkIO $ startBasketHistoryIngestor manager pool basketCfg
-            pure ()
+            vaultIndexerClient <-
+              newClientWithOptions $
+                RpcClientOptions
+                  (cfgPerpsRpcUrl cfg)
+                  (cfgPerpsRpcAuthToken cfg)
+                  "vault-indexer"
+            _ <-
+              forkIO $
+                startVaultPerformanceIndexer
+                  vaultIndexerClient
+                  vaultIndexerClient
+                  pool
+                  vaultHistoryCfg
+            when (cfgPythIngestionEnabled cfg) $ do
+              let basketCfg = BasketIngestorConfig
+                    { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                    , bicHistoryUrl = cfgPythHistoryUrl cfg
+                    , bicApiKey = cfgPythApiKey cfg
+                    , bicChainId = cfgPerpsChainId cfg
+                    , bicBackfillDays = cfgPythBackfillDays cfg
+                    , bicOwnHistoryTargets = False
+                    , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
+                    , bicPollSeconds = 15 * 60
+                    , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                    , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+                    }
+              logInfo
+                "pyth_history_ingestor_started"
+                "Pyth basket history ingestor started"
+                [ field "backfill_days" $ bicBackfillDays basketCfg
+                , field "sample_interval_seconds" $ bicSampleIntervalSeconds basketCfg
+                , field "poll_seconds" $ bicPollSeconds basketCfg
+                ]
+              _ <- forkIO $ startBasketHistoryIngestor manager pool basketCfg
+              pure ()
           pure $ Just pool
         Nothing -> do
           logWarn
@@ -188,7 +193,8 @@ main = do
       pimlicoProxyState <- newPimlicoProxyState
       faucetGuardState <- newFaucetGuardState
       nativeGatewayState <- newNativeGatewayState manager cfg perpsClient
-      initializeGatewayObservability nativeGatewayState cfg mPool perpsClient
+      when Manifest.releaseIsDeployed $
+        initializeGatewayObservability nativeGatewayState cfg mPool perpsClient
       case nativeGatewayIssuanceError nativeGatewayState of
         Just _ ->
           logWarn
@@ -205,7 +211,7 @@ main = do
         , field "perps_chain_id" $ cfgPerpsChainId cfg
         , field "history_enabled" $ maybe False (const True) mPool
         ]
-      discordConfig <- case cfgRegistrationConfig cfg of
+      discordConfig <- if not Manifest.releaseIsDeployed then pure Nothing else case cfgRegistrationConfig cfg of
         Nothing -> do
           divisionsEnabled <- lookupEnv "INSIGHTS_DIVISIONS_REGISTRATION_ENABLED"
           when (divisionsEnabled == Just "true") $
@@ -214,7 +220,7 @@ main = do
         Just registrationConfig -> do
           configured <- loadDiscordConfig registrationConfig
           either (ioError . userError) pure configured
-      case (mPool, discordConfig) of
+      case (if Manifest.releaseIsDeployed then mPool else Nothing, discordConfig) of
         (Just pool, _) -> withDb pool ensureDivisionsSchema
         (Nothing, Just _) -> ioError $ userError "Divisions registration requires DATABASE_URL"
         _ -> pure ()

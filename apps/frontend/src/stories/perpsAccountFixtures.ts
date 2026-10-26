@@ -11,15 +11,15 @@ export const accountStoryIdentity: PerpsIdentityContextValue = {
 }
 
 export function accountPositionFixture(overrides: Partial<PerpsPriceRiskInputs> = {}, mark = 98_300_000n): PerpsPosition {
-  const input = { size: 2_000n * 10n ** 18n, side: 0, entryCostUsdcAtoms: 2_014_250_000n,
-    positionMarginUsdc: 400_000_000n, traderClaimBalanceUsdc: 0n, capPrice: 200_000_000n, maintenanceMarginBps: 10n, ...overrides }
+  const input = { size: 2_000n * 10n ** 18n, side: 0, entryCostAssetAtoms: 2_014_250_000n,
+    positionMarginAssets: 400_000_000n, traderClaimBalanceAssets: 0n, capPrice: 200_000_000n, maintenanceMarginBps: 10n, ...overrides }
   const risk = calculatePriceRisk(input, mark)
   const threshold = findLiquidationThreshold(input)
   return { exists: true, side: input.side, direction: input.side === 0 ? 'long' : 'short', size: input.size,
-    entryPrice: input.entryCostUsdcAtoms / (input.size / 10n ** 20n), marginUsdc: input.positionMarginUsdc,
-    unrealizedPnlUsdc: risk.pnlUsdc, maintenanceMarginUsdc: risk.maintenanceMarginUsdc, liquidatable: risk.liquidatable,
-    estimatedNotionalUsdc: risk.notionalUsdc, entryNotionalUsdc: input.entryCostUsdcAtoms,
-    dxyExposureUsdc: input.size / 10n ** 20n * (input.capPrice - mark), displayDxyPrice: input.capPrice - mark,
+    entryPrice: input.entryCostAssetAtoms / (input.size / 10n ** 20n), marginAssets: input.positionMarginAssets,
+    unrealizedPnlAssets: risk.pnlAssets, maintenanceMarginAssets: risk.maintenanceMarginAssets, liquidatable: risk.liquidatable,
+    estimatedNotionalAssets: risk.notionalAssets, entryNotionalAssets: input.entryCostAssetAtoms,
+    dxyExposureAssets: input.size / 10n ** 20n * (input.capPrice - mark), displayDxyPrice: input.capPrice - mark,
     liquidationThreshold: threshold, liquidationPrice: threshold.status === 'boundary' ? threshold.price : undefined,
-    capPrice: input.capPrice, riskStatus: 'ready', positionEquityUsdc: risk.equityUsdc, pendingCarryUsdc: 1_250_000n }
+    capPrice: input.capPrice, riskStatus: 'ready', positionEquityAssets: risk.equityAssets, pendingCarryAssets: 1_250_000n }
 }

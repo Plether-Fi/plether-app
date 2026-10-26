@@ -26,7 +26,7 @@ const read = (key, contractAbi, functionName, args = []) => client.readContract(
 })
 const [riskValues, bounty, executionFeeBps] = await Promise.all([
   read('cfdEngine', engineAbi, 'riskParams'),
-  read('orderRouter', routerAbi, 'closeOrderExecutionBountyUsdc'),
+  Promise.resolve(0n),
   read('cfdEngine', engineAbi, 'executionFeeBps'),
 ])
 const planFunction = plannerAbi.find(item => item.name === 'planClose')
@@ -51,30 +51,30 @@ for (const field of boundsParameter.components) {
 }
 bounds.allowedExecutionModes = 7
 
-function snapshot(marginUsdc) {
+function snapshot(marginAssets) {
   const snap = empty(planFunction.inputs[0])
   snap.currentTimestamp = block.timestamp
   snap.lastMarkTime = block.timestamp
   snap.lastMarkPrice = PRICE
   snap.capPrice = CAP
   snap.executionFeeBps = executionFeeBps
-  snap.poolAssetsUsdc = parseUnits('1000000000', 6)
-  snap.poolCashUsdc = snap.poolAssetsUsdc
+  snap.poolAssets = parseUnits('1000000000', 6)
+  snap.poolCashAssets = snap.poolAssets
   const fields = planFunction.inputs[0].components.find(item => item.name === 'riskParams').components
   snap.riskParams = Array.isArray(riskValues)
     ? Object.fromEntries(fields.map((item, index) => [item.name, riskValues[index]])) : riskValues
-  Object.assign(snap.position, { size: SIZE, margin: marginUsdc, entryPrice: PRICE,
-    side: 1, maxProfitUsdc: LOTS * (CAP - PRICE), lastUpdateTime: block.timestamp, lastCarryTimestamp: block.timestamp })
-  snap.positionEntryCostUsdcAtoms = LOTS * PRICE
-  Object.assign(snap.shortSide, { maxProfitUsdc: snap.position.maxProfitUsdc, openInterest: SIZE,
-    entryNotional: snap.positionEntryCostUsdcAtoms * 10n ** 12n, totalMargin: marginUsdc })
-  Object.assign(snap.accountBuckets, { settlementBalanceUsdc: marginUsdc, totalLockedMarginUsdc: marginUsdc, activePositionMarginUsdc: marginUsdc })
-  Object.assign(snap.lockedBuckets, { positionMarginUsdc: marginUsdc, totalLockedMarginUsdc: marginUsdc })
+  Object.assign(snap.position, { size: SIZE, margin: marginAssets, entryPrice: PRICE,
+    side: 1, maxProfitAssets: LOTS * (CAP - PRICE), lastUpdateTime: block.timestamp, lastCarryTimestamp: block.timestamp })
+  snap.positionEntryCostAssetAtoms = LOTS * PRICE
+  Object.assign(snap.shortSide, { maxProfitAssets: snap.position.maxProfitAssets, openInterest: SIZE,
+    entryNotional: snap.positionEntryCostAssetAtoms * 10n ** 12n, totalMargin: marginAssets })
+  Object.assign(snap.accountBuckets, { settlementBalanceAssets: marginAssets, totalLockedMarginAssets: marginAssets, activePositionMarginAssets: marginAssets })
+  Object.assign(snap.lockedBuckets, { positionMarginAssets: marginAssets, totalLockedMarginAssets: marginAssets })
   return snap
 }
 const output = { release: release.release.version, blockNumber: block.number,
   screenshot: { size: SIZE, inferredRawPrice: PRICE, targetPrice, displayedPrice: CAP - PRICE,
-    exposureUsdc: LOTS * (CAP - PRICE), displayedExecutionLimit: CAP - targetPrice },
+    exposureAssets: LOTS * (CAP - PRICE), displayedExecutionLimit: CAP - targetPrice },
   assumptions: 'Synthetic full short close; entry price equals current price; no pending orders, carry or claims; one-sided pool with 1 billion USDC; varied remaining settlement/margin. Not the screenshot account.',
   riskParams: snapshot(0n).riskParams, cases: [] }
 for (const margin of ['3000000', '10000']) {
@@ -82,16 +82,16 @@ for (const margin of ['3000000', '10000']) {
   const snap = snapshot(parseUnits(margin, 6))
   const order = { account: snap.account, sizeDelta: SIZE, marginDelta: 0n, targetPrice,
     commitTime: block.timestamp, commitBlock: block.number, orderId: 0n, side: 1, isClose: true }
-  const result = { marginUsdc: snap.position.margin, assessedRawPrice: assessedPrice, executionBountyUsdc: bounty }
+  const result = { marginAssets: snap.position.margin, assessedRawPrice: assessedPrice, executionBountyAssets: bounty }
   try {
     const delta = await read('cfdEnginePlanner', plannerAbi, 'planClose', [snap, order, assessedPrice, block.timestamp])
-    result.planner = { valid: delta.valid, revertCode: delta.revertCode, executionFeeUsdc: delta.closeState.executionFeeUsdc,
-      realizedCarryUsdc: delta.realizedCarryUsdc, pricePnlPledgeConsumedUsdc: delta.pricePnlPledgeConsumedUsdc,
-      actionChargeCollectedUsdc: delta.actionChargeCollectedUsdc, actionRebatePaidUsdc: delta.actionRebatePaidUsdc,
-      actionChargeWaivedUsdc: delta.actionChargeWaivedUsdc, deletePosition: delta.deletePosition }
+    result.planner = { valid: delta.valid, revertCode: delta.revertCode, executionFeeAssets: delta.closeState.executionFeeAssets,
+      realizedCarryAssets: delta.realizedCarryAssets, pricePnlPledgeConsumedAssets: delta.pricePnlPledgeConsumedAssets,
+      actionChargeCollectedAssets: delta.actionChargeCollectedAssets, actionRebatePaidAssets: delta.actionRebatePaidAssets,
+      actionChargeWaivedAssets: delta.actionChargeWaivedAssets, deletePosition: delta.deletePosition }
     result.stage = 'evaluateClose'
     const assessment = await read('cfdOrderPolicyEvaluator', evaluatorAbi, 'evaluateClose', [snap, delta, bounds, bounty])
-    result.assessment = { postSettlementBalanceUsdc: assessment.postSettlementBalanceUsdc, postPositionSize: assessment.postPositionSize }
+    result.assessment = { postSettlementBalanceAssets: assessment.postSettlementBalanceAssets, postPositionSize: assessment.postPositionSize }
   } catch (error) {
     const cause = error.walk?.(item => item.name === 'ContractFunctionRevertedError')
     result.error = { name: cause?.data?.errorName, args: cause?.data?.args, raw: cause?.raw, message: error.shortMessage }

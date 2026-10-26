@@ -5,11 +5,11 @@ export type PreparationStage = 'preflight' | 'deployment_verification' | 'contex
   | 'commit_simulation' | 'preparation_timeout' | 'review_freshness'
 
 export type PreparationFunction = 'maxExecutionWindowSeconds' | 'currentExecutionConfigHash'
-  | 'openOrderExecutionBountyBps' | 'minOpenOrderExecutionBountyUsdc'
-  | 'maxOpenOrderExecutionBountyUsdc' | 'closeOrderExecutionBountyUsdc'
+  | 'openOrderExecutionBountyBps' | 'minOpenOrderExecutionBountyAssets'
+  | 'maxOpenOrderExecutionBountyAssets'
   | 'lastMarkPrice' | 'CAP_PRICE' | 'totalAssets' | 'getLatestPrice'
   | 'activePositionProtectionId' | 'getPendingOrders' | 'maxPendingOrders'
-  | 'getFreeBuyingPowerUsdc' | 'positionProtectionTriggerBountyUsdc' | 'getPosition'
+  | 'getFreeBuyingPowerAssets' | 'positionProtectionTriggerBountyAssets' | 'getPosition'
   | 'assessOrder' | 'quoteMaxOpen' | 'previewOpen' | 'previewClose' | 'previewSponsoredClose' | 'executeBatch'
   | 'commitOrder' | 'commitOpenOrderWithProtection'
 

@@ -1,51 +1,53 @@
-import type { Address } from 'viem'
-import release from '../../../../config/perps/arbitrum-sepolia-v3.json'
+import { zeroAddress, type Address } from 'viem'
+import release from '../../../../config/perps/mock-usdg-prepared.json'
 import { parsePerpsReleaseConfiguration, settlementTokenContract } from './perpsRelease'
 
 export const PERPS_RELEASE = parsePerpsReleaseConfiguration(release)
+export const PERPS_RELEASE_IS_DEPLOYED = PERPS_RELEASE.isDeployed
 export const PERPS_SETTLEMENT_TOKEN = PERPS_RELEASE.settlementToken
-export const PERPS_SETTLEMENT_TOKEN_LABEL = PERPS_RELEASE.schemaVersion === 4
-  ? PERPS_SETTLEMENT_TOKEN.name
-  : PERPS_SETTLEMENT_TOKEN.symbol
+export const PERPS_SETTLEMENT_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN.name
 export const PERPS_SETTLEMENT_TOKEN_CONTRACT = settlementTokenContract(PERPS_RELEASE)
 
-/** Active perps graph, pinned to the deployed v1.3.1 release. */
-export const PERPS_CLOSE_PREVIEW_ADDRESS = PERPS_RELEASE.contracts.cfdClosePreview.address
+// Null prepared pins use a non-deployment sentinel only inside disabled hooks.
+// Public configuration keeps nulls; no request or transaction may use this graph
+// until PERPS_RELEASE_IS_DEPLOYED becomes true after verified activation.
+function contractAddress(name: string): Address { return PERPS_RELEASE.contracts[name].address ?? zeroAddress }
+export const PERPS_CLOSE_PREVIEW_ADDRESS = contractAddress('cfdClosePreview')
 
 export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614 as const
-export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = PERPS_RELEASE.release.deploymentBlock
+export const PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK = PERPS_RELEASE.release.deploymentBlock ?? 0
 
 export type PerpsContractAddresses = typeof PERPS_ARBITRUM_SEPOLIA
 
 export const PERPS_ARBITRUM_SEPOLIA = {
   pyth: PERPS_RELEASE.release.pyth,
-  usdc: PERPS_SETTLEMENT_TOKEN_CONTRACT.address,
-  marginClearinghouse: PERPS_RELEASE.contracts.marginClearinghouse.address,
-  cfdEngine: PERPS_RELEASE.contracts.cfdEngine.address,
-  terminalNavBookV2: PERPS_RELEASE.contracts.terminalNavBookV2.address,
-  cfdEnginePlanner: PERPS_RELEASE.contracts.cfdEnginePlanner.address,
-  cfdEngineSettlementSidecar: PERPS_RELEASE.contracts.cfdEngineSettlementSidecar.address,
-  cfdEngineAdmin: PERPS_RELEASE.contracts.cfdEngineAdmin.address,
-  housePoolRedemptionMathSidecar: PERPS_RELEASE.contracts.housePoolRedemptionMathSidecar.address,
-  housePool: PERPS_RELEASE.contracts.housePool.address,
-  cfdEngineProtocolLens: PERPS_RELEASE.contracts.cfdEngineProtocolLens.address,
-  seniorVault: PERPS_RELEASE.contracts.seniorVault.address,
-  juniorVault: PERPS_RELEASE.contracts.juniorVault.address,
-  cfdEngineAccountLens: PERPS_RELEASE.contracts.cfdEngineAccountLens.address,
-  cfdEngineLens: PERPS_RELEASE.contracts.cfdEngineLens.address,
-  cfdEngineOpenQuoter: PERPS_RELEASE.contracts.cfdEngineOpenQuoter.address,
-  policyEvaluator: PERPS_RELEASE.contracts.cfdOrderPolicyEvaluator.address,
-  cfdClosePreview: PERPS_RELEASE.contracts.cfdClosePreview.address,
-  orderRouterExecutionSidecar: PERPS_RELEASE.contracts.orderRouterExecutionSidecar.address,
-  orderRecoverySidecar: PERPS_RELEASE.contracts.orderRecoverySidecar.address,
-  pletherOracle: PERPS_RELEASE.contracts.pletherOracle.address,
-  orderRouterLiquidationBatchSidecar: PERPS_RELEASE.contracts.orderRouterLiquidationBatchSidecar.address,
-  orderLifecycleBook: PERPS_RELEASE.contracts.orderLifecycleBook.address,
-  orderRouter: PERPS_RELEASE.contracts.orderRouter.address,
-  orderRouterAdmin: PERPS_RELEASE.contracts.orderRouterAdmin.address,
-  positionProtectionBook: PERPS_RELEASE.contracts.positionProtectionBook.address,
-  perpsPublicLens: PERPS_RELEASE.contracts.perpsPublicLens.address,
-  settlementMonitorLens: PERPS_RELEASE.contracts.settlementMonitorLens.address,
-  settlementMonitorLensSidecar: PERPS_RELEASE.contracts.settlementMonitorLensSidecar.address,
-  emergencyPauseCoordinator: PERPS_RELEASE.contracts.emergencyPauseCoordinator.address,
+  settlementToken: contractAddress('settlementToken'),
+  marginClearinghouse: contractAddress('marginClearinghouse'),
+  cfdEngine: contractAddress('cfdEngine'),
+  terminalNavBookV2: contractAddress('terminalNavBookV2'),
+  cfdEnginePlanner: contractAddress('cfdEnginePlanner'),
+  cfdEngineSettlementSidecar: contractAddress('cfdEngineSettlementSidecar'),
+  cfdEngineAdmin: contractAddress('cfdEngineAdmin'),
+  housePoolRedemptionMathSidecar: contractAddress('housePoolRedemptionMathSidecar'),
+  housePool: contractAddress('housePool'),
+  cfdEngineProtocolLens: contractAddress('cfdEngineProtocolLens'),
+  seniorVault: contractAddress('seniorVault'),
+  juniorVault: contractAddress('juniorVault'),
+  cfdEngineAccountLens: contractAddress('cfdEngineAccountLens'),
+  cfdEngineLens: contractAddress('cfdEngineLens'),
+  cfdEngineOpenQuoter: contractAddress('cfdEngineOpenQuoter'),
+  policyEvaluator: contractAddress('cfdOrderPolicyEvaluator'),
+  cfdClosePreview: contractAddress('cfdClosePreview'),
+  orderRouterExecutionSidecar: contractAddress('orderRouterExecutionSidecar'),
+  orderRecoverySidecar: contractAddress('orderRecoverySidecar'),
+  pletherOracle: contractAddress('pletherOracle'),
+  orderRouterLiquidationBatchSidecar: contractAddress('orderRouterLiquidationBatchSidecar'),
+  orderLifecycleBook: contractAddress('orderLifecycleBook'),
+  orderRouter: contractAddress('orderRouter'),
+  orderRouterAdmin: contractAddress('orderRouterAdmin'),
+  positionProtectionBook: contractAddress('positionProtectionBook'),
+  perpsPublicLens: contractAddress('perpsPublicLens'),
+  settlementMonitorLens: contractAddress('settlementMonitorLens'),
+  settlementMonitorLensSidecar: contractAddress('settlementMonitorLensSidecar'),
+  emergencyPauseCoordinator: contractAddress('emergencyPauseCoordinator'),
 } satisfies Record<string, Address>

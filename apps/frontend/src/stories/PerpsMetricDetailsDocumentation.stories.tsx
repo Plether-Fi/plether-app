@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { ReactNode } from 'react'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
@@ -5,7 +6,7 @@ import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
 import { TokenAmount } from '../components/ui'
 import type { PerpsPosition } from '../hooks'
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 
 const position = {
   exists: true,
@@ -13,16 +14,16 @@ const position = {
   direction: 'long',
   size: 2_000n * 10n ** 18n,
   entryPrice: 98_300_000n,
-  marginUsdc: 400n * USDC,
-  unrealizedPnlUsdc: 48_250_000n,
-  maintenanceMarginUsdc: 20n * USDC,
+  marginAssets: 400n * ASSETS,
+  unrealizedPnlAssets: 48_250_000n,
+  maintenanceMarginAssets: 20n * ASSETS,
   liquidatable: false,
-  estimatedNotionalUsdc: 1_999_920_000n,
-  entryNotionalUsdc: 2_000_000_000n,
-  dxyExposureUsdc: 2_069_380_000n,
+  estimatedNotionalAssets: 1_999_920_000n,
+  entryNotionalAssets: 2_000_000_000n,
+  dxyExposureAssets: 2_069_380_000n,
   displayDxyPrice: 101_700_000n,
   liquidationPrice: 110_000_000n,
-  pendingCarryUsdc: 1_250_000n,
+  pendingCarryAssets: 1_250_000n,
 } satisfies PerpsPosition
 
 function MetricCard({
@@ -102,21 +103,21 @@ export const UnrealizedPnl: Story = {
       <div className="mx-auto max-w-5xl space-y-5">
         <PerpsAccountPanel
           isConnected
-          equityUsdc={1_248_250_000n}
-          freeBuyingPowerUsdc={848_250_000n}
+          equityAssets={1_248_250_000n}
+          freeBuyingPowerAssets={848_250_000n}
           position={position}
         />
         <DetailsPanel
           eyebrow="Current Position · metric guide"
           title="Reading Unrealized PnL"
-          description="This is the mark-to-market price movement from the position’s entry price to the current mark. It is an estimate, not settled USDC."
+          description={`This is the mark-to-market price movement from the position’s entry price to the current mark. It is an estimate, not settled ${PERPS_SETTLEMENT_TOKEN_LABEL}.`}
           footer="Settlement turns the final trading result into Margin Account credit, a trader claim, or a debit."
         >
           <div className="grid gap-3 md:grid-cols-3">
             <MetricCard
               label="Current value"
-              value={<TokenAmount amount="+48.25" />}
-              detail="Displayed in USDC"
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="+48.25" />}
+              detail={`Displayed in ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
               tone="positive"
             />
             <MetricCard
@@ -152,30 +153,30 @@ export const PoolLiquidity: Story = {
               freshnessTooltip: 'updated 24s ago',
             },
             { label: '24h change', value: '-0.16%', tone: 'negative' },
-            { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
+            { label: '24h volume', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="2.4M" /> },
             {
               label: 'Directional limit used',
               directionalLimit: {
                 usagePercent: 87,
                 side: 'long',
-                totalExposure: <TokenAmount amount="8.36M" />,
-                netExposure: <TokenAmount amount="3.07M" />,
-                limit: <TokenAmount amount="3.53M" />,
+                totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="8.36M" />,
+                netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.07M" />,
+                limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.53M" />,
               },
             },
-            { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
+            { label: 'Free pool liquidity', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6.3M" /> },
             { label: 'Cost of carry', value: '5.24%' },
           ]}
         />
         <DetailsPanel
           eyebrow="Market header · metric guide"
           title="What Free pool liquidity represents"
-          description="Free pool liquidity is USDC remaining after backing existing positions and protected reserves. New orders must satisfy both the directional limit and payout-backing requirements."
+          description={`Free pool liquidity is ${PERPS_SETTLEMENT_TOKEN_LABEL} remaining after backing existing positions and protected reserves. New orders must satisfy both the directional limit and payout-backing requirements.`}
           footer="Use Max in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes."
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <MetricCard label="Total pool assets" value={<TokenAmount amount="10 000 000" />} />
-            <MetricCard label="Reserved pool assets" value={<TokenAmount amount="3 700 000" />} detail="37.0% of pool assets are reserved for existing positions and other protocol obligations." />
+            <MetricCard label="Total pool assets" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="10 000 000" />} />
+            <MetricCard label="Reserved pool assets" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3 700 000" />} detail="37.0% of pool assets are reserved for existing positions and other protocol obligations." />
           </div>
         </DetailsPanel>
       </div>

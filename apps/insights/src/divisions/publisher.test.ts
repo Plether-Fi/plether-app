@@ -32,7 +32,7 @@ describe('Snapshot publication CLI', () => {
     expect(readFileSync(archived, 'utf8')).toBe(first)
     expect(() => publish(dir, 0)).not.toThrow()
     const altered = input()
-    altered.accounts[0].closingEquityUsdc = '130000000000'
+    altered.accounts[0].closingEquityAssets = '130000000000'
     expect(() => publish(dir, 0, undefined, altered)).toThrow(/refusing to rewrite history/)
     expect(readFileSync(current, 'utf8')).toBe(first)
     expect(() => publish(dir, 1, archived)).not.toThrow()
@@ -44,7 +44,7 @@ describe('Snapshot publication CLI', () => {
   it('rejects malformed source data before writing publication assets', () => {
     const dir = directory()
     const malformed = input()
-    malformed.accounts[0].startingEquityUsdc = '100.5'
+    malformed.accounts[0].startingEquityAssets = '100.5'
     expect(() => publish(dir, 0, undefined, malformed)).toThrow(/Invalid weekly snapshot/)
   })
 })

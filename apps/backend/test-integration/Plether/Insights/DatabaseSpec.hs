@@ -73,7 +73,7 @@ import Plether.Database.Schema
   , deletePerpsHistoryFromBlock
   , insertPerpsEvent
   , insertPerpsActivity
-  , insertPerpsUsdcTransfer
+  , insertPerpsAssetTransfer
   , setPerpsIndexerState
   )
 import Plether.Perps.IndexerFormat (PerpsIndexerFormat (..), indexerName)
@@ -200,7 +200,7 @@ insightsDatabaseSpec databaseUrl =
         seedOfficialAllocation conn walletA 80 90 "review"
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
         setParticipantEligibility conn competitionSlug walletA EligibilityEligible Nothing "test-reviewer" `shouldReturn` True
-        insertDeposit conn walletA 105 5 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "review-extra"
+        insertDeposit conn walletA 105 5 (Just fixtureClearinghouse) (Just fixtureAssets) 1 "review-extra"
         setParticipantEligibility conn competitionSlug walletA EligibilityEligible Nothing "test-reviewer" `shouldReturn` False
         void $ execute conn "UPDATE insights_competition_participants SET eligibility_status='pending' WHERE competition_slug=?" (Only competitionSlug)
         void $ execute conn "UPDATE perps_indexer_state SET last_indexed_block_hash=NULL WHERE chain_id=? AND release_router=?" (fixtureChain,fixtureRouter)
@@ -212,11 +212,11 @@ insightsDatabaseSpec databaseUrl =
         forM_ cases $ \(i,wallet) -> do
           insertParticipant conn wallet ("generated-" <> T.pack (show i))
           seedOfficialAllocation conn wallet 80 90 (T.pack $ show i)
-          when (i `mod` 3 == 0) $ insertDeposit conn wallet 105 5 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 ("extra-" <> T.pack (show i))
+          when (i `mod` 3 == 0) $ insertDeposit conn wallet 105 5 (Just fixtureClearinghouse) (Just fixtureAssets) 1 ("extra-" <> T.pack (show i))
           when (i `mod` 4 == 0) $ void $ execute conn
             "UPDATE testnet_faucet_claims SET token_address=UPPER(token_address),address=UPPER(address),tx_hash=UPPER(tx_hash) WHERE address=?" (Only wallet)
           when (i `mod` 5 == 0) $ void $ execute conn
-            "INSERT INTO perps_usdc_transfers SELECT r.* FROM perps_usdc_transfers x CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(x)||jsonb_build_object('log_index',99)) r WHERE x.from_address=? AND x.block_number=90" (Only wallet)
+            "INSERT INTO perps_asset_transfers SELECT r.* FROM perps_asset_transfers x CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_asset_transfers,to_jsonb(x)||jsonb_build_object('log_index',99)) r WHERE x.from_address=? AND x.block_number=90" (Only wallet)
           when (i `mod` 7 == 0) $ void $ execute conn
             "UPDATE perps_account_activity SET contract_address=UPPER(contract_address),data=jsonb_set(data,'{asset}',to_jsonb(UPPER(data->>'asset'))) WHERE account=?" (Only wallet)
         setCompetitionBoundaryBlocks conn competitionSlug (Just (startBlock,startHash,baselineHash)) Nothing
@@ -236,7 +236,7 @@ insightsDatabaseSpec databaseUrl =
         icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "pending"
         before <- requireWallet walletA =<< getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear before `shouldBe` False
-        ilrFinalPnlUsdc before `shouldBe` Just gain
+        ilrFinalPnlAssets before `shouldBe` Just gain
         stageCompetitionIntegrity conn competitionSlug
         publishStagedCompetitionIntegrity conn competitionSlug 120 `shouldReturn` True
         icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "current"
@@ -250,7 +250,7 @@ insightsDatabaseSpec databaseUrl =
         icrIntegrityStatus <$> requireCompetition conn competitionSlug `shouldReturn` "stale"
         stale <- requireWallet walletA =<< getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear stale `shouldBe` False
-        ilrFinalPnlUsdc stale `shouldBe` ilrFinalPnlUsdc fresh
+        ilrFinalPnlAssets stale `shouldBe` ilrFinalPnlAssets fresh
         ilrRank stale `shouldBe` ilrRank fresh
 
     forM_ ["roster", "wallet", "baseline", "boundary", "release", "rewind", "finalization"] $ \change ->
@@ -325,7 +325,7 @@ insightsDatabaseSpec databaseUrl =
           markers <- query conn "SELECT settlement_evidence_version FROM perps_orders WHERE chain_id = ? AND order_router = ?"
             (fixtureChain, fixtureRouter) :: IO [Only (Maybe Int)]
           markers `shouldBe` [Only (Just 1)]
-          events <- query conn "SELECT data->>'protocolFeeCollectedUsdc' FROM perps_events WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
+          events <- query conn "SELECT data->>'protocolFeeCollectedAssets' FROM perps_events WHERE chain_id = ? AND release_router = ? AND event_name = 'ActionChargeSettled'"
             (fixtureChain, fixtureRouter) :: IO [Only Text]
           events `shouldBe` [Only "222311115"]
           counts <- query conn "SELECT COUNT(*) FROM perps_account_activity WHERE chain_id = ? AND release_router = ?"
@@ -341,7 +341,7 @@ insightsDatabaseSpec databaseUrl =
         publishAccountSnapshotBatch conn [snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp bankroll]
         let tx = hashText "breakdown-tx"
             receiptHash = hashText "breakdown-receipt"
-            receipt = object ["executionFeeUsdc" .= ("1000000" :: Text)]
+            receipt = object ["executionFeeAssets" .= ("1000000" :: Text)]
         forM_ [(1, 10, 20), (2, 30, 40)] $ \(oid, activityIndex, terminalIndex) -> do
           insertPerpsActivity conn fixtureChain fixtureRouter fixtureRouter ("breakdown-" <> T.pack (show oid))
             walletA "Close" Nothing Nothing (Just 1) (Just 100000000) (Just 1000000000000000000) Nothing (Just 0)
@@ -356,7 +356,7 @@ insightsDatabaseSpec databaseUrl =
             (object ["receiptHash" .= receiptHash, "status" .= (2 :: Int), "terminalReason" .= ("Executed" :: Text)])
           insertPerpsEvent conn fixtureChain fixtureRouter fixtureRouter "ActionChargeSettled" tx liveBlock liveHash 0 (activityIndex - 1)
             liveTimestamp (Just walletA) (Just oid) Nothing
-            (object ["assessedUsdc" .= ("1000000" :: Text), "recoveredUsdc" .= ("900000" :: Text), "waivedUsdc" .= ("100000" :: Text)])
+            (object ["assessedAssets" .= ("1000000" :: Text), "recoveredAssets" .= ("900000" :: Text), "waivedAssets" .= ("100000" :: Text)])
         rows <- getCompetitionWalletActivity conn competitionSlug walletA 20
         let orderId row = case iarExecution row of
               Just (Object execution) -> KM.lookup "orderId" execution
@@ -436,7 +436,7 @@ insightsDatabaseSpec databaseUrl =
         -- A normal September restart must validate only that row and must not
         -- reinterpret or refresh finalized July history.
         ensureInsightsSchema
-          conn testSeptemberRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+          conn testSeptemberRules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
         julyAfter <- requireCompetition conn $ crSlug july2026Competition
         current <- getCurrentCompetition conn $ crSlug testSeptemberRules
 
@@ -490,7 +490,7 @@ insightsDatabaseSpec databaseUrl =
             registrationId = "11111111-1111-4111-8111-111111111111" :: Text
         void $ execute conn "DELETE FROM insights_competitions WHERE slug = ?" (Only slug)
         ensureInsightsSchema
-          conn legacyRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+          conn legacyRules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
         ensureRegistrationSchema conn
         void $ execute conn
           "INSERT INTO insights_registration_applications (\
@@ -508,7 +508,7 @@ insightsDatabaseSpec databaseUrl =
         insertParticipantFor conn slug walletA registrationId
 
         ensureInsightsSchema
-          conn currentRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+          conn currentRules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
 
         migrated <- query conn
           "SELECT c.minimum_x_account_age_days, a.status, a.rules_version,\
@@ -525,7 +525,7 @@ insightsDatabaseSpec databaseUrl =
           "UPDATE insights_competitions SET finalized = TRUE WHERE slug = ?"
           (Only $ crSlug july2026Competition)
         ensureInsightsSchema
-          conn testSeptemberRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+          conn testSeptemberRules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
           `shouldThrow` anyIOException
 
     it "blocks manual wallet remapping for a verified-registration roster" $
@@ -560,7 +560,7 @@ insightsDatabaseSpec databaseUrl =
         initialRows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         original <- requireWallet walletA initialRows
         ilrRank original `shouldBe` Just 1
-        ilrFinalPnlUsdc original `shouldBe` Just gain
+        ilrFinalPnlAssets original `shouldBe` Just gain
         ilrExecutedTrades original `shouldBe` 1
         activityBefore <- getCompetitionWalletActivity conn competitionSlug walletA 20
         activityBefore `shouldSatisfy` (not . null)
@@ -578,7 +578,7 @@ insightsDatabaseSpec databaseUrl =
         existing `shouldBe` original
         newcomer <- requireWallet walletB during
         ilrRank newcomer `shouldBe` Nothing
-        ilrFinalPnlUsdc newcomer `shouldBe` Nothing
+        ilrFinalPnlAssets newcomer `shouldBe` Nothing
         getCompetitionWallet conn competitionSlug walletA `shouldReturn` Just original
         getCompetitionWalletActivity conn competitionSlug walletA 20
           `shouldReturn` activityBefore
@@ -592,7 +592,7 @@ insightsDatabaseSpec databaseUrl =
         baselineOnly <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         requireWallet walletA baselineOnly `shouldReturn` original
         waiting <- requireWallet walletB baselineOnly
-        ilrFinalPnlUsdc waiting `shouldBe` Nothing
+        ilrFinalPnlAssets waiting `shouldBe` Nothing
         publishAccountSnapshotBatch conn
           [ snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)
           , snapshot walletB SnapshotLive liveBlock liveHash liveTimestamp (bankroll + gain)
@@ -603,7 +603,7 @@ insightsDatabaseSpec databaseUrl =
           `shouldReturn` True
         rebuilt <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         joined <- requireWallet walletB rebuilt
-        ilrFinalPnlUsdc joined `shouldBe` Just (bankroll + gain)
+        ilrFinalPnlAssets joined `shouldBe` Just (bankroll + gain)
 
         -- A successful exact lens read can legitimately return zero state for
         -- the entire roster. It must replace the earlier stateful batch.
@@ -614,7 +614,7 @@ insightsDatabaseSpec databaseUrl =
         hasCompleteAccountSnapshotBatch conn competitionSlug SnapshotFinal finalBlock finalHash
           `shouldReturn` True
         rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
-        sort (map ilrCurrentAccountValueUsdc rows) `shouldBe` [Just 0, Just 0]
+        sort (map ilrCurrentAccountValueAssets rows) `shouldBe` [Just 0, Just 0]
 
     forM_
       [ ("rebate-only open", [-gain], gain, 0)
@@ -636,7 +636,7 @@ insightsDatabaseSpec databaseUrl =
                   conn fixtureChain fixtureRouter fixtureRouter ("insights:vpi:" <> wallet <> ":" <> T.pack (show blockNumber)) wallet activityType
                   Nothing Nothing (Just 1) (Just 100_000_000) (Just 1_000_000_000_000_000_000) Nothing Nothing
                   (hashText $ T.pack (show blockNumber) <> wallet) blockNumber liveHash 0 1
-                  (eventTimestamp blockNumber) (object ["vpiUsdc" .= show (vpi :: Integer)])
+                  (eventTimestamp blockNumber) (object ["vpiAssets" .= show (vpi :: Integer)])
           forM_ (zip [startBlock ..] vpis) $ \(blockNumber, vpi) ->
             insertVpi walletA blockNumber (if blockNumber == startBlock then "Open" else "Close") vpi
           -- Neither baseline rebates nor events beyond the published snapshot
@@ -650,13 +650,13 @@ insightsDatabaseSpec databaseUrl =
           publishAccountSnapshotBatch conn
             [ (snapshot walletA SnapshotLive liveBlock liveHash liveTimestamp (bankroll + accountPnl))
                 { asiEquity = EquitySnapshot True (bankroll + accountPnl) 0 0 }
-            , snapshot walletB SnapshotLive liveBlock liveHash liveTimestamp (bankroll + usdcScale)
+            , snapshot walletB SnapshotLive liveBlock liveHash liveTimestamp (bankroll + assetScale)
             ]
           rows <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
           scored <- requireWallet walletA rows
-          ilrFinalPnlUsdc scored `shouldBe` Just expectedPnl
-          ilrCurrentAccountValueUsdc scored `shouldBe` Just (bankroll + accountPnl)
-          ilrRank scored `shouldBe` Just (if expectedPnl > usdcScale then 1 else 2)
+          ilrFinalPnlAssets scored `shouldBe` Just expectedPnl
+          ilrCurrentAccountValueAssets scored `shouldBe` Just (bankroll + accountPnl)
+          ilrRank scored `shouldBe` Just (if expectedPnl > assetScale then 1 else 2)
           ilrRoiBps scored `shouldBe` Just (expectedPnl * 10_000 `quot` bankroll)
           getCompetitionWallet conn competitionSlug walletA `shouldReturn` Just scored
 
@@ -731,19 +731,19 @@ insightsDatabaseSpec databaseUrl =
           ]
 
         -- September ignores the legacy manual-adjustment mechanism entirely.
-        adjustment <- insertManualAdjustment conn competitionSlug walletA (999 * usdcScale) "fixture" "integration"
+        adjustment <- insertManualAdjustment conn competitionSlug walletA (999 * assetScale) "fixture" "integration"
         adjustment `shouldSatisfy` isJust
         refreshAndCompareIntegrity conn competitionSlug
         initial <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         a <- requireWallet walletA initial
         b <- requireWallet walletB initial
         c <- requireWallet walletC initial
-        ilrFinalPnlUsdc a `shouldBe` Just gain
-        ilrFinalPnlUsdc b `shouldBe` Just gain
-        ilrFinalPnlUsdc c `shouldBe` Just (negate loss)
-        ilrDepositsUsdc a `shouldBe` 0
-        ilrDepositsUsdc b `shouldBe` bankroll
-        ilrManualAdjustmentsUsdc a `shouldBe` 0
+        ilrFinalPnlAssets a `shouldBe` Just gain
+        ilrFinalPnlAssets b `shouldBe` Just gain
+        ilrFinalPnlAssets c `shouldBe` Just (negate loss)
+        ilrDepositsAssets a `shouldBe` 0
+        ilrDepositsAssets b `shouldBe` bankroll
+        ilrManualAdjustmentsAssets a `shouldBe` 0
         ilrFundingIntegrityClear a `shouldBe` True
         ilrFundingIntegrityClear b `shouldBe` True
         ilrRank a `shouldBe` Just 1
@@ -754,7 +754,7 @@ insightsDatabaseSpec databaseUrl =
         -- faucet receipt remains. Receipt-only provenance must fail closed;
         -- replaying the exact canonical transfer restores it.
         void $ execute conn
-          "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ? AND tx_hash = ?"
+          "DELETE FROM perps_asset_transfers WHERE chain_id = ? AND release_router = ? AND tx_hash = ?"
           (fixtureChain, fixtureRouter, hashText "faprefund-c")
         refreshAndCompareIntegrity conn competitionSlug
         afterStaleMint <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
@@ -773,7 +773,7 @@ insightsDatabaseSpec databaseUrl =
 
         -- A same-tx/same-amount piggyback transfer destroys the one-to-one
         -- Deposit pairing and proves dust/substitute capital was used.
-        insertPerpsUsdcTransfer conn fixtureChain fixtureRouter fixtureUsdc walletC fixtureClearinghouse bankroll
+        insertPerpsAssetTransfer conn fixtureChain fixtureRouter fixtureAssets walletC fixtureClearinghouse bankroll
           (hashText "txprefund-c") 91 (hashText "blprefund-c") 0 2 (eventTimestamp 91)
         refreshAndCompareIntegrity conn competitionSlug
         afterPiggyback <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
@@ -781,16 +781,16 @@ insightsDatabaseSpec databaseUrl =
 
         -- Missing and wrong asset provenance must be excluded from displayed
         -- cash flow and must independently block integrity eligibility.
-        insertDeposit conn walletB 104 4 (Just fixtureClearinghouse) Nothing (7 * usdcScale) "missing-asset"
-        insertDeposit conn walletB 105 5 (Just fixtureClearinghouse) (Just wrongAsset) (9 * usdcScale) "wrong-asset"
+        insertDeposit conn walletB 104 4 (Just fixtureClearinghouse) Nothing (7 * assetScale) "missing-asset"
+        insertDeposit conn walletB 105 5 (Just fixtureClearinghouse) (Just wrongAsset) (9 * assetScale) "wrong-asset"
         refreshAndCompareIntegrity conn competitionSlug
         afterMalformed <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         malformed <- requireWallet walletB afterMalformed
-        ilrDepositsUsdc malformed `shouldBe` bankroll
-        ilrFinalPnlUsdc malformed `shouldBe` Just gain
+        ilrDepositsAssets malformed `shouldBe` bankroll
+        ilrFinalPnlAssets malformed `shouldBe` Just gain
         ilrFundingIntegrityClear malformed `shouldBe` False
 
-        -- Moving the claimed mint away and replacing it with unrelated USDC
+        -- Moving the claimed mint away and replacing it with unrelated settlement asset
         -- cannot reuse the faucet entitlement to bless later capital.
         insertTransfer conn walletA attacker bankroll 85 6 "official-out"
         insertTransfer conn attacker walletA bankroll 86 7 "unofficial-in"
@@ -802,7 +802,7 @@ insightsDatabaseSpec databaseUrl =
     it "subtracts verified assistance from PnL without treating it as extra bankroll, including late registration" $
       withInsightsDatabase databaseUrl $ \pool -> withDb pool $ \conn -> do
         seedOfficialAllocation conn walletA 80 90 "prefund-a"
-        insertDeposit conn walletA 105 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 198000 "assisted"
+        insertDeposit conn walletA 105 4 (Just fixtureClearinghouse) (Just fixtureAssets) 198000 "assisted"
         let digest = "0x" <> T.replicate 64 "a"
             grant = CloseAssistanceReservation fixtureRouter walletA ("0x" <> T.replicate 64 "b") ("0x" <> T.replicate 64 "c") fixtureLens 198000
         void $ execute conn
@@ -822,9 +822,9 @@ insightsDatabaseSpec databaseUrl =
         verified <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         let row = requireWalletUnsafe walletA verified
         ilrFundingIntegrityClear row `shouldBe` True
-        ilrDepositsUsdc row `shouldBe` 198000
-        ilrFinalPnlUsdc row `shouldBe` Just gain
-        insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureUsdc) 1 "unrelated"
+        ilrDepositsAssets row `shouldBe` 198000
+        ilrFinalPnlAssets row `shouldBe` Just gain
+        insertDeposit conn walletA 106 4 (Just fixtureClearinghouse) (Just fixtureAssets) 1 "unrelated"
         refreshAndCompareIntegrity conn competitionSlug
         unrelated <- getCompetitionLeaderboard conn competitionSlug Nothing 20 0
         ilrFundingIntegrityClear (requireWalletUnsafe walletA unrelated) `shouldBe` False
@@ -843,7 +843,7 @@ prepareSeptemberRegistrationExtension conn = void $ execute conn
 seedRelease :: Connection -> CompetitionRules -> CompetitionReleaseManifest -> IO ()
 seedRelease conn rules manifest =
   seedCompetition conn rules (crmChainId manifest) (crmOrderRouter manifest)
-    (crmUsdc manifest) (crmMarginClearinghouse manifest) (crmAccountLens manifest) manifest
+    (crmSettlementToken manifest) (crmMarginClearinghouse manifest) (crmAccountLens manifest) manifest
 
 withPendingV123Competition :: Text -> (Connection -> CompetitionRules -> IO a) -> IO a
 withPendingV123Competition databaseUrl action =
@@ -882,12 +882,12 @@ prepareDatabase pool = withDb pool $ \conn -> do
   -- versioned row. Registration metadata is disabled in this disposable clone
   -- so the fixture remains runnable after the real registration deadline.
   ensureInsightsSchema
-    conn july2026Competition fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+    conn july2026Competition fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
   cleanupRows conn
   ensureInsightsSchema
-    conn july2026Competition fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+    conn july2026Competition fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
   ensureInsightsSchema
-    conn testSeptemberRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
+    conn testSeptemberRules fixtureChain fixtureRouter fixtureAssets fixtureClearinghouse fixtureLens fixtureManifest
   setPerpsIndexerState
     conn fixtureChain (indexerName LegacyV1) fixtureRouter 1 cursorBlock (Just cursorHash)
   setPerpsIndexerState
@@ -908,11 +908,11 @@ cleanupRows conn = do
     "DELETE FROM perps_account_activity WHERE chain_id = ? AND release_router = ?"
     (fixtureChain, fixtureRouter)
   void $ execute conn
-    "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ?"
+    "DELETE FROM perps_asset_transfers WHERE chain_id = ? AND release_router = ?"
     (fixtureChain, fixtureRouter)
   void $ execute conn
     "DELETE FROM testnet_faucet_claims WHERE LOWER(token_address)=LOWER(?)"
-    (Only fixtureUsdc)
+    (Only fixtureAssets)
   void $ execute conn
     "DELETE FROM perps_indexer_state WHERE chain_id = ? AND release_router = ?"
     (fixtureChain, fixtureRouter)
@@ -935,10 +935,10 @@ seedOfficialAllocation conn wallet mintBlock depositBlock suffix = do
     "INSERT INTO testnet_faucet_claims\
     \ (address, amount, token_address, tx_hash, mint_block_number, status)\
     \ VALUES (?, ?, ?, ?, ?, 'success')"
-    (wallet, bankroll, fixtureUsdc, faucetTx, mintBlock)
+    (wallet, bankroll, fixtureAssets, faucetTx, mintBlock)
   insertMintTransfer conn wallet mintBlock suffix
   insertDeposit
-    conn wallet depositBlock 1 (Just fixtureClearinghouse) (Just fixtureUsdc) bankroll suffix
+    conn wallet depositBlock 1 (Just fixtureClearinghouse) (Just fixtureAssets) bankroll suffix
 
 -- Frozen pre-change SQL validates exact equivalence for all funding fixtures.
 refreshAndCompareIntegrity :: Connection -> Text -> IO ()
@@ -952,8 +952,8 @@ refreshAndCompareIntegrity conn slug = do
 
 insertMintTransfer :: Connection -> Text -> Integer -> Text -> IO ()
 insertMintTransfer conn wallet mintBlock suffix =
-  insertPerpsUsdcTransfer
-    conn fixtureChain fixtureRouter fixtureUsdc zeroAddress wallet bankroll (hashText $ "fa" <> suffix) mintBlock
+  insertPerpsAssetTransfer
+    conn fixtureChain fixtureRouter fixtureAssets zeroAddress wallet bankroll (hashText $ "fa" <> suffix) mintBlock
     (hashText $ "mint" <> suffix) 0 0 (eventTimestamp mintBlock)
 
 insertDeposit
@@ -973,8 +973,8 @@ insertDeposit conn wallet blockNumber logIndex emitter asset amount suffix =
     case (emitter, asset) of
       (Just emitterAddress, Just assetAddress)
         | T.toLower emitterAddress == T.toLower fixtureClearinghouse
-        , T.toLower assetAddress == T.toLower fixtureUsdc ->
-            insertPerpsUsdcTransfer conn fixtureChain fixtureRouter fixtureUsdc wallet fixtureClearinghouse amount
+        , T.toLower assetAddress == T.toLower fixtureAssets ->
+            insertPerpsAssetTransfer conn fixtureChain fixtureRouter fixtureAssets wallet fixtureClearinghouse amount
               txHash blockNumber blockHash 0 (max 0 $ logIndex - 1) (eventTimestamp blockNumber)
       _ -> pure ()
     insertPerpsActivity
@@ -985,7 +985,7 @@ insertDeposit conn wallet blockNumber logIndex emitter asset amount suffix =
 
 insertTransfer :: Connection -> Text -> Text -> Integer -> Integer -> Integer -> Text -> IO ()
 insertTransfer conn fromAddress toAddress amount blockNumber logIndex suffix =
-  insertPerpsUsdcTransfer conn fixtureChain fixtureRouter fixtureUsdc fromAddress toAddress amount
+  insertPerpsAssetTransfer conn fixtureChain fixtureRouter fixtureAssets fromAddress toAddress amount
     (hashText $ "tx" <> suffix) blockNumber (hashText $ "bl" <> suffix) 0 logIndex (eventTimestamp blockNumber)
 
 insertTrade :: Connection -> Text -> Integer -> Integer -> IO ()
@@ -1062,7 +1062,7 @@ fixtureManifest =
   CompetitionReleaseManifest
     { crmReleaseId = competitionSlug
     , crmChainId = fixtureChain
-    , crmUsdc = fixtureUsdc
+    , crmSettlementToken = fixtureAssets
     , crmOrderRouter = fixtureRouter
     , crmMarginClearinghouse = fixtureClearinghouse
     , crmAccountLens = fixtureLens
@@ -1073,10 +1073,10 @@ fixtureManifest =
     , crmIndexerStartBlock = 1
     }
 
-competitionSlug, fixtureRouter, fixtureUsdc, fixtureClearinghouse, fixtureLens :: Text
+competitionSlug, fixtureRouter, fixtureAssets, fixtureClearinghouse, fixtureLens :: Text
 competitionSlug = crSlug testSeptemberRules
 fixtureRouter = "0xa100000000000000000000000000000000000001"
-fixtureUsdc = "0xa200000000000000000000000000000000000002"
+fixtureAssets = "0xa200000000000000000000000000000000000002"
 fixtureClearinghouse = "0xa300000000000000000000000000000000000003"
 fixtureLens = "0xa400000000000000000000000000000000000004"
 
@@ -1104,11 +1104,11 @@ liveHash = hashText "live"
 finalHash = hashText "final"
 cursorHash = hashText "cursor"
 
-bankroll, gain, loss, usdcScale :: Integer
-usdcScale = 1_000_000
-bankroll = 100_000 * usdcScale
-gain = 5_000 * usdcScale
-loss = 1_000 * usdcScale
+bankroll, gain, loss, assetScale :: Integer
+assetScale = 1_000_000
+bankroll = 100_000 * assetScale
+gain = 5_000 * assetScale
+loss = 1_000 * assetScale
 
 startTimestamp, baselineTimestamp, liveTimestamp, finalTimestamp :: Integer
 startTimestamp = round $ utcTimeToPOSIXSeconds $ crStartAt testSeptemberRules
@@ -1142,7 +1142,7 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
     void $ execute_ conn "ALTER TABLE insights_account_snapshots ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey DEFERRABLE INITIALLY IMMEDIATE"
     indexRows <- query_ conn "SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname IN ('idx_insights_transfers_normalized_inbound','idx_insights_transfers_normalized_outbound','idx_insights_transfers_normalized_transaction') AND i.indisvalid" :: IO [Only Int]
     unless (indexRows == [Only 3]) $ do
-      indexes <- readFile "config/migrations/insights-integrity-indexes-v1.sql"
+      indexes <- readFile "config/migrations/insights-integrity-indexes-v2.sql"
       forM_ (filter (not . all isSpace) $ splitSqlStatements indexes) $ \statement -> void $ execute_ conn (fromString statement)
     unless reuse $ do
       insertParticipant conn walletA "benchmark-template"
@@ -1151,25 +1151,25 @@ runIntegrityBenchmark databaseUrl = bracket (newDbPool databaseUrl) destroyDbPoo
       publishAccountSnapshotBatch conn [snapshot walletA SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll]
       void $ execute_ conn "CREATE TEMP TABLE benchmark_wallets AS SELECT i,'0x'||lpad(to_hex(i),40,'0') AS wallet FROM generate_series(1,2700) i"
       void $ execute conn "INSERT INTO insights_competition_participants (competition_slug,wallet,trader_reference) SELECT ?,wallet,'benchmark-'||i FROM benchmark_wallets" (Only competitionSlug)
-      void $ execute conn "INSERT INTO testnet_faucet_claims SELECT r.* FROM testnet_faucet_claims t CROSS JOIN benchmark_wallets p CROSS JOIN LATERAL jsonb_populate_record(NULL::testnet_faucet_claims,to_jsonb(t)||jsonb_build_object('address',p.wallet,'tx_hash','0x'||lpad(to_hex(p.i*100),64,'0'))) r WHERE t.address=? AND t.token_address=?" (walletA,fixtureUsdc)
-      void $ execute conn "INSERT INTO perps_usdc_transfers SELECT r.* FROM (SELECT * FROM perps_usdc_transfers WHERE release_router=? ORDER BY block_number LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(0,33) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_usdc_transfers,to_jsonb(t)||jsonb_build_object('tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'from_address',CASE WHEN j=0 THEN ? ELSE p.wallet END,'to_address',CASE WHEN j=0 THEN p.wallet ELSE ? END,'block_number',CASE WHEN j=0 THEN 80 ELSE 90+j END,'log_index',0,'amount',CASE WHEN j<2 THEN ? ELSE 1 END)) r" (fixtureRouter,zeroAddress,fixtureClearinghouse,bankroll)
-      void $ execute conn "INSERT INTO perps_account_activity SELECT r.* FROM (SELECT * FROM perps_account_activity WHERE release_router=? LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(1,60) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_account_activity,to_jsonb(t)||jsonb_build_object('id',nextval('perps_account_activity_id_seq'),'event_key','benchmark-'||p.i||'-'||j,'account',p.wallet,'activity_type',CASE WHEN j%3=0 THEN 'Open' WHEN j%3=1 THEN 'Deposit' ELSE 'Withdraw' END,'tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'block_number',90+j,'log_index',1,'amount_usdc',CASE WHEN j=1 THEN ? ELSE 1 END,'size_delta',1)) r" (fixtureRouter,bankroll)
+      void $ execute conn "INSERT INTO testnet_faucet_claims SELECT r.* FROM testnet_faucet_claims t CROSS JOIN benchmark_wallets p CROSS JOIN LATERAL jsonb_populate_record(NULL::testnet_faucet_claims,to_jsonb(t)||jsonb_build_object('address',p.wallet,'tx_hash','0x'||lpad(to_hex(p.i*100),64,'0'))) r WHERE t.address=? AND t.token_address=?" (walletA,fixtureAssets)
+      void $ execute conn "INSERT INTO perps_asset_transfers SELECT r.* FROM (SELECT * FROM perps_asset_transfers WHERE release_router=? ORDER BY block_number LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(0,33) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_asset_transfers,to_jsonb(t)||jsonb_build_object('tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'from_address',CASE WHEN j=0 THEN ? ELSE p.wallet END,'to_address',CASE WHEN j=0 THEN p.wallet ELSE ? END,'block_number',CASE WHEN j=0 THEN 80 ELSE 90+j END,'log_index',0,'amount',CASE WHEN j<2 THEN ? ELSE 1 END)) r" (fixtureRouter,zeroAddress,fixtureClearinghouse,bankroll)
+      void $ execute conn "INSERT INTO perps_account_activity SELECT r.* FROM (SELECT * FROM perps_account_activity WHERE release_router=? LIMIT 1) t CROSS JOIN benchmark_wallets p CROSS JOIN generate_series(1,60) j CROSS JOIN LATERAL jsonb_populate_record(NULL::perps_account_activity,to_jsonb(t)||jsonb_build_object('id',nextval('perps_account_activity_id_seq'),'event_key','benchmark-'||p.i||'-'||j,'account',p.wallet,'activity_type',CASE WHEN j%3=0 THEN 'Open' WHEN j%3=1 THEN 'Deposit' ELSE 'Withdraw' END,'tx_hash','0x'||lpad(to_hex(p.i*100+j),64,'0'),'block_number',90+j,'log_index',1,'amount_assets',CASE WHEN j=1 THEN ? ELSE 1 END,'size_delta',1)) r" (fixtureRouter,bankroll)
       wallets <- query_ conn "SELECT wallet FROM benchmark_wallets ORDER BY wallet" :: IO [Only Text]
       registrationWallet <- RegistrationBenchmark.prepareRegistrationBenchmark conn competitionSlug (crRulesVersion testSeptemberRules)
       let allWallets = walletA : registrationWallet : [w | Only w <- wallets]
       publishAccountSnapshotBatch conn [snapshot w SnapshotStart baselineBlock baselineHash baselineTimestamp bankroll | w <- allWallets]
       -- Retained history has the production index shape and many batches per wallet.
-      void $ execute conn "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data) SELECT s.competition_slug,s.wallet,'live',s.chain_id,s.release_router,1000+j,s.block_hash,s.timestamp,s.has_open_position,s.signed_net_equity_usdc,s.terminal_reachable_usdc,s.trader_claims_usdc,s.raw_data FROM insights_account_snapshots s CROSS JOIN generate_series(1,750) j WHERE s.competition_slug=? AND s.snapshot_kind='start'" (Only competitionSlug)
+      void $ execute conn "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,has_open_position,signed_net_equity_assets,terminal_reachable_assets,trader_claims_assets,raw_data) SELECT s.competition_slug,s.wallet,'live',s.chain_id,s.release_router,1000+j,s.block_hash,s.timestamp,s.has_open_position,s.signed_net_equity_assets,s.terminal_reachable_assets,s.trader_claims_assets,s.raw_data FROM insights_account_snapshots s CROSS JOIN generate_series(1,750) j WHERE s.competition_slug=? AND s.snapshot_kind='start'" (Only competitionSlug)
     -- Match canonical transfer provenance for the generated deposits/withdrawals,
     -- so the benchmark exercises allocation and funding windows for every wallet.
-    void $ execute conn "UPDATE perps_usdc_transfers SET block_hash=?,from_address=CASE WHEN (block_number-90)%3=2 THEN ? ELSE CASE WHEN from_address=? THEN to_address ELSE from_address END END,to_address=CASE WHEN (block_number-90)%3=2 THEN CASE WHEN from_address=? THEN to_address ELSE from_address END ELSE ? END WHERE release_router=? AND block_number BETWEEN 91 AND 123" (hashText "blbenchmark",fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureRouter)
+    void $ execute conn "UPDATE perps_asset_transfers SET block_hash=?,from_address=CASE WHEN (block_number-90)%3=2 THEN ? ELSE CASE WHEN from_address=? THEN to_address ELSE from_address END END,to_address=CASE WHEN (block_number-90)%3=2 THEN CASE WHEN from_address=? THEN to_address ELSE from_address END ELSE ? END WHERE release_router=? AND block_number BETWEEN 91 AND 123" (hashText "blbenchmark",fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureClearinghouse,fixtureRouter)
     wallets <- query conn "SELECT wallet FROM insights_competition_participants WHERE competition_slug=? ORDER BY wallet" (Only competitionSlug) :: IO [Only Text]
     let allWallets = [w | Only w <- wallets]
     void $ execute conn "DELETE FROM insights_registration_applications WHERE competition_slug=? AND status='in_progress'" (Only competitionSlug)
     void $ execute conn "UPDATE insights_competitions SET registration_close_timestamp=EXTRACT(EPOCH FROM NOW())::bigint+3600 WHERE slug=?" (Only competitionSlug)
     void $ execute conn "UPDATE insights_registration_sessions s SET expires_at=NOW()+INTERVAL '1 hour' FROM insights_registration_applications a WHERE a.registration_id=s.application_id AND a.competition_slug=?" (Only competitionSlug)
     void $ execute conn "UPDATE insights_competition_participants SET integrity_flags='[\"benchmark_pending\"]' WHERE competition_slug=?" (Only competitionSlug)
-    void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; SET jit=off; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_usdc_transfers; ANALYZE testnet_faucet_claims"
+    void $ execute_ conn "SET lock_timeout=0; SET statement_timeout='10min'; SET jit=off; ANALYZE insights_account_snapshots; ANALYZE insights_competition_participants; ANALYZE perps_account_activity; ANALYZE perps_asset_transfers; ANALYZE testnet_faucet_claims"
     plan <- query conn ("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " <> integrityCalculationSql) (Only competitionSlug) :: IO [Only Value]
     LBS.writeFile "/tmp/insights-integrity-benchmark-plan.json" (encode [v | Only v <- plan])
     previousBlocks <- query conn "SELECT COALESCE(MAX(block_number),?) FROM insights_snapshot_batches WHERE competition_slug=? AND snapshot_kind='live'" (liveBlock,competitionSlug) :: IO [Only Integer]

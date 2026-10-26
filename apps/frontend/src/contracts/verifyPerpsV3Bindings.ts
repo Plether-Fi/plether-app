@@ -1,6 +1,4 @@
 import { isAddress, isAddressEqual, keccak256, stringToHex, type Address, type Hex, type PublicClient } from 'viem'
-import release from '../../../../config/perps/arbitrum-sepolia-v3.json'
-import closePreview from '../../../../config/perps/close-preview/arbitrum-sepolia.json'
 import {
   PERPS_CFD_ENGINE_ABI,
   PERPS_ORDER_LIFECYCLE_BOOK_ABI,
@@ -8,10 +6,10 @@ import {
   PERPS_POSITION_PROTECTION_BOOK_ABI,
   PERPS_PUBLIC_LENS_ABI,
 } from './abis'
-import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE as release, PERPS_RELEASE_IS_DEPLOYED } from './perpsAddresses'
 import type { PerpsAaDeploymentManifest } from '../perps-aa/manifest'
 
-export const ORDER_V3_INTENT_TYPEHASH = keccak256(stringToHex('PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyUsdc,uint256 maxExecutionNotionalUsdc,uint256 maxGrossAccountDebitUsdc,uint256 maxActionChargeUsdc,uint256 maxExplicitFeesUsdc,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceUsdc,uint256 minPostPositionEquityUsdc,uint32 maxPostLeverageBps)'))
+export const ORDER_V3_INTENT_TYPEHASH = keccak256(stringToHex('PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyAssets,uint256 maxExecutionNotionalAssets,uint256 maxGrossAccountDebitAssets,uint256 maxActionChargeAssets,uint256 maxExplicitFeesAssets,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceAssets,uint256 minPostPositionEquityAssets,uint32 maxPostLeverageBps)'))
 
 function requireSameAddress(
   label: string,
@@ -31,17 +29,13 @@ export async function verifyClosePreviewDeployment(
   manifest: PerpsAaDeploymentManifest,
   blockNumber: bigint,
 ): Promise<Address> {
-  const configuration: { contracts?: { cfdClosePreview?: { address: string; runtimeCodeHash: string } } } = closePreview
-  const pin = configuration.contracts?.cfdClosePreview
-  if (!pin || !isAddress(pin.address) || !/^0x[0-9a-f]{64}$/i.test(pin.runtimeCodeHash)) {
-    throw new Error('Close review is unavailable: preview deployment configuration is invalid.')
-  }
-  if (manifest.chainId !== closePreview.network.chainId || await client.getChainId() !== closePreview.network.chainId) {
-    throw new Error('Close review requires Arbitrum Sepolia.')
-  }
-  requireSameAddress('Close preview Engine', manifest.cfdEngine, closePreview.existingProtocol.engine as Address)
-  requireSameAddress('Close preview Router', manifest.orderRouter, closePreview.existingProtocol.router as Address)
-  requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, closePreview.existingProtocol.policyEvaluator as Address)
+  if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps release is prepared and unavailable.')
+  const pin = release.contracts.cfdClosePreview
+  if (!pin.address || !isAddress(pin.address) || !pin.runtimeCodeHash) throw new Error('Close review deployment pins are missing.')
+  if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('Close review requires Arbitrum Sepolia.')
+  requireSameAddress('Close preview Engine', manifest.cfdEngine, PERPS_ARBITRUM_SEPOLIA.cfdEngine)
+  requireSameAddress('Close preview Router', manifest.orderRouter, PERPS_ARBITRUM_SEPOLIA.orderRouter)
+  requireSameAddress('Close preview execution evaluator', manifest.policyEvaluator, PERPS_ARBITRUM_SEPOLIA.policyEvaluator)
   if (isAddressEqual(pin.address, manifest.policyEvaluator)) {
     throw new Error('Close review is unavailable: preview aliases the execution evaluator.')
   }
@@ -53,12 +47,14 @@ export async function verifyClosePreviewDeployment(
 }
 
 export async function verifyProtectionDeployment(client: PublicClient, manifest: PerpsAaDeploymentManifest, blockNumber?: bigint): Promise<void> {
+  if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps release is prepared and unavailable.')
   if (manifest.chainId !== release.network.chainId || await client.getChainId() !== release.network.chainId) throw new Error('TP/SL requires the reviewed Arbitrum Sepolia release')
   for (const [key, address] of [['positionProtectionBook', manifest.positionProtectionBook], ['orderRouter', manifest.orderRouter], ['orderLifecycleBook', manifest.orderLifecycleBook]] as const) {
     const contract = release.contracts[key]
-    requireSameAddress(`TP/SL ${key}`, address, contract.address as Address)
+    if (!contract.address || !contract.runtimeCodeHash) throw new Error('Protection deployment pins are missing.')
+    requireSameAddress(`TP/SL ${key}`, address, contract.address)
     const code = await client.getCode({ address, blockNumber })
-    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version}`)
+    if (!code || keccak256(code) !== contract.runtimeCodeHash.toLowerCase()) throw new Error(`TP/SL ${key} bytecode does not match ${release.release.version ?? 'the reviewed release'}`)
   }
 }
 
@@ -74,6 +70,7 @@ export async function verifyPerpsV3DeploymentBindings(
   blockNumber: bigint
   block: { number: bigint; hash: Hex; timestamp: bigint }
 }> {
+  if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps release is prepared and unavailable.')
   const block = await client.getBlock({ blockTag: 'latest' })
   const blockNumber = block.number
   const [

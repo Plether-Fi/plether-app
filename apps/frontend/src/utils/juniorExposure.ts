@@ -1,10 +1,10 @@
-import { oraclePriceToDisplayDxyPrice, sizeDeltaToNotionalUsdc } from './perps'
+import { oraclePriceToDisplayDxyPrice, sizeDeltaToNotionalAssets } from './perps'
 
 export interface JuniorExposureInputs {
-  totalAssetsUsdc?: bigint
-  freeUsdc?: bigint
-  juniorPrincipalUsdc?: bigint
-  seniorPrincipalUsdc?: bigint
+  totalAssets?: bigint
+  freeAssets?: bigint
+  juniorPrincipalAssets?: bigint
+  seniorPrincipalAssets?: bigint
   seniorRateBps?: bigint
   longOpenInterest?: bigint
   shortOpenInterest?: bigint
@@ -18,20 +18,20 @@ function ratio(numerator: bigint | undefined, denominator: bigint | undefined) {
 }
 
 export function calculateJuniorExposure(pool: JuniorExposureInputs) {
-  const junior = pool.juniorPrincipalUsdc
-  const senior = pool.seniorPrincipalUsdc
+  const junior = pool.juniorPrincipalAssets
+  const senior = pool.seniorPrincipalAssets
   const capital = junior === undefined || senior === undefined ? undefined : junior + senior
   const displayPrice = oraclePriceToDisplayDxyPrice(pool.markPrice)
   const usablePrice = displayPrice !== undefined && displayPrice > 0n ? displayPrice : undefined
-  const long = sizeDeltaToNotionalUsdc(pool.longOpenInterest, usablePrice)
-  const short = sizeDeltaToNotionalUsdc(pool.shortOpenInterest, usablePrice)
+  const long = sizeDeltaToNotionalAssets(pool.longOpenInterest, usablePrice)
+  const short = sizeDeltaToNotionalAssets(pool.shortOpenInterest, usablePrice)
   const netPositionSize = pool.longOpenInterest === undefined || pool.shortOpenInterest === undefined
     ? undefined : pool.longOpenInterest - pool.shortOpenInterest
   const net = long === undefined || short === undefined ? undefined : long - short
   const gross = long === undefined || short === undefined ? undefined : long + short
-  const unavailableCash = pool.totalAssetsUsdc === undefined || pool.freeUsdc === undefined
+  const unavailableCash = pool.totalAssets === undefined || pool.freeAssets === undefined
     ? undefined
-    : pool.totalAssetsUsdc > pool.freeUsdc ? pool.totalAssetsUsdc - pool.freeUsdc : 0n
+    : pool.totalAssets > pool.freeAssets ? pool.totalAssets - pool.freeAssets : 0n
   const seniorToJunior = ratio(senior, junior)
 
   return {
@@ -41,7 +41,7 @@ export function calculateJuniorExposure(pool: JuniorExposureInputs) {
     grossExposureMultiple: ratio(gross, capital),
     // A +1% displayed dollar-index move changes pool PnL by -1% of net exposure.
     juniorLossPercentForOnePercentRise: ratio(net, junior),
-    unavailableCashShare: ratio(unavailableCash, pool.totalAssetsUsdc),
+    unavailableCashShare: ratio(unavailableCash, pool.totalAssets),
     couponDragPercent: seniorToJunior === undefined || pool.seniorRateBps === undefined
       ? undefined : seniorToJunior * Number(pool.seniorRateBps) / 100,
   }

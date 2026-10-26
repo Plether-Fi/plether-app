@@ -1,5 +1,6 @@
 module Plether.Api
   ( app
+  , perpsReleaseMiddleware
   , handleBasketCurrentCandleAt
   ) where
 
@@ -25,7 +26,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Header (hCacheControl, hPragma)
 import Network.HTTP.Types.Status (status200, status400, status403, status404, status426, status429, status500, status503)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware, pathInfo, queryString, requestHeaders)
+import Network.Wai (Middleware, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -42,6 +43,7 @@ import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import qualified Plether.Perps.Manifest as Manifest
 import Plether.Perps.Release
   ( perpsV2CalldataPolicy
   , perpsV2DeploymentBlock
@@ -162,6 +164,18 @@ import Web.Scotty
   , status
   )
 
+-- | Inactive pins must not reach handlers, RPC, database writes, or sponsorship.
+-- Spot protocol/user/quote/health endpoints remain available.
+perpsReleaseMiddleware :: Bool -> Middleware
+perpsReleaseMiddleware deployed application req respond
+  | not deployed && isPerpsPath (pathInfo req) =
+      respond $ responseLBS status503 [("Content-Type", "application/json"), ("Cache-Control", "no-store")]
+        "{\"error\":{\"code\":\"PERPS_RELEASE_NOT_DEPLOYED\",\"message\":\"Perps release is prepared; deployment is required\"}}"
+  | otherwise = application req respond
+ where
+  isPerpsPath ("api" : section : _) = section `elem` ["perps", "aa", "testnet", "insights", "divisions", "readiness"]
+  isPerpsPath _ = False
+
 data TestnetFaucetRequest = TestnetFaucetRequest (Maybe Text) Bool
 
 instance FromJSON TestnetFaucetRequest where
@@ -176,6 +190,7 @@ instance FromJSON TestnetFaucetRequest where
 
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> FaucetGuardState -> NativeGatewayState -> Maybe DiscordConfig -> ScottyM ()
 app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState nativeGatewayState discordConfig = do
+  middleware $ perpsReleaseMiddleware Manifest.releaseIsDeployed
   get "/api/readiness" $ do
     supplied <- fmap LT.toStrict <$> header "X-Plether-AA-Proxy-Token"
     setHeader "Cache-Control" "no-store"
@@ -213,7 +228,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
       _ -> status status403 >> json (Aeson.object ["error" .= ("Forbidden" :: Text)])
   middleware $ corsMiddleware cfg
 
-  case mPool of
+  case if Manifest.releaseIsDeployed then mPool else Nothing of
     Just pool -> do
       registerInsightsRegistrationRoutes pool perpsClient cfg manager
       registerDivisionsRegistrationRoutes pool perpsClient cfg manager discordConfig
@@ -245,7 +260,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
         [ "manifestVersion" .= perpsV2ManifestVersion
         , "chainId" .= cfgPerpsChainId cfg
         , "deploymentBlock" .= perpsV2DeploymentBlock
-        , "usdc" .= cfgPerpsUsdc cfg
+        , "settlementToken" .= cfgPerpsSettlementToken cfg
         , "orderRouter" .= cfgPerpsOrderRouter cfg
         , "orderInterfaceVersion" .= (3 :: Int)
         , "orderLifecycleBook" .= cfgPerpsOrderLifecycleBook cfg

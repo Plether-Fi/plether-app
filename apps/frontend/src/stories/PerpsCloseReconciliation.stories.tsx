@@ -12,11 +12,11 @@ const meta = {
   args: {
     reconciliation: derivePerpsCloseReconciliation({
       ...closeSettlementAdjustmentReceipt,
-      totalPositionVpiUsdc: '148190000',
-      positionLifetimeNetResultUsdc: '-8000000000',
-      positionLifetimeTradesResultUsdc: '-7990000000',
-      positionLifetimeAccountAdjustmentUsdc: '-10000000',
-    }, { preExecutionPositionMarginUsdc: 5_000_000_000n })!,
+      totalPositionVpiAssets: '148190000',
+      positionLifetimeNetResultAssets: '-8000000000',
+      positionLifetimeTradesResultAssets: '-7990000000',
+      positionLifetimeAccountAdjustmentAssets: '-10000000',
+    }, { preExecutionPositionMarginAssets: 5_000_000_000n })!,
   },
 } satisfies Meta<typeof PerpsCloseReconciliationDisclosure>
 
@@ -35,7 +35,7 @@ export const MissingPositionHistory: Story = {
 export const PartialClose: Story = {
   args: {
     reconciliation: derivePerpsCloseReconciliation(closeOrder14Receipt, {
-      preExecutionPositionMarginUsdc: 4_500_000_000n,
+      preExecutionPositionMarginAssets: 4_500_000_000n,
     })!,
   },
 }

@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket_, displayException, try)
@@ -184,6 +186,7 @@ defaultOptions action =
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   args <- getArgs
   case parseAdminOptions args of
     Left err -> do

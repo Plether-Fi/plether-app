@@ -20,7 +20,7 @@ function runtime() {
 function operation() {
   return { chainId: 421614, ownerAddress: owner, accountAddress: account, userOperationHash: hash,
     sponsorshipAuthority: { version: 1, paymasterAddress: paymaster, validUntil: '1' },
-    orderRequestV3: { closeAssistance: { amountUsdc: '198000', lens: account, lensCodeHash: hash, paymasterAddress: paymaster } },
+    orderRequestV3: { closeAssistance: { amountAssets: '198000', lens: account, lensCodeHash: hash, paymasterAddress: paymaster } },
   } as SponsoredOperation
 }
 describe('sponsored close recovery routing', () => {

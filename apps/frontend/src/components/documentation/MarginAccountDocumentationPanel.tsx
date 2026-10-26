@@ -17,7 +17,7 @@ interface MarginAccountDocumentationPanelProps {
   view: MarginAccountDocumentationView
 }
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const OWNER_WALLET = '0x9B2F4e0E78E36D97f91c80D5B1aED422d3C2e741'
 const TRADING_ACCOUNT = '0x62A9c44fAbC68B6dE62059E827cE972bD09E6c18'
 
@@ -26,11 +26,11 @@ const pendingOrder = {
   side: 0,
   direction: 'long',
   sizeDelta: 1_200n * 10n ** 18n,
-  marginDeltaUsdc: 1_200n * USDC,
+  marginDeltaAssets: 1_200n * ASSETS,
   acceptablePrice: 102_400_000n,
   isReduceOnly: false,
   status: 1,
-  estimatedNotionalUsdc: 5_900n * USDC,
+  estimatedNotionalAssets: 5_900n * ASSETS,
   commitTime: BigInt(Math.floor(Date.now() / 1_000) - 42),
   expiryTime: BigInt(Math.floor(Date.now() / 1_000) + 2_958),
 } satisfies PerpsPendingOrder
@@ -440,10 +440,10 @@ function TraderClaim() {
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
       <PerpsClaimPanel
-        claimUsdc="800.00"
+        claimAssets="800.00"
         status="available"
         tradingAccountAddress={TRADING_ACCOUNT}
-        marginAccountUsdc="2 450.00"
+        marginAccountAssets="2 450.00"
       />
 
       <section className="border border-brand-border/30 bg-surface-panel">

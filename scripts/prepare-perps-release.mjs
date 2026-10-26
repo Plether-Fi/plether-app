@@ -13,7 +13,7 @@ const requireAddress = (value, label) => requireValue(typeof value === 'string' 
 const requireHash = (value, label) => requireValue(typeof value === 'string' && HASH.test(value) && nonzero(value), `${label} must be a nonzero runtime hash`)
 
 export const terraformBindings = {
-  perps_usdc: 'settlementToken', // Existing Terraform/API key; not a token symbol.
+  perps_settlement_token: 'settlementToken',
   perps_order_router: 'orderRouter',
   perps_order_lifecycle_book: 'orderLifecycleBook',
   perps_cfd_engine: 'cfdEngine',
@@ -31,7 +31,7 @@ export const terraformBindings = {
   vault_history_junior_vault_address: 'juniorVault',
 }
 const aaBindings = {
-  usdc: 'settlementToken', marginClearinghouse: 'marginClearinghouse',
+  settlementToken: 'settlementToken', marginClearinghouse: 'marginClearinghouse',
   cfdEngine: 'cfdEngine', orderRouter: 'orderRouter', orderLifecycleBook: 'orderLifecycleBook',
   policyEvaluator: 'cfdOrderPolicyEvaluator', positionProtectionBook: 'positionProtectionBook',
 }
@@ -40,12 +40,12 @@ const otherContracts = ['perpsPublicLens', 'settlementMonitorLensSidecar', 'orde
   'orderRouterExecutionSidecar', 'orderRecoverySidecar', 'orderRouterLiquidationBatchSidecar', 'emergencyPauseCoordinator']
 
 export function settlementContract(manifest) {
-  if (manifest.schemaVersion === 4 || Object.hasOwn(manifest.contracts ?? {}, 'settlementToken')) return manifest.contracts?.settlementToken
-  return manifest.contracts?.mockUsdc
+  requireValue(manifest?.schemaVersion === 4, 'Canonical Core manifest schema 4 is required')
+  return manifest.contracts?.settlementToken
 }
 
 export function validateCoreRelease(manifest) {
-  requireValue([1, 2, 3, 4].includes(manifest?.schemaVersion), 'Unsupported Core manifest schema')
+  requireValue(manifest?.schemaVersion === 4, 'Canonical Core manifest schema 4 is required')
   requireValue(manifest.network?.chainId === 421614, 'Expected Arbitrum Sepolia chain 421614')
   requireValue(['deployed', 'seeded', 'active'].includes(manifest.release?.phase), 'Prepared manifests cannot become app release candidates; use verified deployed evidence')
   requireValue(Number.isSafeInteger(manifest.release.deploymentBlock) && manifest.release.deploymentBlock > 0, 'Missing deployment block')
@@ -53,17 +53,13 @@ export function validateCoreRelease(manifest) {
   requireValue(/^[0-9a-f]{40}$/i.test(manifest.release.sourceCommit ?? ''), 'Missing immutable Core source commit')
   requireValue(manifest.verification?.deployedPhase?.passed === true, 'Core deployed-phase verification must pass')
   requireAddress(manifest.release.pyth, 'release.pyth')
-  if (manifest.schemaVersion === 4) {
-    requireValue(!Object.hasOwn(manifest.contracts ?? {}, 'mockUsdc'), 'Schema 4 must use only contracts.settlementToken')
-  } else {
-    requireValue(!Object.hasOwn(manifest.contracts ?? {}, 'settlementToken') && !Object.hasOwn(manifest, 'settlementToken'),
-      'Historical manifests must retain mockUsdc identity without settlement token relabeling')
-  }
   for (const [name, contract] of Object.entries(manifest.contracts ?? {})) {
     requireAddress(contract?.address, `${name}.address`)
     requireHash(contract?.runtimeCodeHash, `${name}.runtimeCodeHash`)
   }
-  const contracts = { ...manifest.contracts, settlementToken: settlementContract(manifest) }
+  const contracts = manifest.contracts
+  const expected = new Set([...Object.values(terraformBindings), ...Object.values(aaBindings), ...otherContracts])
+  requireValue(Object.keys(contracts).length === expected.size, 'Unexpected canonical contract graph')
   for (const name of new Set([...Object.values(terraformBindings), ...Object.values(aaBindings), ...otherContracts])) {
     requireAddress(contracts[name]?.address, `${name}.address`)
     requireHash(contracts[name]?.runtimeCodeHash, `${name}.runtimeCodeHash`)
@@ -115,9 +111,9 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
       'preparationRpcVersion', 'smartAccountMode', 'smartAccountVersion', 'smartAccountIndex', 'smartAccountFactory']
       .map(key => [key, aaProfile[key]])),
     ...Object.fromEntries(Object.entries(aaBindings).map(([key, name]) => [key, contracts[name].address])),
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
     userOperationExplorerUrlTemplate: 'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
     transactionExplorerUrlTemplate: 'https://arbitrum-sepolia.blockscout.com/tx/{transactionHash}',
     testnetFaucet: null,
@@ -131,7 +127,7 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
   }
   const backendEnv = Object.fromEntries(Object.entries(terraform).map(([key, value]) => [key.toUpperCase(), value]))
   return {
-    'arbitrum-sepolia-v3.json': appRelease,
+    'mock-usdg-prepared.json': appRelease,
     'perps-aa-manifest.json': aaManifest,
     'perps-core.tfvars.json': terraform,
     'perps-backend.env.json': backendEnv,
@@ -141,7 +137,7 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
       settlementToken: { address: contracts.settlementToken.address, runtimeCodeHash: contracts.settlementToken.runtimeCodeHash },
       requiredFollowups: [
         'Review and publish the complete new Core deployment and ABI bundle; regenerate protection-worker ABI from that bundle.',
-        'Review backend/frontend deployment workflow pins and Terraform deployment_target.tf together with the candidate; retain existing active pins until activation is authorized.',
+        'Review backend/frontend deployment workflow pins and Terraform deployment_target.tf together with the candidate; activate only after the new release pins and evidence have been reviewed.',
         'Review the integrated cfdClosePreview contract and close-assistance bindings against the new release; do not reuse old deployment bindings.',
         'Configure native AA safety inputs, sponsor/paymaster policy, RPC and worker signers for the new deployment. Sponsorship stays disabled in this candidate.',
         'Use a fresh indexer deployment boundary and verify history/competition release isolation before activation.',

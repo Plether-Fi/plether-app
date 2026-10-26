@@ -16,14 +16,14 @@ const wallet = createWalletClient({ chain: arbitrumSepolia, transport: http('htt
 const rpc = (method, params = []) => client.request({ method, params })
 assert.match(await rpc('web3_clientVersion'), /anvil/i)
 assert.equal(await client.getChainId(), 421614)
-const release = JSON.parse(fs.readFileSync('../../config/perps/arbitrum-sepolia-v3.json', 'utf8'))
+const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/mock-usdg-prepared.json', 'utf8'))
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 assert.ok(bundle, 'LOCAL_PERPS_ABI_BUNDLE is required')
 assert.equal(createHash('sha256').update(fs.readFileSync(bundle)).digest('hex'), release.release.bundleSha256)
 const releaseContracts = { ...release.contracts, settlementToken: settlementContract(release) }
 const contracts = Object.fromEntries(Object.entries({ cfdEngine: 'CfdEngine', cfdEngineLens: 'CfdEngineLens',
   cfdEngineAccountLens: 'CfdEngineAccountLens', marginClearinghouse: 'MarginClearinghouse',
-  settlementToken: releaseContracts.settlementToken.artifact?.split(':').at(-1) ?? 'MockUSDC', housePool: 'ArbitrumSepoliaReleaseHousePool', orderRouter: 'ArbitrumSepoliaReleaseRouter',
+  settlementToken: releaseContracts.settlementToken.artifact?.split(':').at(-1) ?? 'MockUSDG', housePool: 'ArbitrumSepoliaReleaseHousePool', orderRouter: 'ArbitrumSepoliaReleaseRouter',
 }).map(([key, name]) => [key, { address: releaseContracts[key].address, abi: JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' })) }]))
 for (const [key, contract] of Object.entries(contracts)) assert.equal(keccak256(await client.getCode(contract)), releaseContracts[key].runtimeCodeHash, key)
 const trader = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
@@ -44,15 +44,15 @@ async function action(path, body) {
 }
 async function snapshot() {
   const blockNumber = await client.getBlockNumber()
-  const [position, entryCostUsdcAtoms, ledger, params, fad, capPrice, mark] = await Promise.all([
-    read('cfdEngine', 'positions', [trader], blockNumber), read('cfdEngine', 'positionEntryCostUsdcAtoms', [trader], blockNumber),
+  const [position, entryCostAssetAtoms, ledger, params, fad, capPrice, mark] = await Promise.all([
+    read('cfdEngine', 'positions', [trader], blockNumber), read('cfdEngine', 'positionEntryCostAssetAtoms', [trader], blockNumber),
     read('cfdEngineAccountLens', 'getAccountLedgerSnapshot', [trader], blockNumber), read('cfdEngine', 'riskParams', [], blockNumber),
     read('cfdEngine', 'isFadWindow', [], blockNumber), read('cfdEngine', 'CAP_PRICE', [], blockNumber), read('cfdEngine', 'lastMarkPrice', [], blockNumber),
   ])
-  const input = { size: position[0], side: Number(position[4]), positionMarginUsdc: ledger.netEquityUsdc - ledger.unrealizedPnlUsdc - ledger.traderClaimBalanceUsdc, entryCostUsdcAtoms,
-    traderClaimBalanceUsdc: ledger.traderClaimBalanceUsdc, capPrice, maintenanceMarginBps: params[fad ? 4 : 2] }
+  const input = { size: position[0], side: Number(position[4]), positionMarginAssets: ledger.netEquityAssets - ledger.unrealizedPnlAssets - ledger.traderClaimBalanceAssets, entryCostAssetAtoms,
+    traderClaimBalanceAssets: ledger.traderClaimBalanceAssets, capPrice, maintenanceMarginBps: params[fad ? 4 : 2] }
   const threshold = findLiquidationThreshold(input)
-  assert.equal(calculatePriceRisk(input, mark).equityUsdc, ledger.netEquityUsdc, 'signed position equity')
+  assert.equal(calculatePriceRisk(input, mark).equityAssets, ledger.netEquityAssets, 'signed position equity')
   return { input, ledger, threshold, blockNumber, entryPrice: position[2] }
 }
 async function checkBoundary() {
@@ -76,7 +76,7 @@ try {
     assert.equal(preview.valid, true)
     await action('execute', {})
     const initial = await checkBoundary()
-    assert.equal(initial.input.positionMarginUsdc, preview.postMarginUsdc, 'equivalent execution margin')
+    assert.equal(initial.input.positionMarginAssets, preview.postMarginAssets, 'equivalent execution margin')
     assert.equal(initial.entryPrice, preview.postEntryPrice, 'equivalent execution price')
     assert.equal(initial.threshold.price, preview.liquidationPrice, 'open preview matches the resulting position')
     await write('settlementToken', 'mint', [trader, parseUnits('100', 6)], release.release.owner)
@@ -85,9 +85,9 @@ try {
     assert.deepEqual((await checkBoundary()).threshold, initial.threshold, 'free deposits do not move price threshold')
     await write('cfdEngine', 'addMargin', [trader, parseUnits('100', 6)])
     const added = await checkBoundary()
-    assert.equal(added.input.positionMarginUsdc, initial.input.positionMarginUsdc + parseUnits('100', 6))
+    assert.equal(added.input.positionMarginAssets, initial.input.positionMarginAssets + parseUnits('100', 6))
     assert.ok(direction === 'long' ? added.threshold.price > initial.threshold.price : added.threshold.price < initial.threshold.price)
-    const withdrawable = await read('cfdEngineAccountLens', 'getWithdrawableUsdc', [trader])
+    const withdrawable = await read('cfdEngineAccountLens', 'getWithdrawableAssets', [trader])
     assert.ok(withdrawable > 0n)
     await assert.rejects(client.simulateContract({ ...contracts.marginClearinghouse, functionName: 'withdraw', args: [trader, withdrawable + 1_000_000n], account: trader }), 'contract withdrawal ceiling is enforced')
     await write('marginClearinghouse', 'withdraw', [trader, 1_000_000n])
@@ -112,7 +112,7 @@ try {
       await rpc('evm_mine')
       await action('execute', {})
       const result = await checkBoundary()
-      assert.notEqual(result.input.entryCostUsdcAtoms, result.input.size / 10n ** 20n * result.entryPrice, 'fixture exercises exact basis beyond rounded entry')
+      assert.notEqual(result.input.entryCostAssetAtoms, result.input.size / 10n ** 20n * result.entryPrice, 'fixture exercises exact basis beyond rounded entry')
     }
     console.log(`PASS ${direction}: exact entry-cost rounding after an increase and partial reduction`)
   }
@@ -136,13 +136,13 @@ try {
   await rpc('evm_increaseTime', [2]); await rpc('evm_mine')
   await action('execute', {})
   const withClaim = await snapshot()
-  assert.ok(withClaim.input.traderClaimBalanceUsdc > 0n, 'partial close creates a claim')
+  assert.ok(withClaim.input.traderClaimBalanceAssets > 0n, 'partial close creates a claim')
   assert.equal(withClaim.input.size, parseUnits('3000', 18))
   await write('settlementToken', 'transfer', [pool, poolCash - 1n], keeper)
   await write('cfdEngine', 'settleTraderClaim', [trader])
   const settled = await snapshot()
-  assert.equal(settled.input.traderClaimBalanceUsdc, 0n)
-  assert.equal(settled.input.positionMarginUsdc, withClaim.input.positionMarginUsdc + withClaim.input.traderClaimBalanceUsdc)
+  assert.equal(settled.input.traderClaimBalanceAssets, 0n)
+  assert.equal(settled.input.positionMarginAssets, withClaim.input.positionMarginAssets + withClaim.input.traderClaimBalanceAssets)
   assert.deepEqual(settled.threshold, withClaim.threshold, 'settling a live claim preserves price collateral')
   console.log('PASS real partial-close claim, exact basis, and settlement into live position margin')
 } finally {

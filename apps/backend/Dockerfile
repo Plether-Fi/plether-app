@@ -29,7 +29,7 @@ COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/schema.sql schema.sql
 COPY apps/backend/config/migrations/ config/migrations/
-COPY config/perps/arbitrum-sepolia-v3.json config/perps/arbitrum-sepolia-v3.json
+COPY config/perps/mock-usdg-prepared.json config/perps/mock-usdg-prepared.json
 COPY apps/backend/test/ test/
 RUN cabal build exe:plether-api exe:plether-aa-reconciler exe:plether-aa-admin exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-provider-preflight exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
@@ -78,15 +78,15 @@ COPY --from=builder --chmod=0644 /tmp/aws-rds-global-bundle.pem /etc/ssl/certs/a
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY --from=protection-worker /protection /app/protection
-COPY config/perps/arbitrum-sepolia-v3.json /app/config/perps/arbitrum-sepolia-v3.json
+COPY config/perps/mock-usdg-prepared.json /app/config/perps/mock-usdg-prepared.json
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 COPY apps/backend/schema.sql /app/schema.sql
 COPY apps/backend/config/migrations/aa-attempt-failure-v1.sql /app/config/migrations/aa-attempt-failure-v1.sql
-COPY apps/backend/config/migrations/insights-integrity-epoch-v1.sql /app/config/migrations/insights-integrity-epoch-v1.sql
+COPY apps/backend/config/migrations/insights-integrity-epoch-v2.sql /app/config/migrations/insights-integrity-epoch-v2.sql
 COPY apps/backend/config/migrations/insights-snapshot-deferred-fk-v1.sql /app/config/migrations/insights-snapshot-deferred-fk-v1.sql
-COPY apps/backend/config/migrations/insights-integrity-indexes-v1.sql /app/config/migrations/insights-integrity-indexes-v1.sql
+COPY apps/backend/config/migrations/insights-integrity-indexes-v2.sql /app/config/migrations/insights-integrity-indexes-v2.sql
 COPY apps/backend/scripts/recover-faucet-nonce.mjs /app/scripts/recover-faucet-nonce.mjs
 COPY apps/backend/config/migrations/testnet-faucet-nonce-recovery-v1.sql /app/config/migrations/testnet-faucet-nonce-recovery-v1.sql
 

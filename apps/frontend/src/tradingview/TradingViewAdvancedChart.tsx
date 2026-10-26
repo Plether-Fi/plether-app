@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import perpsRelease from '../../../../config/perps/arbitrum-sepolia-v3.json'
 import { useQueryClient } from '@tanstack/react-query'
@@ -565,7 +566,7 @@ export function TradingViewAdvancedChart({
       <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
       {!unavailable && volumeUnavailable ? (
         <div className="pointer-events-none absolute inset-x-4 bottom-4 z-10 sm:right-auto sm:max-w-md">
-          <Alert variant="warning" title={freshDailyVolume ? 'Daily volume: 0 USDC' : 'Volume temporarily unavailable'}>
+          <Alert variant="warning" title={freshDailyVolume ? `Daily volume: 0 ${PERPS_SETTLEMENT_TOKEN_LABEL}` : 'Volume temporarily unavailable'}>
             {freshDailyVolume
               ? '0 is a placeholder until the first full UTC day is indexed, not a verified daily total. Price data is still live.'
               : '— Price data is still live. Volume is being indexed for this market.'}

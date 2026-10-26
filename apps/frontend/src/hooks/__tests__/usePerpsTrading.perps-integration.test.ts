@@ -3,16 +3,16 @@ import { createPublicClient, http, type Address } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { PERPS_PUBLIC_LENS_ABI } from '../../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE_IS_DEPLOYED } from '../../contracts/perpsAddresses'
 import { preparePerpsOrderV3 } from '../../contracts/preparePerpsOrderV3'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
-import { sizeDeltaToNotionalUsdc } from '../../utils/perps'
+import { sizeDeltaToNotionalAssets } from '../../utils/perps'
 import { resolvePerpsSizeDelta } from '../../utils/perpsOrder'
 
 const rpcUrl = process.env.ARBITRUM_SEPOLIA_RPC_URL
 const account = (process.env.PERPS_INTEGRATION_ACCOUNT ??
   '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B') as Address
-const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
+const manifest = PERPS_RELEASE_IS_DEPLOYED ? parsePerpsAaManifest(rawManifest) : undefined
 
 const client = rpcUrl
   ? createPublicClient({
@@ -31,7 +31,7 @@ function tupleValue(value: unknown, index: number, key: string): unknown {
 
 describe('perps full-close integration', () => {
   it('uses exact position size and passes close preview/commit simulation', async (ctx) => {
-    if (!client) {
+    if (!client || !manifest) {
       ctx.skip()
       return
     }
@@ -60,12 +60,12 @@ describe('perps full-close integration', () => {
       return
     }
 
-    const positionNotional = sizeDeltaToNotionalUsdc(size, oraclePrice) ?? 0n
+    const positionNotional = sizeDeltaToNotionalAssets(size, oraclePrice) ?? 0n
     const resolvedSizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: true,
       currentPositionSize: size,
-      notionalUsdc: positionNotional,
-      maxNotionalUsdc: positionNotional,
+      notionalAssets: positionNotional,
+      maxNotionalAssets: positionNotional,
       oraclePrice,
     })
     expect(resolvedSizeDelta).toBe(size)

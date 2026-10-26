@@ -60,7 +60,7 @@ describe('CompetitionArchivePage', () => {
     address: '0x1111111111111111111111111111111111111111',
     displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
     trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
-    prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+    prizePlace: null, prizeAmountAssets: null, prizePlaces: [],
   }
 
   it.each([
@@ -149,7 +149,7 @@ describe('CompetitionArchivePage', () => {
         address: '0x1111111111111111111111111111111111111111',
         displayName: 'Alice', rank: null, pnl: null, roiBps: null, volume: '0',
         trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
-        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+        prizePlace: null, prizeAmountAssets: null, prizePlaces: [],
       }], provisional: true, nextCursor: null }] },
       hasNextPage: false, isError: false, isLoading: false,
     })
@@ -178,7 +178,7 @@ describe('CompetitionArchivePage', () => {
         address: '0x1111111111111111111111111111111111111111',
         displayName: 'Alice', rank: 1, pnl: '0', roiBps: 0, volume: '0',
         trades: 0, activeDays: 0, eligible: false, eligibilityStatus: 'pending',
-        prizePlace: null, prizeAmountUsdc: null, prizePlaces: [],
+        prizePlace: null, prizeAmountAssets: null, prizePlaces: [],
       }], provisional: true, nextCursor: null }] },
       hasNextPage: false, isError: false, isLoading: false,
     })

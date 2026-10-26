@@ -45,7 +45,7 @@ locals {
     volumesFrom      = []
     environment = [
       { name = "AA_FUNDING_MONITORS", value = jsonencode(var.aa_funding_monitors) },
-      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/arbitrum-sepolia-v3.json" },
+      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/mock-usdg-prepared.json" },
     ]
     secrets = concat([
       { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },

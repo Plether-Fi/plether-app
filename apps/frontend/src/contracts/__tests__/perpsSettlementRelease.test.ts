@@ -1,78 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import legacyRelease from '../../../../../config/perps/arbitrum-sepolia-v2.json'
-import currentRelease from '../../../../../config/perps/arbitrum-sepolia-v3.json'
+import prepared from '../../../../../config/perps/mock-usdg-prepared.json'
+import historical from '../../../../../config/perps/arbitrum-sepolia-v3.json'
+import deployed from './fixtures/perps-canonical-release.json'
 import { parsePerpsReleaseConfiguration, settlementTokenContract } from '../perpsRelease'
 
-function mockUsdgRelease() {
-  const { mockUsdc, ...contracts } = currentRelease.contracts
-  return {
-    ...currentRelease,
-    schemaVersion: 4,
-    contracts: { ...contracts, settlementToken: { ...mockUsdc,
-      address: '0x1111111111111111111111111111111111111111',
-      artifact: 'script/DeployPerpsArbitrumSepolia.s.sol:MockUSDG',
-    } },
-    settlementToken: { name: 'Mock USDG', symbol: 'USDG', decimals: 6, isMock: true,
-      supportsReceiveWithAuthorization: false, supportsBridgeFunding: false },
-  }
-}
-
-describe('perps settlement release identity', () => {
-  it('keeps the historical USDC identity and address', () => {
-    const parsed = parsePerpsReleaseConfiguration(legacyRelease)
-    expect(parsed.settlementToken.symbol).toBe('USDC')
-    expect(settlementTokenContract(parsed)).toMatchObject(legacyRelease.contracts.mockUsdc)
+describe('canonical perps settlement release', () => {
+  it('keeps prepared pins null and explicitly unavailable', () => {
+    const parsed = parsePerpsReleaseConfiguration(prepared)
+    expect(parsed.isDeployed).toBe(false)
+    expect(parsed.release.deploymentBlock).toBeNull()
+    expect(settlementTokenContract(parsed).address).toBeNull()
+    expect(settlementTokenContract(parsed).runtimeCodeHash).toBeNull()
   })
-
-  it('preserves the current v3 graph and USDC identity', () => {
-    const parsed = parsePerpsReleaseConfiguration(currentRelease)
-    expect(parsed.contracts.cfdClosePreview).toEqual(currentRelease.contracts.cfdClosePreview)
-    expect(settlementTokenContract(parsed)).toEqual(currentRelease.contracts.mockUsdc)
+  it('accepts only complete deployed canonical metadata', () => {
+    const parsed = parsePerpsReleaseConfiguration(deployed)
+    expect(parsed.isDeployed).toBe(true)
+    expect(parsed.settlementToken.symbol).toBe('USDG')
+    expect(settlementTokenContract(parsed)).toMatchObject(deployed.contracts.settlementToken)
   })
-
-  it('reads schema 4 MockUSDG identity, address, codehash and capabilities together', () => {
-    const release = mockUsdgRelease()
-    const parsed = parsePerpsReleaseConfiguration(release)
-    expect(parsed.settlementToken).toEqual(release.settlementToken)
-    expect(settlementTokenContract(parsed)).toEqual(release.contracts.settlementToken)
-    expect(parsed.settlementToken.supportsReceiveWithAuthorization).toBe(false)
-    expect(parsed.settlementToken.supportsBridgeFunding).toBe(false)
+  it('rejects historical interfaces without relabeling or adapting them', () => {
+    expect(() => parsePerpsReleaseConfiguration(historical)).toThrow('schema 4')
   })
-
-  it.each([undefined, 2])('rejects a canonical release with order interface %s', (orderInterfaceVersion) => {
-    expect(() => parsePerpsReleaseConfiguration({ ...mockUsdgRelease(), orderInterfaceVersion }))
-      .toThrow('requires order interface version 3')
+  it.each([undefined, 2])('rejects wrong order interface %s', (orderInterfaceVersion) => {
+    expect(() => parsePerpsReleaseConfiguration({ ...deployed, orderInterfaceVersion })).toThrow('interface version 3')
   })
-
-  it('rejects prepared manifests instead of treating them as an active deployment', () => {
-    const release = mockUsdgRelease()
-    release.release = { ...release.release, phase: 'prepared' }
-    expect(() => parsePerpsReleaseConfiguration(release)).toThrow('not deployed')
+  it.each(['name', 'decimals', 'isMock', 'supportsReceiveWithAuthorization', 'supportsBridgeFunding'])('rejects mismatched token %s', field => {
+    const release = structuredClone(deployed)
+    Object.assign(release.settlementToken, { [field]: 'invalid' })
+    expect(() => parsePerpsReleaseConfiguration(release)).toThrow('metadata')
   })
-
-  it.each([
-    ['name', 'USDC'], ['decimals', 18], ['isMock', false],
-    ['supportsReceiveWithAuthorization', true], ['supportsBridgeFunding', true],
-  ])('rejects incompatible metadata %s', (field, value) => {
-    const release = mockUsdgRelease()
-    Object.assign(release.settlementToken, { [field]: value })
-    expect(() => parsePerpsReleaseConfiguration(release)).toThrow('Invalid MockUSDG metadata')
-  })
-
-  it('rejects relabeling a historical USDC release', () => {
-    expect(() => parsePerpsReleaseConfiguration({ ...legacyRelease, settlementToken: mockUsdgRelease().settlementToken }))
-      .toThrow('Historical release requires its mockUsdc contract')
-  })
-
-  it('rejects mixed canonical and historical token keys', () => {
-    const release = mockUsdgRelease()
-    Object.assign(release.contracts, { mockUsdc: legacyRelease.contracts.mockUsdc })
-    expect(() => parsePerpsReleaseConfiguration(release)).toThrow('legacy mockUsdc')
-  })
-
-  it.each(['address', 'runtimeCodeHash'])('rejects a missing token %s', (field) => {
-    const release = mockUsdgRelease()
+  it.each(['address', 'runtimeCodeHash'])('rejects missing deployed %s', field => {
+    const release = structuredClone(deployed)
     Object.assign(release.contracts.settlementToken, { [field]: null })
     expect(() => parsePerpsReleaseConfiguration(release)).toThrow()
+  })
+  it('rejects a prepared manifest that borrows old deployment pins', () => {
+    const release = structuredClone(prepared)
+    Object.assign(release.contracts.settlementToken, deployed.contracts.settlementToken)
+    expect(() => parsePerpsReleaseConfiguration(release)).toThrow('null deployment pins')
   })
 })

@@ -2,7 +2,7 @@ import { useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { WalletActivity } from '../api/types'
 import { formatPrice, formatUtc, shortAddress } from '../utils/format'
-import { deriveTradeBreakdown, formatTradeUsdc } from '../utils/tradeBreakdown'
+import { deriveTradeBreakdown, formatTradeAssets } from '../utils/tradeBreakdown'
 import { TradeBreakdownDetails } from './TradeBreakdown'
 
 function unsigned(value: string | null | undefined): bigint | null {
@@ -32,8 +32,8 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
   const validReceipt = deriveTradeBreakdown(item.execution, item.type) !== null
   const receipt = validReceipt ? item.execution?.receipt : undefined
   const remaining = unsigned(receipt?.postPositionSize)
-  const margin = unsigned(receipt?.postPositionMarginUsdc)
-  const notional = unsigned(receipt?.executionNotionalUsdc)
+  const margin = unsigned(receipt?.postPositionMarginAssets)
+  const notional = unsigned(receipt?.executionNotionalAssets)
   const status = remaining === null ? 'Unavailable'
     : isClose ? (remaining === 0n ? 'Fully closed' : 'Partially closed')
       : remaining > 0n ? 'Open' : 'Unavailable'
@@ -64,7 +64,7 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
             <Detail label="Order ID">{validReceipt ? item.execution?.orderId : 'Unavailable'}</Detail>
             <Detail label="Final plDXY price">{formatPrice(item.price)}</Detail>
             <Detail label={isClose ? 'Quantity closed' : 'Quantity added'}>{quantity(unsigned(item.sizeDelta))}</Detail>
-            <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeUsdc(notional, false, true)}</Detail>
+            <Detail label="Executed exposure">{notional === null ? 'Unavailable' : formatTradeAssets(notional, false, true)}</Detail>
             <Detail label="Execution transaction">{item.txHash ? <a className="font-mono text-brand-peach hover:underline" href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer">{shortAddress(item.txHash)} ↗</a> : 'Unavailable'}</Detail>
           </dl>
         </section>
@@ -78,7 +78,7 @@ export function PositionBreakdown({ item }: { item: WalletActivity }) {
             <Detail label="Status">{status}</Detail>
             {remaining !== null && remaining > 0n && <>
               <Detail label="Position quantity">{quantity(remaining)}</Detail>
-              <Detail label="Position margin">{margin === null ? 'Unavailable' : formatTradeUsdc(margin, false, true)}</Detail>
+              <Detail label="Position margin">{margin === null ? 'Unavailable' : formatTradeAssets(margin, false, true)}</Detail>
             </>}
           </dl>
         </section>

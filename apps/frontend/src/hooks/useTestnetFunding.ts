@@ -3,10 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Result } from 'better-result'
 import { isAddressEqual, isHash, keccak256, parseAbi, type Address } from 'viem'
 import { usePublicClient, useWriteContract } from 'wagmi'
-import { perpsApi, testnetFaucetErrorMessage } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
 import { ERC20_ABI } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_CONTRACT, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_CONTRACT, PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_RELEASE_IS_DEPLOYED } from '../contracts/perpsAddresses'
 import { usePerpsIdentity } from '../perps-aa'
 import { usePerpsTrading } from './usePerpsTrading'
 
@@ -37,7 +36,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
   ])
 
   async function requestFunds(address: Address) {
-    if (!enabled || operation.current) return
+    if (!enabled || operation.current || !PERPS_RELEASE_IS_DEPLOYED) return
     const controller = new AbortController()
     operation.current = controller
     const { signal } = controller
@@ -46,27 +45,29 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
     setPhase('claiming')
 
     try {
-      const directMockMint = PERPS_SETTLEMENT_TOKEN.isMock && PERPS_SETTLEMENT_TOKEN.symbol === 'USDG'
-      if (identity.isAaManifestConfigured || directMockMint) {
+      if (!PERPS_SETTLEMENT_TOKEN.isMock || PERPS_SETTLEMENT_TOKEN.symbol !== 'USDG') {
+        throw new Error('Direct testnet funding requires the reviewed Mock USDG release.')
+      }
+      {
         if (identity.status !== 'ready' || !identity.accountAddress ||
             !isAddressEqual(address, identity.accountAddress)) {
           throw new Error('Confirm the canonical Plether Trading Account before requesting funds.')
         }
       }
       let funding: TestnetFaucetClaim
-      if (directMockMint) {
+      {
         // Unrestricted test minting is a regular owner-wallet transaction. It
         // never signs EIP-3009 or consumes the backend faucet entitlement.
-        if (!identity.isAaManifestConfigured || identity.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID || !identity.ownerAddress || !identity.accountAddress || !identity.manifest ||
-            !isAddressEqual(identity.manifest.usdc, PERPS_ARBITRUM_SEPOLIA.usdc) ||
+        if (!identity.isAaManifestConfigured || identity.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID || !identity.ownerAddress || !identity.manifest ||
+            !isAddressEqual(identity.manifest.settlementToken, PERPS_ARBITRUM_SEPOLIA.settlementToken) ||
             !isAddressEqual(identity.manifest.marginClearinghouse, PERPS_ARBITRUM_SEPOLIA.marginClearinghouse) ||
-            identity.manifest.usdcSupportsEip3009) {
+            identity.manifest.settlementTokenSupportsEip3009) {
           throw new Error('The Mock USDG funding configuration does not match this Trading Account.')
         }
         let reusableClaim = claim && phase !== 'deposited' && isAddressEqual(claim.address as Address, address) ? claim : null
         if (reusableClaim?.status === 'minted' || reusableClaim?.status === 'already_funded') {
           const remaining = await client.readContract({
-            address: PERPS_ARBITRUM_SEPOLIA.usdc, abi: ERC20_ABI,
+            address: PERPS_ARBITRUM_SEPOLIA.settlementToken, abi: ERC20_ABI,
             functionName: 'balanceOf', args: [identity.accountAddress],
           })
           if (isCancelled()) return
@@ -81,39 +82,28 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
         if (reusableClaim) {
           funding = reusableClaim
         } else {
-          const code = await client.getCode({ address: PERPS_ARBITRUM_SEPOLIA.usdc })
+          const code = await client.getCode({ address: PERPS_ARBITRUM_SEPOLIA.settlementToken })
           if (isCancelled()) return
-          if (!code || code === '0x' || keccak256(code) !== PERPS_SETTLEMENT_TOKEN_CONTRACT.runtimeCodeHash.toLowerCase()) {
+          if (!code || code === '0x' || keccak256(code) !== PERPS_SETTLEMENT_TOKEN_CONTRACT.runtimeCodeHash?.toLowerCase()) {
             throw new Error('Mock USDG bytecode does not match the reviewed release. No mint was sent.')
           }
           const txHash = await writeContractAsync({
             account: identity.ownerAddress,
             chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-            address: PERPS_ARBITRUM_SEPOLIA.usdc,
+            address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
             abi: MINT_ABI,
             functionName: 'mint',
             args: [identity.accountAddress, TESTNET_FUNDING_AMOUNT],
           })
           if (isCancelled()) return
-          funding = { address, token: PERPS_ARBITRUM_SEPOLIA.usdc, amount: TESTNET_FUNDING_AMOUNT.toString(), txHash, status: 'submitted' }
+          funding = { address, token: PERPS_ARBITRUM_SEPOLIA.settlementToken, amount: TESTNET_FUNDING_AMOUNT.toString(), txHash, status: 'submitted' }
         }
-      } else {
-        const result = await perpsApi.claimTestnetFaucet(address)
-        if (isCancelled()) return
-        if (Result.isError(result)) throw new Error(testnetFaucetErrorMessage(result.error))
-        funding = result.value.data
       }
       setClaim(funding)
 
-      // Legacy wallet recipients keep the manual deposit flow.
-      if (!identity.isAaManifestConfigured) {
-        setPhase('idle')
-        return
-      }
-      if (identity.status !== 'ready' || !identity.accountAddress ||
-          !isAddressEqual(address, identity.accountAddress) ||
+      if (!isAddressEqual(address, identity.accountAddress) ||
           !isAddressEqual(funding.address as Address, address) ||
-          !isAddressEqual(funding.token as Address, PERPS_ARBITRUM_SEPOLIA.usdc)) {
+          !isAddressEqual(funding.token as Address, PERPS_ARBITRUM_SEPOLIA.settlementToken)) {
         throw new Error('The faucet recipient or token does not match this Trading Account. Refresh and try again.')
       }
 
@@ -130,10 +120,10 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
         }
         const receipt = receiptResult.value
         if (receipt.status !== 'success') {
-          if (directMockMint) setClaim(null)
+          setClaim(null)
           throw new Error(`The funding transaction reverted. Try requesting ${PERPS_SETTLEMENT_TOKEN_LABEL} again.`)
         }
-        if (directMockMint && funding.status === 'submitted') {
+        if (funding.status === 'submitted') {
           // Preserve confirmation even if the subsequent balance read or
           // deposit fails; later retries can distinguish consumed funding.
           funding = { ...funding, status: 'minted' }
@@ -148,14 +138,14 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       const deadline = Date.now() + 120_000
       while (!isCancelled()) {
         const balance = await client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.usdc,
+          address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
           abi: ERC20_ABI,
           functionName: 'balanceOf',
           args: [address],
         })
         if (isCancelled()) return
         // A recovered claim may have already been partially deposited or spent.
-        const recovered = funding.status === 'already_claimed' || funding.status === 'already_funded'
+        const recovered = funding.status === 'already_funded'
         if (balance >= amount || (recovered && balance > 0n)) {
           setClaim({ ...funding, status: funding.status === 'submitted' ? 'minted' : funding.status })
           setPhase('depositing')

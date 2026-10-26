@@ -1,10 +1,8 @@
 # Plether Frontend
 
-The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
-publication. See `../../config/perps/ORDER_V3_TIMING.md` for current source provenance and local
-verification. Deployment and published-SDK details below describe the existing
-release; no deployment pins are changed by the V3 source work.
-
+Current perps source uses the checksum-pinned SDK 0.4.0 and the prepared
+MockUSDG release. See `../../config/perps/ORDER_V3_TIMING.md` for provenance.
+Perps stays unavailable until verified deployment evidence is reviewed.
 
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
@@ -191,36 +189,21 @@ AGPL-3.0-only
 
 ### Preparing a MockUSDG perps release
 
-The frontend registry now reads `config/perps/arbitrum-sepolia-v3.json` rather
-than duplicating its contract addresses. The checked-in file still selects the
-existing USDC release. A future reviewed schema-4 release selects
-`contracts.settlementToken` and its top-level `settlementToken` metadata; legacy
-schemas retain `contracts.mockUsdc` and the USDC label. Prepared manifests,
-missing addresses/runtime hashes, and incompatible token metadata are rejected.
-Use `node scripts/prepare-perps-release.mjs` from the repository root to stage a
-candidate configuration after a deployment exists. That tool never activates it.
+The frontend selects `config/perps/mock-usdg-prepared.json`: canonical schema 4,
+order interface 3 and six-decimal MockUSDG metadata. Its null deployment pins
+keep perps trading, funding and vault hooks unavailable. Spot remains separately
+configured. Historical USDC manifests are archived evidence; current perps
+consumers do not accept their keys or ABI.
 
-For the MockUSDG configuration, the welcome/funding flow displays **Mock USDG**
-and calls unrestricted `mint(address,uint256)` for 100,000 tokens to the confirmed
-canonical Plether Trading Account. The connected owner wallet pays Arbitrum
-Sepolia ETH for this ordinary mint transaction. After confirmation, the existing
-sponsored `approve` + `depositMargin` batch deposits those tokens. Funding can be
-repeated after completion; a failed deposit retries the existing minted balance
-instead of minting again. The token runtime hash is checked before a mint is
-requested. These writes happen only after the user clicks the funding button
-and confirms in their wallet; no deployment or transaction is part of this
-source change.
+The breaking SDK 0.4.0 and current APIs use `settlementToken`, `Assets` and
+`AssetAtoms`, including `settlementTokenSupportsEip3009: false` and null EIP-712
+domain settings. No compatibility aliases remain. After a separately reviewed
+activation, the funding flow mints 100,000 MockUSDG to the confirmed Trading
+Account, checks the token runtime hash, and deposits with exact approval. The
+owner wallet pays testnet ETH and confirms the mint; a failed deposit can reuse
+the minted balance. Mock bridge funding and GDN rewards are unavailable.
 
-MockUSDG has six decimals and no EIP-3009 or permit support. Its manifest must
-keep `usdcSupportsEip3009: false` and both EIP-712 domain fields null. A funded
-Trading Account remains able to deposit without the signed owner-wallet route.
-Owner-wallet tokens can also be transferred into the Trading Account before
-that deposit. The public `usdc`/`*Usdc` names remain six-decimal settlement-token
-API names; they do not identify the displayed token. Mock bridge funding stays
-unavailable. Unrestricted mock minting does not establish competition faucet
-provenance or production USDG reward eligibility.
-
-Perps and its LP vaults use the configured token label. Spot token configuration
-and the default shared USDC display remain unchanged. New deployment addresses,
-AA sponsor targets, worker/indexer bindings and the integrated close-preview
-contract must be reviewed together before any later activation.
+Use `node scripts/prepare-perps-release.mjs` from the repository root to generate
+a candidate only after verified deployed evidence exists. Read
+[`docs/runbooks/perps-mock-usdg.md`](../../docs/runbooks/perps-mock-usdg.md) for
+package/ABI provenance, activation guards and the unapplied SQL migration.

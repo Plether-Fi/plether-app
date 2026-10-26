@@ -1,33 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { createPublicClient, http, type PublicClient } from 'viem'
+import { createPublicClient, http, type Address } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
 import rawManifest from '../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../perps-aa/manifest'
 import { preparePerpsOrderV3 } from './preparePerpsOrderV3'
 import { verifyClosePreviewDeployment } from './verifyPerpsV3Bindings'
+import { PERPS_RELEASE_IS_DEPLOYED, PERPS_CLOSE_PREVIEW_ADDRESS } from './perpsAddresses'
 
 const url = process.env.ARB_SEPOLIA_RPC_URL
-const manifest = parsePerpsAaManifest({ ...rawManifest, orderInterfaceVersion: 3 })
-// Public sample from the source-verified lens deployment packet. All calls are
-// pinned read-only calls, including commit simulation; no wallet is constructed.
-const account = '0x434034d4706173a9f9902eb00f1f80e59da3b82a' as const
+const account = process.env.PERPS_INTEGRATION_ACCOUNT as Address | undefined
+const size = process.env.PERPS_INTEGRATION_CLOSE_SIZE
+const manifest = PERPS_RELEASE_IS_DEPLOYED ? parsePerpsAaManifest(rawManifest) : undefined
 
-describe.skipIf(!url)('deployed close-preview frontend compatibility', () => {
-  it('verifies the lens and completes a real reservation-aware review plus commit simulation', async () => {
-    const rpc = createPublicClient({ chain: arbitrumSepolia, transport: http(url) })
-    const block = await rpc.getBlock({ blockNumber: 308935132n })
-    const client = rpc.extend(() => ({ getBlock: async () => block })) as unknown as PublicClient
-    await expect(verifyClosePreviewDeployment(client, manifest, block.number)).resolves.toBe('0x202A2C5156563Ec4fEF7D3997771bBCa90e98117')
+// Read-only current-release check. Prepared configuration has no chain target;
+// historical samples require their matching archived consumer and ABI.
+describe.skipIf(!url || !account || !size || !manifest)('deployed close-preview frontend compatibility', () => {
+  it('verifies the current lens and reviews an explicitly supplied close', async () => {
+    if (!url || !account || !size || !manifest) throw new Error('Current deployment inputs are required')
+    const client = createPublicClient({ chain: arbitrumSepolia, transport: http(url) })
+    const block = await client.getBlock({ blockTag: 'latest' })
+    await expect(verifyClosePreviewDeployment(client, manifest, block.number)).resolves.toBe(PERPS_CLOSE_PREVIEW_ADDRESS)
     const prepared = await preparePerpsOrderV3(client, manifest, {
       account, direction: 'long', side: 0, isClose: true,
-      sizeDelta: 1200n * 10n ** 18n, marginDelta: 0n,
+      sizeDelta: BigInt(size), marginDelta: 0n,
       slippagePercent: 0.1, selectedMaxLeverageBps: 0,
     })
-    expect(prepared.reviewedBlockNumber).toBe(block.number)
     expect(prepared.account).toBe(account)
-    expect(prepared.reviewSummary?.commitmentCarryUsdc).toBe(100n)
-    expect(prepared.executionBountyUsdc).toBe(200_000n)
-    expect(prepared.reviewSummary?.currentAssessment.postPositionSize).toBe(0n)
-    expect(prepared.reviewSummary?.currentAssessment.carryUsdc).toBe(0n)
+    expect(prepared.executionBountyAssets).toBe(0n)
+    expect(prepared.request.isClose).toBe(true)
   })
 })

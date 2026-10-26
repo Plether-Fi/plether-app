@@ -29,9 +29,9 @@ export function deriveTradeBreakdown(execution: unknown, type: string): TradeBre
       !isRecord(execution.receipt) || !Array.isArray(execution.settlements) ||
       !['open', 'close'].includes(type.toLowerCase())) return null
   const r = execution.receipt
-  const keys = ['realizedPnlUsdc', 'executionFeeUsdc', 'vpiUsdc', 'carryUsdc', 'frozenSpreadUsdc',
-    'executionBountyUsdc', 'preSettlementBalanceUsdc', 'postSettlementBalanceUsdc',
-    'preTraderClaimBalanceUsdc', 'postTraderClaimBalanceUsdc'] as const
+  const keys = ['realizedPnlAssets', 'executionFeeAssets', 'vpiAssets', 'carryAssets', 'frozenSpreadAssets',
+    'executionBountyAssets', 'preSettlementBalanceAssets', 'postSettlementBalanceAssets',
+    'preTraderClaimBalanceAssets', 'postTraderClaimBalanceAssets'] as const
   const values = keys.map(key => integer(r[key]))
   if (values.some(value => value === null)) return null
   const [pnl, fee, vpi, carry, spread, reward, before, after, claimBefore, claimAfter] = values as bigint[]
@@ -52,7 +52,7 @@ export function deriveTradeBreakdown(execution: unknown, type: string): TradeBre
   const events = new Map<string, { assessed: bigint; recovered: bigint; waived: bigint; raw: Record<string, unknown> }>()
   for (const event of execution.settlements) {
     if (!isRecord(event) || typeof event.kind !== 'string' || !['ActionChargeSettled', 'ActionRebateSettled', 'FrozenCloseSpreadSettled'].includes(event.kind)) return null
-    const assessed = integer(event.assessedUsdc), recovered = integer(event.recoveredUsdc), waived = integer(event.waivedUsdc)
+    const assessed = integer(event.assessedAssets), recovered = integer(event.recoveredAssets), waived = integer(event.waivedAssets)
     if (assessed === null || recovered === null || waived === null || assessed < 0n || recovered < 0n || waived < 0n ||
         recovered > assessed || waived > assessed || events.has(event.kind) ||
         (event.kind !== 'FrozenCloseSpreadSettled' && recovered + waived !== assessed)) return null
@@ -69,7 +69,7 @@ export function deriveTradeBreakdown(execution: unknown, type: string): TradeBre
   if (complete && charge && charge.waived > 0n) {
     // Treasury collection alone is not proof of a waiver: a fee can instead be
     // withheld from a rebate/profit. Only classify when isolated by evidence.
-    const collectedFee = integer(charge.raw.protocolFeeCollectedUsdc)
+    const collectedFee = integer(charge.raw.protocolFeeCollectedAssets)
     const feeWaiver = collectedFee !== null && collectedFee >= 0n && collectedFee <= fee &&
       pnl <= 0n && vpi >= 0n && spread === 0n && fee - collectedFee === charge.waived
     lines.push({ label: feeWaiver ? 'Fee waived' : 'Charges waived', value: charge.waived })
@@ -91,12 +91,12 @@ export function deriveTradeBreakdown(execution: unknown, type: string): TradeBre
     adjustment, unexplained, notice, netRebate, effectiveFee, evidencePending: !complete }
 }
 
-export function formatTradeUsdc(value: bigint, signed = false, exact = false): string {
+export function formatTradeAssets(value: bigint, signed = false, exact = false): string {
   const absolute = value < 0n ? -value : value
   const sign = value < 0n ? '−' : signed && value > 0n ? '+' : ''
-  if (!exact && absolute > 0n && absolute < 10_000n) return `${sign}<0.01 USDC`
+  if (!exact && absolute > 0n && absolute < 10_000n) return `${sign}<0.01 assets`
   const scale = exact ? 1_000_000n : 100n
   const rounded = exact ? absolute : (absolute + 5_000n) / 10_000n
   const whole = new Intl.NumberFormat('en-US').format(rounded / scale)
-  return `${sign}${whole}.${(rounded % scale).toString().padStart(exact ? 6 : 2, '0')} USDC`
+  return `${sign}${whole}.${(rounded % scale).toString().padStart(exact ? 6 : 2, '0')} assets`
 }

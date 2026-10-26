@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const directory = new URL('../apps/frontend/vendor/perps-aa-client/', import.meta.url)
 const release = JSON.parse(readFileSync(new URL('release.json', directory)))
 assert.equal(release.name, '@plether-fi/perps-aa-client')
-assert.equal(release.version, '0.2.0')
+assert.equal(release.version, '0.4.0')
 assert.match(release.gitHead, /^[0-9a-f]{40}$/)
 assert.equal(release.filename, `plether-fi-perps-aa-client-${release.version}.tgz`)
 const tarball = new URL(release.filename, directory)

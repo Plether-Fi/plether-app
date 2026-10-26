@@ -5,27 +5,27 @@ import {
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
   formatPerpsPositionSize,
-  formatPerpsSummaryUsdc,
-  formatSignedPerpsSummaryUsdc,
-  notionalUsdcToQuantizedSizeDelta,
+  formatPerpsSummaryAssets,
+  formatSignedPerpsSummaryAssets,
+  notionalAssetsToQuantizedSizeDelta,
   oraclePriceToDisplayDxyPrice,
   parsePerpsPositionSize,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
   quantizePerpsPositionSize,
-  sizeDeltaToNotionalUsdc,
+  sizeDeltaToNotionalAssets,
 } from '../perps'
 import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 
-describe('perps summary USDC formatting', () => {
-  it('keeps fractional precision below 100 000 USDC', () => {
-    expect(formatPerpsSummaryUsdc(99_999_990_000n)).toBe('99 999.99')
+describe('perps summary Mock USDG formatting', () => {
+  it('keeps fractional precision below 100 000 Mock USDG', () => {
+    expect(formatPerpsSummaryAssets(99_999_990_000n)).toBe('99 999.99')
   })
 
-  it('uses whole USDC for six-figure and larger values', () => {
-    expect(formatPerpsSummaryUsdc(100_000_490_000n)).toBe('100 000')
-    expect(formatPerpsSummaryUsdc(4_073_013_780_000n)).toBe('4 073 014')
-    expect(formatSignedPerpsSummaryUsdc(-4_073_013_780_000n)).toBe('-4 073 014')
+  it('uses whole Mock USDG for six-figure and larger values', () => {
+    expect(formatPerpsSummaryAssets(100_000_490_000n)).toBe('100 000')
+    expect(formatPerpsSummaryAssets(4_073_013_780_000n)).toBe('4 073 014')
+    expect(formatSignedPerpsSummaryAssets(-4_073_013_780_000n)).toBe('-4 073 014')
   })
 })
 
@@ -76,11 +76,11 @@ describe('perps position size quantum', () => {
 
   it('rounds the requested exposure down to a 100 plDXY increment', () => {
     const displayPrice = 101_420_000n
-    const sizeDelta = notionalUsdcToQuantizedSizeDelta(5_000_000_000n, displayPrice)
+    const sizeDelta = notionalAssetsToQuantizedSizeDelta(5_000_000_000n, displayPrice)
 
     expect(sizeDelta).toBe(4_900n * 10n ** 18n)
     expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
-    expect(sizeDeltaToNotionalUsdc(sizeDelta, displayPrice)).toBe(4_969_580_000n)
+    expect(sizeDeltaToNotionalAssets(sizeDelta, displayPrice)).toBe(4_969_580_000n)
   })
 
   it('can round minimum requirements up to the next valid increment', () => {

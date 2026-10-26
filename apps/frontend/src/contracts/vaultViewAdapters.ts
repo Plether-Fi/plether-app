@@ -31,15 +31,15 @@ function hasEveryField(value: Record<string, unknown>): boolean {
 }
 
 export interface PoolLiquidityView {
-  totalAssetsUsdc: bigint
-  freeUsdc: bigint
-  withdrawalReservedUsdc: bigint
-  pendingRecapitalizationUsdc: bigint
-  pendingTradingRevenueUsdc: bigint
-  seniorPrincipalUsdc: bigint
-  juniorPrincipalUsdc: bigint
-  seniorHighWaterMarkUsdc: bigint
-  currentTerminalDeficitUsdc: bigint
+  totalAssets: bigint
+  freeAssets: bigint
+  withdrawalReservedAssets: bigint
+  pendingRecapitalizationAssets: bigint
+  pendingTradingRevenueAssets: bigint
+  seniorPrincipalAssets: bigint
+  juniorPrincipalAssets: bigint
+  seniorHighWaterMarkAssets: bigint
+  currentTerminalDeficitAssets: bigint
   markFresh: boolean
   oracleFrozen: boolean
   degradedMode: boolean
@@ -47,15 +47,15 @@ export interface PoolLiquidityView {
 
 export function decodePoolLiquidityView(value: unknown): PoolLiquidityView | undefined {
   const decoded = {
-    totalAssetsUsdc: bigintField(value, 0, 'totalAssetsUsdc'),
-    freeUsdc: bigintField(value, 1, 'freeUsdc'),
-    withdrawalReservedUsdc: bigintField(value, 2, 'withdrawalReservedUsdc'),
-    pendingRecapitalizationUsdc: bigintField(value, 3, 'pendingRecapitalizationUsdc'),
-    pendingTradingRevenueUsdc: bigintField(value, 4, 'pendingTradingRevenueUsdc'),
-    seniorPrincipalUsdc: bigintField(value, 5, 'seniorPrincipalUsdc'),
-    juniorPrincipalUsdc: bigintField(value, 6, 'juniorPrincipalUsdc'),
-    seniorHighWaterMarkUsdc: bigintField(value, 7, 'seniorHighWaterMarkUsdc'),
-    currentTerminalDeficitUsdc: bigintField(value, 8, 'currentTerminalDeficitUsdc'),
+    totalAssets: bigintField(value, 0, 'totalAssets'),
+    freeAssets: bigintField(value, 1, 'freeAssets'),
+    withdrawalReservedAssets: bigintField(value, 2, 'withdrawalReservedAssets'),
+    pendingRecapitalizationAssets: bigintField(value, 3, 'pendingRecapitalizationAssets'),
+    pendingTradingRevenueAssets: bigintField(value, 4, 'pendingTradingRevenueAssets'),
+    seniorPrincipalAssets: bigintField(value, 5, 'seniorPrincipalAssets'),
+    juniorPrincipalAssets: bigintField(value, 6, 'juniorPrincipalAssets'),
+    seniorHighWaterMarkAssets: bigintField(value, 7, 'seniorHighWaterMarkAssets'),
+    currentTerminalDeficitAssets: bigintField(value, 8, 'currentTerminalDeficitAssets'),
     markFresh: booleanField(value, 9, 'markFresh'),
     oracleFrozen: booleanField(value, 10, 'oracleFrozen'),
     degradedMode: booleanField(value, 11, 'degradedMode'),
@@ -64,14 +64,14 @@ export function decodePoolLiquidityView(value: unknown): PoolLiquidityView | und
 }
 
 export interface TrancheView {
-  totalAssetsUsdc: bigint
+  totalAssets: bigint
   totalShares: bigint
   effectiveTotalShares: bigint
   pendingMaintenanceFeeShares: bigint
   maintenanceFeeAprBps: bigint
   maintenanceFeeRecipient: Address
   sharePrice: bigint
-  maxWithdrawUsdc: bigint
+  maxWithdrawAssets: bigint
   frozenLpFeeBps: bigint
   depositEnabled: boolean
   withdrawEnabled: boolean
@@ -80,14 +80,14 @@ export interface TrancheView {
 
 export function decodeTrancheView(value: unknown): TrancheView | undefined {
   const decoded = {
-    totalAssetsUsdc: bigintField(value, 0, 'totalAssetsUsdc'),
+    totalAssets: bigintField(value, 0, 'totalAssets'),
     totalShares: bigintField(value, 1, 'totalShares'),
     effectiveTotalShares: bigintField(value, 2, 'effectiveTotalShares'),
     pendingMaintenanceFeeShares: bigintField(value, 3, 'pendingMaintenanceFeeShares'),
     maintenanceFeeAprBps: bigintField(value, 4, 'maintenanceFeeAprBps'),
     maintenanceFeeRecipient: addressField(value, 5, 'maintenanceFeeRecipient'),
     sharePrice: bigintField(value, 6, 'sharePrice'),
-    maxWithdrawUsdc: bigintField(value, 7, 'maxWithdrawUsdc'),
+    maxWithdrawAssets: bigintField(value, 7, 'maxWithdrawAssets'),
     frozenLpFeeBps: bigintField(value, 8, 'frozenLpFeeBps'),
     depositEnabled: booleanField(value, 9, 'depositEnabled'),
     withdrawEnabled: booleanField(value, 10, 'withdrawEnabled'),
@@ -160,18 +160,18 @@ export function decodeProtocolStatusView(value: unknown): ProtocolStatusView | u
 }
 
 export interface PendingTrancheState {
-  seniorPrincipalUsdc: bigint
-  juniorPrincipalUsdc: bigint
-  maxSeniorWithdrawUsdc: bigint
-  maxJuniorWithdrawUsdc: bigint
+  seniorPrincipalAssets: bigint
+  juniorPrincipalAssets: bigint
+  maxSeniorWithdrawAssets: bigint
+  maxJuniorWithdrawAssets: bigint
 }
 
 export function decodePendingTrancheState(value: unknown): PendingTrancheState | undefined {
   const decoded = {
-    seniorPrincipalUsdc: bigintField(value, 0, 'seniorPrincipalUsdc'),
-    juniorPrincipalUsdc: bigintField(value, 1, 'juniorPrincipalUsdc'),
-    maxSeniorWithdrawUsdc: bigintField(value, 2, 'maxSeniorWithdrawUsdc'),
-    maxJuniorWithdrawUsdc: bigintField(value, 3, 'maxJuniorWithdrawUsdc'),
+    seniorPrincipalAssets: bigintField(value, 0, 'seniorPrincipalAssets'),
+    juniorPrincipalAssets: bigintField(value, 1, 'juniorPrincipalAssets'),
+    maxSeniorWithdrawAssets: bigintField(value, 2, 'maxSeniorWithdrawAssets'),
+    maxJuniorWithdrawAssets: bigintField(value, 3, 'maxJuniorWithdrawAssets'),
   }
   return hasEveryField(decoded) ? decoded as PendingTrancheState : undefined
 }

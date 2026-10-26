@@ -1,9 +1,13 @@
 module Plether.Perps.ReleaseSpec (spec) where
 
-import Data.Either (isLeft, isRight)
+import Data.Either (isLeft)
 import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString.Base16 as B16
+import Plether.Ethereum.Abi (keccak256)
 import Plether.Perps.Release
-  ( perpsV2DeploymentBlock
+  ( orderV3IntentDomain
+  , perpsV2DeploymentBlock
   , perpsV2OrderLifecycleBook
   , perpsV2OrderRouter
   , perpsV2VolumeHistoryStartTimestamp
@@ -38,11 +42,15 @@ validReleaseConfig =
 spec :: Spec
 spec =
   describe "bounded V2 release configuration" $ do
-    it "accepts only the pinned Sepolia graph and deployment boundary" $
-      validReleaseConfig `shouldSatisfy` isRight
+    it "pins the token-neutral V3 intent type hash" $
+      B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
+        `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 
-    it "pins the first whole minute after the deployment block for volume history" $
-      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1791804360
+    it "rejects perps activation while the canonical release is prepared" $
+      validReleaseConfig `shouldSatisfy` isLeft
+
+    it "does not invent a volume history boundary for an undeployed release" $
+      perpsV2VolumeHistoryStartTimestamp `shouldBe` 0
 
     it "rejects a missing LifecycleBook" $
       validatePerpsV2ReleaseConfig
@@ -78,13 +86,13 @@ spec =
             ]
       mismatchCases `shouldSatisfy` all isLeft
 
-    it "validates the effective indexer graph before startup" $
+    it "rejects an indexer bound to prepared internal pins before startup" $
       validatePerpsIndexerReleaseConfig
         421614
         defaultPerpsAddresses
         housePool
         perpsV2DeploymentBlock
-        `shouldSatisfy` isRight
+        `shouldSatisfy` isLeft
 
     it "fails indexer startup when the effective LifecycleBook is absent or wrong" $ do
       let wrong = "0x0000000000000000000000000000000000000001"

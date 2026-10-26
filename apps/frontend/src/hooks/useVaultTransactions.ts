@@ -5,6 +5,7 @@ import { useConfig, usePublicClient, useWriteContract } from 'wagmi'
 import { ERC20_ABI, TRANCHE_VAULT_READ_ABI } from '../contracts/abis'
 import {
   PERPS_SETTLEMENT_TOKEN_LABEL,
+  PERPS_RELEASE_IS_DEPLOYED,
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
@@ -29,6 +30,7 @@ export function useVaultTransactions({
   const sequence = useTransactionSequence()
 
   const requireTransactionContext = useCallback((expectedAddress: Address | undefined) => {
+    if (!PERPS_RELEASE_IS_DEPLOYED) throw new Error('The perps vault release is prepared and has not been deployed.')
     const currentAccount = getAccount(config)
     if (!currentAccount.address) {
       throw new Error('Connect a wallet before submitting a vault transaction.')
@@ -58,7 +60,7 @@ export function useVaultTransactions({
               const context = requireTransactionContext(expectedAddress)
               await context.publicClient.simulateContract({
                 account: context.address,
-                address: PERPS_ARBITRUM_SEPOLIA.usdc,
+                address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
                 abi: ERC20_ABI,
                 functionName: 'approve',
                 args: [vaultAddress, amount],
@@ -66,7 +68,7 @@ export function useVaultTransactions({
               return writeContractAsync({
                 account: context.address,
                 chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-                address: PERPS_ARBITRUM_SEPOLIA.usdc,
+                address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
                 abi: ERC20_ABI,
                 functionName: 'approve',
                 args: [vaultAddress, amount],

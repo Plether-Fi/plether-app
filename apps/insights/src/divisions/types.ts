@@ -12,18 +12,18 @@ export interface WeeklyAccount {
   displayName: string | null
   hasTraded: boolean
   // Complete economic account value, including marked positions, fees and claims.
-  startingEquityUsdc: string
-  closingEquityUsdc: string
-  depositsUsdc: string
-  withdrawalsUsdc: string
+  startingEquityAssets: string
+  closingEquityAssets: string
+  depositsAssets: string
+  withdrawalsAssets: string
   // Only successfully executed, nonzero voluntary position changes.
   executedTradeTimes: string[]
 }
 
 export interface DivisionStanding extends DivisionState {
   rank: number | null
-  weeklyPnlUsdc: string
-  adjustedEquityUsdc: string
+  weeklyPnlAssets: string
+  adjustedEquityAssets: string
   // Full-precision ratio is kept as integer numerator / denominator.
   activeDays: number
   qualifying: boolean

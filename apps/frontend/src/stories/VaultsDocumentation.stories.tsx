@@ -17,13 +17,13 @@ type VaultsSnapshot = VaultsOverviewProps['snapshot']
 type VaultActivityViewState = VaultDetailViewProps['vaultActivity']
 type VaultRequestsViewState = VaultDetailViewProps['vaultRequests']
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const SHARES = 1_000_000_000n
 const MAX_UINT256 = (1n << 256n) - 1n
 const FIXED_EPOCH_COUNTDOWN_SECONDS = 25 * 60 + 4
 
-function usdc(value: number): bigint {
-  return BigInt(value) * USDC
+function assets(value: number): bigint {
+  return BigInt(value) * ASSETS
 }
 
 function shares(value: number): bigint {
@@ -35,50 +35,50 @@ function noop() {}
 const snapshot = {
   status: 'live',
   pool: {
-    totalAssetsUsdc: usdc(120_000_000),
-    freeUsdc: usdc(90_000_000),
-    withdrawalReservedUsdc: usdc(30_000_000),
-    pendingRecapitalizationUsdc: 0n,
-    pendingTradingRevenueUsdc: usdc(480_000),
-    seniorPrincipalUsdc: usdc(70_000_000),
-    juniorPrincipalUsdc: usdc(50_000_000),
-    seniorHighWaterMarkUsdc: usdc(70_000_000),
-    currentTerminalDeficitUsdc: 0n,
+    totalAssets: assets(120_000_000),
+    freeAssets: assets(90_000_000),
+    withdrawalReservedAssets: assets(30_000_000),
+    pendingRecapitalizationAssets: 0n,
+    pendingTradingRevenueAssets: assets(480_000),
+    seniorPrincipalAssets: assets(70_000_000),
+    juniorPrincipalAssets: assets(50_000_000),
+    seniorHighWaterMarkAssets: assets(70_000_000),
+    currentTerminalDeficitAssets: 0n,
     markFresh: true,
     oracleFrozen: false,
     degradedMode: false,
     seniorImpaired: false,
-    seniorImpairmentGapUsdc: 0n,
-    seniorPoolWithdrawCapUsdc: usdc(70_000_000),
-    juniorPoolWithdrawCapUsdc: 26_666_666_666_666n,
-    maxSeniorExposureUsdc: usdc(100_000_000),
+    seniorImpairmentGapAssets: 0n,
+    seniorPoolWithdrawCapAssets: assets(70_000_000),
+    juniorPoolWithdrawCapAssets: 26_666_666_666_666n,
+    maxSeniorExposureAssets: assets(100_000_000),
     maxSeniorShareBps: 7_500n,
     seniorRateBps: 800n,
-    seniorDepositCapacityUsdc: usdc(25_000_000),
-    reservedSeniorDepositAssetsUsdc: usdc(5_000_000),
+    seniorDepositCapacityAssets: assets(25_000_000),
+    reservedSeniorDepositAssets: assets(5_000_000),
     seniorReservationsWithinLimits: true,
-    minTrancheDepositUsdc: usdc(1),
+    minTrancheDepositAssets: assets(1),
     markPrice: 100_000_000n,
     longOpenInterest: 40_000_000n * 10n ** 18n,
     shortOpenInterest: 30_000_000n * 10n ** 18n,
-    longOpenCapacityUsdc: usdc(38_400_000),
-    shortOpenCapacityUsdc: usdc(31_200_000),
+    longOpenCapacityAssets: assets(38_400_000),
+    shortOpenCapacityAssets: assets(31_200_000),
   },
-  walletUsdc: usdc(25_000),
+  walletAssets: assets(25_000),
   hasLivePoolData: true,
   tranches: {
     senior: {
-      totalAssets: usdc(70_000_000),
+      totalAssets: assets(70_000_000),
       totalSupply: shares(35_000_000),
       effectiveTotalSupply: shares(35_000_000),
       pendingMaintenanceFeeShares: 0n,
       maintenanceFeeAprBps: 0n,
       maintenanceFeeRecipient: '0x0000000000000000000000000000000000000000',
       userShares: shares(12_500),
-      maxRequestDeposit: usdc(25_000_000),
+      maxRequestDeposit: assets(25_000_000),
       maxRequestRedeem: shares(12_500),
       withdrawalCooldownEndsAt: 0n,
-      allowance: usdc(50_000),
+      allowance: assets(50_000),
       currentEpoch: 500_000n,
       nextRequestEpoch: 500_001n,
       nextRequestCutoffTime: 1_800_003_300n,
@@ -90,14 +90,14 @@ const snapshot = {
       frozenLpFeeBps: 0n,
       depositEnabled: true,
       withdrawEnabled: true,
-      poolWithdrawCapUsdc: usdc(70_000_000),
+      poolWithdrawCapAssets: assets(70_000_000),
       sharePrice: 2,
       hasCoreData: true,
       hasDepositData: true,
       hasUserData: true,
     },
     junior: {
-      totalAssets: usdc(50_000_000),
+      totalAssets: assets(50_000_000),
       totalSupply: shares(50_000_000),
       effectiveTotalSupply: shares(50_000_000) + 99_985_740_167_002n,
       pendingMaintenanceFeeShares: 99_985_740_167_002n,
@@ -107,7 +107,7 @@ const snapshot = {
       maxRequestDeposit: MAX_UINT256,
       maxRequestRedeem: shares(8_500),
       withdrawalCooldownEndsAt: 0n,
-      allowance: usdc(50_000),
+      allowance: assets(50_000),
       currentEpoch: 500_000n,
       nextRequestEpoch: 500_001n,
       nextRequestCutoffTime: 1_800_003_300n,
@@ -119,7 +119,7 @@ const snapshot = {
       frozenLpFeeBps: 0n,
       depositEnabled: true,
       withdrawEnabled: true,
-      poolWithdrawCapUsdc: 26_666_666_666_666n,
+      poolWithdrawCapAssets: 26_666_666_666_666n,
       sharePrice: 50_000_000 / 50_099_985.740167,
       hasCoreData: true,
       hasDepositData: true,
@@ -180,9 +180,9 @@ function historySeries(
 const seniorSupply = shares(35_000_000)
 const juniorSupply = shares(50_000_000)
 const juniorPendingFeeShares = 99_985_740_167_002n
-const seniorEndAssets = usdc(70_000_000)
+const seniorEndAssets = assets(70_000_000)
 const seniorStartAssets = (seniorEndAssets + 1n) * 1_000n / 1_001n - 1n
-const juniorEndAssets = usdc(50_000_000)
+const juniorEndAssets = assets(50_000_000)
 const juniorStartAssets = (juniorEndAssets + 1n) * 400n / 399n - 1n
 
 const history = {
@@ -218,24 +218,24 @@ const activity = {
   holders: [
     {
       address: '0x1111111111111111111111111111111111111111',
-      currentNavUsdc: usdc(18_500_000),
+      currentNavAssets: assets(18_500_000),
       shareOfVaultNav: 45,
-      seniorNavUsdc: usdc(15_000_000),
-      juniorNavUsdc: usdc(3_500_000),
+      seniorNavAssets: assets(15_000_000),
+      juniorNavAssets: assets(3_500_000),
     },
     {
       address: '0x2222222222222222222222222222222222222222',
-      currentNavUsdc: usdc(12_000_000),
+      currentNavAssets: assets(12_000_000),
       shareOfVaultNav: 30,
-      seniorNavUsdc: usdc(10_000_000),
-      juniorNavUsdc: usdc(2_000_000),
+      seniorNavAssets: assets(10_000_000),
+      juniorNavAssets: assets(2_000_000),
     },
     {
       address: '0x3333333333333333333333333333333333333333',
-      currentNavUsdc: usdc(10_000_000),
+      currentNavAssets: assets(10_000_000),
       shareOfVaultNav: 25,
-      seniorNavUsdc: usdc(8_000_000),
-      juniorNavUsdc: usdc(2_000_000),
+      seniorNavAssets: assets(8_000_000),
+      juniorNavAssets: assets(2_000_000),
     },
   ],
   activity: [
@@ -245,7 +245,7 @@ const activity = {
       tranche: 'senior',
       account: '0x4444444444444444444444444444444444444444',
       requestId: 500_000n,
-      amountUsdc: usdc(25_000),
+      amountAssets: assets(25_000),
       amountIsEstimate: false,
       timestamp: '2027-01-15T07:40:46.000Z',
       blockNumber: 302_932_837,
@@ -257,7 +257,7 @@ const activity = {
       tranche: 'senior',
       account: '0x5555555555555555555555555555555555555555',
       requestId: 499_999n,
-      amountUsdc: usdc(8_400),
+      amountAssets: assets(8_400),
       shares: shares(4_200),
       amountIsEstimate: true,
       timestamp: '2027-01-15T06:18:11.000Z',
@@ -283,7 +283,7 @@ const pendingRequests = {
     {
       requestId: 500_001n,
       targetTimestamp: 1_800_003_600,
-      pendingAssets: usdc(10_000),
+      pendingAssets: assets(10_000),
       directRedeemableShares: 0n,
       pendingSharesEstimate: shares(5_000),
       claimableAssets: 0n,
@@ -299,7 +299,7 @@ const pendingRequests = {
       directRedeemableShares: shares(1_250),
       pendingAssets: 0n,
       pendingSharesEstimate: 0n,
-      claimableAssets: usdc(2_500),
+      claimableAssets: assets(2_500),
       claimableShares: shares(1_250),
       refundableAssets: 0n,
       matured: true,

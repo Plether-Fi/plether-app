@@ -86,8 +86,8 @@ spec = do
         `shouldBe` Right 2000000200
     it "caps orders with TP/SL at the embedded order deadline" $ do
       let protectedOrder = smartCall (T.toLower Manifest.positionProtectionBookAddress) $
-            encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
-              [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
+            encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256,(uint256,uint256,uint256,uint256)))"
+              [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000, encodeUint256 1000000000, encodeUint256 1000000000, encodeUint256 1000000, encodeUint256 1000000]
       capSponsorshipExpiry 2000000200 (encodeExecute protectedOrder)
         `shouldBe` Right 2000000000
       capSponsorshipExpiry 2000000200 (encodeExecuteBatch [protectedOrder])
@@ -111,8 +111,8 @@ spec = do
     it "extracts submitBy for ordinary and protected orders, never their execution duration" $ do
       orderSubmissionDeadline (encodeExecute orderCall) `shouldBe` Right (Just 2000000000)
       let protected = smartCall Manifest.positionProtectionBookAddress $
-            selector "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))"
-              <> BS.drop 4 (smartCallData orderCall) <> encodeUint256 70000000 <> encodeUint256 90000000
+            selector "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256,(uint256,uint256,uint256,uint256)))"
+              <> BS.drop 4 (smartCallData orderCall) <> encodeUint256 70000000 <> encodeUint256 90000000 <> mconcat (replicate 4 $ encodeUint256 0)
       orderSubmissionDeadline (encodeExecute protected) `shouldBe` Right (Just 2000000000)
 
     it "caps stub and final sponsorship to the same signed bound and fails on malformed calldata" $ do
@@ -348,7 +348,7 @@ spec = do
   describe "SimpleAccount calldata policy" $ do
     it "decodes the canonical v0.8 executeBatch encoding" $ do
       let calls =
-            [ smartCall usdc $ encodeCall "approve(address,uint256)"
+            [ smartCall settlementToken $ encodeCall "approve(address,uint256)"
                 [encodeAddress clearinghouse, encodeUint256 25]
             , smartCall clearinghouse $ encodeCall "depositMargin(uint256)"
                 [encodeUint256 25]
@@ -365,10 +365,10 @@ spec = do
   describe "Plether whole-operation policy" $ do
     it "accepts canonical Book calls at the deployed address and rejects malformed protection calldata" $ do
       let book = T.toLower Manifest.positionProtectionBookAddress
-          create = smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]
-          replace = smartCall book $ encodeCall "replacePositionProtection(uint64,(uint256,uint256))" [encodeUint256 42, encodeUint256 0, encodeUint256 92000000]
+          create = smartCall book $ encodeCall "createPositionProtection((uint256,uint256,(uint256,uint256,uint256,uint256)))" [encodeUint256 68000000, encodeUint256 92000000, encodeUint256 1000000000, encodeUint256 1000000000, encodeUint256 1000000, encodeUint256 1000000]
+          replace = smartCall book $ encodeCall "replacePositionProtection(uint64,(uint256,uint256,(uint256,uint256,uint256,uint256)))" [encodeUint256 42, encodeUint256 0, encodeUint256 92000000, encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0]
           cancel = smartCall book $ encodeCall "cancelPositionProtection(uint64)" [encodeUint256 42]
-          protectedOpen = smartCall book $ encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256))" [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000]
+          protectedOpen = smartCall book $ encodeCall "commitOpenOrderWithProtection((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint256,uint256,(uint256,uint256,uint256,uint256)))" [BS.drop 4 $ smartCallData orderCall, encodeUint256 68000000, encodeUint256 92000000, encodeUint256 1000000000, encodeUint256 1000000000, encodeUint256 1000000, encodeUint256 1000000]
           disabledConfig = testConfig { cfgAaConfig = Just testAaConfig { aaProtectionCommitsEnabled = False } }
       mapM_ (\call -> validate [call] `shouldSatisfy` isRight) [create, replace, cancel, protectedOpen]
       validateActionSequence disabledConfig sender owner [create] `shouldSatisfy` isLeft
@@ -376,13 +376,14 @@ spec = do
       validate [create { smartCallValue = 1 }] `shouldSatisfy` isLeft
       validate [create { smartCallTarget = router }] `shouldSatisfy` isLeft
       validate [create { smartCallData = smartCallData create <> BS.singleton 0 }] `shouldSatisfy` isLeft
-      validate [smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 0, encodeUint256 0]] `shouldSatisfy` isLeft
+      validate [smartCall book $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]] `shouldSatisfy` isLeft
+      validate [smartCall book $ encodeCall "createPositionProtection((uint256,uint256,(uint256,uint256,uint256,uint256)))" [encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0, encodeUint256 0]] `shouldSatisfy` isLeft
       validate [smartCall book $ encodeCall "cancelPositionProtection(uint64)" [encodeUint256 (2 ^ (64 :: Int))]] `shouldSatisfy` isLeft
       validate [smartCall book $ encodeCall "retryPositionProtectionClose(uint64)" [encodeUint256 42]] `shouldSatisfy` isLeft
 
     it "rejects protection calls to the retired v1.2.1 Book" $ do
       let retiredBook = "0x63973eb0b5a862dfc95348d4d575fc55c9546f04"
-          call = smartCall retiredBook $ encodeCall "createPositionProtection((uint256,uint256))" [encodeUint256 68000000, encodeUint256 92000000]
+          call = smartCall retiredBook $ encodeCall "createPositionProtection((uint256,uint256,(uint256,uint256,uint256,uint256)))" [encodeUint256 68000000, encodeUint256 92000000, encodeUint256 1000000000, encodeUint256 1000000000, encodeUint256 1000000, encodeUint256 1000000]
       validate [call] `shouldSatisfy` isLeft
 
     it "accepts the five frontend action shapes" $ do
@@ -395,7 +396,7 @@ spec = do
     it "rejects standalone withdrawal and arbitrary token recipients" $ do
       validate [head withdrawalCalls] `shouldSatisfy` isLeft
       let badTransfer =
-            smartCall usdc $
+            smartCall settlementToken $
               encodeCall "transfer(address,uint256)"
                 [encodeAddress attacker, encodeUint256 19]
       validate [head withdrawalCalls, badTransfer] `shouldSatisfy` isLeft
@@ -460,7 +461,7 @@ gasPriceRequest =
 
 depositCalls :: [SmartCall]
 depositCalls =
-  [ smartCall usdc $
+  [ smartCall settlementToken $
       encodeCall "approve(address,uint256)"
         [encodeAddress clearinghouse, encodeUint256 7]
   , smartCall clearinghouse $
@@ -471,7 +472,7 @@ withdrawalCalls :: [SmartCall]
 withdrawalCalls =
   [ smartCall clearinghouse $
       encodeCall "withdrawMargin(uint256)" [encodeUint256 19]
-  , smartCall usdc $
+  , smartCall settlementToken $
       encodeCall "transfer(address,uint256)"
         [encodeAddress owner, encodeUint256 19]
   ]
@@ -605,7 +606,7 @@ testConfig =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = usdc
+    , cfgPerpsSettlementToken = settlementToken
     , cfgPerpsOrderRouter = router
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = engine
@@ -652,7 +653,7 @@ testReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "pimlico-test"
     , crmChainId = 421614
-    , crmUsdc = usdc
+    , crmSettlementToken = settlementToken
     , crmOrderRouter = router
     , crmMarginClearinghouse = clearinghouse
     , crmAccountLens = zeroAddress
@@ -663,12 +664,12 @@ testReleaseManifest =
     , crmIndexerStartBlock = 0
     }
 
-entryPoint, sender, owner, attacker, usdc, clearinghouse, router, engine, simpleAccountFactory, zeroAddress :: T.Text
+entryPoint, sender, owner, attacker, settlementToken, clearinghouse, router, engine, simpleAccountFactory, zeroAddress :: T.Text
 entryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 sender = "0x1111111111111111111111111111111111111111"
 owner = "0x2222222222222222222222222222222222222222"
 attacker = "0x9999999999999999999999999999999999999999"
-usdc = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+settlementToken = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
 clearinghouse = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
 router = "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
 engine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
@@ -729,6 +730,6 @@ assistedCalls amount recipient =
         <> encodeUint256 1 <> BS.drop (6*32) raw
       close = smartCall router $ selector "commitOrder((bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))" <> closeRequest
       guard = smartCall attacker $ selector "validateSponsoredClose(address,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),uint256)" <> encodeAddress engine <> closeRequest <> encodeUint256 amount
-  in [guard,smartCall usdc $ encodeCall "mint(address,uint256)" [encodeAddress recipient,encodeUint256 amount],
-      smartCall usdc $ encodeCall "approve(address,uint256)" [encodeAddress clearinghouse,encodeUint256 amount],
+  in [guard,smartCall settlementToken $ encodeCall "mint(address,uint256)" [encodeAddress recipient,encodeUint256 amount],
+      smartCall settlementToken $ encodeCall "approve(address,uint256)" [encodeAddress clearinghouse,encodeUint256 amount],
       smartCall clearinghouse $ encodeCall "depositMargin(uint256)" [encodeUint256 amount],close]

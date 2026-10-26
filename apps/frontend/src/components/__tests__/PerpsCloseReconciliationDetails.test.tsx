@@ -29,7 +29,7 @@ describe('PerpsCloseReconciliationDisclosure', () => {
   ])('shows lifetime VPI %s separately from the close rebate', (total, displayed, tone) => {
     const reconciliation = derivePerpsCloseReconciliation({
       ...closeSettlementAdjustmentReceipt,
-      totalPositionVpiUsdc: total,
+      totalPositionVpiAssets: total,
     })!
     render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
     const totalRow = screen.getByText('Total VPI balance').closest('div')!
@@ -37,14 +37,14 @@ describe('PerpsCloseReconciliationDisclosure', () => {
     expect(totalRow.querySelector('dd')).toHaveClass(tone)
     expect(within(screen.getByText('VPI rebate').closest('div')!).getByText('+251.81'))
       .toBeInTheDocument()
-    expect(reconciliation.actualAccountChangeUsdc)
-      .toBe(derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!.actualAccountChangeUsdc)
+    expect(reconciliation.actualAccountChangeAssets)
+      .toBe(derivePerpsCloseReconciliation(closeSettlementAdjustmentReceipt)!.actualAccountChangeAssets)
   })
 
   it.each([undefined, '', 'invalid'])('does not invent a total for unavailable history (%s)', (total) => {
     const reconciliation = derivePerpsCloseReconciliation({
       ...closeSettlementAdjustmentReceipt,
-      totalPositionVpiUsdc: total,
+      totalPositionVpiAssets: total,
     })!
     render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
     expect(within(screen.getByText('Total VPI balance').closest('div')!).getByText('Unavailable'))
@@ -54,10 +54,10 @@ describe('PerpsCloseReconciliationDisclosure', () => {
   it('uses the actual zero outcome for summary color even when the calculated result is negative', () => {
     const reconciliation = derivePerpsCloseReconciliation({
       ...closeSettlementAdjustmentReceipt,
-      executionBountyUsdc: '0',
-      actionChargeCollectedUsdc: '0',
-      grossAccountDebitUsdc: '0',
-      preSettlementBalanceUsdc: '0',
+      executionBountyAssets: '0',
+      actionChargeCollectedAssets: '0',
+      grossAccountDebitAssets: '0',
+      preSettlementBalanceAssets: '0',
     })!
     render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
     const summary = screen.getByTestId('close-reconciliation-summary')
@@ -67,11 +67,11 @@ describe('PerpsCloseReconciliationDisclosure', () => {
   it('separates the lifetime result from the current close and reconciles VPI', () => {
     const reconciliation = derivePerpsCloseReconciliation({
       ...closeSettlementAdjustmentReceipt,
-      totalPositionVpiUsdc: '148190000',
-      positionLifetimeNetResultUsdc: '-8000000000',
-      positionLifetimeTradesResultUsdc: '-7990000000',
-      positionLifetimeAccountAdjustmentUsdc: '-10000000',
-    }, { preExecutionPositionMarginUsdc: 500_000_000n })!
+      totalPositionVpiAssets: '148190000',
+      positionLifetimeNetResultAssets: '-8000000000',
+      positionLifetimeTradesResultAssets: '-7990000000',
+      positionLifetimeAccountAdjustmentAssets: '-10000000',
+    }, { preExecutionPositionMarginAssets: 500_000_000n })!
     render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
     expect(screen.getByText('Position fully closed')).toBeInTheDocument()
     expect(within(screen.getByTestId('close-reconciliation-summary')).getByText('Total realized result since opening').closest('div')?.querySelector('dd')).toHaveTextContent('-8 000')
@@ -96,9 +96,9 @@ describe('PerpsCloseReconciliationDisclosure', () => {
   it('shows the remaining quantity for partial closes and keeps incomplete lifetime accounting unavailable', () => {
     const reconciliation = derivePerpsCloseReconciliation({
       ...closeOrder14Receipt,
-      positionLifetimeNetResultUsdc: '10',
-      positionLifetimeTradesResultUsdc: '20',
-      positionLifetimeAccountAdjustmentUsdc: '0',
+      positionLifetimeNetResultAssets: '10',
+      positionLifetimeTradesResultAssets: '20',
+      positionLifetimeAccountAdjustmentAssets: '0',
     })!
     render(<PerpsCloseReconciliationDisclosure reconciliation={reconciliation} />)
     expect(screen.getByText('Position partially closed')).toBeInTheDocument()

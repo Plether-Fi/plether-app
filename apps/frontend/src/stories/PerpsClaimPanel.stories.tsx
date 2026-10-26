@@ -12,12 +12,12 @@ const meta: Meta<typeof PerpsClaimPanel> = {
     layout: 'fullscreen',
   },
   args: {
-    claimUsdc: '800.00',
+    claimAssets: '800.00',
     status: 'waiting',
     tradingAccountAddress: TRADING_ACCOUNT,
-    marginAccountUsdc: '2 450.00',
-    aggregateClaimsUsdc: '1 200.00',
-    housePoolAssetsUsdc: '1 100.00',
+    marginAccountAssets: '2 450.00',
+    aggregateClaimsAssets: '1 200.00',
+    housePoolAssets: '1 100.00',
     coverageRatio: '91.7%',
   },
 }
@@ -40,7 +40,7 @@ export const WaitingForLiquidity: Story = {
 export const AvailableToSettle: Story = {
   args: {
     status: 'available',
-    housePoolAssetsUsdc: '1 250.00',
+    housePoolAssets: '1 250.00',
     coverageRatio: '104.2%',
   },
   render: (args) => <Frame><PerpsClaimPanel {...args} /></Frame>,
@@ -49,7 +49,7 @@ export const AvailableToSettle: Story = {
 export const SettlementConfirmation: Story = {
   args: {
     status: 'available',
-    housePoolAssetsUsdc: '1 250.00',
+    housePoolAssets: '1 250.00',
     coverageRatio: '104.2%',
     initialConfirmationOpen: true,
   },
@@ -58,12 +58,12 @@ export const SettlementConfirmation: Story = {
 
 export const SuccessfullySettled: Story = {
   args: {
-    claimUsdc: '0.00',
+    claimAssets: '0.00',
     status: 'settled',
-    marginAccountUsdc: '3 250.00',
-    settledCreditUsdc: '800.00',
-    aggregateClaimsUsdc: '400.00',
-    housePoolAssetsUsdc: '400.00',
+    marginAccountAssets: '3 250.00',
+    settledCreditAssets: '800.00',
+    aggregateClaimsAssets: '400.00',
+    housePoolAssets: '400.00',
     coverageRatio: '100%',
   },
   render: (args) => <Frame><PerpsClaimPanel {...args} /></Frame>,
@@ -82,10 +82,10 @@ export const CloseCreatedClaim: Story = {
           identifier="0x75c4...1032"
         />
         <PerpsClaimPanel
-          claimUsdc="800.00"
+          claimAssets="800.00"
           status="waiting"
           tradingAccountAddress={TRADING_ACCOUNT}
-          marginAccountUsdc="2 450.00"
+          marginAccountAssets="2 450.00"
         />
       </div>
     </div>

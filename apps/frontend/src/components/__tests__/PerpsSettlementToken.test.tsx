@@ -21,7 +21,7 @@ const account = '0x6b72fE6CC52201a1eb7892A813C6C10cCe62745c'
 
 describe('Mock USDG perps display', () => {
   it('labels perps balances from configuration without changing shared spot token defaults', () => {
-    const view = render(<PerpsClaimPanel claimUsdc="25.00" status="waiting" tradingAccountAddress={account} />)
+    const view = render(<PerpsClaimPanel claimAssets="25.00" status="waiting" tradingAccountAddress={account} />)
     expect(screen.getByText('Mock USDG')).toBeInTheDocument()
     expect(screen.queryByText('USDC')).not.toBeInTheDocument()
 
@@ -31,7 +31,7 @@ describe('Mock USDG perps display', () => {
 
   it('uses the configured label in sponsored cost and carry explanations', () => {
     render(<PerpsReviewFooter preparing={false} refreshing={false} slow={false} changes={[]}
-      canConfirm direction="long" sponsoredCloseUsdc="0.20" depositCarryUsdc="0.10" commitmentCarryUsdc="0.05"
+      canConfirm direction="long" sponsoredCloseAssets="0.20" depositCarryAssets="0.10" commitmentCarryAssets="0.05"
       onConfirm={vi.fn()} onCancel={vi.fn()} />)
     expect(screen.getByText(/Plether covers/)).toHaveTextContent('0.20 Mock USDG')
     expect(screen.getByText(/Carry collected with assistance/)).toHaveTextContent('0.10 Mock USDG')

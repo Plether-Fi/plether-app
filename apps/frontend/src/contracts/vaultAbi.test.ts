@@ -19,14 +19,14 @@ function outputComponents(abi: readonly unknown[], functionName: string) {
 describe('v1.2.0 vault ABI regression boundary', () => {
   it('keeps TrancheView in the exact released order', () => {
     const expected = [
-      ['totalAssetsUsdc', 'uint256'],
+      ['totalAssets', 'uint256'],
       ['totalShares', 'uint256'],
       ['effectiveTotalShares', 'uint256'],
       ['pendingMaintenanceFeeShares', 'uint256'],
       ['maintenanceFeeAprBps', 'uint256'],
       ['maintenanceFeeRecipient', 'address'],
       ['sharePrice', 'uint256'],
-      ['maxWithdrawUsdc', 'uint256'],
+      ['maxWithdrawAssets', 'uint256'],
       ['frozenLpFeeBps', 'uint256'],
       ['depositEnabled', 'bool'],
       ['withdrawEnabled', 'bool'],
@@ -81,15 +81,15 @@ describe('v1.2.0 vault ABI regression boundary', () => {
       ['redeemRefundPending', 'bool'],
     ])
     expect(outputComponents(PERPS_HOUSE_POOL_ABI, 'getPoolLiquidityView')).toEqual([
-      ['totalAssetsUsdc', 'uint256'],
-      ['freeUsdc', 'uint256'],
-      ['withdrawalReservedUsdc', 'uint256'],
-      ['pendingRecapitalizationUsdc', 'uint256'],
-      ['pendingTradingRevenueUsdc', 'uint256'],
-      ['seniorPrincipalUsdc', 'uint256'],
-      ['juniorPrincipalUsdc', 'uint256'],
-      ['seniorHighWaterMarkUsdc', 'uint256'],
-      ['currentTerminalDeficitUsdc', 'uint256'],
+      ['totalAssets', 'uint256'],
+      ['freeAssets', 'uint256'],
+      ['withdrawalReservedAssets', 'uint256'],
+      ['pendingRecapitalizationAssets', 'uint256'],
+      ['pendingTradingRevenueAssets', 'uint256'],
+      ['seniorPrincipalAssets', 'uint256'],
+      ['juniorPrincipalAssets', 'uint256'],
+      ['seniorHighWaterMarkAssets', 'uint256'],
+      ['currentTerminalDeficitAssets', 'uint256'],
       ['markFresh', 'bool'],
       ['oracleFrozen', 'bool'],
       ['degradedMode', 'bool'],
@@ -133,7 +133,7 @@ describe('typed vault tuple adapters', () => {
     const liquidity = decodePoolLiquidityView([
       1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, true, false, false,
     ])
-    expect(liquidity?.currentTerminalDeficitUsdc).toBe(9n)
+    expect(liquidity?.currentTerminalDeficitAssets).toBe(9n)
   })
 
   it('fails closed instead of shifting a legacy tuple', () => {

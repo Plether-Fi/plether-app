@@ -1,14 +1,14 @@
 import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
-import { formatPerpsUsdc, type PerpsDirection } from './perps'
+import { formatPerpsAssets, type PerpsDirection } from './perps'
 
 export function getOpenCapacityUnavailableMessage({
   direction,
   isOpeningFromZero,
-  minimumDxyExposureUsdc,
+  minimumDxyExposureAssets,
 }: {
   direction: PerpsDirection
   isOpeningFromZero: boolean
-  minimumDxyExposureUsdc: bigint
+  minimumDxyExposureAssets: bigint
 }): string {
   const selectedDirectionLabel = direction === 'long' ? 'Long' : 'Short'
   const opposingDirectionLabel = direction === 'long' ? 'Short' : 'Long'
@@ -17,5 +17,5 @@ export function getOpenCapacityUnavailableMessage({
     ? `You can open a ${opposingDirectionLabel} plDXY Perp position instead, which helps rebalance the market.`
     : `You can reduce or close your current ${selectedDirectionLabel} position. After closing it, you can open a ${opposingDirectionLabel} plDXY Perp position, which helps rebalance the market.`
 
-  return `${selectedDirectionLabel} plDXY Perp positions are temporarily unavailable because there is not enough remaining ${selectedDirectionLabel} capacity to fit the ${minimumLabel} of ${formatPerpsUsdc(minimumDxyExposureUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}. Opening more ${selectedDirectionLabel} exposure would worsen the market imbalance. ${alternativeAction}`
+  return `${selectedDirectionLabel} plDXY Perp positions are temporarily unavailable because there is not enough remaining ${selectedDirectionLabel} capacity to fit the ${minimumLabel} of ${formatPerpsAssets(minimumDxyExposureAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}. Opening more ${selectedDirectionLabel} exposure would worsen the market imbalance. ${alternativeAction}`
 }

@@ -17,8 +17,8 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { usePerpsIdentity } from '../perps-aa'
 import { findLiquidationThreshold, projectCarry, type LiquidationThreshold } from '../utils/perpsRisk'
 import { useInvalidatePerpsSnapshot, usePerpsSnapshotInvalidated } from './usePerpsSnapshotInvalidated'
-import { calculatePendingCarryUsdc } from '../utils/perpsCarry'
-import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
+import { calculatePendingCarryAssets } from '../utils/perpsCarry'
+import { formatDisplayDxyPrice, formatPerpsAssets, formatSignedPerpsAssets, oraclePriceToDisplayDxyPrice, perpsSideToDirection, sizeDeltaToNotionalAssets } from '../utils/perps'
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -39,7 +39,7 @@ function sideCarryContracts(side: bigint) {
   return [
     { ...engine, functionName: 'sideCarryIndex' },
     { ...engine, functionName: 'sideCarryTimestamp' },
-    { ...engine, functionName: 'sideBorrowBaseUsdc' },
+    { ...engine, functionName: 'sideBorrowBaseAssets' },
   ] as const
 }
 
@@ -48,11 +48,11 @@ export interface PerpsPendingOrder {
   side: number
   direction: 'long' | 'short'
   sizeDelta: bigint
-  marginDeltaUsdc: bigint
+  marginDeltaAssets: bigint
   acceptablePrice: bigint
   isReduceOnly: boolean
   status: number
-  estimatedNotionalUsdc?: bigint
+  estimatedNotionalAssets?: bigint
   commitTime?: bigint
   expiryTime?: bigint
 }
@@ -63,22 +63,22 @@ export interface PerpsPosition {
   direction: 'long' | 'short'
   size: bigint
   entryPrice: bigint
-  marginUsdc: bigint
-  unrealizedPnlUsdc: bigint
-  maintenanceMarginUsdc: bigint
+  marginAssets: bigint
+  unrealizedPnlAssets: bigint
+  maintenanceMarginAssets: bigint
   liquidatable: boolean
-  estimatedNotionalUsdc?: bigint
-  entryNotionalUsdc?: bigint
-  dxyExposureUsdc?: bigint
+  estimatedNotionalAssets?: bigint
+  entryNotionalAssets?: bigint
+  dxyExposureAssets?: bigint
   displayDxyPrice?: bigint
   liquidationPrice?: bigint
   liquidationThreshold?: LiquidationThreshold
   riskStatus?: 'ready' | 'unavailable'
   capPrice?: bigint
-  positionEquityUsdc?: bigint
-  uncoveredCarryUsdc?: bigint
+  positionEquityAssets?: bigint
+  uncoveredCarryAssets?: bigint
   vpiReserveUnderfunded?: boolean
-  pendingCarryUsdc?: bigint
+  pendingCarryAssets?: bigint
   /** Signed net VPI accumulated over the position lifecycle. Positive is net paid; negative is provisional credit. */
   vpiAccrued?: bigint
 }
@@ -115,13 +115,13 @@ function parsePosition(value: unknown, markPrice?: bigint): PerpsPosition | unde
     direction: perpsSideToDirection(side),
     size,
     entryPrice: tupleValue(value, 3, 'entryPrice') as bigint | undefined ?? 0n,
-    marginUsdc: tupleValue(value, 4, 'marginUsdc') as bigint | undefined ?? 0n,
-    unrealizedPnlUsdc: tupleValue(value, 5, 'unrealizedPnlUsdc') as bigint | undefined ?? 0n,
-    maintenanceMarginUsdc: tupleValue(value, 6, 'maintenanceMarginUsdc') as bigint | undefined ?? 0n,
+    marginAssets: tupleValue(value, 4, 'marginAssets') as bigint | undefined ?? 0n,
+    unrealizedPnlAssets: tupleValue(value, 5, 'unrealizedPnlAssets') as bigint | undefined ?? 0n,
+    maintenanceMarginAssets: tupleValue(value, 6, 'maintenanceMarginAssets') as bigint | undefined ?? 0n,
     liquidatable: Boolean(tupleValue(value, 7, 'liquidatable')),
-    estimatedNotionalUsdc: sizeDeltaToNotionalUsdc(size, markPrice),
-    entryNotionalUsdc: sizeDeltaToNotionalUsdc(size, tupleValue(value, 3, 'entryPrice') as bigint | undefined ?? 0n),
-    dxyExposureUsdc: sizeDeltaToNotionalUsdc(size, displayDxyPrice),
+    estimatedNotionalAssets: sizeDeltaToNotionalAssets(size, markPrice),
+    entryNotionalAssets: sizeDeltaToNotionalAssets(size, tupleValue(value, 3, 'entryPrice') as bigint | undefined ?? 0n),
+    dxyExposureAssets: sizeDeltaToNotionalAssets(size, displayDxyPrice),
     displayDxyPrice,
   }
 }
@@ -138,11 +138,11 @@ function parsePendingOrders(value: unknown, markPrice?: bigint): PerpsPendingOrd
       side,
       direction: perpsSideToDirection(side),
       sizeDelta,
-      marginDeltaUsdc: tupleValue(item, 3, 'marginDeltaUsdc') as bigint | undefined ?? 0n,
+      marginDeltaAssets: tupleValue(item, 3, 'marginDeltaAssets') as bigint | undefined ?? 0n,
       acceptablePrice: tupleValue(item, 4, 'acceptablePrice') as bigint | undefined ?? 0n,
       isReduceOnly: Boolean(tupleValue(item, 5, 'isReduceOnly')),
       status: Number(tupleValue(item, 6, 'status') ?? 0),
-      estimatedNotionalUsdc: sizeDeltaToNotionalUsdc(sizeDelta, markPrice),
+      estimatedNotionalAssets: sizeDeltaToNotionalAssets(sizeDelta, markPrice),
     }
   })
 }
@@ -164,24 +164,24 @@ function readBigInt(value: unknown, index: number, key: string): bigint | undefi
   return undefined
 }
 
-function readPendingCarryUsdc(data: readonly ContractResult[] | undefined): bigint | undefined {
+function readPendingCarryAssets(data: readonly ContractResult[] | undefined): bigint | undefined {
   const side = readBigInt(readResult(data, 9), 4, 'side')
   if (side !== 0n && side !== 1n) return undefined
   const sideOffset = side === 0n ? 16 : 19
   const carryState = readResult(data, 11)
 
-  // netEquityUsdc is price-risk equity, not carry-adjusted account equity.
+  // netEquityAssets is price-risk equity, not carry-adjusted account equity.
   // Subtracting it from settlement would incorrectly label free collateral as carry.
-  return calculatePendingCarryUsdc({
-    borrowBaseUsdc: readBigInt(carryState, 0, 'borrowBaseUsdc'),
+  return calculatePendingCarryAssets({
+    borrowBaseAssets: readBigInt(carryState, 0, 'borrowBaseAssets'),
     lastCarryIndex: readBigInt(carryState, 1, 'lastCarryIndex'),
-    unsettledCarryUsdc: readResult(data, 12) as bigint | undefined,
+    unsettledCarryAssets: readResult(data, 12) as bigint | undefined,
     baseCarryBps: readBigInt(readResult(data, 13), 5, 'baseCarryBps'),
-    poolAssetsUsdc: readResult(data, 14) as bigint | undefined,
+    poolAssets: readResult(data, 14) as bigint | undefined,
     blockTimestamp: readResult(data, 15) as bigint | undefined,
     sideCarryIndex: readResult(data, sideOffset) as bigint | undefined,
     sideCarryTimestamp: readResult(data, sideOffset + 1) as bigint | undefined,
-    sideBorrowBaseUsdc: readResult(data, sideOffset + 2) as bigint | undefined,
+    sideBorrowBaseAssets: readResult(data, sideOffset + 2) as bigint | undefined,
   })
 }
 
@@ -234,21 +234,21 @@ export function usePerpsAccount(markPrice?: bigint) {
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [account],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [owner],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'allowance',
         args: [account, PERPS_ARBITRUM_SEPOLIA.marginClearinghouse],
@@ -257,7 +257,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
         abi: PERPS_MARGIN_CLEARINGHOUSE_ABI,
-        functionName: 'getFreeBuyingPowerUsdc',
+        functionName: 'getFreeBuyingPowerAssets',
         args: [account],
       },
       {
@@ -298,7 +298,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
-        functionName: 'unsettledCarryUsdc',
+        functionName: 'unsettledCarryAssets',
         args: [account],
       },
       {
@@ -325,7 +325,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
-        functionName: 'positionEntryCostUsdcAtoms',
+        functionName: 'positionEntryCostAssetAtoms',
         args: [account],
       },
       {
@@ -338,7 +338,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
         abi: PERPS_MARGIN_CLEARINGHOUSE_ABI,
-        functionName: 'vpiRebateReserveUsdc',
+        functionName: 'vpiRebateReserveAssets',
         args: [account],
       },
     ],
@@ -394,7 +394,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'minOpenNotionalUsdc',
+        functionName: 'minOpenNotionalAssets',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -503,10 +503,10 @@ export function usePerpsAccount(markPrice?: bigint) {
     const accountView = readResult(dynamicContractData, 0)
     const accountMarkPrice = readResult(dynamicContractData, 23) as bigint | undefined
     const position = parsePosition(readResult(dynamicContractData, 1), accountMarkPrice)
-    const tradingAccountUsdc = readResult(dynamicContractData, 3) as bigint | undefined
-    const ownerWalletUsdc = readResult(dynamicContractData, 4) as bigint | undefined
-    const marginAllowanceUsdc = readResult(dynamicContractData, 5) as bigint | undefined
-    const freeBuyingPowerUsdc = readResult(dynamicContractData, 6) as bigint | undefined
+    const tradingAccountAssets = readResult(dynamicContractData, 3) as bigint | undefined
+    const ownerWalletAssets = readResult(dynamicContractData, 4) as bigint | undefined
+    const marginAllowanceAssets = readResult(dynamicContractData, 5) as bigint | undefined
+    const freeBuyingPowerAssets = readResult(dynamicContractData, 6) as bigint | undefined
     const accountLedgerSnapshot = readResult(dynamicContractData, 7)
     const isFadWindow = readResult(dynamicContractData, 8) as boolean | undefined
     const enginePosition = readResult(dynamicContractData, 9)
@@ -515,43 +515,43 @@ export function usePerpsAccount(markPrice?: bigint) {
     const maxPendingOrders = readResult(routerConfigurationData, 1) as bigint | undefined
     const maxExecutionWindowSeconds = readResult(routerConfigurationData, 2) as bigint | undefined
     const capPrice = readResult(immutableContractData, 0) as bigint | undefined
-    const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
-    const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
-    const settlementBalanceUsdc = readBigInt(accountLedgerSnapshot, 0, 'settlementBalanceUsdc')
-    const freeSettlementUsdc = readBigInt(accountLedgerSnapshot, 1, 'freeSettlementUsdc')
-    const positionEquityUsdc = readBigInt(accountLedgerSnapshot, 22, 'netEquityUsdc')
-    const traderClaimBalanceUsdc = readBigInt(accountLedgerSnapshot, 9, 'traderClaimBalanceUsdc')
+    const withdrawableAssets = tupleValue(accountView, 1, 'withdrawableAssets') as bigint | undefined
+    const equityAssets = tupleValue(accountView, 0, 'equityAssets') as bigint | undefined
+    const settlementBalanceAssets = readBigInt(accountLedgerSnapshot, 0, 'settlementBalanceAssets')
+    const freeSettlementAssets = readBigInt(accountLedgerSnapshot, 1, 'freeSettlementAssets')
+    const positionEquityAssets = readBigInt(accountLedgerSnapshot, 22, 'netEquityAssets')
+    const traderClaimBalanceAssets = readBigInt(accountLedgerSnapshot, 9, 'traderClaimBalanceAssets')
     const maintenanceMarginBps = isFadWindow
       ? readBigInt(riskParams, 4, 'fadMarginBps')
       : readBigInt(riskParams, 2, 'maintMarginBps')
     const vpiAccrued = readBigInt(enginePosition, 6, 'vpiAccrued')
-    const pendingCarryUsdc = readPendingCarryUsdc(dynamicContractData)
-    const entryCostUsdcAtoms = readResult(dynamicContractData, 22) as bigint | undefined
-    const vpiReserveUsdc = readResult(dynamicContractData, 24) as bigint | undefined
+    const pendingCarryAssets = readPendingCarryAssets(dynamicContractData)
+    const entryCostAssetAtoms = readResult(dynamicContractData, 22) as bigint | undefined
+    const vpiReserveAssets = readResult(dynamicContractData, 24) as bigint | undefined
     const snapshotCurrent = !snapshotInvalidated && !dynamicContractsError
     const riskReady = snapshotCurrent && accountView !== undefined && accountLedgerSnapshot !== undefined &&
       accountMarkPrice !== undefined && accountMarkPrice > 0n && capPrice !== undefined && isFadWindow !== undefined &&
-      maintenanceMarginBps !== undefined && entryCostUsdcAtoms !== undefined &&
-      traderClaimBalanceUsdc !== undefined && positionEquityUsdc !== undefined &&
-      pendingCarryUsdc !== undefined && freeSettlementUsdc !== undefined &&
-      vpiAccrued !== undefined && vpiReserveUsdc !== undefined
-    const carryProjection = position && pendingCarryUsdc !== undefined && freeSettlementUsdc !== undefined
-      ? projectCarry(position.marginUsdc, freeSettlementUsdc, pendingCarryUsdc)
+      maintenanceMarginBps !== undefined && entryCostAssetAtoms !== undefined &&
+      traderClaimBalanceAssets !== undefined && positionEquityAssets !== undefined &&
+      pendingCarryAssets !== undefined && freeSettlementAssets !== undefined &&
+      vpiAccrued !== undefined && vpiReserveAssets !== undefined
+    const carryProjection = position && pendingCarryAssets !== undefined && freeSettlementAssets !== undefined
+      ? projectCarry(position.marginAssets, freeSettlementAssets, pendingCarryAssets)
       : undefined
     const liquidationThreshold = findLiquidationThreshold(position?.exists && riskReady && carryProjection ? {
-      capPrice, entryCostUsdcAtoms, maintenanceMarginBps, side: position.side,
-      size: position.size, positionMarginUsdc: carryProjection.positionMarginUsdc, traderClaimBalanceUsdc,
+      capPrice, entryCostAssetAtoms, maintenanceMarginBps, side: position.side,
+      size: position.size, positionMarginAssets: carryProjection.positionMarginAssets, traderClaimBalanceAssets,
     } : undefined)
     const liquidationPrice = liquidationThreshold.status === 'boundary' ? liquidationThreshold.price : undefined
     const positionWithLiquidationPrice = position === undefined ? undefined : {
       ...position, liquidationPrice, liquidationThreshold, capPrice,
       liquidatable: position.liquidatable || Boolean(tupleValue(accountView, 5, 'liquidatable')),
       riskStatus: riskReady && liquidationThreshold.status !== 'unavailable' ? 'ready' as const : 'unavailable' as const,
-      positionEquityUsdc: riskReady ? positionEquityUsdc : undefined,
-      pendingCarryUsdc: snapshotCurrent ? pendingCarryUsdc : undefined,
+      positionEquityAssets: riskReady ? positionEquityAssets : undefined,
+      pendingCarryAssets: snapshotCurrent ? pendingCarryAssets : undefined,
       vpiAccrued,
-      uncoveredCarryUsdc: riskReady ? carryProjection?.uncoveredCarryUsdc : undefined,
-      vpiReserveUnderfunded: riskReady ? vpiAccrued < 0n && vpiReserveUsdc < -vpiAccrued : undefined,
+      uncoveredCarryAssets: riskReady ? carryProjection?.uncoveredCarryAssets : undefined,
+      vpiReserveUnderfunded: riskReady ? vpiAccrued < 0n && vpiReserveAssets < -vpiAccrued : undefined,
     }
     const pendingOrders = basicPendingOrders.map((order, index) => {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
@@ -592,22 +592,22 @@ export function usePerpsAccount(markPrice?: bigint) {
       error,
       refetchDynamic: refreshDynamic,
       refetch,
-      walletUsdc: ownerWalletUsdc,
-      ownerWalletUsdc,
-      tradingAccountUsdc,
-      marginAllowanceUsdc,
-      equityUsdc: snapshotCurrent ? equityUsdc : undefined,
-      positionEquityUsdc: position?.exists && riskReady ? positionEquityUsdc : undefined,
-      settlementBalanceUsdc: snapshotCurrent ? settlementBalanceUsdc : undefined,
-      freeSettlementUsdc: snapshotCurrent ? freeSettlementUsdc : undefined,
+      walletAssets: ownerWalletAssets,
+      ownerWalletAssets,
+      tradingAccountAssets,
+      marginAllowanceAssets,
+      equityAssets: snapshotCurrent ? equityAssets : undefined,
+      positionEquityAssets: position?.exists && riskReady ? positionEquityAssets : undefined,
+      settlementBalanceAssets: snapshotCurrent ? settlementBalanceAssets : undefined,
+      freeSettlementAssets: snapshotCurrent ? freeSettlementAssets : undefined,
       carryProjection: snapshotCurrent ? carryProjection : undefined,
       snapshotStatus: snapshotCurrent && accountView !== undefined && accountLedgerSnapshot !== undefined &&
         position !== undefined && (!position.exists || riskReady) ? 'ready' as const : 'unavailable' as const,
-      freeBuyingPowerUsdc: snapshotCurrent ? freeBuyingPowerUsdc : undefined,
-      withdrawableUsdc: snapshotCurrent ? withdrawableUsdc : undefined,
-      traderClaimBalanceUsdc: snapshotCurrent ? traderClaimBalanceUsdc : undefined,
-      pendingOrderMarginUsdc: tupleValue(accountView, 2, 'pendingOrderMarginUsdc') as bigint | undefined,
-      pendingExecutionBountyUsdc: tupleValue(accountView, 3, 'pendingExecutionBountyUsdc') as bigint | undefined,
+      freeBuyingPowerAssets: snapshotCurrent ? freeBuyingPowerAssets : undefined,
+      withdrawableAssets: snapshotCurrent ? withdrawableAssets : undefined,
+      traderClaimBalanceAssets: snapshotCurrent ? traderClaimBalanceAssets : undefined,
+      pendingOrderMarginAssets: tupleValue(accountView, 2, 'pendingOrderMarginAssets') as bigint | undefined,
+      pendingExecutionBountyAssets: tupleValue(accountView, 3, 'pendingExecutionBountyAssets') as bigint | undefined,
       maxPendingOrders,
       maxExecutionWindowSeconds,
       activePositionProtectionId:
@@ -624,14 +624,14 @@ export function usePerpsAccount(markPrice?: bigint) {
       position: positionWithLiquidationPrice,
       pendingOrders,
       display: {
-        walletUsdc: formatPerpsUsdc(ownerWalletUsdc),
-        ownerWalletUsdc: formatPerpsUsdc(ownerWalletUsdc),
-        tradingAccountUsdc: formatPerpsUsdc(tradingAccountUsdc),
-        availableToTrade: formatPerpsUsdc(snapshotCurrent ? freeBuyingPowerUsdc ?? withdrawableUsdc : undefined),
-        equity: formatPerpsUsdc(snapshotCurrent ? equityUsdc : undefined),
-        positionNotional: formatPerpsUsdc(positionWithLiquidationPrice?.estimatedNotionalUsdc),
+        walletAssets: formatPerpsAssets(ownerWalletAssets),
+        ownerWalletAssets: formatPerpsAssets(ownerWalletAssets),
+        tradingAccountAssets: formatPerpsAssets(tradingAccountAssets),
+        availableToTrade: formatPerpsAssets(snapshotCurrent ? freeBuyingPowerAssets ?? withdrawableAssets : undefined),
+        equity: formatPerpsAssets(snapshotCurrent ? equityAssets : undefined),
+        positionNotional: formatPerpsAssets(positionWithLiquidationPrice?.estimatedNotionalAssets),
         entryPrice: formatDisplayDxyPrice(positionWithLiquidationPrice?.entryPrice),
-        pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
+        pnl: formatSignedPerpsAssets(positionWithLiquidationPrice?.unrealizedPnlAssets),
       },
     }
   }, [snapshotInvalidated, dynamicContractsError, accountAddress, basicPendingOrders, dynamicContractData, error, identityStatus, immutableContractData, isConnected, isLoading, ownerAddress, pendingOrderPoliciesData, pendingOrderPoliciesLoading, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refreshDynamic, routerConfigurationData])
@@ -654,9 +654,9 @@ export function usePerpsAccount(markPrice?: bigint) {
             liquidationPrice: undefined,
             liquidationThreshold: { status: 'unavailable' as const },
             riskStatus: 'unavailable' as const,
-            positionEquityUsdc: undefined,
-            pendingCarryUsdc: undefined,
-            uncoveredCarryUsdc: undefined,
+            positionEquityAssets: undefined,
+            pendingCarryAssets: undefined,
+            uncoveredCarryAssets: undefined,
             vpiReserveUnderfunded: undefined,
           }
         : undefined
@@ -673,9 +673,9 @@ export function usePerpsAccount(markPrice?: bigint) {
       position: stablePosition,
       display: {
         ...freshAccount.display,
-        positionNotional: formatPerpsUsdc(stablePosition?.estimatedNotionalUsdc),
+        positionNotional: formatPerpsAssets(stablePosition?.estimatedNotionalAssets),
         entryPrice: formatDisplayDxyPrice(stablePosition?.entryPrice),
-        pnl: formatSignedPerpsUsdc(stablePosition?.unrealizedPnlUsdc),
+        pnl: formatSignedPerpsAssets(stablePosition?.unrealizedPnlAssets),
       },
     }
   }, [freshAccount, account])
