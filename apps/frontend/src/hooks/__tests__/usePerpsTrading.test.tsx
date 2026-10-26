@@ -374,7 +374,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: expect.stringContaining('Not enough free Mock USDG settlement balance to reserve TP/SL keeper rewards. Deposit Mock USDG into your margin account and retry.\n\nSupport reference: '),
+        message: expect.stringContaining('Not enough free USDG settlement balance to reserve TP/SL keeper rewards. Deposit USDG into your margin account and retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -453,7 +453,7 @@ describe('usePerpsTrading', () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.approveSettlementTokenForMargin(25_000_000n))
-      .rejects.toThrow('Direct Mock USDG approvals are disabled')
+      .rejects.toThrow('Direct USDG approvals are disabled')
   })
 
   it('blocks order submission until the Trading Account is ready', async () => {

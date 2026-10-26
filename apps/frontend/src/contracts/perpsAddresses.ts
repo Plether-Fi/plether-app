@@ -5,7 +5,7 @@ import { parsePerpsReleaseConfiguration, settlementTokenContract } from './perps
 export const PERPS_RELEASE = parsePerpsReleaseConfiguration(release)
 export const PERPS_RELEASE_IS_DEPLOYED = PERPS_RELEASE.isDeployed
 export const PERPS_SETTLEMENT_TOKEN = PERPS_RELEASE.settlementToken
-export const PERPS_SETTLEMENT_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN.name
+export const PERPS_SETTLEMENT_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN.symbol
 export const PERPS_SETTLEMENT_TOKEN_CONTRACT = settlementTokenContract(PERPS_RELEASE)
 
 // Null prepared pins use a non-deployment sentinel only inside disabled hooks.

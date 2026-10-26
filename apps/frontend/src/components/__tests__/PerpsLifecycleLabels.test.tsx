@@ -822,7 +822,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
     expect(screen.queryByText('Contract notional')).not.toBeInTheDocument()
     expect(screen.getAllByText('Order quantity').length).toBeGreaterThan(0)
-    expect(screen.getByText('Trade executed at 1.0089 Mock USDG')).toBeInTheDocument()
+    expect(screen.getByText('Trade executed at 1.0089 USDG')).toBeInTheDocument()
     const initialConfetti = document.querySelector('[data-finalization-confetti]')
     expect(initialConfetti).toHaveAttribute('aria-hidden', 'true')
 
@@ -925,7 +925,7 @@ describe('perps lifecycle labels', () => {
     // The account refresh can remove the closed position; the result must retain its side.
     rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={101_000_000n} />)
     const sideLabel = positionDirection === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
-    expect(screen.getByText(`${sideLabel} position ${fullClose ? 'closed' : 'reduced'} at 1.0000 Mock USDG`)).toBeInTheDocument()
+    expect(screen.getByText(`${sideLabel} position ${fullClose ? 'closed' : 'reduced'} at 1.0000 USDG`)).toBeInTheDocument()
     expect(within(screen.getByRole('dialog')).getByText('Position side').closest('div')).toHaveTextContent(sideLabel)
   })
 
@@ -956,7 +956,7 @@ describe('perps lifecycle labels', () => {
     rerender(<PerpsTradeTicket {...props} oraclePriceRaw={105_000_000n} />)
     fireEvent.change(screen.getByLabelText('Leverage'), { target: { value: '10' } })
     fireEvent.blur(screen.getByLabelText('Leverage'))
-    expect(within(screen.getByRole('dialog')).getByText('Margin posted').closest('div')).toHaveTextContent('2 129.4Mock USDG')
+    expect(within(screen.getByRole('dialog')).getByText('Margin posted').closest('div')).toHaveTextContent('2 129.4USDG')
     expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: prepared }))
   })
 
@@ -1135,7 +1135,7 @@ describe('perps lifecycle labels', () => {
     expect(protections).not.toBeNull()
     expect(within(protections!).getByText('Pinned regime')).toBeInTheDocument()
     expect(within(protections!).getByText('Maximum execution reward')).toBeInTheDocument()
-    expect(within(protections!).getByText('0.120252 Mock USDG')).toBeInTheDocument()
+    expect(within(protections!).getByText('0.120252 USDG')).toBeInTheDocument()
     expect(within(protections!).queryByText('Execution reward')).not.toBeInTheDocument()
   })
 
@@ -1539,9 +1539,9 @@ describe('perps lifecycle labels', () => {
 
     const dialog = screen.getByRole('dialog')
     await waitFor(() => {
-      expect(within(dialog).getByText(/Deposit 9.99 Mock USDG more or reduce the order/)).toBeInTheDocument()
+      expect(within(dialog).getByText(/Deposit 9.99 USDG more or reduce the order/)).toBeInTheDocument()
     })
-    expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0Mock USDG')
+    expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDG')
     expect(within(dialog).queryByText('Total funding required')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Available account funding')).not.toBeInTheDocument()
     expect(within(dialog).getByText('Highest reviewed leverage').closest('div')).toHaveTextContent('5x')
@@ -1623,9 +1623,9 @@ describe('perps lifecycle labels', () => {
       })
       expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
       expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginAssets: 0n }))
-      expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25Mock USDG')
-      expect(within(dialog).getByText('Settlement after execution').closest('div')).toHaveTextContent('12.3Mock USDG')
-      expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0Mock USDG')
+      expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDG')
+      expect(within(dialog).getByText('Settlement after execution').closest('div')).toHaveTextContent('12.3USDG')
+      expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDG')
     }
   )
 
@@ -1667,7 +1667,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
   })
 
-  it('combines owner and Trading Account Mock USDG in the supported deposit flow', () => {
+  it('combines owner and Trading Account USDG in the supported deposit flow', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
 
@@ -1686,9 +1686,9 @@ describe('perps lifecycle labels', () => {
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText('Available to deposit')).toBeInTheDocument()
     expect(within(dialog).getByText('Available to trade')).toBeInTheDocument()
-    expect(within(dialog).getByText('Owner Wallet Mock USDG')).toBeInTheDocument()
+    expect(within(dialog).getByText('Owner Wallet USDG')).toBeInTheDocument()
     expect(within(dialog).queryByText('Trading Account balance')).not.toBeInTheDocument()
-    expect(within(dialog).getByText('Trading Account Mock USDG')).toBeInTheDocument()
+    expect(within(dialog).getByText('Trading Account USDG')).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('200 000')
   })
 
@@ -1780,7 +1780,7 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Minimum new position is 1 117.22 Mock USDG.')).toBeInTheDocument()
+    expect(screen.getByText('Minimum new position is 1 117.22 USDG.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
@@ -1802,7 +1802,7 @@ describe('perps lifecycle labels', () => {
     )
 
     expect(screen.getByText(
-      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum position size of 1 000 Mock USDG. Opening more Long exposure would worsen the market imbalance. You can open a Short plDXY Perp position instead, which helps rebalance the market.'
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum position size of 1 000 USDG. Opening more Long exposure would worsen the market imbalance. You can open a Short plDXY Perp position instead, which helps rebalance the market.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
@@ -1838,7 +1838,7 @@ describe('perps lifecycle labels', () => {
     )
 
     expect(screen.getByText(
-      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum increase size of 100 Mock USDG. Opening more Long exposure would worsen the market imbalance. You can reduce or close your current Long position. After closing it, you can open a Short plDXY Perp position, which helps rebalance the market.'
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum increase size of 100 USDG. Opening more Long exposure would worsen the market imbalance. You can reduce or close your current Long position. After closing it, you can open a Short plDXY Perp position, which helps rebalance the market.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
@@ -2003,7 +2003,7 @@ describe('perps lifecycle labels', () => {
     )
 
     expect(screen.getByText(
-      'Minimum partial reduction is 1 115.62 Mock USDG. Use Max to close the full position.'
+      'Minimum partial reduction is 1 115.62 USDG. Use Max to close the full position.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
 
@@ -2071,7 +2071,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox', { name: 'Order quantity' }))
       .toHaveValue('800')
     expect(screen.getByText(
-      'Minimum partial reduction is 1 115.62 Mock USDG. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
+      'Minimum partial reduction is 1 115.62 USDG. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Review Close' })).not.toBeInTheDocument()
@@ -2118,7 +2118,7 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.queryByText('Deposit 0.2 Mock USDG more before committing this order.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Deposit 0.2 USDG more before committing this order.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
   })
 
@@ -2184,7 +2184,7 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
 
     expect(screen.getByText('Edit Position Margin')).toBeInTheDocument()
-    expect(screen.getByText(/This moves free Mock USDG into position margin/)).toBeInTheDocument()
+    expect(screen.getByText(/This moves free USDG into position margin/)).toBeInTheDocument()
     expect(screen.getByText(/Direct margin removal is not supported/i)).toBeInTheDocument()
     expect(screen.queryByText(/by the current contracts/i)).not.toBeInTheDocument()
     expect(screen.getByText('Current position margin')).toBeInTheDocument()
@@ -2621,7 +2621,7 @@ describe('perps lifecycle labels', () => {
             minNewPositionNotionalAssets={100_000_000n}
             onAccountRefresh={async () => {
               await onAccountRefresh()
-              setPosition('1 000 Mock USDG')
+              setPosition('1 000 USDG')
             }}
           />
         </>
@@ -2641,7 +2641,7 @@ describe('perps lifecycle labels', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 Mock USDG')
+      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 USDG')
       expect(screen.getByText('Final Result')).toBeInTheDocument()
     })
   })
@@ -3230,8 +3230,8 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText(/Your price protection prevented the trade/)).toBeInTheDocument()
     expect(screen.getByText('1.02063448')).toBeInTheDocument()
     expect(screen.getByText('Maximum acceptable price').closest('div')).toHaveTextContent('Not available')
-    expect(screen.getByText('Execution reward charged').closest('div')).toHaveTextContent('0.2 Mock USDG')
-    expect(screen.getByText('Trading execution fee charged').closest('div')).toHaveTextContent('0 Mock USDG')
+    expect(screen.getByText('Execution reward charged').closest('div')).toHaveTextContent('0.2 USDG')
+    expect(screen.getByText('Trading execution fee charged').closest('div')).toHaveTextContent('0 USDG')
     expect(screen.getByText('Finalization tx').closest('div')?.querySelector('a')).toHaveAttribute(
       'href', `https://arbitrum-sepolia.blockscout.com/tx/0x${'ab'.repeat(32)}`,
     )

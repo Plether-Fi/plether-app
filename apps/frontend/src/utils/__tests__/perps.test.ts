@@ -17,12 +17,12 @@ import {
 } from '../perps'
 import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 
-describe('perps summary Mock USDG formatting', () => {
-  it('keeps fractional precision below 100 000 Mock USDG', () => {
+describe('perps summary USDG formatting', () => {
+  it('keeps fractional precision below 100 000 USDG', () => {
     expect(formatPerpsSummaryAssets(99_999_990_000n)).toBe('99 999.99')
   })
 
-  it('uses whole Mock USDG for six-figure and larger values', () => {
+  it('uses whole USDG for six-figure and larger values', () => {
     expect(formatPerpsSummaryAssets(100_000_490_000n)).toBe('100 000')
     expect(formatPerpsSummaryAssets(4_073_013_780_000n)).toBe('4 073 014')
     expect(formatSignedPerpsSummaryAssets(-4_073_013_780_000n)).toBe('-4 073 014')

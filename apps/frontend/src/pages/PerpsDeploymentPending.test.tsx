@@ -23,7 +23,7 @@ import { TestnetWelcomeModal } from '../components/TestnetWelcomeModal'
 describe('prepared perps release', () => {
   it.each([['Perps', Perps], ['Vaults', Vaults]] as const)('keeps %s unavailable without mounting its live hooks', (_name, Page) => {
     render(<Page />)
-    expect(screen.getByRole('status')).toHaveTextContent('Mock USDG perps are being prepared')
+    expect(screen.getByRole('status')).toHaveTextContent('USDG perps are being prepared')
     expect(screen.getByRole('status')).toHaveTextContent('Trading, testnet funding, and vault deposits will be available after deployment.')
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
     expect(mocks.liveHook).not.toHaveBeenCalled()

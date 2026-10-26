@@ -9,7 +9,7 @@ describe('refreshed review changes', () => {
     before.request.bounds.maxExecutionBountyAssets = 120_251n
     after.request.bounds.maxExecutionBountyAssets = 120_252n
     expect(perpsReviewChanges(before, after)).toEqual([
-      { label: 'Maximum execution reward', before: '0.120251 Mock USDG', after: '0.120252 Mock USDG' },
+      { label: 'Maximum execution reward', before: '0.120251 USDG', after: '0.120252 USDG' },
     ])
   })
   it('ignores refreshed IDs, block metadata, and deadlines', () => {
@@ -28,8 +28,8 @@ describe('refreshed review changes', () => {
     after.request.targetPrice++
     after.request.marginDelta++
     expect(perpsReviewChanges(before, after)).toEqual([
-      { label: 'Execution limit', before: '1 Mock USDG', after: '0.99999999 Mock USDG' },
-      { label: 'Required margin', before: '20 Mock USDG', after: '20.000001 Mock USDG' },
+      { label: 'Execution limit', before: '1 USDG', after: '0.99999999 USDG' },
+      { label: 'Required margin', before: '20 USDG', after: '20.000001 USDG' },
     ])
   })
   it('highlights a changed Max quantity at full precision', () => {

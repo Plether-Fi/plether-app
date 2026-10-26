@@ -140,7 +140,7 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('funds the Trading Account with an exact owner-wallet Mock USDG transfer', async () => {
+  it('funds the Trading Account with an exact owner-wallet USDG transfer', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.fundTradingAccount(25_000_000n))

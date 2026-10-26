@@ -120,7 +120,7 @@ function TrancheCard({
       </div>
       <div className="grid grid-cols-2 gap-px bg-brand-border/15">
         <div className="bg-app-bg p-4">
-          <div className="text-xs text-content-secondary">Total assets</div>
+          <div className="text-xs text-content-secondary">Vault value</div>
           <div className="mt-1 text-lg font-semibold text-content-primary">
             <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={assets} />
           </div>
@@ -153,7 +153,7 @@ function OverviewView() {
   return (
     <>
       <div className="grid gap-3 md:grid-cols-3">
-        <Metric label="Canonical HousePool assets" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6 300 000" />} />
+        <Metric label={`HousePool ${PERPS_SETTLEMENT_TOKEN_LABEL} value`} value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6 300 000" />} />
         <Metric
           label="Maximum live trader liability"
           value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="4 550 000" />}

@@ -11,9 +11,9 @@ export function SepoliaNoticeBar() {
   return (
     <div className="flex min-h-11 flex-col items-stretch justify-center gap-1 bg-brand-yellow page-gutter py-1.5 text-center text-[10px] font-medium leading-tight text-[#250917] sm:flex-row sm:items-center sm:gap-3 sm:py-2.5 sm:text-sm sm:leading-normal">
       <span>
-        <span className="block sm:hidden">Arbitrum Sepolia testnet · Mock funds only</span>
+        <span className="block sm:hidden">Arbitrum Sepolia testnet · USDG</span>
         <span className="hidden sm:inline">
-          You are on Arbitrum Sepolia testnet. Try trading with mock funds.{' '}
+          You are on Arbitrum Sepolia testnet. Try trading with USDG.{' '}
         </span>
         <strong className="font-bold">
           Climb the weekly ranks in Plether Divisions and earn badges. Show them off on Discord.

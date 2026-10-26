@@ -49,7 +49,7 @@ describe('calculatePendingCarryAssets', () => {
       .toBe(2_773_000n) // 0.773% APR, not 0.77%.
   })
 
-  it('floors fractional Mock USDG atoms instead of rounding up', () => {
+  it('floors fractional USDG atoms instead of rounding up', () => {
     expect(calculatePendingCarryAssets({ ...snapshot, borrowBaseAssets: 79n })).toBe(2_000_001n)
   })
 

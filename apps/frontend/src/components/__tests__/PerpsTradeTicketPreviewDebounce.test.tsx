@@ -215,7 +215,7 @@ describe('Perps trade preview debounce', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
     expect(screen.queryByText(/This quote is no longer valid/)).not.toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByText('Required margin').closest('div')).toHaveTextContent('20.0Mock USDG')
+    expect(within(screen.getByRole('dialog')).getByText('Required margin').closest('div')).toHaveTextContent('20.0USDG')
     expect(wagmiMocks.prepareOrder).toHaveBeenCalledTimes(1)
     expect(wagmiMocks.commitOrder).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
@@ -268,7 +268,7 @@ describe('Perps trade preview debounce', () => {
       protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
-    expect(screen.getByLabelText('Stop loss (Mock USDG)')).toHaveValue('0.96') // 5 Mock USDG loss / 20 Mock USDG preview margin.
+    expect(screen.getByLabelText('Stop loss (USDG)')).toHaveValue('0.96') // 5 USDG loss / 20 USDG preview margin.
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '90' } })
     expect(screen.getByLabelText('Stop loss (%)')).toHaveAttribute('aria-invalid', 'true')
@@ -277,14 +277,14 @@ describe('Perps trade preview debounce', () => {
 
     fireEvent.change(screen.getByLabelText('Stop loss (%)'), { target: { value: '25' } })
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Leverage' }), { target: { value: '6' } })
-    expect(screen.getByLabelText('Stop loss (Mock USDG)')).toHaveValue('')
+    expect(screen.getByLabelText('Stop loss (USDG)')).toHaveValue('')
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
     wagmiMocks.useReadContracts.mockReturnValue({
       data: [{ status: 'success', result: { ...openPreviewResult, postMarginAssets: 40_000_000n, liquidationPrice: 110_000_000n } }],
       isFetching: false, isLoading: false,
     })
     await act(async () => { vi.advanceTimersByTime(300) })
-    expect(screen.getByLabelText('Stop loss (Mock USDG)')).toHaveValue('0.91')
+    expect(screen.getByLabelText('Stop loss (USDG)')).toHaveValue('0.91')
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeEnabled()
   })
 
@@ -389,7 +389,7 @@ describe('Perps trade preview debounce', () => {
     expect((reviewButton as HTMLButtonElement).disabled).toBe(false)
     expect(within(previewPanel!).queryByText('Loading')).toBeNull()
     expect(within(previewPanel!).queryByText('Position VPI balance')).not.toBeInTheDocument()
-    expect(within(previewPanel!).getByLabelText('Pay 25.0 Mock USDG')).toBeInTheDocument()
+    expect(within(previewPanel!).getByLabelText('Pay 25.0 USDG')).toBeInTheDocument()
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
   })
 
@@ -418,7 +418,7 @@ describe('Perps trade preview debounce', () => {
     const orderExposureRow = preview.getByText('Order exposure').closest('div')
 
     expect(within(orderExposureRow!).getByText('4 969.58')).toBeInTheDocument()
-    expect(within(orderExposureRow!).getByText('Mock USDG')).toBeInTheDocument()
+    expect(within(orderExposureRow!).getByText('USDG')).toBeInTheDocument()
     expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
   })
 
@@ -517,14 +517,14 @@ describe('Perps trade preview debounce', () => {
       />
     )
 
-    expect(screen.getAllByLabelText('Net paid 85.0 Mock USDG')).toHaveLength(2)
-    expect(screen.getAllByLabelText('Pay 25.0 Mock USDG')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Net paid 85.0 USDG')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Pay 25.0 USDG')).toHaveLength(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
 
     const confirmation = screen.getByRole('dialog')
-    expect(within(confirmation).getByLabelText('Net paid 85.0 Mock USDG')).toBeInTheDocument()
-    expect(within(confirmation).getByLabelText('Pay 25.0 Mock USDG')).toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Net paid 85.0 USDG')).toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDG')).toBeInTheDocument()
   })
 
   it('keeps the reviewed VPI in a fresh opening confirmation without adding a balance row', () => {
@@ -545,7 +545,7 @@ describe('Perps trade preview debounce', () => {
 
     const confirmation = screen.getByRole('dialog')
     expect(within(confirmation).queryByText('Position VPI balance')).not.toBeInTheDocument()
-    expect(within(confirmation).getByLabelText('Pay 25.0 Mock USDG')).toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDG')).toBeInTheDocument()
   })
 })
 

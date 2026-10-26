@@ -340,15 +340,15 @@ describe('perps ticket oracle regime matrix', () => {
   it('keeps new-order TP/SL optional and preserves inputs while toggled off', () => {
     render(<PerpsTradeTicket currentPositionAmount="0" oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n}
       protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />)
-    expect(screen.queryByLabelText('Take profit (Mock USDG)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
     fireEvent.click(toggle)
-    fireEvent.change(screen.getByLabelText('Take profit (Mock USDG)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     fireEvent.click(toggle)
-    expect(screen.queryByLabelText('Take profit (Mock USDG)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     fireEvent.click(toggle)
-    expect(screen.getByLabelText('Take profit (Mock USDG)')).toHaveValue('1.1')
-    expect(screen.getByLabelText('Take profit (Mock USDG)')).toHaveAttribute('aria-invalid', 'false')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveAttribute('aria-invalid', 'false')
   })
 
   it('keeps attached TP/SL visible but disabled on an existing position', () => {
@@ -373,13 +373,13 @@ describe('perps ticket oracle regime matrix', () => {
   it('hides TP/SL only while reduce only is selected and preserves the draft', () => {
     render(<PerpsTradeTicket oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true }} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
-    fireEvent.change(screen.getByLabelText('Take profit (Mock USDG)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
     expect(screen.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Take profit (Mock USDG)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
     expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeChecked()
-    expect(screen.getByLabelText('Take profit (Mock USDG)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
   })
 
   it('restores the disabled checkbox when reduce only is cleared on an existing position', () => {
@@ -394,15 +394,15 @@ describe('perps ticket oracle regime matrix', () => {
     const view = render(<PerpsTradeTicket {...props} />)
     const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
     fireEvent.click(toggle)
-    fireEvent.change(screen.getByLabelText('Take profit (Mock USDG)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     view.rerender(<PerpsTradeTicket {...props} currentPosition={currentPosition} />)
     expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBe(toggle)
     expect(toggle).toBeDisabled()
     expect(toggle).not.toBeChecked()
-    expect(screen.queryByLabelText('Take profit (Mock USDG)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     view.rerender(<PerpsTradeTicket {...props} />)
     expect(toggle).toBeEnabled()
-    expect(screen.getByLabelText('Take profit (Mock USDG)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
   })
 
   beforeEach(() => {
@@ -605,12 +605,12 @@ describe('perps ticket oracle regime matrix', () => {
     {
       caseName: 'net-paid balance',
       positionVpiAccrued: 60_000_000n,
-      positionBalance: 'Net paid 60.0 Mock USDG',
+      positionBalance: 'Net paid 60.0 USDG',
     },
     {
       caseName: 'existing provisional credit',
       positionVpiAccrued: -40_000_000n,
-      positionBalance: 'Provisional credit 40.0 Mock USDG',
+      positionBalance: 'Provisional credit 40.0 USDG',
     },
   ])('shows the position VPI balance for a $caseName', ({
     positionVpiAccrued,
@@ -642,8 +642,8 @@ describe('perps ticket oracle regime matrix', () => {
   })
 
   it.each([
-    ['charge', 1_250_000n, 'Pay 1.3 Mock USDG'],
-    ['credit', -1_250_000n, 'Credit 1.3 Mock USDG'],
+    ['charge', 1_250_000n, 'Pay 1.3 USDG'],
+    ['credit', -1_250_000n, 'Credit 1.3 USDG'],
     ['zero adjustment', 0n, 'No VPI'],
   ] as const)('shows an estimated close VPI %s as an account action', (_case, vpiDeltaAssets, expected) => {
     mockReadContractsData = [{
@@ -927,7 +927,7 @@ describe('perps ticket oracle regime matrix', () => {
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
-      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 Mock USDG')
+      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDG')
     expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()

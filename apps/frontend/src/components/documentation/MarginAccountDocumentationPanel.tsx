@@ -215,12 +215,12 @@ function Overview() {
               label="Available to Trade"
               value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="848.25" />}
               tone="positive"
-              detail="Free, unreserved collateral"
+              detail="Funds available for new trades"
             />
             <Metric
-              label="Settlement balance"
+              label={`${PERPS_SETTLEMENT_TOKEN_LABEL} balance`}
               value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 248.25" />}
-              detail={`${PERPS_SETTLEMENT_TOKEN_LABEL} in the clearinghouse ledger, including locked funds`}
+              detail={`${PERPS_SETTLEMENT_TOKEN_LABEL} in your Margin Account, including reserved funds`}
             />
             <Metric
               label="Position equity"
@@ -385,7 +385,7 @@ function AddPositionMargin() {
         </dl>
 
         <p className="border border-positive/30 bg-positive/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-          Adding margin increases position price-risk backing. Accrued carry of 1.25 {PERPS_SETTLEMENT_TOKEN_LABEL} consumes existing position margin first, leaving free funds available to add. Future carry can reduce the new margin too. The action takes effect after confirmation and does not enter the delayed-order queue.
+          Adding {PERPS_SETTLEMENT_TOKEN_LABEL} gives your position more margin. Accrued carry of 1.25 {PERPS_SETTLEMENT_TOKEN_LABEL} is deducted from existing margin first, leaving available funds for you to add. Future carry can reduce the new margin too. The change takes effect after confirmation without waiting in the order queue.
         </p>
 
         <Button className="w-full" size="lg">Authorize Add Margin</Button>
@@ -462,7 +462,7 @@ function TraderClaim() {
             <SummaryRow label="Network gas" value="Sponsored" tone="positive" />
           </dl>
           <p className="text-sm leading-6 text-content-secondary">
-            Claims already support the same account's price risk. Settlement credits position margin while a position is open, or free account funds when flat. Withdrawal remains a separate action.
+            Claims already count toward your account’s equity. Settling a claim adds {PERPS_SETTLEMENT_TOKEN_LABEL} to position margin while a position is open, or to your available balance when no position is open. Withdrawal remains a separate action.
           </p>
         </div>
       </section>

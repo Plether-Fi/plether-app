@@ -28,7 +28,7 @@ vi.mock('../../contracts/perpsAddresses', () => ({
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID: 421614,
   PERPS_ARBITRUM_SEPOLIA: { settlementToken: '0x3333333333333333333333333333333333333333', marginClearinghouse: '0x4444444444444444444444444444444444444444' },
   PERPS_SETTLEMENT_TOKEN: { name: 'Mock USDG', symbol: 'USDG', decimals: 6, isMock: true, supportsReceiveWithAuthorization: false, supportsBridgeFunding: false },
-  PERPS_SETTLEMENT_TOKEN_LABEL: 'Mock USDG',
+  PERPS_SETTLEMENT_TOKEN_LABEL: 'USDG',
   PERPS_SETTLEMENT_TOKEN_CONTRACT: { runtimeCodeHash: keccak256('0x1234') },
 }))
 vi.mock('../../perps-aa', () => ({ usePerpsIdentity: () => mocks.identity }))
@@ -122,7 +122,7 @@ describe('MockUSDG testnet funding', () => {
     mocks.code.mockResolvedValue('0x5678')
     const { result } = renderHook(() => useTestnetFunding(account, true))
     await act(async () => { await result.current.requestFunds(account) })
-    expect(result.current.error).toContain('bytecode does not match')
+    expect(result.current.error).toContain('contract could not be verified')
     expect(mocks.mint).not.toHaveBeenCalled()
   })
 

@@ -5,8 +5,8 @@ import { PerpsPoolLiquidityDetails } from './PerpsPoolLiquidityDetails'
 const HEALTHY_PROPS = {
   poolAssets: 10_000_000n * 1_000_000n,
   freeAssets: 6_300_000n * 1_000_000n,
-  juniorPrincipal: '3.2M Mock USDG',
-  seniorPrincipal: '6.8M Mock USDG',
+  juniorPrincipal: '3.2M USDG',
+  seniorPrincipal: '6.8M USDG',
   juniorSharePercent: 32,
   seniorSharePercent: 68,
   seniorStatus: 'at-high-water-mark' as const,
@@ -35,7 +35,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     expect(screen.queryByText('(68%)')).not.toBeInTheDocument()
     expect(screen.getByText('Senior is at its protected balance')).toBeVisible()
     expect(screen.getByText(/Junior protects Senior from the first/)).toHaveTextContent(
-      'Junior protects Senior from the first 3.2M Mock USDG of pool losses'
+      'Junior protects Senior from the first 3.2M USDG of pool losses'
     )
     expect(screen.getByText(/Withdrawals depend on the liquidity available/)).toHaveTextContent(
       'Withdrawals depend on the liquidity available at each hourly processing time.'
@@ -46,7 +46,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS}
       poolAssets={590_100_000n * 1_000_000n}
       freeAssets={1_100n * 1_000_000n}
-      juniorPrincipal="585.1M Mock USDG" seniorPrincipal="5M Mock USDG"
+      juniorPrincipal="585.1M USDG" seniorPrincipal="5M USDG"
       juniorSharePercent={99.2} seniorSharePercent={0.8}
     />)
 
@@ -66,7 +66,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     { assets: 1_000_000n, free: 2_000_000n, share: undefined },
     { assets: undefined, free: 0n, share: undefined },
     { assets: 1_000_000n, free: undefined, share: undefined },
-  ])('handles reserved share for $assets assets and $free free Mock USDG', ({ assets, free, share }) => {
+  ])('handles reserved share for $assets assets and $free free USDG', ({ assets, free, share }) => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssets={assets} freeAssets={free} />)
     if (share) expect(screen.getByText(share)).toBeVisible()
     else expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
@@ -100,7 +100,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     const { rerender } = render(
       <PerpsPoolLiquidityDetails
         {...HEALTHY_PROPS}
-        juniorPrincipal="0 Mock USDG"
+        juniorPrincipal="0 USDG"
         juniorSharePercent={0}
         seniorSharePercent={100}
         isJuniorExhausted
@@ -113,18 +113,18 @@ describe('PerpsPoolLiquidityDetails', () => {
     rerender(
       <PerpsPoolLiquidityDetails
         {...HEALTHY_PROPS}
-        juniorPrincipal="0 Mock USDG"
-        seniorPrincipal="5.9M Mock USDG"
+        juniorPrincipal="0 USDG"
+        seniorPrincipal="5.9M USDG"
         juniorSharePercent={0}
         seniorSharePercent={100}
         seniorStatus="impaired"
-        seniorImpairment="900K Mock USDG"
+        seniorImpairment="900K USDG"
         isJuniorExhausted
       />
     )
 
     expect(screen.getByText(/Senior is below its protected balance by/)).toHaveTextContent(
-      'Senior is below its protected balance by 900K Mock USDG'
+      'Senior is below its protected balance by 900K USDG'
     )
     expect(screen.queryByText("Further pool losses would reduce Senior's value")).not.toBeInTheDocument()
   })

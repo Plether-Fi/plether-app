@@ -46,7 +46,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
 
     try {
       if (!PERPS_SETTLEMENT_TOKEN.isMock || PERPS_SETTLEMENT_TOKEN.symbol !== 'USDG') {
-        throw new Error('Direct testnet funding requires the reviewed Mock USDG release.')
+        throw new Error('USDG funding is unavailable. Please try again later.')
       }
       {
         if (identity.status !== 'ready' || !identity.accountAddress ||
@@ -62,7 +62,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
             !isAddressEqual(identity.manifest.settlementToken, PERPS_ARBITRUM_SEPOLIA.settlementToken) ||
             !isAddressEqual(identity.manifest.marginClearinghouse, PERPS_ARBITRUM_SEPOLIA.marginClearinghouse) ||
             identity.manifest.settlementTokenSupportsEip3009) {
-          throw new Error('The Mock USDG funding configuration does not match this Trading Account.')
+          throw new Error('USDG funding is unavailable for this Trading Account. Please refresh and try again.')
         }
         let reusableClaim = claim && phase !== 'deposited' && isAddressEqual(claim.address as Address, address) ? claim : null
         if (reusableClaim?.status === 'minted' || reusableClaim?.status === 'already_funded') {
@@ -85,7 +85,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
           const code = await client.getCode({ address: PERPS_ARBITRUM_SEPOLIA.settlementToken })
           if (isCancelled()) return
           if (!code || code === '0x' || keccak256(code) !== PERPS_SETTLEMENT_TOKEN_CONTRACT.runtimeCodeHash?.toLowerCase()) {
-            throw new Error('Mock USDG bytecode does not match the reviewed release. No mint was sent.')
+            throw new Error('The USDG contract could not be verified. No mint was sent.')
           }
           const txHash = await writeContractAsync({
             account: identity.ownerAddress,
@@ -134,7 +134,7 @@ export function useTestnetFunding(recipient: string, enabled: boolean) {
       }
 
       const amount = BigInt(funding.amount)
-      if (amount <= 0n) throw new Error('The faucet returned an invalid settlement token amount.')
+      if (amount <= 0n) throw new Error('The faucet returned an invalid USDG amount.')
       const deadline = Date.now() + 120_000
       while (!isCancelled()) {
         const balance = await client.readContract({

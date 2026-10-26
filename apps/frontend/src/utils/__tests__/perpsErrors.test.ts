@@ -90,7 +90,7 @@ describe('getPerpsErrorMessage', () => {
     })
 
     expect(getPerpsErrorMessage(error, 'protection')).toBe(
-      'Not enough free Mock USDG settlement balance to reserve TP/SL keeper rewards. Deposit Mock USDG into your margin account and retry.'
+      'Not enough free USDG settlement balance to reserve TP/SL keeper rewards. Deposit USDG into your margin account and retry.'
     )
   })
 
@@ -181,7 +181,7 @@ describe('getPerpsErrorMessage', () => {
     ['MarginClearinghouse__ZeroAmount', [], 'greater than zero'],
     ['MarginClearinghouse__InsufficientBalance', [], 'balance is too low'],
     ['MarginClearinghouse__InsufficientFreeEquity', [], 'Not enough free margin'],
-    ['MarginClearinghouse__InsufficientAssetsForSettlement', [], 'does not have enough Mock USDG settlement'],
+    ['MarginClearinghouse__InsufficientAssetsForSettlement', [], 'does not have enough USDG settlement'],
 
     ['OrderRouter__ZeroSize', [], 'Order size must be greater than zero'],
     ['OrderRouter__InvalidSizeQuantum', [], '100 plDXY increments'],

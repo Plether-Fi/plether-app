@@ -68,7 +68,7 @@ describe('useVaultTransactions', () => {
     mocks.writeContractAsync.mockResolvedValue('0xabc')
   })
 
-  it('approves exact Mock USDG before queueing a deposit when allowance is insufficient', async () => {
+  it('approves exact USDG before queueing a deposit when allowance is insufficient', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       allowance: 0n,
@@ -81,7 +81,7 @@ describe('useVaultTransactions', () => {
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('supply')
     const steps = config.buildSteps()
-    expect(steps.map(({ label }) => label)).toEqual(['Approve Mock USDG', 'Queue deposit'])
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDG', 'Queue deposit'])
 
     await steps[0].action()
     expect(mocks.estimateContractGas).not.toHaveBeenCalled()
@@ -211,7 +211,7 @@ describe('useVaultTransactions', () => {
     }
   })
 
-  it('approves exact Mock USDG and submits a queued deposit request', async () => {
+  it('approves exact USDG and submits a queued deposit request', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       allowance: 0n,
@@ -224,7 +224,7 @@ describe('useVaultTransactions', () => {
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('supply')
     const steps = config.buildSteps()
-    expect(steps.map(({ label }) => label)).toEqual(['Approve Mock USDG', 'Queue deposit'])
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDG', 'Queue deposit'])
 
     await steps[0].action()
     await steps[1].action()
@@ -297,7 +297,7 @@ describe('useVaultTransactions', () => {
   })
 
   it.each([
-    ['cancelPendingDeposit', 'Recover Mock USDG', 'withdraw'],
+    ['cancelPendingDeposit', 'Recover USDG', 'withdraw'],
     ['claimDepositShares', 'Claim shares', 'supply'],
   ] as const)('simulates and submits %s for an epoch', async (method, label, type) => {
     const { result } = renderHook(() => useVaultTransactions({

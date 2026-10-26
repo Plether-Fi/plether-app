@@ -661,7 +661,7 @@ export function usePerpsTrading() {
           throw new SponsoredPreflightError({
             reason: 'OWNER_AUTHORIZATION_UNAVAILABLE',
             message:
-              'Signed owner-wallet deposits are unavailable for this settlement token. Fund the Trading Account and deposit from its balance.',
+              'Transfer USDG to your Trading Account, then deposit it into your Margin Account.',
           })
         }
         try {

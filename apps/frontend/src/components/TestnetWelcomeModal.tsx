@@ -13,7 +13,6 @@ import { Button, Input, Modal } from './ui'
 
 const DIRECT_MOCK_MINT = PERPS_SETTLEMENT_TOKEN.isMock && PERPS_SETTLEMENT_TOKEN.name === 'Mock USDG'
 const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL
-const MOCK_TOKEN_LABEL_LOWER = MOCK_TOKEN_LABEL.replace(/^Mock /, 'mock ')
 
 interface TestnetWelcomeModalViewProps {
   isOpen: boolean
@@ -87,10 +86,10 @@ export function TestnetWelcomeModalView({
             className="w-full"
           >
             {isRecipientReady ? (
-              fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL_LOWER}`
-                : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL_LOWER}`
+              fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL}`
+                : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL}`
                 : isDeposited && !DIRECT_MOCK_MINT ? `${MOCK_TOKEN_LABEL} deposited`
-                : isPendingClaim ? 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL_LOWER}`
+                : isPendingClaim ? 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
             ) : (
@@ -114,36 +113,23 @@ export function TestnetWelcomeModalView({
       }
     >
       <div className="space-y-5 panel-padding text-sm text-content-secondary">
-        <p>
-          This is a testnet version of Plether Perps, built for trying deposits, trades, and order
-          execution without real funds.
-        </p>
+        <p>Try deposits and trades on Arbitrum Sepolia with test USDG.</p>
         <p>
           {!isWalletConnected
-            ? `Connect your wallet to continue. Once connected, we will fill your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address so you can request 100,000 ${MOCK_TOKEN_LABEL_LOWER} on Arbitrum Sepolia.`
+            ? 'Connect your wallet to get 100,000 USDG.'
             : recipientError
-              ? 'Your wallet is connected, but Plether could not prepare the Trading Account address that should receive the test funds.'
+              ? 'We could not prepare your Trading Account. Please refresh and try again.'
             : isRecipientReady
-              ? `Your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address is shown below. We will send it 100,000 ${MOCK_TOKEN_LABEL_LOWER} on Arbitrum Sepolia to start testing.${isTradingAccountRecipient ? ' Once the tokens arrive, we will automatically start the sponsored deposit into your Margin Account. Confirm in your wallet if prompted.' : ''}`
-              : 'Your wallet is connected. Plether is preparing the Trading Account address that will receive the test funds.'}
+              ? `We will send 100,000 USDG to your ${isTradingAccountRecipient ? 'Trading Account and deposit it into your Margin Account' : 'wallet'}. Confirm in your wallet when prompted.`
+              : 'Preparing your Trading Account to receive USDG.'}
         </p>
         {DIRECT_MOCK_MINT ? (
           <p>
-            Minting requires Arbitrum Sepolia ETH in your connected wallet for network gas.
-            You can mint more {MOCK_TOKEN_LABEL} whenever needed.
-            {isTradingAccountRecipient ? ' Tokens go directly to your Trading Account; the following Margin Account deposit is sponsored.' : ''}
+            You can get more USDG anytime. Your wallet needs Arbitrum Sepolia ETH for the mint transaction.
+            {isTradingAccountRecipient ? ' Plether covers gas for the deposit.' : ''}
           </p>
         ) : null}
-        <p>
-          Testnet balances and positions have no real-world value and could be reset at any time.
-          {isTradingAccountRecipient
-            ? ' Eligible trader actions are gas-sponsored while sponsorship is available.'
-            : ' Use a wallet that supports Arbitrum Sepolia because it will pay network gas.'}
-        </p>
-        <p>
-          Thanks for being here early. This is a safe testnet environment, so try things freely.
-          Nothing here has real-world value, and every bit of feedback helps.
-        </p>
+        <p>Test funds have no real value. Balances and positions may be reset.</p>
 
         {isRecipientReady ? (
           <Input
@@ -196,17 +182,15 @@ export function TestnetWelcomeModalView({
                 ? 'Your sponsored deposit is confirmed.'
                 : isAutomaticFunding
                 ? fundingPhase === 'depositing'
-                  ? `Depositing ${MOCK_TOKEN_LABEL_LOWER} into your Margin Account. Confirm in your wallet if prompted.`
-                  : `Waiting for ${MOCK_TOKEN_LABEL_LOWER} to arrive. Your sponsored deposit will start automatically.`
+                  ? `Depositing ${MOCK_TOKEN_LABEL} into your Margin Account. Confirm in your wallet if prompted.`
+                  : `Waiting for ${MOCK_TOKEN_LABEL} to arrive. Your sponsored deposit will start automatically.`
                 : isPendingClaim
-                ? 'Use “Check confirmation” below to refresh this transaction safely. Funds are not available until confirmation completes.'
-                : isTradingAccountRecipient
-                ? 'Next, use the sponsored deposit flow to move those funds into the Trading Account’s Margin Account before placing orders.'
-                : 'Next, deposit those funds into the exchange margin account before placing orders.'}
+                ? 'Use “Check confirmation” to refresh the transaction status.'
+                : 'Deposit your USDG into your Margin Account to start trading.'}
             </p>
             {!isPendingClaim && isTradingAccountRecipient ? (
               <p className="text-content-secondary">
-                Plether sponsors eligible perps operations. A later owner-wallet transfer back to the Trading Account, such as after withdrawing {MOCK_TOKEN_LABEL}, requires Arbitrum Sepolia ETH for gas.
+                Plether covers gas for eligible trades. Wallet transfers need Arbitrum Sepolia ETH for gas.
               </p>
             ) : !isPendingClaim ? (
               <p className="text-content-secondary">
