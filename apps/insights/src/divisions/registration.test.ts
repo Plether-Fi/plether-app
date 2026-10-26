@@ -43,8 +43,11 @@ describe('Divisions Discord registration', () => {
       expect(call[1].headers.get('X-Registration-CSRF')).toBe('csrf')
     }
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-      acceptRules: true, acceptPrivacy: true,
+      acceptRules: true, acceptPrivacy: true, showDiscordHandle: false,
       rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1',
     })
+    fetchMock.mockResolvedValueOnce(Response.json({ registration: session }))
+    await completeDivisionsRegistration(session, true)
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).showDiscordHandle).toBe(true)
   })
 })

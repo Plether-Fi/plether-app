@@ -55,6 +55,7 @@ export function useTradedWallets() {
 
 export interface LiveStanding {
   address: string
+  discordUsername?: string | null
   rank: number | null
   weeklyReturnBps: number | null
   activeDays: number
@@ -87,6 +88,7 @@ export async function getLiveDivisions(signal?: AbortSignal): Promise<LiveDivisi
     || !Array.isArray(data.standings) || data.standings.length !== data.walletCount
     || !data.standings.every((row: unknown) => typeof row === 'object' && row !== null
       && 'address' in row && typeof row.address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.address)
+      && (!('discordUsername' in row) || row.discordUsername === null || typeof row.discordUsername === 'string' && row.discordUsername.length > 0)
       && 'rank' in row && (row.rank === null || typeof row.rank === 'number' && Number.isSafeInteger(row.rank) && row.rank > 0)
       && 'weeklyReturnBps' in row && (row.weeklyReturnBps === null || typeof row.weeklyReturnBps === 'number' && Number.isSafeInteger(row.weeklyReturnBps))
       && 'activeDays' in row && typeof row.activeDays === 'number' && Number.isSafeInteger(row.activeDays) && row.activeDays >= 0)) {

@@ -43,12 +43,13 @@ export async function verifyDivisionsWallet(csrfToken: string, ownerAddress: str
   })).registration
 }
 
-export async function completeDivisionsRegistration(session: DivisionsRegistrationSession) {
+export async function completeDivisionsRegistration(session: DivisionsRegistrationSession, showDiscordHandle = false) {
   return (await registrationRequest<RegistrationEnvelope>(`${base}/complete`, {
     method: 'POST', csrfToken: session.csrfToken,
     body: {
       acceptRules: true,
       acceptPrivacy: true,
+      showDiscordHandle,
       rulesVersion: session.requiredConsents.rulesVersion,
       privacyVersion: session.requiredConsents.privacyVersion,
     },

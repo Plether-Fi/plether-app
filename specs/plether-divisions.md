@@ -80,7 +80,15 @@ immediate first-trade badges require the future live account feed.
 ## Public status and announcements
 
 Leaderboard badges show earned persistent tiers, not the tier implied by one
-week's percentile. Wallets may rank without Discord.
+week's percentile. The live leaderboard joins these tiers from the latest
+published results; it shows pending/unavailable while no publication can be read.
+A newly traded wallet absent from an available publication starts at Iron.
+Discord handles come from completed links matched by Trading Account, and are
+public only when the trader opts in with `showDiscordHandle` at registration.
+Existing links default to private; traders can repeat verification to change
+visibility. Neither Discord IDs nor owner-wallet mappings are returned in the
+public standings. Search matches wallet addresses and public Discord handles.
+Wallets may rank without Discord.
 
 Matching Discord roles will require a linked wallet. The `/register` flow links
 one Discord account to one owner wallet and its deterministic Trading Account,

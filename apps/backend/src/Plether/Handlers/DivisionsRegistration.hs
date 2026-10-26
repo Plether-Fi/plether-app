@@ -6,7 +6,7 @@ module Plether.Handlers.DivisionsRegistration
   ) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), Value, eitherDecode, object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), Value, eitherDecode, object, withObject, (.:), (.:?), (.=))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isControl, isSpace)
@@ -116,10 +116,10 @@ data Authenticated = Authenticated
   , auSession :: LinkSession
   }
 
-data CompleteRequest = CompleteRequest Bool Bool Text Text
+data CompleteRequest = CompleteRequest Bool Bool Text Text (Maybe Bool)
 instance FromJSON CompleteRequest where
   parseJSON = withObject "CompleteRequest" $ \v ->
-    CompleteRequest <$> v .: "acceptRules" <*> v .: "acceptPrivacy" <*> v .: "rulesVersion" <*> v .: "privacyVersion"
+    CompleteRequest <$> v .: "acceptRules" <*> v .: "acceptPrivacy" <*> v .: "rulesVersion" <*> v .: "privacyVersion" <*> v .:? "showDiscordHandle"
 
 data DiscordToken = DiscordToken Text Text Text
 instance FromJSON DiscordToken where
@@ -298,7 +298,7 @@ registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord
                 body <- decodeBody
                 case body of
                   Left err -> respondError err
-                  Right (CompleteRequest acceptRules acceptPrivacy rulesVersion privacyVersion) -> do
+                  Right (CompleteRequest acceptRules acceptPrivacy rulesVersion privacyVersion showDiscordHandle) -> do
                     outcome <- safeRegistrationIO $ do
                       let session = auSession auth
                       if not (acceptRules && acceptPrivacy) || rulesVersion /= dcRulesVersion discord || privacyVersion /= dcPrivacyVersion discord
@@ -316,8 +316,8 @@ registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord
                                     then pure $ Left expiredSession
                                     else do
                                       inserted <- execute connection
-                                        "INSERT INTO insights_divisions_links (discord_id, discord_username, owner_wallet, trading_account, rules_version, privacy_version) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING"
-                                        (discordId, username, owner, account, rulesVersion, privacyVersion)
+                                        "INSERT INTO insights_divisions_links (discord_id, discord_username, owner_wallet, trading_account, rules_version, privacy_version, show_discord_handle) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, FALSE)) ON CONFLICT DO NOTHING"
+                                        (discordId, username, owner, account, rulesVersion, privacyVersion, showDiscordHandle)
                                       same <- query connection
                                         "SELECT EXISTS (SELECT 1 FROM insights_divisions_links WHERE discord_id=? AND owner_wallet=? AND trading_account=?)"
                                         (discordId, owner, account) :: IO [Only Bool]
@@ -325,8 +325,8 @@ registerDivisionsRegistrationRoutes pool perpsClient config manager maybeDiscord
                                         then pure $ Left $ registrationError DuplicateRegistration "This Discord account or wallet is already linked"
                                         else do
                                           _ <- execute connection
-                                            "UPDATE insights_divisions_links SET discord_username=?, rules_version=?, privacy_version=? WHERE discord_id=? AND owner_wallet=? AND trading_account=?"
-                                            (username, rulesVersion, privacyVersion, discordId, owner, account)
+                                            "UPDATE insights_divisions_links SET discord_username=?, rules_version=?, privacy_version=?, show_discord_handle=COALESCE(?, show_discord_handle) WHERE discord_id=? AND owner_wallet=? AND trading_account=?"
+                                            (username, rulesVersion, privacyVersion, showDiscordHandle, discordId, owner, account)
                                           updated <- execute connection
                                             "UPDATE insights_divisions_link_sessions SET completed_at=NOW(), updated_at=NOW() WHERE session_digest=? AND completed_at IS NULL"
                                             (Only $ Binary $ auDigest auth)
@@ -351,6 +351,8 @@ ensureDivisionsSchema :: Connection -> IO ()
 ensureDivisionsSchema connection = do
   _ <- execute_ connection
     "CREATE TABLE IF NOT EXISTS insights_divisions_links (discord_id TEXT PRIMARY KEY, discord_username TEXT NOT NULL, owner_wallet TEXT NOT NULL UNIQUE, trading_account TEXT NOT NULL UNIQUE, rules_version TEXT NOT NULL, privacy_version TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CHECK (discord_id ~ '^[0-9]{17,22}$'), CHECK (owner_wallet ~ '^0x[0-9a-f]{40}$'), CHECK (trading_account ~ '^0x[0-9a-f]{40}$'))"
+  _ <- execute_ connection
+    "ALTER TABLE insights_divisions_links ADD COLUMN IF NOT EXISTS show_discord_handle BOOLEAN NOT NULL DEFAULT FALSE"
   _ <- execute_ connection
     "CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions (session_digest BYTEA PRIMARY KEY, expires_at TIMESTAMPTZ NOT NULL, oauth_state_digest BYTEA, oauth_expires_at TIMESTAMPTZ, discord_id TEXT, discord_username TEXT, owner_wallet TEXT, trading_account TEXT, challenge_message TEXT, challenge_owner TEXT, challenge_expires_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CHECK (octet_length(session_digest)=32), CHECK (oauth_state_digest IS NULL OR octet_length(oauth_state_digest)=32), CHECK (num_nonnulls(oauth_state_digest,oauth_expires_at) IN (0,2)), CHECK (num_nonnulls(challenge_message,challenge_owner,challenge_expires_at) IN (0,3)))"
   _ <- execute_ connection "CREATE INDEX IF NOT EXISTS idx_insights_divisions_link_sessions_expiry ON insights_divisions_link_sessions(expires_at)"
