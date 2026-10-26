@@ -9,7 +9,7 @@ permissions:
 jobs:
   local-flow:
     name: Delayed approval and canonical recovery
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -42,8 +42,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
       - run: cabal update
         working-directory: apps/backend
       - name: Typecheck the local integration harness

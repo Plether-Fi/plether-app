@@ -41,7 +41,7 @@ jobs:
           FAUCET_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     defaults:
       run:
         working-directory: apps/backend
@@ -93,8 +93,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
 
       - name: Update Cabal package index
         run: |
@@ -124,7 +124,7 @@ jobs:
 
   perps-critical-path-integration:
     name: Perps critical path integration
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     timeout-minutes: 20
     defaults:
       run:
@@ -165,8 +165,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
 
       - name: Update Cabal package index
         run: |
@@ -198,7 +198,7 @@ jobs:
 
   native-aa-integration:
     name: Native AA integration
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # GHC 9.4.8 requires the gold linker absent from 26.04.
     timeout-minutes: 15
     defaults:
       run:
@@ -245,8 +245,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
-          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+          key: ubuntu-24.04-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ubuntu-24.04-ghc-9.4.8-cabal-
 
       - name: Update Cabal package index
         run: |
