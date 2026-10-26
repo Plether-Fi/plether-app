@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { prepared } from '../../test/fixtures/preparedOrder'
+import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection'
 import { perpsReviewChanges } from '../perpsReviewChanges'
 
 describe('refreshed review changes', () => {
@@ -47,7 +48,7 @@ describe('refreshed review changes', () => {
     after.protection.executionMode = 2
     after.request.bounds.expectedConfigHash = '0x99'
     after.executionBountyAssets++
-    after.positionProtection = { book: after.account, params: { takeProfitTriggerPrice: 95_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }
+    after.positionProtection = { book: after.account, params: { takeProfitTriggerPrice: 95_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }
     expect(perpsReviewChanges(before, after).map(change => change.label)).toEqual([
       'Execution reward', 'Execution conditions', 'Execution configuration', 'Take profit', 'Stop loss', 'Protection trigger reward', 'Protection execution reward',
     ])

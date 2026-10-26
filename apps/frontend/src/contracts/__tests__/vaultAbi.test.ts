@@ -15,7 +15,7 @@ describe('tranche vault ABI', () => {
     expect(convertToAssets).toMatchObject({
       stateMutability: 'view',
       inputs: [{ name: 'shares', type: 'uint256' }],
-      outputs: [{ name: 'assets', type: 'uint256' }],
+      outputs: [{ name: '', type: 'uint256' }],
     })
   })
 
