@@ -378,6 +378,7 @@ sessionResponse config discord authenticated = object ["registration" .= object
   , "wallet" .= case (lsOwner session, lsTradingAccount session) of
       (Just owner, Just account) -> Just $ object ["ownerAddress" .= owner, "tradingAccount" .= account]
       _ -> Nothing
+  , "capabilities" .= object ["publicDiscordHandle" .= True]
   , "requiredConsents" .= object ["rulesVersion" .= dcRulesVersion discord, "privacyVersion" .= dcPrivacyVersion discord]
   ]] where session = auSession authenticated
 

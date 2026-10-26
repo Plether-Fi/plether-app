@@ -16,6 +16,7 @@ const session: DivisionsRegistrationSession = {
   steps: { discord: 'verified', wallet: 'verified', completed: false },
   identity: { username: 'trader' },
   wallet: { ownerAddress: `0x${'1'.repeat(40)}`, tradingAccount: `0x${'2'.repeat(40)}` },
+  capabilities: { publicDiscordHandle: true },
   requiredConsents: { rulesVersion: 'v1', privacyVersion: 'v1' },
 }
 
@@ -36,6 +37,18 @@ describe('Discord leaderboard visibility', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Complete registration' }))
     await waitFor(() => expect(api.completeDivisionsRegistration).toHaveBeenCalledWith(session, publicHandle))
     expect(await screen.findByRole('heading', { name: 'Discord and wallet linked' })).toBeInTheDocument()
+  })
+
+  it('keeps legacy registration working without offering an unsupported opt-in', async () => {
+    const legacySession = { ...session, capabilities: undefined }
+    api.getDivisionsRegistrationSession.mockResolvedValue(legacySession)
+    render(<MemoryRouter><DivisionsRegistrationPage /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Review your link' })
+    expect(screen.queryByRole('checkbox', { name: /Show my Discord handle publicly/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: /I accept the/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I understand Plether stores/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Complete registration' }))
+    await waitFor(() => expect(api.completeDivisionsRegistration).toHaveBeenCalledWith(legacySession, false))
   })
 
   it('lets an existing trader restart verification to change visibility', async () => {

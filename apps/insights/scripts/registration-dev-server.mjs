@@ -126,6 +126,7 @@ function divisionsView(session) {
     },
     ...(session.discordId ? { identity: { username: 'plether_local_tester' } } : {}),
     ...(session.wallet ? { wallet: session.wallet } : {}),
+    capabilities: { publicDiscordHandle: true },
     requiredConsents: { rulesVersion: 'divisions-2026-10', privacyVersion: 'divisions-2026-10' },
   }
 }
