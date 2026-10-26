@@ -63,6 +63,8 @@ contract NativeAALifecycleTest is BasePerpTest {
         protectionViews = IPositionProtectionViews(address(protectionBook));
         _fundTrader(ALICE, 20_000e6);
         vm.chainId(421614);
+        // Local EVM: emulate ArbSys.arbBlockNumber using this test chain's block clock.
+        vm.etch(address(100), hex"4360005260206000f3");
         string memory f = vm.readFile("aa-fixture.json");
         vm.etch(ENTRY, vm.parseJsonBytes(f, ".accounts.0x4337084d9e255ff0702461cf8895ce9e3b5ff108.code"));
         vm.etch(
@@ -325,7 +327,7 @@ contract NativeAALifecycleTest is BasePerpTest {
 
     // A typed no-op is a successful EVM call, so estimating it does not prove
     // that the engine has enough gas to settle once the MEV boundary clears.
-    function test_NativeAA_KeeperEngineFailureGasEnvelope() public {
+    function test_NativeAA_KeeperGasEnvelope() public {
         _setupAA();
         _open(ALICE, CfdTypes.Side.SHORT, POSITION_SIZE, POSITION_MARGIN_ASSETS, 120_000_000);
         OrderV3Types.OrderRequest memory request = _protectedOpenRequest();
@@ -345,7 +347,7 @@ contract NativeAALifecycleTest is BasePerpTest {
         OrderV3Types.ExecutionResult memory sameBlock = router.executeOrder(id, tick);
         assertEq(uint8(sameBlock.pendingReason), uint8(OrderV3Types.PendingReason.SameBlock));
         assertTrue(vm.revertToState(baseline));
-        bool sawEngineFailure;
+        bool sawInsufficientGas;
         bool sawSuccess;
         for (uint256 allowance = 500_000; allowance <= 8_000_000; allowance += 250_000) {
             vm.prank(EXECUTION_KEEPER);
@@ -355,12 +357,12 @@ contract NativeAALifecycleTest is BasePerpTest {
                 OrderV3Types.ExecutionResult memory outcome = abi.decode(result, (OrderV3Types.ExecutionResult));
                 emit log_named_uint("keeper allowance", allowance);
                 emit log_named_uint("pending reason", uint8(outcome.pendingReason));
-                if (outcome.pendingReason == OrderV3Types.PendingReason.EngineFailure) sawEngineFailure = true;
+                if (outcome.pendingReason == OrderV3Types.PendingReason.InsufficientGas) sawInsufficientGas = true;
                 if (outcome.status == OrderV3Types.LifecycleStatus.Executed) sawSuccess = true;
             }
             assertTrue(vm.revertToState(baseline));
         }
-        assertTrue(sawEngineFailure, "must reproduce successful call reporting EngineFailure at low gas");
+        assertTrue(sawInsufficientGas, "low gas must defer execution with InsufficientGas");
         assertTrue(sawSuccess, "same order must execute at a bounded larger allowance");
 
         // A genuine engine error is still pending even at the keeper hard cap.

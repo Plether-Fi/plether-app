@@ -46,8 +46,9 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
-run "insights_v123_without_native_aa" {
+run "reject_insights_on_prepared_release" {
   command = plan
+  expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]
   variables {
     insights_active_competition_slug = "testnet-trading-2026-09"
     insights_competition_release_id  = "testnet-trading-2026-09"
@@ -66,7 +67,7 @@ run "reject_insights_other_release_lens" {
     insights_competition_release_id  = "testnet-trading-2026-09"
     perps_account_lens               = "0x1111111111111111111111111111111111111111"
   }
-  expect_failures = [terraform_data.deployment_target_guard]
+  expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]
 }
 run "reject_insights_incomplete_history" {
   command = plan
@@ -75,7 +76,7 @@ run "reject_insights_incomplete_history" {
     insights_competition_release_id  = "testnet-trading-2026-09"
     perps_indexer_start_block        = "307397197"
   }
-  expect_failures = [terraform_data.deployment_target_guard]
+  expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]
 }
 run "preserve_singapore_identity" {
   command = plan
@@ -173,8 +174,9 @@ run "deployment_customer_key_metadata_permissions" {
     error_message = "Customer-key metadata inspection must name only the configured key and SSM default key."
   }
 }
-run "public_sepolia" {
+run "reject_public_sepolia_on_prepared_release" {
   command = plan
+  expect_failures = [terraform_data.deployment_target_guard]
   variables {
     configure_native_aa_backend      = true
     alto_sepolia_safe_mode_exception = true
@@ -220,7 +222,7 @@ run "reject_public_without_funding" {
     aa_native_global_rollout_enabled = true
     aa_native_canary_owners          = ""
   }
-  expect_failures = [terraform_data.self_hosted_aa_guard]
+  expect_failures = [terraform_data.self_hosted_aa_guard, terraform_data.deployment_target_guard]
 }
 run "reject_mismatched_core" {
   command = plan

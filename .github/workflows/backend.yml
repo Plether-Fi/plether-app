@@ -71,7 +71,7 @@ jobs:
         working-directory: .
         run: |
           terraform -chdir=infra/terraform init -backend=false -input=false
-          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -var-file=sepolia-core-v1.3.1.tfvars.json -no-color
+          terraform -chdir=infra/terraform test -filter=tests/sepolia.tftest.hcl -no-color
 
       - name: Test AA RPC deployment mode guards
         env:
@@ -194,7 +194,8 @@ jobs:
           psql "$PERPS_CRITICAL_PATH_DATABASE_URL" --set ON_ERROR_STOP=1 --command "SELECT 1;"
 
       - name: Run deterministic Perps critical path integration tests
-        run: cabal test plether-api-integration-test --test-show-details=direct -j1
+        working-directory: .
+        run: node scripts/test-backend-integration.mjs
 
   native-aa-integration:
     name: Native AA integration

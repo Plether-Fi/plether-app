@@ -24,7 +24,7 @@ const wallet = createWalletClient({ chain: arbitrumSepolia, account: admin, tran
 export const rpc = (method: string, params: unknown[] = []) => client.request({ method, params } as never)
 export const core = requiredEnv('PLETHER_CORE_PATH')
 export function artifact(name: string, pkg = 'perps'): { abi: Abi; bytecode: Hex } {
-  const raw = JSON.parse(readFileSync(path.join(core, 'packages', pkg, 'out', `${name}.sol`, `${name}.json`), 'utf8')) as { abi: Abi; bytecode: { object: Hex } }
+  const raw = JSON.parse(readFileSync(path.join(core, 'packages', pkg, 'out', name === 'MockUSDG' ? 'DeployPerpsArbitrumSepolia.s.sol' : `${name}.sol`, `${name}.json`), 'utf8')) as { abi: Abi; bytecode: { object: Hex } }
   return { abi: raw.abi, bytecode: raw.bytecode.object }
 }
 export function aaArtifact(name: string): { abi: Abi; bytecode: Hex } {
@@ -58,10 +58,12 @@ export async function createStack() {
   assert.match(String(await rpc('web3_clientVersion')), /anvil/i)
   assert.equal(await client.getChainId(), 421614)
   await rpc('anvil_reset')
-  const token = await deploy('MockUSDC')
+  // Anvil has no ArbSys; return the local block clock for arbBlockNumber().
+  await rpc('anvil_setCode', ['0x0000000000000000000000000000000000000064', '0x4360005260206000f3'])
+  const token = await deploy('MockUSDG')
   const clearinghouse = await deploy('MarginClearinghouse', [token.address])
   const risk = { vpiFactor: 0n, maxSkewRatio: 400_000_000_000_000_000n, maintMarginBps: 100n, initMarginBps: 150n,
-    fadMarginBps: 300n, baseCarryBps: 500n, minBountyUsdc: 1_000_000n, bountyBps: 10n, keeperShareBps: 5000n, protocolShareBps: 0n }
+    fadMarginBps: 300n, baseCarryBps: 500n, minBountyAssets: 1_000_000n, bountyBps: 10n, keeperShareBps: 5000n, protocolShareBps: 0n }
   const engine = await deploy('CfdEngine', [token.address, clearinghouse.address, 200_000_000n, risk, 50n])
   const planner = await deploy('CfdEnginePlanner')
   const settlement = await deploy('CfdEngineSettlementSidecar', [engine.address])
@@ -90,13 +92,18 @@ export async function createStack() {
   const router = await deploy('OrderRouter', [engine.address, engineLens.address, pool.address, oracle.address, commit.address, evaluator.address, execution.address, book.address])
   assert.equal(router.address.toLowerCase(), routerAddress.toLowerCase())
   await write(engine, 'setOrderRouter', [router.address])
-  const closePreview = await deploy('CfdClosePreview', [engine.address])
+  const closePreview = await deploy('CfdClosePreview')
   const lens = await deploy('PerpsPublicLens', [accountLens.address, engine.address, router.address, pool.address])
   const protection: Contract = { address: await read(router, 'positionProtectionBook') as Address, abi: artifact('PositionProtectionBook').abi }
-  await write(pool, 'proposePoolConfig', [{ seniorRateBps: 800n, markStalenessLimit: 60n, seniorFrozenLpFeeBps: 25n, juniorFrozenLpFeeBps: 75n, maxSeniorExposureUsdc: 40_000_000_000_000n, maxSeniorShareBps: 8000n }])
+  await write(pool, 'proposePoolConfig', [{ seniorRateBps: 800n, markStalenessLimit: 60n, seniorFrozenLpFeeBps: 25n, juniorFrozenLpFeeBps: 75n, maxSeniorExposureAssets: 40_000_000_000_000n, maxSeniorShareBps: 8000n }])
   await warp(await read(pool, 'poolConfigActivationTime') as bigint)
   await write(pool, 'finalizePoolConfig')
-  async function mark() { await write(pyth, 'setAllPrices', [feeds, 100_000_000n, -8, await now()]); await write(router, 'updateMarkPrice', [['0x00']]) }
+  async function mark() {
+    const timestamp = await now()
+    await write(pyth, 'setAllPrices', [feeds, 100_000_000n, -8, timestamp])
+    await write(pyth, 'setAllUniquePrices', [feeds, 100_000_000n, 0n, -8, timestamp, timestamp - 1n])
+    await write(router, 'updateMarkPrice', [['0x00']])
+  }
   await mark()
   await write(token, 'mint', [admin.address, 2_000_000_000_000n]); await write(token, 'approve', [pool.address, 2_000_000_000_000n])
   await write(pool, 'initializeSeedPosition', [false, 1_000_000_000_000n, admin.address])

@@ -490,7 +490,7 @@ intentRegisteredData =
 
 orderFinalizedData :: BranchFixture -> EvidenceFixture -> BS.ByteString
 orderFinalizedData branch evidence =
-  mconcat $ map eventWord [0 :: Int .. 72]
+  mconcat $ map eventWord [0 :: Int .. 70]
  where
   eventWord index
     | index == 0 = encodeUint256 $ bfReceiptHashWord branch
@@ -941,7 +941,7 @@ intentRegisteredTopic =
     "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 orderFinalizedTopic =
   hexText $ keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
 positionClosedTopic =
   hexText $ keccak256Text "PositionClosed(address,uint8,uint256,uint256,int256)"
 
