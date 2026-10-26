@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../../contracts/perpsAddresses'
 import { type ReactNode } from 'react'
 import type { PerpsPendingOrder } from '../../hooks'
 import { PerpsAccountPanel } from '../PerpsAccountPanel'
@@ -185,14 +186,14 @@ function AmountInput({
         label={label}
         value={value}
         readOnly
-        rightElement={<TokenLabel token="USDC" />}
+        rightElement={<TokenLabel token={PERPS_SETTLEMENT_TOKEN_LABEL} />}
       />
       <div className="mt-2 flex justify-end">
         <button
           type="button"
           className="text-xs font-semibold text-content-secondary"
         >
-          Max: <TokenAmount amount={max} />
+          Max: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={max} />
         </button>
       </div>
     </div>
@@ -212,30 +213,30 @@ function Overview() {
           <div className="grid gap-3 md:grid-cols-2">
             <Metric
               label="Available to Trade"
-              value={<TokenAmount amount="848.25" />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="848.25" />}
               tone="positive"
               detail="Free, unreserved collateral"
             />
             <Metric
               label="Settlement balance"
-              value={<TokenAmount amount="1 248.25" />}
-              detail="USDC in the clearinghouse ledger, including locked funds"
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 248.25" />}
+              detail={`${PERPS_SETTLEMENT_TOKEN_LABEL} in the clearinghouse ledger, including locked funds`}
             />
             <Metric
               label="Position equity"
-              value={<TokenAmount amount="448.25" />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="448.25" />}
               detail="Position margin plus same-account claims and exact price PnL"
             />
             <Metric
               label="Withdrawable"
-              value={<TokenAmount amount="847.00" />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="847.00" />}
               detail="Maximum currently eligible for withdrawal"
             />
           </div>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <SummaryRow label="Trading Account" value={<AddressValue value={TRADING_ACCOUNT} />} />
-            <SummaryRow label="Pending order margin" value={<TokenAmount amount="0.00" />} />
-            <SummaryRow label="Reserved execution reward" value={<TokenAmount amount="0.00" />} />
+            <SummaryRow label="Pending order margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0.00" />} />
+            <SummaryRow label="Reserved execution reward" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0.00" />} />
           </dl>
         </div>
       </section>
@@ -247,10 +248,10 @@ function Overview() {
           status={<StatusBadge tone="neutral">4.92x leverage</StatusBadge>}
         />
         <div className="grid gap-3 panel-padding md:grid-cols-4">
-          <Metric label="Position margin" value={<TokenAmount amount="400.00" />} />
-          <Metric label="Maintenance margin" value={<TokenAmount amount="1.97" />} />
-          <Metric label="Unrealized PnL" value={<TokenAmount amount="+48.25" />} tone="positive" />
-          <Metric label="Pending carry" value={<TokenAmount amount="1.25" />} />
+          <Metric label="Position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="400.00" />} />
+          <Metric label="Maintenance margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1.97" />} />
+          <Metric label="Unrealized PnL" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="+48.25" />} tone="positive" />
+          <Metric label="Pending carry" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1.25" />} />
         </div>
       </section>
     </div>
@@ -262,19 +263,19 @@ function Deposit() {
     <section className="border border-brand-border/30 bg-surface-panel">
       <PanelHeader
         eyebrow="Margin Account"
-        title="Deposit USDC"
+        title={`Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
         status={<StatusBadge>Network gas sponsored</StatusBadge>}
       />
       <div className="space-y-5 panel-padding">
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Owner-wallet balance"
-            value={<TokenAmount amount="25 000.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 000.00" />}
             detail={truncateAddress(OWNER_WALLET)}
           />
           <Metric
             label="Trading Account balance"
-            value={<TokenAmount amount="0.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0.00" />}
             detail={truncateAddress(TRADING_ACCOUNT)}
           />
         </div>
@@ -285,7 +286,7 @@ function Deposit() {
           <OperationStatus
             stage="Authorization status"
             title="Awaiting wallet authorization"
-            message="Sign an exact 10 000 USDC transfer authorization from the owner wallet to the Trading Account."
+            message={`Sign an exact 10 000 ${PERPS_SETTLEMENT_TOKEN_LABEL} transfer authorization from the owner wallet to the Trading Account.`}
             tone="warning"
           />
           <OperationStatus
@@ -299,7 +300,7 @@ function Deposit() {
         <dl className="border border-brand-border/20 bg-app-bg px-4">
           <SummaryRow label="Source" value="Owner wallet → Trading Account" />
           <SummaryRow label="Destination" value="Trading Account's Margin Account" />
-          <SummaryRow label="Margin Account after deposit" value={<TokenAmount amount="15 000.00" />} />
+          <SummaryRow label="Margin Account after deposit" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="15 000.00" />} />
         </dl>
 
         <Button className="w-full" size="lg">Authorize and Deposit</Button>
@@ -320,23 +321,23 @@ function PendingReservations() {
         <div className="grid gap-3 panel-padding md:grid-cols-4">
           <Metric
             label="Available before commit"
-            value={<TokenAmount amount="5 000.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="5 000.00" />}
           />
           <Metric
             label="Pending order margin"
-            value={<TokenAmount amount="-1 200.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="-1 200.00" />}
             tone="warning"
             detail="Reserved for the opening order"
           />
           <Metric
             label="Execution reward"
-            value={<TokenAmount amount="-0.20" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="-0.20" />}
             tone="warning"
             detail="Reserved for terminal processing"
           />
           <Metric
             label="Available to Trade"
-            value={<TokenAmount amount="3 799.80" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3 799.80" />}
             tone="positive"
             detail="After both reservations"
           />
@@ -364,27 +365,27 @@ function AddPositionMargin() {
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Available to Trade"
-            value={<TokenAmount amount="848.25" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="848.25" />}
             tone="positive"
           />
           <Metric
             label="Current position margin"
-            value={<TokenAmount amount="400.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="400.00" />}
           />
         </div>
 
         <AmountInput label="Amount to add" value="300" max="848.25" />
 
         <dl className="border border-brand-border/20 bg-app-bg px-4">
-          <SummaryRow label="Amount being added" value={<TokenAmount amount="+300.00" />} tone="positive" />
-          <SummaryRow label="Resulting position margin" value={<TokenAmount amount="698.75" />} />
+          <SummaryRow label="Amount being added" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="+300.00" />} tone="positive" />
+          <SummaryRow label="Resulting position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="698.75" />} />
           <SummaryRow label="Current leverage" value="4.92x" />
           <SummaryRow label="Resulting leverage" value="2.82x" tone="positive" />
           <SummaryRow label="Exposure" value="Unchanged" />
         </dl>
 
         <p className="border border-positive/30 bg-positive/10 px-4 py-3 text-sm leading-5 text-content-secondary">
-          Adding margin increases position price-risk backing. Accrued carry of 1.25 USDC consumes existing position margin first, leaving free funds available to add. Future carry can reduce the new margin too. The action takes effect after confirmation and does not enter the delayed-order queue.
+          Adding margin increases position price-risk backing. Accrued carry of 1.25 {PERPS_SETTLEMENT_TOKEN_LABEL} consumes existing position margin first, leaving free funds available to add. Future carry can reduce the new margin too. The action takes effect after confirmation and does not enter the delayed-order queue.
         </p>
 
         <Button className="w-full" size="lg">Authorize Add Margin</Button>
@@ -398,20 +399,20 @@ function Withdrawal() {
     <section className="border border-brand-border/30 bg-surface-panel">
       <PanelHeader
         eyebrow="Margin Account"
-        title="Withdraw USDC"
+        title={`Withdraw ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
         status={<StatusBadge>Network gas sponsored</StatusBadge>}
       />
       <div className="space-y-5 panel-padding">
         <div className="grid gap-3 md:grid-cols-2">
           <Metric
             label="Withdrawable"
-            value={<TokenAmount amount="3 200.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3 200.00" />}
             tone="positive"
             detail="Current wallet-out limit"
           />
           <Metric
             label="Current Margin Account"
-            value={<TokenAmount amount="8 750.00" />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="8 750.00" />}
           />
         </div>
 
@@ -420,8 +421,8 @@ function Withdrawal() {
         <dl className="border border-brand-border/20 bg-app-bg px-4">
           <SummaryRow label="Trading Account" value={<AddressValue value={TRADING_ACCOUNT} />} />
           <SummaryRow label="Verified owner-wallet recipient" value={<AddressValue value={OWNER_WALLET} />} />
-          <SummaryRow label="Requested amount" value={<TokenAmount amount="1 500.00" />} />
-          <SummaryRow label="Resulting Margin Account balance" value={<TokenAmount amount="7 250.00" />} />
+          <SummaryRow label="Requested amount" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 500.00" />} />
+          <SummaryRow label="Resulting Margin Account balance" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="7 250.00" />} />
           <SummaryRow label="Transfer route" value="Margin Account → Trading Account → owner wallet" />
         </dl>
 
@@ -454,10 +455,10 @@ function TraderClaim() {
         <div className="space-y-5 panel-padding">
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <SummaryRow label="Claim owner" value={<AddressValue value={TRADING_ACCOUNT} />} />
-            <SummaryRow label="Complete claim" value={<TokenAmount amount="800.00" />} />
+            <SummaryRow label="Complete claim" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="800.00" />} />
             <SummaryRow label="Settlement status" value="Available to settle" tone="positive" />
             <SummaryRow label="Destination" value="Trading Account's Margin Account" />
-            <SummaryRow label="Margin Account after settlement" value={<TokenAmount amount="3 250.00" />} />
+            <SummaryRow label="Margin Account after settlement" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3 250.00" />} />
             <SummaryRow label="Network gas" value="Sponsored" tone="positive" />
           </dl>
           <p className="text-sm leading-6 text-content-secondary">

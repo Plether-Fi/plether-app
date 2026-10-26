@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { ReactNode } from 'react'
 import { formatPerpsUsdc } from '../utils/perps'
 import type { PerpsSeniorCapitalStatus } from '../utils/perpsPoolCapital'
@@ -21,7 +22,7 @@ export interface PerpsPoolLiquidityDetailsProps {
 function poolAmount(value: bigint | undefined, isLoading: boolean): ReactNode {
   if (isLoading) return '...'
   if (value === undefined) return '--'
-  return <TokenAmount amount={value > 0n && value < 10_000n ? '<0.01' : formatPerpsUsdc(value)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value > 0n && value < 10_000n ? '<0.01' : formatPerpsUsdc(value)} />
 }
 
 function reservedShare(poolAssetsUsdc: bigint | undefined, reservedUsdc: bigint | undefined): string | undefined {

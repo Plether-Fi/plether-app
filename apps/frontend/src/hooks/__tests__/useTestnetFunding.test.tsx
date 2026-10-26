@@ -19,6 +19,7 @@ vi.mock('../../api', () => ({
   testnetFaucetErrorMessage: () => 'Faucet unavailable. Try again.',
 }))
 vi.mock('wagmi', () => ({
+  useWriteContract: () => ({ writeContractAsync: vi.fn() }),
   usePublicClient: () => ({ waitForTransactionReceipt: mocks.receipt, readContract: mocks.balance }),
 }))
 vi.mock('../../perps-aa', () => ({ usePerpsIdentity: () => mocks.identity }))

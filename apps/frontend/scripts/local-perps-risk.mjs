@@ -2,6 +2,7 @@
 // every mutation is restricted to its fixed localhost Anvil RPC.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { settlementContract } from '../../../scripts/prepare-perps-release.mjs'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createPublicClient, createWalletClient, http, keccak256, parseUnits, toHex } from 'viem'
@@ -19,11 +20,12 @@ const release = JSON.parse(fs.readFileSync('../../config/perps/arbitrum-sepolia-
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 assert.ok(bundle, 'LOCAL_PERPS_ABI_BUNDLE is required')
 assert.equal(createHash('sha256').update(fs.readFileSync(bundle)).digest('hex'), release.release.bundleSha256)
+const releaseContracts = { ...release.contracts, settlementToken: settlementContract(release) }
 const contracts = Object.fromEntries(Object.entries({ cfdEngine: 'CfdEngine', cfdEngineLens: 'CfdEngineLens',
   cfdEngineAccountLens: 'CfdEngineAccountLens', marginClearinghouse: 'MarginClearinghouse',
-  mockUsdc: 'MockUSDC', housePool: 'ArbitrumSepoliaReleaseHousePool', orderRouter: 'ArbitrumSepoliaReleaseRouter',
-}).map(([key, name]) => [key, { address: release.contracts[key].address, abi: JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' })) }]))
-for (const [key, contract] of Object.entries(contracts)) assert.equal(keccak256(await client.getCode(contract)), release.contracts[key].runtimeCodeHash, key)
+  settlementToken: releaseContracts.settlementToken.artifact?.split(':').at(-1) ?? 'MockUSDC', housePool: 'ArbitrumSepoliaReleaseHousePool', orderRouter: 'ArbitrumSepoliaReleaseRouter',
+}).map(([key, name]) => [key, { address: releaseContracts[key].address, abi: JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' })) }]))
+for (const [key, contract] of Object.entries(contracts)) assert.equal(keccak256(await client.getCode(contract)), releaseContracts[key].runtimeCodeHash, key)
 const trader = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const keeper = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
 const read = (key, functionName, args = [], blockNumber) => client.readContract({ ...contracts[key], functionName, args, blockNumber })
@@ -77,8 +79,8 @@ try {
     assert.equal(initial.input.positionMarginUsdc, preview.postMarginUsdc, 'equivalent execution margin')
     assert.equal(initial.entryPrice, preview.postEntryPrice, 'equivalent execution price')
     assert.equal(initial.threshold.price, preview.liquidationPrice, 'open preview matches the resulting position')
-    await write('mockUsdc', 'mint', [trader, parseUnits('100', 6)], release.release.owner)
-    await write('mockUsdc', 'approve', [contracts.marginClearinghouse.address, parseUnits('100', 6)])
+    await write('settlementToken', 'mint', [trader, parseUnits('100', 6)], release.release.owner)
+    await write('settlementToken', 'approve', [contracts.marginClearinghouse.address, parseUnits('100', 6)])
     await write('marginClearinghouse', 'deposit', [trader, parseUnits('100', 6)])
     assert.deepEqual((await checkBoundary()).threshold, initial.threshold, 'free deposits do not move price threshold')
     await write('cfdEngine', 'addMargin', [trader, parseUnits('100', 6)])
@@ -127,16 +129,16 @@ try {
     sizeDelta: parseUnits('3000', 18), marginDelta: 0n, slippagePercent: 1, isClose: true, selectedMaxLeverageBps: 50_000 })
   await write('orderRouter', 'commitOrder', [prepared.request])
   const pool = contracts.housePool.address
-  const poolCash = await read('mockUsdc', 'balanceOf', [pool])
+  const poolCash = await read('settlementToken', 'balanceOf', [pool])
   await rpc('anvil_impersonateAccount', [pool])
   await rpc('anvil_setBalance', [pool, toHex(parseUnits('1', 18))])
-  await write('mockUsdc', 'transfer', [keeper, poolCash - 1n], pool)
+  await write('settlementToken', 'transfer', [keeper, poolCash - 1n], pool)
   await rpc('evm_increaseTime', [2]); await rpc('evm_mine')
   await action('execute', {})
   const withClaim = await snapshot()
   assert.ok(withClaim.input.traderClaimBalanceUsdc > 0n, 'partial close creates a claim')
   assert.equal(withClaim.input.size, parseUnits('3000', 18))
-  await write('mockUsdc', 'transfer', [pool, poolCash - 1n], keeper)
+  await write('settlementToken', 'transfer', [pool, poolCash - 1n], keeper)
   await write('cfdEngine', 'settleTraderClaim', [trader])
   const settled = await snapshot()
   assert.equal(settled.input.traderClaimBalanceUsdc, 0n)

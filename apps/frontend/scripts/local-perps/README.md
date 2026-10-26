@@ -39,7 +39,7 @@ The controller checks the Anvil client, chain ID and pinned contract code
 hashes before writing. It never accepts a configurable execution RPC. It
 impersonates accounts **only on the fork**, replaces only Pyth's code with a
 local price fixture, advances the chain clock to a Monday, seeds the pool if
-necessary, activates local trading, and deposits 100,000 mock USDC for the
+necessary, activates local trading, and deposits 100,000 units of the configured mock settlement token for the
 default Anvil trader. Production oracle, router, engine and Book code remain
 unchanged. No real wallet, keys or public-chain writes are used.
 
@@ -108,3 +108,5 @@ state, restart both test processes with a fresh fork.
 
 See [the accounting and verification record](../../../../docs/runbooks/perps-account-risk-v1.2.2.md)
 for the pinned Solidity vectors and the frontend snapshot policy.
+
+The local harness resolves `settlementToken`/MockUSDG in schema 4 and the historical `mockUsdc`/MockUSDC artifact in older release manifests. It keeps the active release bundle checksum and runtime-code checks. These commands modify only the explicit localhost Anvil sandbox; do not run them as a deployment workflow.

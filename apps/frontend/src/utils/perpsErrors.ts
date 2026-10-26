@@ -1,4 +1,5 @@
 import { TRANSACTION_FAILURE_MESSAGES, transactionErrorRecords, errorField, readableTransactionMessage } from './transactionFailure'
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { decodeErrorResult, formatUnits, parseAbi } from 'viem'
 import { PERPS_CFD_CLOSE_PREVIEW_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_POSITION_PROTECTION_BOOK_ABI } from '../contracts/abis'
 
@@ -335,13 +336,13 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'MarginClearinghouse__InsufficientBalance':
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
-      if (action === 'protection') return 'Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.'
+      if (action === 'protection') return `Not enough free ${PERPS_SETTLEMENT_TOKEN_LABEL} settlement balance to reserve TP/SL keeper rewards. Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account and retry.`
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'OrderRouter__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'MarginClearinghouse__InsufficientUsdcForSettlement':
-      return 'The margin account does not have enough USDC settlement balance.'
+      return `The margin account does not have enough ${PERPS_SETTLEMENT_TOKEN_LABEL} settlement balance.`
     case 'OrderRouter__ZeroSize':
       return 'Order size must be greater than zero.'
     case 'OrderRouter__InvalidSizeQuantum':
@@ -398,7 +399,7 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       if (args?.length === 3 && args.every(value => typeof value === 'bigint' && value >= 0n)) {
         const [required, available, unpaid] = args as readonly bigint[]
         const shortfall = required > available ? required - available : 0n
-        return `The close needs ${formatUnits(required, 6)} USDC reserved for execution, but only ${formatUnits(available, 6)} USDC is backed by free settlement and eligible position margin after carry. Backing is short by ${formatUnits(shortfall, 6)} USDC.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} USDC.` : ''} Refresh the review after funding changes.`
+        return `The close needs ${formatUnits(required, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} reserved for execution, but only ${formatUnits(available, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} is backed by free settlement and eligible position margin after carry. Backing is short by ${formatUnits(shortfall, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.${unpaid > 0n ? ` Unpaid carry: ${formatUnits(unpaid, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.` : ''} Refresh the review after funding changes.`
       }
       return 'Free settlement and eligible position margin after carry cannot fund the close execution reserve. Refresh the account and review again.'
     case 'CfdOrderPolicyEvaluator__InsufficientBountyBacking':
@@ -528,11 +529,11 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
 function fallbackMessage(action: PerpsAction): string {
   switch (action) {
     case 'approve':
-      return 'USDC approval failed. Check the wallet message and retry.'
+      return `${PERPS_SETTLEMENT_TOKEN_LABEL} approval failed. Check the wallet message and retry.`
     case 'fund':
-      return 'Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and Arbitrum Sepolia ETH for gas.'
+      return `Transfer to the Trading Account failed. Check the Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} balance and Arbitrum Sepolia ETH for gas.`
     case 'deposit':
-      return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
+      return `Deposit failed. Check ${PERPS_SETTLEMENT_TOKEN_LABEL} balance, allowance, and wallet gas.`
     case 'withdraw':
       return 'Withdraw failed. Check free margin and pending orders.'
     case 'addPositionMargin':

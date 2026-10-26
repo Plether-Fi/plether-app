@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { type ReactNode, useId } from 'react'
 import { formatPerpsPositionSize, formatPerpsUsdc, formatSignedPerpsUsdc } from '../utils/perps'
 import type { PerpsCloseReconciliation } from '../utils/perpsCloseReconciliation'
@@ -48,7 +49,7 @@ function ReconciliationRow({
         ) : null}
       </dt>
       <dd className={`shrink-0 text-right ${emphasized ? 'font-semibold' : ''} ${amountToneClass(tone)}`}>
-        {amount === undefined ? 'Unavailable' : <TokenAmount amount={signed ? formatSignedPerpsUsdc(amount) : formatPerpsUsdc(amount)} />}
+        {amount === undefined ? 'Unavailable' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={signed ? formatSignedPerpsUsdc(amount) : formatPerpsUsdc(amount)} />}
       </dd>
     </div>
   )

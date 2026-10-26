@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { settlementContract } from '../../../scripts/prepare-perps-release.mjs'
 import path from 'node:path'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -18,15 +19,17 @@ const rpc = (method, params = []) => client.request({ method, params })
 if (!(await rpc('web3_clientVersion')).toLowerCase().includes('anvil') || await client.getChainId() !== 421614) throw new Error('Expected isolated Anvil fork on port 18545')
 const release = JSON.parse(fs.readFileSync('../../config/perps/arbitrum-sepolia-v3.json', 'utf8'))
 const manifest = JSON.parse(fs.readFileSync('public/perps-aa-manifest.json', 'utf8'))
+const token = settlementContract(release)
 const addresses = Object.fromEntries(Object.entries(release.contracts).map(([k, v]) => [k, v.address]))
+addresses.settlementToken = token.address
 const owner = release.release.owner
 const trader = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const keeper = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
-if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified v1.2.3 release tar.gz')
-if (release.release.version !== 'v1.2.3' || createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('Expected the pinned v1.2.3 ABI bundle')
+if (!bundle) throw new Error('Set LOCAL_PERPS_ABI_BUNDLE to the checksum-verified active release tar.gz')
+if (createHash('sha256').update(fs.readFileSync(bundle)).digest('hex') !== release.release.bundleSha256) throw new Error('Expected the checksum-pinned active release ABI bundle')
 const loadAbi = name => JSON.parse(execFileSync('tar', ['-xOzf', bundle, `perps-${release.release.version}-arbitrum-sepolia/abi/${name}.json`], { encoding: 'utf8' }))
-const abis = { mockUsdc: loadAbi('MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), cfdEngineAccountLens: loadAbi('CfdEngineAccountLens'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
+const abis = { settlementToken: loadAbi(token.artifact?.split(':').at(-1) ?? 'MockUSDC'), housePool: loadAbi('ArbitrumSepoliaReleaseHousePool'), orderRouter: loadAbi('ArbitrumSepoliaReleaseRouter'), pletherOracle: loadAbi('ArbitrumSepoliaReleaseOracle'), cfdEngine: loadAbi('CfdEngine'), cfdEngineAccountLens: loadAbi('CfdEngineAccountLens'), perpsPublicLens: loadAbi('PerpsPublicLens'), marginClearinghouse: loadAbi('MarginClearinghouse'), positionProtectionBook: loadAbi('PositionProtectionBook'), orderLifecycleBook: loadAbi('OrderLifecycleBook') }
 const log = []
 const note = (action, tx) => { log.unshift({ action, tx, time: new Date().toISOString() }); log.splice(40); console.log(action, tx ?? '') }
 const read = (key, functionName, args = [], blockNumber) => client.readContract({ address: addresses[key], abi: abis[key], functionName, args, blockNumber })
@@ -45,8 +48,8 @@ async function write(key, functionName, args = [], account = keeper) {
 }
 
 // Verify fork identity before any funding, impersonation or code replacement.
-for (const key of ['cfdEngine', 'orderRouter', 'positionProtectionBook', 'pletherOracle', 'housePool']) {
-  if (keccak256(await client.getCode({ address: addresses[key] })) !== release.contracts[key].runtimeCodeHash) throw new Error(`Fork deployment mismatch: ${key}`)
+for (const key of ['settlementToken', 'cfdEngine', 'orderRouter', 'positionProtectionBook', 'pletherOracle', 'housePool']) {
+  if (keccak256(await client.getCode({ address: addresses[key] })) !== (key === 'settlementToken' ? token : release.contracts[key]).runtimeCodeHash) throw new Error(`Fork deployment mismatch: ${key}`)
 }
 for (const address of [owner, trader, keeper]) {
   await rpc('anvil_impersonateAccount', [address])
@@ -71,14 +74,14 @@ openDate.setUTCHours(12, 0, 0, 0)
 await rpc('evm_setNextBlockTimestamp', [Math.floor(openDate.getTime() / 1000)])
 await rpc('evm_mine')
 await write('orderRouter', 'updateMarkPrice', [['0x00']])
-await write('mockUsdc', 'mint', [owner, parseUnits('2000000', 6)], owner)
-await write('mockUsdc', 'approve', [addresses.housePool, parseUnits('2000000', 6)], owner)
+await write('settlementToken', 'mint', [owner, parseUnits('2000000', 6)], owner)
+await write('settlementToken', 'approve', [addresses.housePool, parseUnits('2000000', 6)], owner)
 for (const senior of [false, true]) {
   if (!await read('housePool', senior ? 'seniorSeedInitialized' : 'juniorSeedInitialized')) await write('housePool', 'initializeSeedPosition', [senior, parseUnits(senior ? '100000' : '1000000', 6), owner], owner)
 }
 if (!await read('housePool', 'isTradingActive')) await write('housePool', 'activateTrading', [], owner)
-await write('mockUsdc', 'mint', [trader, parseUnits('100000', 6)], owner)
-await write('mockUsdc', 'approve', [addresses.marginClearinghouse, parseUnits('100000', 6)], trader)
+await write('settlementToken', 'mint', [trader, parseUnits('100000', 6)], owner)
+await write('settlementToken', 'approve', [addresses.marginClearinghouse, parseUnits('100000', 6)], trader)
 await write('marginClearinghouse', 'deposit', [trader, parseUnits('100000', 6)], trader)
 const startBlock = await client.getBlockNumber()
 let resetSnapshot = await rpc('evm_snapshot')

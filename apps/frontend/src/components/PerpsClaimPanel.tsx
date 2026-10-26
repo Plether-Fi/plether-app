@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { type ReactNode, useState } from 'react'
 import { Button, Modal, TokenAmount } from './ui'
 
@@ -61,7 +62,7 @@ export function PerpsClaimPanel({
 
         <dl className="panel-padding-x">
           <ClaimRow label="Claim owner" value={<span title={tradingAccountAddress}>{truncateAddress(tradingAccountAddress)}</span>} />
-          <ClaimRow label="Account claim" value={<TokenAmount amount={claimUsdc} />} />
+          <ClaimRow label="Account claim" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={claimUsdc} />} />
           {aggregateClaimsUsdc && housePoolAssetsUsdc ? (
             <ClaimRow
               label="Aggregate claim coverage"
@@ -72,7 +73,7 @@ export function PerpsClaimPanel({
                     {coverageRatio ? ` · ${coverageRatio}` : ''}
                   </span>
                   <span className="text-xs font-normal text-content-secondary">
-                    <TokenAmount amount={housePoolAssetsUsdc} /> assets / <TokenAmount amount={aggregateClaimsUsdc} /> claims
+                    <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={housePoolAssetsUsdc} /> assets / <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={aggregateClaimsUsdc} /> claims
                   </span>
                 </span>
               )}
@@ -94,12 +95,12 @@ export function PerpsClaimPanel({
           />
           <ClaimRow label="Settlement destination" value={settlementDestination} />
           {marginAccountUsdc ? (
-            <ClaimRow label="Current Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
+            <ClaimRow label="Current Margin Account" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginAccountUsdc} />} />
           ) : null}
           {settledCreditUsdc ? (
             <ClaimRow
               label="Latest settlement credit"
-              value={<span className="text-positive">+<TokenAmount amount={settledCreditUsdc} /></span>}
+              value={<span className="text-positive">+<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={settledCreditUsdc} /></span>}
             />
           ) : null}
         </dl>
@@ -142,7 +143,7 @@ export function PerpsClaimPanel({
             Your connected owner wallet authorizes settlement for the claim-owning Trading Account. Settlement converts the claim into position margin while open, or account funds while flat.
           </p>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
-            <ClaimRow label="Complete claim" value={<TokenAmount amount={claimUsdc} />} />
+            <ClaimRow label="Complete claim" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={claimUsdc} />} />
             <ClaimRow label="Destination" value={settlementDestination} />
             <ClaimRow label="Network gas" value={<span className="text-positive">Sponsored</span>} />
           </dl>

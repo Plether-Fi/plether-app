@@ -158,7 +158,7 @@ september2026ReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = september2026CompetitionSlug
     , crmChainId = Manifest.releaseChainId
-    , crmUsdc = Manifest.mockUsdcAddress
+    , crmUsdc = Manifest.settlementTokenAddress
     , crmOrderRouter = Manifest.orderRouterAddress
     , crmMarginClearinghouse = Manifest.marginClearinghouseAddress
     , crmAccountLens = Manifest.cfdEngineAccountLensAddress

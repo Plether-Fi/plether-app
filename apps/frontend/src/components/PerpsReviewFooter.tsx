@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { PerpsAnalyticsProperties } from '../analytics/perps'
 import type { PerpsReviewChange } from '../utils/perpsReviewChanges'
 import { Button } from './ui'
@@ -38,9 +39,9 @@ export function PerpsReviewFooter({ sponsoredCloseUsdc, depositCarryUsdc, commit
           </>
         ) : null}
       </div>
-      {sponsoredCloseUsdc && <p className="text-sm text-content-secondary">Plether covers {sponsoredCloseUsdc} USDC of your keeper bounty and transaction gas. The bounty remains a trading cost in competition PnL.</p>}
-      {depositCarryUsdc && <p className="text-sm text-content-secondary">Carry collected with assistance funding: {depositCarryUsdc} USDC.</p>}
-      {commitmentCarryUsdc && <p className="text-sm text-content-secondary">Carry collected when the order is committed: {commitmentCarryUsdc} USDC.</p>}
+      {sponsoredCloseUsdc && <p className="text-sm text-content-secondary">Plether covers {sponsoredCloseUsdc} {PERPS_SETTLEMENT_TOKEN_LABEL} of your keeper bounty and transaction gas. The bounty remains a trading cost in competition PnL.</p>}
+      {depositCarryUsdc && <p className="text-sm text-content-secondary">Carry collected with assistance funding: {depositCarryUsdc} {PERPS_SETTLEMENT_TOKEN_LABEL}.</p>}
+      {commitmentCarryUsdc && <p className="text-sm text-content-secondary">Carry collected when the order is committed: {commitmentCarryUsdc} {PERPS_SETTLEMENT_TOKEN_LABEL}.</p>}
       {!preparing && error && onRetry ? <Button size="sm" variant="secondary" onClick={onRetry}>Retry review</Button> : null}
       <div className="flex gap-3">
         <Button className="flex-1 !border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D]"

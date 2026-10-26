@@ -125,6 +125,9 @@ verifyPerpsV3ReleaseBindings client chainId router maybeLifecycle engine clearin
                 , ("Lifecycle Engine", lifecycle, "ENGINE()", engine)
                 , ("Lifecycle Clearinghouse", lifecycle, "CLEARINGHOUSE()", clearinghouse)
                 , ("Lifecycle HousePool", lifecycle, "HOUSE_POOL()", housePool)
+                , ("Clearinghouse settlement token", clearinghouse, "settlementAsset()", Manifest.settlementTokenAddress)
+                , ("Engine settlement token", engine, "USDC()", Manifest.settlementTokenAddress)
+                , ("HousePool settlement token", housePool, "USDC()", Manifest.settlementTokenAddress)
                 , ("Engine Clearinghouse", engine, "clearinghouse()", clearinghouse)
                 , ("Engine Pool", engine, "pool()", housePool)
                 , ("Public lens Engine", perpsV2PublicLens, "ENGINE()", engine)
@@ -161,7 +164,8 @@ verifyAddressAt client blockNumber (Right ()) (label, target, signature, expecte
 
 runtimeHashes :: [(Text, Text, Text)]
 runtimeHashes =
-  [ ("OrderRouter", perpsV2OrderRouter, Manifest.orderRouterCodeHash)
+  [ ("SettlementToken", Manifest.settlementTokenAddress, Manifest.settlementTokenCodeHash)
+  , ("OrderRouter", perpsV2OrderRouter, Manifest.orderRouterCodeHash)
   , ("OrderLifecycleBook", perpsV2OrderLifecycleBook, Manifest.orderLifecycleBookCodeHash)
   , ("PolicyEvaluator", perpsV2PolicyEvaluator, Manifest.cfdOrderPolicyEvaluatorCodeHash)
   , ("PositionProtectionBook", perpsV2PositionProtectionBook, Manifest.positionProtectionBookCodeHash)

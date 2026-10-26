@@ -30,7 +30,7 @@ import {
   PERPS_PUBLIC_LENS_ABI,
   PERPS_POSITION_PROTECTION_BOOK_ABI,
 } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import {
   preparePerpsOrderV3,
   PerpsOrderFundingShortfallError,
@@ -440,7 +440,7 @@ async function describeCommitFailure({
     const pendingMarginUsdc = readBigInt(accountView, 'pendingOrderMarginUsdc', 2)
     const pendingBountyUsdc = readBigInt(accountView, 'pendingExecutionBountyUsdc', 3)
     context.push(
-      `Current account state: ${readArrayLength(pendingOrders).toString()}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} USDC, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} USDC, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} USDC, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} USDC.`
+      `Current account state: ${readArrayLength(pendingOrders).toString()}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     )
   } catch {
     context.push('Could not refresh account diagnostics after the failed commit.')
@@ -579,7 +579,7 @@ export function usePerpsTrading() {
   const approveUsdcForMargin = useCallback(async (amount: bigint) => {
     void amount
     throw new Error(
-      'Direct USDC approvals are disabled. Sponsored deposits execute atomically through the Trading Account.'
+      `Direct ${PERPS_SETTLEMENT_TOKEN_LABEL} approvals are disabled. Sponsored deposits execute atomically through the Trading Account.`
     )
   }, [])
 
@@ -658,7 +658,7 @@ export function usePerpsTrading() {
           throw new SponsoredPreflightError({
             reason: 'OWNER_AUTHORIZATION_UNAVAILABLE',
             message:
-              'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.',
+              'Signed owner-wallet deposits are unavailable for this settlement token. Fund the Trading Account and deposit from its balance.',
           })
         }
         try {

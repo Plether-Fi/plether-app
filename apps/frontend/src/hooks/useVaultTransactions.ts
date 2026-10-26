@@ -4,6 +4,7 @@ import { getAccount } from '@wagmi/core'
 import { useConfig, usePublicClient, useWriteContract } from 'wagmi'
 import { ERC20_ABI, TRANCHE_VAULT_READ_ABI } from '../contracts/abis'
 import {
+  PERPS_SETTLEMENT_TOKEN_LABEL,
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
@@ -44,7 +45,7 @@ export function useVaultTransactions({
   const requestDeposit = useCallback((amount: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
-      title: 'Queueing USDC for Plether Vault',
+      title: `Queueing ${PERPS_SETTLEMENT_TOKEN_LABEL} for Plether Vault`,
       type: 'supply',
       showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => {
@@ -52,7 +53,7 @@ export function useVaultTransactions({
 
         if (allowance === undefined || allowance < amount) {
           steps.push({
-            label: 'Approve USDC',
+            label: `Approve ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
             action: async () => {
               const context = requireTransactionContext(expectedAddress)
               await context.publicClient.simulateContract({
@@ -176,7 +177,7 @@ export function useVaultTransactions({
       type: 'withdraw',
       showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
-        label: 'Recover USDC',
+        label: `Recover ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
         action: async () => {
           const context = requireTransactionContext(expectedAddress)
           await context.publicClient.simulateContract({
@@ -269,7 +270,7 @@ export function useVaultTransactions({
       type: 'withdraw',
       showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
-        label: 'Claim USDC',
+        label: `Claim ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
         action: async () => {
           const context = requireTransactionContext(expectedAddress)
           await context.publicClient.simulateContract({

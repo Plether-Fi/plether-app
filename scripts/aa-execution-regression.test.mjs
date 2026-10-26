@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { before, after, test } from 'node:test'
 import fs from 'node:fs'
+import { settlementContract } from './prepare-perps-release.mjs'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -137,7 +138,7 @@ test('offline sponsored action gas inventory distinguishes successful execution 
     ['deposit',depositCalls(1_000_000n)],
     ['withdraw',batch([
       call(manifest.contracts.marginClearinghouse.address,'function withdrawMargin(uint256)','withdrawMargin',[1_000_000n]),
-      call(manifest.contracts.mockUsdc.address,'function transfer(address,uint256) returns(bool)','transfer',[owner.address,1_000_000n]),
+      call(settlementContract(manifest).address,'function transfer(address,uint256) returns(bool)','transfer',[owner.address,1_000_000n]),
     ])],
     ['add_margin',batch([call(manifest.contracts.cfdEngine.address,'function addMargin(address,uint256)','addMargin',[fixture.sender,1_000_000n])])],
     ['settle_claim',batch([call(manifest.contracts.cfdEngine.address,'function settleTraderClaim(address)','settleTraderClaim',[fixture.sender])])],
@@ -212,7 +213,7 @@ test('extra unused execution allowance increases the real EntryPoint charge', as
 
 test('token state changed after signing remains a genuine failure, not an automatic retry', async () => {
   await reset()
-  const token = manifest.contracts.mockUsdc.address
+  const token = settlementContract(manifest).address
   const beforeSubmit = async () => {
     const balance = await client.readContract({address:token,abi:tokenAbi,functionName:'balanceOf',args:[fixture.sender]})
     const data = encodeFunctionData({abi:accountAbi,functionName:'executeBatch',args:[[{target:token,value:0n,data:encodeFunctionData({abi:parseAbi(['function transfer(address,uint256) returns(bool)']),functionName:'transfer',args:[owner.address,balance]})}]]})
@@ -244,7 +245,7 @@ function depositCalls(amount) {
 for (const amount of [1n,1_000_000n,100_000_000n,10_000_000_000n]) {
   test(`deposit ${amount} token atoms with existing position/carry state`, async () => {
     await reset()
-    const token = manifest.contracts.mockUsdc.address
+    const token = settlementContract(manifest).address
     const marginBalance = () => client.readContract({address:manifest.contracts.marginClearinghouse.address,abi:parseAbi(['function balanceUsdc(address) view returns(uint256)']),functionName:'balanceUsdc',args:[fixture.sender]})
     const before = await client.readContract({address:token,abi:tokenAbi,functionName:'balanceOf',args:[fixture.sender]})
     const marginBefore = await marginBalance()

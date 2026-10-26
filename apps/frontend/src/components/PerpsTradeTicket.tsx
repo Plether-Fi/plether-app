@@ -10,7 +10,7 @@ import { formatUnits, zeroAddress } from 'viem'
 import { useAccountDeploymentConfirmation } from '../perps-aa/useAccountDeploymentConfirmation'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   executionModeOracleFrozen,
   PERPS_EXECUTION_MODE_LABELS,
@@ -389,7 +389,7 @@ const EXECUTION_LIMIT_TOOLTIP =
 const MAINTENANCE_MARGIN_TOOLTIP =
   'The minimum position equity required to avoid price liquidation. At or below this amount, the entire position can be liquidated.'
 const EXECUTION_REWARD_TOOLTIP =
-  'USDC reserved for whoever finalizes or clears the order. It can still be paid if the order fails or expires.'
+  `${PERPS_SETTLEMENT_TOKEN_LABEL} reserved for whoever finalizes or clears the order. It can still be paid if the order fails or expires.`
 const MANUAL_FINALIZATION_TOOLTIP =
   'Unless marked Sponsored, manual finalization requires ETH for network gas and the Pyth update fee.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
@@ -649,7 +649,7 @@ function formatUsdcAmount(value: number): string {
 }
 
 function formatUsdc(value: number): ReactNode {
-  return <TokenAmount amount={formatUsdcAmount(value)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatUsdcAmount(value)} />
 }
 
 function formatPreviewUsdcRaw(value: bigint | undefined): string {
@@ -658,7 +658,7 @@ function formatPreviewUsdcRaw(value: bigint | undefined): string {
 }
 
 function formatUsdcRaw(value: bigint | undefined): ReactNode {
-  return <TokenAmount amount={formatPreviewUsdcRaw(value)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPreviewUsdcRaw(value)} />
 }
 
 function formatOrderQuantity(value: bigint | undefined): ReactNode {
@@ -676,7 +676,7 @@ function orderDetailRows(
     },
     {
       label: 'Order exposure',
-      value: <TokenAmount amount={formatPerpsUsdc(orderDxyExposureUsdc)} />,
+      value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(orderDxyExposureUsdc)} />,
       tooltip: ORDER_EXPOSURE_TOOLTIP,
       tooltipDocsLink: DOCS_LINKS.orderExposure,
     },
@@ -687,7 +687,7 @@ function formatSignedUsdcNoPlus(value: bigint | undefined): ReactNode {
   if (value === undefined) return 'Unavailable'
   const sign = value < 0n ? '-' : ''
   const absolute = value < 0n ? -value : value
-  return <TokenAmount amount={`${sign}${formatPreviewUsdcRaw(absolute)}`} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={`${sign}${formatPreviewUsdcRaw(absolute)}`} />
 }
 
 function formatTradeVpi(
@@ -709,11 +709,11 @@ function formatTradeVpi(
   return {
     value: (
       <span
-        aria-label={`${action} ${formattedAmount} USDC`}
+        aria-label={`${action} ${formattedAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
         className="inline-flex items-baseline justify-end gap-1.5 whitespace-nowrap"
       >
         <span>{action}</span>
-        <TokenAmount amount={formattedAmount} />
+        <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formattedAmount} />
       </span>
     ),
     tone: isCredit ? 'positive' : 'warning',
@@ -737,11 +737,11 @@ function formatVpiBalance(
   return {
     value: (
       <span
-        aria-label={`${status} ${formattedAmount} USDC`}
+        aria-label={`${status} ${formattedAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
         className="inline-flex items-baseline justify-end gap-1.5 whitespace-nowrap"
       >
         <span>{compactStatus}</span>
-        <TokenAmount amount={formattedAmount} />
+        <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formattedAmount} />
       </span>
     ),
     tone: isProvisionalCredit ? 'positive' : 'warning',
@@ -962,7 +962,7 @@ function directionLabel(direction: Direction): string {
 }
 
 function OrderSummaryRawAmount({ value }: { value: bigint }) {
-  return <span className="break-words sm:whitespace-nowrap">{formatPerpsUsdc(value)} USDC</span>
+  return <span className="break-words sm:whitespace-nowrap">{formatPerpsUsdc(value)} {PERPS_SETTLEMENT_TOKEN_LABEL}</span>
 }
 
 function truncateHash(hash: string): string {
@@ -2954,10 +2954,10 @@ export function PerpsTradeTicket({
       orderDxyExposureUsdc < effectiveMinOpenDxyExposureUsdc
     ) {
       const minimumLabel = isOpeningFromZero ? 'Minimum new position' : 'Minimum order size'
-      return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC.`
+      return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     }
     if (!isReducingCurrentPosition && !isReduceOnly && !isMaxOpenIntent && selectedOpenDxyCapacityUsdc !== undefined && orderDxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
-      return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
+      return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL} before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
     if (
@@ -2975,7 +2975,7 @@ export function PerpsTradeTicket({
       !isFullCloseOrder &&
       orderSizeDelta < minPartialCloseSizeRaw
     ) {
-      const minimumLabel = `Minimum partial reduction is ${formatPerpsUsdc(minNewPositionDxyExposureUsdc)} USDC.`
+      const minimumLabel = `Minimum partial reduction is ${formatPerpsUsdc(minNewPositionDxyExposureUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
       return hasPendingOrderDependencies
         ? `${minimumLabel} Finalize or clean up earlier pending orders before closing a smaller projected remainder.`
         : `${minimumLabel} Use Max to close the full position.`
@@ -2997,7 +2997,7 @@ export function PerpsTradeTicket({
         ? `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Wait for the keeper to finalize or clean up an order before committing a new one.`
         : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
-    if (marginShortfall > 0n && !isMaxOpenIntent) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
+    if (marginShortfall > 0n && !isMaxOpenIntent) return `Deposit ${formatPerpsUsdc(marginShortfall)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
       return 'Waiting for fresh oracle publish time before previewing this order.'
     }
@@ -3107,7 +3107,7 @@ export function PerpsTradeTicket({
   const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
   const fundingShortfallMessage = reviewFundingShortfallUsdc === undefined
     ? undefined
-    : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} USDC more or reduce the order before committing.`
+    : `Deposit ${formatPerpsUsdc(reviewFundingShortfallUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL} more or reduce the order before committing.`
   const reviewFooterError = sponsorshipPauseMessage ?? executionProtectionsError
   const pendingOperationGuidance = enableLiveTrading && isConnected && isCorrectChain && activeAccountOperation
     ? accountOperationGuidance(activeAccountOperation, nowSeconds * 1000, savedConfirmation) : undefined
@@ -3330,20 +3330,20 @@ export function PerpsTradeTicket({
       ...(requiresCloseReview ? [
         {
           label: 'Commitment carry',
-          value: <TokenAmount amount={activeReviewSummary?.commitmentCarryUsdc === undefined ? '--' : formatUnits(activeReviewSummary.commitmentCarryUsdc, 6)} />,
+          value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={activeReviewSummary?.commitmentCarryUsdc === undefined ? '--' : formatUnits(activeReviewSummary.commitmentCarryUsdc, 6)} />,
           tooltip: 'Carry paid when committing the close, from position margin first and then free settlement. Separate from execution costs.',
           tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
         },
         {
           label: 'Settlement after execution',
           value: formatUsdcRaw(closeReviewAssessment?.postSettlementBalanceUsdc),
-          tooltip: 'Total internal USDC after commitment and execution, including locked funds. This is not the amount available to withdraw.',
+          tooltip: `Total internal ${PERPS_SETTLEMENT_TOKEN_LABEL} after commitment and execution, including locked funds. This is not the amount available to withdraw.`,
           tooltipDocsLink: DOCS_LINKS.withdrawable,
         },
         {
           label: 'Trader claim after execution',
           value: formatUsdcRaw(closeReviewAssessment?.postTraderClaimUsdc),
-          tooltip: 'Remaining or deferred trader claim. Claims are not immediately available USDC.',
+          tooltip: `Remaining or deferred trader claim. Claims are not immediately available ${PERPS_SETTLEMENT_TOKEN_LABEL}.`,
           tooltipDocsLink: DOCS_LINKS.withdrawable,
         },
       ] : []),
@@ -3553,10 +3553,10 @@ export function PerpsTradeTicket({
   const executedTitle = finalPriceDisplay === '--'
     ? finalIsFullClose ? 'Position closed' : finalIsClose ? 'Position reduced' : 'Trade executed'
     : finalIsFullClose
-      ? `${finalPositionLabel} closed at ${finalPriceDisplay} USDC`
+      ? `${finalPositionLabel} closed at ${finalPriceDisplay} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
       : finalIsClose
-        ? `${finalPositionLabel} reduced at ${finalPriceDisplay} USDC`
-        : `Trade executed at ${finalPriceDisplay} USDC`
+        ? `${finalPositionLabel} reduced at ${finalPriceDisplay} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
+        : `Trade executed at ${finalPriceDisplay} ${PERPS_SETTLEMENT_TOKEN_LABEL}`
   const isReviewingFullClose = isFullCloseOrder
   const reviewCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
@@ -3629,7 +3629,7 @@ export function PerpsTradeTicket({
     : enableLiveTrading && !isCorrectChain
       ? 'Switch Network'
       : marginActionStatus === 'funding'
-        ? 'Transferring USDC'
+        ? `Transferring ${PERPS_SETTLEMENT_TOKEN_LABEL}`
         : marginActionStatus === 'depositing'
           ? 'Depositing'
           : requiresOwnerWalletTransfer
@@ -3766,7 +3766,7 @@ export function PerpsTradeTicket({
         ? error.message
         : `${marginActionLabel} failed. Check wallet and retry.`
       setMarginActionError(ownerWalletTransferConfirmed
-        ? `The transfer succeeded, but the Margin Account deposit failed. The USDC remains in your Trading Account and will not be transferred again when you retry. ${errorMessage}`
+        ? `The transfer succeeded, but the Margin Account deposit failed. The ${PERPS_SETTLEMENT_TOKEN_LABEL} remains in your Trading Account and will not be transferred again when you retry. ${errorMessage}`
         : errorMessage)
       trackPerpsMarginLifecycle(`${marginAction}_failed`, {
         ...commonAnalyticsProperties,
@@ -4241,7 +4241,7 @@ export function PerpsTradeTicket({
         <div className="grid gap-2">
           <AccountContextRow
             label="Available to Trade"
-            value={<TokenAmount amount={availableToTradeDisplayAmount} />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={availableToTradeDisplayAmount} />}
             disabled={!canUseAvailableToTrade}
             onClick={() => {
               if (canUseAvailableToTrade) {
@@ -4254,7 +4254,7 @@ export function PerpsTradeTicket({
           />
           <AccountContextRow
             label="Current Position"
-            value={<TokenAmount amount={currentPositionDisplayAmount} />}
+            value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={currentPositionDisplayAmount} />}
             disabled={!canUseCurrentPosition}
             onClick={() => {
               if (canUseCurrentPosition) {
@@ -4368,7 +4368,7 @@ export function PerpsTradeTicket({
             {canAttachProtection && isProtectionEnabled ? <div className="mt-4 space-y-3">
               <ProtectionInputs value={protectionDraft} onChange={setProtectionDraft} disabled={isReviewOpen} {...protectionPriceContext} />
               {protectionInput.error && (protectionDraft.takeProfit || protectionDraft.stopLoss) ? <p role="alert" className="text-xs text-brand-orange">{protectionInput.error}</p> : null}
-              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional <TokenAmount amount={formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} /> from free margin to trigger and execute the close.</p>
+              <p className="text-xs leading-5 text-content-secondary">Active after the opening order fills. Reserves an additional <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc((protectionConfiguration.triggerBountyUsdc ?? 0n) + (protectionConfiguration.executionBountyUsdc ?? 0n))} /> from free margin to trigger and execute the close.</p>
             </div> : null}
           </div> : null}
 
@@ -4605,20 +4605,20 @@ export function PerpsTradeTicket({
         <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Margin Account</div>
           <div className="space-y-2">
-            <AccountSummaryRow label="Settlement balance" value={<TokenAmount amount={formatPerpsUsdc(settlementBalanceUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip="USDC held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims." />
-            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount amount={formatPerpsUsdc(positionEquityUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free settlement and dedicated reserves do not increase this price buffer." /> : null}
+            <AccountSummaryRow label="Settlement balance" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(settlementBalanceUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims.`} />
+            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(positionEquityUsdcRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free settlement and dedicated reserves do not increase this price buffer." /> : null}
             <AccountSummaryRow
               label="Unrealized PnL"
-              value={<TokenAmount amount={formatSignedPerpsUsdc(unrealizedPnlRaw)} />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatSignedPerpsUsdc(unrealizedPnlRaw)} />}
               tone={accountSummaryPnlTone}
             />
             <AccountSummaryRow
               label="Maintenance margin"
-              value={<TokenAmount amount={formatPerpsUsdc(currentPosition?.riskStatus === 'unavailable' ? undefined : currentPosition?.maintenanceMarginUsdc)} />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(currentPosition?.riskStatus === 'unavailable' ? undefined : currentPosition?.maintenanceMarginUsdc)} />}
             />
             <AccountSummaryRow
               label="Withdrawable"
-              value={<TokenAmount amount={formatPerpsUsdc(withdrawableUsdcRaw)} />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(withdrawableUsdcRaw)} />}
               tooltip={
                 <span>
                   Amount that can leave the protocol right now. It can be lower than available to trade because withdrawals
@@ -4891,7 +4891,7 @@ export function PerpsTradeTicket({
                 <h3 className="text-sm font-semibold text-content-primary">Take profit & stop loss</h3>
                 <ProtectionPriceSummary params={displayedExecutionProtections.positionProtection.params} cap={protectionCapPrice} />
                 <p className="text-xs leading-5 text-content-secondary">Applies to 100% of your position after the opening order fills. The first trigger reached queues a close and cancels the other; the fill price may differ.</p>
-                <p className="text-xs text-content-secondary">Additional execution reserve: <span className="text-content-primary">{formatPerpsUsdc(displayedExecutionProtections.positionProtection.triggerBountyUsdc + displayedExecutionProtections.positionProtection.executionBountyUsdc)} USDC</span></p>
+                <p className="text-xs text-content-secondary">Additional execution reserve: <span className="text-content-primary">{formatPerpsUsdc(displayedExecutionProtections.positionProtection.triggerBountyUsdc + displayedExecutionProtections.positionProtection.executionBountyUsdc)} {PERPS_SETTLEMENT_TOKEN_LABEL}</span></p>
               </section> : null}
 
               {shouldShowExecutionProtections ? (
@@ -4930,11 +4930,11 @@ export function PerpsTradeTicket({
                         },
                         {
                           label: 'Maximum execution reward',
-                          value: `${formatPerpsUsdc(displayedExecutionProtections.request.bounds.maxExecutionBountyUsdc, 6)} USDC`,
+                          value: `${formatPerpsUsdc(displayedExecutionProtections.request.bounds.maxExecutionBountyUsdc, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
                         },
                       ]} />
                       <p className="mt-3 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                        The execution reward maximum includes 1% tolerance (at least 0.000010 USDC); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, submission deadline, execution window, pinned regime, reward maximum, and reviewed protocol configuration still apply.
+                        The execution reward maximum includes 1% tolerance (at least 0.000010 {PERPS_SETTLEMENT_TOKEN_LABEL}); only the required reward is charged. The web ticket uses wide accounting bounds. Your execution limit, submission deadline, execution window, pinned regime, reward maximum, and reviewed protocol configuration still apply.
                       </p>
                     </div>
                   ) : (
@@ -5285,7 +5285,7 @@ export function PerpsTradeTicket({
                           ? 'Reduced position value'
                           : 'Execution plDXY Perp exposure',
                       value: finalExecutedDxyExposureUsdc === undefined
-                        ? <TokenAmount amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
+                        ? <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
                     ...(!finalIsClose ? [
@@ -5521,22 +5521,22 @@ export function PerpsTradeTicket({
           <p className="text-sm leading-6 text-content-secondary">
             {marginAction === 'withdraw'
               ? isSponsoredAccountConfigured
-                ? 'Withdraw free USDC from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in the same sponsored action.'
-                : 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
+                ? `Withdraw free ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in the same sponsored action.`
+                : `Withdraw free ${PERPS_SETTLEMENT_TOKEN_LABEL} from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.`
               : isSponsoredAccountConfigured
                 ? usesOwnerDepositAuthorization
-                  ? 'Authorize USDC from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
-                  : 'Deposit USDC into the Plether Trading Account Margin Account. If the Trading Account needs funds, Plether first transfers the exact shortfall from the Owner Wallet.'
-                : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
+                  ? `Authorize ${PERPS_SETTLEMENT_TOKEN_LABEL} from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; ${PERPS_SETTLEMENT_TOKEN_LABEL} protocol costs still apply.`
+                  : `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into the Plether Trading Account Margin Account. If the Trading Account needs funds, Plether first transfers the exact shortfall from the Owner Wallet.`
+                : `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account. Deposited margin increases available buying power and can be used for committed orders.`}
           </p>
 
           {marginAction === 'deposit' && requiresOwnerWalletTransfer ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm leading-5 text-content-primary">
               <p className="font-semibold">
-                Transfer <TokenAmount amount={formatPerpsUsdc(ownerWalletTransferAmountRaw)} /> from Owner Wallet
+                Transfer <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(ownerWalletTransferAmountRaw)} /> from Owner Wallet
               </p>
               <p className="mt-1 text-content-secondary">
-                This first confirmation is a regular Arbitrum Sepolia USDC transfer to your Trading Account and requires ETH for network gas. The following Margin Account deposit is gas-sponsored.
+                This first confirmation is a regular Arbitrum Sepolia {PERPS_SETTLEMENT_TOKEN_LABEL} transfer to your Trading Account and requires ETH for network gas. The following Margin Account deposit is gas-sponsored.
               </p>
             </div>
           ) : null}
@@ -5552,7 +5552,7 @@ export function PerpsTradeTicket({
                   setMarginActionError(undefined)
                 }
               }}
-              rightElement={<TokenLabel token="USDC" />}
+              rightElement={<TokenLabel token={PERPS_SETTLEMENT_TOKEN_LABEL} />}
               autoFocus
             />
             <div className="flex justify-end">
@@ -5570,7 +5570,7 @@ export function PerpsTradeTicket({
               >
                 <span>Max: </span>
                 <span className="group-enabled:group-hover:underline">
-                  <TokenAmount amount={marginActionLimitDisplay} />
+                  <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginActionLimitDisplay} />
                 </span>
               </button>
             </div>
@@ -5581,16 +5581,16 @@ export function PerpsTradeTicket({
               {marginAction === 'deposit' ? (
                 <AccountSummaryRow
                   label={marginActionLimitLabel}
-                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                  value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginActionLimitDisplay} />}
                   tooltip={usesTradingAccountDepositBalance
-                    ? 'Combined Trading Account and Owner Wallet USDC available for this flow. Any required Owner Wallet transfer confirms before the sponsored deposit.'
-                    : 'Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms.'}
+                    ? `Combined Trading Account and Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL} available for this flow. Any required Owner Wallet transfer confirms before the sponsored deposit.`
+                    : `Wallet-held ${PERPS_SETTLEMENT_TOKEN_LABEL} available to move into the Margin Account. It cannot fund orders until the deposit confirms.`}
                   tooltipDocsLink={DOCS_LINKS.withdrawable}
                 />
               ) : (
                 <AccountSummaryRow
                   label={marginActionLimitLabel}
-                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                  value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginActionLimitDisplay} />}
                 />
               )}
               {isSponsoredAccountConfigured ? (
@@ -5598,34 +5598,34 @@ export function PerpsTradeTicket({
                   {marginAction === 'deposit' ? (
                     <AccountSummaryRow
                       label="Available to trade"
-                      value={<TokenAmount amount={availableToTradeDisplayAmount} />}
+                      value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={availableToTradeDisplayAmount} />}
                       tooltip="Free margin already deposited in the Margin Account and available for orders."
                       tooltipDocsLink={DOCS_LINKS.withdrawable}
                     />
                   ) : null}
                   {marginAction !== 'deposit' || usesTradingAccountDepositBalance ? (
                     <AccountSummaryRow
-                      label="Owner Wallet USDC"
-                      value={<TokenAmount amount={formatPerpsUsdc(effectiveOwnerWalletBalance)} />}
+                      label={`Owner Wallet ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
+                      value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(effectiveOwnerWalletBalance)} />}
                     />
                   ) : null}
                   {marginAction === 'deposit' && usesTradingAccountDepositBalance ? (
                     <AccountSummaryRow
-                      label="Trading Account USDC"
-                      value={<TokenAmount amount={formatPerpsUsdc(effectiveTradingAccountBalance)} />}
+                      label={`Trading Account ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
+                      value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(effectiveTradingAccountBalance)} />}
                     />
                   ) : null}
                   {marginAction !== 'deposit' ? (
                     <AccountSummaryRow
-                      label="Trading Account USDC"
-                      value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
+                      label={`Trading Account ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
+                      value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
                     />
                   ) : null}
                 </>
               ) : null}
               {shouldShowMarginActionPositionContext ? (
                 <>
-                  <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />
+                  <AccountSummaryRow label="Position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />
                   <p className="pt-2 text-xs leading-5 text-content-secondary">
                     Deposit and withdraw change free margin only. Position leverage changes when you open, increase, reduce, close, or add isolated position margin.
                   </p>
@@ -5653,7 +5653,7 @@ export function PerpsTradeTicket({
                     setMarginActionError(undefined)
                   }}
                 >
-                  Start with a new USDC authorization
+                  Start with a new {PERPS_SETTLEMENT_TOKEN_LABEL} authorization
                 </button>
               ) : null}
             </div>

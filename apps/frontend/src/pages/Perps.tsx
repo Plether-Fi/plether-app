@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
@@ -23,7 +24,7 @@ function displayValue(value: string | undefined, isLoading: boolean): string {
 }
 
 function usdcValue(value: string | undefined, isLoading: boolean): ReactNode {
-  if (value) return <TokenAmount amount={value} />
+  if (value) return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value} />
   return isLoading ? '...' : '--'
 }
 
@@ -113,7 +114,7 @@ export function Perps() {
           </p>
           <p>
             This is not a funding rate; both sides can pay carry at the same time. The actual
-            USDC amount depends on borrow base, side utilization, and elapsed time.
+            {PERPS_SETTLEMENT_TOKEN_LABEL} amount depends on borrow base, side utilization, and elapsed time.
           </p>
         </div>
       )

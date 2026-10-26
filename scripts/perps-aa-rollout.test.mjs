@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { settlementContract } from './prepare-perps-release.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -8,7 +9,8 @@ import { protectionWorkerProvenance } from './migrate-perps-aa-client.mjs'
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
 const manifestText = read('apps/frontend/public/perps-aa-manifest.json')
 const manifest = JSON.parse(manifestText)
-const { release, contracts } = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
+const coreManifest = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
+const { release, contracts } = coreManifest
 const runbook = read('docs/runbooks/self-hosted-aa-rollout.md')
 
 test('client provenance matches the dependency, lockfile and installed artifact', () => {
@@ -65,10 +67,11 @@ test('deployment validator accepts the activated capability and rejects altered 
 
 test('rollout identity and public artifact checksum match the deployment', () => {
   for (const [label, contract] of Object.entries({
-    USDC: 'mockUsdc', 'Order router': 'orderRouter', 'CFD engine': 'cfdEngine',
+    'Order router': 'orderRouter', 'CFD engine': 'cfdEngine',
     'Margin clearinghouse': 'marginClearinghouse', 'Order lifecycle book': 'orderLifecycleBook',
     'Policy evaluator': 'cfdOrderPolicyEvaluator', 'Position protection book': 'positionProtectionBook',
   })) assert.ok(runbook.includes(`| ${label} | \`${contracts[contract].address}\` |`), label)
+  assert.ok(runbook.includes(`| ${coreManifest.settlementToken?.symbol ?? 'USDC'} | \`${settlementContract(coreManifest).address}\` |`))
   assert.ok(runbook.includes(`Core deployment: **${release.version}**`))
   assert.ok(runbook.includes(`deployment block \`${release.deploymentBlock}\``))
   assert.ok(runbook.includes(`\`${release.sourceCommit}\``))

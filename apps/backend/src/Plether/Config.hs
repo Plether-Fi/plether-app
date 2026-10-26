@@ -1816,7 +1816,7 @@ isValidPrivateKeyShape value =
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc (T.toLower Manifest.mockUsdcAddress)
+    [ reviewed usdc (T.toLower Manifest.settlementTokenAddress)
     , reviewed router (T.toLower Manifest.orderRouterAddress)
     , reviewed engine (T.toLower Manifest.cfdEngineAddress)
     , reviewed clearinghouse (T.toLower Manifest.marginClearinghouseAddress)

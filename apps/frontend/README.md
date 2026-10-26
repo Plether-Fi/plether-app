@@ -188,3 +188,39 @@ Operations are never automatically rebuilt or sent through the owner EOA.
 ## License
 
 AGPL-3.0-only
+
+### Preparing a MockUSDG perps release
+
+The frontend registry now reads `config/perps/arbitrum-sepolia-v3.json` rather
+than duplicating its contract addresses. The checked-in file still selects the
+existing USDC release. A future reviewed schema-4 release selects
+`contracts.settlementToken` and its top-level `settlementToken` metadata; legacy
+schemas retain `contracts.mockUsdc` and the USDC label. Prepared manifests,
+missing addresses/runtime hashes, and incompatible token metadata are rejected.
+Use `node scripts/prepare-perps-release.mjs` from the repository root to stage a
+candidate configuration after a deployment exists. That tool never activates it.
+
+For the MockUSDG configuration, the welcome/funding flow displays **Mock USDG**
+and calls unrestricted `mint(address,uint256)` for 100,000 tokens to the confirmed
+canonical Plether Trading Account. The connected owner wallet pays Arbitrum
+Sepolia ETH for this ordinary mint transaction. After confirmation, the existing
+sponsored `approve` + `depositMargin` batch deposits those tokens. Funding can be
+repeated after completion; a failed deposit retries the existing minted balance
+instead of minting again. The token runtime hash is checked before a mint is
+requested. These writes happen only after the user clicks the funding button
+and confirms in their wallet; no deployment or transaction is part of this
+source change.
+
+MockUSDG has six decimals and no EIP-3009 or permit support. Its manifest must
+keep `usdcSupportsEip3009: false` and both EIP-712 domain fields null. A funded
+Trading Account remains able to deposit without the signed owner-wallet route.
+Owner-wallet tokens can also be transferred into the Trading Account before
+that deposit. The public `usdc`/`*Usdc` names remain six-decimal settlement-token
+API names; they do not identify the displayed token. Mock bridge funding stays
+unavailable. Unrestricted mock minting does not establish competition faucet
+provenance or production USDG reward eligibility.
+
+Perps and its LP vaults use the configured token label. Spot token configuration
+and the default shared USDC display remain unchanged. New deployment addresses,
+AA sponsor targets, worker/indexer bindings and the integrated close-preview
+contract must be reviewed together before any later activation.

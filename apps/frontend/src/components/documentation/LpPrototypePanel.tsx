@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
+import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
 import { Badge, Button, TokenAmount } from '../ui'
 
 export type LpPrototypeView = 'overview' | 'deposit' | 'pending' | 'position' | 'withdraw'
@@ -122,12 +122,12 @@ function TrancheCard({
         <div className="bg-app-bg p-4">
           <div className="text-xs text-content-secondary">Total assets</div>
           <div className="mt-1 text-lg font-semibold text-content-primary">
-            <TokenAmount amount={assets} />
+            <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={assets} />
           </div>
         </div>
         <div className="bg-app-bg p-4">
           <div className="text-xs text-content-secondary">Share price</div>
-          <div className="mt-1 text-lg font-semibold text-content-primary">{sharePrice} USDC</div>
+          <div className="mt-1 text-lg font-semibold text-content-primary">{sharePrice} {PERPS_SETTLEMENT_TOKEN_LABEL}</div>
         </div>
         <div className="bg-app-bg p-4">
           <div className="text-xs text-content-secondary">{returnLabel}</div>
@@ -142,7 +142,7 @@ function TrancheCard({
         <SummaryRow label="Current deposit mode" value={<Badge variant="warning">Pending epoch</Badge>} />
         <SummaryRow
           label="Withdrawal availability"
-          value={<TokenAmount amount={withdrawal} amountClassName="text-positive" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={withdrawal} amountClassName="text-positive" />}
         />
       </dl>
     </article>
@@ -153,15 +153,15 @@ function OverviewView() {
   return (
     <>
       <div className="grid gap-3 md:grid-cols-3">
-        <Metric label="Canonical HousePool assets" value={<TokenAmount amount="6 300 000" />} />
+        <Metric label="Canonical HousePool assets" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6 300 000" />} />
         <Metric
           label="Maximum live trader liability"
-          value={<TokenAmount amount="4 550 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="4 550 000" />}
           detail="Open-position liability ceiling"
         />
         <Metric
           label="Aggregate trader claims"
-          value={<TokenAmount amount="180 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="180 000" />}
           detail="Recognized protocol liabilities"
           tone="text-warning"
         />
@@ -169,24 +169,24 @@ function OverviewView() {
       <div className="grid gap-3 md:grid-cols-4">
         <Metric
           label="Total withdrawal reserve"
-          value={<TokenAmount amount="4 880 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="4 880 000" />}
           detail="Protected before LP withdrawals"
         />
         <Metric
           label="Free LP liquidity"
-          value={<TokenAmount amount="1 420 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 420 000" />}
           detail="After reserved liabilities"
           tone="text-positive"
         />
         <Metric
           label="Senior maximum withdrawal"
-          value={<TokenAmount amount="1 200 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 200 000" />}
           detail="First claim on free liquidity"
           tone="text-positive"
         />
         <Metric
           label="Junior maximum withdrawal"
-          value={<TokenAmount amount="220 000" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="220 000" />}
           detail="Above the Senior claim"
           tone="text-positive"
         />
@@ -278,15 +278,15 @@ function DepositView() {
             <div className="text-xs text-content-secondary">Deposit amount</div>
             <div className="mt-2 flex items-baseline justify-between gap-3">
               <div className="text-2xl font-semibold text-content-primary">25 000</div>
-              <Badge>USDC</Badge>
+              <Badge>{PERPS_SETTLEMENT_TOKEN_LABEL}</Badge>
             </div>
             <div className="mt-3 flex justify-between text-xs text-content-secondary">
               <span>Owner-wallet balance</span>
-              <span>42 850 USDC</span>
+              <span>42 850 {PERPS_SETTLEMENT_TOKEN_LABEL}</span>
             </div>
             <div className="mt-1 flex justify-between text-xs text-content-secondary">
               <span>Balance after deposit</span>
-              <span>17 850 USDC</span>
+              <span>17 850 {PERPS_SETTLEMENT_TOKEN_LABEL}</span>
             </div>
           </div>
           <VaultVerification />
@@ -302,14 +302,14 @@ function DepositView() {
           </div>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <SummaryRow label="Selected tranche" value="Senior · lower relative risk" />
-            <SummaryRow label="USDC deposited" value={<TokenAmount amount="25 000" />} />
-            <SummaryRow label="Current share price" value="1.0432 USDC" />
+            <SummaryRow label={`${PERPS_SETTLEMENT_TOKEN_LABEL} deposited`} value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 000" />} />
+            <SummaryRow label="Current share price" value={`1.0432 ${PERPS_SETTLEMENT_TOKEN_LABEL}`} />
             <SummaryRow label="Estimated shares received" value="23 964.12 Senior shares" />
             <SummaryRow label="Deposit mode" value="Pending deposit epoch" />
             <SummaryRow label="Expected activation" value="Epoch #48 · in 1h 24m" />
             <SummaryRow label="Active oracle-frozen surcharge" value="0.00%" />
             <SummaryRow
-              label="MockUSDC approval"
+              label={`${PERPS_SETTLEMENT_TOKEN_LABEL} approval`}
               detail="Separate wallet transaction"
               value={<Badge variant="warning">Required</Badge>}
             />
@@ -383,7 +383,7 @@ function PendingView() {
       <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
         <dl className="border border-brand-border/20 bg-app-bg px-4">
           <SummaryRow label="Current state" value={<Badge variant="warning">Pending · cancellable</Badge>} />
-          <SummaryRow label="Requested USDC" value={<TokenAmount amount="25 000" />} />
+          <SummaryRow label={`Requested ${PERPS_SETTLEMENT_TOKEN_LABEL}`} value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 000" />} />
           <SummaryRow label="Selected tranche" value="Senior Vault" />
           <SummaryRow label="Assigned epoch" value="#48" />
           <SummaryRow label="Estimated activation" value="In 1h 24m · 18:00 UTC" />
@@ -398,7 +398,7 @@ function PendingView() {
             </div>
             <div className="mt-2 text-sm font-semibold text-content-primary">Cancel before activation</div>
             <div className="mt-1 text-xs leading-5 text-content-secondary">
-              The escrowed 25 000 USDC returns to the owner wallet. No shares are issued.
+              The escrowed 25 000 {PERPS_SETTLEMENT_TOKEN_LABEL} returns to the owner wallet. No shares are issued.
             </div>
           </div>
           <div className="border border-brand-border/20 bg-app-bg p-4 text-xs leading-5 text-content-secondary">
@@ -432,17 +432,17 @@ function PositionView() {
 
       <div className="grid gap-3 md:grid-cols-3">
         <Metric label="Vault shares held" value="23 964.12" />
-        <Metric label="Current USDC value" value={<TokenAmount amount="25 382.70" />} />
-        <Metric label="Current share price" value="1.0592 USDC" />
+        <Metric label={`Current ${PERPS_SETTLEMENT_TOKEN_LABEL} value`} value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 382.70" />} />
+        <Metric label="Current share price" value={`1.0592 ${PERPS_SETTLEMENT_TOKEN_LABEL}`} />
         <Metric
           label="Change since entry"
-          value={<TokenAmount amount="+382.70" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="+382.70" />}
           detail="+1.53% · unrealized"
           tone="text-positive"
         />
         <Metric
           label="Withdrawable now"
-          value={<TokenAmount amount="18 400.00" />}
+          value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="18 400.00" />}
           detail="Limited by free LP liquidity"
           tone="text-positive"
         />
@@ -451,7 +451,7 @@ function PositionView() {
 
       <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
         <dl className="border border-brand-border/20 bg-app-bg px-4">
-          <SummaryRow label="Average entry value" value={<TokenAmount amount="25 000.00" />} />
+          <SummaryRow label="Average entry value" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 000.00" />} />
           <SummaryRow label="Active oracle-frozen fee" value="0.00%" />
           <SummaryRow label="Pending deposit epochs" value="1" />
           <SummaryRow label="Network gas" value="LP pays native gas" />
@@ -465,7 +465,7 @@ function PositionView() {
             <div>
               <div className="text-xs text-content-secondary">Requested deposit</div>
               <div className="mt-1 text-lg font-semibold text-content-primary">
-                <TokenAmount amount="2 500" />
+                <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="2 500" />
               </div>
             </div>
             <div className="text-right">
@@ -493,19 +493,19 @@ function WithdrawalView() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-content-primary">Senior Vault</div>
-                <div className="mt-0.5 text-xs text-content-secondary">Enter a USDC withdrawal amount</div>
+                <div className="mt-0.5 text-xs text-content-secondary">Enter a {PERPS_SETTLEMENT_TOKEN_LABEL} withdrawal amount</div>
               </div>
               <Badge variant="success">Cooldown ready</Badge>
             </div>
             <div className="mt-5 border-b border-brand-border/40 pb-3">
               <div className="flex items-baseline justify-between gap-3">
                 <div className="text-3xl font-semibold text-content-primary">10 000</div>
-                <Badge>USDC</Badge>
+                <Badge>{PERPS_SETTLEMENT_TOKEN_LABEL}</Badge>
               </div>
             </div>
             <div className="mt-3 flex justify-between text-xs text-content-secondary">
               <span>Live maximum</span>
-              <span className="font-semibold text-positive">18 400.00 USDC</span>
+              <span className="font-semibold text-positive">18 400.00 {PERPS_SETTLEMENT_TOKEN_LABEL}</span>
             </div>
             <div className="mt-3 h-1.5 bg-surface-panel">
               <div className="h-full w-[54%] bg-brand-peach" />
@@ -522,7 +522,7 @@ function WithdrawalView() {
               Oracle-frozen fee active
             </div>
             <div className="mt-1 text-xs leading-5 text-content-secondary">
-              25.00 USDC remains in the Senior tranche for existing LPs.
+              25.00 {PERPS_SETTLEMENT_TOKEN_LABEL} remains in the Senior tranche for existing LPs.
             </div>
           </div>
         </div>
@@ -536,23 +536,23 @@ function WithdrawalView() {
             <Badge variant="warning">Standard transaction</Badge>
           </div>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
-            <SummaryRow label="Total position value" value={<TokenAmount amount="25 382.70" />} />
+            <SummaryRow label="Total position value" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="25 382.70" />} />
             <SummaryRow label="Share balance" value="23 964.12 Senior shares" />
-            <SummaryRow label="Current maximum withdrawal" value={<TokenAmount amount="18 400.00" />} />
-            <SummaryRow label="Requested tranche value" value={<TokenAmount amount="10 000.00" />} />
+            <SummaryRow label="Current maximum withdrawal" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="18 400.00" />} />
+            <SummaryRow label="Requested tranche value" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="10 000.00" />} />
             <SummaryRow label="Shares burned" value="9 441.09 Senior shares" />
             <SummaryRow label="Withdrawal cooldown" value={<Badge variant="success">Ready</Badge>} />
-            <SummaryRow label="Active oracle-frozen fee" value="0.25% · 25.00 USDC" />
+            <SummaryRow label="Active oracle-frozen fee" value={`0.25% · 25.00 ${PERPS_SETTLEMENT_TOKEN_LABEL}`} />
             <SummaryRow
               label="Expected owner-wallet receipt"
-              value={<TokenAmount amount="9 975.00" amountClassName="text-positive" />}
+              value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="9 975.00" amountClassName="text-positive" />}
             />
             <SummaryRow label="Network gas" value="LP pays native gas" />
           </dl>
         </div>
       </div>
       <Button className="w-full">
-        Withdraw 9 975.00 USDC to owner wallet
+        Withdraw 9 975.00 {PERPS_SETTLEMENT_TOKEN_LABEL} to owner wallet
       </Button>
     </>
   )

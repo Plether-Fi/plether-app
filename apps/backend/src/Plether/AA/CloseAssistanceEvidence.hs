@@ -41,7 +41,7 @@ verifyCloseAssistanceReceipt grant operationHash tx blockNumber blockHash eventI
       previous = maximum $ startIndex : [rlIndex l | l <- operationEvents, rlIndex l < eventIndex]
       scoped = filter (\l -> rlIndex l > previous && rlIndex l < eventIndex) logs
       accountTopic = addressTopic $ carAccount grant
-      token = T.toLower Manifest.mockUsdcAddress
+      token = T.toLower Manifest.settlementTokenAddress
       house = T.toLower Manifest.marginClearinghouseAddress
       mints = filter (\l -> rlAddress l == token && rlTopics l == [topic "Transfer(address,address,uint256)", zeroTopic, accountTopic]
         && word (rlData l) == Just (carAmountUsdc grant)) scoped

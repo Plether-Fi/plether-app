@@ -85,7 +85,7 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09

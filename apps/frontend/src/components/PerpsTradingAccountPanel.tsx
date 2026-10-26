@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { type ReactNode } from 'react'
 import { TokenAmount } from './ui'
 
@@ -119,7 +120,7 @@ export function PerpsTradingAccountPanel({
           label="Account model"
           value={accountModel === 'same-address' ? 'Same-address EIP-7702' : 'Separate smart account'}
         />
-        <DetailRow label="Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
+        <DetailRow label="Margin Account" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={marginAccountUsdc} />} />
       </dl>
 
       {sponsorshipStatus !== 'available' ? (

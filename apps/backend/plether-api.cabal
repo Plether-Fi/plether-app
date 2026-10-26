@@ -428,6 +428,7 @@ test-suite plether-api-test
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Perps.ReleaseSpec
+        Plether.Perps.ManifestSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.ObservationSpec
         Plether.Database.VaultPerformanceSpec

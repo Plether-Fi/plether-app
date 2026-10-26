@@ -161,7 +161,7 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paUsdc = Manifest.mockUsdcAddress
+    { paUsdc = Manifest.settlementTokenAddress
     , paOrderRouter = Manifest.orderRouterAddress
     , paOrderLifecycleBook = Just Manifest.orderLifecycleBookAddress
     , paCfdEngine = Manifest.cfdEngineAddress

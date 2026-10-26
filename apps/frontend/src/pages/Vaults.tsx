@@ -32,6 +32,7 @@ import {
   TRANCHE_VAULT_READ_ABI,
 } from '../contracts/abis'
 import {
+  PERPS_SETTLEMENT_TOKEN_LABEL,
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
@@ -190,7 +191,7 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
   increase: [
     {
       label: 'Collectible marked and collected trader losses',
-      tooltip: 'A collateral-capped collectible marked loss can increase accounting value before collection. Once collected, it also adds physical USDC to the pool.',
+      tooltip: `A collateral-capped collectible marked loss can increase accounting value before collection. Once collected, it also adds physical ${PERPS_SETTLEMENT_TOKEN_LABEL} to the pool.`,
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
@@ -242,7 +243,7 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
     },
     {
       label: 'Annual maintenance fee dilution',
-      tooltip: 'The fee is paid by adding fee shares to effective Junior supply. This dilutes each existing holder without transferring USDC out of Junior principal.',
+      tooltip: `The fee is paid by adding fee shares to effective Junior supply. This dilutes each existing holder without transferring ${PERPS_SETTLEMENT_TOKEN_LABEL} out of Junior principal.`,
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
@@ -400,7 +401,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
       },
       {
         label: 'Withdrawals',
-        text: 'Senior withdrawals are funded before Junior whenever USDC is available',
+        text: `Senior withdrawals are funded before Junior whenever ${PERPS_SETTLEMENT_TOKEN_LABEL} is available`,
       },
     ],
     riskItems: [
@@ -1057,12 +1058,12 @@ function formatFullUsdc(amount: bigint | undefined, maximumFractionDigits = 2): 
 
 function formatCompactUsd(amount: bigint | undefined): ReactNode {
   const formatted = formatCompactUsdc(amount)
-  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
+  return formatted === '--' ? formatted : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): ReactNode {
   const formatted = formatFullUsdc(amount, maximumFractionDigits)
-  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
+  return formatted === '--' ? formatted : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function formatVaultLimit(amount: bigint | undefined): ReactNode {
@@ -1148,8 +1149,8 @@ function formatPositionValue(value: number | undefined): ReactNode {
   }).format(value)
 
   return (
-    <span title={`${exactAmount} USDC`} aria-label={`${exactAmount} USDC`}>
-      <TokenAmount amount={compactAmount} />
+    <span title={`${exactAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`} aria-label={`${exactAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`}>
+      <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={compactAmount} />
     </span>
   )
 }
@@ -1166,7 +1167,7 @@ function formatPositionShares(amount: bigint | undefined, token: string): ReactN
 
 function formatSharePrice(value: number | undefined): ReactNode {
   if (value === undefined) return '--'
-  return <TokenAmount amount={value.toFixed(4)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value.toFixed(4)} />
 }
 
 interface VaultChartPoint {
@@ -1196,7 +1197,7 @@ function formatHistorySharePrice(value: number): ReactNode {
     minimumFractionDigits: 4,
     maximumFractionDigits: 6,
   }).format(value)
-  return <TokenAmount amount={formatted} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function performanceTone(value: number): 'default' | 'positive' | 'negative' {
@@ -1614,7 +1615,7 @@ function MiniPerformanceChart({
           setActiveIndex(null)
         }}
       >
-        <title>{trancheName} USDC share price over the last seven days</title>
+        <title>{trancheName} {PERPS_SETTLEMENT_TOKEN_LABEL} share price over the last seven days</title>
         {yTicks.map((tick) => {
           const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
           return (
@@ -1936,11 +1937,11 @@ function activityAmount(activity: VaultOverviewActivityItem): ReactNode {
     const amount = formatFullUsdc(activity.amountUsdc, 2)
     return (
       <span
-        title={activity.amountIsEstimate ? 'Current USDC estimate; the final value is set when this withdrawal is processed.' : undefined}
+        title={activity.amountIsEstimate ? `Current ${PERPS_SETTLEMENT_TOKEN_LABEL} estimate; the final value is set when this withdrawal is processed.` : undefined}
         className="inline-flex items-baseline gap-1"
       >
         {activity.amountIsEstimate ? <span aria-hidden="true">≈</span> : null}
-        <TokenAmount amount={amount} />
+        <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount} />
       </span>
     )
   }
@@ -2109,7 +2110,7 @@ function VaultActivitySection({
                           </a>
                         </td>
                         <td className="panel-padding-x py-4 text-sm font-semibold text-content-primary">
-                          <TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} />
+                          <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatFullUsdc(holder.currentNavUsdc, 2)} />
                         </td>
                         <td className="panel-padding-x py-4">
                           <span className="inline-flex items-center gap-3 text-sm font-semibold text-content-primary">
@@ -2138,7 +2139,7 @@ function VaultActivitySection({
                     <div className="flex items-end justify-between gap-4">
                       <div>
                         <p className="text-[10px] uppercase tracking-[0.12em] text-content-secondary">Current value</p>
-                        <p className="mt-1 font-semibold text-content-primary"><TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} /></p>
+                        <p className="mt-1 font-semibold text-content-primary"><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatFullUsdc(holder.currentNavUsdc, 2)} /></p>
                       </div>
                       <span className="inline-flex items-center gap-2 text-sm font-semibold text-content-primary">
                         <DistributionRing percentage={holder.shareOfVaultNav} />
@@ -2297,7 +2298,7 @@ export function VaultsOverview({
               Provide liquidity that keeps the market running.
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-content-secondary">
-              Deposit USDC into the Senior or Junior Vault. Both supply the same trading pool, but
+              Deposit {PERPS_SETTLEMENT_TOKEN_LABEL} into the Senior or Junior Vault. Both supply the same trading pool, but
               they take different positions when profits, losses, and withdrawal funds are shared.
             </p>
           </div>
@@ -2319,21 +2320,21 @@ export function VaultsOverview({
           <PoolStat
             label="Total pool funds"
             value={formatCompactUsd(pool.totalAssetsUsdc)}
-            tooltip="The total USDC currently held by the shared trading pool."
+            tooltip={`The total ${PERPS_SETTLEMENT_TOKEN_LABEL} currently held by the shared trading pool.`}
             stackedOnMobile
           />
           <PoolStat
             label="Reserved funds"
             value={formatCompactUsd(pool.withdrawalReservedUsdc)}
             subvalue="Set aside for trader payouts"
-            tooltip="USDC reserved for trader withdrawals and other protected payments."
+            tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} reserved for trader withdrawals and other protected payments.`}
             stackedOnMobile
           />
           <PoolStat
             label="Available liquidity"
             value={formatCompactUsd(pool.freeUsdc)}
             subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of pool funds`}
-            tooltip="USDC available after amounts reserved for trader withdrawals and other protected payments."
+            tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} available after amounts reserved for trader withdrawals and other protected payments.`}
             stackedOnMobile
             startsTabletRow
           />
@@ -2361,7 +2362,7 @@ export function VaultsOverview({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
             Choose a vault
           </p>
-          <h2 className="mt-1 text-2xl font-semibold text-content-primary">USDC vaults</h2>
+          <h2 className="mt-1 text-2xl font-semibold text-content-primary">{PERPS_SETTLEMENT_TOKEN_LABEL} vaults</h2>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -2569,7 +2570,7 @@ export function OverviewTab({
         <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
-            <DetailRow label="Asset" value="USDC" />
+            <DetailRow label="Asset" value={PERPS_SETTLEMENT_TOKEN_LABEL} />
             <DetailRow label="Vault share symbol" value={<TokenLabel token={tranche.token} />} />
             <DetailRow label="Processing" value="Every hour" />
             <DetailRow label="Network" value="Arbitrum Sepolia" />
@@ -3134,7 +3135,7 @@ function PerformanceChart({
           }}
           style={{ touchAction: 'pan-y' }}
         >
-          <title>{tranche.name} USDC share price over the last seven days</title>
+          <title>{tranche.name} {PERPS_SETTLEMENT_TOKEN_LABEL} share price over the last seven days</title>
           {yTicks.map((tick) => {
             const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
             return (
@@ -3252,8 +3253,8 @@ function PerformanceChart({
         ) : null}
       </div>
       <figcaption id={`${tranche.id}-performance-summary`} className="sr-only">
-        {tranche.name} share price moved from {startingPrice.toFixed(6)} USDC to{' '}
-        {performance.points[performance.points.length - 1].sharePrice.toFixed(6)} USDC over seven
+        {tranche.name} share price moved from {startingPrice.toFixed(6)} {PERPS_SETTLEMENT_TOKEN_LABEL} to{' '}
+        {performance.points[performance.points.length - 1].sharePrice.toFixed(6)} {PERPS_SETTLEMENT_TOKEN_LABEL} over seven
         days, a return of {formatSignedPercent(performance.return7d)} and a realized APY of{' '}
         {formatSignedPercent(performance.apy7d)}. Focus the chart and use the arrow, Home, or End keys
         to inspect hourly checkpoints.
@@ -3502,7 +3503,7 @@ export function ActivityTab({
             tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
           />
           <DetailMetric
-            label="USDC ready for wallet"
+            label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready for wallet`}
             value={isConnected ? formatFullUsd(claimableUsdc) : '--'}
             tone={claimableUsdc > 0n ? 'positive' : 'default'}
           />
@@ -3515,7 +3516,7 @@ export function ActivityTab({
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending deposits</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                The vault holds your USDC until the next eligible hourly processing time.
+                The vault holds your {PERPS_SETTLEMENT_TOKEN_LABEL} until the next eligible hourly processing time.
               </p>
             </div>
             {depositRequests.length > 0 ? (
@@ -3592,7 +3593,7 @@ export function ActivityTab({
                     ) : null}
                     {request.refundableAssets > 0n ? (
                       <RequestMetric
-                        label="USDC ready to return"
+                        label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready to return`}
                         value={formatFullUsd(request.refundableAssets)}
                         tone="warning"
                       />
@@ -3602,7 +3603,7 @@ export function ActivityTab({
                   <div className="space-y-4 border-t border-brand-border/20 pt-4">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.refundableAssets > 0n
-                        ? 'This deposit could not be completed. Return the held USDC to your wallet.'
+                        ? `This deposit could not be completed. Return the held ${PERPS_SETTLEMENT_TOKEN_LABEL} to your wallet.`
                         : request.claimableShares > 0n
                           ? directRedeemableShares > 0n
                             ? 'Your deposit is active and the withdrawal cooldown is complete. Queue a withdrawal or move shares to your wallet without restarting the cooldown.'
@@ -3671,7 +3672,7 @@ export function ActivityTab({
                             })
                           }}
                         >
-                          Return USDC to wallet
+                          Return {PERPS_SETTLEMENT_TOKEN_LABEL} to wallet
                         </Button>
                       ) : null}
                       {request.pendingAssets > 0n && !request.matured ? (
@@ -3710,7 +3711,7 @@ export function ActivityTab({
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending withdrawals</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                Your shares can change in value until enough USDC is available for the withdrawal.
+                Your shares can change in value until enough {PERPS_SETTLEMENT_TOKEN_LABEL} is available for the withdrawal.
               </p>
             </div>
             {redeemRequests.length > 0 ? (
@@ -3726,11 +3727,11 @@ export function ActivityTab({
             {redeemRequests.map((request) => {
               const actionReady = request.claimableAssets > 0n || request.refundPending
               const statusLabel = request.claimableAssets > 0n
-                ? 'USDC ready'
+                ? `${PERPS_SETTLEMENT_TOKEN_LABEL} ready`
                 : request.refundPending
                   ? 'Shares ready to return'
                   : request.matured
-                    ? 'Waiting for USDC'
+                    ? `Waiting for ${PERPS_SETTLEMENT_TOKEN_LABEL}`
                     : 'Pending'
               const displayedShares = request.pendingShares > 0n
                 ? request.pendingShares
@@ -3762,13 +3763,13 @@ export function ActivityTab({
                     />
                     {!hasProcessedWithdrawal ? (
                       <RequestMetric
-                        label="Estimated USDC"
+                        label={`Estimated ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
                         value={formatFullUsd(request.pendingAssetsEstimate)}
                       />
                     ) : null}
                     {request.claimableAssets > 0n ? (
                       <RequestMetric
-                        label="USDC ready for wallet"
+                        label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready for wallet`}
                         value={formatFullUsd(request.claimableAssets)}
                         tone="positive"
                       />
@@ -3785,12 +3786,12 @@ export function ActivityTab({
                   <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.claimableAssets > 0n
-                        ? 'USDC is ready and can now be moved to your wallet.'
+                        ? `${PERPS_SETTLEMENT_TOKEN_LABEL} is ready and can now be moved to your wallet.`
                         : request.refundPending
                           ? 'This withdrawal could not be funded. Return the remaining shares to your wallet.'
                           : request.matured
                             ? tranche.id === 'senior'
-                              ? 'The withdrawal is ready to process and is waiting for enough available USDC.'
+                              ? `The withdrawal is ready to process and is waiting for enough available ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
                               : 'The withdrawal is ready to process. Senior is funded first, so Junior may wait longer.'
                             : 'You can cancel before processing. The shares continue to gain or lose value while waiting.'}
                     </p>
@@ -3814,7 +3815,7 @@ export function ActivityTab({
                             })
                           }}
                         >
-                          Move USDC to wallet
+                          Move {PERPS_SETTLEMENT_TOKEN_LABEL} to wallet
                         </Button>
                       ) : null}
                       {request.refundPending ? (
@@ -4139,8 +4140,8 @@ function VaultRequestActionModal({
       case 'cancel-deposit':
         return {
           title: 'Cancel this deposit?',
-          description: 'The deposit is still pending. Cancelling returns the USDC held by the vault to your wallet.',
-          amountLabel: 'USDC returned',
+          description: `The deposit is still pending. Cancelling returns the ${PERPS_SETTLEMENT_TOKEN_LABEL} held by the vault to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           amount: formatFullUsd(action.assets),
           confirmLabel: 'Cancel deposit',
           confirmVariant: 'danger' as const,
@@ -4150,12 +4151,12 @@ function VaultRequestActionModal({
       case 'recover-deposit':
         return {
           title: 'Return this deposit?',
-          description: 'The deposit could not be completed. Return the refundable USDC held by the vault to your wallet.',
-          amountLabel: 'USDC returned',
+          description: `The deposit could not be completed. Return the refundable ${PERPS_SETTLEMENT_TOKEN_LABEL} held by the vault to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           amount: formatFullUsd(action.assets),
-          confirmLabel: 'Return USDC',
+          confirmLabel: `Return ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
           confirmVariant: 'primary' as const,
-          successTitle: 'USDC returned',
+          successTitle: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           successDescription: <>{formatFullUsd(action.assets)} has been returned to your wallet.</>,
         }
       case 'claim-deposit':
@@ -4183,7 +4184,7 @@ function VaultRequestActionModal({
       case 'cancel-withdrawal':
         return {
           title: 'Cancel this withdrawal?',
-          description: 'This withdrawal is still waiting for USDC. Cancelling returns the shares held by the vault to your wallet and restarts the one-hour withdrawal cooldown for your entire position.',
+          description: `This withdrawal is still waiting for ${PERPS_SETTLEMENT_TOKEN_LABEL}. Cancelling returns the shares held by the vault to your wallet and restarts the one-hour withdrawal cooldown for your entire position.`,
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Cancel withdrawal',
@@ -4193,19 +4194,19 @@ function VaultRequestActionModal({
         }
       case 'claim-withdrawal':
         return {
-          title: 'Move your USDC to your wallet?',
-          description: 'USDC has been allocated to this withdrawal and is ready to move to your wallet.',
-          amountLabel: 'USDC moved',
+          title: `Move your ${PERPS_SETTLEMENT_TOKEN_LABEL} to your wallet?`,
+          description: `${PERPS_SETTLEMENT_TOKEN_LABEL} has been allocated to this withdrawal and is ready to move to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} moved`,
           amount: formatFullUsd(action.assets),
-          confirmLabel: 'Move USDC',
+          confirmLabel: `Move ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
           confirmVariant: 'primary' as const,
-          successTitle: 'USDC moved to wallet',
+          successTitle: `${PERPS_SETTLEMENT_TOKEN_LABEL} moved to wallet`,
           successDescription: <>{formatFullUsd(action.assets)} has been transferred to your wallet.</>,
         }
       case 'reclaim-withdrawal':
         return {
           title: 'Return your unfunded shares?',
-          description: `USDC could not be allocated to this part of the withdrawal. Returning the remaining shares to your wallet restarts the one-hour withdrawal cooldown for every ${tranche.token} share in your wallet.`,
+          description: `${PERPS_SETTLEMENT_TOKEN_LABEL} could not be allocated to this part of the withdrawal. Returning the remaining shares to your wallet restarts the one-hour withdrawal cooldown for every ${tranche.token} share in your wallet.`,
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Return shares',
@@ -4453,7 +4454,7 @@ export function VaultPreviewModal({
             </div>
             {mode === 'deposit' && needsApproval ? (
               <p className="text-center text-xs leading-5 text-content-secondary">
-                Your wallet will first ask you to approve this USDC amount, then confirm the deposit.
+                Your wallet will first ask you to approve this {PERPS_SETTLEMENT_TOKEN_LABEL} amount, then confirm the deposit.
               </p>
             ) : null}
           </div>
@@ -4475,7 +4476,7 @@ export function VaultPreviewModal({
         <div className="space-y-5">
           <p className="text-xl font-semibold leading-7 text-content-primary">
             You are {mode === 'deposit' ? 'depositing' : 'withdrawing'}{' '}
-            <TokenAmount amount={amount || '0.00'} /> {mode === 'deposit' ? 'into' : 'from'}{' '}
+            <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} /> {mode === 'deposit' ? 'into' : 'from'}{' '}
             {tranche.name}.
           </p>
 
@@ -4485,8 +4486,8 @@ export function VaultPreviewModal({
             </p>
             <div className="space-y-3">
               <PreviewRow
-                label={mode === 'deposit' ? 'USDC to deposit' : 'USDC to withdraw'}
-                value={<TokenAmount amount={amount || '0.00'} />}
+                label={mode === 'deposit' ? `${PERPS_SETTLEMENT_TOKEN_LABEL} to deposit` : `${PERPS_SETTLEMENT_TOKEN_LABEL} to withdraw`}
+                value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} />}
               />
               <PreviewRow
                 label={mode === 'withdraw' ? 'Estimated shares used' : 'Estimated shares received'}
@@ -4509,7 +4510,7 @@ export function VaultPreviewModal({
               ) : null}
               <PreviewRow
                 label="Processing"
-                value={mode === 'deposit' ? depositMode : 'Processed hourly when USDC is available'}
+                value={mode === 'deposit' ? depositMode : `Processed hourly when ${PERPS_SETTLEMENT_TOKEN_LABEL} is available`}
               />
               <PreviewRow label="Expected processing" value={targetSettlement} />
               {oracleFrozen === true ? (
@@ -4746,7 +4747,7 @@ function VaultActionPanel({
     : depositLimitExceeded
       ? 'Amount is above the current deposit limit.'
       : belowMinimumDeposit
-        ? `The minimum vault deposit is ${formatFullUsdc(snapshot.pool.minTrancheDepositUsdc)} USDC.`
+        ? `The minimum vault deposit is ${formatFullUsdc(snapshot.pool.minTrancheDepositUsdc)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
         : redeemLimitExceeded
           ? 'Amount is above what you can currently withdraw.'
           : undefined
@@ -4852,7 +4853,7 @@ function VaultActionPanel({
       <aside className="border border-brand-border/30 bg-surface-panel">
         <div className="border-b border-brand-border/25 panel-padding">
           <div>
-            <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? 'Deposit USDC' : 'Withdraw USDC'}</h2>
+            <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL}` : `Withdraw ${PERPS_SETTLEMENT_TOKEN_LABEL}`}</h2>
             <p className="mt-1 text-sm text-content-secondary">{tranche.name}</p>
           </div>
         </div>
@@ -4888,7 +4889,7 @@ function VaultActionPanel({
               setReviewQuote(undefined)
               setQuoteRefreshError(undefined)
             }}
-            token={{ symbol: 'USDC', decimals: USDC_DECIMALS }}
+            token={{ symbol: PERPS_SETTLEMENT_TOKEN_LABEL, decimals: USDC_DECIMALS }}
             balance={isConnected ? maxAmount : undefined}
             balanceLabel={mode === 'deposit' ? 'Wallet balance:' : 'Estimated position value:'}
             label={mode === 'deposit' ? 'Amount to deposit' : 'Amount to withdraw'}
@@ -4939,11 +4940,11 @@ function VaultActionPanel({
                   label="Position value"
                   value={positionValue === undefined
                     ? '--'
-                    : <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
+                    : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
                 />
                 <PreviewRow
-                  label="Estimated USDC you’ll receive"
-                  value={<TokenAmount amount={amount || '0.00'} />}
+                  label={`Estimated ${PERPS_SETTLEMENT_TOKEN_LABEL} you’ll receive`}
+                  value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} />}
                 />
                 <PreviewRow label="Processing" value="Processed hourly; Senior withdrawals are funded first" />
               </>
@@ -4968,7 +4969,7 @@ function VaultActionPanel({
 
           {mode === 'deposit' && depositMode === 'Open for deposits' ? (
             <Alert variant="info" title="This deposit is processed hourly">
-              The vault holds your USDC immediately. You can cancel before it is processed.
+              The vault holds your {PERPS_SETTLEMENT_TOKEN_LABEL} immediately. You can cancel before it is processed.
               Once your shares are ready, move them to your wallet from Your position.
             </Alert>
           ) : null}
@@ -5546,7 +5547,7 @@ function InvalidVault() {
       <span className="material-symbols-outlined text-5xl text-brand-orange">search_off</span>
       <h1 className="mt-4 text-2xl font-semibold text-content-primary">Vault not found</h1>
       <p className="mt-2 text-sm leading-6 text-content-secondary">
-        Plether currently exposes the Senior and Junior USDC vaults.
+        Plether currently exposes the Senior and Junior {PERPS_SETTLEMENT_TOKEN_LABEL} vaults.
       </p>
       <Link
         to="/vaults"

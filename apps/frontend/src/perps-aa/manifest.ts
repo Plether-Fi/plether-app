@@ -1,5 +1,5 @@
 import { getAddress, isAddress, type Address } from 'viem'
-import { PERPS_ARBITRUM_SEPOLIA } from '../contracts/perpsAddresses'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_RELEASE, PERPS_SETTLEMENT_TOKEN } from '../contracts/perpsAddresses'
 
 export const PERPS_AA_MANIFEST_V1_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
@@ -411,7 +411,7 @@ export function parsePerpsAaManifest(
   ) {
     invalid(
       'usdcSupportsEip3009',
-      'requires both USDC EIP-712 name and version'
+      'requires both settlement-token EIP-712 name and version'
     )
   }
   if (
@@ -420,8 +420,15 @@ export function parsePerpsAaManifest(
   ) {
     invalid(
       'usdcSupportsEip3009',
-      'requires both USDC EIP-712 fields to be null when disabled'
+      'requires both settlement-token EIP-712 fields to be null when disabled'
     )
+  }
+
+  if (PERPS_RELEASE.schemaVersion === 4) {
+    parsePinnedAddress(value.usdc, 'usdc', PERPS_ARBITRUM_SEPOLIA.usdc)
+    if (usdcSupportsEip3009 !== PERPS_SETTLEMENT_TOKEN.supportsReceiveWithAuthorization) {
+      invalid('usdcSupportsEip3009', 'must match the configured settlement-token capabilities')
+    }
   }
 
   const commonManifest: PerpsAaDeploymentManifestBase = {

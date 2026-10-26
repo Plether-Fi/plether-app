@@ -7,6 +7,8 @@ module Plether.Perps.Manifest
   , releaseDeploymentBlock
   , releaseVolumeHistoryStartTimestamp
   , releaseAaManifestVersion
+  , settlementTokenAddress
+  , settlementTokenCodeHash
   , mockUsdcAddress
   , mockUsdcCodeHash
   , marginClearinghouseAddress
@@ -44,7 +46,7 @@ module Plether.Perps.Manifest
   ) where
 
 import Data.Text (Text)
-import Plether.Perps.Manifest.Embed (manifestInteger, manifestText)
+import Plether.Perps.Manifest.Embed (manifestInteger, manifestText, manifestSettlementText)
 
 releaseChainId :: Integer
 releaseChainId = $(manifestInteger ["network", "chainId"])
@@ -61,11 +63,19 @@ releaseVolumeHistoryStartTimestamp = $(manifestInteger ["integration", "volumeHi
 releaseAaManifestVersion :: Text
 releaseAaManifestVersion = $(manifestText ["integration", "aaManifestVersion"])
 
+settlementTokenAddress :: Text
+settlementTokenAddress = $(manifestSettlementText "address")
+
+settlementTokenCodeHash :: Text
+settlementTokenCodeHash = $(manifestSettlementText "runtimeCodeHash")
+
+-- Compatibility aliases: public APIs and historical database fields retain
+-- their USDC names, but these values always identify the release asset.
 mockUsdcAddress :: Text
-mockUsdcAddress = $(manifestText ["contracts", "mockUsdc", "address"])
+mockUsdcAddress = settlementTokenAddress
 
 mockUsdcCodeHash :: Text
-mockUsdcCodeHash = $(manifestText ["contracts", "mockUsdc", "runtimeCodeHash"])
+mockUsdcCodeHash = settlementTokenCodeHash
 
 marginClearinghouseAddress :: Text
 marginClearinghouseAddress = $(manifestText ["contracts", "marginClearinghouse", "address"])

@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatUnits } from 'viem'
 import { ProtectionInputs, ProtectionPriceSummary } from './ProtectionInputs'
@@ -92,7 +93,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
     : availableFreeSettlementUsdc === undefined
       ? 'Waiting for your available free margin. Refresh your account if this continues.'
       : availableFreeSettlementUsdc < reward
-        ? `Deposit at least ${formatUnits(reward - availableFreeSettlementUsdc, 6)} USDC into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
+        ? `Deposit at least ${formatUnits(reward - availableFreeSettlementUsdc, 6)} ${PERPS_SETTLEMENT_TOKEN_LABEL} into your perps account to fund the TP/SL execution reserve. Adding position margin does not fund this reserve.`
         : undefined
   const reviewChanged = targetChanged || (review?.action === 'create' && (review.reward !== reward || pendingOrders > 0))
   const delayed = protection?.status === 8
@@ -174,7 +175,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
               <p className="mt-1 text-sm leading-6 text-content-secondary">{delayed
                 ? 'The triggered close did not complete. Your original trigger remains binding, even if the price moves back. TP/SL cannot be changed or removed while this close is unresolved.'
                 : `Close order #${protection.linkedOrderId.toString()} is waiting for execution. The final fill price may differ from your trigger. TP/SL can no longer be changed or removed.`}</p>
-              {protection.triggerMarkPrice > 0n ? <p className="mt-2 text-xs text-content-secondary">{protection.triggeredLeg === 1 ? 'Take profit' : 'Stop loss'} triggered at <TokenAmount amount={protectionPrice(protection.triggerMarkPrice, cap)} />{delayed ? ` · latest close #${protection.linkedOrderId.toString()}` : ''}</p> : null}
+              {protection.triggerMarkPrice > 0n ? <p className="mt-2 text-xs text-content-secondary">{protection.triggeredLeg === 1 ? 'Take profit' : 'Stop loss'} triggered at <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={protectionPrice(protection.triggerMarkPrice, cap)} />{delayed ? ` · latest close #${protection.linkedOrderId.toString()}` : ''}</p> : null}
               <p className="mt-2 text-xs text-content-secondary">You can still add margin from the Position tab.</p>
             </div> : null}
             {[4, 5, 6, 7].includes(protection.status) ? <p className="text-sm leading-6 text-content-secondary">{protectionStateDescription(protection.status)}</p> : null}
@@ -200,7 +201,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           <ProtectionPriceSummary params={review.params} cap={review.cap} rawMark={review.rawMark} position={review.position} direction={direction} />
           <dl className="space-y-2 border-y border-brand-border/20 py-3 text-xs">
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Amount to close</dt><dd>100% of the position</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve</dt><dd><TokenAmount amount={formatUnits(protection ? reserve : review.reward, 6)} /> {protection ? '· already reserved' : '· from free margin'}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatUnits(protection ? reserve : review.reward, 6)} /> {protection ? '· already reserved' : '· from free margin'}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-content-secondary">Active from</dt><dd>{protection?.status === 1 ? 'Opening order execution' : 'Update confirmation'}</dd></div>
           </dl>
           <p className="text-xs leading-5 text-content-secondary">These trigger prices are fixed for confirmation. Reaching one queues a close; it does not guarantee that fill price.</p>
@@ -210,7 +211,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
           </div>
         </> : view === 'remove' ? <>
           <p className="text-sm leading-6">{protection?.status === 1 ? 'Your opening order will remain committed and can still fill without TP/SL.' : 'Your position will stay open without take-profit or stop-loss triggers.'}</p>
-          <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount amount={formatPerpsUsdc(reserve)} />.</p>
+          <p className="text-xs leading-5 text-content-secondary">Removing TP/SL does not close your position. It releases the unpaid execution reserve of <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(reserve)} />.</p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="danger" isLoading={pending} disabled={targetChanged} onClick={() => void submit(true)}>Confirm removal</Button>
             <Button size="sm" variant="secondary" disabled={pending} onClick={() => { setView('overview'); setError(undefined) }}>Keep TP/SL</Button>
@@ -218,8 +219,8 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
         </> : null}
         {!protection && (creatable || view === 'edit' || view === 'review') ? <div className="space-y-2 border-t border-brand-border/20 pt-3 text-xs">
           <dl className="space-y-2">
-            {view !== 'review' ? <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve required</dt><dd><TokenAmount amount={rewardKnown ? formatUnits(reward, 6) : '—'} /></dd></div> : null}
-            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Available free margin</dt><dd><TokenAmount amount={availableFreeSettlementUsdc === undefined ? '—' : formatUnits(availableFreeSettlementUsdc, 6)} /></dd></div>
+            {view !== 'review' ? <div className="flex justify-between gap-4"><dt className="text-content-secondary">Execution reserve required</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={rewardKnown ? formatUnits(reward, 6) : '—'} /></dd></div> : null}
+            <div className="flex justify-between gap-4"><dt className="text-content-secondary">Available free margin</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={availableFreeSettlementUsdc === undefined ? '—' : formatUnits(availableFreeSettlementUsdc, 6)} /></dd></div>
           </dl>
           {fundingError ? <p role="alert" className="leading-5 text-brand-orange">{fundingError}</p> : null}
         </div> : null}
@@ -232,7 +233,7 @@ export function PositionProtectionManager({ protection, position, rawMark, cap, 
       {protection && view === 'overview' ? <details className="border-t border-brand-border/20 panel-padding-x py-3 text-xs text-content-secondary">
         <summary className="cursor-pointer hover:text-content-primary">Execution details</summary>
         <dl className="mt-3 space-y-2">
-          <div className="flex flex-wrap justify-between gap-2"><dt>Execution reserve remaining</dt><dd><TokenAmount amount={formatPerpsUsdc(reserve)} /></dd></div>
+          <div className="flex flex-wrap justify-between gap-2"><dt>Execution reserve remaining</dt><dd><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsUsdc(reserve)} /></dd></div>
           <div className="flex flex-wrap justify-between gap-2"><dt>Protection reference</dt><dd>#{protection.protectionId.toString()}</dd></div>
           {protection.linkedOrderId > 0n ? <div className="flex flex-wrap justify-between gap-2"><dt>Latest close order</dt><dd>#{protection.linkedOrderId.toString()}</dd></div> : null}
         </dl>
@@ -290,7 +291,7 @@ export function ProtectionHistoryRow({ row, events, pending, error, more, onTogg
     </summary>
     <p className="mt-3 text-xs leading-5 text-content-secondary">{protectionStateDescription(row.status)}</p>
     <p className="mt-2 text-xs text-content-secondary">{row.parentOrderId !== '0' ? `Opening order #${row.parentOrderId} · ` : ''}{row.linkedOrderId !== '0' ? `Latest close #${row.linkedOrderId}` : 'No close order queued'}{row.status === 5 ? ' · See Order history for the order outcome.' : ''}</p>
-    <p className="mt-3 text-xs text-content-secondary">TP {row.takeProfitTriggerPrice === '0' ? 'not set' : <TokenAmount amount={protectionPrice(BigInt(row.takeProfitTriggerPrice), 200_000_000n)} />} · SL {row.stopLossTriggerPrice === '0' ? 'not set' : <TokenAmount amount={protectionPrice(BigInt(row.stopLossTriggerPrice), 200_000_000n)} />}</p>
+    <p className="mt-3 text-xs text-content-secondary">TP {row.takeProfitTriggerPrice === '0' ? 'not set' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={protectionPrice(BigInt(row.takeProfitTriggerPrice), 200_000_000n)} />} · SL {row.stopLossTriggerPrice === '0' ? 'not set' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={protectionPrice(BigInt(row.stopLossTriggerPrice), 200_000_000n)} />}</p>
     {pending ? <p className="mt-3 text-xs">Loading activity…</p> : error ? <p className="mt-3 text-xs text-content-secondary">Event details are temporarily unavailable.</p> : <ol className="mt-4 space-y-3 border-l border-brand-border/30 pl-4">
       {events?.map(event => <li key={`${event.blockHash}:${event.logIndex}`} className="text-xs">
         <a className="text-content-primary underline decoration-brand-border/40 underline-offset-4 hover:text-[#FFAB96]" href={getExplorerTxUrl(421614, event.transactionHash)} target="_blank" rel="noopener noreferrer">{event.event === 'PositionProtectionTerminal' ? `TP/SL ${protectionStatusLabel(Number(event.args.status ?? row.status)).toLowerCase()}` : event.event === 'PositionProtectionTriggered' ? `${Number(event.args.leg ?? row.triggeredLeg) === 1 ? 'Take profit' : 'Stop loss'} reached` : labels[event.event] ?? 'TP/SL update'} ↗</a>

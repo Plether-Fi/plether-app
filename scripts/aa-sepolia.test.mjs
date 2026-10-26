@@ -1,11 +1,12 @@
 import test from 'node:test'
+import { settlementContract } from './prepare-perps-release.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const read = path => readFileSync(new URL(path, root), 'utf8')
 const bindings = {
-  "perps_usdc": "mockUsdc",
+  "perps_usdc": "settlementToken",
   "perps_order_router": "orderRouter",
   "perps_order_lifecycle_book": "orderLifecycleBook",
   "perps_cfd_engine": "cfdEngine",
@@ -29,10 +30,13 @@ test('Singapore release overlay exactly matches the canonical Core manifest', ()
   assert.equal(overlay.perps_indexer_start_block, String(release.release.deploymentBlock))
   assert.equal(overlay.vault_history_deployment_block, String(release.release.deploymentBlock))
   assert.equal(overlay.perps_chain_id, String(release.network.chainId))
-  for (const [name, contract] of Object.entries(bindings)) assert.equal(overlay[name], release.contracts[contract].address)
+  for (const [name, contract] of Object.entries(bindings)) assert.equal(overlay[name], (contract === 'settlementToken' ? settlementContract(release) : release.contracts[contract]).address)
   const guards = read('infra/terraform/deployment_target.tf')
   assert.ok(guards.includes('var.vault_history_deployment_block == tostring(local.sepolia_core.release.deploymentBlock)'))
-  for (const [name, contract] of Object.entries(bindings)) assert.ok(guards.includes('lower(var.' + name + ') == lower(local.sepolia_core.contracts.' + contract + '.address)'))
+  for (const [name, contract] of Object.entries(bindings)) {
+    const key = contract === 'settlementToken' && release.schemaVersion < 4 ? 'mockUsdc' : contract
+    assert.ok(guards.includes('lower(var.' + name + ') == lower(local.sepolia_core.contracts.' + key + '.address)'))
+  }
 })
 test('public overlay stages policy without enabling sponsorship or preparation', () => {
   const overlay = read('infra/terraform/sepolia-aa-public.tfvars')

@@ -289,7 +289,7 @@ describe('parsePerpsAaManifest', () => {
     manifest.usdcSupportsEip3009 = true
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
-      /requires both USDC EIP-712 name and version/
+      /requires both settlement-token EIP-712 name and version/
     )
   })
 
