@@ -15,7 +15,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
 ENV PATH="/opt/.ghcup/bin:${PATH}"
 
 ARG AWS_RDS_CA_BUNDLE_URL=https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-ARG AWS_RDS_CA_BUNDLE_SHA256=fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c
+ARG AWS_RDS_CA_BUNDLE_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
 RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --retry 3 \
       --output /tmp/aws-rds-global-bundle.pem "$AWS_RDS_CA_BUNDLE_URL" && \
     echo "$AWS_RDS_CA_BUNDLE_SHA256  /tmp/aws-rds-global-bundle.pem" | sha256sum --check --strict
