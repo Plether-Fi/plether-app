@@ -57,12 +57,23 @@ describe('all traded wallets', () => {
 describe('live Divisions rankings', () => {
   it('reads a complete provisional snapshot from the backend', async () => {
     const data = { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 1, standings: [
-      { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 125, activeDays: 1 },
+      { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 125, activeDays: 1, discordUsername: 'mellboi' },
     ] }
     const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
     vi.stubGlobal('fetch', fetcher)
     expect(await getLiveDivisions()).toEqual(data)
     expect(fetcher).toHaveBeenCalledWith('/api/insights/v1/divisions/live', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+  it('rejects malformed public handles while accepting unlinked and older responses', async () => {
+    for (const discordUsername of [null, undefined, 'trader', 42, { username: 'private' }, '']) {
+      const data = { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 1, standings: [
+        { address: '0x0000000000000000000000000000000000000001', rank: 1, weeklyReturnBps: 125, activeDays: 1, discordUsername },
+      ] }
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data })))
+      if (discordUsername === null || discordUsername === undefined || discordUsername === 'trader') {
+        await expect(getLiveDivisions()).resolves.toMatchObject({ status: 'ready' })
+      } else await expect(getLiveDivisions()).rejects.toThrow('Live Divisions response is invalid')
+    }
   })
   it('rejects a partial snapshot whose declared wallet count differs', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: {

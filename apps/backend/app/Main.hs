@@ -215,7 +215,7 @@ main = do
           configured <- loadDiscordConfig registrationConfig
           either (ioError . userError) pure configured
       case (mPool, discordConfig) of
-        (Just pool, Just _) -> withDb pool ensureDivisionsSchema
+        (Just pool, _) -> withDb pool ensureDivisionsSchema
         (Nothing, Just _) -> ioError $ userError "Divisions registration requires DATABASE_URL"
         _ -> pure ()
       scottyOpts (apiServerOptions $ cfgPort cfg) $ do

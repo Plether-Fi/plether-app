@@ -2459,6 +2459,10 @@ CREATE TABLE IF NOT EXISTS insights_divisions_links (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Existing links remain private until the trader explicitly opts in.
+ALTER TABLE insights_divisions_links
+    ADD COLUMN IF NOT EXISTS show_discord_handle BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions (
     session_digest BYTEA PRIMARY KEY CHECK (octet_length(session_digest) = 32),
     expires_at TIMESTAMPTZ NOT NULL,

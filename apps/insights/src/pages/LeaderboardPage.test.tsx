@@ -46,6 +46,35 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0002')
   })
+  it('shows public handles and earned badges without deriving tiers from live returns', () => {
+    const publication = publishWeek(input(0, [account(1)]), null)
+    query.mockReturnValue({ data: publication })
+    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 2, standings: [
+      { address: account(2).address, discordUsername: null, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
+      { address: account(1).address, discordUsername: 'mellboi', rank: 2, weeklyReturnBps: -100, activeDays: 0 },
+    ] } })
+    show()
+    const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
+    expect(within(table).getByRole('columnheader', { name: 'Discord handle' })).toBeInTheDocument()
+    expect(within(table).getByRole('columnheader', { name: 'Current badge' })).toBeInTheDocument()
+    const rows = within(table).getAllByRole('row')
+    expect(rows[1]).toHaveTextContent('Iron')
+    expect(rows[2]).toHaveTextContent('Bronze')
+    expect(rows[2]).toHaveTextContent('@mellboi')
+    expect(within(rows[1]).getByLabelText('No public Discord handle')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(table).toHaveTextContent('@mellboi')
+  })
+  it('shows pending badges when no weekly awards have been published', () => {
+    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
+      { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
+    ] } })
+    show()
+    const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
+    expect(table).toHaveTextContent('Pending publication')
+    expect(within(table).queryByRole('img')).not.toBeInTheDocument()
+  })
   it('pages through all live rankings and searches across pages', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 101, standings: Array.from({ length: 101 }, (_, index) => ({
       address: `0x${(index + 1).toString(16).padStart(40, '0')}`, rank: index + 1, weeklyReturnBps: 100, activeDays: 1,
