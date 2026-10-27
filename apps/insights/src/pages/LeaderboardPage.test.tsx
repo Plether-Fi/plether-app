@@ -66,6 +66,14 @@ describe('Divisions leaderboard', () => {
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')
   })
+  it('finds published trader handles with an @ prefix', () => {
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { displayName: 'mellboi' }), account(2)]), null) })
+    show()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
+    const table = screen.getByRole('table', { name: 'Published weekly percentage P&L and division badges' })
+    expect(table).toHaveTextContent('mellboi')
+    expect(table).not.toHaveTextContent('Trader 2')
+  })
   it('shows first-trade Iron badges when the backend confirms there are no weekly awards yet', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },

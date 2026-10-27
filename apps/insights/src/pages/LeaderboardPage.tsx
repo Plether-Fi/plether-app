@@ -51,7 +51,7 @@ export function LeaderboardPage() {
   const livePageCount = Math.max(1, Math.ceil(liveStandings.length / 100))
   const currentLivePage = Math.min(livePage, livePageCount - 1)
   const visibleLiveStandings = liveStandings.slice(currentLivePage * 100, (currentLivePage + 1) * 100)
-  const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ?? ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
+  const standings = publication?.standings.filter((row) => `${row.address} ${row.displayName ? `@${row.displayName}` : ''}`.toLowerCase().includes(search.trim().toLowerCase())) ?? []
 
   return <div className="space-y-8">
     <section className="relative overflow-hidden border border-brand-border/30 bg-surface-panel p-6 sm:p-10">
