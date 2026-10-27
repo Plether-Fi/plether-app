@@ -127,14 +127,24 @@ rounded weekly returns, active-day counts, and snapshot timing without exposing
 balances or exact P&L. Insights refreshes this view every minute. A new release
 starts a new roster; a wallet does not need a Discord link to rank.
 
-Live ranks can change until Friday close. Earned tiers, promotions, and weekly
-announcements still require the finalized weekly publication. Ranking JSON is
-not committed to the public repository.
+Live ranks can change until Friday close. The worker also captures each completed
+week at canonical finalized boundaries and publishes after Monday 00:00 UTC.
+It backfills every week sequentially from launch, including empty and inactive
+weeks, using the same complete account and verified funding calculations as the
+live feed. Awards are append-only in `divisions_publications`, scoped by chain
+and release, and remain available across worker restarts and frontend deployments.
+Failed capture or missing prior wallets prevents advancement and retries next cycle.
 
-An upstream all-account weekly exporter is required for production data. The
-existing September API, registered roster and frozen snapshots cannot provide
-this feed. The publisher checks format and sequence; it does not independently
-verify blockchain hashes or data completeness against the chain. Do not supply
-mock inputs to production. Keep source inputs for audit and replay. Changes to
-canonicality after publication require an explicit correction process, rather
-than silently rewriting public history.
+`/api/insights/v1/divisions/current` serves the latest publication (or explicit
+null before the first publication), enriched with registered Discord handles.
+The leaderboard uses these persistent tiers; a newly traded wallet receives Iron.
+It never derives earned badges from provisional current-week ranks. The API keeps
+published awards available even when live snapshots are temporarily stale.
+The backend and offline TypeScript engines share regression fixtures for promotion,
+demotion, exact ties, inactive weeks and empty weeks.
+
+The September API, registered roster and frozen snapshots are not the Divisions
+feed. The standalone file publisher remains an offline replay/audit tool. Ranking
+JSON is not committed to the public repository, except synthetic test fixtures.
+Changes to canonicality after publication require an explicit correction process,
+rather than silently rewriting public history.

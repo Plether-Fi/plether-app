@@ -3,12 +3,12 @@ import type { DivisionPublication } from './types'
 import { isPublication } from './schema'
 
 export async function getDivisions(signal?: AbortSignal): Promise<DivisionPublication | null> {
-  const response = await fetch('/divisions/current.json', { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
-  if (response.status === 404) return null
+  const response = await fetch('/api/insights/v1/divisions/current', { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`Divisions standings are unavailable (${String(response.status)})`)
-  // Older Pages deployments can return the SPA HTML with 200 for a missing file.
-  if (response.headers.get('Content-Type')?.toLowerCase().includes('text/html')) return null
-  const data: unknown = await response.json().catch(() => { throw new Error('Divisions publication is invalid') })
+  const body: unknown = await response.json().catch(() => { throw new Error('Divisions publication is invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('Divisions publication is invalid')
+  const data = body.data
+  if (data === null) return null
   if (!isPublication(data) || Date.parse(data.publishedAt) > Date.now()) throw new Error('Divisions publication is invalid')
   return data
 }

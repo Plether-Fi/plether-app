@@ -66,14 +66,22 @@ describe('Divisions leaderboard', () => {
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')
   })
-  it('shows pending badges when no weekly awards have been published', () => {
+  it('finds published trader handles with an @ prefix', () => {
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { displayName: 'mellboi' }), account(2)]), null) })
+    show()
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
+    const table = screen.getByRole('table', { name: 'Published weekly percentage P&L and division badges' })
+    expect(table).toHaveTextContent('mellboi')
+    expect(table).not.toHaveTextContent('Trader 2')
+  })
+  it('shows first-trade Iron badges when the backend confirms there are no weekly awards yet', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
     ] } })
     show()
     const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
-    expect(table).toHaveTextContent('Pending publication')
-    expect(within(table).queryByRole('img')).not.toBeInTheDocument()
+    expect(table).toHaveTextContent('Iron')
+    expect(table).not.toHaveTextContent('Pending publication')
   })
   it('pages through all live rankings and searches across pages', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 101, standings: Array.from({ length: 101 }, (_, index) => ({
