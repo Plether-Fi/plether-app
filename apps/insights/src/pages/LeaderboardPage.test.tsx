@@ -61,7 +61,7 @@ describe('Divisions leaderboard', () => {
     expect(rows[1]).toHaveTextContent('Iron')
     expect(rows[2]).toHaveTextContent('Bronze')
     expect(rows[2]).toHaveTextContent('@mellboi')
-    expect(within(rows[1]).getByLabelText('No public Discord handle')).toBeInTheDocument()
+    expect(within(rows[1]).getByLabelText('Discord not linked')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')

@@ -246,7 +246,7 @@ getDivisionsLiveResponse pool cfg = do
     "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
     \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
     \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
-    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address' AND l.show_discord_handle), \
+    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
     \EXTRACT(EPOCH FROM s.captured_at)::BIGINT FROM divisions_live_snapshots s \
     \WHERE s.chain_id=? AND s.release_router=? AND s.week_start=? \
     \AND s.captured_at > NOW() - INTERVAL '5 minutes' \

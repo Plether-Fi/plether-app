@@ -28,7 +28,6 @@ describe('Divisions Discord registration', () => {
     const session: DivisionsRegistrationSession = {
       status: 'in_progress', csrfToken: 'csrf', expiresAt: '2026-10-19T12:00:00Z',
       steps: { discord: 'verified', wallet: 'verified', completed: false },
-      capabilities: { publicDiscordHandle: true },
       requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
     }
     const fetchMock = vi.fn()
@@ -44,17 +43,9 @@ describe('Divisions Discord registration', () => {
       expect(call[1].headers.get('X-Registration-CSRF')).toBe('csrf')
     }
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-      acceptRules: true, acceptPrivacy: true, showDiscordHandle: false,
+      acceptRules: true, acceptPrivacy: true,
       rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1',
     })
-    fetchMock.mockResolvedValueOnce(Response.json({ registration: session }))
-    await completeDivisionsRegistration(session, true)
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).showDiscordHandle).toBe(true)
-    const legacySession = { ...session, capabilities: undefined }
-    fetchMock.mockResolvedValueOnce(Response.json({ registration: legacySession }))
-    await completeDivisionsRegistration(legacySession)
-    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).not.toHaveProperty('showDiscordHandle')
-    await expect(completeDivisionsRegistration(legacySession, true)).rejects.toThrow('not available yet')
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
