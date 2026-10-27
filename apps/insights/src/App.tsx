@@ -5,6 +5,7 @@ import { LeaderboardPage } from './pages/LeaderboardPage'
 import { MethodologyPage } from './pages/MethodologyPage'
 import { CompetitionArchivePage } from './pages/CompetitionArchivePage'
 import { CompetitionMethodologyPage } from './pages/CompetitionMethodologyPage'
+import { DivisionsWalletPage } from './pages/DivisionsWalletPage'
 import { WalletPage } from './pages/WalletPage'
 import { DivisionsRegistrationPage } from './pages/DivisionsRegistrationPage'
 
@@ -19,6 +20,7 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<LeaderboardPage />} />
+          <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />
           <Route path="/register" element={<DivisionsRegistrationPage />} />
           <Route path="/competitions/:slug/register" element={<Navigate to="/archive/september-2026" replace />} />
           <Route path="/archive/september-2026" element={<CompetitionArchivePage />} />
