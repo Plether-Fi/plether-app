@@ -3138,3 +3138,13 @@ FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
 ALTER TABLE insights_account_snapshots
   ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey
   DEFERRABLE INITIALLY IMMEDIATE;
+
+-- Immutable weekly Divisions badge awards, scoped to the perps release.
+CREATE TABLE IF NOT EXISTS divisions_publications (
+  chain_id BIGINT NOT NULL,
+  release_router TEXT NOT NULL,
+  week_start BIGINT NOT NULL,
+  closing_block BIGINT NOT NULL,
+  publication JSONB NOT NULL,
+  PRIMARY KEY (chain_id, release_router, week_start)
+);

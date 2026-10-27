@@ -31,7 +31,7 @@ jobs:
         working-directory: apps/backend/oracle-worker
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Verify Divisions handles match registrations and preserve standings
-        run: node --test scripts/divisions-public-handles.test.mjs
+        run: node --test scripts/divisions-public-handles.test.mjs scripts/divisions-publications.test.mjs
         env:
           PGDATABASE: postgresql://postgres:postgres@127.0.0.1:5432/faucet_test
       - name: Verify nonce recovery proofs and atomic database recovery

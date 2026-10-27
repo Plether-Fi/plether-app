@@ -1,8 +1,9 @@
+import fixtures from '../../../backend/test/fixtures/divisions-publications.json'
+import type { DivisionPublication, WeeklyInput } from './types'
 import { describe, expect, it } from 'vitest'
 import { formatReturn, publishWeek } from './engine'
 import { activeSessionDay, FIRST_WEEK_START, tradingWeek } from './rules'
 import { isPublication, isWeeklyInput } from './schema'
-import type { DivisionPublication } from './types'
 import { account, input } from '../test/divisions'
 
 describe('Divisions ranking and progression', () => {
@@ -111,5 +112,17 @@ describe('UTC trading sessions', () => {
     expect(activeSessionDay('2026-10-16T21:00:00Z', week.startsAt, week.closesAt)).toBeNull()
     expect(week.publishesAt).toBe('2026-10-19T00:00:00.000Z')
     expect(tradingWeek(Date.parse('2026-10-18T21:00:00Z')).closesAt).toBe('2026-10-23T21:00:00.000Z')
+  })
+})
+
+// Shared with the production Haskell publisher to detect drift in either engine.
+describe('backend publication compatibility', () => {
+  it('replays the shared multi-week badge history exactly', () => {
+    let previous: DivisionPublication | null = null
+    for (const { input, expected } of fixtures) {
+      const actual = publishWeek(input as WeeklyInput, previous)
+      expect(actual).toEqual(expected)
+      previous = actual
+    }
   })
 })

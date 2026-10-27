@@ -4,6 +4,7 @@ module Plether.Handlers.Insights
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
   , getDivisionsTradersResponse
+  , getDivisionsCurrentResponse
   , getDivisionsLiveResponse
   , competitionRowToJson
   , leaderboardRowToJson
@@ -236,6 +237,24 @@ getDivisionsTradersResponse pool cfg = do
         , "generatedAt" .= isoTimestamp now
         ]
     _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
+
+-- Finalized badges have no live-snapshot freshness limit: an awarded tier
+-- remains current throughout the following week and across worker restarts.
+getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsCurrentResponse pool cfg = do
+  rows <- withDb pool $ \conn -> query conn
+    "SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
+    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
+    \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
+    \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text \
+    \FROM divisions_publications p WHERE p.chain_id=? AND p.release_router=? \
+    \ORDER BY p.week_start DESC LIMIT 1"
+    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg)
+  pure $ case rows :: [(Integer, Text)] of
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) Null
+    (block, encoded):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) publication
 
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do
