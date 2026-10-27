@@ -83,13 +83,13 @@ Leaderboard badges show earned persistent tiers, not the tier implied by one
 week's percentile. The live leaderboard joins these tiers from the latest
 published results; it shows pending/unavailable while no publication can be read.
 A newly traded wallet absent from an available publication starts at Iron.
-Discord handles come from completed links matched by Trading Account, and are
-public only when the trader opts in with `showDiscordHandle` at registration.
-The registration API advertises `capabilities.publicDiscordHandle`; the UI only
-offers visibility controls after the backend supports persisting them.
-Existing links default to private; traders can repeat verification to change
-visibility. Neither Discord IDs nor owner-wallet mappings are returned in the
-public standings. Search matches wallet addresses and public Discord handles.
+Discord handles come from completed registrations matched by Trading Account.
+Registration makes the handle public beside that Trading Account on the
+leaderboard, including for existing registrations. There is no separate
+visibility setting or additional checkbox. The registration review explains
+that the handle will be public. Neither Discord IDs nor owner-wallet mappings
+are returned in public standings. Search matches wallet addresses and Discord
+handles.
 Wallets may rank without Discord.
 
 Matching Discord roles will require a linked wallet. The `/register` flow links

@@ -126,7 +126,6 @@ function divisionsView(session) {
     },
     ...(session.discordId ? { identity: { username: 'plether_local_tester' } } : {}),
     ...(session.wallet ? { wallet: session.wallet } : {}),
-    capabilities: { publicDiscordHandle: true },
     requiredConsents: { rulesVersion: 'divisions-2026-10', privacyVersion: 'divisions-2026-10' },
   }
 }
@@ -221,11 +220,6 @@ async function handleDivisions(request, response, action) {
       error(response, 409, 'REGISTRATION_INCOMPLETE', 'Complete local Discord and wallet verification and accept the rules.')
       return
     }
-    if (payload.showDiscordHandle !== undefined && typeof payload.showDiscordHandle !== 'boolean') {
-      error(response, 400, 'INVALID_REQUEST', 'Leaderboard visibility must be a boolean.')
-      return
-    }
-    session.showDiscordHandle = payload.showDiscordHandle ?? false
     session.completed = true
     json(response, 200, { registration: divisionsView(session) })
     return
