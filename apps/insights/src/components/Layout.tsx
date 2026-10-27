@@ -24,8 +24,9 @@ function Header() {
             Divisions
           </span>
         </Link>
-        <nav className="flex items-center gap-1" aria-label="Primary navigation">
+        <nav className="flex items-center gap-1 overflow-x-auto" aria-label="Primary navigation">
           <NavLink to="/" end className={navClass}>Trading activity</NavLink>
+          <NavLink to="/results" className={navClass}>Last week’s results</NavLink>
           <NavLink to="/methodology" className={navClass}>Methodology</NavLink>
           <NavLink to="/register" className={navClass}>Link Discord</NavLink>
           <a href="https://app.sepolia.plether.com" className={navClass({ isActive: false })}>Trade ↗</a>

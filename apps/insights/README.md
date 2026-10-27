@@ -17,6 +17,12 @@ consumes complete account snapshots, includes inactive previously ranked wallets
 and emits tier state, standings, and weekly announcement data. It uses exact
 integer ratios to rank percentage returns, without floating-point rounding.
 
+The home page shows live rankings and current awarded badges. Completed results live
+on `/results` (Last week’s results), with older/newer navigation using stable week-start
+cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` returns
+one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects
+the latest published week. Empty published weeks remain browsable.
+
 The UI reads `/api/insights/v1/divisions/current` from the backend. The Insights
 worker captures finalized boundary values for every traded account, checks
 external funding against indexed USDC transfers, and appends each completed

@@ -78,15 +78,11 @@ describe('Divisions leaderboard', () => {
     expect(table).toHaveTextContent('Iron')
     expect(table).not.toHaveTextContent('Bronze')
     expect(screen.getByText(/Last awarded for the week ending 16 Oct 2026/)).toBeInTheDocument()
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(screen.queryByRole('table', { name: /Published weekly percentage/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Last week’s results →' })).toHaveAttribute('href', '/results')
   })
-  it('finds published trader handles with an @ prefix', () => {
-    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { displayName: 'mellboi' }), account(2)]), null) })
-    show()
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
-    const table = screen.getByRole('table', { name: 'Published weekly percentage P&L and division badges' })
-    expect(table).toHaveTextContent('mellboi')
-    expect(table).not.toHaveTextContent('Trader 2')
-  })
+
   it('does not award any badge during a trader’s first week, even with a qualifying live score', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
@@ -111,28 +107,8 @@ describe('Divisions leaderboard', () => {
     expect(screen.queryByText(/Page 2 of 2/)).not.toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('101')
   })
-  it('shows earned badges beside traders and filters the full published ranking', () => {
-    const publication = publishWeek(input(0, [account(1, { displayName: 'Alice' }), account(2, { displayName: 'Bob' })]), null)
-    query.mockReturnValue({ data: publication })
-    show()
-    const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('img', { name: 'Bronze' })).toHaveLength(2)
-    expect(within(table).getByText('Alice')).toBeInTheDocument()
-    expect(within(table).getAllByText('+10.00%')).toHaveLength(2)
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'bob' } })
-    expect(screen.queryByRole('table')?.textContent).not.toContain('Alice')
-    expect(within(screen.getByRole('table')).getByText('Bob')).toBeInTheDocument()
-    expect(screen.getByText('Alice, Bob')).toBeInTheDocument()
-  })
-  it('retains published results on a failed refresh and provides retry', () => {
-    const refetch = vi.fn()
-    query.mockReturnValue({ data: publishWeek(input(), null), isError: true, refetch })
-    show()
-    expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.getByText(/Could not refresh Divisions/)).toHaveAttribute('role', 'status')
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(refetch).toHaveBeenCalledOnce()
-  })
+
+
   it('keeps live rankings available if no publication can be read', () => {
     query.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 1, standings: [
