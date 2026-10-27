@@ -24,7 +24,10 @@ week to `divisions_publications`. It backfills from the first week in order,
 including empty weeks, one week per cycle. Publication starts Monday at 00:00
 UTC; failed captures leave the previous awards intact and retry next cycle.
 Awards persist across deployments and never expire with live snapshot freshness.
-New traders receive Iron immediately; current-week returns remain provisional.
+Every badge, including Iron, is awarded only in a completed week’s publication.
+New traders show “Not yet awarded” until included in published results; returning
+traders keep their last awarded tier throughout the active week. Current-week
+returns remain provisional and never grant a badge.
 The API adds current registered Discord handles to published display names.
 The backend and TypeScript engines share multi-week regression fixtures.
 
