@@ -58,13 +58,26 @@ describe('Divisions leaderboard', () => {
     expect(within(table).getByRole('columnheader', { name: 'Discord handle' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: 'Current badge' })).toBeInTheDocument()
     const rows = within(table).getAllByRole('row')
-    expect(rows[1]).toHaveTextContent('Iron')
+    expect(rows[1]).toHaveTextContent('Not yet awarded')
+    expect(rows[1]).not.toHaveTextContent('Iron')
     expect(rows[2]).toHaveTextContent('Bronze')
     expect(rows[2]).toHaveTextContent('@mellboi')
     expect(within(rows[1]).getByLabelText('Discord not linked')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')
+  })
+  it('shows Iron only after a completed week publishes it, regardless of current-week gains', () => {
+    clock.now = Date.parse('2026-10-20T12:00:00Z')
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityUsdc: '99000000000' })]), null) })
+    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
+      { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 2 },
+    ] } })
+    show()
+    const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
+    expect(table).toHaveTextContent('Iron')
+    expect(table).not.toHaveTextContent('Bronze')
+    expect(screen.getByText(/Last awarded for the week ending 16 Oct 2026/)).toBeInTheDocument()
   })
   it('finds published trader handles with an @ prefix', () => {
     query.mockReturnValue({ data: publishWeek(input(0, [account(1, { displayName: 'mellboi' }), account(2)]), null) })
@@ -74,14 +87,15 @@ describe('Divisions leaderboard', () => {
     expect(table).toHaveTextContent('mellboi')
     expect(table).not.toHaveTextContent('Trader 2')
   })
-  it('shows first-trade Iron badges when the backend confirms there are no weekly awards yet', () => {
+  it('does not award any badge during a trader’s first week, even with a qualifying live score', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
     ] } })
     show()
     const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
-    expect(table).toHaveTextContent('Iron')
-    expect(table).not.toHaveTextContent('Pending publication')
+    expect(table).toHaveTextContent('Not yet awarded')
+    expect(table).not.toHaveTextContent('Iron')
+    expect(table).not.toHaveTextContent('Bronze')
   })
   it('pages through all live rankings and searches across pages', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 101, standings: Array.from({ length: 101 }, (_, index) => ({
@@ -128,6 +142,8 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('heading', { name: 'Live weekly leaderboard' })).toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.queryByText('offline')).not.toBeInTheDocument()
+    expect(screen.getByRole('table')).toHaveTextContent('Badge unavailable')
+    expect(screen.getByRole('table')).not.toHaveTextContent('Not yet awarded')
   })
   it('shows provisional current-release ranks before any weekly publication', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-11T21:00:00Z', snapshotAt: '2026-10-12T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [

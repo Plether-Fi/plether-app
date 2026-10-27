@@ -53,7 +53,7 @@ weekend events do not create active days.
 
 | Tier | Requirement in a qualifying week |
 | --- | --- |
-| Iron | Automatic on first executed trade |
+| Iron | At least one executed trade, awarded after the completed week is published |
 | Bronze | In profit |
 | Silver | Top 50% of profitable traders |
 | Gold | Top 20% of profitable traders |
@@ -74,15 +74,19 @@ repeating the entry percentile every week.
 
 Every prior wallet must have complete weekly data. Missing input aborts
 publication; it is never inferred as inactivity. New wallets are initialized at
-Iron. The current snapshot publisher exposes those badges at weekly publication;
-immediate first-trade badges require the future live account feed.
+Iron internally for progression calculations, but this is not an awarded badge.
+Every badge, including Iron, is awarded only after the trading week ends and its
+results are published on Monday. Live trading never grants a badge.
 
 ## Public status and announcements
 
 Leaderboard badges show earned persistent tiers, not the tier implied by one
 week's percentile. The live leaderboard joins these tiers from the latest
-published results; it shows pending/unavailable while no publication can be read.
-A newly traded wallet absent from an available publication starts at Iron.
+published results; it shows loading/unavailable while publication cannot be read.
+An explicit empty publication result does not grant a badge.
+A newly traded wallet absent from the latest publication shows “Not yet awarded”.
+Returning traders keep their last awarded badge throughout the active week;
+current-week rankings cannot change it.
 Discord handles come from completed registrations matched by Trading Account.
 Registration makes the handle public beside that Trading Account on the
 leaderboard, including for existing registrations. There is no separate
@@ -137,7 +141,8 @@ Failed capture or missing prior wallets prevents advancement and retries next cy
 
 `/api/insights/v1/divisions/current` serves the latest publication (or explicit
 null before the first publication), enriched with registered Discord handles.
-The leaderboard uses these persistent tiers; a newly traded wallet receives Iron.
+The leaderboard uses only these published tiers; a newly traded wallet waits
+for its first completed week’s publication before receiving a badge.
 It never derives earned badges from provisional current-week ranks. The API keeps
 published awards available even when live snapshots are temporarily stale.
 The backend and offline TypeScript engines share regression fixtures for promotion,
