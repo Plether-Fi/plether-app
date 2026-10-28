@@ -29,7 +29,7 @@ describe('published weekly results', () => {
     expect(screen.getByRole('heading', { name: /Week ending 23 Oct 2026/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Newer week →' })).toBeDisabled()
     const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('img', { name: 'Bronze' })).toHaveLength(2)
+    expect(within(table).getAllByText('Bronze')).toHaveLength(2)
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@BOB' } })
     expect(table).toHaveTextContent('Bob')
     expect(table).not.toHaveTextContent('Alice')
