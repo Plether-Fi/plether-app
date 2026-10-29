@@ -1,0 +1,21 @@
+# Copy outside Git and replace every placeholder before planning.
+# Review against the existing Sepolia base tfvars; never use this as a full state input.
+provision_sepolia_rpc = false
+sepolia_rpc = {
+  ami_id                   = "REPLACE_WITH_REVIEWED_SINGAPORE_AL2023_X86_AMI"
+  nitro_image              = "offchainlabs/nitro-node@sha256:87548501c3ee41cff84e6764cc86f65eb7f0a14e2e50a0d3219d462e5793680d"
+  snapshot_url             = "https://snapshot.arbitrum.foundation/sepolia-rollup/2026-10-20-dbd26a00/"
+  snapshot_metadata_sha256 = "REPLACE_WITH_REVIEWED_METADATA_SHA256"
+  state_history_blocks     = 345600
+  staging_volume_gib       = 4096
+  hostname                 = "rpc-internal.sepolia.plether.com"
+  certificate_arn          = "REPLACE_WITH_ISSUED_SINGAPORE_CERTIFICATE_ARN"
+  parent_parameter         = "/plether/sepolia/rpc-node/parent"
+  gateway_token_parameter  = "/plether/sepolia/rpc-node/gateway-token"
+  backup_url_parameter     = "/plether/sepolia/rpc-node/backup-url"
+  backup_token_parameter   = ""
+  reference_url_parameter  = "/plether/sepolia/rpc-node/reference-url"
+  reference_token_parameter = ""
+  kms_key_arns              = []
+  gateway_image            = "" # Initial repository bootstrap; then set its reviewed ECR digest.
+}
