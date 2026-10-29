@@ -4,7 +4,7 @@
 
 Plether is an oracle-priced[^oracle], cash-settled market for leveraged **LONG USD** and **SHORT USD** exposure.
 
-Traders do not buy currencies, receive a position token or borrow a notional[^notional] amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. No notional principal changes hands; realized PnL, VPI, fees, carry and any frozen-close spread are settled in USDC[^usdc].
+Traders do not buy currencies, receive a position token or borrow a notional[^notional] amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. No notional principal changes hands; realized PnL, VPI, fees, carry and any frozen-close spread are settled in USDG[^usdg].
 
 Plether separates the functions that many trading venues combine:
 
@@ -13,8 +13,8 @@ Plether separates the functions that many trading venues combine:
 | **Reference price**       | External FX oracle data                    |
 | **Order sequencing**      | Binding, delayed FIFO queue                |
 | **Trade-cost adjustment** | Oracle confidence, virtual price impact and frozen-close spread |
-| **Trader collateral**     | Trading Account’s USDC Margin Account      |
-| **Settlement capital**    | USDC-funded liquidity pool                      |
+| **Trader collateral**     | Trading Account’s USDG Margin Account      |
+| **Settlement capital**    | USDG-funded liquidity pool                      |
 | **LP risk allocation**    | Senior and Junior tranches                 |
 
 The oracle supplies the market price. The liquidity pool supplies the balance sheet behind it.
@@ -88,7 +88,7 @@ Plether separates price discovery from risk pricing:
 
 A Plether order follows a commit-now, price-later process:
 
-1. The trader deposits USDC into the Trading Account’s Margin Account.
+1. The trader deposits USDG into the Trading Account’s Margin Account.
 2. The owner wallet authorizes a LONG USD or SHORT USD commitment, and Plether submits the eligible sponsored operation.
 3. For an open, committed margin is reserved. Every order reserves its execution reward; a close can source that reward from active position margin.
 4. The order enters the global FIFO[^fifo] queue.
@@ -181,22 +181,22 @@ The boundary makes liability measurable. It does not make risk disappear.
 
 Opening a leveraged position does not transfer a large notional loan to the trader.
 
-Instead, Plether records market exposure and locks USDC collateral against it. Leverage describes the relationship between that exposure and the collateral supporting it.
+Instead, Plether records market exposure and locks USDG collateral against it. Leverage describes the relationship between that exposure and the collateral supporting it.
 
-A trader account separates USDC into several states:
+A trader account separates USDG into several states:
 
 | Account balance              | Purpose                                       |
 | ---------------------------- | --------------------------------------------- |
-| **Free settlement balance**  | Available for new orders, costs or withdrawal |
+| **Free USDG balance**  | Available for new orders, costs or withdrawal |
 | **Position margin**          | Assigned to the live position                 |
 | **Committed-order margin**   | Reserved for a pending order                  |
 | **Execution-reward reserve** | Reserved for whoever finalizes the order      |
 
 Reserved balances are not free buying power.
 
-Price-risk backing is position margin plus same-account trader claims. Free USDC covers carry and action obligations separately; it does not move the price-liquidation threshold.
+Price-risk backing is position margin plus same-account trader claims. Free USDG covers carry and action obligations separately; it does not move the price-liquidation threshold.
 
-This means a trader’s loss is not necessarily limited to the margin initially assigned on the trade ticket. A full close or liquidation can consume other economically reachable USDC held inside the Plether account.
+This means a trader’s loss is not necessarily limited to the margin initially assigned on the trade ticket. A full close or liquidation can consume other economically reachable USDG held inside the Plether account.
 
 Plether cannot debit assets sitting outside the protocol in the trader’s wallet.
 
@@ -206,20 +206,20 @@ The simplified value flow is:
 
 | Event                 | Trader side                                      | pool side                                    |
 | --------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| **Deposit margin**    | USDC enters the Trading Account’s Margin Account | No change                                         |
+| **Deposit margin**    | USDG enters the Trading Account’s Margin Account | No change                                         |
 | **Commit order**      | An open reserves margin; every order reserves its execution reward | No change                                         |
 | **Open position**     | Position margin is locked and trade costs settle | Pool assumes a bounded payout liability           |
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
-| **Losing close**      | Reachable trader USDC is collected               | The LP-owned portion becomes liquidity pool value; the execution fee belongs to the treasury |
+| **Losing close**      | Reachable trader USDG is collected               | The LP-owned portion becomes liquidity pool value; the execution fee belongs to the treasury |
 | **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
-| **Carry realization** | Carry is collected from eligible free settlement     | Realized carry becomes LP revenue                 |
-| **LP deposit**        | No change to trader margin                       | USDC enters through a tranche vault               |
+| **Carry realization** | Carry is collected from eligible free USDG     | Realized carry becomes LP revenue                 |
+| **LP deposit**        | No change to trader margin                       | USDG enters through a tranche vault               |
 
 Protocol execution fees belong to the treasury rather than LPs. Order-execution rewards are funded from trader collateral rather than pool capital.
 
 ### Unrealized PnL is not cash
 
-Plether distinguishes between a mathematical gain or loss and USDC that has physically moved.
+Plether distinguishes between a mathematical gain or loss and USDG that has physically moved.
 
 For conservative pool accounting:
 
@@ -259,7 +259,7 @@ The claim:
 * Settles through an eligible sponsored operation into the Margin Account
 * Requires aggregate trader claims to be fully cash-covered before settlement
 
-Bounded solvency and immediate liquidity are different questions. A liability can be fully recorded even when it cannot yet be paid out as free USDC.
+Bounded solvency and immediate liquidity are different questions. A liability can be fully recorded even when it cannot yet be paid out as free USDG.
 
 ### When a trader closes at a loss
 
@@ -330,7 +330,7 @@ Perpetual designs vary, but the main structural differences are:
 |                              | Plether                                                       | Common perpetual model                                          |
 | ---------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
 | **Reference price**          | Six-currency external FX basket                               | Exchange index, order book or AMM reference                     |
-| **Counterparty**             | Tranched USDC liquidity pool                                       | Other traders, market makers or pooled AMM liquidity            |
+| **Counterparty**             | Tranched USDG liquidity pool                                       | Other traders, market makers or pooled AMM liquidity            |
 | **Execution**                | Delayed, binding FIFO orders                                  | Commonly immediate matching or pool execution                   |
 | **Price discovery**          | External oracle                                               | Often influenced by venue trading                               |
 | **Price impact**             | Separate VPI adjustment                                       | Often produced by order-book or AMM liquidity                   |
@@ -348,20 +348,20 @@ Plether separates three things:
 2. **The delayed queue defines execution.**
 3. **The liquidity pool underwrites the result.**
 
-Traders post USDC margin and choose LONG USD or SHORT USD. The protocol calculates the position’s maximum possible profit inside the fixed settlement range. It accepts the order only if the liquidity pool can support the resulting liability.
+Traders post USDG margin and choose LONG USD or SHORT USD. The protocol calculates the position’s maximum possible profit inside the fixed settlement range. It accepts the order only if the liquidity pool can support the resulting liability.
 
 When the position settles, value moves between the Trading Account’s Margin Account and the liquidity pool. Junior and Senior LP capital determine how the pool absorbs the outcome.
 
 That is the Plether market model: **oracle-priced, margin-backed and bounded by design.**
 
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^fx]: Foreign exchange, the market for trading one currency against another.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

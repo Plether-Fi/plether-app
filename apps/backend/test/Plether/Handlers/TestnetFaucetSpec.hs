@@ -47,7 +47,7 @@ spec = do
       testnetFaucetEnabled (testConfig 1 421614) `shouldBe` True
 
   describe "testnetFaucetAmount" $
-    it "is 100,000 settlement asset with 6 decimals" $
+    it "is 100,000 USDG with 6 decimals" $
       testnetFaucetAmount `shouldBe` 100_000_000_000
 
   describe "faucet response status JSON" $

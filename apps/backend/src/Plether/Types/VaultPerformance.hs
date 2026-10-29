@@ -72,7 +72,7 @@ instance ToJSON VaultPerformanceCoverage where
       ]
 
 -- | All integer-valued EVM quantities are kept lossless in Haskell and encoded
--- as decimal strings below. 'vppSharePrice' is a 1e18-scaled settlement asset/share value.
+-- as decimal strings below. 'vppSharePrice' is a 1e18-scaled USDG/share value.
 data VaultPerformancePoint = VaultPerformancePoint
   { vppTimestamp :: Integer
   , vppBlockNumber :: Integer

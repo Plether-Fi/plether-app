@@ -26,7 +26,7 @@ const collection = (id, source, title) => spec(id, source, title, 'V2 CLOSE ACCO
       step('Write off excess', 'Any price loss beyond that cap.')),
     lane('Action charges', 'accent',
       step('Withhold from gain', 'Offset a positive price gain first.'),
-      step('Use eligible funds', 'VPI clawback reserve, spendable action reserve, then free settlement.'),
+      step('Use eligible funds', 'VPI clawback reserve, spendable action reserve, then free USDG.'),
       step('Full-close fallback', 'Committed-order margin, then waive uncollectible charges.'))),
     note('A partial close cannot waive action charges. PnL pledge and protected execution bounties are not general fee collateral.')], ['close', 'settlement'])
 
@@ -39,7 +39,7 @@ const positionFlow = (id, source, title, setup, result) => spec(id, source, titl
 
 const claimCredit = lanes(
   lane('Position still open', 'accent', step('Credit PnL pledge', 'The funded price payout backs the remaining position.')),
-  lane('No open position', 'success', step('Credit settlement', 'USDC enters the Margin Account; withdrawal is a separate action.')))
+  lane('No open position', 'success', step('Credit settlement', 'USDG enters the Margin Account; withdrawal is a separate action.')))
 
 export const diagrams = [
   spec('delayed-order-execution-pipeline', how('how-orders-execute'), 'From review to execution', 'DELAYED ORDERS',
@@ -83,12 +83,12 @@ export const diagrams = [
     'Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.', [
       lanes(lane('Price PnL', 'accent', step('Oracle price + position', 'Side, exact entry cost and quantity determine price gain or loss.')), lane('Action economics', 'warning', step('Fees + carry + VPI', 'Add frozen-close spread when applicable. VPI can be signed.'))),
       flow(step('Separate settlement paths', 'Costs may offset a gain. Price losses and remaining action charges use different backing.')),
-      note('Do not treat a displayed price change as net profit or a guarantee of immediately withdrawable USDC.')], ['close']),
+      note('Do not treat a displayed price change as net profit or a guarantee of immediately withdrawable USDG.')], ['close']),
   collection('protocol-close-collection-order', how('trading-costs-fees-carry-and-vpi'), 'How close obligations are funded'),
   spec('margin-reduces-future-carry', how('trading-costs-fees-carry-and-vpi'), 'More pledge, less borrowed backing', 'CARRY',
     'For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.', [
       flow(step('Add assigned PnL pledge', 'Increase the margin backing this position.', 'accent'), step('Reduce the borrow base', 'Borrow base = max(maximum profit − pledge, 0).'), step('Lower future carry', 'At the same carry-index growth, less borrowed backing accrues less carry.', 'success')),
-      note('Holding other conditions equal. Free USDC alone is not assigned pledge; adding margin does not undo carry already accrued.')], ['risk']),
+      note('Holding other conditions equal. Free USDG alone is not assigned pledge; adding margin does not undo carry already accrued.')], ['risk']),
   spec('senior-junior-waterfall-rules', 'liquidity-provider-quickstart.md', 'Three rules for LP returns', 'SENIOR & JUNIOR',
     'Losses go through Junior before Senior; revenue restores Senior impairment before reaching Junior; the coupon transfers available Junior principal to Senior.', [
       section('01 · Loss absorption'), flow(step('Junior → Senior', 'Junior takes the first loss. Senior absorbs the remainder.', 'danger')),
@@ -101,8 +101,8 @@ export const diagrams = [
       flow(step('A price payout cannot be funded', 'Record the full residual payout as a trader claim.', 'warning'), step('Aggregate coverage returns', 'Pool cash must cover all outstanding trader claims.'), step('Authorize Settle Claim', 'The owning Trading Account submits the sponsored action.', 'accent')),
       claimCredit, note('Settlement is not withdrawal. Pledged credit remains backing for an open position; only eligible free funds can be withdrawn.')], ['claim', 'aa']),
   spec('claim-settlement-funding-path', trade('check-and-settle-a-trader-claim'), 'Where settled claim funds go', 'FUNDING PATH',
-    'Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free settlement otherwise.', [
-      flow(step('Liquidity pool', 'Cash coverage passes for all outstanding claims.'), step('Margin Clearinghouse', 'Receives USDC for the claim-owning Trading Account.', 'accent')), claimCredit], ['claim']),
+    'Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free USDG otherwise.', [
+      flow(step('Liquidity pool', 'Cash coverage passes for all outstanding claims.'), step('Margin Clearinghouse', 'Receives USDG for the claim-owning Trading Account.', 'accent')), claimCredit], ['claim']),
   spec('wallet-trading-account-ownership', trade('gas-sponsored-trading-and-your-plether-trading-account'), 'Your wallet controls the account', 'OWNERSHIP',
     'The owner wallet signs for the distinct Trading Account. Protocol positions, orders, protection, margin and claims are keyed to that Trading Account.', [
       flow(step('Owner wallet', 'You review and sign the authorized action.'), step('Trading Account', 'A separate smart-account address you control.', 'accent')),
@@ -114,13 +114,13 @@ export const diagrams = [
       note('Sponsorship does not pay your margin, execution bounties or trading costs.')], ['aa']),
   spec('sponsored-withdrawal-flow', trade('gas-sponsored-trading-and-your-plether-trading-account'), 'Withdraw to your owner wallet', 'MARGIN WITHDRAWAL',
     'Review the free amount and verified owner recipient, prepare sponsorship, sign and confirm. Withdrawal remains subject to onchain account-health and balance checks.', [
-      flow(step('Choose an eligible amount', 'Use Withdrawable, not total collateral or unrealized profit.'), step('Verify the recipient', 'Check the Trading Account and displayed owner wallet.'), step('Prepare and sign', 'Authorize the sponsored withdrawal.', 'accent'), step('Confirm receipt', 'After successful execution, check owner-wallet USDC.', 'success')),
+      flow(step('Choose an eligible amount', 'Use Withdrawable, not total collateral or unrealized profit.'), step('Verify the recipient', 'Check the Trading Account and displayed owner wallet.'), step('Prepare and sign', 'Authorize the sponsored withdrawal.', 'accent'), step('Confirm receipt', 'After successful execution, check owner-wallet USDG.', 'success')),
       note('The contract rechecks balances and account health. An estimate or wallet signature alone does not complete a withdrawal.')], ['accounts', 'aa']),
   positionFlow('open-increase-position-lifecycle', trade('open-or-increase-a-position'), 'Open or increase a position', 'Choose direction, quantity, leverage and execution protections.', 'Create the position or increase its size and update its backing.'),
   sponsor('open-increase-sponsored-submission', trade('open-or-increase-a-position'), 'Authorize an opening order'),
   spec('account-health-reading-order', trade('read-your-position-and-account-health'), 'Read account health in context', 'ACCOUNT CHECKLIST',
     'Recommended reading order, not a calculation or state transition: market regime, position, equity and margin, liquidation context, pending obligations and spendable balances.', [
-      { type: 'checklist', steps: [step('Market state', 'Check oracle availability and close-only restrictions.'), step('Current position', 'Confirm side, size and entry price.'), step('Equity and margin', 'Compare signed position equity with maintenance. Settlement balance is separate.'), step('Liquidation context', 'Treat liquidation price as an estimate, not a guarantee.'), step('Pending obligations', 'Check orders, TP/SL and reserved funds.'), step('Spendable balances', 'Available to Trade and Withdrawable have different checks.')] }], ['risk', 'accounts']),
+      { type: 'checklist', steps: [step('Market state', 'Check oracle availability and close-only restrictions.'), step('Current position', 'Confirm side, size and entry price.'), step('Equity and margin', 'Compare signed position equity with maintenance. USDG balance is separate.'), step('Liquidation context', 'Treat liquidation price as an estimate, not a guarantee.'), step('Pending obligations', 'Check orders, TP/SL and reserved funds.'), step('Spendable balances', 'Available to Trade and Withdrawable have different checks.')] }], ['risk', 'accounts']),
   positionFlow('reduce-close-position-lifecycle', trade('reduce-or-close-a-position'), 'Reduce or close a position', 'Choose the reduction and review its price and financial bounds.', 'Reduce or remove the position and apply the close accounting.'),
   sponsor('reduce-close-sponsored-submission', trade('reduce-or-close-a-position'), 'Authorize a closing order'),
   spec('confirmed-order-execution-path', trade('trader-troubleshooting'), 'Confirmed does not mean filled', 'ORDER TROUBLESHOOTING',
@@ -135,16 +135,16 @@ export const diagrams = [
       section('02 · Delayed order'),
       lanes(lane('Still pending', 'warning', step('Temporary blockers', 'Queue, oracle timing, insufficient gas, engine or receipt failure.')), { ...lane('Terminal result', 'accent', step('Executed', 'The requested trade was applied.'), step('Failed', 'Expiry, slippage, config or mode mismatch, risk-off, planner or constraint rejection, liquidation.')), alternatives: true }),
       note('An engine panic is not automatically a terminal order failure. Read the stored V2 receipt and pending reason.')], ['orders', 'aa']),
-  spec('usdc-account-flow', trade('your-margin-account'), 'USDC has distinct places to live', 'ACCOUNT BALANCES',
-    'Trading Account wallet USDC can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.', [
-      flow(step('Trading Account wallet', 'Fund with a token transfer or the testnet faucet.'), step('Deposit margin', 'USDC enters the Margin Clearinghouse.', 'accent')),
-      { type: 'group', title: 'Internal account balances', items: ['Free settlement — eligible for actions', 'PnL pledge — backs position price risk', 'Action, order and liquidation reserves'] },
+  spec('usdg-account-flow', trade('your-margin-account'), 'USDG has distinct places to live', 'ACCOUNT BALANCES',
+    'Trading Account wallet USDG can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.', [
+      flow(step('Trading Account wallet', 'Fund with a token transfer or the testnet faucet.'), step('Deposit margin', 'USDG enters the Margin Clearinghouse.', 'accent')),
+      { type: 'group', title: 'Internal account balances', items: ['Free USDG — eligible for actions', 'PnL pledge — backs position price risk', 'Action, order and liquidation reserves'] },
       note('Trading moves value between eligible buckets. A deposit does not have to pass through a trade before it can be withdrawn.'),
-      flow(step('Withdraw eligible free USDC', 'Subject to reserves, carry and account-health checks.'), step('Owner wallet receives USDC', 'After the sponsored withdrawal succeeds.', 'success'))], ['accounts', 'claim']),
+      flow(step('Withdraw eligible free USDG', 'Subject to reserves, carry and account-health checks.'), step('Owner wallet receives USDG', 'After the sponsored withdrawal succeeds.', 'success'))], ['accounts', 'claim']),
   spec('claim-to-owner-wallet', trade('your-margin-account'), 'A claim is not wallet cash', 'CLAIM SETTLEMENT',
-    'Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free settlement and a separate authorized action.', [
+    'Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free USDG and a separate authorized action.', [
       flow(step('Check claim coverage', 'Pool cash must cover all outstanding claims.', 'warning'), step('Authorize settlement', 'Submit Settle Claim from the owning Trading Account.', 'accent')), claimCredit,
-      flow(step('Review Withdrawable', 'Only eligible free settlement can leave the account.'), step('Authorize withdrawal', 'A separate operation sends USDC to the owner wallet.', 'success'))], ['claim', 'accounts', 'aa']),
+      flow(step('Review Withdrawable', 'Only eligible free USDG can leave the account.'), step('Authorize withdrawal', 'A separate operation sends USDG to the owner wallet.', 'success'))], ['claim', 'accounts', 'aa']),
 ]
 
 export const evidence = {

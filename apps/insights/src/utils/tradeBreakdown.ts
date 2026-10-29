@@ -94,9 +94,9 @@ export function deriveTradeBreakdown(execution: unknown, type: string): TradeBre
 export function formatTradeAssets(value: bigint, signed = false, exact = false): string {
   const absolute = value < 0n ? -value : value
   const sign = value < 0n ? '−' : signed && value > 0n ? '+' : ''
-  if (!exact && absolute > 0n && absolute < 10_000n) return `${sign}<0.01 assets`
+  if (!exact && absolute > 0n && absolute < 10_000n) return `${sign}<0.01 USDG`
   const scale = exact ? 1_000_000n : 100n
   const rounded = exact ? absolute : (absolute + 5_000n) / 10_000n
   const whole = new Intl.NumberFormat('en-US').format(rounded / scale)
-  return `${sign}${whole}.${(rounded % scale).toString().padStart(exact ? 6 : 2, '0')} assets`
+  return `${sign}${whole}.${(rounded % scale).toString().padStart(exact ? 6 : 2, '0')} USDG`
 }

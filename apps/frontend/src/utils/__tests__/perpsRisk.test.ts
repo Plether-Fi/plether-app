@@ -28,7 +28,7 @@ describe('canonical price risk (unchanged Solidity vectors from v1.2.2)', () => 
     expect(formatLiquidationPrice(102_397_603n, 200_000_000n, 8)).toBe('0.97602397')
     expect(formatLiquidationPrice(97_597_597n, 200_000_000n, 8)).toBe('1.02402403')
   })
-  it('pays carry from position margin before touching free settlement', () => {
+  it('pays carry from position margin before touching free USDG', () => {
     expect(projectCarry(250_000_000n, 750_000_000n, 20_000_000n)).toEqual({
       positionMarginAssets: 230_000_000n, freeSettlementAssets: 750_000_000n, uncoveredCarryAssets: 0n,
     })

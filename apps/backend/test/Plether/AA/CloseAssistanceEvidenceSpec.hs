@@ -24,7 +24,7 @@ spec = describe "close assistance receipt provenance" $ do
     verify (receipt $ mint otherAccount : drop 1 validLogs) `shouldSatisfy` isLeft
   it "rejects duplicate deposit evidence" $
     verify (receipt $ take 2 validLogs ++ [deposit] ++ drop 2 validLogs) `shouldSatisfy` isLeft
-  it "rejects missing fresh-intent evidence even when settlement asset was deposited" $
+  it "rejects missing fresh-intent evidence even when USDG was deposited" $
     verify (receipt $ take 2 validLogs ++ drop 3 validLogs) `shouldSatisfy` isLeft
   it "excludes validation-phase mints before EntryPoint begins execution" $
     verifyAt 6 (receiptWithoutStart $ validationMint : laterExecutionStart : shiftedLogs) `shouldBe` Right (3,7)

@@ -3,23 +3,23 @@ import { formatCompactAssets, formatCountdown, formatRoi, formatSignedAssets, fo
 
 describe('assets formatting', () => {
   it('keeps six-decimal integer units lossless and rounds for display', () => {
-    expect(formatAssets('100000000000')).toBe('100,000.00 assets')
-    expect(formatAssets('1000999')).toBe('1.00 assets')
-    expect(formatAssets('-1000500')).toBe('-1.00 assets')
+    expect(formatAssets('100000000000')).toBe('100,000.00 USDG')
+    expect(formatAssets('1000999')).toBe('1.00 USDG')
+    expect(formatAssets('-1000500')).toBe('-1.00 USDG')
   })
 
   it('adds a sign only for positive P&L', () => {
-    expect(formatSignedAssets('1000000000')).toBe('+1,000.00 assets')
-    expect(formatSignedAssets('999999999')).toBe('+1,000.00 assets')
-    expect(formatSignedAssets('313177984')).toBe('+313.18 assets')
-    expect(formatSignedAssets('0')).toBe('0.00 assets')
-    expect(formatSignedAssets('-1000000')).toBe('-1.00 assets')
+    expect(formatSignedAssets('1000000000')).toBe('+1,000.00 USDG')
+    expect(formatSignedAssets('999999999')).toBe('+1,000.00 USDG')
+    expect(formatSignedAssets('313177984')).toBe('+313.18 USDG')
+    expect(formatSignedAssets('0')).toBe('0.00 USDG')
+    expect(formatSignedAssets('-1000000')).toBe('-1.00 USDG')
   })
 
   it('uses compact notation for table values', () => {
-    expect(formatCompactAssets('1250000000')).toBe('1.25K assets')
-    expect(formatCompactAssets('1200000000000')).toBe('1.20M assets')
-    expect(formatCompactAssets('999999999')).toBe('1,000.00 assets')
+    expect(formatCompactAssets('1250000000')).toBe('1.25K USDG')
+    expect(formatCompactAssets('1200000000000')).toBe('1.20M USDG')
+    expect(formatCompactAssets('999999999')).toBe('1,000.00 USDG')
   })
 })
 

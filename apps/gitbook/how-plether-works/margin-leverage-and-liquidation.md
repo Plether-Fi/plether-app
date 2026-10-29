@@ -1,8 +1,8 @@
 # Margin, leverage and liquidation
 
-Position margin and same-account trader claims back price risk. Free settlement covers carry separately.
+Position margin and same-account trader claims back price risk. Free USDG covers carry separately.
 
-The USDC[^usdc] shown as **Position margin** is pledged to price losses. Adding free settlement does not move the price-liquidation threshold until funds are assigned to position margin. A same-account claim also supports price equity.
+The USDG[^usdg] shown as **Position margin** is pledged to price losses. Adding free USDG does not move the price-liquidation threshold until funds are assigned to position margin. A same-account claim also supports price equity.
 
 The practical model is:
 
@@ -10,26 +10,26 @@ The practical model is:
 * **Position equity** determines price health; carry coverage and reserve backing are checked separately.
 * **Maintenance margin** determines when the account becomes liquidatable.
 
-### Where your USDC sits
+### Where your USDG sits
 
-All trader collateral is held in the MarginClearinghouse. Within it, USDC is divided into separate accounting buckets.
+All trader collateral is held in the MarginClearinghouse. Within it, USDG is divided into separate accounting buckets.
 
 | Bucket                   | What it means                                                                                         |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Free USDC                | Available for new orders, fees, carry, margin additions or withdrawal—subject to action checks |
-| Position margin          | USDC assigned to the active position                                                                  |
-| Committed order margin   | USDC reserved for a pending order                                                                     |
-| Execution reward reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
+| Free USDG                | Available for new orders, fees, carry, margin additions or withdrawal—subject to action checks |
+| Position margin          | USDG assigned to the active position                                                                  |
+| Committed order margin   | USDG reserved for a pending order                                                                     |
+| Execution reward reserve | USDG reserved to reward the account executing or cleaning up an order                                 |
 
-The total of these buckets forms the account’s settlement balance, but not every bucket is available for every purpose.
+The total of these buckets forms the account’s USDG balance, but not every bucket is available for every purpose.
 
-Position margin and same-account claims support price health. Free settlement, committed-order funds and execution rewards do not support price losses. Dedicated action and liquidation reserves have separate purposes.
+Position margin and same-account claims support price health. Free USDG, committed-order funds and execution rewards do not support price losses. Dedicated action and liquidation reserves have separate purposes.
 
 A trader claim is not spendable cash, but the same account’s claim is included in its position equity and can offset its price losses.
 
 > Price losses use position margin and same-account claims; carry cannot consume either of these sources.
 
-Plether cannot debit USDC or other assets held in your wallet, another protocol or another Plether account.
+Plether cannot debit USDG or other assets held in your wallet, another protocol or another Plether account.
 
 ### The notional used for margin
 
@@ -116,7 +116,7 @@ Position leverage
 = current contract notional ÷ assigned position margin
 ```
 
-This is the leverage shown in the **Current Position** panel. It describes the relationship between the position’s current notional and the USDC explicitly assigned to it.
+This is the leverage shown in the **Current Position** panel. It describes the relationship between the position’s current notional and the USDG explicitly assigned to it.
 
 #### Equity leverage
 
@@ -148,7 +148,7 @@ Equity leverage:  6.67×
 
 If price losses reduce position equity to `$800`, equity leverage rises to `12.50×`, even if assigned position margin and contract notional remain unchanged.
 
-A same-account claim or price profit can reduce equity leverage without changing assigned margin. Free USDC does not change price equity.
+A same-account claim or price profit can reduce equity leverage without changing assigned margin. Free USDG does not change price equity.
 
 Leverage is also a snapshot. It can change because:
 
@@ -162,25 +162,25 @@ Higher leverage means less room for adverse movement and costs. Leverage itself,
 
 ![Current Position fields](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
-### Depositing USDC versus adding position margin
+### Depositing USDG versus adding position margin
 
 These actions are not equivalent.
 
-#### Depositing new USDC
+#### Depositing new USDG
 
-Depositing new USDC into the Margin Account increases the account’s settlement balance. In the current sponsored flow, that USDC is sourced from the separate Trading Account.
+Depositing new USDG into the Margin Account increases the account’s USDG balance. In the current sponsored flow, that USDG is sourced from the separate Trading Account.
 
 If carry is due, some of the deposit may settle it immediately. Depositing can restore carry coverage, but does not itself increase position equity.
 
 #### Adding position margin
 
-Adding position margin moves existing free USDC into the position-margin bucket. It does not:
+Adding position margin moves existing free USDG into the position-margin bucket. It does not:
 
 * increase position size;
 * change entry price;
-* change the total USDC held in settlement.
+* change the total USDG held in settlement.
 
-Moving that USDC into the position increases price-risk backing, while leaving less free settlement for carry.
+Moving that USDG into the position increases price-risk backing, while leaving less free USDG for carry.
 
 Adding position margin can still:
 
@@ -189,19 +189,19 @@ Adding position margin can still:
 * reduce the part of the position economically financed by LP[^lp] capital;
 * reduce future carry.
 
-Plether realizes collectible carry from free settlement before locking added margin. The form’s maximum subtracts projected carry first. Keep additional free funds for future carry; the transaction checks the actual state at execution.
+Plether realizes collectible carry from free USDG before locking added margin. The form’s maximum subtracts projected carry first. Keep additional free funds for future carry; the transaction checks the actual state at execution.
 
 #### Removing position margin
 
 Direct position-margin removal is not supported.
 
-Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
+Reducing or closing the position releases assigned margin proportionally. Once released into free USDG, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
 ![Position-margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 
-Free buying power shows USDC not currently locked in accounting buckets. It does not, by itself, prove that the same amount can safely leave the account.
+Free buying power shows USDG not currently locked in accounting buckets. It does not, by itself, prove that the same amount can safely leave the account.
 
 Before allowing a withdrawal, Plether accounts for:
 
@@ -213,7 +213,7 @@ Before allowing a withdrawal, Plether accounts for:
 * the active protocol state;
 * the account’s health after withdrawal.
 
-The interface therefore shows a separate **Withdrawable** amount. It may be lower than **Available to Trade**, and may temporarily be zero even when some free USDC is visible.
+The interface therefore shows a separate **Withdrawable** amount. It may be lower than **Available to Trade**, and may temporarily be zero even when some free USDG is visible.
 
 ### How liquidation equity is calculated
 
@@ -222,9 +222,9 @@ Position equity = assigned position margin + same-account claim + exact price Pn
 Price liquidation: Position equity ≤ active maintenance margin
 ```
 
-Free settlement, order commitments, liquidation reserves and VPI reserves do not enter this price-equity formula. Carry is collected only from eligible free settlement. An uncovered carry amount or an insufficient VPI reserve is a separate account-health failure.
+Free USDG, order commitments, liquidation reserves and VPI reserves do not enter this price-equity formula. Carry is collected only from eligible free USDG. An uncovered carry amount or an insufficient VPI reserve is a separate account-health failure.
 
-For example, with 1,000 USDC of position margin, a 500 USDC claim and a 1,150 USDC price loss, position equity is 350 USDC. Against 250 USDC maintenance, the price buffer is 100 USDC. A further 100 USDC price loss reaches liquidation equality even if substantial free settlement remains. If 50 USDC of carry is due, free settlement must cover it separately.
+For example, with 1,000 USDG of position margin, a 500 USDG claim and a 1,150 USDG price loss, position equity is 350 USDG. Against 250 USDG maintenance, the price buffer is 100 USDG. A further 100 USDG price loss reaches liquidation equality even if substantial free USDG remains. If 50 USDG of carry is due, free USDG must cover it separately.
 
 ### Liquidation price
 
@@ -390,8 +390,8 @@ In practice:
 
 * Monitor position equity and maintenance margin together, plus the contract’s liquidatable status.
 * Leave room for price movement, carry and the market-close regime.
-* Deposit USDC for carry and actions; assign margin explicitly to increase price-risk backing.
-* Leave free settlement for future carry after adding position margin.
+* Deposit USDG for carry and actions; assign margin explicitly to increase price-risk backing.
+* Leave free USDG for future carry after adding position margin.
 * Treat **Withdrawable**, not free buying power, as the withdrawal limit.
 * Remember that a pending close leaves the position live.
 * Treat the displayed liquidation price as an estimate.
@@ -406,12 +406,12 @@ In practice:
 
 The fixed `0.00–2.00` range bounds directional price PnL for a fixed position. That PnL bound does not include carry, execution fees, execution rewards, VPI or a liquidation bounty, and it does not prevent liquidation before either price boundary is reached.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.

@@ -1,6 +1,6 @@
 # Read your LP position and pool health
 
-An LP[^lp] position is a balance of Senior or Junior vault shares. Those shares record a proportional claim on one tranche[^tranche] of the liquidity pool. They are not a fixed USDC[^usdc] balance, and a positive position value does not guarantee that the same amount can be withdrawn immediately.
+An LP[^lp] position is a balance of Senior or Junior vault shares. Those shares record a proportional claim on one tranche[^tranche] of the liquidity pool. They are not a fixed USDG[^usdg] balance, and a positive position value does not guarantee that the same amount can be withdrawn immediately.
 
 Read the page as three separate questions:
 
@@ -52,19 +52,19 @@ The selected vault header separates accounting value, historical performance and
 | **Current vault value** | Current accounting value assigned to the selected tranche. It is not cumulative deposits and is not a promise of immediate redemption. |
 | **7d realized APY** | Annualized historical return derived from the actual seven-day share-price change. It appears only with complete history and is not a forecast. |
 | **Share price** | Current accounting value of one psLP or pjLP share. |
-| **Estimated withdrawal liquidity** | Pool-level USDC that may be available to fund the selected tranche, with Senior funded first. It is not your wallet's guaranteed receipt. |
+| **Estimated withdrawal liquidity** | Pool-level USDG that may be available to fund the selected tranche, with Senior funded first. It is not your wallet's guaranteed receipt. |
 | **How returns work** | A summary of the tranche's targeted or residual return model. |
 
 On **Overview**, the first four metrics answer more personal and operational questions:
 
 | Label | How to read it |
 | --- | --- |
-| **Your position** | Estimated current USDC value of the connected wallet's active shares. |
+| **Your position** | Estimated current USDG value of the connected wallet's active shares. |
 | **Shares available to withdraw** | Shares the wallet can currently place into a withdrawal request. During cooldown, the live **Available in** countdown explains why this can be zero. |
 | **Available withdrawal liquidity** | Pool-level funding capacity for the selected tranche at the next processing time. Junior is shown after Senior priority. |
 | **Deposit availability** | Whether new deposit requests are open, together with the current hourly-window countdown. |
 
-In **Your position**, the app also shows **Your active position**, **Current value**, **Shares available to withdraw** and **USDC ready for wallet**. The last value is USDC already allocated to processed withdrawal requests but not yet moved into the owner wallet.
+In **Your position**, the app also shows **Your active position**, **Current value**, **Shares available to withdraw** and **USDG ready for wallet**. The last value is USDG already allocated to processed withdrawal requests but not yet moved into the owner wallet.
 
 ### Read shares, share price and current value
 
@@ -112,11 +112,11 @@ A share price can therefore fall. A historical increase, a targeted Senior retur
 
 For the complete allocation rules, see [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md#the-waterfall) and [Trading costs: fees, carry and VPI](../how-plether-works/trading-costs-fees-carry-and-vpi.md#what-lps-receive).
 
-### Current value is not immediately withdrawable USDC
+### Current value is not immediately withdrawable USDG
 
-All withdrawals use the hourly request flow. The **Withdraw USDC** form accepts a desired USDC amount, refreshes an **Estimated shares used** quote, and queues those shares. It does not exchange the shares for a fixed USDC receipt in the submission transaction.
+All withdrawals use the hourly request flow. The **Withdraw USDG** form accepts a desired USDG amount, refreshes an **Estimated shares used** quote, and queues those shares. It does not exchange the shares for a fixed USDG receipt in the submission transaction.
 
-The shares continue to gain or lose value while the request waits. The final USDC amount is set when Plether processes and funds the withdrawal, so it can differ from the request-time estimate.
+The shares continue to gain or lose value while the request waits. The final USDG amount is set when Plether processes and funds the withdrawal, so it can differ from the request-time estimate.
 
 Before LP capital can leave, Plether protects cash for trader liabilities, outstanding trader claims and other reserved amounts. Read these figures separately:
 
@@ -132,7 +132,7 @@ Senior withdrawal requests are funded before Junior requests. Junior can therefo
 This is why:
 
 * **Current value** can be positive while **Shares available to withdraw** is zero during cooldown.
-* Eligible shares can be queued while the request later waits for enough USDC.
+* Eligible shares can be queued while the request later waits for enough USDG.
 * Junior can wait longer than Senior for funding.
 * A large **Total pool funds** value does not mean the same amount is available for LP withdrawals.
 
@@ -146,7 +146,7 @@ The **How this vault works** panel shows operational terms rather than a return 
 
 * **Processing** — every hour.
 * **Network** — Arbitrum Sepolia.
-* **Asset** — USDC.
+* **Asset** — USDG.
 * **Vault share symbol** — `psLP` for Senior or `pjLP` for Junior.
 * **Deposits** — the current deposit status.
 * **Submission deadline** — five minutes before each hour.
@@ -163,7 +163,7 @@ The **Shared pool status** panel uses these exact labels:
 | --- | --- |
 | **Total pool funds** | Canonical physically backed pool depth: `min(raw assets, accounted assets)`, excluding quarantined excess. It is not necessarily the liquidity pool's literal token balance. |
 | **Available liquidity** | Pool cash left after protected amounts; this is before applying your share balance and request state. |
-| **Reserved for trader withdrawals** | USDC set aside for trader payouts and other protected payments. |
+| **Reserved for trader withdrawals** | USDG set aside for trader payouts and other protected payments. |
 | **Trading revenue awaiting distribution** | Collected value not yet assigned through tranche accounting. |
 | **Funds awaiting loss recovery** | Recovery capital awaiting assignment. It is not ordinary current yield. |
 | **Unresolved pool shortfall** | A remaining deficit. A positive value is a severe accounting and deposit-availability warning. |
@@ -172,7 +172,7 @@ The **Shared pool status** panel uses these exact labels:
 | **Safety restrictions** | Whether degraded safety restrictions are active. |
 | **New deposits paused** | Whether the emergency pool pause blocks new deposits. |
 | **Hourly processing paused** | Whether new shares and withdrawal funding are waiting for processing to resume. |
-| **New withdrawal funding** | Whether the current state permits new USDC allocation to withdrawal requests. |
+| **New withdrawal funding** | Whether the current state permits new USDG allocation to withdrawal requests. |
 
 The remaining Overview sections show **Protected balance** for Senior or **Junior loss buffer** for Junior, followed by **Delayed settings changes**. The displayed pool risk, Junior fee, trading and pricing settings require 48 hours' notice before taking effect.
 
@@ -183,14 +183,14 @@ If required onchain action data is missing, the affected metric shows `Unavailab
 Every deposit and withdrawal is a queued request:
 
 ```text
-Owner-wallet USDC
+Owner-wallet USDG
 → queued deposit
 → hourly processing and source-deposit cooldown start
 → shares ready
 → move shares to wallet, or queue a direct withdrawal after cooldown
 → queued withdrawal
 → hourly funding
-→ move USDC to wallet
+→ move USDG to wallet
 ```
 
 Plether assigns requests to hourly eligibility boundaries; actual processing can occur later. The contract uses the request transaction's block-inclusion timestamp: inclusion strictly before the five-minute cutoff targets the next boundary, while inclusion at or after it targets the following one. Signing or sending earlier is not enough if confirmation lands after the cutoff; treat the confirmed request record as authoritative.
@@ -201,29 +201,29 @@ Do not submit a duplicate request just because its expected time has passed. Rea
 
 ### Read pending deposits
 
-Pending deposit USDC is separate from wallet-held shares. The final share amount is set when processing occurs, not when the request is submitted.
+Pending deposit USDG is separate from wallet-held shares. The final share amount is set when processing occurs, not when the request is submitted.
 
 | Status | What it means | Available action |
 | --- | --- | --- |
-| **Pending** | The vault holds the submitted USDC for a future hourly processing time. | **Cancel deposit** is available before the processing boundary. |
+| **Pending** | The vault holds the submitted USDG for a future hourly processing time. | **Cancel deposit** is available before the processing boundary. |
 | **Waiting for processing** | The expected time has passed, but neither ready shares nor a refund exists yet. | Wait; do not submit a duplicate. |
 | **Shares ready** | The processed shares already participate in vault performance, remain in vault custody and age from their activation time. | **Move shares to wallet**, or **Queue direct withdrawal** after cooldown when shown. |
-| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and USDC is available to recover. | **Return USDC to wallet**. |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected and USDG is available to recover. | **Return USDG to wallet**. |
 
-Each item includes a deposit reference, **Expected processing**, **Estimated shares**, and—when applicable—**Shares ready for wallet** or **USDC ready to return**.
+Each item includes a deposit reference, **Expected processing**, **Estimated shares**, and—when applicable—**Shares ready for wallet** or **USDG ready to return**.
 
 ### Read pending withdrawals
 
-A withdrawal request escrows shares, not a fixed USDC amount. The displayed **Estimated USDC** can change while those shares wait.
+A withdrawal request escrows shares, not a fixed USDG amount. The displayed **Estimated USDG** can change while those shares wait.
 
 | Status | What it means | Available action |
 | --- | --- | --- |
 | **Pending** | Shares are queued for a future hourly processing time and continue to gain or lose value. | **Cancel withdrawal** is available before the processing boundary. |
-| **Waiting for USDC** | The expected processing epoch has arrived or passed, but no USDC has been allocated. A pause, pricing, health, liquidity or matured-Senior gate may still block funding. | Wait and check the live funding state. |
-| **USDC ready** | USDC has been allocated to all or part of the request. A zero-value share remainder may also be returnable. | **Move USDC to wallet**. |
+| **Waiting for USDG** | The expected processing epoch has arrived or passed, but no USDG has been allocated. A pause, pricing, health, liquidity or matured-Senior gate may still block funding. | Wait and check the live funding state. |
+| **USDG ready** | USDG has been allocated to all or part of the request. A zero-value share remainder may also be returnable. | **Move USDG to wallet**. |
 | **Shares ready to return** | A remaining share amount quoted to zero assets and entered the terminal refund state. | **Return shares to wallet**. |
 
-A partially funded request can show **USDC ready** while also exposing **Return shares to wallet** for a zero-value remainder. Ordinary insufficient-liquidity remainders stay queued for later funding rather than becoming returnable.
+A partially funded request can show **USDG ready** while also exposing **Return shares to wallet** for a zero-value remainder. Ordinary insufficient-liquidity remainders stay queued for later funding rather than becoming returnable.
 
 If older request discovery fails, the app warns **Older activity is unavailable** while continuing to check the latest pending activity. Use **Retry history** rather than assuming an older request disappeared.
 
@@ -238,7 +238,7 @@ The following recovery actions restart the cooldown for the connected wallet's e
 
 An ordinary wallet-to-wallet transfer is possible only after the sender cooldown and propagates the sender's timestamp rather than starting a fresh hour. Until the countdown ends, wallet-held shares cannot be transferred or used for a new withdrawal request. **Shares available to withdraw** shows a live **Available in** countdown. A claimable deposit with an elapsed source cooldown can instead show **Queue direct withdrawal**, which moves shares from that single deposit into the current withdrawal queue without a wallet transfer or approval. Waiting shares can still gain or lose value during the cooldown.
 
-Moving already allocated USDC to the wallet does not return shares and is not described as a cooldown-triggering action.
+Moving already allocated USDG to the wallet does not return shares and is not described as a cooldown-triggering action.
 
 ### Read Performance when it is present
 
@@ -255,7 +255,7 @@ Realized APY can be negative. It is historical, not a forecast or a promised rat
 
 **Holder distribution** shows the current value already moved into user wallets and each holder's percentage of wallet-held vault value. It excludes pending deposits and processed shares still waiting to be moved.
 
-**Recent deposits and withdrawals** shows submitted requests with **Date**, **Type**, **Amount**, **User** and **Transaction**. A withdrawal row displays an approximate current USDC value because its final amount is set at processing. Both lists are tranche-specific and paginated five rows at a time.
+**Recent deposits and withdrawals** shows submitted requests with **Date**, **Type**, **Amount**, **User** and **Transaction**. A withdrawal row displays an approximate current USDG value because its final amount is set at processing. Both lists are tranche-specific and paginated five rows at a time.
 
 Holder and recent-activity data comes from block-explorer indexing. A temporary activity error does not change the onchain vault balance, but it can make the list incomplete until the indexer recovers.
 
@@ -283,10 +283,10 @@ A tranche with shares outstanding and zero accounting assets is terminally wiped
 | State | Current Vaults behavior |
 | --- | --- |
 | **Scheduled close-only, live pricing** | Normal request, cooldown and liquidity rules continue. The schedule alone does not activate the temporary pricing fee. |
-| **Live pricing unavailable / oracle frozen** | New deposits are unavailable. A withdrawal can still be queued, and its current share quote includes the displayed temporary pricing fee. The queued shares are fixed; later pricing or fee changes affect final USDC. Wait for live pricing when possible. |
+| **Live pricing unavailable / oracle frozen** | New deposits are unavailable. A withdrawal can still be queued, and its current share quote includes the displayed temporary pricing fee. The queued shares are fixed; later pricing or fee changes affect final USDG. Wait for live pricing when possible. |
 | **Market price out of date or required data unavailable** | Pricing-dependent processing or actions can wait until acceptable data returns. |
 | **New deposits paused** | New deposit requests are blocked. Withdrawal requests remain available unless a separate limit applies. |
-| **Safety restrictions active** | Deposits are blocked. The interface can still accept withdrawal requests, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode. Already-funded actions remain usable. |
+| **Safety restrictions active** | Deposits are blocked. The interface can still accept withdrawal requests, but no new withdrawal USDG is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode. Already-funded actions remain usable. |
 | **Hourly processing paused** | Requests can still be submitted when other limits permit; pre-boundary cancellations and already-ready claim or return actions remain available. Deposits do not start earning and withdrawals receive no new funding until processing resumes. |
 | **Senior impaired or unresolved pool shortfall** | New deposits are blocked and future value follows the recovery waterfall. |
 
@@ -302,7 +302,7 @@ Before depositing:
 
 While invested:
 
-1. Keep **Your active position** separate from pending deposits, pending withdrawals and **USDC ready for wallet**.
+1. Keep **Your active position** separate from pending deposits, pending withdrawals and **USDG ready for wallet**.
 2. Review every pending item's exact status before taking an action or submitting another request.
 3. Compare **Current value**, **Shares available to withdraw** and **Available withdrawal liquidity**.
 4. Watch the live cooldown countdown.
@@ -313,9 +313,9 @@ When planning an exit, continue to [Withdraw liquidity](withdraw-liquidity.md). 
 
 The distinction to remember is simple: **shares measure an accounting claim; the hourly request state and available liquidity determine when cash can move to the wallet.**
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.

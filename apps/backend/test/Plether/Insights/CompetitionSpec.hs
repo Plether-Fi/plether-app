@@ -456,7 +456,7 @@ spec = do
       qMeetsProfitRequirement (qualification july2026Competition EligibilityEligible 999_999_999 5)
         `shouldBe` False
 
-    it "uses the exact +1.00 settlement asset threshold for September" $ do
+    it "uses the exact +1.00 USDG threshold for September" $ do
       qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 1_000_000 5)
         `shouldBe` True
       qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 999_999 5)

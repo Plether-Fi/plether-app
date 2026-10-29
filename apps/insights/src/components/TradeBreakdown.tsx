@@ -33,7 +33,7 @@ export function TradeBreakdownDetails({ item }: { item: WalletActivity }) {
           <dt>Actual account change</dt><dd className={`whitespace-nowrap tabular-nums ${breakdown.actual < 0n ? 'text-brand-orange' : 'text-positive'}`}>{amount(breakdown.actual)}</dd>
         </div>
         {breakdown.claimChange !== 0n && <>
-          <div className="flex justify-between gap-6 text-xs text-content-secondary"><dt>Settlement balance change</dt><dd>{amount(breakdown.settlementChange)}</dd></div>
+          <div className="flex justify-between gap-6 text-xs text-content-secondary"><dt>USDG balance change</dt><dd>{amount(breakdown.settlementChange)}</dd></div>
           <div className="flex justify-between gap-6 text-xs text-content-secondary"><dt>Trader claim change</dt><dd>{amount(breakdown.claimChange)}</dd></div>
         </>}
       </dl>
@@ -43,6 +43,6 @@ export function TradeBreakdownDetails({ item }: { item: WalletActivity }) {
       {breakdown.unexplained !== 0n && <p className="mt-3 text-xs text-content-secondary">Other settlement adjustment is the remaining difference between assessed costs and the recorded account change. Its cause has not been classified.</p>}
       {breakdown.notice === 'Charges partly waived' && <p className="mt-3 text-xs text-content-secondary">The contract waived charges that settlement could not collect. Collateral reserved for other purposes may still remain in the account.</p>}
       {breakdown.notice === 'Fee deducted from rebate' && <p className="mt-3 text-xs text-content-secondary">The protocol fee reduces the gross VPI rebate. A zero treasury collection does not mean this execution was free.</p>}
-      <p className="mt-3 text-xs leading-5 text-content-tertiary">Actual account change includes settlement balance and trader claims. Released position margin is existing collateral, not additional profit.{item.type.toLowerCase() === 'open' ? ' This change covers the opening or increase, not the eventual position return.' : ''}</p>
+      <p className="mt-3 text-xs leading-5 text-content-tertiary">Actual account change includes USDG balance and trader claims. Released position margin is existing collateral, not additional profit.{item.type.toLowerCase() === 'open' ? ' This change covers the opening or increase, not the eventual position return.' : ''}</p>
     </div>
 }

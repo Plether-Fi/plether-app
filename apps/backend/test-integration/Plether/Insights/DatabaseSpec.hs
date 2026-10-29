@@ -790,7 +790,7 @@ insightsDatabaseSpec databaseUrl =
         ilrFinalPnlAssets malformed `shouldBe` Just gain
         ilrFundingIntegrityClear malformed `shouldBe` False
 
-        -- Moving the claimed mint away and replacing it with unrelated settlement asset
+        -- Moving the claimed mint away and replacing it with unrelated USDG
         -- cannot reuse the faucet entitlement to bless later capital.
         insertTransfer conn walletA attacker bankroll 85 6 "official-out"
         insertTransfer conn attacker walletA bankroll 86 7 "unofficial-in"

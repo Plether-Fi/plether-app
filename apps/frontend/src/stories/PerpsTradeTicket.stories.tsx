@@ -344,6 +344,34 @@ export const PreviewModal: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+export const QuickstartOrder: Story = {
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'preview',
+    initialDirection: 'long',
+    initialOrderQuantity: '2 000',
+    initialLeverage: 2,
+    currentPositionAmount: '0',
+    availableToTradeRaw: 100_000n * ASSETS,
+    availableToTradeAmount: '100 000',
+    settlementBalanceAssetsRaw: 100_000n * ASSETS,
+    withdrawableAssetsRaw: 100_000n * ASSETS,
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalAssets: 1_966n * ASSETS,
+      marginDeltaAssets: 983n * ASSETS,
+      postSize: 2_000n * 10n ** 18n,
+      postMarginAssets: 983n * ASSETS,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const QuickstartPreview: Story = {
+  args: { ...QuickstartOrder.args, initialReviewOpen: true },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const PreparingWalletRequest: Story = {
   name: 'Open Long · Preparing Wallet Request',
   args: {

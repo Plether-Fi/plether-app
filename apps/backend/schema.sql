@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
 
--- Sepolia testnet mock settlement asset faucet claims
+-- Sepolia testnet MockUSDG faucet claims
 CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     address VARCHAR(42) NOT NULL,
     amount BIGINT NOT NULL,

@@ -134,7 +134,7 @@ captureAtBlocks client pool cfg multicallSize cursor weekStart baseline current 
     (chain, router, upper)
   let addresses = [wallet | Only wallet <- wallets]
   unless (null addresses) $ do
-    -- Every flow is checked against the indexed settlement asset transfer and the exact
+    -- Every flow is checked against the indexed USDG transfer and the exact
     -- clearinghouse. Assisted-close deposits are internal and excluded.
     flowRows <- withDb pool $ \conn -> query conn
       "SELECT LOWER(a.account), a.activity_type, a.amount_assets::text, \

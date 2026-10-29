@@ -32,7 +32,7 @@ import Plether.Ethereum.Client
 -- | Complete account state returned by
 -- @CfdEngineAccountLens.getAccountLedgerSnapshot(address)@.
 --
--- All monetary values use the contracts' native settlement asset precision. The two
+-- All monetary values use the contracts' native USDG precision. The two
 -- signed fields are decoded as two's-complement @int256@ values.
 data AccountLedgerSnapshot = AccountLedgerSnapshot
   { alsSettlementBalanceAssets :: Integer

@@ -369,9 +369,9 @@ const COMPACT_PREVIEW_ROW_LABELS = new Set([
 const VPI_PRICE_IMPACT_TOOLTIP =
   'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
 const CLOSE_VPI_TOOLTIP =
-  'For a close or reduction, positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement after the lifetime VPI clamp. A credit is not sent directly to the owner wallet. The preview can change before execution.'
+  'For a close or reduction, positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account in USDG after the lifetime VPI clamp. A credit is not sent directly to the owner wallet. The preview can change before execution.'
 const POSITION_VPI_BALANCE_TOOLTIP =
-  'The position\'s signed net VPI over its lifecycle. Net paid VPI can support a future closing credit. A provisional credit has already been added to settlement, remains excluded from risk equity, and may be reconciled on close. Partial-reduction limits are applied automatically to the VPI estimate.'
+  'The position\'s signed net VPI over its lifecycle. Net paid VPI can support a future closing credit. A provisional credit has already been added to your USDG balance, remains excluded from risk equity, and may be reconciled on close. Partial-reduction limits are applied automatically to the VPI estimate.'
 const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
   'Execution uses the adverse side of the Pyth confidence range for opens and for live or FAD-only closes. Oracle-frozen voluntary closes/reductions waive that price shift and use the separate frozen close spread instead; confidence-width validation still applies.'
 const FROZEN_CLOSE_SPREAD_TOOLTIP =
@@ -3330,11 +3330,11 @@ export function PerpsTradeTicket({
         {
           label: 'Commitment carry',
           value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={activeReviewSummary?.commitmentCarryAssets === undefined ? '--' : formatUnits(activeReviewSummary.commitmentCarryAssets, 6)} />,
-          tooltip: 'Carry paid when committing the close, from position margin first and then free settlement. Separate from execution costs.',
+          tooltip: 'Carry paid when committing the close, from position margin first and then free USDG. Separate from execution costs.',
           tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
         },
         {
-          label: 'Settlement after execution',
+          label: 'USDG after execution',
           value: formatAssetsRaw(closeReviewAssessment?.postSettlementBalanceAssets),
           tooltip: `Total internal ${PERPS_SETTLEMENT_TOKEN_LABEL} after commitment and execution, including locked funds. This is not the amount available to withdraw.`,
           tooltipDocsLink: DOCS_LINKS.withdrawable,
@@ -4604,8 +4604,8 @@ export function PerpsTradeTicket({
         <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Margin Account</div>
           <div className="space-y-2">
-            <AccountSummaryRow label="Settlement balance" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(settlementBalanceAssetsRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims.`} />
-            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(positionEquityAssetsRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free settlement and dedicated reserves do not increase this price buffer." /> : null}
+            <AccountSummaryRow label="USDG balance" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(settlementBalanceAssetsRaw)} />} tooltipDocsLink={DOCS_LINKS.withdrawable} tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} held in the clearinghouse, including locked margin and reserves. Excludes unrealized PnL and unsettled trader claims.`} />
+            {currentPosition?.exists ? <AccountSummaryRow label="Position equity" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(positionEquityAssetsRaw)} />} tooltipDocsLink={DOCS_LINKS.liquidationPrice} tooltip="Position margin after carry plus same-account claims and exact price PnL. Free USDG and dedicated reserves do not increase this price buffer." /> : null}
             <AccountSummaryRow
               label="Unrealized PnL"
               value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatSignedPerpsAssets(unrealizedPnlRaw)} />}

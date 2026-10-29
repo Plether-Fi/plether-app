@@ -34,7 +34,7 @@ describe('MockUSDG sponsorship manifest', () => {
   })
   it('rejects a signed-deposit capability that conflicts with release metadata', () => {
     expect(() => parsePerpsAaManifest({ ...rawManifest, settlementTokenSupportsEip3009: true, settlementTokenEip712Name: 'Mock USDG', settlementTokenEip712Version: '1' }))
-      .toThrow('must match the configured settlement-token capabilities')
+      .toThrow('must match the configured USDG token capabilities')
   })
   it('rejects a stale token address', () => {
     expect(() => parsePerpsAaManifest({ ...rawManifest, settlementToken: '0x1111111111111111111111111111111111111111' }))

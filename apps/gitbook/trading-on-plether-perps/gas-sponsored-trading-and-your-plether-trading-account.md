@@ -4,11 +4,11 @@ The current Plether Perps deployment uses a separate smart account for trading. 
 
 Plether sponsors network gas for eligible Trading Account actions, subject to availability and policy limits. There is no direct owner-wallet or self-funded fallback in the current interface.
 
-Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], execution rewards and the frozen-close spread remain USDC[^usdc] costs.
+Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], execution rewards and the frozen-close spread remain USDG[^usdg] costs.
 
 ### Close — sponsored on Arbitrum Sepolia
 
-When close assistance is available, an otherwise valid full or partial close can receive the exact USDC amount missing from its keeper bounty, up to $0.20. Close review displays **Close — sponsored**, the covered amount and sponsored gas. You authorize one Trading Account operation; funding and order commitment happen together, without a separate deposit step.
+When close assistance is available, an otherwise valid full or partial close can receive the exact USDG amount missing from its keeper bounty, up to $0.20. Close review displays **Close — sponsored**, the covered amount and sponsored gas. You authorize one Trading Account operation; funding and order commitment happen together, without a separate deposit step.
 
 Your existing collateral must cover accrued carry. Assistance does not waive trading charges, partial-close health checks, minimum sizes, pending-order restrictions or active position protection. A changed funding requirement requires a fresh review. Successful commitment queues the close; the keeper still executes it separately.
 
@@ -22,7 +22,7 @@ Assistance has no automatic expiration and can be explicitly disabled. Competiti
 | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | **Owner wallet**     | The connected wallet used to control the Trading Account and authorize its actions                       |
 | **Trading Account**  | A separate smart-account address that owns positions, orders, margin, token balances and trader claims   |
-| **Margin Account**   | Plether’s internal USDC balance for the Trading Account; it has no separate wallet address                |
+| **Margin Account**   | Plether’s internal USDG balance for the Trading Account; it has no separate wallet address                |
 
 The owner wallet and Trading Account use different addresses on the current deployment:
 
@@ -43,12 +43,12 @@ The current sponsorship allowlist covers:
 
 | Action                    | What the Trading Account does                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------ |
-| **Deposit margin**        | Approves an exact amount of Trading Account USDC and deposits it into the Margin Account |
+| **Deposit margin**        | Approves an exact amount of Trading Account USDG and deposits it into the Margin Account |
 | **Open or increase**      | Commits a risk-increasing order to the global FIFO[^fifo] queue                       |
 | **Reduce or close**       | Commits a risk-reducing order to the same global FIFO queue                           |
-| **Add position margin**   | Assigns free Margin Account USDC to an existing position                              |
+| **Add position margin**   | Assigns free Margin Account USDG to an existing position                              |
 | **Settle a trader claim** | Credits a serviceable claim to the Margin Account                                     |
-| **Withdraw margin**       | Withdraws eligible USDC and transfers the exact amount to the verified owner wallet   |
+| **Withdraw margin**       | Withdraws eligible USDG and transfers the exact amount to the verified owner wallet   |
 
 All sponsored calls send zero native value. The sponsor validates the Trading Account, owner and exact call sequence before funding an operation. Arbitrary contract calls and unrelated token transfers are not sponsored.
 
@@ -63,17 +63,17 @@ In the current sponsored interface:
 * The owner wallet is not asked to finalize an order.
 * The owner wallet is not asked to clean up an expired order.
 * The owner wallet does not pay native gas or the Pyth update fee for keeper processing.
-* For ordinary execution, failure or expiry cleanup, the reserved USDC execution reward is paid to the account that processes the terminal order result. If liquidation clears the order first, the reward is forfeited to the protocol treasury.
+* For ordinary execution, failure or expiry cleanup, the reserved USDG execution reward is paid to the account that processes the terminal order result. If liquidation clears the order first, the reward is forfeited to the protocol treasury.
 
 An expired row under **Open Orders** therefore shows **Keeper cleanup in progress** and **Keeper processing**, not a trader-operated **Clean Up** action.
 
 ### What sponsorship pays
 
-Eligible [TP/SL](take-profit-and-stop-loss.md) creation, editing and removal also use owner-authorized sponsored operations when enabled for the deployment. This is separate from keeper execution: the protection worker triggers or retries a close, and the order keeper finalizes it. Sponsorship does not pay the protection's USDC trigger and execution reserve. A confirmed TP/SL update does not mean that its eventual close has executed.
+Eligible [TP/SL](take-profit-and-stop-loss.md) creation, editing and removal also use owner-authorized sponsored operations when enabled for the deployment. This is separate from keeper execution: the protection worker triggers or retries a close, and the order keeper finalizes it. Sponsorship does not pay the protection's USDG trigger and execution reserve. A confirmed TP/SL update does not mean that its eventual close has executed.
 
 Plether pays the network gas required to include an eligible smart-account operation. The following still come from the Trading Account or the trade’s settlement:
 
-* USDC deposited into the Margin Account
+* USDG deposited into the Margin Account
 * Position margin
 * Protocol execution fees
 * VPI charges or credits
@@ -91,7 +91,7 @@ For each eligible action, the owner wallet signs an authorization for the prepar
 * The network
 * The owner wallet
 * The Trading Account
-* The action and USDC amount
+* The action and USDG amount
 * The withdrawal recipient, when applicable
 * That network gas is shown as sponsored
 
@@ -101,9 +101,9 @@ Creating the signature is an offchain action and does not itself consume network
 
 ### Fund and deposit
 
-On the current Arbitrum Sepolia deployment, the sponsored deposit operation uses USDC held at the Trading Account address.
+On the current Arbitrum Sepolia deployment, the sponsored deposit operation uses USDG held at the Trading Account address.
 
-The testnet welcome flow sends MockUSDC directly to the derived Trading Account. The deposit modal also supports MockUSDC that has returned to the owner wallet after a withdrawal. It first transfers only the required shortfall to the verified Trading Account, then continues with the sponsored deposit.
+Select **Get USDG**, then **Get 100,000 USDG** to mint MockUSDG directly to the derived Trading Account. The owner wallet pays Arbitrum Sepolia ETH for this mint transaction. After it confirms, the app requests a sponsored deposit into the Margin Account. You can request more test USDG again after completing the flow. The deposit modal also supports MockUSDG that has returned to the owner wallet after a withdrawal. It first transfers only the required shortfall to the verified Trading Account, then continues with the sponsored deposit.
 
 To deposit:
 
@@ -118,7 +118,7 @@ The Trading Account batches two exact calls:
 1. Approve the Margin Clearinghouse for the deposit amount.
 2. Deposit the same amount into the Margin Account.
 
-When the Trading Account already holds the complete amount, the transfer step is skipped. If the transfer succeeds but the sponsored deposit fails, the USDC remains in the Trading Account and can be deposited on retry.
+When the Trading Account already holds the complete amount, the transfer step is skipped. If the transfer succeeds but the sponsored deposit fails, the USDG remains in the Trading Account and can be deposited on retry.
 
 The batch is atomic. If either call fails, the Margin Account is not credited and the approval does not remain changed.
 
@@ -128,8 +128,8 @@ A withdrawal begins with the Trading Account’s withdrawable Margin Account bal
 
 The sponsored operation performs two exact calls as one batch:
 
-1. Withdraw eligible USDC from the Margin Account to the Trading Account.
-2. Transfer the same USDC amount from the Trading Account to its verified owner wallet.
+1. Withdraw eligible USDG from the Margin Account to the Trading Account.
+2. Transfer the same USDG amount from the Trading Account to its verified owner wallet.
 
 Plether’s sponsor rejects a withdrawal batch whose transfer recipient is not the verified owner or whose two amounts differ. Gas sponsorship does not increase the amount available for withdrawal.
 
@@ -217,13 +217,13 @@ The owner-wallet address is used for ownership and signatures. The separate Trad
 
 Your owner wallet controls the Trading Account through its signature rules. The sponsor decides whether to pay network gas, but it cannot sign trader actions or withdraw funds on your behalf.
 
-USDC in the Margin Account remains subject to Plether’s margin, reservation and settlement rules. Never share your private key or recovery phrase with Plether support.
+USDG in the Margin Account remains subject to Plether’s margin, reservation and settlement rules. Never share your private key or recovery phrase with Plether support.
 
 #### Do I need the network’s native gas token?
 
 The owner wallet and Trading Account do not need native gas for eligible sponsored Plether operations. Keeper-operated order execution and expiry cleanup also do not charge the owner wallet native gas.
 
-The owner wallet does need Arbitrum Sepolia ETH when the deposit flow must first transfer MockUSDC to the Trading Account. That transfer is a regular token transaction rather than a sponsored Trading Account operation.
+The owner wallet needs Arbitrum Sepolia ETH to mint test USDG or transfer MockUSDG to the Trading Account. Minting and owner-wallet transfers are regular transactions. Plether sponsors the subsequent eligible deposit operation.
 
 #### Why is my sponsored order still pending?
 
@@ -231,10 +231,10 @@ Sponsorship covers the operation that commits the order. Execution is a separate
 
 #### Does sponsorship cover my trading costs?
 
-It covers eligible network gas. Execution fees, VPI, carry, execution rewards and the frozen-close spread continue to be accounted for in USDC.
+It covers eligible network gas. Execution fees, VPI, carry, execution rewards and the frozen-close spread continue to be accounted for in USDG.
 
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

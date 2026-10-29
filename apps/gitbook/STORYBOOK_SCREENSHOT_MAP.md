@@ -2,7 +2,7 @@
 
 This inventory maps the Storybook screenshots embedded in published `apps/gitbook` articles to their deterministic states. Full capture runs remove unused PNGs from `.gitbook/assets/screenshots`.
 
-Live Firefox and MetaMask captures for `trader-quickstart.md` are stored separately in `.gitbook/assets/trader-quickstart`. They are refreshed manually from the Sepolia interface and are outside the Storybook capture and pruning process.
+Trader quickstart captures use current production components with illustrative USDG values. Wallet confirmation steps are documented in text.
 
 References use the article path and current screenshot line so the capture script can locate and synchronize each embed.
 
@@ -39,20 +39,20 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
 | `how-plether-works/how-pnl-is-calculated.md:77` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:544` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
+| `how-plether-works/how-pnl-is-calculated.md:537` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/margin-leverage-and-liquidation.md:164` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/margin-leverage-and-liquidation.md:201` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `how-plether-works/margin-leverage-and-liquidation.md:163` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `how-plether-works/margin-leverage-and-liquidation.md:200` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Market states and oracle closures
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `how-plether-works/market-states-and-oracle-closures.md:516` | Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown; not the contract calendar |
+| `how-plether-works/market-states-and-oracle-closures.md:509` | Illustrative market-phase banner with a fixture countdown, not the recurring weekly schedule | [Open Then Close Only](http://localhost:6006/?path=/story/perps-market-state-panel--open-then-close-only) | Current component, illustrative countdown; not the contract calendar |
 
 ## Liquidity pool and tranche waterfall
 
@@ -95,23 +95,33 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/your-margin-account.md:207` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `trading-on-plether-perps/your-margin-account.md:204` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Take profit and stop loss
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:37` | Trade ticket with Take profit / stop loss checked and both trigger inputs expanded | [New order with TP/SL](http://localhost:6006/?path=/story/perps-trade-ticket--add-take-profit-stop-loss) | Current component, illustrative values, no wallet transactions |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:59` | Active TP/SL with saved trigger prices and the worker monitoring notice | [Active TP/SL](http://localhost:6006/?path=/story/perps-position-protection--armed) | Current component, illustrative worker observation |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:100` | Close queued after a trigger, with the linked order awaiting execution | [Close Queued](http://localhost:6006/?path=/story/perps-position-protection--close-queued) | Current component, illustrative queued close |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:106` | Close delayed with a binding trigger and a queue-related retry delay | [Close Delayed](http://localhost:6006/?path=/story/perps-position-protection--latched) | Current component, illustrative latched close and worker observation |
-| `trading-on-plether-perps/take-profit-and-stop-loss.md:148` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:39` | Trade ticket with Take profit / stop loss checked and both trigger inputs expanded | [New order with TP/SL](http://localhost:6006/?path=/story/perps-trade-ticket--add-take-profit-stop-loss) | Current component, illustrative values, no wallet transactions |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:61` | Active TP/SL with saved trigger prices and the worker monitoring notice | [Active TP/SL](http://localhost:6006/?path=/story/perps-position-protection--armed) | Current component, illustrative worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:102` | Close queued after a trigger, with the linked order awaiting execution | [Close Queued](http://localhost:6006/?path=/story/perps-position-protection--close-queued) | Current component, illustrative queued close |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:108` | Close delayed with a binding trigger and a queue-related retry delay | [Close Delayed](http://localhost:6006/?path=/story/perps-position-protection--latched) | Current component, illustrative latched close and worker observation |
+| `trading-on-plether-perps/take-profit-and-stop-loss.md:150` | Completed TP/SL record with expanded activity and transaction links | [Closed](http://localhost:6006/?path=/story/perps-position-protection--closed) | Current component, illustrative completed protection and events |
+
+## USDG quickstart and account balance
+
+| Documentation reference | Required visual | Storybook target | Coverage |
+| --- | --- | --- | --- |
+| `trader-quickstart.md:23` | Get 100,000 USDG for your Trading Account. The wallet pays mint gas; Plether sponsors the deposit. | [USDG component](http://localhost:6006/?path=/story/testnet-welcome-modal--request-funds) | Current production component, illustrative values |
+| `trader-quickstart.md:31` | A 10,000 USDG deposit from the Trading Account. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--deposit-margin) | Current production component, illustrative values |
+| `trader-quickstart.md:48` | The example long order uses 2,000 plDXY and 2x leverage. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-order) | Current production component, illustrative values |
+| `trader-quickstart.md:62` | Commit Preview shows the example order's margin, leverage, price limit and costs. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--quickstart-preview) | Current production component, illustrative values |
+| `trading-on-plether-perps/your-margin-account.md:41` | USDG balance and signed Position equity are separate account metrics. | [USDG component](http://localhost:6006/?path=/story/perps-trade-ticket--margin-account-summary) | Current production component, illustrative values |
 
 ## Inventory result
 
 The counts below cover the Storybook screenshots only.
 
-- Screenshot references found: **23**
-- Unique screenshot assets: **16**
-- References mapped to a Storybook target: **23**
+- Screenshot references found: **28**
+- Unique screenshot assets: **21**
+- References mapped to a Storybook target: **28**
 - Unmapped references: **0**

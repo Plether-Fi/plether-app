@@ -443,14 +443,14 @@ function PositionView({
   const currentPnl = position.unrealizedPnlAssets
   const pendingCarryTooltip = (
     <span>
-      Pending carry is paid from active position margin first, then eligible free settlement.
+      Pending carry is paid from active position margin first, then eligible free USDG.
       This reduces the margin backing price losses. If both sources cannot cover carry, the account can become liquidatable.
       Claims and other reserved funds do not cover carry.
     </span>
   )
   const liquidationTooltip = (
     <span>
-      Price liquidation occurs when position margin after carry plus same-account claims and price PnL reach maintenance margin. Free settlement does not increase this price buffer.
+      Price liquidation occurs when position margin after carry plus same-account claims and price PnL reach maintenance margin. Free USDG does not increase this price buffer.
       <br />
       <br />
       <strong>Not in range</strong> means there is no liquidation threshold inside the protocol&apos;s
@@ -541,7 +541,7 @@ function PositionView({
       {riskUnavailable ? <p role="status" className="mb-3 text-sm text-content-secondary">Account risk unavailable. Waiting for a current account snapshot.</p> : null}
       {position.liquidatable ? <div role="alert" className="mb-3 border border-brand-orange/40 p-3 text-sm text-brand-orange">
         <strong>Liquidatable</strong> — {riskUnavailable ? 'Last known contract status; current risk data is unavailable.' : 'The contract reports this position is eligible for liquidation.'}
-        {!riskUnavailable && (position.uncoveredCarryAssets ?? 0n) > 0n ? <p>Position margin plus free settlement does not cover accrued carry.</p> : null}
+        {!riskUnavailable && (position.uncoveredCarryAssets ?? 0n) > 0n ? <p>Position margin plus free USDG does not cover accrued carry.</p> : null}
         {!riskUnavailable && position.vpiReserveUnderfunded ? <p>The dedicated VPI reserve is insufficient.</p> : null}
       </div> : null}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
@@ -593,7 +593,7 @@ function PositionView({
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>
         {' '}
-        <span>Position margin after carry and same-account claims back price losses. Carry consumes position margin first, then free settlement.</span>
+        <span>Position margin after carry and same-account claims back price losses. Carry consumes position margin first, then free USDG.</span>
       </p>
       <Modal
         isOpen={isPositionMarginModalOpen}
@@ -627,7 +627,7 @@ function PositionView({
       >
         <div className="space-y-5">
           <p className="text-sm leading-5 text-content-secondary">
-            This moves free {PERPS_SETTLEMENT_TOKEN_LABEL} into position margin, increasing the price-loss buffer without changing position size. The maximum accounts for accrued carry consuming existing position margin first, then free settlement. Future carry can reduce the new margin too.
+            This moves free {PERPS_SETTLEMENT_TOKEN_LABEL} into position margin, increasing the price-loss buffer without changing position size. The maximum accounts for accrued carry consuming existing position margin first, then free USDG. Future carry can reduce the new margin too.
           </p>
 
           <div className="border border-brand-border/20 bg-app-bg p-4 text-sm leading-5 text-content-secondary">
@@ -642,7 +642,7 @@ function PositionView({
               value={positionMarginAmount}
               placeholder="0"
               rightElement={<TokenLabel token={PERPS_SETTLEMENT_TOKEN_LABEL} />}
-              error={isPositionMarginTooHigh ? 'Amount exceeds free settlement after accrued carry.' : undefined}
+              error={isPositionMarginTooHigh ? 'Amount exceeds free USDG after accrued carry.' : undefined}
               onChange={(event) => {
                 const nextValue = event.target.value
                 if (!isPositionMarginInput(nextValue)) return
@@ -668,7 +668,7 @@ function PositionView({
           </div>
 
           <dl className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
-            <AccountSummaryRow label="Free settlement after carry" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(positionMarginLimitRaw)} />} />
+            <AccountSummaryRow label="Free USDG after carry" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(positionMarginLimitRaw)} />} />
             <AccountSummaryRow label="Current position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(position.marginAssets)} />} />
             <AccountSummaryRow label="Resulting position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(resultingPositionMargin)} />} />
             <AccountSummaryRow label="Current leverage" value={riskUnavailable ? 'Unavailable' : formatPositionLeverageForMargin(position, position.marginAssets)} />

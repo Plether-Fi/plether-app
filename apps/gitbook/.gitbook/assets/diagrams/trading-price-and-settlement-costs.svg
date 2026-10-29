@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="842" viewBox="0 0 640 842" role="img" aria-labelledby="trading-price-and-settlement-costs-title trading-price-and-settlement-costs-desc" focusable="false">
 <title id="trading-price-and-settlement-costs-title">Price and costs are different inputs</title>
-<desc id="trading-price-and-settlement-costs-desc">Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price. Do not treat a displayed price change as net profit or a guarantee of immediately withdrawable USDC.</desc>
+<desc id="trading-price-and-settlement-costs-desc">Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price. Do not treat a displayed price change as net profit or a guarantee of immediately withdrawable USDG.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}</style>
 <rect width="640" height="842" rx="16" fill="#FFF5F9"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / TRADE ECONOMICS</text>
@@ -34,5 +34,5 @@
 <rect x="32" y="682" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
 <text x="50" y="720" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">Do not treat a displayed price change as net</text>
 <text x="50" y="752" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">profit or a guarantee of immediately</text>
-<text x="50" y="784" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">withdrawable USDC.</text>
+<text x="50" y="784" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">withdrawable USDG.</text>
 </svg>

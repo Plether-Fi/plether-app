@@ -42,7 +42,7 @@ validReleaseConfig =
 spec :: Spec
 spec =
   describe "bounded V2 release configuration" $ do
-    it "pins the token-neutral V3 intent type hash" $
+    it "pins the USDG V3 intent type hash" $
       B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
         `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 

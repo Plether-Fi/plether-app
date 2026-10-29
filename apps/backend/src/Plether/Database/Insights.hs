@@ -1463,7 +1463,7 @@ validateOrMigrateCompetitionSeed conn expected stored =
               putStrLn $
                 "Migrated the pre-launch Plether Insights prize pool for "
                   <> T.unpack (csmSlug expected)
-                  <> " from 1,000 settlement asset across three places to 2,000 settlement asset across five places."
+                  <> " from 1,000 USDC across three places to 2,000 USDC across five places."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch September prize correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
       | isLegacySeptemberXAccountAgeOnlyMismatch expected stored -> do

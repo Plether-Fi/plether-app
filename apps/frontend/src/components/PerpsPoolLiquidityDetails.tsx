@@ -114,23 +114,23 @@ export function PerpsPoolLiquidityDetails({
     <div className="w-full text-left">
       <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 sm:gap-6">
         <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3">
-          <dt className="text-content-secondary">Total pool assets</dt>
+          <dt className="text-content-secondary">Total pool USDG</dt>
           <dd className="font-semibold text-content-primary">{poolAmount(poolAssets, isLoading)}</dd>
-          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">Pool assets reported by the protocol.</dd>
+          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">Pool USDG reported by the protocol.</dd>
         </div>
         <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3 sm:border-l sm:border-brand-border/20 sm:pl-6">
-          <dt className="text-content-secondary">Reserved pool assets</dt>
+          <dt className="text-content-secondary">Reserved pool USDG</dt>
           <dd className="font-semibold text-content-primary">{poolAmount(reservedAssets, isLoading)}</dd>
           <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">
-            Total pool assets minus free liquidity: assets backing existing positions and other protocol obligations.
-            {reservedShareLabel !== undefined ? <span className="mt-1 block">Share of pool assets reserved: <span className="font-semibold text-content-primary">{reservedShareLabel}</span></span> : null}
+            Total pool USDG minus free liquidity: USDG backing existing positions and other protocol obligations.
+            {reservedShareLabel !== undefined ? <span className="mt-1 block">Share of pool USDG reserved: <span className="font-semibold text-content-primary">{reservedShareLabel}</span></span> : null}
           </dd>
         </div>
       </dl>
 
       <div className="mt-4 space-y-2 border-y border-brand-border/20 py-3 text-xs leading-5 text-content-secondary">
         <h3 className="font-semibold text-content-primary">What this means for trading</h3>
-        <p>Existing positions can reserve most of the pool’s assets. New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation.</p>
+        <p>Existing positions can reserve most of the pool’s USDG. New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation.</p>
         <p>Use Max in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes.</p>
       </div>
 

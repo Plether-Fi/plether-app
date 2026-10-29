@@ -30,7 +30,7 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
   worker.submit = async (...args) => { calls.push(args); return true }
   return { worker, calls, logs, observations, publicClient }
 }
-it('passes only the oracle ETH update fee to a triggered Book close, never the settlement asset reward', async () => {
+it('passes only the oracle ETH update fee to a triggered Book close, never the USDG reward', async () => {
   const { worker, calls } = fixture()
   await worker.evaluate()
   assert.deepEqual(calls, [['trigger', 7n, address, 'PositionProtectionBook', 'triggerPositionProtection', [7n, ['0x1234']], 13n]])

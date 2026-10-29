@@ -28,7 +28,7 @@
 <circle cx="47" cy="549" r="5" fill="#250917"/>
 <text x="80" y="558" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Confirm receipt</text>
 <text x="80" y="595" font-size="24" font-weight="400" fill="#250917" data-max-width="528">After successful execution, check</text>
-<text x="80" y="627" font-size="24" font-weight="400" fill="#250917" data-max-width="528">owner-wallet USDC.</text>
+<text x="80" y="627" font-size="24" font-weight="400" fill="#250917" data-max-width="528">owner-wallet USDG.</text>
 <rect x="32" y="651" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
 <text x="50" y="689" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">The contract rechecks balances and account</text>
 <text x="50" y="721" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">health. An estimate or wallet signature alone</text>

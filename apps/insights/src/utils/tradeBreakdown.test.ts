@@ -104,8 +104,8 @@ describe('executed trade reconciliation', () => {
     ]) { const e = clone(); mutate(e); expect(deriveTradeBreakdown(e, 'Close')).toBeNull() }
   })
   it('formats exact amounts and never rounds a tiny nonzero cost to zero', () => {
-    expect(formatTradeAssets(-1n, true)).toBe('−<0.01 assets')
-    expect(formatTradeAssets(0n)).toBe('0.00 assets')
-    expect(formatTradeAssets(866453105n, false, true)).toBe('866.453105 assets')
+    expect(formatTradeAssets(-1n, true)).toBe('−<0.01 USDG')
+    expect(formatTradeAssets(0n)).toBe('0.00 USDG')
+    expect(formatTradeAssets(866453105n, false, true)).toBe('866.453105 USDG')
   })
 })

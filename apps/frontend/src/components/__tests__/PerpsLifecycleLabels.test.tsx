@@ -1624,7 +1624,7 @@ describe('perps lifecycle labels', () => {
       expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
       expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginAssets: 0n }))
       expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDG')
-      expect(within(dialog).getByText('Settlement after execution').closest('div')).toHaveTextContent('12.3USDG')
+      expect(within(dialog).getByText('USDG after execution').closest('div')).toHaveTextContent('12.3USDG')
       expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDG')
     }
   )
@@ -3399,11 +3399,11 @@ describe('perps lifecycle labels', () => {
       maintenanceMarginAssets: 10_000_000n, liquidatable: true }
     const { rerender } = render(<PerpsTradeTicket settlementBalanceAssetsRaw={1_000_000_000n} positionEquityAssetsRaw={-5_000_000n} currentPosition={position} />)
     expect(screen.queryByText('Portfolio value')).not.toBeInTheDocument()
-    expect(screen.getByText('Settlement balance').parentElement).toHaveTextContent('1 000')
+    expect(screen.getByText('USDG balance').parentElement).toHaveTextContent('1 000')
     expect(screen.getByText('Position equity').parentElement).toHaveTextContent('-5')
     rerender(<PerpsTradeTicket settlementBalanceAssetsRaw={1_000_000_000n} />)
     expect(screen.queryByText('Position equity')).not.toBeInTheDocument()
-    expect(screen.getByText('Settlement balance')).toBeVisible()
+    expect(screen.getByText('USDG balance')).toBeVisible()
   })
 
 })

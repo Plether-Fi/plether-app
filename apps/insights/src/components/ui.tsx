@@ -47,7 +47,7 @@ export function Pnl({ value, className = '', assetKind }: { value: string | null
   const formatted = formatSignedAssets(value)
   return (
     <span className={`tabular-nums ${positive ? 'text-positive' : negative ? 'text-brand-orange' : 'text-content-primary'} ${className}`}>
-      {assetKind ? formatted.replace(/ assets$/, ` ${assetKind} assets`) : formatted}
+      {assetKind ? formatted.replace(/ USDG$/, assetKind === 'mock' ? ' mock USDC' : ' USDC') : formatted}
     </span>
   )
 }

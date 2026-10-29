@@ -8,7 +8,7 @@ import qualified Plether.Perps.Manifest as Manifest
 import Test.Hspec
 
 spec :: Spec
-spec = describe "settlement token release binding" $ do
+spec = describe "USDG release binding" $ do
   prepared <- runIO $ eitherDecodeFileStrict' "../../config/perps/mock-usdg-prepared.json"
   let root = either error id prepared
       set key value (Object fields) = Object $ KM.insert key value fields

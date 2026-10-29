@@ -97,7 +97,7 @@ spec = do
       queryContains leaderboardQuerySql
         "t.slug = 'testnet-trading-2026' AND NOT jsonb_exists(a.data, 'asset')"
 
-    it "requires an explicit exact settlement asset for September cash flows" $ do
+    it "requires an explicit exact USDG for September cash flows" $ do
       queryContains leaderboardQuerySql
         "LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.settlement_token_address)"
       queryDoesNotContain leaderboardQuerySql

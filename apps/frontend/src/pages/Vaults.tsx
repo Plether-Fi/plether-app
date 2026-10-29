@@ -179,7 +179,7 @@ const SENIOR_SHARE_VALUE_FACTORS: {
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
-      label: 'Oracle, contract, or stablecoin losses after Junior is exhausted',
+      label: 'Oracle, contract, or USDG losses after Junior is exhausted',
       tooltip: 'A failure affects Senior share value only when it causes a recognized pool loss that remains after Junior has been exhausted.',
       docsLink: DOCS_LINKS.lpRisks,
     },
@@ -249,7 +249,7 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
-      label: 'Oracle, contract, or stablecoin losses',
+      label: 'Oracle, contract, or USDG losses',
       tooltip: 'These failures reduce share value only when they cause a recognized loss. As the first-loss tranche, Junior absorbs that loss before Senior.',
       docsLink: DOCS_LINKS.lpRisks,
     },

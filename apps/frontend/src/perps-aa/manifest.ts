@@ -411,7 +411,7 @@ export function parsePerpsAaManifest(
   ) {
     invalid(
       'settlementTokenSupportsEip3009',
-      'requires both settlement-token EIP-712 name and version'
+      'requires both USDG token EIP-712 name and version'
     )
   }
   if (
@@ -420,14 +420,14 @@ export function parsePerpsAaManifest(
   ) {
     invalid(
       'settlementTokenSupportsEip3009',
-      'requires both settlement-token EIP-712 fields to be null when disabled'
+      'requires both USDG token EIP-712 fields to be null when disabled'
     )
   }
 
   {
     parsePinnedAddress(value.settlementToken, 'settlementToken', PERPS_ARBITRUM_SEPOLIA.settlementToken)
     if (settlementTokenSupportsEip3009 !== PERPS_SETTLEMENT_TOKEN.supportsReceiveWithAuthorization) {
-      invalid('settlementTokenSupportsEip3009', 'must match the configured settlement-token capabilities')
+      invalid('settlementTokenSupportsEip3009', 'must match the configured USDG token capabilities')
     }
   }
 

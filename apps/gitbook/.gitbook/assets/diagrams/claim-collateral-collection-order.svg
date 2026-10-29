@@ -33,7 +33,7 @@
 <text x="346" y="454" font-size="24" font-weight="400" fill="#250917" data-max-width="246">VPI clawback</text>
 <text x="346" y="486" font-size="24" font-weight="400" fill="#250917" data-max-width="246">reserve, spendable</text>
 <text x="346" y="518" font-size="24" font-weight="400" fill="#250917" data-max-width="246">action reserve, then</text>
-<text x="346" y="550" font-size="24" font-weight="400" fill="#250917" data-max-width="246">free settlement.</text>
+<text x="346" y="550" font-size="24" font-weight="400" fill="#250917" data-max-width="246">free USDG.</text>
 <path d="M354 567 V586 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 <text x="346" y="630" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Full-close fallback</text>
 <text x="346" y="669" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Committed-order</text>

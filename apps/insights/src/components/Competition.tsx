@@ -5,7 +5,7 @@ import { formatCompactAssets, formatCountdown, formatRoi, formatAssets, formatUt
 import { EligibilityBadge, EmptyState, Panel, Pnl, WalletIdentity } from './ui'
 
 function labelMockAssets(value: string): string {
-  return value.replace(/ assets$/, ' mock USDC')
+  return value.replace(/ USDG$/, ' mock USDC')
 }
 
 function formatMockAssets(value: string): string {
@@ -85,7 +85,7 @@ export function CompetitionHero({ competition, archived = false }: { competition
 
 function prizePool(prizes: Competition['prizes']): string {
   try {
-    return formatAssets(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString()).replace(/ assets$/, ' USDC')
+    return formatAssets(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString()).replace(/ USDG$/, ' USDC')
   } catch {
     return '2,000.00 USDC'
   }
@@ -123,7 +123,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
   if (standing.prizePlace === null || standing.prizeAmountAssets === null) return null
   const places = standing.prizePlaces.length > 0 ? standing.prizePlaces : [standing.prizePlace]
   const placeLabel = places.length > 1 ? `Places ${places.join('–')} tie` : `Place #${String(places[0])}`
-  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatAssets(standing.prizeAmountAssets)}</div>
+  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatAssets(standing.prizeAmountAssets).replace(/ USDG$/, ' USDC')}</div>
 }
 
 function DesktopTable({ standings, competitionSlug, competitionStatus }: { standings: Standing[]; competitionSlug: string; competitionStatus: Competition['status'] }) {
@@ -245,7 +245,7 @@ export function RulesSummary({ competition }: { competition: Competition }) {
               {competition.prizes.map((prize) => (
                 <li key={prize.place} className="flex items-center gap-2 border border-brand-orange/20 bg-brand-orange/5 px-3 py-2">
                   <span className="font-mono text-[10px] font-semibold text-brand-orange">#{String(prize.place).padStart(2, '0')}</span>
-                  <span className="text-sm font-semibold tabular-nums text-content-primary">{formatAssets(prize.amount).replace(/ assets$/, '')}</span>
+                  <span className="text-sm font-semibold tabular-nums text-content-primary">{formatAssets(prize.amount).replace(/ USDG$/, '')}</span>
                 </li>
               ))}
             </ol>

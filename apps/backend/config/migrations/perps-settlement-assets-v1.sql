@@ -1,4 +1,4 @@
--- Breaking schema rename for the token-neutral perps application.
+-- Breaking schema rename for the USDG perps application.
 -- Apply explicitly during an offline upgrade, after taking a database backup.
 -- This file is deliberately NOT executed by API/worker startup.
 -- It changes identifiers only: no balances, token addresses, signed bytes,

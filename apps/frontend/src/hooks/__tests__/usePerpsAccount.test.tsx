@@ -521,7 +521,7 @@ describe('usePerpsAccount', () => {
     expect(result.current.position?.vpiReserveUnderfunded).toBe(true)
   })
 
-  it('exposes only free settlement remaining after carry consumes position margin', () => {
+  it('exposes only free USDG remaining after carry consumes position margin', () => {
     mocks.primaryData = riskData()
     mocks.primaryData[12] = success(250_000_001n)
     const { result } = renderHook(() => usePerpsAccount())

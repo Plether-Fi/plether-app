@@ -356,7 +356,7 @@ describe('reviewed leverage validation', () => {
     expect(simulateContract).not.toHaveBeenCalled()
   })
 
-  it('allows an ordinary full close with zero free settlement and no subsidy batch', async () => {
+  it('allows an ordinary full close with zero free USDG and no subsidy batch', async () => {
     const { client, readContract, simulateContract } = reviewClient(() => ({ postPositionSize: 0n, postPositionEquityAssets: 0n, postLeverageBps: 0n }))
     const original = readContract.getMockImplementation()!
     readContract.mockImplementation(async call => call.functionName === 'getFreeBuyingPowerAssets' ? 0n : original(call))

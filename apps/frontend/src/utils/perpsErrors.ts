@@ -86,7 +86,7 @@ const V2_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   4: 'action charge',
   5: 'explicit fees',
   6: 'post-position size',
-  7: 'post-settlement balance',
+  7: 'USDG balance after settlement',
   8: 'post-position equity',
   9: 'post-position leverage',
 }
@@ -253,13 +253,13 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'MarginClearinghouse__InsufficientBalance':
       return 'Your margin account balance is too low for this withdrawal.'
     case 'MarginClearinghouse__InsufficientFreeEquity':
-      if (action === 'protection') return `Not enough free ${PERPS_SETTLEMENT_TOKEN_LABEL} settlement balance to reserve TP/SL keeper rewards. Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account and retry.`
+      if (action === 'protection') return `Not enough free ${PERPS_SETTLEMENT_TOKEN_LABEL} to reserve TP/SL keeper rewards. Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL} into your margin account and retry.`
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'OrderRouter__InsufficientFreeEquity':
       if (action === 'protection') return 'Not enough free margin to reserve TP/SL rewards while maintaining your position margin requirements. Refresh account risk and review your position.'
       return 'Not enough free margin. Remember that committed orders also reserve keeper bounty.'
     case 'MarginClearinghouse__InsufficientAssetsForSettlement':
-      return `The margin account does not have enough ${PERPS_SETTLEMENT_TOKEN_LABEL} settlement balance.`
+      return `The margin account does not have enough ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
     case 'OrderRouter__ZeroSize':
       return 'Order size must be greater than zero.'
     case 'OrderRouter__InvalidSizeQuantum':

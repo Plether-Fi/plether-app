@@ -284,7 +284,7 @@ export function relaxedWebPerpsExecutionBounds(input: {
   }
 }
 
-/** Six-decimal settlement assets: a reviewed ceiling, not a charge or a sponsorship gas cap. */
+/** Six-decimal USDG: a reviewed ceiling, not a charge or a sponsorship gas cap. */
 export function reviewedExecutionBountyMaximum(quote: bigint): bigint {
   if (quote < 0n || quote > UINT256_MAX) throw new Error('Invalid execution bounty quote')
   if (quote === 0n) return 0n
@@ -528,7 +528,7 @@ export const PERPS_FAILED_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   [PERPS_FAILED_CONSTRAINT.ACTION_CHARGE]: 'Action charge',
   [PERPS_FAILED_CONSTRAINT.EXPLICIT_FEES]: 'Explicit fees',
   [PERPS_FAILED_CONSTRAINT.POST_POSITION_SIZE]: 'Post-position size',
-  [PERPS_FAILED_CONSTRAINT.POST_SETTLEMENT_BALANCE]: 'Post-settlement balance',
+  [PERPS_FAILED_CONSTRAINT.POST_SETTLEMENT_BALANCE]: 'USDG balance after settlement',
   [PERPS_FAILED_CONSTRAINT.POST_POSITION_EQUITY]: 'Post-position equity',
   [PERPS_FAILED_CONSTRAINT.POST_LEVERAGE]: 'Post leverage',
 }

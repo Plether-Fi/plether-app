@@ -290,7 +290,7 @@ describe('parsePerpsAaManifest', () => {
     manifest.settlementTokenSupportsEip3009 = true
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
-      /requires both settlement-token EIP-712 name and version/
+      /requires both USDG token EIP-712 name and version/
     )
   })
 

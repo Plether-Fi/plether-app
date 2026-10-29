@@ -23,7 +23,7 @@ interface ProtectionPanelProps {
   cap?: bigint
   configuration: ProtectionConfiguration
   pendingOrders: number
-  /** Free settlement remaining after pending carry, excluding position margin. */
+  /** Free USDG remaining after pending carry, excluding position margin. */
   availableFreeSettlementAssets: bigint | undefined
   onRefresh: () => void
 }

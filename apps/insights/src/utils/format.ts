@@ -28,7 +28,7 @@ export function formatAssets(value: string | null | undefined): string {
   const whole = rounded / scale
   const fraction = rounded % scale
   const fractionText = `.${fraction.toString().padStart(2, '0')}`
-  return `${negative ? '-' : ''}${formatWhole(whole)}${fractionText} assets`
+  return `${negative ? '-' : ''}${formatWhole(whole)}${fractionText} USDG`
 }
 
 export function formatSignedAssets(value: string | null | undefined): string {
@@ -55,7 +55,7 @@ export function formatCompactAssets(value: string | null | undefined): string {
   const sign = units < 0n ? '-' : ''
   const whole = hundredths / 100n
   const fraction = hundredths % 100n
-  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, '0')}${threshold.suffix} assets`
+  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, '0')}${threshold.suffix} USDG`
 }
 
 export function formatRoi(roiBps: number | null | undefined): string {

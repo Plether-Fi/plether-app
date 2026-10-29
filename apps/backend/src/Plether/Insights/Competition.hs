@@ -62,9 +62,9 @@ import Data.Time
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Plether.Perps.Manifest as Manifest
 
--- | All monetary values in this module are integer settlement asset base units (six
--- decimals). Keeping the scoring core integral makes profit boundaries and ties
--- exact and reproducible.
+-- | Trading values use integer USDG base units (six decimals). Historical real
+-- prizes use the same precision in USDC. Keeping the scoring core integral makes
+-- profit boundaries and ties exact and reproducible.
 assetScale :: Integer
 assetScale = 1_000_000
 
@@ -316,7 +316,7 @@ data ParticipantEligibility
 
 -- | A reviewed, mechanically qualified participant's share of the public
 -- prize table. Exact P&L ties occupy consecutive prize places and split the
--- combined awards for those places. Any indivisible single-micro-settlement asset dust is
+-- combined awards for those places. Any indivisible micro-USDC remainder is
 -- deliberately left undistributed so every tied participant receives exactly
 -- the same integer amount.
 data PrizeAllocation = PrizeAllocation

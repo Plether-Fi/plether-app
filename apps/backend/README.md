@@ -7,7 +7,7 @@ environment overrides cannot activate the prepared manifest.
 
 The new API uses `settlementToken` for token identity and `Assets` for amounts
 (for example `executionBountyAssets` and `amountAssets`). Amounts remain integer
-six-decimal asset units. `PERPS_SETTLEMENT_TOKEN` replaces the old perps token
+six-decimal USDG units. `PERPS_SETTLEMENT_TOKEN` replaces the old perps token
 environment variable; no legacy aliases are accepted. Tuple order-interface
 version stays three; receipt/config/digest domains remain V5/V5/V6.
 
@@ -383,7 +383,7 @@ participant; values above `100` are rejected at startup.
 
 Insights persists these configured contract addresses with the competition.
 Deposit and withdrawal adjustments count only events emitted by that exact
-MarginClearinghouse for that exact mock settlement asset.
+MarginClearinghouse for that exact MockUSDG.
 
 Register the scored Plether Trading Account (which may differ from the
 controlling wallet) and manage the post-competition review with the audited
@@ -555,7 +555,7 @@ Local URLs:
 | `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `318398363` | Earliest block eligible for the configured vault deployment's history |
 | `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
-| `PERPS_SETTLEMENT_TOKEN` | No | Unavailable until deployment | Perps mock settlement token minted by the testnet faucet |
+| `PERPS_SETTLEMENT_TOKEN` | No | Unavailable until deployment | Perps MockUSDG minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Unavailable until deployment | Perps order router address |
 | `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | Unavailable until deployment | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
 | `PERPS_HOUSE_POOL` | No | Unavailable until deployment | HousePool identity verified against the Settlement Monitor facade at keeper startup |
@@ -564,11 +564,11 @@ Local URLs:
 | `PERPS_SETTLEMENT_MONITOR_LENS` | No | Unavailable until deployment | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Unavailable until deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Unavailable until deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
-| `PERPS_MARGIN_CLEARINGHOUSE` | No | Unavailable until deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock settlement asset transfers |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Unavailable until deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored MockUSDG transfers |
 | `PERPS_PLETHER_ORACLE` | No | Unavailable until deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Unavailable until deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
 | `PERPS_INDEXER_START_BLOCK` | No | Unavailable until deployment | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
-| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia mock settlement asset signer; configuring it also requires the dedicated proxy token |
+| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia MockUSDG signer; configuring it also requires the dedicated proxy token |
 | `FAUCET_PROXY_ORIGIN_TOKEN` | With faucet signer | - | Dedicated secret required from the exact trusted Pages/Vite faucet proxy path |
 | `FAUCET_CLIENT_REQUESTS_PER_HOUR` | No | `20` | Rolling-hour accepted request limit per pseudonymous trusted client IP |
 | `FAUCET_GLOBAL_REQUESTS_PER_HOUR` | No | `200` | Rolling-hour accepted request limit across the single API process |

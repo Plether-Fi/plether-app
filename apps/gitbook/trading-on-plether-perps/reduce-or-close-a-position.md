@@ -72,13 +72,13 @@ Remaining contract quantity
 = current contract quantity − Order quantity
 ```
 
-The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission. The committed Order quantity remains fixed, but both the reduced and remaining displayed exposure can be revalued at the final execution price.
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDG at the current displayed price. **Commit Preview** confirms both values before submission. The committed Order quantity remains fixed, but both the reduced and remaining displayed exposure can be revalued at the final execution price.
 
 For a full close with no earlier pending orders, select `Current Position` or `Max`. This fills the exact live position quantity, so the full close does not leave a rounding residual. The action becomes `Review Close`.
 
 Earlier pending reductions count against the amount available to later orders. If the live position is 10,000 units and an earlier order is already reducing 3,000, only the projected remaining 7,000 units are available to a later order. Because the earlier reduction may fail, the later 7,000-unit order is treated as a conditional reduction, not a guaranteed full close. If that remainder is below the minimum partial-reduction size, finalize or clean up the earlier order before trying to close it.
 
-Review the current exposure, Order quantity, Order exposure and the projected remaining amount. Treat the USDC exposure amounts as current-price estimates until execution.
+Review the current exposure, Order quantity, Order exposure and the projected remaining amount. Treat the USDG exposure amounts as current-price estimates until execution.
 
 #### Minimum-size rules
 
@@ -168,9 +168,9 @@ After the sponsored commitment confirms:
 
 The execution reward pays the account that performs terminal order processing. It is separate from the trading execution fee.
 
-Plether funds the reward from free Margin Account USDC[^usdc] first. When necessary, it may reserve a bounded amount from position margin after running the close-path risk checks.
+Plether funds the reward from free Margin Account USDG[^usdg] first. When necessary, it may reserve a bounded amount from position margin after running the close-path risk checks.
 
-The current ticket performs a client-side check against `Available to Trade` before enabling review, so traders should normally keep enough free USDC for the quoted reward. Position-margin sourcing is an underlying protocol fallback, not a selectable ticket option.
+The current ticket performs a client-side check against `Available to Trade` before enabling review, so traders should normally keep enough free USDG for the quoted reward. Position-margin sourcing is an underlying protocol fallback, not a selectable ticket option.
 
 If position margin funds part of the reward:
 
@@ -275,7 +275,7 @@ Because size and position margin generally fall in the same proportion, isolated
 
 A partial reduction can use:
 
-* Free Margin Account USDC
+* Free Margin Account USDG
 * Margin released by the reduced portion
 
 The residual position margin remains protected. Margin committed to other pending orders and reserved execution rewards also remain protected.
@@ -288,7 +288,7 @@ A partial reduction cannot:
 * Waive a frozen-close spread
 * Pass an unpaid obligation to the remaining position
 
-The trader can deposit additional USDC, choose a different reduction amount or submit a complete close.
+The trader can deposit additional USDG, choose a different reduction amount or submit a complete close.
 
 ### After a full close
 
@@ -296,7 +296,7 @@ A full close releases all remaining position margin and removes the position.
 
 For a losing full close, settlement can reach:
 
-* Free Margin Account USDC
+* Free Margin Account USDG
 * All released position margin
 * Eligible margin committed to other pending orders
 * An existing trader claim belonging to the same account
@@ -318,7 +318,7 @@ Frozen-close spread
 = reduced contract notional × 0.50%
 ```
 
-A reduction of `10,000 USDC` in contract notional therefore carries a `50 USDC` frozen-close spread.
+A reduction of `10,000 USDG` in contract notional therefore carries a `50 USDG` frozen-close spread.
 
 The execution-time market state controls the charge:
 
@@ -399,9 +399,9 @@ Assume:
 ```
 Current contract quantity:     10,000
 Current displayed price:       1.0000
-Current displayed exposure:    10,000 USDC
+Current displayed exposure:    10,000 USDG
 Entry price:                    1.0000
-Position margin:            2,000 USDC
+Position margin:            2,000 USDG
 Reduction contract quantity:    2,500
 Exit price:                     1.0400
 ```
@@ -419,28 +419,28 @@ At the `1.0400` exit mark, the remaining displayed exposure is:
 ```
 Remaining displayed exposure
 = 7,500 × 1.0400
-= 7,800 USDC
+= 7,800 USDG
 ```
 
 ```
 Released margin
 = 2,000 × 2,500 ÷ 10,000
-= 500 USDC
+= 500 USDG
 ```
 
 ```
 Realized PnL
 = 2,500 × (1.0400 − 1.0000)
-= +100 USDC
+= +100 USDG
 ```
 
 Assume:
 
 ```
-Execution fee:   0.96 USDC
-VPI charge:         8 USDC
-Accrued carry:     12 USDC
-Execution reward: 0.20 USDC
+Execution fee:   0.96 USDG
+VPI charge:         8 USDG
+Accrued carry:     12 USDG
+Execution reward: 0.20 USDG
 ```
 
 The execution settlement is:
@@ -448,27 +448,27 @@ The execution settlement is:
 ```
 Net close settlement
 = 100 − 0.96 − 8 − 12 − 0.20
-= +78.84 USDC
+= +78.84 USDG
 ```
 
 ```
 Account movement at execution
 = 500 + 78.84
-= +578.84 USDC
+= +578.84 USDG
 ```
 
 The remaining position is approximately:
 
 ```
 Contract quantity:             7,500
-Displayed exposure at 1.0400:  7,800 USDC
+Displayed exposure at 1.0400:  7,800 USDG
 Entry price:                   1.0000
-Position margin:               1,500 USDC
+Position margin:               1,500 USDG
 ```
 
 The execution reward reserved at commitment is shown separately in the close breakdown and included in the net close settlement.
 
-If pool liquidity cannot cover the fresh `78.84 USDC` payment, the released `500 USDC` returns to the Margin Account and `78.84 USDC` becomes a trader claim.
+If pool liquidity cannot cover the fresh `78.84 USDG` payment, the released `500 USDG` returns to the Margin Account and `78.84 USDG` becomes a trader claim.
 
 ### Check the result
 
@@ -504,10 +504,10 @@ After a full close, confirm:
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^bps]: Basis points; 100 bps equals 1%.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

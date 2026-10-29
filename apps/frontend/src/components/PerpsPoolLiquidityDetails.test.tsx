@@ -16,9 +16,9 @@ describe('PerpsPoolLiquidityDetails', () => {
   it('distinguishes pool assets and free liquidity from tranche accounting capital', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} />)
 
-    expect(screen.getByText('Total pool assets')).toBeVisible()
+    expect(screen.getByText('Total pool USDG')).toBeVisible()
     expect(screen.getByText('10 000 000')).toBeVisible()
-    expect(screen.getByText('Reserved pool assets')).toBeVisible()
+    expect(screen.getByText('Reserved pool USDG')).toBeVisible()
     expect(screen.getByText('3 700 000')).toBeVisible()
     expect(screen.getByText('37.0%')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'What this means for trading' })).toBeVisible()
@@ -69,7 +69,7 @@ describe('PerpsPoolLiquidityDetails', () => {
   ])('handles reserved share for $assets assets and $free free USDG', ({ assets, free, share }) => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} poolAssets={assets} freeAssets={free} />)
     if (share) expect(screen.getByText(share)).toBeVisible()
-    else expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    else expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
     const amounts = screen.getAllByRole('definition').slice(0, 4)
     if (assets === undefined || free === undefined || free > assets) {
       expect(amounts.some((amount) => amount.textContent === '--')).toBe(true)
@@ -80,7 +80,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} isLoading />)
     expect(screen.getAllByText('...')).toHaveLength(2)
     expect(screen.queryByText('3 700 000')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
   })
 
   it('keeps a tiny positive reserve distinct from zero', () => {
@@ -93,7 +93,7 @@ describe('PerpsPoolLiquidityDetails', () => {
     render(<PerpsPoolLiquidityDetails poolAssets={0n} freeAssets={0n} isEmpty />)
     expect(screen.getAllByText('0')).toHaveLength(2)
     expect(screen.getByText('No vault capital yet')).toBeVisible()
-    expect(screen.queryByText(/Share of pool assets reserved/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Share of pool USDG reserved/)).not.toBeInTheDocument()
   })
 
   it('shows factual exhausted and impaired states', () => {

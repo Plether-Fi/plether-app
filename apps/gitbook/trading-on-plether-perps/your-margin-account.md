@@ -1,22 +1,22 @@
 # Your Margin Account
 
-Every Plether trade settles through a USDC[^usdc] Margin Account associated with the **Trading Account**.
+Every Plether trade settles through a USDG[^usdg] Margin Account associated with the **Trading Account**.
 
-The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI[^vpi], carry[^carry] and realized PnL[^pnl] update it. Eligible USDC can then be withdrawn to the owner wallet.
+The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI[^vpi], carry[^carry] and realized PnL[^pnl] update it. Eligible USDG can then be withdrawn to the owner wallet.
 
-![Trading Account wallet USDC can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
+![Trading Account wallet USDG can be deposited into clearinghouse settlement custody. Free funds, PnL pledge and action reserves have different permissions; withdrawal does not require first making a trade.](../.gitbook/assets/diagrams/usdg-account-flow.svg)
 
-### Three places USDC can appear
+### Three places USDG can appear
 
 | Balance                  | Where it exists                                                                        | What it can do                                                        |
 | ------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Can fund the in-app deposit flow through an owner-paid token transfer when required |
-| **Trading Account USDC** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
-| **Margin Account USDC**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
+| **Owner-wallet USDG**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Can fund the in-app deposit flow through an owner-paid token transfer when required |
+| **Trading Account USDG** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
+| **Margin Account USDG**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
 
 The current application uses a separate smart Trading Account, so the owner-wallet and Trading Account token balances are at two different addresses. The deposit flow can use both balances. When the Trading Account does not hold the complete deposit amount, the application first transfers the exact shortfall from the owner wallet to the Trading Account and then submits the sponsored Margin Account deposit.
 
-The Margin Account has no separate wallet address. Sending USDC to a Plether contract does not credit it; use the deposit flow.
+The Margin Account has no separate wallet address. Sending USDG to a Plether contract does not credit it; use the deposit flow.
 
 ### Reading your account
 
@@ -24,28 +24,28 @@ The current interface places related values in several locations:
 
 | Value                       | Where it appears                    | Meaning                                                                |
 | --------------------------- | ----------------------------------- | ---------------------------------------------------------------------- |
-| **Available to Trade**      | Trade-ticket context row            | Free, unreserved USDC inside Plether                                   |
-| **Settlement balance** | Margin Account card | All credited settlement USDC, including locked buckets |
+| **Available to Trade**      | Trade-ticket context row            | Free, unreserved USDG inside Plether                                   |
+| **USDG balance** | Margin Account card | All credited USDG, including locked buckets |
 | **Position equity**         | Margin Account card                 | Signed position margin + same-account claim + exact price PnL   |
 | **Unrealized PnL**          | Margin Account and Position panels  | Directional profit or loss under the latest usable mark                |
 | **Maintenance margin**      | Margin Account card                 | The account-equity threshold used to determine liquidation eligibility |
 | **Withdrawable**            | Margin Account card                 | The maximum amount that can currently reach the owner wallet           |
-| **Position margin**         | `Edit Position Margin`              | USDC assigned to the open position                                     |
-| **Owner/Trading balances**  | Deposit or withdrawal modal         | USDC held outside the Margin Account                                   |
+| **Position margin**         | `Edit Position Margin`              | USDG assigned to the open position                                     |
+| **Owner/Trading balances**  | Deposit or withdrawal modal         | USDG held outside the Margin Account                                   |
 | **Trader claim**            | Separate card, when a claim exists  | A pool obligation owed to the Trading Account                     |
 
 Pending-order margin and reserved execution rewards are internal account buckets, but the current Margin Account card does not show their aggregate values. **Open Orders** shows which commitments are active.
 
 These values answer different account questions. Position equity measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
 
-![Settlement balance and signed Position equity are separate account metrics.](../.gitbook/assets/screenshots/storybook-documentation-margin-account--overview.png)
+![USDG balance and signed Position equity are separate account metrics.](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png)
 
-### How account USDC is allocated
+### How account USDG is allocated
 
-Plether’s clearinghouse records the account’s total USDC and divides it into several buckets:
+Plether’s clearinghouse records the account’s total USDG and divides it into several buckets:
 
 ```
-Margin Account USDC
+Margin Account USDG
 = Available to Trade
 + Position margin
 + Pending order margin
@@ -54,7 +54,7 @@ Margin Account USDC
 
 Reserved settlement includes execution rewards associated with pending orders.
 
-Assigning margin or committing an order moves USDC between these buckets. The account’s total USDC changes when funds enter or leave through:
+Assigning margin or committing an order moves USDG between these buckets. The account’s total USDG changes when funds enter or leave through:
 
 * Deposits and withdrawals
 * Trading fees and VPI
@@ -64,9 +64,9 @@ Assigning margin or committing an order moves USDC between these buckets. The ac
 * Settled trader claims
 * Execution reward payments
 
-### Settlement balance and Position equity
+### USDG balance and Position equity
 
-**Settlement balance** includes every USDC bucket credited to the clearinghouse account. It excludes unrealized PnL and unsettled claims.
+**USDG balance** includes every USDG bucket credited to the clearinghouse account. It excludes unrealized PnL and unsettled claims.
 
 **Position equity** is shown only while a position exists:
 
@@ -74,50 +74,52 @@ Assigning margin or committing an order moves USDC between these buckets. The ac
 Position equity = assigned position margin + same-account trader claim + exact price PnL
 ```
 
-The value is signed and uses the engine’s accepted mark. Free settlement and reserves do not enter this formula. Carry must be covered by eligible free settlement; a negative VPI balance must have its dedicated reserve. Those checks can make an account liquidatable independently of price equity.
+The value is signed and uses the engine’s accepted mark. Free USDG and reserves do not enter this formula. Carry must be covered by eligible free USDG; a negative VPI balance must have its dedicated reserve. Those checks can make an account liquidatable independently of price equity.
 
 Unrealized profit can increase Position equity without increasing Available to Trade. Settling a claim on an open position turns it into assigned margin; while flat, settlement credits account funds.
 
-### Depositing USDC
+### Depositing USDG
+
+To get test funds, select **Get USDG**, then **Get 100,000 USDG**. Confirm the MockUSDG mint in your owner wallet using Arbitrum Sepolia ETH for gas. The app then requests a sponsored deposit into your Margin Account. If that deposit fails, the minted USDG remains in your Trading Account for a retry.
 
 To deposit:
 
 1. Open the **Margin Account** section.
 2. Select `Deposit`.
 3. In `Deposit Margin`, enter an `Amount` no greater than `Available to deposit`.
-4. Select `Deposit` or `Transfer & Deposit`, depending on where the USDC is held.
+4. Select `Deposit` or `Transfer & Deposit`, depending on where the USDG is held.
 5. Confirm the requested wallet actions.
 
 If the Trading Account already holds the complete amount, the owner wallet authorizes only the sponsored deposit operation. The Trading Account approves the clearinghouse and deposits the amount into the Margin Account.
 
-If the amount exceeds the Trading Account balance, the application first requests a regular MockUSDC transfer for only the shortfall from the owner wallet to the Trading Account. This transfer requires Arbitrum Sepolia ETH for network gas. After it confirms, the application requests the sponsored deposit authorization.
+If the amount exceeds the Trading Account balance, the application first requests a regular MockUSDG transfer for only the shortfall from the owner wallet to the Trading Account. This transfer requires Arbitrum Sepolia ETH for network gas. After it confirms, the application requests the sponsored deposit authorization.
 
-The two-step path is deliberately recoverable. If the owner-wallet transfer confirms but the sponsored deposit fails, the USDC remains at the Trading Account address. Retry the deposit; do not transfer the same amount again. If the sponsored deposit reverts, the Margin Account is not credited.
+The two-step path is deliberately recoverable. If the owner-wallet transfer confirms but the sponsored deposit fails, the USDG remains at the Trading Account address. Retry the deposit; do not transfer the same amount again. If the sponsored deposit reverts, the Margin Account is not credited.
 
 After confirmation, the deposited amount enters **Available to Trade**, subject to any carry collected during the same sponsored operation.
 
 #### Deposits and accrued carry
 
-An account with an open position checkpoints and realizes carry when its settlement balance changes.
+An account with an open position checkpoints and realizes carry when its USDG balance changes.
 
 Plether first credits the deposit and then applies accrued carry. A deposit can therefore increase the displayed Margin Account balance by less than the amount transferred from the funding balance.
 
 For example:
 
 ```
-Deposit:                         500 USDC
-Carry collected in operation:    40 USDC
+Deposit:                         500 USDG
+Carry collected in operation:    40 USDG
 
-Net account increase:            460 USDC
+Net account increase:            460 USDG
 ```
 
-The complete `500 USDC` entered Plether. The account used `40 USDC` to settle carry that had already accrued.
+The complete `500 USDG` entered Plether. The account used `40 USDG` to settle carry that had already accrued.
 
 Deposits have no market-state, oracle-freshness[^oracle] or degraded-mode restriction. They remain available as a protective account action.
 
 ### What happens when you commit an order
 
-A committed order reserves account USDC before it enters the pending queue.
+A committed order reserves account USDG before it enters the pending queue.
 
 #### Opening and increasing
 
@@ -136,7 +138,7 @@ Immediately before a successful execution, the committed margin is released for 
 
 A reduction or close reserves its execution reward without reserving new order margin.
 
-Plether uses free account USDC for this reward first. When free USDC is insufficient, a bounded amount can be moved from position margin after the relevant risk checks pass. This allows a risk-reducing close to be committed during stale-market conditions.
+Plether uses free account USDG for this reward first. When free USDG is insufficient, a bounded amount can be moved from position margin after the relevant risk checks pass. This allows a risk-reducing close to be committed during stale-market conditions.
 
 The current ticket checks the quoted reward against **Available to Trade** before enabling review. Treat position-margin sourcing as a protocol fallback, not as an option you can select in the interface.
 
@@ -158,14 +160,14 @@ Price-loss collection uses assigned position margin and same-account claims. Com
 
 ### Position margin
 
-Position margin is USDC assigned directly to the open position.
+Position margin is USDG assigned directly to the open position.
 
-It determines the leverage displayed for that position. Free USDC pays carry separately; it must be assigned as margin to support price losses.
+It determines the leverage displayed for that position. Free USDG pays carry separately; it must be assigned as margin to support price losses.
 
 This can produce two different views of the same account:
 
 * **Position leverage** reflects the margin assigned to the position.
-* **Account buffer** also includes eligible free USDC.
+* **Account buffer** also includes eligible free USDG.
 
 #### Adding position margin
 
@@ -177,7 +179,7 @@ To add margin:
 4. Review the resulting position margin and leverage.
 5. Select `Add Margin`.
 
-Plether realizes accrued carry first. The requested USDC then moves from **Available to Trade** into **Position margin**.
+Plether realizes accrued carry first. The requested USDG then moves from **Available to Trade** into **Position margin**.
 
 The immediate account effect is:
 
@@ -185,7 +187,7 @@ The immediate account effect is:
 * **Available to Trade** decreases.
 * **Exposure** remains unchanged.
 
-Total account USDC stays unchanged apart from carry collected during the transaction.
+Total account USDG stays unchanged apart from carry collected during the transaction.
 
 Additional position margin can:
 
@@ -193,7 +195,7 @@ Additional position margin can:
 * Reduce the position’s LP-backed[^lp] borrow base
 * Reduce future carry accrual
 
-It increases price-risk backing by the amount assigned. Carry is realized from free settlement first, and the form’s maximum subtracts projected carry. A deposit alone increases free settlement and carry coverage.
+It increases price-risk backing by the amount assigned. Carry is realized from free USDG first, and the form’s maximum subtracts projected carry. A deposit alone increases free USDG and carry coverage.
 
 Adding margin is immediate and bypasses the delayed order queue. It remains available during stale, frozen and degraded market conditions and requires no current oracle mark.
 
@@ -208,16 +210,16 @@ The account follows this relationship:
 ```
 Withdrawable
 ≤ Available to Trade
-≤ total Margin Account USDC
+≤ total Margin Account USDG
 ```
 
-**Available to Trade** is free, unreserved account USDC. A new order must still pass the protocol’s margin, capacity, solvency and market-state checks.
+**Available to Trade** is free, unreserved account USDG. A new order must still pass the protocol’s margin, capacity, solvency and market-state checks.
 
 **Withdrawable** is the current wallet-out limit after withdrawal-specific checks.
 
 #### Flat accounts
 
-When the account has no open position, its free, unreserved USDC is generally withdrawable.
+When the account has no open position, its free, unreserved USDG is generally withdrawable.
 
 A stale mark or degraded mode does not block a flat account withdrawal. Pending order margin and reserved execution rewards continue to limit the available amount.
 
@@ -252,10 +254,10 @@ To withdraw:
 
 For a separate smart account, the operation atomically:
 
-1. Withdraws eligible USDC from the Margin Account to the Trading Account.
-2. Transfers the same USDC from the Trading Account to its verified owner wallet.
+1. Withdraws eligible USDG from the Margin Account to the Trading Account.
+2. Transfers the same USDG from the Trading Account to its verified owner wallet.
 
-If either step fails, neither step is applied. The USDC is not left behind in the separate Trading Account.
+If either step fails, neither step is applied. The USDG is not left behind in the separate Trading Account.
 
 ### Reductions, closes and account settlement
 
@@ -280,35 +282,35 @@ Account movement
 + net close economics
 ```
 
-These equations summarize economic components, not an unconditional free-USDC credit. V2 separates price-loss backing from action costs. A residual price payout is funded in full or becomes a claim; a separate action rebate is cash-limited and its unpaid remainder is waived. Funded price payouts credit PnL pledge if a position remains open, otherwise free settlement.
+These equations summarize economic components, not an unconditional free-USDG credit. V2 separates price-loss backing from action costs. A residual price payout is funded in full or becomes a claim; a separate action rebate is cash-limited and its unpaid remainder is waived. Funded price payouts credit PnL pledge if a position remains open, otherwise free USDG.
 
 ### Trader claims
 
-A trader claim records a fixed USDC obligation owed to the Trading Account by the liquidity pool.
+A trader claim records a fixed USDG obligation owed to the Trading Account by the liquidity pool.
 
-An unsettled claim is not wallet USDC, free buying power or withdrawable cash. However, the same account’s claim **is** included in V2 price-risk equity and can be netted against that account’s price losses. It remains a distinct balance rather than deposited PnL pledge, and cannot be spent as a general source for fees or carry.
+An unsettled claim is not wallet USDG, free buying power or withdrawable cash. However, the same account’s claim **is** included in V2 price-risk equity and can be netted against that account’s price losses. It remains a distinct balance rather than deposited PnL pledge, and cannot be spent as a general source for fees or carry.
 
 Claim settlement becomes available once the liquidity pool has enough physical cash to cover aggregate trader claims. Settlement credits the account’s complete claim balance; partial claim servicing is unavailable.
 
 The flow is:
 
-![Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free settlement and a separate authorized action.](../.gitbook/assets/diagrams/claim-to-owner-wallet.svg)
+![Claim coverage and settlement precede account credit. Live-position credit is pledged, so withdrawal requires eligible free USDG and a separate authorized action.](../.gitbook/assets/diagrams/claim-to-owner-wallet.svg)
 
 Claim settlement and wallet withdrawal are separate sponsored operations.
 
 An existing claim can also offset a later uncovered loss from the same account during a close or liquidation. The remaining claim balance reflects any such netting.
 
-### Example: how account USDC moves
+### Example: how account USDG moves
 
-Assume a flat account deposits `5,000 USDC`.
+Assume a flat account deposits `5,000 USDG`.
 
 ```
-Margin Account USDC:    5,000.00
+Margin Account USDG:    5,000.00
 Available to Trade:     5,000.00
 Withdrawable:           5,000.00
 ```
 
-The trader commits a `1,200 USDC` contract-notional opening at `1x`, so the submitted margin is `1,200 USDC`. At the current `1 bp` execution-reward rate, the order reserves:
+The trader commits a `1,200 USDG` contract-notional opening at `1x`, so the submitted margin is `1,200 USDG`. At the current `1 bp` execution-reward rate, the order reserves:
 
 ```
 Order margin:           1,200.00
@@ -318,7 +320,7 @@ Execution reward:           0.12
 While the order is pending:
 
 ```
-Margin Account USDC:    5,000.00
+Margin Account USDG:    5,000.00
 Available to Trade:     3,799.88
 Pending order margin:   1,200.00
 Reserved reward:            0.12
@@ -326,7 +328,7 @@ Reserved reward:            0.12
 
 When the order executes, pending order margin is replaced by the resulting position margin. The execution reward leaves the account, and the execution fee and VPI are applied.
 
-If the trader later adds `300 USDC` of position margin:
+If the trader later adds `300 USDG` of position margin:
 
 ```
 Position margin:          +300
@@ -345,16 +347,16 @@ When the position closes, its remaining margin is released separately. The compl
 | Deposit increased Available to Trade by less than the transferred amount | Accrued carry was collected during the deposit                               |
 | Available to Trade fell after committing an order                        | The execution reward—and, for an open or increase, order margin—was reserved  |
 | Position equity exceeds Withdrawable                                     | Part of the value comes from unrealized PnL or supports the open position    |
-| Free USDC is visible but Withdrawable is zero                            | Check mark freshness, degraded mode, carry and post-withdraw margin headroom |
+| Free USDG is visible but Withdrawable is zero                            | Check mark freshness, degraded mode, carry and post-withdraw margin headroom |
 | Claim settlement left Position equity unchanged                      | The claim became position margin, preserving their sum                  |
 | A failed order still affects the account                                 | Terminal processing or cleanup may still be required                         |
 | A trader claim appears without increasing Available to Trade             | The claim awaits settlement into the Margin Account                          |
 | A pending close exists while health continues to decline                 | Exposure and carry remain active until the close executes                    |
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.

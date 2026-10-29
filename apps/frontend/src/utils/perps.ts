@@ -70,7 +70,7 @@ export function formatPerpsPositionSize(amount: bigint | undefined, maxDecimals 
 const PERPS_SUMMARY_WHOLE_ASSETS_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.ASSETS)
 
 /**
- * Keep cents for normal-sized summary values, but drop fractional settlement assets once
+ * Keep cents for normal-sized summary values, but drop fractional USDG once
  * they stop being useful and make the value materially harder to scan.
  */
 export function formatPerpsSummaryAssets(amount: bigint | undefined): string {

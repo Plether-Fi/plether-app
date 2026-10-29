@@ -4142,7 +4142,7 @@ assertPerpsReplayAssetTransferExact conn chainId releaseRouter tokenAddress from
     , logIndex
     , timestamp
     ) :: IO [Only Integer]
-  assertExactlyOneReplayRow "settlement asset transfer" rows
+  assertExactlyOneReplayRow "USDG transfer" rows
 
 assertPerpsReplayExpiredCleanupExact :: Connection -> Integer -> Text -> Integer -> IO ()
 assertPerpsReplayExpiredCleanupExact conn chainId orderRouter orderId =
@@ -5098,7 +5098,7 @@ insertPerpsAssetTransfer conn chainId releaseRouter tokenAddress fromAddress toA
     , timestamp
     )
   unless (affected == 1) $
-    fail "Canonical settlement asset transfer conflicts with a previously indexed event identity"
+    fail "Canonical USDG transfer conflicts with a previously indexed event identity"
 
 perpsOrderBaseSelectSql :: Query
 -- Reconstruct lifetime accounting independently of the history page limit.

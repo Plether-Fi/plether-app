@@ -14,15 +14,15 @@ describe('trade breakdown details', () => {
     const { container } = render(<TradeBreakdownDetails item={item(rebate.execution as TradeExecution)} />)
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     const feeRow = screen.getByText('Protocol fee assessed').parentElement!
-    expect(within(feeRow).getByText('−866.453105 assets')).toBeInTheDocument()
-    expect(screen.getByText('+5,474.976305 assets')).toBeInTheDocument()
-    expect(container.textContent).toContain('Net rebate paid: 889.031888 assets')
+    expect(within(feeRow).getByText('−866.453105 USDG')).toBeInTheDocument()
+    expect(screen.getByText('+5,474.976305 USDG')).toBeInTheDocument()
+    expect(container.textContent).toContain('Net rebate paid: 889.031888 USDG')
   })
   it('shows a confirmed fee waiver and effective fee without double counting', () => {
     render(<TradeBreakdownDetails item={item(waiver.execution as TradeExecution)} />)
     expect(screen.getByText('Fee waived')).toBeInTheDocument()
-    expect(screen.getByText('−7,200.207038 assets')).toBeInTheDocument()
-    expect(screen.getByText(/Fee after waiver: 222.311115 assets/)).toBeInTheDocument()
+    expect(screen.getByText('−7,200.207038 USDG')).toBeInTheDocument()
+    expect(screen.getByText(/Fee after waiver: 222.311115 USDG/)).toBeInTheDocument()
   })
   it('never falls back to the ambiguous zero legacy fee', () => {
     const trade = item()
@@ -30,6 +30,6 @@ describe('trade breakdown details', () => {
     expect(screen.getByTestId('fee')).toHaveTextContent('—')
     expect(screen.getByTestId('vpi')).toHaveTextContent('—')
     expect(screen.getByText(/Breakdown unavailable/)).toBeInTheDocument()
-    expect(screen.queryByText('0.00 assets')).not.toBeInTheDocument()
+    expect(screen.queryByText('0.00 USDG')).not.toBeInTheDocument()
   })
 })

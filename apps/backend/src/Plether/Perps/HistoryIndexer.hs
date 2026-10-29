@@ -1255,7 +1255,7 @@ decodeSettlementReceipt addresses txHash blockNumber blockHash = \case
     ]
 
 -- For the verified current release, AssetSeized without a matching token transfer is an
--- internal protocol-fee credit. Other seized amounts physically transfer settlement asset.
+-- internal protocol-fee credit. Other seized amounts physically transfer USDG.
 -- Do not apply this attribution to another release, a liquidation, or an
 -- ambiguous interval. This is collection evidence, not the trader's assessed fee.
 internalFeeCredit :: PerpsAddresses -> Text -> [RpcLog] -> Maybe Integer
@@ -2272,7 +2272,7 @@ failedConstraintName = \case
   4 -> "Action charge"
   5 -> "Explicit fees"
   6 -> "Post-position size"
-  7 -> "Post-settlement balance"
+  7 -> "USDG balance after settlement"
   8 -> "Post-position equity"
   9 -> "Post leverage"
   n -> "Unknown(" <> T.pack (show n) <> ")"

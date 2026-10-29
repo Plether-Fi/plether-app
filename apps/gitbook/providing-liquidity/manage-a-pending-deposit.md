@@ -1,6 +1,6 @@
 # Manage a pending deposit
 
-Every accepted Plether liquidity-provider (LP)[^lp] deposit is queued for hourly processing. The request moves USDC[^usdc] into the selected Senior or Junior tranche[^tranche] vault, but it does not immediately put vault shares in the owner wallet.
+Every accepted Plether liquidity-provider (LP)[^lp] deposit is queued for hourly processing. The request moves USDG[^usdg] into the selected Senior or Junior tranche[^tranche] vault, but it does not immediately put vault shares in the owner wallet.
 
 The normal lifecycle is:
 
@@ -11,8 +11,8 @@ Queue deposit → Pending → Eligible hourly settlement and cooldown start → 
 Two recovery outcomes are also possible:
 
 ```text
-Pending → Cancel deposit → USDC returned
-Aggregate deposit quote rounds to zero → Epoch rejected → Refund available → Return USDC to wallet
+Pending → Cancel deposit → USDG returned
+Aggregate deposit quote rounds to zero → Epoch rejected → Refund available → Return USDG to wallet
 ```
 
 There is no user-facing `Finalize epoch` step. The settlement path is permissionless, and an enabled, healthy keeper[^keeper] can submit eligible hourly processing.
@@ -31,12 +31,12 @@ The displayed time is an expectation, not a guaranteed completion time. Processi
 
 | Status | Where the value is | What it means | Available action |
 | --- | --- | --- | --- |
-| **Pending** | USDC in vault escrow | The expected processing time has not passed | Wait or **Cancel deposit** |
-| **Waiting for processing** | USDC in vault escrow | The expected time passed, but neither ready shares nor a refund exists yet | Wait and check live protocol status |
+| **Pending** | USDG in vault escrow | The expected processing time has not passed | Wait or **Cancel deposit** |
+| **Waiting for processing** | USDG in vault escrow | The expected time passed, but neither ready shares nor a refund exists yet | Wait and check live protocol status |
 | **Shares ready** | Processed shares held by the vault for you | The deposit is active, participates in vault performance and has an activation-aged cooldown | **Move shares to wallet**, or **Queue direct withdrawal** after cooldown when shown |
-| **Refund available** | Recoverable USDC held by the vault | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected | **Return USDC to wallet** |
+| **Refund available** | Recoverable USDG held by the vault | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected | **Return USDG to wallet** |
 
-Pending USDC is not part of the active share balance. Once **Shares ready** appears, the allocation is active even though the shares have not yet been moved into the wallet.
+Pending USDG is not part of the active share balance. Once **Shares ready** appears, the allocation is active even though the shares have not yet been moved into the wallet.
 
 ### 1. Verify the submitted request
 
@@ -46,7 +46,7 @@ Match the record to the transaction using:
 
 * the selected Senior or Junior Vault;
 * **Deposit reference**;
-* deposited USDC amount;
+* deposited USDG amount;
 * **Expected processing**; and
 * estimated shares.
 
@@ -61,10 +61,10 @@ While the record is **Pending**, the interface can offer **Cancel deposit**.
 A successful cancellation:
 
 * removes the pending request;
-* returns the escrowed USDC to the owner wallet; and
+* returns the escrowed USDG to the owner wallet; and
 * creates no vault shares.
 
-Open the cancellation modal, verify the deposit reference and **USDC returned**, then confirm **Cancel deposit** in the owner wallet.
+Open the cancellation modal, verify the deposit reference and **USDG returned**, then confirm **Cancel deposit** in the owner wallet.
 
 Once the expected processing time has passed and the record changes to **Waiting for processing**, ordinary cancellation is no longer offered. A processing delay does not reopen the earlier cancellation action.
 
@@ -78,7 +78,7 @@ When processing succeeds, the protocol:
 
 1. reconciles liquidity pool and tranche accounting;
 2. determines the batch share conversion;
-3. moves the accepted USDC into the liquidity pool; and
+3. moves the accepted USDG into the liquidity pool; and
 4. creates the depositor's share allocation in vault custody.
 
 Depositors processed together use the same batch accounting. The final share amount can differ from the request estimate because the tranche share price and pool economics can change before processing.
@@ -87,7 +87,7 @@ Before processing completes:
 
 * you do not hold wallet shares;
 * the estimate is not a locked conversion rate; and
-* the queued USDC is not available for trading or wallet withdrawal.
+* the queued USDG is not available for trading or wallet withdrawal.
 
 ### If processing is late
 
@@ -124,21 +124,21 @@ The delivery transaction does not create a separate interest payment. Senior tar
 
 ### 5. Recover a refundable deposit
 
-If the processed batch's aggregate deposit quote rounds to zero shares, the contract rejects that epoch. The status changes to **Refund available** and the record shows **USDC ready to return**. Pause, stale pricing, impairment, caps and shortfalls ordinarily defer activation or enable an exceptional mature cancellation rather than creating this refund state.
+If the processed batch's aggregate deposit quote rounds to zero shares, the contract rejects that epoch. The status changes to **Refund available** and the record shows **USDG ready to return**. Pause, stale pricing, impairment, caps and shortfalls ordinarily defer activation or enable an exceptional mature cancellation rather than creating this refund state.
 
 To recover it:
 
 1. Open the matching record.
-2. Verify the deposit reference and refundable USDC amount.
-3. Select **Return USDC to wallet**.
-4. Review the modal and confirm **Return USDC**.
+2. Verify the deposit reference and refundable USDG amount.
+3. Select **Return USDG to wallet**.
+4. Review the modal and confirm **Return USDG**.
 5. Verify the transaction receipt and owner-wallet balance.
 
 A refund creates no vault shares. Do not submit a replacement deposit until the return transaction is confirmed and the old record no longer exposes a refundable balance.
 
 ### Price and ordering risk
 
-Queueing commits USDC before the exact share amount is known. The final result can change because:
+Queueing commits USDG before the exact share amount is known. The final result can change because:
 
 * tranche accounting changes before processing;
 * trader outcomes alter the value reconciled into the waterfall;
@@ -165,28 +165,28 @@ Use [Market states and oracle closures](../how-plether-works/market-states-and-o
 | What you see | Likely meaning | What to do |
 | --- | --- | --- |
 | Approval confirmed, but no deposit record appears | Only the allowance changed | Confirm whether **Queue deposit** was submitted before retrying |
-| USDC left the wallet, but shares are zero | The request is pending or waiting for processing | Match the deposit reference and expected processing time |
+| USDG left the wallet, but shares are zero | The request is pending or waiting for processing | Match the deposit reference and expected processing time |
 | **Cancel deposit** is unavailable | The record is no longer in its cancellable pending stage | Read its current status; do not submit repeated cancellations |
 | **Waiting for processing** persists | Settlement is paused, delayed or blocked | Check processing, backlog, pricing and safety status; do not look for a user finalization control |
 | Final shares differ from the estimate | Processing used current batch accounting and share price | Review the processed allocation rather than the request-time estimate |
 | **Shares ready** but wallet balance is unchanged | Shares remain in vault custody | Select **Move shares to wallet** and verify its receipt |
-| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares and the epoch was rejected | Select **Return USDC to wallet** and verify the refund |
-| A pending amount is absent from position value | Queued USDC is not an active wallet-share position | Keep it separate until shares are ready or a refund is available |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares and the epoch was rejected | Select **Return USDG to wallet** and verify the refund |
+| A pending amount is absent from position value | Queued USDG is not an active wallet-share position | Keep it separate until shares are ready or a refund is available |
 
 ### Before you stop monitoring
 
 Confirm one terminal owner outcome:
 
-* **Cancelled:** escrowed USDC returned and no shares were created.
+* **Cancelled:** escrowed USDG returned and no shares were created.
 * **Delivered:** ready shares were moved into the owner wallet.
 * **Directly queued:** ready shares entered a withdrawal request after their source cooldown without passing through the wallet.
-* **Refunded:** recoverable USDC was returned after processing could not complete the deposit.
+* **Refunded:** recoverable USDG was returned after processing could not complete the deposit.
 
 **Deposit submitted**, an expected processing timestamp or **Shares ready** alone does not mean every owner action is complete.
 
 For how the resulting position gains or loses value, continue to [Understand LP returns and share value](understand-lp-returns-and-share-value.md). For the complete accounting model, see [The liquidity pool and tranche waterfall](../how-plether-works/the-liquidity-pool-and-tranche-waterfall.md).
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.

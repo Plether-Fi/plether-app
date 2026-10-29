@@ -86,7 +86,7 @@ The underlying commitment call can fail for:
 
 | Commit error                     | Typical cause                                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Insufficient free USDC           | Available to Trade cannot cover the margin and execution reward                                 |
+| Insufficient free USDG           | Available to Trade cannot cover the margin and execution reward                                 |
 | Too many pending orders          | The account has reached the active pending-order limit                                          |
 | Position too small               | The opening or partial reduction is below the minimum supported size                            |
 | Insufficient initial margin      | Size and margin would create excessive leverage                                                 |
@@ -209,7 +209,7 @@ The trade modal continues to show keeper progress. It does not expose **Finalize
 
 The underlying order-execution function is permissionless, but the current sponsored interface does not expose an owner-wallet manual-finalization route. Plether’s keeper supplies the execution transaction, the required Pyth update data and any native-token Pyth fee.
 
-For an ordinary terminal result processed by the keeper, the reserved USDC[^usdc] execution reward is credited to the keeper account. If liquidation clears the order first, the reward is forfeited to the protocol treasury. The owner wallet is not charged native gas for keeper processing.
+For an ordinary terminal result processed by the keeper, the reserved USDG[^usdg] execution reward is credited to the keeper account. If liquidation clears the order first, the reward is forfeited to the protocol treasury. The owner wallet is not charged native gas for keeper processing.
 
 #### A keeper finalization attempt failed
 
@@ -261,7 +261,7 @@ An existing position keeps its current size, entry price, PnL[^pnl] and carry[^c
 
 A close normally reserves only its execution reward.
 
-Plether uses free Margin Account USDC first. When permitted, it can source a bounded part from assigned position margin.
+Plether uses free Margin Account USDG first. When permitted, it can source a bounded part from assigned position margin.
 
 Position-margin funding can:
 
@@ -412,8 +412,8 @@ Submit a fresh order if the trade is still required.
 | -------------------------------- | ------------------------------------------------ | ------------------------------ |
 | Pending                          | Remains reserved                                 | Remains reserved               |
 | Executed                         | Becomes active position margin as applicable     | Paid to terminal processor     |
-| Slippage or engine failure       | Released to free Margin Account USDC             | Paid to terminal processor     |
-| Expired and cleaned              | Released to free Margin Account USDC             | Paid to cleanup keeper         |
+| Slippage or engine failure       | Released to free Margin Account USDG             | Paid to terminal processor     |
+| Expired and cleaned              | Released to free Margin Account USDG             | Paid to cleanup keeper         |
 | Keeper transaction reverts       | Unchanged                                        | Unchanged                      |
 | Liquidation happens first        | May be consumed before any remainder is released | Forfeited to protocol treasury |
 
@@ -487,9 +487,9 @@ Open Orders are read from onchain state, while Order History is indexed separate
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.

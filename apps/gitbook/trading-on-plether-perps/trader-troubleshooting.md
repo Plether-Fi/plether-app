@@ -53,7 +53,7 @@ These failures occur before the delayed order lifecycle:
 
 The owner wallet rejected or did not complete the authorization. Nothing was submitted, and Plether cannot create the signature on the user’s behalf.
 
-Check the network, Trading Account, action, USDC[^usdc] amount and recipient before trying again.
+Check the network, Trading Account, action, USDG[^usdg] amount and recipient before trying again.
 
 #### Sponsor unavailable
 
@@ -102,7 +102,7 @@ Common causes include:
 
 The interface may show messages such as:
 
-* **Deposit … USDC more before committing this order**
+* **Deposit … USDG more before committing this order**
 * **Minimum order size is …**
 * **Max Long/Short exposure is … before hitting the market skew cap**
 * **Reduce or close the current position first**
@@ -276,25 +276,25 @@ If the order reached a terminal failure, the position remains unchanged.
 
 Check:
 
-* Trading Account USDC balance
+* Trading Account USDG balance
 * Deposit amount
 * Active Trading Account
 * Network
 * Sponsorship status
 * Owner-wallet Arbitrum Sepolia ETH when a transfer is required
 
-The deposit modal includes both Trading Account and owner-wallet MockUSDC in **Available to deposit**. The testnet welcome flow normally funds the derived Trading Account directly. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
+The deposit modal includes both Trading Account and owner-wallet MockUSDG in **Available to deposit**. The testnet welcome flow normally funds the derived Trading Account directly. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
 
-After the required USDC is at the Trading Account address, the owner wallet authorizes one sponsored Trading Account operation. It batches:
+After the required USDG is at the Trading Account address, the owner wallet authorizes one sponsored Trading Account operation. It batches:
 
 1. An exact approval to the Margin Clearinghouse.
 2. A deposit for the same amount.
 
-If the owner-wallet transfer confirms but the sponsored operation fails, the transferred USDC remains at the Trading Account address. Retry the deposit from the same modal or refresh first. The application will not request the completed shortfall transfer again once the updated balance is visible.
+If the owner-wallet transfer confirms but the sponsored operation fails, the transferred USDG remains at the Trading Account address. Retry the deposit from the same modal or refresh first. The application will not request the completed shortfall transfer again once the updated balance is visible.
 
 #### The deposit succeeded, but Available to Trade increased by less
 
-Depositing into an account with an open position checkpoints carry. Some of the deposited USDC may be collected against accrued carry.
+Depositing into an account with an open position checkpoints carry. Some of the deposited USDG may be collected against accrued carry.
 
 Review:
 
@@ -304,7 +304,7 @@ Review:
 * Position margin
 * Transaction events
 
-A deposit increases free Margin Account USDC. To assign part of it directly to the current position, use **Edit Position Margin** and **Add margin**.
+A deposit increases free Margin Account USDG. To assign part of it directly to the current position, use **Edit Position Margin** and **Add margin**.
 
 See [**Your Margin Account**](your-margin-account.md).
 
@@ -314,10 +314,10 @@ Adding position margin requires:
 
 * The owner wallet controlling the Trading Account to be connected
 * An existing open position
-* Sufficient free Margin Account USDC
+* Sufficient free Margin Account USDG
 * An amount greater than zero
 
-Carry is realized before the margin is assigned. If free USDC is insufficient after that carry collection, reduce the amount or deposit additional USDC first.
+Carry is realized before the margin is assigned. If free USDG is insufficient after that carry collection, reduce the amount or deposit additional USDG first.
 
 Position margin can be added directly. Releasing assigned position margin requires reducing or closing the position.
 
@@ -407,7 +407,7 @@ Available to Trade excludes:
 
 Carry can also reduce the balance when an account action checkpoints it.
 
-Unrealized profit can contribute to Position equity before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
+Unrealized profit can contribute to Position equity before it becomes free Margin Account USDG. Released margin follows separately. At realization, the complete fresh pool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on pool settlement liquidity.
 
 ### My liquidation price or account health changed
 
@@ -417,12 +417,12 @@ Check for changes in:
 * Unrealized PnL
 * Carry
 * Position margin
-* Free Margin Account USDC
+* Free Margin Account USDG
 * Pending-order reservations
 * Execution-reward reservations
 * Current FAD margin requirement
 
-Price health uses position margin plus same-account claims and exact PnL. Carry coverage and dedicated VPI reserve backing are checked separately; free settlement and order reservations do not increase price equity.
+Price health uses position margin plus same-account claims and exact PnL. Carry coverage and dedicated VPI reserve backing are checked separately; free USDG and order reservations do not increase price equity.
 
 Actual liquidation uses an adverse confidence-adjusted oracle price. A position close to the boundary can therefore become liquidatable before the central displayed mark reaches the estimated liquidation price.
 
@@ -442,7 +442,7 @@ During the wait:
 * The close execution reward has already been reserved.
 * Position margin may already have been used to back that reward.
 
-Depositing USDC can restore carry coverage. To increase the price-loss buffer without changing size, assign free funds using Add Margin.
+Depositing USDG can restore carry coverage. To increase the price-loss buffer without changing size, assign free funds using Add Margin.
 
 If liquidation executes first:
 
@@ -485,7 +485,7 @@ The condition applies to aggregate claims. Cash sufficient for one individual cl
 
 Claim settlement processes the Trading Account’s complete claim balance. Retrying while coverage remains insufficient cannot make the claim serviceable and may be rejected during simulation.
 
-Successful settlement credits the Margin Account. Moving the USDC to the wallet requires a separate withdrawal.
+Successful settlement credits the Margin Account. Moving the USDG to the wallet requires a separate withdrawal.
 
 An existing claim may also be consumed against a shortfall from a losing terminal full close or liquidation.
 
@@ -528,11 +528,11 @@ Never share a seed phrase, private key or wallet recovery code.
 
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.

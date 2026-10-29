@@ -637,7 +637,7 @@ describe('perps ticket oracle regime matrix', () => {
     const positionVpiInfo = preview.getByLabelText('Position VPI balance info')
     fireEvent.focus(positionVpiInfo)
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'A provisional credit has already been added to settlement, remains excluded from risk equity'
+      'A provisional credit has already been added to your USDG balance, remains excluded from risk equity'
     )
   })
 
@@ -667,7 +667,7 @@ describe('perps ticket oracle regime matrix', () => {
 
     fireEvent.focus(preview.getByLabelText('VPI info'))
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement'
+      'positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account in USDG'
     )
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'not sent directly to the owner wallet'

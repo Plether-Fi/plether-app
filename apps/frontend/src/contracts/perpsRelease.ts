@@ -57,7 +57,7 @@ export function parsePerpsReleaseConfiguration(value: unknown): PerpsReleaseConf
   if (Object.keys(contracts).length !== expectedContracts.length) throw new Error('Perps contract graph has unsupported entries')
   for (const name of expectedContracts) if (!Object.hasOwn(contracts, name)) throw new Error(`Missing perps ${name} contract`)
   if (record(source.contracts, 'contracts').settlementToken === undefined || record(record(source.contracts, 'contracts').settlementToken, 'settlementToken').artifact !== 'script/DeployPerpsArbitrumSepolia.s.sol:MockUSDG') throw new Error('Schema 4 requires the MockUSDG artifact')
-  const metadata = record(source.settlementToken, 'settlement token metadata')
+  const metadata = record(source.settlementToken, 'USDG token metadata')
   if (metadata.name !== 'Mock USDG' || metadata.symbol !== 'USDG' || metadata.decimals !== 6 ||
       metadata.isMock !== true || metadata.supportsReceiveWithAuthorization !== false || metadata.supportsBridgeFunding !== false) throw new Error('Invalid MockUSDG metadata or capabilities')
   return {
