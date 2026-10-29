@@ -103,7 +103,6 @@ export function DivisionsRegistrationPage() {
   const [turnstileReset, setTurnstileReset] = useState(0)
   const [acceptRules, setAcceptRules] = useState(false)
   const [acceptPrivacy, setAcceptPrivacy] = useState(false)
-  const [showDiscordHandle, setShowDiscordHandle] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -145,14 +144,13 @@ export function DivisionsRegistrationPage() {
     if (!session || !acceptRules || !acceptPrivacy) return
     setPending('complete')
     setActionError(null)
-    try { setSession(await completeDivisionsRegistration(session, supportsPublicHandle && showDiscordHandle)) }
+    try { setSession(await completeDivisionsRegistration(session)) }
     catch (caught) {
       setActionError(registrationErrorMessage(caught))
       if (registrationNeedsRecovery(caught)) await load()
     } finally { setPending(null) }
   }
 
-  const supportsPublicHandle = session?.capabilities?.publicDiscordHandle === true
   const completed = !session ? 0 : session.status === 'completed' || session.steps.completed ? 4
     : session.steps.wallet === 'verified' ? 3 : session.steps.discord === 'verified' ? 2 : 1
 
@@ -173,10 +171,8 @@ export function DivisionsRegistrationPage() {
           <button type="button" className={`mt-5 ${PRIMARY_BUTTON}`} disabled={!turnstileToken || pending === 'session'} onClick={() => { void start() }}>{pending === 'session' ? 'Starting…' : 'Start registration'}</button>
         </div> : completed === 4 ? <div><p className="text-xs font-semibold uppercase tracking-widest text-positive">Link complete</p>
           <h2 className="mt-2 text-2xl font-semibold">Discord and wallet linked</h2>
-          <p className="mt-3 text-sm leading-6 text-content-secondary">Your Discord account <strong className="text-content-primary">{session.identity?.username}</strong> is linked to owner wallet <span className="font-mono text-content-primary">{session.wallet && shortAddress(session.wallet.ownerAddress)}</span>. This link does not change ranking eligibility. Discord roles will become available separately.</p>
+          <p className="mt-3 text-sm leading-6 text-content-secondary">Your Discord account <strong className="text-content-primary">{session.identity?.username}</strong> is linked to owner wallet <span className="font-mono text-content-primary">{session.wallet && shortAddress(session.wallet.ownerAddress)}</span>. Your Discord handle appears beside your Trading Account on the leaderboard. This link does not change ranking eligibility. Discord roles will become available separately.</p>
           <div className="mt-5 flex flex-wrap gap-3"><Link to="/" className={PRIMARY_BUTTON}>View Divisions</Link><a href="https://plether.com/discord" target="_blank" rel="noreferrer" className={SECONDARY_BUTTON}>Join Discord ↗</a></div>
-          {supportsPublicHandle && <><p className="mt-4 text-sm text-content-secondary">To change whether your handle appears publicly, verify your Discord account and wallet again.</p>
-          <button type="button" className={`mt-3 ${SECONDARY_BUTTON}`} onClick={() => { setSession(null); setTurnstileToken(null); setAcceptRules(false); setAcceptPrivacy(false); setShowDiscordHandle(false); setTurnstileReset((value) => value + 1) }}>Update leaderboard visibility</button></>}
         </div> : completed === 1 ? <div><p className="text-xs font-semibold uppercase tracking-widest text-brand-peach">Step 2 of 4</p>
           <h2 className="mt-2 text-2xl font-semibold">Sign in with Discord</h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">Discord will share your account ID and username. We use the ID to keep each account linked to one wallet. We do not request your email or permission to post.</p>
@@ -194,8 +190,7 @@ export function DivisionsRegistrationPage() {
           </dl>
           <div className="mt-5 space-y-3 text-sm leading-6 text-content-secondary">
             <label className="flex items-start gap-3"><input type="checkbox" checked={acceptRules} onChange={(event) => { setAcceptRules(event.target.checked) }} className="mt-1 accent-brand-orange" /><span>I accept the <Link to="/methodology" className="text-brand-peach underline">Divisions rules</Link> and the one Discord account per wallet linking rule.</span></label>
-            <label className="flex items-start gap-3"><input type="checkbox" checked={acceptPrivacy} onChange={(event) => { setAcceptPrivacy(event.target.checked) }} className="mt-1 accent-brand-orange" /><span>I understand Plether stores my Discord ID and username with the owner wallet and Trading Account for role linking. Linking does not automatically assign a role. My Discord handle stays private unless I choose to show it on the leaderboard.</span></label>
-            {supportsPublicHandle && <label className="flex items-start gap-3"><input type="checkbox" checked={showDiscordHandle} onChange={(event) => { setShowDiscordHandle(event.target.checked) }} className="mt-1 accent-brand-orange" /><span>Show my Discord handle publicly beside my Trading Account on the leaderboard (optional).</span></label>}
+            <label className="flex items-start gap-3"><input type="checkbox" checked={acceptPrivacy} onChange={(event) => { setAcceptPrivacy(event.target.checked) }} className="mt-1 accent-brand-orange" /><span>I understand Plether stores my Discord ID and username with the owner wallet and Trading Account for role linking. Linking does not automatically assign a role. Registering makes my Discord handle public beside my Trading Account on the leaderboard.</span></label>
           </div>
           <button type="button" className={`mt-5 ${PRIMARY_BUTTON}`} disabled={!acceptRules || !acceptPrivacy || pending === 'complete'} onClick={() => { void complete() }}>{pending === 'complete' ? 'Completing…' : 'Complete registration'}</button>
         </div>}

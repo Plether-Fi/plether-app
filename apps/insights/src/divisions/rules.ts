@@ -2,7 +2,7 @@ export const TIERS = ['Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond']
 export type Tier = typeof TIERS[number]
 
 export const TIER_REQUIREMENTS: Record<Tier, string> = {
-  Iron: 'Automatic on your first trade',
+  Iron: 'Trade in a completed week',
   Bronze: 'Finish in profit',
   Silver: 'Top 50% of profitable traders',
   Gold: 'Top 20% of profitable traders',

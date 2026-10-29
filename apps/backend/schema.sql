@@ -2459,10 +2459,6 @@ CREATE TABLE IF NOT EXISTS insights_divisions_links (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Existing links remain private until the trader explicitly opts in.
-ALTER TABLE insights_divisions_links
-    ADD COLUMN IF NOT EXISTS show_discord_handle BOOLEAN NOT NULL DEFAULT FALSE;
-
 CREATE TABLE IF NOT EXISTS insights_divisions_link_sessions (
     session_digest BYTEA PRIMARY KEY CHECK (octet_length(session_digest) = 32),
     expires_at TIMESTAMPTZ NOT NULL,
@@ -3142,3 +3138,13 @@ FOR EACH ROW EXECUTE FUNCTION insights_integrity_cursor_epoch();
 ALTER TABLE insights_account_snapshots
   ALTER CONSTRAINT insights_account_snapshots_competition_slug_fkey
   DEFERRABLE INITIALLY IMMEDIATE;
+
+-- Immutable weekly Divisions badge awards, scoped to the perps release.
+CREATE TABLE IF NOT EXISTS divisions_publications (
+  chain_id BIGINT NOT NULL,
+  release_router TEXT NOT NULL,
+  week_start BIGINT NOT NULL,
+  closing_block BIGINT NOT NULL,
+  publication JSONB NOT NULL,
+  PRIMARY KEY (chain_id, release_router, week_start)
+);

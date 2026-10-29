@@ -53,7 +53,7 @@ weekend events do not create active days.
 
 | Tier | Requirement in a qualifying week |
 | --- | --- |
-| Iron | Automatic on first executed trade |
+| Iron | At least one executed trade, awarded after the completed week is published |
 | Bronze | In profit |
 | Silver | Top 50% of profitable traders |
 | Gold | Top 20% of profitable traders |
@@ -74,22 +74,26 @@ repeating the entry percentile every week.
 
 Every prior wallet must have complete weekly data. Missing input aborts
 publication; it is never inferred as inactivity. New wallets are initialized at
-Iron. The current snapshot publisher exposes those badges at weekly publication;
-immediate first-trade badges require the future live account feed.
+Iron internally for progression calculations, but this is not an awarded badge.
+Every badge, including Iron, is awarded only after the trading week ends and its
+results are published on Monday. Live trading never grants a badge.
 
 ## Public status and announcements
 
 Leaderboard badges show earned persistent tiers, not the tier implied by one
 week's percentile. The live leaderboard joins these tiers from the latest
-published results; it shows pending/unavailable while no publication can be read.
-A newly traded wallet absent from an available publication starts at Iron.
-Discord handles come from completed links matched by Trading Account, and are
-public only when the trader opts in with `showDiscordHandle` at registration.
-The registration API advertises `capabilities.publicDiscordHandle`; the UI only
-offers visibility controls after the backend supports persisting them.
-Existing links default to private; traders can repeat verification to change
-visibility. Neither Discord IDs nor owner-wallet mappings are returned in the
-public standings. Search matches wallet addresses and public Discord handles.
+published results; it shows loading/unavailable while publication cannot be read.
+An explicit empty publication result does not grant a badge.
+A newly traded wallet absent from the latest publication shows “Not yet awarded”.
+Returning traders keep their last awarded badge throughout the active week;
+current-week rankings cannot change it.
+Discord handles come from completed registrations matched by Trading Account.
+Registration makes the handle public beside that Trading Account on the
+leaderboard, including for existing registrations. There is no separate
+visibility setting or additional checkbox. The registration review explains
+that the handle will be public. Neither Discord IDs nor owner-wallet mappings
+are returned in public standings. Search matches wallet addresses and Discord
+handles.
 Wallets may rank without Discord.
 
 Matching Discord roles will require a linked wallet. The `/register` flow links
@@ -127,14 +131,25 @@ rounded weekly returns, active-day counts, and snapshot timing without exposing
 balances or exact P&L. Insights refreshes this view every minute. A new release
 starts a new roster; a wallet does not need a Discord link to rank.
 
-Live ranks can change until Friday close. Earned tiers, promotions, and weekly
-announcements still require the finalized weekly publication. Ranking JSON is
-not committed to the public repository.
+Live ranks can change until Friday close. The worker also captures each completed
+week at canonical finalized boundaries and publishes after Monday 00:00 UTC.
+It backfills every week sequentially from launch, including empty and inactive
+weeks, using the same complete account and verified funding calculations as the
+live feed. Awards are append-only in `divisions_publications`, scoped by chain
+and release, and remain available across worker restarts and frontend deployments.
+Failed capture or missing prior wallets prevents advancement and retries next cycle.
 
-An upstream all-account weekly exporter is required for production data. The
-existing September API, registered roster and frozen snapshots cannot provide
-this feed. The publisher checks format and sequence; it does not independently
-verify blockchain hashes or data completeness against the chain. Do not supply
-mock inputs to production. Keep source inputs for audit and replay. Changes to
-canonicality after publication require an explicit correction process, rather
-than silently rewriting public history.
+`/api/insights/v1/divisions/current` serves the latest publication (or explicit
+null before the first publication), enriched with registered Discord handles.
+The leaderboard uses only these published tiers; a newly traded wallet waits
+for its first completed week’s publication before receiving a badge.
+It never derives earned badges from provisional current-week ranks. The API keeps
+published awards available even when live snapshots are temporarily stale.
+The backend and offline TypeScript engines share regression fixtures for promotion,
+demotion, exact ties, inactive weeks and empty weeks.
+
+The September API, registered roster and frozen snapshots are not the Divisions
+feed. The standalone file publisher remains an offline replay/audit tool. Ranking
+JSON is not committed to the public repository, except synthetic test fixtures.
+Changes to canonicality after publication require an explicit correction process,
+rather than silently rewriting public history.

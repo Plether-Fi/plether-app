@@ -7,7 +7,6 @@ export interface DivisionsRegistrationSession {
   steps: { discord: 'pending' | 'verified'; wallet: 'pending' | 'verified'; completed: boolean }
   identity?: { username: string }
   wallet?: { ownerAddress: string; tradingAccount: string }
-  capabilities?: { publicDiscordHandle?: boolean }
   requiredConsents: { rulesVersion: string; privacyVersion: string }
 }
 
@@ -44,15 +43,12 @@ export async function verifyDivisionsWallet(csrfToken: string, ownerAddress: str
   })).registration
 }
 
-export async function completeDivisionsRegistration(session: DivisionsRegistrationSession, showDiscordHandle = false) {
-  const supportsPublicHandle = session.capabilities?.publicDiscordHandle === true
-  if (showDiscordHandle && !supportsPublicHandle) throw new Error('Public Discord handles are not available yet. Refresh and try again later.')
+export async function completeDivisionsRegistration(session: DivisionsRegistrationSession) {
   return (await registrationRequest<RegistrationEnvelope>(`${base}/complete`, {
     method: 'POST', csrfToken: session.csrfToken,
     body: {
       acceptRules: true,
       acceptPrivacy: true,
-      ...(supportsPublicHandle ? { showDiscordHandle } : {}),
       rulesVersion: session.requiredConsents.rulesVersion,
       privacyVersion: session.requiredConsents.privacyVersion,
     },

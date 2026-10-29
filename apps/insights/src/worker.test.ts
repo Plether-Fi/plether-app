@@ -115,6 +115,8 @@ describe('Cloudflare Pages Worker', () => {
     ['/api/insights/v1/status', 30],
     ['/api/insights/v1/divisions/traders', 15],
     ['/api/insights/v1/divisions/live', 15],
+    ['/api/insights/v1/divisions/current', 15],
+    ['/api/insights/v1/divisions/history?week=1791752400', 15],
     ['/api/insights/v1/competitions/summer-2026/leaderboard?limit=50', 15],
     ['/api/insights/v1/competitions/summer-2026/wallets/0x1234', 15],
   ])('edge-caches successful public reads for %s for %i seconds', async (path, cacheTtl) => {

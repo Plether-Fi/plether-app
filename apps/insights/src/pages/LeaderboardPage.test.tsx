@@ -58,22 +58,40 @@ describe('Divisions leaderboard', () => {
     expect(within(table).getByRole('columnheader', { name: 'Discord handle' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: 'Current badge' })).toBeInTheDocument()
     const rows = within(table).getAllByRole('row')
-    expect(rows[1]).toHaveTextContent('Iron')
+    expect(rows[1]).toHaveTextContent('Not yet awarded')
+    expect(rows[1]).not.toHaveTextContent('Iron')
     expect(rows[2]).toHaveTextContent('Bronze')
     expect(rows[2]).toHaveTextContent('@mellboi')
-    expect(within(rows[1]).getByLabelText('No public Discord handle')).toBeInTheDocument()
+    expect(within(rows[1]).getByLabelText('Discord not linked')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '@MELLBOI' } })
     expect(within(table).getAllByRole('row')).toHaveLength(2)
     expect(table).toHaveTextContent('@mellboi')
   })
-  it('shows pending badges when no weekly awards have been published', () => {
+  it('shows Iron only after a completed week publishes it, regardless of current-week gains', () => {
+    clock.now = Date.parse('2026-10-20T12:00:00Z')
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityAssets: '99000000000' })]), null) })
+    liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
+      { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 2 },
+    ] } })
+    show()
+    const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
+    expect(table).toHaveTextContent('Iron')
+    expect(table).not.toHaveTextContent('Bronze')
+    expect(screen.getByText(/Last awarded for the week ending 16 Oct 2026/)).toBeInTheDocument()
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(screen.queryByRole('table', { name: /Published weekly percentage/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Last week’s results →' })).toHaveAttribute('href', '/results')
+  })
+
+  it('does not award any badge during a trader’s first week, even with a qualifying live score', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 5 },
     ] } })
     show()
     const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
-    expect(table).toHaveTextContent('Pending publication')
-    expect(within(table).queryByRole('img')).not.toBeInTheDocument()
+    expect(table).toHaveTextContent('Not yet awarded')
+    expect(table).not.toHaveTextContent('Iron')
+    expect(table).not.toHaveTextContent('Bronze')
   })
   it('pages through all live rankings and searches across pages', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 101, standings: Array.from({ length: 101 }, (_, index) => ({
@@ -89,28 +107,8 @@ describe('Divisions leaderboard', () => {
     expect(screen.queryByText(/Page 2 of 2/)).not.toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('101')
   })
-  it('shows earned badges beside traders and filters the full published ranking', () => {
-    const publication = publishWeek(input(0, [account(1, { displayName: 'Alice' }), account(2, { displayName: 'Bob' })]), null)
-    query.mockReturnValue({ data: publication })
-    show()
-    const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('img', { name: 'Bronze' })).toHaveLength(2)
-    expect(within(table).getByText('Alice')).toBeInTheDocument()
-    expect(within(table).getAllByText('+10.00%')).toHaveLength(2)
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'bob' } })
-    expect(screen.queryByRole('table')?.textContent).not.toContain('Alice')
-    expect(within(screen.getByRole('table')).getByText('Bob')).toBeInTheDocument()
-    expect(screen.getByText('Alice, Bob')).toBeInTheDocument()
-  })
-  it('retains published results on a failed refresh and provides retry', () => {
-    const refetch = vi.fn()
-    query.mockReturnValue({ data: publishWeek(input(), null), isError: true, refetch })
-    show()
-    expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.getByText(/Could not refresh Divisions/)).toHaveAttribute('role', 'status')
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(refetch).toHaveBeenCalledOnce()
-  })
+
+
   it('keeps live rankings available if no publication can be read', () => {
     query.mockReturnValue({ isError: true, error: new Error('offline'), refetch: vi.fn() })
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '320000000', walletCount: 1, standings: [
@@ -120,6 +118,8 @@ describe('Divisions leaderboard', () => {
     expect(screen.getByRole('heading', { name: 'Live weekly leaderboard' })).toBeInTheDocument()
     expect(screen.getByRole('table')).toHaveTextContent('0x0000…0001')
     expect(screen.queryByText('offline')).not.toBeInTheDocument()
+    expect(screen.getByRole('table')).toHaveTextContent('Badge unavailable')
+    expect(screen.getByRole('table')).not.toHaveTextContent('Not yet awarded')
   })
   it('shows provisional current-release ranks before any weekly publication', () => {
     liveQuery.mockReturnValue({ data: { status: 'ready', weekStartsAt: '2026-10-11T21:00:00Z', snapshotAt: '2026-10-12T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [
@@ -130,8 +130,8 @@ describe('Divisions leaderboard', () => {
     const table = screen.getByRole('table', { name: /Provisional weekly ranks/ })
     expect(table).toHaveTextContent('+12.50%')
     expect(table).toHaveTextContent('0x0000…0002')
-    expect(within(table).getByRole('link', { name: 'View 0x0000000000000000000000000000000000000001 on Arbiscan' })).toHaveAttribute('href', 'https://sepolia.arbiscan.io/address/0x0000000000000000000000000000000000000001')
-    expect(within(table).getByRole('link', { name: 'View 0x0000000000000000000000000000000000000001 on Arbiscan' })).toHaveAttribute('target', '_blank')
+    expect(within(table).getByRole('link', { name: 'View trader 0x0000000000000000000000000000000000000001' })).toHaveAttribute('href', '/divisions/wallets/0x0000000000000000000000000000000000000001')
+    expect(within(table).getByRole('link', { name: 'View trader 0x0000000000000000000000000000000000000001' })).not.toHaveAttribute('target')
     expect(screen.getByText(/2 wallets/)).toBeInTheDocument()
   })
 })

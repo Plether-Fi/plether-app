@@ -17,10 +17,27 @@ consumes complete account snapshots, includes inactive previously ranked wallets
 and emits tier state, standings, and weekly announcement data. It uses exact
 integer ratios to rank percentage returns, without floating-point rounding.
 
-The UI reads `/divisions/current.json`. It never uses September's cumulative
-P&L or 100,000-USDC baseline to calculate weekly Divisions results. Before a
-publication exists, it shows the live traded-wallet roster without a ranking
-placeholder or unpublished badges.
+The home page shows live rankings and current awarded badges. Completed results live
+on `/results` (Last week’s results), with older/newer navigation using stable week-start
+cursors in the URL. `/api/insights/v1/divisions/history?week=<epoch-seconds>` returns
+one saved publication plus `olderCursor` and `newerCursor`; omitting `week` selects
+the latest published week. Empty published weeks remain browsable.
+
+The UI reads `/api/insights/v1/divisions/current` from the backend. The Insights
+worker captures finalized boundary values for every traded account, checks
+external funding against indexed USDC transfers, and appends each completed
+week to `divisions_publications`. It backfills from the first week in order,
+including empty weeks, one week per cycle. Publication starts Monday at 00:00
+UTC; failed captures leave the previous awards intact and retry next cycle.
+Awards persist across deployments and never expire with live snapshot freshness.
+Every badge, including Iron, is awarded only in a completed week’s publication.
+New traders show “Not yet awarded” until included in published results; returning
+traders keep their last awarded tier throughout the active week. Current-week
+returns remain provisional and never grant a badge.
+The API adds current registered Discord handles to published display names.
+The backend and TypeScript engines share multi-week regression fixtures.
+
+The standalone publisher remains available for offline replay and audit:
 
 Use Node **22.18+** to run the publisher (native TypeScript support):
 
@@ -42,20 +59,16 @@ voluntary position changes. The exporter must verify event emitter, asset,
 canonicality, finalized boundary blocks, and complete wallet coverage. Retain
 source inputs and their block hashes privately for replay/audit.
 
-**Integration boundary:** the ranking UI and snapshot-input engine do not collect
-new weekly snapshots from the existing Haskell indexer. Its September snapshot
-worker and participant roster cannot be used as a Divisions feed. A complete
-weekly exporter for all traded accounts is required to supply production inputs.
-Discord account and wallet linking is implemented separately. Role assignment
-and posting to X/Discord are deferred; the engine only prepares announcement data.
+The production worker uses the Divisions all-account feed, independent of the
+September competition roster. It retains exact adjusted equity, P&L and canonical
+boundary hashes in immutable weekly publications. Missing prior wallets, invalid
+funding, failed account reads, premature publication and skipped weeks prevent
+publication. Existing weeks are never overwritten, including during rolling
+deployments. Canonical-history corrections require an explicit correction process.
 
-The publisher refuses premature/future publication, skipped weeks, duplicate
-wallets, missing snapshots, rewriting a published week's results, and
-replacement of an unexpected current week. It writes an immutable weekly
-archive and atomically replaces `current.json`; exact retries are idempotent.
-Run one publisher at a time. Publish the resulting assets through the normal
-Insights deployment; generating files alone does not deploy them. No sample or
-synthetic standings are included in production assets.
+The standalone file publisher enforces the same sequencing and progression rules
+and writes an immutable weekly archive. Its files are not the production data
+source. Discord role assignment and posting remain separate from badge display.
 
 ## September archive
 

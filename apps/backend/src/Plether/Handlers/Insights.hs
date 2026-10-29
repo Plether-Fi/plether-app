@@ -4,6 +4,8 @@ module Plether.Handlers.Insights
   , getCompetitionWalletResponse
   , getInsightsDataStatusResponse
   , getDivisionsTradersResponse
+  , getDivisionsCurrentResponse
+  , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
   , competitionRowToJson
   , leaderboardRowToJson
@@ -237,6 +239,53 @@ getDivisionsTradersResponse pool cfg = do
         ]
     _ -> Left $ E.internalError "Divisions trade indexer has no finalized cursor"
 
+-- Finalized badges have no live-snapshot freshness limit: an awarded tier
+-- remains current throughout the following week and across worker restarts.
+getDivisionsCurrentResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
+getDivisionsCurrentResponse pool cfg = do
+  rows <- withDb pool $ \conn -> query conn
+    "SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
+    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
+    \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
+    \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text \
+    \FROM divisions_publications p WHERE p.chain_id=? AND p.release_router=? \
+    \ORDER BY p.week_start DESC LIMIT 1"
+    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg)
+  pure $ case rows :: [(Integer, Text)] of
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) Null
+    (block, encoded):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) publication
+
+-- Cursor identities are week starts, so new publications cannot shift an
+-- existing history page. The window is scoped to one chain and release before
+-- selecting a page, and includes empty published weeks.
+getDivisionsHistoryResponse :: DbPool -> Config -> Maybe Int -> IO (Either ApiError (ApiResponse Value))
+getDivisionsHistoryResponse pool cfg week = do
+  rows <- withDb pool $ \conn -> query conn
+    "WITH weeks AS (SELECT week_start, closing_block, publication, \
+    \LAG(week_start) OVER (ORDER BY week_start) AS older_week, \
+    \LEAD(week_start) OVER (ORDER BY week_start) AS newer_week \
+    \FROM divisions_publications WHERE chain_id=? AND release_router=?) \
+    \SELECT p.closing_block, jsonb_set(p.publication, '{standings}', \
+    \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('displayName', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb) \
+    \FROM jsonb_array_elements(p.publication->'standings') WITH ORDINALITY AS e(value, ordinality) \
+    \LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'))::text, \
+    \p.older_week, p.newer_week FROM weeks p \
+    \WHERE (?::BIGINT IS NULL OR p.week_start=?) ORDER BY p.week_start DESC LIMIT 1"
+    (cfgPerpsChainId cfg, cfgPerpsOrderRouter cfg, week, week)
+  pure $ case rows :: [(Integer, Text, Maybe Int64, Maybe Int64)] of
+    [] | Just _ <- week -> Left $ E.notFound "This Divisions week has not been published"
+    [] -> Right $ mkResponse 0 (cfgPerpsChainId cfg) $ object
+      [ "publication" .= Null, "olderCursor" .= Null, "newerCursor" .= Null ]
+    (block, encoded, older, newer):_ -> case Aeson.decodeStrict' (TE.encodeUtf8 encoded) of
+      Nothing -> Left $ E.internalError "Divisions publication is invalid"
+      Just (publication :: Value) -> Right $ mkResponse block (cfgPerpsChainId cfg) $ object
+        [ "publication" .= publication
+        , "olderCursor" .= fmap show older
+        , "newerCursor" .= fmap show newer
+        ]
+
 getDivisionsLiveResponse :: DbPool -> Config -> IO (Either ApiError (ApiResponse Value))
 getDivisionsLiveResponse pool cfg = do
   now <- floor <$> getPOSIXTime
@@ -246,7 +295,7 @@ getDivisionsLiveResponse pool cfg = do
     "SELECT s.snapshot_block, s.snapshot_hash, s.snapshot_timestamp, s.wallet_count, \
     \(SELECT COALESCE(jsonb_agg(e.value || jsonb_build_object('discordUsername', l.discord_username) ORDER BY e.ordinality), '[]'::jsonb)::text \
     \ FROM jsonb_array_elements(s.standings) WITH ORDINALITY AS e(value, ordinality) \
-    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address' AND l.show_discord_handle), \
+    \ LEFT JOIN insights_divisions_links l ON l.trading_account=e.value->>'address'), \
     \EXTRACT(EPOCH FROM s.captured_at)::BIGINT FROM divisions_live_snapshots s \
     \WHERE s.chain_id=? AND s.release_router=? AND s.week_start=? \
     \AND s.captured_at > NOW() - INTERVAL '5 minutes' \

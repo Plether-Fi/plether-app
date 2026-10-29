@@ -107,6 +107,8 @@ import Plether.Handlers.Insights
   , getCurrentCompetitionResponse
   , getInsightsDataStatusResponse
   , getDivisionsTradersResponse
+  , getDivisionsCurrentResponse
+  , getDivisionsHistoryResponse
   , getDivisionsLiveResponse
   )
 import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
@@ -467,6 +469,19 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
     case mPool of
       Just pool -> liftIO (getDivisionsTradersResponse pool cfg) >>= handleResult
       Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/current" $
+    case mPool of
+      Just pool -> liftIO (getDivisionsCurrentResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/divisions/history" $ do
+    mWeek <- queryParamMaybe "week"
+    case traverse parseNonNegativeInt mWeek of
+      Nothing -> handleError $ E.invalidAmount "week must be a non-negative integer timestamp"
+      Just week -> case mPool of
+        Just pool -> liftIO (getDivisionsHistoryResponse pool cfg week) >>= handleResult
+        Nothing -> insightsUnavailable
 
   get "/api/insights/v1/divisions/live" $
     case mPool of

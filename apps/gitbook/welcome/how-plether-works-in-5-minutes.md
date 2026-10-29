@@ -1,8 +1,8 @@
 # How Plether works in 5 minutes
 
-> **Traders take a view on the dollar. LPs[^lp] underwrite it. Plether keeps the obligation measurable and accounts for everything in USDG[^usdg].**
+> **Traders take a view on the dollar.** [**LPs**](#user-content-fn-1)[^1] **underwrite it. Plether keeps the obligation measurable and accounts for everything in** [**USDG**](#user-content-fn-2)[^2]**.**
 
-Plether is an oracle-priced[^oracle] perpetual market, not an order book.
+Plether is an oracle-priced[^3] perpetual market, not an order book.
 
 Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against Plether's shared USDG liquidity pool.
 
@@ -24,7 +24,7 @@ Plether derives dollar exposure from six major currencies:
 * Swedish krona
 * Swiss franc
 
-Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired[^dxy] weights to produce a transparent basket-derived market.
+Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired[^4] weights to produce a transparent basket-derived market.
 
 It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
 
@@ -33,11 +33,13 @@ It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
 | **LONG USD**  | The dollar will strengthen | The dollar gains against the currency basket |
 | **SHORT USD** | The dollar will weaken     | The dollar loses against the currency basket |
 
-The raw oracle basket prices foreign currencies in dollars. It therefore falls when the dollar strengthens and rises when the dollar weakens. Plether expresses positions from the dollar’s perspective: LONG USD or SHORT USD.
+The dollar index price rises when USD strengthens and falls when USD weakens. LONG USD profits from a rising index; SHORT USD profits from a falling index.
 
-The interface displays the dollar-oriented complement of the bounded raw basket: `Displayed index = 2.00 − bounded raw basket`. The displayed index therefore rises when USD strengthens and falls when USD weakens.
+```plether-dollar-index
+Dollar index trade example
+```
 
-The market price has a hard upper bound. This limits the maximum possible payout and makes the protocol’s worst-case obligation calculable before accepting a trade.
+The dollar index price has fixed lower and upper bounds. This limits the maximum possible payout and makes the protocol’s worst-case obligation calculable before accepting a trade.
 
 ### 2. Traders deposit margin
 
@@ -66,9 +68,9 @@ Instead:
 1. The owner wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
 2. Any required margin and an execution reward are reserved.
 3. The order enters a global first-in, first-out queue.
-4. A permissionless keeper[^keeper] submits execution and any Pyth update data required by the active market state.
-5. While the FX[^fx] market is live, execution uses the first eligible oracle update published after the order was committed.
-6. The protocol applies the active confidence policy, VPI[^vpi] and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
+4. A permissionless keeper[^5] submits execution and any Pyth update data required by the active market state.
+5. While the FX[^6] market is live, execution uses the first eligible oracle update published after the order was committed.
+6. The protocol applies the active confidence policy, VPI[^7] and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
 7. The position executes or the order fails according to protocol rules.
 
 The trader cannot cancel an order after commitment.
@@ -81,14 +83,14 @@ Delayed execution is still execution risk. The market may move between commitmen
 
 A position has several separate economic components:
 
-| Component           | What it does                                                             |
-| ------------------- | ------------------------------------------------------------------------ |
-| **Directional PnL** | Gains or loses value as the dollar moves relative to the basket          |
-| **Margin**          | Supports the position and absorbs losses                                 |
-| **Execution fee**   | Protocol fee charged when position size changes                          |
-| **Price impact**    | Applies a separate USDG charge or rebate based on pool imbalance     |
-| **Carry**           | Time-based cost for using LP-backed capital                              |
-| **Execution reward** | Pays the account that processes the delayed order                        |
+| Component            | What it does                                                     |
+| -------------------- | ---------------------------------------------------------------- |
+| **Directional PnL**  | Gains or loses value as the dollar moves relative to the basket  |
+| **Margin**           | Supports the position and absorbs losses                         |
+| **Execution fee**    | Protocol fee charged when position size changes                  |
+| **Price impact**     | Applies a separate USDG charge or rebate based on pool imbalance |
+| **Carry**            | Time-based cost for using LP-backed capital                      |
+| **Execution reward** | Pays the account that processes the delayed order                |
 
 #### Price impact
 
@@ -102,7 +104,7 @@ VPI changes the trade’s USDG economics. It does not change the oracle executio
 
 Plether does not transfer funding payments between LONG and SHORT traders.
 
-Carry[^carry] is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
+Carry[^8] is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
 
 Both LONG USD and SHORT USD positions can pay carry simultaneously. Carry can also continue accruing while the FX oracle is stale or frozen.
 
@@ -116,7 +118,7 @@ Available collateral pays the trading loss and liquidation bounty. Any positive 
 
 ### 5. LPs provide the counterparty capital
 
-The liquidity pool holds the USDG that backs trader payouts. LPs enter through two tranches[^tranche] with different positions in the loss waterfall.
+The liquidity pool holds the USDG that backs trader payouts. LPs enter through two tranches[^9] with different positions in the loss waterfall.
 
 | Tranche    | Return profile                                      | Loss position                                 |
 | ---------- | --------------------------------------------------- | --------------------------------------------- |
@@ -158,30 +160,38 @@ If a terminal settlement reveals insolvency, the protocol enters degraded mode. 
 
 The dollar market does not trade like crypto. Plether changes behavior around FX-market closures.
 
-| State                   | What changes                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Live market**         | Normal opens, increases, closes and liquidations                                                             |
-| **Market-close runway** | New risk is blocked and a higher margin requirement applies; closes and liquidations continue                |
-| **Oracle frozen**       | Opens remain blocked; eligible closes and liquidations use conservative frozen-market rules; carry continues |
-| **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                      |
+| State                   | What changes                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Live market**         | Normal opens, increases, closes and liquidations                                                                                                                                                                                                                                                                    |
+| **Market-close runway** | New risk is blocked and a higher margin requirement applies; closes and liquidations continue                                                                                                                                                                                                                       |
+| **Oracle frozen**       | Opens remain blocked; eligible closes and liquidations use conservative frozen-market rules; carry continues                                                                                                                                                                                                        |
+| **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                                                                                                                                                                                                                             |
 | **Degraded**            | New risk and LP deposits are blocked; LP withdrawal requests may still queue, but no new withdrawal USDG is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. Closes, liquidations and recapitalization continue. |
 
 Frozen-market execution prioritizes risk reduction over normal live-price guarantees. Voluntary closes use special pricing rules and a fixed LP-owned frozen-close spread; liquidations keep their separate adverse-confidence policy and do not pay that spread.
 
 ### Five things to remember
 
-1. **LONG and SHORT refer to the dollar**, not the raw currency basket.
+1. LONG USD profits when the dollar index rises; SHORT USD profits when it falls.
 2. **Orders are delayed, binding and non-cancellable.**
 3. **The liquidity pool—not another trader—is the economic counterparty.**
 4. **Carry pays for LP-backed exposure; it is not trader-to-trader funding.**
 5. **Bounded liability makes risk measurable. It does not make trading or LPing risk-free.**
 
-[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
-[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^fx]: Foreign exchange, the market for trading one currency against another.
-[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^1]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+
+[^2]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+
+[^3]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+
+[^4]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+
+[^5]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+
+[^6]: Foreign exchange, the market for trading one currency against another.
+
+[^7]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+
+[^8]: The time-based cost charged on the portion of a position financed by LP capital.
+
+[^9]: A pool layer with its own loss priority, withdrawal priority and return profile.

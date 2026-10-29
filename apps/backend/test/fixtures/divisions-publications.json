@@ -1,0 +1,1088 @@
+[
+  {
+    "input": {
+      "startsAt": "2026-10-11T21:00:00.000Z",
+      "publishedAt": "2026-10-19T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "100",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "199",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": []
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "100",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "199",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-10-11T21:00:00.000Z",
+        "closesAt": "2026-10-16T21:00:00.000Z",
+        "publishesAt": "2026-10-19T00:00:00.000Z"
+      },
+      "publishedAt": "2026-10-19T00:00:00.000Z",
+      "standings": [],
+      "announcement": {
+        "tradersOfTheWeek": [],
+        "promotions": [],
+        "diamondRoster": []
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-10-18T21:00:00.000Z",
+      "publishedAt": "2026-10-26T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "200",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "299",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "110",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-18T22:00:00.000Z",
+            "2026-10-19T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "220",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-18T22:00:00.000Z",
+            "2026-10-19T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "330",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-18T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-18T22:00:00.000Z",
+            "2026-10-19T22:00:00.000Z"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "200",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "299",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-10-18T21:00:00.000Z",
+        "closesAt": "2026-10-23T21:00:00.000Z",
+        "publishesAt": "2026-10-26T00:00:00.000Z"
+      },
+      "publishedAt": "2026-10-26T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Bronze",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Bronze",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 1,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 2,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+          "0x0000000000000000000000000000000000000003"
+        ],
+        "promotions": [],
+        "diamondRoster": []
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-10-25T21:00:00.000Z",
+      "publishedAt": "2026-11-02T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "300",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "399",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "110",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-25T22:00:00.000Z",
+            "2026-10-26T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "220",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-25T22:00:00.000Z",
+            "2026-10-26T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "330",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-25T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-10-25T22:00:00.000Z",
+            "2026-10-26T22:00:00.000Z"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "300",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "399",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-10-25T21:00:00.000Z",
+        "closesAt": "2026-10-30T21:00:00.000Z",
+        "publishesAt": "2026-11-02T00:00:00.000Z"
+      },
+      "publishedAt": "2026-11-02T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Silver",
+          "previousTier": "Bronze",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Silver",
+          "previousTier": "Bronze",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 1,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 2,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+          "0x0000000000000000000000000000000000000003"
+        ],
+        "promotions": [],
+        "diamondRoster": []
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-11-01T21:00:00.000Z",
+      "publishedAt": "2026-11-09T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "400",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "499",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "110",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-01T22:00:00.000Z",
+            "2026-11-02T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "220",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-01T22:00:00.000Z",
+            "2026-11-02T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "330",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-01T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-01T22:00:00.000Z",
+            "2026-11-02T22:00:00.000Z"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "400",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "499",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-11-01T21:00:00.000Z",
+        "closesAt": "2026-11-06T21:00:00.000Z",
+        "publishesAt": "2026-11-09T00:00:00.000Z"
+      },
+      "publishedAt": "2026-11-09T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Gold",
+          "previousTier": "Silver",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Gold",
+          "previousTier": "Silver",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 1,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 2,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+          "0x0000000000000000000000000000000000000003"
+        ],
+        "promotions": [
+          {
+            "address": "0x0000000000000000000000000000000000000001",
+            "tier": "Gold"
+          },
+          {
+            "address": "0x0000000000000000000000000000000000000002",
+            "tier": "Gold"
+          }
+        ],
+        "diamondRoster": []
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-11-08T21:00:00.000Z",
+      "publishedAt": "2026-11-16T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "500",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "599",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "110",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-08T22:00:00.000Z",
+            "2026-11-09T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "220",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-08T22:00:00.000Z",
+            "2026-11-09T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "330",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-08T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-08T22:00:00.000Z",
+            "2026-11-09T22:00:00.000Z"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "500",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "599",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-11-08T21:00:00.000Z",
+        "closesAt": "2026-11-13T21:00:00.000Z",
+        "publishesAt": "2026-11-16T00:00:00.000Z"
+      },
+      "publishedAt": "2026-11-16T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Platinum",
+          "previousTier": "Gold",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Platinum",
+          "previousTier": "Gold",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 1,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 2,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+          "0x0000000000000000000000000000000000000003"
+        ],
+        "promotions": [
+          {
+            "address": "0x0000000000000000000000000000000000000001",
+            "tier": "Platinum"
+          },
+          {
+            "address": "0x0000000000000000000000000000000000000002",
+            "tier": "Platinum"
+          }
+        ],
+        "diamondRoster": []
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-11-15T21:00:00.000Z",
+      "publishedAt": "2026-11-23T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "600",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "699",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "110",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-15T22:00:00.000Z",
+            "2026-11-16T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "220",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-15T22:00:00.000Z",
+            "2026-11-16T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "330",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-15T22:00:00.000Z"
+          ]
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": [
+            "2026-11-15T22:00:00.000Z",
+            "2026-11-16T22:00:00.000Z"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "600",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "699",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-11-15T21:00:00.000Z",
+        "closesAt": "2026-11-20T21:00:00.000Z",
+        "publishesAt": "2026-11-23T00:00:00.000Z"
+      },
+      "publishedAt": "2026-11-23T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Diamond",
+          "previousTier": "Platinum",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Diamond",
+          "previousTier": "Platinum",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 2,
+          "qualifying": true,
+          "rank": 1,
+          "movement": "promoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 1,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 2,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+          "0x0000000000000000000000000000000000000003"
+        ],
+        "promotions": [
+          {
+            "address": "0x0000000000000000000000000000000000000001",
+            "tier": "Diamond"
+          },
+          {
+            "address": "0x0000000000000000000000000000000000000002",
+            "tier": "Diamond"
+          }
+        ],
+        "diamondRoster": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002"
+        ]
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-11-22T21:00:00.000Z",
+      "publishedAt": "2026-11-30T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "700",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "799",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "90",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "180",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "270",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "700",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "799",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-11-22T21:00:00.000Z",
+        "closesAt": "2026-11-27T21:00:00.000Z",
+        "publishesAt": "2026-11-30T00:00:00.000Z"
+      },
+      "publishedAt": "2026-11-30T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Diamond",
+          "previousTier": "Diamond",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "-10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Diamond",
+          "previousTier": "Diamond",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "-20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "-30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [],
+        "promotions": [],
+        "diamondRoster": [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002"
+        ]
+      }
+    }
+  },
+  {
+    "input": {
+      "startsAt": "2026-11-29T21:00:00.000Z",
+      "publishedAt": "2026-12-07T00:00:00.000Z",
+      "baselineBlock": {
+        "number": "800",
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "closingBlock": {
+        "number": "899",
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "accounts": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "100",
+          "closingEquityAssets": "90",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "200",
+          "closingEquityAssets": "180",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "300",
+          "closingEquityAssets": "270",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "hasTraded": true,
+          "startingEquityAssets": "0",
+          "closingEquityAssets": "5",
+          "depositsAssets": "0",
+          "withdrawalsAssets": "0",
+          "executedTradeTimes": []
+        }
+      ]
+    },
+    "expected": {
+      "version": 1,
+      "source": {
+        "baselineBlock": {
+          "number": "800",
+          "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "closingBlock": {
+          "number": "899",
+          "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "week": {
+        "startsAt": "2026-11-29T21:00:00.000Z",
+        "closesAt": "2026-12-04T21:00:00.000Z",
+        "publishesAt": "2026-12-07T00:00:00.000Z"
+      },
+      "publishedAt": "2026-12-07T00:00:00.000Z",
+      "standings": [
+        {
+          "address": "0x0000000000000000000000000000000000000001",
+          "displayName": null,
+          "tier": "Platinum",
+          "previousTier": "Diamond",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "-10",
+          "adjustedEquityAssets": "100",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "demoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000002",
+          "displayName": null,
+          "tier": "Platinum",
+          "previousTier": "Diamond",
+          "nonQualifyingWeeks": 0,
+          "weeklyPnlAssets": "-20",
+          "adjustedEquityAssets": "200",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "demoted"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000003",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "-30",
+          "adjustedEquityAssets": "300",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": 1,
+          "movement": "unchanged"
+        },
+        {
+          "address": "0x0000000000000000000000000000000000000004",
+          "displayName": null,
+          "tier": "Iron",
+          "previousTier": "Iron",
+          "nonQualifyingWeeks": 1,
+          "weeklyPnlAssets": "5",
+          "adjustedEquityAssets": "0",
+          "activeDays": 0,
+          "qualifying": false,
+          "rank": null,
+          "movement": "unchanged"
+        }
+      ],
+      "announcement": {
+        "tradersOfTheWeek": [],
+        "promotions": [],
+        "diamondRoster": []
+      }
+    }
+  }
+]
