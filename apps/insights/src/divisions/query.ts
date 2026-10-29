@@ -17,6 +17,41 @@ export function useDivisions() {
   return useQuery({ queryKey: ['insights', 'divisions'], queryFn: ({ signal }) => getDivisions(signal), staleTime: 30_000, refetchInterval: 60_000 })
 }
 
+export interface DivisionsHistory {
+  publication: DivisionPublication | null
+  olderCursor: string | null
+  newerCursor: string | null
+}
+
+function isWeekCursor(value: unknown): value is string {
+  return typeof value === 'string' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
+}
+
+export async function getDivisionsHistory(week: string | null, signal?: AbortSignal): Promise<DivisionsHistory> {
+  if (week !== null && !isWeekCursor(week)) throw new Error('Invalid results week')
+  const response = await fetch(`/api/insights/v1/divisions/history${week === null ? '' : `?week=${encodeURIComponent(week)}`}`, { signal, cache: 'no-store', headers: { Accept: 'application/json' } })
+  if (response.status === 404) throw new Error('This week has not been published. Choose the latest results to browse available weeks.')
+  if (!response.ok) throw new Error(`Weekly results are unavailable (${String(response.status)})`)
+  const body: unknown = await response.json().catch(() => { throw new Error('Weekly results are invalid') })
+  if (typeof body !== 'object' || body === null || !('data' in body) || typeof body.data !== 'object' || body.data === null) throw new Error('Weekly results are invalid')
+  const data = body.data
+  if (!('publication' in data) || !('olderCursor' in data) || !('newerCursor' in data)
+    || !(data.olderCursor === null || isWeekCursor(data.olderCursor)) || !(data.newerCursor === null || isWeekCursor(data.newerCursor))) throw new Error('Weekly results are invalid')
+  if (data.publication === null) {
+    if (week !== null || data.olderCursor !== null || data.newerCursor !== null) throw new Error('Weekly results are invalid')
+  } else {
+    if (!isPublication(data.publication) || Date.parse(data.publication.publishedAt) > Date.now()) throw new Error('Weekly results are invalid')
+    const selected = Date.parse(data.publication.week.startsAt) / 1000
+    if ((week !== null && Number(week) !== selected) || (data.olderCursor !== null && Number(data.olderCursor) >= selected)
+      || (data.newerCursor !== null && Number(data.newerCursor) <= selected)) throw new Error('Weekly results are invalid')
+  }
+  return { publication: data.publication, olderCursor: data.olderCursor, newerCursor: data.newerCursor }
+}
+
+export function useDivisionsHistory(week: string | null) {
+  return useQuery({ queryKey: ['insights', 'divisions', 'history', week], queryFn: ({ signal }) => getDivisionsHistory(week, signal), staleTime: 30_000, refetchInterval: 60_000 })
+}
+
 export interface TradedWallet {
   address: string
   executedTrades: number

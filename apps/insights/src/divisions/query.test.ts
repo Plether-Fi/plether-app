@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDivisions, getLiveDivisions, getTradedWallets } from './query'
+import { getDivisions, getDivisionsHistory, getLiveDivisions, getTradedWallets } from './query'
 import { publishWeek } from './engine'
 import { input } from '../test/divisions'
 
@@ -82,5 +82,51 @@ describe('live Divisions rankings', () => {
       status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-19T12:00:00Z', snapshotBlock: '321', walletCount: 2, standings: [],
     } })))
     await expect(getLiveDivisions()).rejects.toThrow('Live Divisions response is invalid')
+  })
+})
+
+
+describe('published week pagination', () => {
+  const publication = publishWeek(input(), null)
+  const cursor = String(Date.parse(publication.week.startsAt) / 1000)
+  it('requests a specific week with cancellation and reads neighboring cursors', async () => {
+    const data = { publication, olderCursor: null, newerCursor: String(Number(cursor) + 604800) }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    const signal = new AbortController().signal
+    expect(await getDivisionsHistory(cursor, signal)).toEqual(data)
+    expect(fetcher).toHaveBeenCalledWith(`/api/insights/v1/divisions/history?week=${cursor}`, expect.objectContaining({ signal, cache: 'no-store' }))
+  })
+  it('requests latest results without a cursor and accepts an explicit empty history', async () => {
+    const data = { publication: null, olderCursor: null, newerCursor: null }
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ data }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await getDivisionsHistory(null)).toEqual(data)
+    expect(fetcher.mock.calls[0][0]).toBe('/api/insights/v1/divisions/history')
+  })
+  it('rejects missing weeks instead of silently returning the latest week', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
+    await expect(getDivisionsHistory('0')).rejects.toThrow('This week has not been published')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data: { publication, olderCursor: null, newerCursor: null } })))
+    await expect(getDivisionsHistory(String(Number(cursor) + 604800))).rejects.toThrow('Weekly results are invalid')
+  })
+  it('rejects malformed or reversed cursors and empty cursor pages', async () => {
+    for (const data of [
+      { publication, olderCursor: cursor, newerCursor: null },
+      { publication, olderCursor: null, newerCursor: cursor },
+      { publication, olderCursor: 'invalid', newerCursor: null },
+      { publication: null, olderCursor: cursor, newerCursor: null },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ data })))
+      await expect(getDivisionsHistory(null)).rejects.toThrow('Weekly results are invalid')
+    }
+  })
+  it('rejects invalid URL cursors before making a request', async () => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    for (const invalid of ['-1', 'bad', '999999999999999999999']) {
+      await expect(getDivisionsHistory(invalid)).rejects.toThrow('Invalid results week')
+    }
+    expect(fetcher).not.toHaveBeenCalled()
   })
 })

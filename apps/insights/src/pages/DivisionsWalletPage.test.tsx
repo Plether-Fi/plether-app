@@ -3,15 +3,17 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DivisionsWalletPage } from './DivisionsWalletPage'
 import { LeaderboardPage } from './LeaderboardPage'
+import { WeeklyResultsPage } from './WeeklyResultsPage'
 import { account, input } from '../test/divisions'
 import { publishWeek } from '../divisions/engine'
 
-const queries = vi.hoisted(() => ({ live: vi.fn(), publication: vi.fn() }))
-vi.mock('../divisions/query', () => ({ useDivisions: queries.publication, useLiveDivisions: queries.live }))
+const queries = vi.hoisted(() => ({ live: vi.fn(), publication: vi.fn(), history: vi.fn() }))
+vi.mock('../divisions/query', () => ({ useDivisions: queries.publication, useLiveDivisions: queries.live, useDivisionsHistory: queries.history }))
 const address = account(1).address
 
 beforeEach(() => {
   queries.publication.mockReturnValue({ data: publishWeek(input(0, [account(1)]), null) })
+  queries.history.mockReturnValue({ data: { publication: publishWeek(input(0, [account(1)]), null), olderCursor: null, newerCursor: null } })
   queries.live.mockReturnValue({ data: {
     status: 'ready', weekStartsAt: '2026-10-18T21:00:00Z', snapshotAt: '2026-10-20T12:00:00Z', walletCount: 1,
     standings: [{ address, discordUsername: 'mellboi', rank: 2, weeklyReturnBps: -100, activeDays: 1 }],
@@ -21,6 +23,7 @@ beforeEach(() => {
 function show(path = `/divisions/wallets/${address}`) {
   render(<MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/" element={<LeaderboardPage />} />
+    <Route path="/results" element={<WeeklyResultsPage />} />
     <Route path="/divisions/wallets/:address" element={<DivisionsWalletPage />} />
   </Routes></MemoryRouter>)
 }
@@ -40,6 +43,7 @@ describe('Divisions trader navigation', () => {
     expect(screen.getByText(/Week ending 16 Oct 2026/)).toBeInTheDocument()
     expect(screen.queryByText(/Cash-prize eligibility/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('link', { name: /Back to leaderboard/ }))
+    fireEvent.click(screen.getByRole('link', { name: 'Last week’s results →' }))
     const publishedTable = screen.getByRole('table', { name: /Published weekly percentage/ })
     fireEvent.click(within(publishedTable).getByRole('link', { name: `View trader ${address}` }))
     expect(screen.getByRole('heading', { name: '@mellboi' })).toBeInTheDocument()
