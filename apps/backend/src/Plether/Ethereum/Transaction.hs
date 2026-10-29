@@ -4,6 +4,7 @@ module Plether.Ethereum.Transaction
   , deriveAddress
   , signTransaction
   , rawTransactionHash
+  , decodeSignedTransaction
   , applyBpsBuffer
   , sameNonceReplacementFees
   , normalizePrivateKey
@@ -32,7 +33,7 @@ import Foreign
   )
 import Foreign.C (CInt (..), CSize (..), CUInt (..))
 import Plether.Ethereum.Abi (keccak256)
-import Plether.Ethereum.Rlp (Rlp (..), encodeRlp, rlpBytes, rlpInteger, rlpList)
+import Plether.Ethereum.Rlp (Rlp (..), decodeRlp, encodeRlp, rlpBytes, rlpInteger, rlpList)
 
 data SecpCtx
 data SecpPubKey
@@ -165,6 +166,35 @@ signTransaction privateKeyText tx = do
 -- verify that the node returns the locally derived hash.
 rawTransactionHash :: ByteString -> Text
 rawTransactionHash raw = "0x" <> TE.decodeUtf8 (B16.encode $ keccak256 raw)
+
+-- Decode only the exact EIP-1559 shape emitted by this signer. Recover the
+-- sender from the signature; journal recovery must never trust a nonce alone.
+decodeSignedTransaction :: ByteString -> IO (Either Text (Tx1559, Text))
+decodeSignedTransaction raw = case decoded of
+  Left err -> pure $ Left err
+  Right (tx, parity, r, s) -> do
+    sender <- recoverSignerAddress (keccak256 $ BS.cons 2 $ unsignedPayload tx)
+      (padded r <> padded s) (fromInteger parity)
+    pure $ (tx,) <$> sender
+ where
+  decoded = do
+    if BS.take 1 raw == BS.singleton 2 && BS.length raw <= 1_048_576
+      then Right () else Left "Unsupported signed transaction"
+    value <- decodeRlp $ BS.drop 1 raw
+    case value of
+      RlpList [RlpBytes chain, RlpBytes nonce, RlpBytes tip, RlpBytes fee,
+               RlpBytes gas, RlpBytes destination, RlpBytes amount, RlpBytes input,
+               RlpList [], RlpBytes parity, RlpBytes r, RlpBytes s] -> do
+        let tx = Tx1559 (bytesToInteger chain) (bytesToInteger nonce)
+              (bytesToInteger tip) (bytesToInteger fee) (bytesToInteger gas)
+              ("0x" <> TE.decodeUtf8 (B16.encode destination)) (bytesToInteger amount) input
+            p = bytesToInteger parity
+        if BS.length destination == 20 && p <= 1 && not (BS.null r) && not (BS.null s)
+            && BS.length r <= 32 && BS.length s <= 32
+            && BS.cons 2 (signedPayload tx p (bytesToInteger r) (bytesToInteger s)) == raw
+          then Right (tx, p, r, s) else Left "Invalid signed transaction fields"
+      _ -> Left "Unexpected signed transaction fields"
+  padded bytes = BS.replicate (32 - BS.length bytes) 0 <> bytes
 
 -- | Apply a basis-point buffer with ceiling division.
 applyBpsBuffer :: Integer -> Integer -> Integer

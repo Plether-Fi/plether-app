@@ -1066,6 +1066,8 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_broadcasts (order_router TEXT PRIMARY KEY, tx_hash TEXT NOT NULL, raw_tx BYTEA NOT NULL, last_broadcast_at TIMESTAMPTZ NOT NULL DEFAULT now())"
   _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_keeper_broadcast_recoveries (tx_hash TEXT PRIMARY KEY, order_router TEXT NOT NULL, raw_tx BYTEA NOT NULL, proof JSONB NOT NULL, recovered_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_state (\
     \id INTEGER PRIMARY KEY DEFAULT 1,\
     \order_router TEXT,\

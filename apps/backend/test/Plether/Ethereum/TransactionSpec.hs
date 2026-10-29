@@ -13,6 +13,7 @@ import Plether.Ethereum.Transaction
   , Tx1559 (..)
   , deriveAddress
   , rawTransactionHash
+  , decodeSignedTransaction
   , sameNonceReplacementFees
   , signTransaction
   )
@@ -20,6 +21,15 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "decodeSignedTransaction" $ do
+    it "recovers the signed nonce, exact intent and sender from the canonical vector" $ do
+      raw <- decodeHex rawTransactionVector
+      decodeSignedTransaction raw `shouldReturn` Right (sampleTx, "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf")
+    it "rejects malformed, truncated, trailing and unsupported transaction encodings" $ do
+      raw <- decodeHex rawTransactionVector
+      mapM_ (\bytes -> decodeSignedTransaction bytes >>= (`shouldSatisfy` either (const True) (const False)))
+        [BS.empty, BS.drop 1 raw, BS.take (BS.length raw - 1) raw, raw <> BS.singleton 0,
+         BS.pack [2, 0xf8, 0xff], BS.pack [2, 0xc0], BS.replicate 1_048_577 2]
   describe "deriveAddress" $ do
     it "derives the expected address for private key 1" $ do
       deriveAddress privateKeyOne

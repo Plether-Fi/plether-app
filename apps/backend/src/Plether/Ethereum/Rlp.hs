@@ -4,11 +4,50 @@ module Plether.Ethereum.Rlp
   , rlpInteger
   , rlpList
   , encodeRlp
+  , decodeRlp
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word (Word8)
+import Data.Text (Text)
+
+-- Bound nesting and lengths before allocating or recursing. Round-tripping
+-- rejects noncanonical length encodings as well as trailing bytes.
+decodeRlp :: ByteString -> Either Text Rlp
+decodeRlp bytes = do
+  (value, rest) <- item (0 :: Int) bytes
+  if BS.null rest && encodeRlp value == bytes then Right value
+    else Left "Noncanonical RLP"
+ where
+  item depth input
+    | depth > 16 = Left "RLP nesting limit"
+    | otherwise = case BS.uncons input of
+        Nothing -> Left "Truncated RLP"
+        Just (prefix, rest)
+          | prefix < 0x80 -> Right (RlpBytes $ BS.singleton prefix, rest)
+          | prefix <= 0xb7 -> payload depth False (fromIntegral $ prefix - 0x80) rest
+          | prefix <= 0xbf -> long depth False (fromIntegral $ prefix - 0xb7) rest
+          | prefix <= 0xf7 -> payload depth True (fromIntegral $ prefix - 0xc0) rest
+          | otherwise -> long depth True (fromIntegral $ prefix - 0xf7) rest
+  long depth list count input
+    | BS.length input < count = Left "Truncated RLP length"
+    | otherwise =
+        let (size, rest) = BS.splitAt count input
+            len = BS.foldl' (\n b -> n * 256 + fromIntegral b) (0 :: Integer) size
+         in if len > fromIntegral (BS.length rest) then Left "Truncated RLP payload"
+              else payload depth list (fromInteger len) rest
+  payload depth list len input
+    | len > BS.length input = Left "Truncated RLP payload"
+    | otherwise = do
+        let (body, rest) = BS.splitAt len input
+        value <- if list then RlpList <$> items (depth + 1) body else Right $ RlpBytes body
+        Right (value, rest)
+  items depth input
+    | BS.null input = Right []
+    | otherwise = do
+        (first, rest) <- item depth input
+        (first :) <$> items depth rest
 
 data Rlp
   = RlpBytes ByteString
