@@ -1,0 +1,161 @@
+name: Deploy Sepolia protection retry hotfix
+run-name: Sepolia protection retry hotfix / ${{ github.sha }}
+
+# The normal backend workflow targets the prepared USDG release. This one-time
+# backport preserves the live v1.3.1 image, ABI, manifest, schema and task settings.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: plether-backend-mutation-sepolia
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-1
+  EXPECTED_ACCOUNT: '932542905614'
+  SOURCE_COMMIT: 70b6e041b175276e4e449bd3f0dd9ca3ee91a049
+  BASE_IMAGE: 932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-api-sepolia@sha256:990ad098eead03220d9af7659966083ac0c35cec2e29b008f9bf3c5bfc45a33b
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - name: Require the protected master-only Sepolia environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          gh api "repos/$GITHUB_REPOSITORY/environments/backend-admin-sepolia" > environment.json
+          jq -e '.can_admins_bypass == false
+            and .deployment_branch_policy.protected_branches == false
+            and .deployment_branch_policy.custom_branch_policies == true
+            and ([.protection_rules[]? | select(.type == "required_reviewers")] | length) == 1
+            and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+            and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length) > 0' environment.json
+          gh api "repos/$GITHUB_REPOSITORY/environments/backend-admin-sepolia/deployment-branch-policies" > branches.json
+          jq -e '(.branch_policies | length) == 1 and .branch_policies[0].name == "master" and .branch_policies[0].type == "branch"' branches.json
+
+  hotfix:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    environment: backend-admin-sepolia
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: protection_test
+          POSTGRES_PASSWORD: protection_test
+          POSTGRES_DB: protection_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U protection_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          path: policy
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 70b6e041b175276e4e449bd3f0dd9ca3ee91a049
+          persist-credentials: false
+          path: hotfix
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Backport only the retry method and ABI-aware regression coverage
+        run: |
+          set -euo pipefail
+          test "$(git -C hotfix rev-parse HEAD)" = "$SOURCE_COMMIT"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          worker = Path('hotfix/apps/backend/protection-worker/worker.mjs')
+          original = worker.read_bytes()
+          assert hashlib.sha256(original).hexdigest() == '2af20c62159f014360e8099f81254579b71b9b033b4a033ba65b7bba691d82e7'
+          old = b"'OrderLifecycleBook', 'outcome',"
+          assert original.count(old) == 1
+          worker.write_bytes(original.replace(old, b"'OrderLifecycleBook', 'terminalOutcome',"))
+          test = Path('policy/apps/backend/protection-worker/test/evaluation.test.mjs').read_text()
+          assert test.count('triggerBountyAssets: 0n') == 1
+          test = test.replace('triggerBountyAssets: 0n', 'triggerBountyUsdc: 0n, executionBountyUsdc: 0n')
+          Path('hotfix/apps/backend/protection-worker/test/evaluation.test.mjs').write_text(test)
+          PY
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: hotfix/apps/backend/protection-worker
+      - name: Run the live-release worker tests with real ABI encoding
+        run: npm test
+        working-directory: hotfix/apps/backend/protection-worker
+        env:
+          PROTECTION_TEST_DATABASE_URL: postgres://protection_test:protection_test@127.0.0.1:5432/protection_test
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          allowed-account-ids: '932542905614'
+          role-session-name: protection-retry-${{ github.run_id }}
+      - name: Pin the existing singleton worker and rollback revision
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT"
+          aws ecs describe-services --cluster plether-sepolia --services plether-position-protection-worker > service.json
+          jq -e '.failures == [] and (.services | length) == 1
+            and .services[0].desiredCount == 1 and .services[0].runningCount == 1
+            and .services[0].pendingCount == 0 and (.services[0].deployments | length) == 1' service.json
+          previous=$(jq -er '.services[0].taskDefinition' service.json)
+          task=$(aws ecs list-tasks --cluster plether-sepolia --service-name plether-position-protection-worker --query 'taskArns[0]' --output text)
+          aws ecs describe-tasks --cluster plether-sepolia --tasks "$task" > running-task.json
+          jq -e --arg digest "${BASE_IMAGE#*@}" '.failures == [] and (.tasks | length) == 1
+            and ([.tasks[0].containers[] | select(.name == "plether-position-protection-worker") | .imageDigest] == [$digest])' running-task.json
+          aws ecs describe-task-definition --task-definition "$previous" --query taskDefinition > previous-task.json
+          jq -e --arg image "${BASE_IMAGE%@*}:$SOURCE_COMMIT" '
+            .family == "plether-sepolia-protection-worker"
+            and .runtimePlatform.cpuArchitecture == "ARM64"
+            and ([.containerDefinitions[] | select(.name == "plether-position-protection-worker")]
+              | length) == 1
+            and ([.containerDefinitions[] | select(.name == "plether-position-protection-worker")][0]
+              | .image == $image and .command == ["node", "/app/protection/main.mjs"]
+              and ([.environment[] | select(.name == "PERPS_RELEASE_MANIFEST") | .value]
+                == ["/app/config/perps/arbitrum-sepolia-v3.json"]))' previous-task.json
+          echo "PREVIOUS_TASK=$previous" >> "$GITHUB_ENV"
+          echo "APPLICATION_IMAGE=${BASE_IMAGE%@*}:protection-retry-$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "Rollback task definition: $previous" >> "$GITHUB_STEP_SUMMARY"
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Define an image containing only the corrected worker file
+        run: |
+          printf 'FROM %s\nCOPY apps/backend/protection-worker/worker.mjs /app/protection/worker.mjs\n' "$BASE_IMAGE" > hotfix/Dockerfile.retry
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        id: image
+        with:
+          context: hotfix
+          file: hotfix/Dockerfile.retry
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.APPLICATION_IMAGE }}
+      - name: Deploy the pinned hotfix to the protection service only
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          current=$(aws ecs describe-services --cluster plether-sepolia --services plether-position-protection-worker --query 'services[0].taskDefinition' --output text)
+          test "$current" = "$PREVIOUS_TASK"
+          jq --arg image "${BASE_IMAGE%@*}@$IMAGE_DIGEST" '
+            del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+            | .containerDefinitions |= map(if .name == "plether-position-protection-worker" then .image = $image else . end)' previous-task.json > hotfix-task.json
+          next=$(aws ecs register-task-definition --cli-input-json file://hotfix-task.json --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster plether-sepolia --service plether-position-protection-worker --task-definition "$next" --query 'service.taskDefinition' --output text
+          aws ecs wait services-stable --cluster plether-sepolia --services plether-position-protection-worker
+          actual=$(aws ecs describe-services --cluster plether-sepolia --services plether-position-protection-worker --query 'services[0].taskDefinition' --output text)
+          test "$actual" = "$next"
+          echo "Deployed task definition: $next" >> "$GITHUB_STEP_SUMMARY"
+          curl --fail --silent --show-error --max-time 20 https://api.sepolia.plether.com/api/health

@@ -1,6 +1,8 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
+import { decodeFunctionResult, encodeFunctionData, encodeFunctionResult } from 'viem'
 import { ProtectionWorker } from '../worker.mjs'
+import abi from '../abi.mjs'
 
 const address = '0x1111111111111111111111111111111111111111'
 function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n, expired = false, source = 'backend_hermes_latest_v2', pendingCount = 0n, executionEnabled = true } = {}) {
@@ -14,20 +16,31 @@ function fixture({ status = 2, frozen = false, reason = 2, tail = 0n, head = 1n,
   } }
   const publicClient = {
     getBlock: async () => ({ number: 200n, timestamp: 1000n, hash: '0x' + 'ab'.repeat(32) }),
-    simulateContract: async () => ({ result: { markPrice: 90n, publishTime: 999n } }),
-    readContract: async ({ functionName }) => {
+    simulateContract: async request => {
+      encodeFunctionData(request)
+      return { result: { markPrice: 90n, publishTime: 999n } }
+    },
+    readContract: async request => {
+      // Exercise the shipped ABI even when RPC responses are deterministic.
+      // A mock must not invent a method or a tuple shape absent from the contract.
+      encodeFunctionData(request)
+      const { functionName } = request
       const values = {
         isOracleFrozen: frozen, getUpdateFee: 13n,
-        getPositionProtection: { protectionId: 7n, account: address, status, side: 0, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, armedAt: 998n, armedBlock: 198n, linkedOrderId: 5n },
-        terminalOutcome: { reason, status: 3 }, nextExecuteId: head, globalTailOrderId: tail,
-        orderTiming: { executionDeadline: expired ? 999n : 1001n }, maxExecutionWindowSeconds: 60n, pendingOrderCounts: pendingCount,
+        getPositionProtection: { protectionId: 7n, parentOrderId: 0n, linkedOrderId: 5n, account: address, status, side: 0, size: 100n, takeProfitTriggerPrice: 90n, stopLossTriggerPrice: 110n, triggerBountyAssets: 0n, armedAt: 998n, armedBlock: 198n, triggerMarkPrice: 0n, triggerPublishTime: 0n, triggeredLeg: 0 },
+        terminalOutcome: { account: address, terminalBlock: 199n, reason, status: 3, receiptHash: '0x' + 'cd'.repeat(32) }, nextExecuteId: head, globalTailOrderId: tail,
+        orderTiming: { submitBy: 940n, executionWindowSeconds: 60, commitTimestamp: 941n, executionDeadline: expired ? 999n : 1001n }, maxExecutionWindowSeconds: 60n, pendingOrderCounts: pendingCount,
       }
       if (!(functionName in values)) throw new Error(`Unexpected ${functionName}`)
-      return values[functionName]
+      return decodeFunctionResult({ ...request, data: encodeFunctionResult({ ...request, result: values[functionName] }) })
     },
   }
   const worker = new ProtectionWorker({ db, publicClient, account: { address }, release, executionEnabled, log: (...args) => logs.push(args) })
-  worker.submit = async (...args) => { calls.push(args); return true }
+  worker.submit = async (...args) => {
+    encodeFunctionData({ abi: abi[args[3]], functionName: args[4], args: args[5] })
+    calls.push(args)
+    return true
+  }
   return { worker, calls, logs, observations, publicClient }
 }
 it('passes only the oracle ETH update fee to a triggered Book close, never the USDG reward', async () => {
@@ -43,9 +56,11 @@ it('does not trigger with a frozen oracle or an unadmitted payload', async () =>
   }
 })
 it('retries a latched expiry using the permissionless zero-value path while the oracle is frozen', async () => {
-  const { worker, calls } = fixture({ status: 8, frozen: true, source: 'unknown' })
+  const { worker, calls, observations, logs } = fixture({ status: 8, frozen: true, source: 'unknown' })
   await worker.evaluate()
   assert.deepEqual(calls, [['retry', 7n, address, 'PositionProtectionBook', 'retryPositionProtectionClose', [7n]]])
+  assert.equal(observations.at(-1).reason, 'retry-ready')
+  assert.equal(logs.some(row => row[1] === 'protection_simulation_failed'), false)
 })
 it('prunes a sole expired head separately before considering another retry', async () => {
   const { worker, calls } = fixture({ status: 8, head: 8n, tail: 8n, expired: true })
