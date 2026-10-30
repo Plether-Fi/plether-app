@@ -348,7 +348,6 @@ const PREVIEW_ASSETS_DECIMALS = 1
 const OPEN_BOUNTY_BPS_RAW = 1n
 const MIN_OPEN_BOUNTY_ASSETS_RAW = 10_000n
 const MAX_OPEN_BOUNTY_ASSETS_RAW = 200_000n
-const CLOSE_BOUNTY_ASSETS_RAW = 200_000n
 const SUMMARY_CLOSE_DUST_ASSETS_RAW = 10_000n
 const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
@@ -639,17 +638,6 @@ const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
 function parseAmount(value: string): number {
   const parsed = Number(value.replaceAll(',', '').replaceAll(' ', ''))
   return Number.isFinite(parsed) ? parsed : 0
-}
-
-function formatAssetsAmount(value: number): string {
-  return value.toLocaleString('en-US', {
-    minimumFractionDigits: PREVIEW_ASSETS_DECIMALS,
-    maximumFractionDigits: PREVIEW_ASSETS_DECIMALS,
-  }).replaceAll(',', ' ')
-}
-
-function formatAssets(value: number): ReactNode {
-  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatAssetsAmount(value)} />
 }
 
 function formatPreviewAssetsRaw(value: bigint | undefined): string {
@@ -1898,6 +1886,7 @@ export function PerpsTradeTicket({
   )
   const [committedDirection, setCommittedDirection] = useState<PerpsDirection | undefined>(initialCommittedDirection)
   const [committedMarginDelta, setCommittedMarginDelta] = useState<bigint | undefined>()
+  const [committedExecutionBountyAssets, setCommittedExecutionBountyAssets] = useState<bigint | undefined>()
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>(initialCommittedTargetPrice)
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
@@ -2683,8 +2672,9 @@ export function PerpsTradeTicket({
   const estimatedMaintenanceMarginAssets = maintenanceMarginBps !== undefined && contractNotionalAssets > 0n
     ? (contractNotionalAssets * maintenanceMarginBps) / 10_000n
     : undefined
-  const estimatedKeeperBountyAssets = isReducingCurrentPosition ? CLOSE_BOUNTY_ASSETS_RAW : estimateOpenBountyAssetsRaw(contractNotionalAssets)
-  const keeperBounty = assetsRawToNumber(estimatedKeeperBountyAssets)
+  // Ordinary and protected closes have no execution reward in this release.
+  // The separate TP/SL trigger reward still comes from protectionConfiguration.
+  const estimatedKeeperBountyAssets = isReducingCurrentPosition ? 0n : estimateOpenBountyAssetsRaw(contractNotionalAssets)
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
   const protocolExecutionFeeRaw = executionFeeAssetsRaw(contractNotionalAssets, executionFeeBpsRaw)
   const slippageNumber = isOracleFrozenClose
@@ -2713,9 +2703,6 @@ export function PerpsTradeTicket({
     leverage: activeLeverage,
     dxyExposureAssets: summaryDxyExposureAssets,
   })
-  // Close bounties can be backed by collateral already attached to the position,
-  // even when the account has no free buying power. The close preview and the
-  // commit simulation are the authoritative checks for that backing.
   const openFundingRequirementAssets = marginAssets + estimatedKeeperBountyAssets
   const marginShortfall = !isReducingCurrentPosition &&
     availableToTradeRaw !== undefined &&
@@ -3103,6 +3090,9 @@ export function PerpsTradeTicket({
     : committedTargetPrice
   const requiresCloseReview = enableLiveTrading && isReviewOpen && isReducingCurrentPosition
   const activeReviewSummary = orderReviewSummary ?? preparedOrder?.reviewSummary
+  const previewExecutionBountyAssets = activeReviewSummary?.executionBountyAssets
+    ?? preparedOrder?.executionBountyAssets
+    ?? (requiresCloseReview ? undefined : estimatedKeeperBountyAssets)
   const closeReviewAssessment = requiresCloseReview ? activeReviewSummary?.currentAssessment : undefined
   const fundingShortfallMessage = reviewFundingShortfallAssets === undefined
     ? undefined
@@ -3356,7 +3346,7 @@ export function PerpsTradeTicket({
       },
       {
         label: 'Estimated execution reward',
-        value: requiresCloseReview ? formatAssetsRaw(activeReviewSummary?.executionBountyAssets) : formatAssets(keeperBounty),
+        value: formatAssetsRaw(previewExecutionBountyAssets),
         tooltip: EXECUTION_REWARD_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.executionReward,
       },
@@ -3377,7 +3367,7 @@ export function PerpsTradeTicket({
       isExecutionProtectionsLoading,
       preparedOrder,
       isReviewOpen,
-      keeperBounty,
+      previewExecutionBountyAssets,
       oraclePriceDisplay,
       oracleFreshness,
       oracleFreshnessTooltip,
@@ -3429,6 +3419,8 @@ export function PerpsTradeTicket({
   const finalIsClose = committedIsClose
     ?? historyOrderIsClose(executedOrderHistoryRow)
     ?? isReducingCurrentPosition
+  const lifecycleExecutionBountyAssets = committedExecutionBountyAssets
+    ?? (finalIsClose ? 0n : estimatedKeeperBountyAssets)
   const finalDirection = committedDirection
     ?? historyOrderDirection(executedOrderHistoryRow)
     ?? (enableLiveTrading ? undefined : effectiveOrderDirection)
@@ -3790,6 +3782,7 @@ export function PerpsTradeTicket({
     setWalletRequestWarning(undefined)
     setCommitExecutionStatus(undefined)
     setCommittedIsClose(isReducingCurrentPosition)
+    setCommittedExecutionBountyAssets(preparedOrder?.executionBountyAssets ?? estimatedKeeperBountyAssets)
     setCommittedIsFullClose(isReviewingFullClose)
     setCommittedVpiAssets(previewVpiAssets)
     setCommittedPositionVpiAccrued(previewPositionVpiAccrued)
@@ -4102,6 +4095,7 @@ export function PerpsTradeTicket({
     setCommittedSizeDelta(undefined)
     setCommittedDirection(undefined)
     setCommittedMarginDelta(undefined)
+    setCommittedExecutionBountyAssets(undefined)
     setCommittedPrePositionMarginAssets(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
@@ -5036,7 +5030,7 @@ export function PerpsTradeTicket({
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatAssetsRaw(protocolExecutionFeeRaw) },
                     ...committedVpiRows,
-                    { label: 'Estimated execution reward', value: formatAssets(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                   ]}
                 />
               </div>
@@ -5066,7 +5060,7 @@ export function PerpsTradeTicket({
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatAssetsRaw(protocolExecutionFeeRaw) },
                     ...committedVpiRows,
-                    { label: 'Estimated execution reward', value: formatAssets(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                     ...(isSponsoredAccountConfigured
                       ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
                       : []),
@@ -5112,7 +5106,7 @@ export function PerpsTradeTicket({
                       ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
                       : []),
                     { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
-                    { label: 'Estimated execution reward', value: formatAssets(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                     {
                       label: isSponsoredAccountConfigured ? 'Keeper processing' : 'Manual finalization',
                       value: isSponsoredAccountConfigured
@@ -5159,7 +5153,7 @@ export function PerpsTradeTicket({
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
-                    { label: 'Estimated execution reward', value: formatAssets(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                     {
                       label: 'Manual finalization',
                       value: flowError && isRevealNotReadyMessage(flowError)
@@ -5192,7 +5186,7 @@ export function PerpsTradeTicket({
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
-                    { label: 'Estimated execution reward', value: formatAssets(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                     { label: 'Transaction', value: 'Awaiting confirmation' },
                   ]}
                 />
@@ -5302,7 +5296,7 @@ export function PerpsTradeTicket({
                         tooltip: VPI_PRICE_IMPACT_TOOLTIP,
                         tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
                       },
-                      { label: 'Execution reward', value: formatAssets(keeperBounty) },
+                      { label: 'Execution reward', value: formatAssetsRaw(lifecycleExecutionBountyAssets) },
                     ] satisfies PreviewRow[] : []),
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },

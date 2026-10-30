@@ -45,7 +45,7 @@ The dollar index price has fixed lower and upper bounds. This limits the maximum
 
 Every position starts with USDG margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
 
-Position margin and same-account trader claims back price losses. A deposit adds free USDG for carry and actions. Assigning free USDG to position margin increases the price-loss buffer and can reduce future carry; keep free funds available for carry collection.
+Position margin after accrued carry and same-account trader claims back price losses. Carry consumes active position margin first, then eligible free USDG. A deposit adds free USDG for actions and any carry left after position margin is exhausted. Assigning free USDG to position margin increases the price-loss buffer and can reduce future carry; later carry can reduce that margin again.
 
 Each Trading Account can hold one live direction at a time. A trader can:
 
@@ -112,7 +112,7 @@ When collected, realized carry becomes pool trading revenue.
 
 #### Liquidation
 
-A position is eligible for liquidation when position margin plus same-account claims and exact price PnL is at or below maintenance. Uncovered carry or insufficient VPI reserve can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
+A position is eligible for liquidation when position margin after accrued carry plus same-account claims and exact price PnL is at or below maintenance. Carry can therefore bring the position closer to liquidation without a price move. Carry left uncovered after both position margin and eligible free USDG are exhausted, or an insufficient VPI reserve, can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
 
 Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, an existing trader claim belonging to the same Trading Account can be netted against the terminal shortfall; any remainder becomes pool bad debt.
 

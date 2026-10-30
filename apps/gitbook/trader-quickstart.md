@@ -93,6 +93,6 @@ For partial closes or changing direction, see [reduce or close a position](tradi
 
 Select `Withdraw` in **Margin Account**. Enter an amount within **Withdrawable**, review it and authorize the sponsored action in MetaMask. It sends the exact withdrawal through your Trading Account to the connected owner wallet.
 
-Withdrawable can be below USDG balance because margin or rewards are reserved and withdrawal checks apply. Free-fund withdrawals reduce carry coverage; price equity is backed separately by position margin and claims. See [your Margin Account](trading-on-plether-perps/your-margin-account.md) for the balance rules.
+Withdrawable can be below USDG balance because margin or rewards are reserved and withdrawal checks apply. Carry consumes active position margin first, then eligible free USDG; free-fund withdrawals reduce that fallback. Price equity uses the margin left after carry plus same-account claims and price PnL. See [your Margin Account](trading-on-plether-perps/your-margin-account.md) for the balance rules.
 
 For connection, sponsorship or validation problems, use [trader troubleshooting](trading-on-plether-perps/trader-troubleshooting.md).

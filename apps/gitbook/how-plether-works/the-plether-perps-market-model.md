@@ -90,7 +90,7 @@ A Plether order follows a commit-now, price-later process:
 
 1. The trader deposits USDG into the Trading Account’s Margin Account.
 2. The owner wallet authorizes a LONG USD or SHORT USD commitment, and Plether submits the eligible sponsored operation.
-3. For an open, committed margin is reserved. Every order reserves its execution reward; a close can source that reward from active position margin.
+3. An open or increase reserves committed margin and its execution reward. A reduction or close, including a TP/SL close order, reserves no keeper execution reward. Carry is still realized from active position margin first, then eligible free USDG.
 4. The order enters the global FIFO[^fifo] queue.
 5. During live or FAD-only execution, Plether resolves the first eligible Pyth observation strictly after commitment. An `oracleFrozen` voluntary close instead uses a validated frozen-policy Pyth basket without the normal post-commit ordering requirement.
 6. During live or FAD-only[^fad] execution, the protocol applies an adverse oracle-confidence adjustment. Frozen voluntary closes use the validated unshifted price and the separate frozen-close spread.
@@ -194,7 +194,7 @@ A trader account separates USDG into several states:
 
 Reserved balances are not free buying power.
 
-Price-risk backing is position margin plus same-account trader claims. Free USDG covers carry and action obligations separately; it does not move the price-liquidation threshold.
+Price-risk backing is position margin after accrued carry plus same-account trader claims. Carry consumes active position margin first, then eligible free USDG; trader claims and reserved funds cannot pay it. Other action obligations use their eligible funds. Free USDG does not itself move the price-liquidation threshold, but carry that consumes position margin does.
 
 This means a trader’s loss is not necessarily limited to the margin initially assigned on the trade ticket. A full close or liquidation can consume other economically reachable USDG held inside the Plether account.
 
@@ -212,7 +212,7 @@ The simplified value flow is:
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
 | **Losing close**      | Reachable trader USDG is collected               | The LP-owned portion becomes liquidity pool value; the execution fee belongs to the treasury |
 | **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
-| **Carry realization** | Carry is collected from eligible free USDG     | Realized carry becomes LP revenue                 |
+| **Carry realization** | Carry is collected from active position margin first, then eligible free USDG | Realized carry becomes LP revenue                 |
 | **LP deposit**        | No change to trader margin                       | USDG enters through a tranche vault               |
 
 Protocol execution fees belong to the treasury rather than LPs. Order-execution rewards are funded from trader collateral rather than pool capital.

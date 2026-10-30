@@ -125,7 +125,7 @@ For the same contract quantity:
 * More assigned margin produces lower displayed position leverage and a smaller LP-backed carry basis.
 * Less assigned margin produces higher displayed position leverage and may fail the position-level initial-margin check.
 
-Assigned margin comes from settlement already in the Margin Account. Moving free USDG into position margin increases price-risk backing. A deposit by itself increases free USDG and carry coverage.
+Assigned margin comes from USDG already in the Margin Account. After accrued carry is collected, moving free USDG into position margin increases price-risk backing. A deposit by itself adds free USDG and a fallback for carry beyond active margin; it does not stop carry from consuming existing position margin.
 
 For an increase, the resulting leverage applies to the complete combined position.
 
@@ -135,7 +135,7 @@ Plether checks both assigned position margin and total account equity. After exe
 * Account equity must also meet the initial margin requirement.
 * The resulting position must remain above its liquidation threshold.
 
-Free USDG elsewhere in the account covers carry and actions. Price health uses assigned position margin, same-account claims and exact PnL; opening also checks the assigned-margin requirement.
+Accrued carry consumes active position margin first, then eligible free USDG. Price health uses the position margin left after carry, same-account claims and exact PnL; opening also checks the assigned-margin requirement. Free USDG and eligible reserves fund other action costs according to their separate rules.
 
 #### How costs affect resulting margin
 
@@ -286,7 +286,7 @@ Execution fee:              1.80 USDG
 VPI charge:                   25 USDG
 ```
 
-With accrued carry already paid from free account USDG:
+With accrued carry already collected from active position margin first, then eligible free account USDG:
 
 ```
 Resulting position margin

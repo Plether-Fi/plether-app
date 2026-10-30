@@ -59,7 +59,7 @@ Plether does not reduce or close an unrelated profitable position to cover anoth
 
 There is no counterparty auto-deleveraging between traders.
 
-Your position can be fully liquidated if position margin plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
+Your position can be fully liquidated if position margin after accrued carry plus same-account claims and exact price PnL falls to or below maintenance. Uncovered carry or insufficient VPI reserve backing can independently make it liquidatable.
 
 That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
 
@@ -111,7 +111,7 @@ There is no partial-liquidation process that reduces an oversized position and l
 
 Do not assume that the margin figure displayed beside a position is always the maximum USDG that can be reached during terminal settlement.
 
-Plether separates price risk from action obligations. Price equity is assigned position margin plus same-account claims and exact PnL. Free USDG covers carry, and reserves have dedicated purposes. Committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
+Plether separates price risk from action obligations. Price equity is assigned position margin after accrued carry plus same-account claims and exact PnL. Carry consumes active position margin first, then eligible free USDG; it cannot consume trader claims or reserved funds. Reserves have dedicated purposes, and committed-order funds do not back price losses. Withdrawals check carry coverage, reserve backing, position equity and eligible mark data.
 
 A same-account trader claim supports price equity and can offset price losses. It is not cash available for carry, fees or withdrawal.
 
@@ -132,7 +132,7 @@ Carry can:
 
 Carry is not trader-to-trader funding. It is the cost of using LP-backed capital.
 
-A position can become liquidatable without an adverse price move if free USDG cannot cover carry, even while price equity remains positive.
+Carry reduces position margin and price equity before it reaches free USDG. A position can therefore become liquidatable without an adverse price move even when free funds remain. If position margin and eligible free USDG together cannot cover carry, the uncovered amount independently makes the position liquidatable, even if claims and price PnL keep price equity above maintenance.
 
 ### Binding-order risk
 

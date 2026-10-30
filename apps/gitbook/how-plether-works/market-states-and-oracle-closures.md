@@ -178,9 +178,9 @@ The state at execution determines whether the spread applies. A close committed 
 
 Frozen spread is part of the action charge. Attribution of recovered spread follows the prior charges shown below; this is not a shared collateral queue for price losses:
 
-![Frozen-close spread is an action charge, not a price change. Recovered spread is attributed only after execution fee, carry and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
+![Frozen-close spread is an action charge, not a price change. Recovery follows execution fee, carry left unpaid after initial collection, and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
 
-V2 settles price losses separately, using the same account’s nettable trader claim and then collectible PnL pledge. Action charges cannot consume that pledge.
+Carry consumes active position margin first, then eligible free USDG, before close accounting. Price losses then use the same account’s nettable trader claim and remaining collectible PnL pledge. Other close charges, including any unpaid carry, can use margin safely released by the close; they cannot consume the margin still backing a residual position.
 
 A partial reduction must settle its action charge without waiver. If eligible action funds are insufficient after any withholding from a price gain, the reduction does not execute.
 
@@ -246,7 +246,7 @@ The affected order normally remains pending until:
 * The order expires and is cleared
 * Another terminal condition applies
 
-A close intent may still be committed if the protocol has a stored mark and can reserve its execution reward. Commitment does not imply that the close can currently execute.
+A close intent may still be committed if the protocol has a stored mark and passes the close-commit checks. Reductions and closes have zero keeper execution reward; no reward reserve is required. Commitment still checkpoints carry and does not imply that the close can currently execute.
 
 ### A live-market oracle outage is not frozen mode
 

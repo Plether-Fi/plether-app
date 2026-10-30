@@ -162,7 +162,7 @@ The sponsored settlement operation does not transfer USDG directly to the owner 
 
 Plether checkpoints carry before crediting a claim to an account with an open position.
 
-Carry is collected from existing free USDG before the claim credit. Position margin and the claim cannot cover carry. The visible change in total USDG balance may therefore be smaller than the settled claim.
+Before the claim credit, carry is collected from active position margin first, then eligible free USDG. The claim itself and other reserved funds cannot pay carry. The visible increase in total USDG balance may therefore be smaller than the settled claim, and the carry deduction reduces the position margin backing price losses.
 
 For example:
 
@@ -174,7 +174,7 @@ Net account balance change:         +4,880 USDG
 
 The claim itself is still settled for the full `5,000 USDG`.
 
-If free USDG cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry. It can independently make the account liquidatable; it does not reduce position price equity.
+If active position margin and eligible free USDG cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry and can independently make the account liquidatable. Carry already collected from position margin has also reduced price equity. The later claim credit becomes new position margin; it does not retroactively fund that carry checkpoint.
 
 ### Withdraw the credited USDG
 

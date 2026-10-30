@@ -62,9 +62,9 @@ Only one active protection record can control the account at a time. If protecti
 
 ### Execution reserve and sponsorship
 
-Creating TP/SL reserves USDG from free margin for the trigger bounty and close-order execution bounty. Attaching TP/SL to an opening order requires this additional reserve as well as the opening order's normal margin and reward.
+Creating TP/SL reserves USDG from free funds for the trigger reward. The resulting close order has zero keeper execution reward. Attaching TP/SL to an opening order requires the trigger reserve as well as the opening order's normal margin and execution reward.
 
-Use the amount shown in the review: it comes from the deployment's configured bounties, not a fixed fee promised by this guide. For example, if each bounty is 0.2 USDG, the additional reserve is 0.4 USDG.
+Use the trigger amount shown in the review: it comes from the deployment's configuration. For example, a 0.2 USDG trigger reward requires an additional 0.2 USDG reserve; no second reward is reserved for close execution.
 
 Gas sponsorship does not pay this USDG reserve or remove normal trading costs. When available, it pays network gas for an eligible create, edit or remove operation that you authorize. Triggering, retrying and executing a close are separate keeper transactions.
 

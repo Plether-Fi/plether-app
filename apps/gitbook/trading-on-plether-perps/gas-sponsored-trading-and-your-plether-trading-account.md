@@ -4,17 +4,15 @@ The current Plether Perps deployment uses a separate smart account for trading. 
 
 Plether sponsors network gas for eligible Trading Account actions, subject to availability and policy limits. There is no direct owner-wallet or self-funded fallback in the current interface.
 
-Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], execution rewards and the frozen-close spread remain USDG[^usdg] costs.
+Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], opening-order execution rewards and the frozen-close spread remain USDG[^usdg] costs.
 
-### Close — sponsored on Arbitrum Sepolia
+### Gas sponsorship for reductions and closes
 
-When close assistance is available, an otherwise valid full or partial close can receive the exact USDG amount missing from its keeper bounty, up to $0.20. Close review displays **Close — sponsored**, the covered amount and sponsored gas. You authorize one Trading Account operation; funding and order commitment happen together, without a separate deposit step.
+Reductions and full closes have **zero USDG keeper execution reward**. This also applies to closes created by TP/SL. Committing these orders does not reserve a reward from free USDG or position margin, and no close-reward top-up is needed.
 
-Your existing collateral must cover accrued carry. Assistance does not waive trading charges, partial-close health checks, minimum sizes, pending-order restrictions or active position protection. A changed funding requirement requires a fresh review. Successful commitment queues the close; the keeper still executes it separately.
+Plether can sponsor the network gas for the Trading Account operation that commits a reduction or close. Successful commitment queues the order; a keeper still executes it separately. Zero execution reward does not remove protocol fees, VPI, carry, applicable frozen-close spread, partial-close health checks or oracle requirements.
 
-Competition scoring treats this funding separately from the initial faucet allocation. The assistance deposit is subtracted from PnL, so the bounty remains a trading cost. For example, if $0.002 is available and Plether supplies $0.198 for a $0.20 bounty, the full $0.20 remains a trading cost. Verified assistance does not count as unexpected funding or extra bankroll. Other deposits still follow the existing competition rules.
-
-Assistance has no automatic expiration and can be explicitly disabled. Competition registration and scoring dates do not change; assistance after the scoring cutoff does not extend the competition window.
+Carry is collected from active position margin first, then eligible free USDG. It can reduce the price-loss buffer while the close is pending. TP/SL may separately reserve a trigger reward; that pays for triggering the protection, not for executing its close order.
 
 ### Your wallet, Trading Account and Margin Account
 
@@ -63,13 +61,14 @@ In the current sponsored interface:
 * The owner wallet is not asked to finalize an order.
 * The owner wallet is not asked to clean up an expired order.
 * The owner wallet does not pay native gas or the Pyth update fee for keeper processing.
-* For ordinary execution, failure or expiry cleanup, the reserved USDG execution reward is paid to the account that processes the terminal order result. If liquidation clears the order first, the reward is forfeited to the protocol treasury.
+* For an open or increase, the reserved USDG execution reward is paid to the account that executes the order or processes its terminal failure or expiry. If liquidation clears that opening order first, its reward is forfeited to the protocol treasury.
+* Reductions and closes reserve and pay no execution reward, including on failure or expiry cleanup.
 
 An expired row under **Open Orders** therefore shows **Keeper cleanup in progress** and **Keeper processing**, not a trader-operated **Clean Up** action.
 
 ### What sponsorship pays
 
-Eligible [TP/SL](take-profit-and-stop-loss.md) creation, editing and removal also use owner-authorized sponsored operations when enabled for the deployment. This is separate from keeper execution: the protection worker triggers or retries a close, and the order keeper finalizes it. Sponsorship does not pay the protection's USDG trigger and execution reserve. A confirmed TP/SL update does not mean that its eventual close has executed.
+Eligible [TP/SL](take-profit-and-stop-loss.md) creation, editing and removal also use owner-authorized sponsored operations when enabled for the deployment. This is separate from keeper execution: the protection worker triggers or retries a close, and the order keeper finalizes it. Sponsorship does not pay the protection's USDG trigger reserve. Its close-order execution reward is zero. A confirmed TP/SL update does not mean that its eventual close has executed.
 
 Plether pays the network gas required to include an eligible smart-account operation. The following still come from the Trading Account or the trade’s settlement:
 
@@ -78,8 +77,8 @@ Plether pays the network gas required to include an eligible smart-account opera
 * Protocol execution fees
 * VPI charges or credits
 * Carry charges
-* The order execution reward
-* The TP/SL trigger and close-execution reserve
+* The opening-order execution reward
+* The TP/SL trigger reserve
 * The current 50 bps[^bps] frozen-close spread, when applicable
 
 Gas sponsorship does not change execution price, FIFO priority, slippage protection, margin requirements, liquidation rules or protocol solvency checks. It also does not guarantee that a committed order will execute; oracle[^oracle] availability, market state, FIFO and execution-time checks still apply.
@@ -231,7 +230,7 @@ Sponsorship covers the operation that commits the order. Execution is a separate
 
 #### Does sponsorship cover my trading costs?
 
-It covers eligible network gas. Execution fees, VPI, carry, execution rewards and the frozen-close spread continue to be accounted for in USDG.
+It covers eligible network gas. Execution fees, VPI, carry, opening-order execution rewards, TP/SL trigger rewards and the frozen-close spread continue to be accounted for in USDG. Reductions and closes have no keeper execution reward.
 
 [^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.

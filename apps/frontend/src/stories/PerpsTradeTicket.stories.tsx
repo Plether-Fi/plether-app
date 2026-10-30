@@ -470,7 +470,7 @@ export const AddTakeProfitStopLoss: Story = {
   name: 'New order · Optional TP/SL',
   parameters: { controls: { disable: true } },
   render: () => <TicketFrame {...documentationMarketArgs} currentPositionAmount="0" initialOrderQuantity="2 000"
-    protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />,
+    protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' }))
@@ -483,7 +483,7 @@ export const AddTakeProfitStopLoss: Story = {
 export const DisabledAttachedProtection: Story = {
   name: 'Existing position · TP/SL disabled',
   render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition}
-    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />,
+    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeDisabled()
@@ -493,7 +493,7 @@ export const DisabledAttachedProtection: Story = {
 export const ReduceOnlyHidesProtection: Story = {
   name: 'Reduce only · TP/SL hidden',
   render: () => <TicketFrame {...documentationMarketArgs} currentPosition={currentLongPosition} initialReduceOnly
-    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />,
+    protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
@@ -509,7 +509,7 @@ export const ProtectedOpenReview: Story = {
     executionProtectionsFixture={{ ...executionProtectionsFixture, positionProtection: {
       book: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
       params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 102_000_000n, closeLimits: relaxedProtectionCloseLimits() },
-      triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n,
+      triggerBountyAssets: 200_000n, executionBountyAssets: 0n,
     } }} />,
 }
 

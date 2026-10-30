@@ -4,6 +4,14 @@ Reviewed on 2026-09-07. Covers all 30 current diagram assets and their article r
 
 The 2026-10-29 terminology refresh changes currency labels to USDG and rerenders the catalog with the existing exported `renderDiagram` function. It preserves the original semantic-review pin and source evidence. It does not certify the older economic explanations against the prepared USDG release.
 
+## Scoped USDG semantic corrections — 2026-10-30
+
+Ten diagrams were corrected against immutable Core commit `e35cf0e0e9b880e07812e36321dee98bd299dcbd`, the source of the vendored SDK 0.4.0. The correction covers carry collection from active position margin before eligible free USDG; price equity after that projection; safely released margin as a later close-action funding source; and zero execution rewards for reductions and closes, distinct from opening execution rewards and TP/SL trigger rewards.
+
+Primary evidence is `MarginClearinghouseAccountingLib.planCarryLossConsumption` and `projectCarryLoss`, `CfdEnginePlanLib._applyPendingCarryRealizationToSnapshot`, `planClose` and `_planCloseCashSources`, `CfdEngine.reserveCloseOrderExecutionBounty`, and `PositionProtectionBook.createPositionProtection` at that exact commit. The manifest's `scopedSemanticReviews` record lists the affected diagram IDs and immutable source links. Related carry, liquidation and worked-example prose was corrected alongside the diagrams.
+
+Only those catalog entries were rendered through the exported `renderDiagram` function, with article alt text and manifest evidence synchronized. The original `reviewedRelease` below remains intact; this scoped correction does not certify the remaining diagram semantics against the new release. The existing full-regeneration guard remains unchanged.
+
 ## Source of truth
 
 Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122c779d4d681d0fa2be517707b7f7df3902`, the deployment pin at the time of that review. The source was read at that exact commit, not from a possibly newer working tree. This is a release-source review, not a claim that mutable live parameters were freshly queried.

@@ -1,6 +1,6 @@
 # Margin, leverage and liquidation
 
-Position margin and same-account trader claims back price risk. Free USDG covers carry separately.
+Position margin remaining after accrued carry and same-account trader claims back price risk. Carry is collected from active position margin first, then eligible free USDG.
 
 The USDG[^usdg] shown as **Position margin** is pledged to price losses. Adding free USDG does not move the price-liquidation threshold until funds are assigned to position margin. A same-account claim also supports price equity.
 
@@ -27,7 +27,7 @@ Position margin and same-account claims support price health. Free USDG, committ
 
 A trader claim is not spendable cash, but the same account’s claim is included in its position equity and can offset its price losses.
 
-> Price losses use position margin and same-account claims; carry cannot consume either of these sources.
+> Carry consumes active position margin first, then eligible free USDG. Same-account claims support price equity and can offset price losses, but claims and other reserved funds cannot pay carry.
 
 Plether cannot debit USDG or other assets held in your wallet, another protocol or another Plether account.
 
@@ -125,7 +125,7 @@ Equity leverage
 = current contract notional ÷ position equity
 ```
 
-Equity leverage includes position margin, same-account claims and exact price PnL. Free funds and action obligations are separate. If carry is uncovered, positive position equity does not imply a healthy account.
+Equity leverage includes position margin after accrued carry, same-account claims and exact price PnL. Free funds are excluded. Carry consumes active margin before free USDG and can therefore change equity leverage. If carry remains uncovered, positive price equity does not imply a healthy account.
 
 If position equity is zero or negative, effective leverage is no longer a meaningful finite number. The account should instead be treated as critically undercollateralized.
 
@@ -170,7 +170,7 @@ These actions are not equivalent.
 
 Depositing new USDG into the Margin Account increases the account’s USDG balance. In the current sponsored flow, that USDG is sourced from the separate Trading Account.
 
-If carry is due, some of the deposit may settle it immediately. Depositing can restore carry coverage, but does not itself increase position equity.
+If carry is due, the deposit action checkpoints it: active position margin pays first, then eligible free USDG. Depositing adds free funds as a fallback but does not automatically assign new position margin. Carry realized during the action can reduce position equity even though funds are being deposited.
 
 #### Adding position margin
 
@@ -180,7 +180,7 @@ Adding position margin moves existing free USDG into the position-margin bucket.
 * change entry price;
 * change the total USDG held in settlement.
 
-Moving that USDG into the position increases price-risk backing, while leaving less free USDG for carry.
+After the carry checkpoint, moving that USDG into the position increases price-risk backing and leaves less free USDG for actions. Future carry can consume the newly assigned margin before drawing on free funds.
 
 Adding position margin can still:
 
@@ -189,7 +189,7 @@ Adding position margin can still:
 * reduce the part of the position economically financed by LP[^lp] capital;
 * reduce future carry.
 
-Plether realizes collectible carry from free USDG before locking added margin. The form’s maximum subtracts projected carry first. Keep additional free funds for future carry; the transaction checks the actual state at execution.
+Plether realizes collectible carry from existing active position margin first, then eligible free USDG, before locking added margin. The form’s maximum uses free USDG remaining after that projection. Keep account health under review: future carry can reduce the new margin, and the transaction checks the actual state at execution.
 
 #### Removing position margin
 
@@ -218,13 +218,13 @@ The interface therefore shows a separate **Withdrawable** amount. It may be lowe
 ### How liquidation equity is calculated
 
 ```
-Position equity = assigned position margin + same-account claim + exact price PnL
+Position equity = position margin after accrued carry + same-account claim + exact price PnL
 Price liquidation: Position equity ≤ active maintenance margin
 ```
 
-Free USDG, order commitments, liquidation reserves and VPI reserves do not enter this price-equity formula. Carry is collected only from eligible free USDG. An uncovered carry amount or an insufficient VPI reserve is a separate account-health failure.
+Free USDG, order commitments, liquidation reserves and VPI reserves do not enter this price-equity formula. Pending carry first reduces the active position margin used in the formula, then uses eligible free USDG if margin is exhausted. Claims and other reserved funds cannot pay carry. Any uncovered carry or insufficient VPI reserve is a separate account-health failure.
 
-For example, with 1,000 USDG of position margin, a 500 USDG claim and a 1,150 USDG price loss, position equity is 350 USDG. Against 250 USDG maintenance, the price buffer is 100 USDG. A further 100 USDG price loss reaches liquidation equality even if substantial free USDG remains. If 50 USDG of carry is due, free USDG must cover it separately.
+For example, with 1,000 USDG of position margin before carry, a 500 USDG claim and a 1,150 USDG price loss, equity before carry would be 350 USDG. If 50 USDG of carry is due, active margin falls to 950 USDG even when free USDG is available. Position equity is then `950 + 500 − 1,150 = 300 USDG`. Against 250 USDG maintenance, only a further 50 USDG price loss reaches liquidation equality.
 
 ### Liquidation price
 
@@ -345,7 +345,7 @@ Liquidation means the entire position is closed. It does not automatically mean 
 | Execution path  | Delayed global order queue                                                | Separate permissionless path                               |
 | Position size   | Partial or full                                                           | Full only                                                  |
 | Pricing         | Eligible delayed execution mark                                           | Active-policy adverse confidence-adjusted liquidation mark |
-| Costs           | Carry, execution fee, execution reward, applicable VPI and frozen-close spread | Carry, applicable VPI clawback and liquidation bounty  |
+| Costs           | Carry, execution fee, applicable VPI and frozen-close spread; zero keeper execution reward | Carry, applicable VPI clawback and liquidation bounty  |
 | Pending orders  | Continue independently                                                    | Failed and cleaned up                                      |
 | Trader residual | Preserved                                                                 | Preserved after terminal costs                             |
 
@@ -391,7 +391,7 @@ In practice:
 * Monitor position equity and maintenance margin together, plus the contract’s liquidatable status.
 * Leave room for price movement, carry and the market-close regime.
 * Deposit USDG for carry and actions; assign margin explicitly to increase price-risk backing.
-* Leave free USDG for future carry after adding position margin.
+* Monitor the margin left after projected carry. Free USDG is a fallback only after active position margin is exhausted.
 * Treat **Withdrawable**, not free buying power, as the withdrawal limit.
 * Remember that a pending close leaves the position live.
 * Treat the displayed liquidation price as an estimate.

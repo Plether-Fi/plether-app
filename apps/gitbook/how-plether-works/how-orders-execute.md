@@ -127,9 +127,7 @@ The commitment records:
 * Whether the order opens risk or reduces it
 * Commitment time and block
 
-For an opening or increase, Plether reserves the submitted margin immediately.
-
-It also reserves an **execution reward**. This compensates whoever later finalizes or clears the order. The reward is separate from:
+For an opening or increase, Plether reserves the submitted margin and an **execution reward** immediately. This reward compensates whoever later finalizes or clears that opening order. It is separate from:
 
 * Position margin
 * Protocol execution fees
@@ -138,9 +136,9 @@ It also reserves an **execution reward**. This compensates whoever later finaliz
 * Any frozen-close spread
 * Network gas
 
-For a reduction or close, the reward is taken from available account USDG[^usdg] where possible. Within defined safety bounds, it may instead be reserved from the position’s margin.
+Reductions and full closes have zero USDG[^usdg] execution reward, including closes created by TP/SL. They reserve no new opening margin or execution reward. TP/SL triggering can have a separate reward. Commitment still collects carry from active position margin first, then eligible free USDG.
 
-At this point, no position size has been added or removed. The order is pending, but its reserved funds are no longer available for another order or withdrawal.
+At this point, no position size has been added or removed. The order is pending. Any funds reserved for an opening order are unavailable for another order or withdrawal; a pending reduction instead counts against the position quantity available to later close orders.
 
 Commitment does not lock whether the frozen-close spread will apply. When a reduction or close reaches execution, Plether recalculates:
 
@@ -225,7 +223,7 @@ At the protocol level, any address can call the permissionless execution endpoin
 * ETH for network gas
 * ETH for the Pyth update fee
 
-The caller receives the reserved execution reward through its Margin Account. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
+For an open or increase, the caller receives the reserved execution reward through its Margin Account. A reduction or close pays no execution reward. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
 
 ### From index observation to execution price
 
@@ -373,9 +371,9 @@ The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps
 
 V2 separates price-loss collection from action-charge funding:
 
-![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/final-collection-priority.svg)
+![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/final-collection-priority.svg)
 
-A price loss consumes the same account’s nettable claim before collectible PnL pledge. Fees, carry, VPI and frozen spread use separate action funds and cannot consume PnL pledge. A partial reduction cannot waive an uncollectible action charge.
+Before close accounting, carry consumes active position margin first, then eligible free USDG. A price loss then consumes the same account’s nettable claim before the remaining collectible PnL pledge. Fees, VPI, frozen spread and any still-unpaid carry use the separate close action-charge sources, including margin safely released by the close. They do not consume the margin still backing a residual position. A partial reduction cannot waive an uncollectible action charge.
 
 A terminal full close may waive uncollectible action charges, including frozen spread. Excess price loss beyond the collectible cap is recorded separately; it is not a fee shortfall.
 

@@ -124,7 +124,6 @@ Check the following:
 * Earlier pending reductions have not already reserved the requested size.
 * The reduction does not exceed the remaining unreserved position.
 * The residual position will remain above the minimum size.
-* The account can reserve the complete close execution reward.
 * A partial reduction can fully pay its losses and costs.
 
 Exposure from a pending open cannot be reduced yet. Wait for the open order to execute.
@@ -153,7 +152,7 @@ Add collateral, reduce a smaller amount or submit a terminal full close.
 
 A full close can consume all reachable collateral and record a genuine uncovered trading obligation as bad debt. During `oracleFrozen`, only an uncollectible frozen-close spread may be waived.
 
-Full-close treatment does not bypass slippage, expiry, oracle validation or execution-reward backing.
+Full-close treatment does not bypass slippage, expiry or oracle validation. Reductions and full closes have zero keeper execution reward; no close reward needs backing.
 
 Close commitments remain available at contract level during degraded mode and while new risk commitments are paused.
 
@@ -317,7 +316,7 @@ Adding position margin requires:
 * Sufficient free Margin Account USDG
 * An amount greater than zero
 
-Carry is realized before the margin is assigned. If free USDG is insufficient after that carry collection, reduce the amount or deposit additional USDG first.
+Carry is realized from existing active position margin first, then eligible free USDG, before new margin is assigned. If free USDG is insufficient after that carry collection, reduce the amount or deposit additional USDG first.
 
 Position margin can be added directly. Releasing assigned position margin requires reducing or closing the position.
 
@@ -422,7 +421,7 @@ Check for changes in:
 * Execution-reward reservations
 * Current FAD margin requirement
 
-Price health uses position margin plus same-account claims and exact PnL. Carry coverage and dedicated VPI reserve backing are checked separately; free USDG and order reservations do not increase price equity.
+Price health uses position margin after projected carry plus same-account claims and exact PnL. Uncovered carry and dedicated VPI reserve backing are checked separately; free USDG and order reservations do not increase price equity.
 
 Actual liquidation uses an adverse confidence-adjusted oracle price. A position close to the boundary can therefore become liquidatable before the central displayed mark reaches the estimated liquidation price.
 
@@ -439,8 +438,8 @@ During the wait:
 * PnL continues moving.
 * Carry continues accruing.
 * The position remains liquidatable.
-* The close execution reward has already been reserved.
-* Position margin may already have been used to back that reward.
+* No close-execution reward is reserved or paid.
+* Carry collected at commitment may already have reduced position margin.
 
 Depositing USDG can restore carry coverage. To increase the price-loss buffer without changing size, assign free funds using Add Margin.
 

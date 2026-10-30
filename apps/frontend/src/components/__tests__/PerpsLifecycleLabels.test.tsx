@@ -367,6 +367,77 @@ describe('perps lifecycle labels', () => {
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    { label: 'partial close', quantity: 100n, isClose: true, reward: 0n, display: '0.0 USDG' },
+    { label: 'full close', quantity: 1_000n, isClose: true, reward: 0n, display: '0.0 USDG' },
+    { label: 'opening order', quantity: 100n, isClose: false, reward: 500_000n, display: '0.5 USDG' },
+  ])('keeps the reviewed execution reward through the $label lifecycle', async ({ quantity, isClose, reward, display }) => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
+    const postSize = isClose ? (1_000n - quantity) * 10n ** 18n : quantity * 10n ** 18n
+    reviewed.request = {
+      ...reviewed.request, sizeDelta: quantity * 10n ** 18n, isClose,
+      marginDelta: isClose ? 0n : reviewed.request.marginDelta,
+      bounds: { ...reviewed.request.bounds, maxExecutionBountyAssets: reward },
+    }
+    reviewed.executionBountyAssets = reward
+    reviewed.protection.executionBountyAssets = reward
+    reviewed.reviewSummary = {
+      executionBountyAssets: reward, requiredMarginAssets: reviewed.request.marginDelta,
+      requiredFundingAssets: reviewed.request.marginDelta + reward, availableFundingAssets: 1_000_000_000n,
+      commitmentCarryAssets: 0n, worstPostLeverageBps: 50_000n,
+      reviewedBlockNumber: reviewed.reviewedBlockNumber, reviewedBlockHash: reviewed.reviewedBlockHash,
+      reviewedPrice: reviewed.reviewedPrice,
+      currentAssessment: {
+        mode: 1, executionNotionalAssets: quantity * 1_000_000n, grossAccountDebitAssets: reward,
+        actionChargeAssessedAssets: 0n, actionChargeCollectedAssets: 0n, explicitFeesAssets: 0n,
+        preSettlementBalanceAssets: 1_000_000_000n, postSettlementBalanceAssets: 1_000_000_000n - reward,
+        realizedPnlAssets: 0n, vpiAssets: 0n, carryAssets: 0n, executionFeeAssets: 0n, frozenSpreadAssets: 0n,
+        preTraderClaimAssets: 0n, postTraderClaimAssets: 0n, postPositionSize: postSize,
+        postPositionMarginAssets: 500_000_000n, postPositionEquityAssets: 500_000_000n, postLeverageBps: 50_000n,
+      },
+    }
+    perpsTradingMocks.prepareOrder.mockClear().mockResolvedValue(reviewed)
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
+    const props = {
+      enableLiveTrading: true, initialReviewOpen: true,
+      initialDirection: isClose ? 'short' as const : 'long' as const,
+      initialOrderQuantity: quantity.toString(),
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 1_000_000_000n,
+      currentPosition: isClose ? {
+        exists: true, side: 0, direction: 'long' as const, size: 1_000n * 10n ** 18n,
+        entryPrice: 100_000_000n, marginAssets: 500_000_000n, unrealizedPnlAssets: 0n,
+        maintenanceMarginAssets: 10_000_000n, liquidatable: false,
+      } : undefined,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    const expectReward = () => {
+      const row = within(screen.getByRole('dialog')).getByText('Estimated execution reward').closest('div')
+      expect(row?.textContent?.replace(/\s/g, '')).toContain(display.replace(/\s/g, ''))
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    expectReward()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    expect(screen.getByText('Preparing sponsored transaction')).toBeInTheDocument()
+    expectReward()
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0][0]
+    act(() => commitInput.onStatus('awaiting-signature'))
+    expectReward()
+    await act(async () => {
+      commitInput.onIncluded({ account: V2_ACCOUNT, clientOrderId: reviewed.request.clientOrderId,
+        hash: `0x${'ab'.repeat(32)}`, orderId: 42n })
+    })
+    expect(screen.getByText('Settlement Details')).toBeInTheDocument()
+    expectReward()
+    // Account polling can clear a closed position before its result is shown.
+    view.rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={110_000_000n} />)
+    expectReward()
+  })
+
   async function startDelayedSponsoredCommit() {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true

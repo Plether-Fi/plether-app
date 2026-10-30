@@ -11,7 +11,7 @@ That first calculation is simple. Settlement is where the distinctions begin.
 
 Gross PnL, account equity, released margin, net settlement, trader claims and wallet balance are related—but they are not the same number.
 
-In the deployed V2 model, **price-risk equity** is PnL pledge plus the same account’s nettable claim plus unrealized price PnL. Fees, carry and VPI are separate action economics. Residual price payouts that cannot be funded in full become claims; an unpaid action rebate is waived. A funded price payout credits PnL pledge while a position remains open, not freely withdrawable USDG.
+For the USDG release, **price-risk equity** is position margin after accrued carry plus the same account’s nettable claim plus unrealized price PnL. Carry consumes active position margin first, then eligible free USDG. Fees, carry and VPI remain separate from gross price PnL. Residual price payouts that cannot be funded in full become claims; an unpaid action rebate is waived. A funded price payout credits PnL pledge while a position remains open, not freely withdrawable USDG.
 
 ![Unrealized price PnL contributes to price-risk equity. A close separates realized price PnL from action costs; positive residual price payouts may be funded or recorded as claims.](../.gitbook/assets/diagrams/pnl-and-close-settlement-outcomes.svg)
 
@@ -366,7 +366,6 @@ Gross realized price PnL
 − Protocol execution fee
 − Accrued carry
 − Frozen-close spread, when applicable
-− Execution reward
 ```
 
 For VPI:
@@ -377,35 +376,43 @@ For VPI:
 
 Opening VPI and the opening execution fee are not subtracted again. They were already settled when the position opened or increased.
 
-The order execution reward pays for resolving the delayed order. It is not directional PnL, but the executed amount is included in the final account result so that the result reconciles to the receipt-backed Margin Account change.
+Reductions and full closes, including TP/SL close orders, have zero keeper execution reward. The protocol execution fee, VPI, carry and any frozen-close spread still apply. A separate TP/SL trigger reward is not a close-order execution reward.
 
 #### Example net settlement
 
-Assume a LONG USD close executes during a live or FAD-only[^fad] market state, so no frozen-close spread applies:
+Assume a full LONG USD close executes during a live or FAD-only[^fad] market state, so no frozen-close spread applies. Before commitment, position margin is 1,000 USDG and 6 USDG carry is due. No further carry accrues before execution, no other reserves change, and the pool can fund the full price payout.
 
 ```
-Gross realized PnL:       +390 USDG
+Gross realized price PnL:  +390 USDG
 Close VPI charge:          −12 USDG
 Protocol execution fee:     −4 USDG
-Accrued carry:              −6 USDG
-Execution reward:           −1 USDG
+Carry at commitment:        −6 USDG
+Close execution reward:      0 USDG
 ```
 
-The net close adjustment is:
+Commitment collects carry from position margin:
 
 ```
-390 − 12 − 4 − 6 − 1
-= +367 USDG
+Remaining position margin = 1,000 − 6 = 994 USDG
 ```
 
-If `1,000 USDG` of position margin is released, the accounting should show two separate entries:
+At full close, all 994 USDG of remaining margin is released. The funded price payout is:
 
 ```
-Margin released:         1,000 USDG
-Net close adjustment:     +367 USDG
+Price payout = 390 − 12 − 4 = 374 USDG
 ```
 
-The `1,000 USDG` is returned collateral. Only the `367 USDG` is the net result created by that close after its execution reward.
+Because no position remains, both amounts become free account USDG:
+
+```
+Margin released:              994 USDG
+Funded price payout:          +374 USDG
+Free USDG credit at execution: 1,368 USDG
+```
+
+Released margin is existing collateral. Across commitment and execution, the account's net economic gain is `390 − 12 − 4 − 6 = 368 USDG`. The carry is counted once, and no keeper-execution reward is deducted.
+
+For a partial reduction, a funded price payout is instead assigned to the remaining position's margin. If the pool cannot fund a price payout, that payout becomes a trader claim rather than immediately available USDG. See the [partial-reduction example](../trading-on-plether-perps/reduce-or-close-a-position.md#example-reducing-a-long-usd-position).
 
 A complete lifetime result would also account for:
 
@@ -466,12 +473,12 @@ Liquidation is not based on Unrealized PnL alone.
 
 ```
 Position equity
-= position margin + same-account trader claim + exact price PnL
+= position margin after accrued carry + same-account trader claim + exact price PnL
 ```
 
 Price risk is liquidatable when this signed equity is less than or equal to maintenance. PnL uses canonical position lots and the exact stored entry cost, including rounding after increases and partial reductions.
 
-Free USDG, pending orders and dedicated reserves do not enter price equity. Uncovered carry and insufficient VPI reserve backing are separate reasons for an account to be liquidatable. Deposits help carry coverage; assigning margin or adding claim backing changes the price threshold.
+Free USDG, pending orders and dedicated reserves do not enter price equity. Carry reduces active position margin first and can lower price equity even while free funds remain. Only carry beyond that margin consumes eligible free USDG; claims and reserved funds cannot cover it. Carry still uncovered after both sources are exhausted, and insufficient VPI reserve backing, are separate reasons for an account to be liquidatable. Deposits add free funds; assigning margin or adding claim backing changes the price threshold.
 
 The interface reflects these distinctions:
 
@@ -479,7 +486,7 @@ The interface reflects these distinctions:
 | ---------------------- | -------------------------------------------- |
 | **Unrealized PnL**     | Gross price result only                      |
 | **Cost of carry**      | Accrued unpaid carry in USDG                 |
-| **Position equity**    | Signed position margin + same-account claim + exact PnL          |
+| **Position equity**    | Signed position margin after accrued carry + same-account claim + exact PnL |
 | **Maintenance margin** | Minimum equity requirement                   |
 | **Available to Trade** | Free buying power after locked funds         |
 | **Withdrawable**       | Amount that can currently leave the protocol |
@@ -521,7 +528,7 @@ It becomes settleable once aggregate trader claims are fully covered by physical
 For a supported executed reduction or close, **Final Result** and historical close breakdowns show:
 
 * **Execution** — final price, Order quantity, execution exposure, Order ID and transactions.
-* **Close result** — realized PnL, carry, execution fee, execution reward, signed VPI charge or rebate, frozen spread charged and **Close result before settlement adjustments**. If any frozen spread was waived, assessed and waived amounts also appear.
+* **Close result** — realized PnL, carry, execution fee, zero close-execution reward, signed VPI charge or rebate, frozen spread charged and **Close result before settlement adjustments**. If any frozen spread was waived, assessed and waived amounts also appear.
 * **Settlement** — a **Settlement adjustment** when the calculated result differs from the recorded account outcome. The difference is not classified as bad debt or an uncollected fee.
 * **Account outcome** — Margin Account balance change, trader claim created or consumed, and **Actual account change**, the sum of the balance and claim changes. The collapsed accounting summary shows this actual total.
 * **Position margin** — remaining margin after a partial reduction and released margin when an execution-bound snapshot is available.
@@ -578,7 +585,7 @@ To understand a Plether position, read the numbers in this order:
 1. Use the displayed dollar-oriented price `D = 2.00 − B`.
 2. Calculate gross price PnL from quantity and directional price movement.
 3. Keep position margin separate from profit.
-4. Calculate position equity from position margin, same-account claims and exact price PnL. Check carry coverage and dedicated VPI reserve backing separately.
+4. Project carry against active position margin first, then eligible free USDG. Calculate position equity from the remaining position margin, same-account claims and exact price PnL; check any uncovered carry and dedicated VPI reserve backing separately.
 5. At close, use the execution price produced by the active oracle policy.
 6. Subtract close VPI, the execution fee and accrued carry.
 7. Subtract the frozen-close spread when it applies.

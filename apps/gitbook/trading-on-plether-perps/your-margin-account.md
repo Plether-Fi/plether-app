@@ -26,7 +26,7 @@ The current interface places related values in several locations:
 | --------------------------- | ----------------------------------- | ---------------------------------------------------------------------- |
 | **Available to Trade**      | Trade-ticket context row            | Free, unreserved USDG inside Plether                                   |
 | **USDG balance** | Margin Account card | All credited USDG, including locked buckets |
-| **Position equity**         | Margin Account card                 | Signed position margin + same-account claim + exact price PnL   |
+| **Position equity**         | Margin Account card                 | Signed position margin after accrued carry + same-account claim + exact price PnL   |
 | **Unrealized PnL**          | Margin Account and Position panels  | Directional profit or loss under the latest usable mark                |
 | **Maintenance margin**      | Margin Account card                 | The account-equity threshold used to determine liquidation eligibility |
 | **Withdrawable**            | Margin Account card                 | The maximum amount that can currently reach the owner wallet           |
@@ -71,10 +71,10 @@ Assigning margin or committing an order moves USDG between these buckets. The ac
 **Position equity** is shown only while a position exists:
 
 ```
-Position equity = assigned position margin + same-account trader claim + exact price PnL
+Position equity = position margin after accrued carry + same-account trader claim + exact price PnL
 ```
 
-The value is signed and uses the engine’s accepted mark. Free USDG and reserves do not enter this formula. Carry must be covered by eligible free USDG; a negative VPI balance must have its dedicated reserve. Those checks can make an account liquidatable independently of price equity.
+The value is signed and uses the engine’s accepted mark. Accrued carry is projected against active position margin first, then eligible free USDG; the reduced position margin enters this formula. Free USDG, claims and reserved funds cannot protect position margin from that carry deduction. Claims remain part of price equity but cannot pay carry. Any carry left after both funding sources are exhausted, or an underfunded negative-VPI reserve, is a separate account-health failure.
 
 Unrealized profit can increase Position equity without increasing Available to Trade. Settling a claim on an open position turns it into assigned margin; while flat, settlement credits account funds.
 
@@ -119,7 +119,7 @@ Deposits have no market-state, oracle-freshness[^oracle] or degraded-mode restri
 
 ### What happens when you commit an order
 
-A committed order reserves account USDG before it enters the pending queue.
+An open or increase reserves account USDG before it enters the pending queue. A reduction or close has no opening-margin or execution-reward reserve.
 
 #### Opening and increasing
 
@@ -136,11 +136,9 @@ Immediately before a successful execution, the committed margin is released for 
 
 #### Reducing and closing
 
-A reduction or close reserves its execution reward without reserving new order margin.
+A reduction or full close reserves no keeper execution reward and no new opening margin. This also applies to a close created by TP/SL; its trigger reward is separate. No free USDG or position margin is moved into a close-execution reward reserve.
 
-Plether uses free account USDG for this reward first. When free USDG is insufficient, a bounded amount can be moved from position margin after the relevant risk checks pass. This allows a risk-reducing close to be committed during stale-market conditions.
-
-The current ticket checks the quoted reward against **Available to Trade** before enabling review. Treat position-margin sourcing as a protocol fallback, not as an option you can select in the interface.
+Commitment still realizes accrued carry from active position margin first, then eligible free USDG. This can reduce position margin and the liquidation buffer while the close waits to execute.
 
 #### When the order reaches a final state
 
@@ -149,9 +147,9 @@ The reservation outcome depends on how the order finishes:
 | Result                                  | Account effect                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Executed open or increase**           | Committed margin is applied to the position; the execution reward is paid                                                          |
-| **Executed reduction or close**         | Proportional margin is released, net settlement is applied and the execution reward is paid                                        |
-| **Failed, expired or outside slippage** | Remaining committed margin normally returns to Available to Trade; the execution reward is paid for terminal processing            |
-| **Still pending**                       | Margin and reward remain reserved                                                                                                  |
+| **Executed reduction or close**         | Eligible margin is released and close accounting is applied; no execution reward is paid                                           |
+| **Failed, expired or outside slippage** | An opening order releases remaining committed margin and pays its execution reward; a reduction or close pays no execution reward   |
+| **Still pending**                       | Opening margin and rewards remain reserved; a reduction or close keeps its requested position quantity pending                      |
 | **Liquidation**                         | Pending execution rewards are forfeited to the protocol treasury; remaining order reservations are resolved during account cleanup |
 
 Pending orders are binding and have no trader cancellation action. For the current sponsored Trading Account, keepers finalize orders and clean up expired orders before their margin becomes available again.
@@ -162,7 +160,7 @@ Price-loss collection uses assigned position margin and same-account claims. Com
 
 Position margin is USDG assigned directly to the open position.
 
-It determines the leverage displayed for that position. Free USDG pays carry separately; it must be assigned as margin to support price losses.
+It determines the leverage displayed for that position and backs price losses. Accrued carry consumes active position margin first, even when free USDG remains. Only carry beyond that margin uses eligible free USDG. Free USDG must be assigned as margin to support price losses.
 
 This can produce two different views of the same account:
 
@@ -179,12 +177,12 @@ To add margin:
 4. Review the resulting position margin and leverage.
 5. Select `Add Margin`.
 
-Plether realizes accrued carry first. The requested USDG then moves from **Available to Trade** into **Position margin**.
+Plether realizes accrued carry from existing active position margin first, then eligible free USDG. The requested USDG then moves from **Available to Trade** into **Position margin**.
 
 The immediate account effect is:
 
-* **Position margin** increases.
-* **Available to Trade** decreases.
+* **Position margin** first falls by any carry taken from it, then increases by the assigned amount. Its net change can be smaller than that amount.
+* **Available to Trade** decreases by the assignment and any carry not covered by existing position margin.
 * **Exposure** remains unchanged.
 
 Total account USDG stays unchanged apart from carry collected during the transaction.
@@ -195,7 +193,7 @@ Additional position margin can:
 * Reduce the position’s LP-backed[^lp] borrow base
 * Reduce future carry accrual
 
-It increases price-risk backing by the amount assigned. Carry is realized from free USDG first, and the form’s maximum subtracts projected carry. A deposit alone increases free USDG and carry coverage.
+The assigned amount increases price-risk backing after accrued carry has been collected. The form’s maximum uses free USDG remaining after that margin-first carry projection. A deposit alone adds free USDG; it does not automatically assign new position margin or prevent carry from consuming existing margin.
 
 Adding margin is immediate and bypasses the delayed order queue. It remains available during stale, frozen and degraded market conditions and requires no current oracle mark.
 
@@ -238,7 +236,7 @@ The post-withdrawal requirement is stricter than the ordinary liquidation thresh
 
 During a scheduled oracle closure, Plether may use the stored mark within the frozen-market validity window. Once that mark exceeds the permitted age, Withdrawable falls to zero until an eligible mark becomes available.
 
-Withdrawing free funds reduces future carry coverage. It does not reduce position price equity or move the price threshold. The contract still requires the position to clear the stricter withdrawal health checks.
+Withdrawing free funds reduces the fallback available if future carry exhausts active position margin. The withdrawal itself does not reduce position price equity, but the carry checkpoint performed by the action can reduce margin and move the price threshold. The contract requires the position to clear the stricter withdrawal health checks after projecting carry.
 
 The displayed Withdrawable value is an estimate based on the current state. Carry, accepted marks and account reservations can change before the withdrawal operation confirms.
 
@@ -345,7 +343,7 @@ When the position closes, its remaining margin is released separately. The compl
 | Situation                                                                | Likely explanation                                                           |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | Deposit increased Available to Trade by less than the transferred amount | Accrued carry was collected during the deposit                               |
-| Available to Trade fell after committing an order                        | The execution reward—and, for an open or increase, order margin—was reserved  |
+| Available to Trade fell after committing an order                        | An open or increase reserved margin and an execution reward; a close may instead have checkpointed carry  |
 | Position equity exceeds Withdrawable                                     | Part of the value comes from unrealized PnL or supports the open position    |
 | Free USDG is visible but Withdrawable is zero                            | Check mark freshness, degraded mode, carry and post-withdraw margin headroom |
 | Claim settlement left Position equity unchanged                      | The claim became position margin, preserving their sum                  |

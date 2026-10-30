@@ -97,7 +97,6 @@ The underlying commitment call can fail for:
 | Degraded mode                    | New risk is blocked                                                                             |
 | Router pause or pool restriction | Risk-increasing commits are temporarily unavailable                                             |
 | Invalid reduction                | No executed position exists, the side differs or earlier queued reductions already use the size |
-| Close reward unavailable         | Eligible account collateral cannot safely back the execution reward                             |
 
 Correct the displayed sponsorship, account or ticket issue and request a fresh operation. Use **Retry Commit** only after the previous UserOperation is confirmed failed or dropped and no order ID exists.
 
@@ -259,18 +258,9 @@ An existing position keeps its current size, entry price, PnL[^pnl] and carry[^c
 
 #### Reduce or close
 
-A close normally reserves only its execution reward.
+A reduction or full close reserves no execution reward and no new opening margin. It still reserves the requested position quantity against later reductions.
 
-Plether uses free Margin Account USDG first. When permitted, it can source a bounded part from assigned position margin.
-
-Position-margin funding can:
-
-* Lower position margin at commitment
-* Increase displayed leverage
-* Reduce account health
-* Leave the complete position exposed
-
-Carry may also be checkpointed while the reward is reserved.
+Commitment realizes carry from active position margin first, then eligible free USDG. This can lower position margin, increase leverage and reduce account health while the complete position remains exposed. Additional carry continues to accrue until execution.
 
 A pending close provides no liquidation protection.
 
@@ -402,11 +392,11 @@ Contact the team if the failure persists.
 
 The order passed its lifetime and was removed without executing.
 
-Committed opening margin is released. The execution reward is paid to the keeper that cleaned the order.
+Committed opening margin is released and its execution reward is paid to the keeper that cleaned the opening order. A reduction or close has no execution reward to pay on expiry.
 
 Submit a fresh order if the trade is still required.
 
-### Reservation outcomes
+### Opening-order reservation outcomes
 
 | Outcome                          | Committed opening margin                         | Execution reward               |
 | -------------------------------- | ------------------------------------------------ | ------------------------------ |
@@ -417,7 +407,7 @@ Submit a fresh order if the trade is still required.
 | Keeper transaction reverts       | Unchanged                                        | Unchanged                      |
 | Liquidation happens first        | May be consumed before any remainder is released | Forfeited to protocol treasury |
 
-For a failed close whose reward came from position margin, that margin remains spent because the reward is paid to the processor.
+A failed reduction or close pays no execution reward. Carry already collected at commitment remains paid; the position is still exposed until a later order executes or liquidation occurs.
 
 ### Why a valid preview can still fail
 
@@ -445,7 +435,6 @@ After failure, possible causes include:
 * The order is expired but has not yet been cleaned by a keeper.
 * Another pending order still reserves margin.
 * Another execution reward remains reserved.
-* The failed close reward was paid from position margin.
 * Carry was checkpointed or realized.
 * Terminal close or liquidation settlement consumed committed margin.
 * The interface is waiting for the history indexer to catch up.

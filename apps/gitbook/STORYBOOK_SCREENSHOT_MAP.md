@@ -39,7 +39,7 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
 | `how-plether-works/how-pnl-is-calculated.md:77` | Current Position fields | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
-| `how-plether-works/how-pnl-is-calculated.md:537` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
+| `how-plether-works/how-pnl-is-calculated.md:544` | Executed close reconciliation in Final Result | [Executed Close Reconciliation](http://localhost:6006/?path=/story/perps-trade-ticket--executed) | Current component, deterministic executed-receipt evidence |
 
 ## Margin, leverage and liquidation
 
@@ -89,13 +89,13 @@ The links below assume Storybook is available at `http://localhost:6006`.
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/reduce-or-close-a-position.md:56` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
+| `trading-on-plether-perps/reduce-or-close-a-position.md:57` | Existing position fields before composing a reduction | [Connected Position](http://localhost:6006/?path=/story/perps-account-panel--connected-position) | Current component, illustrative values |
 
 ## Your Margin Account
 
 | Documentation reference | Required visual | Storybook target | Coverage |
 | --- | --- | --- | --- |
-| `trading-on-plether-perps/your-margin-account.md:204` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
+| `trading-on-plether-perps/your-margin-account.md:202` | Position-margin form | [Edit Position Margin](http://localhost:6006/?path=/story/perps-account-panel--edit-position-margin) | Current component, illustrative values |
 
 ## Take profit and stop loss
 

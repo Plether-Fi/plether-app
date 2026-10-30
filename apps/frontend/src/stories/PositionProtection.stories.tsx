@@ -124,7 +124,7 @@ function ProtectionPreviewState({ scenario, direction, commitsEnabled, showPosit
   }
   const content = <PositionProtectionManager
     protection={protection} position={position} accountAddress={account} rawMark={percentageExample !== 'none' ? 99_500_000n : 100_000_000n} cap={200_000_000n}
-    configuration={{ enabled: commitsEnabled, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }}
+    configuration={{ enabled: commitsEnabled, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }}
     availableFreeSettlementAssets={funding === 'unavailable' ? undefined : funding === 'insufficient' ? 2_000n : 1_200_000_000n}
     pendingOrders={scenario === 'pending' ? 1 : 0} onManage={manage}
     executionReport={executionState === 'loading' ? undefined : executionReport} executionLoading={executionState === 'loading'} executionError={executionState === 'error'}

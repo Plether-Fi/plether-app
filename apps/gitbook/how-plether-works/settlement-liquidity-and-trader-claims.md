@@ -88,7 +88,7 @@ For a partial close, the margin supporting the remaining position stays locked.
 
 Price loss is netted against the same account’s trader claim, then collectible PnL pledge. Excess beyond the terminal cap is recorded as a price-loss write-off.
 
-Separately, action charges offset a price gain first, then use the attributable VPI clawback reserve, spendable action reserve and free USDG. A full close can also use eligible committed-order margin. PnL pledge and protected execution bounties remain isolated from those charges.
+Carry is collected from active position margin first, then eligible free USDG, before close accounting. Any unpaid carry joins the close action charge. That charge offsets a price gain first, then uses attributable VPI clawback backing, spendable action reserve, free USDG and margin safely released by the close. A full close can also use eligible committed-order margin. The margin still backing a residual position and protected execution bounties remain isolated from those later action charges.
 
 #### Partial reductions must settle in full
 
@@ -177,7 +177,7 @@ Frozen spread waived:   30 USDG
 
 The `30 USDG` waiver is not bad debt, a trader claim or an LP receivable.
 
-The same action funding is insufficient for a partial reduction: its `60 USDG` action charge cannot be fully covered by `30 USDG`. Unused PnL pledge cannot be repurposed to cover the difference.
+For a partial reduction, `30 USDG` of action funds is insufficient for the `60 USDG` charge unless the close can safely release at least another `30 USDG` of position margin while preserving the residual position’s health. Margin still needed by that residual position cannot fund the difference. If the charge remains uncollectible, the partial reduction does not execute.
 
 ### Step 3: Fund or record the positive settlement
 
@@ -302,9 +302,9 @@ An unsettled same-account claim is included in V2 price-risk equity and can be n
 
 Price losses consume the same account’s claim before collectible PnL pledge, including on eligible partial closes. Action charges follow a separate funding path:
 
-![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
+![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
 
-Claim backing and PnL pledge are not general sources for execution fees, carry, VPI or frozen spread. A partial close must fund its action charge without waiver; a full close can waive the uncollectible remainder. Price-loss write-offs and waived action charges are reported separately.
+Claims cannot pay carry or general action costs. Active position margin pays accrued carry first; after that checkpoint, only margin safely released by the close can help fund its action charge. Margin still backing a residual position remains protected from those later charges. A partial close must fund its action charge without waiver; a full close can waive the uncollectible remainder. Price-loss write-offs and waived action charges are reported separately.
 
 Claims belonging to other traders are never used.
 
