@@ -39,11 +39,19 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/environments/backend-admin-sepolia/deployment-branch-policies" > branches.json
           jq -e '(.branch_policies | length) == 1 and .branch_policies[0].name == "master" and .branch_policies[0].type == "branch"' branches.json
 
-  hotfix:
+  approval:
     needs: preflight
+    runs-on: ubuntu-latest
+    environment: backend-admin-sepolia
+    permissions:
+      contents: read
+    steps:
+      - run: echo 'Protected Sepolia worker hotfix approved.'
+
+  hotfix:
+    needs: approval
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
-    environment: backend-admin-sepolia
     permissions:
       contents: read
       id-token: write
