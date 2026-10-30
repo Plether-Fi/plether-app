@@ -44,13 +44,14 @@ def validate_config(config, parent):
     history = config['state_history_blocks']
     if isinstance(history, bool) or not isinstance(history, int) or not 16384 <= history <= 691200:
         raise ValueError('recent history must be explicitly bounded')
-    for key in ('execution_url', 'beacon_url', 'secondary_beacon_url'):
+    keys = ['execution_url', 'beacon_url']
+    if parent.get('secondary_beacon_url'):
+        keys.append('secondary_beacon_url')
+    for key in keys:
         url = urlparse(parent[key])
         if url.scheme != 'https' or not url.hostname or url.username or url.password or url.fragment:
             raise ValueError('parent endpoints must be HTTPS without URL userinfo')
-        if url.hostname.endswith('.alchemy.com') or url.hostname == 'alchemy.com':
-            raise ValueError('parent endpoints must not depend on Alchemy')
-    if parent['beacon_url'] == parent['secondary_beacon_url']:
+    if parent.get('secondary_beacon_url') == parent['beacon_url']:
         raise ValueError('configure distinct primary and backup beacon endpoints')
 
 
@@ -112,7 +113,10 @@ def nitro_config(config, parent):
         'parent-chain': {
             'id': 11155111,
             'connection': {'url': parent['execution_url']},
-            'blob-client': {'beacon-url': parent['beacon_url'], 'secondary-beacon-url': parent['secondary_beacon_url']},
+            'blob-client': {
+                'beacon-url': parent['beacon_url'],
+                **({'secondary-beacon-url': parent['secondary_beacon_url']} if parent.get('secondary_beacon_url') else {}),
+            },
         },
         # archive enables the historical RPC index, while this finite window
         # still prunes state online. Never use the unbounded archive default.

@@ -57,7 +57,6 @@ variables {
     gateway_token_parameter  = "/plether/sepolia/rpc-node/gateway-token"
     backup_url_parameter     = "/plether/sepolia/rpc-node/backup-url"
     backup_token_parameter   = "/plether/sepolia/rpc-node/backup-token"
-    reference_url_parameter  = "/plether/sepolia/rpc-node/reference-url"
     gateway_image            = "932542905614.dkr.ecr.ap-southeast-1.amazonaws.com/plether-rpc-gateway-sepolia@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   }
 }
@@ -84,6 +83,10 @@ run "isolated_sepolia_pilot" {
   assert {
     condition     = aws_ecs_service.rpc_gateway[0].desired_count == 2 && aws_ecs_task_definition.rpc_gateway[0].runtime_platform[0].cpu_architecture == "ARM64"
     error_message = "The router must run redundantly outside the Nitro host."
+  }
+  assert {
+    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.rpc_gateway[0].container_definitions)[0].secrets : secret.name]) == toset(["RPC_BACKUP_TOKEN", "RPC_BACKUP_URL", "RPC_GATEWAY_TOKEN"])
+    error_message = "The minimal pilot must not require a separately subscribed reference or its credentials."
   }
   assert {
     condition     = nonsensitive(aws_ssm_parameter.perps_rpc_url.value) == "https://fixture.invalid/arbitrum" && var.perps_indexer_poll_seconds == "12"

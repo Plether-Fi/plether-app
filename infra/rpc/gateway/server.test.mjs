@@ -15,7 +15,7 @@ async function listen(server) {
   return `http://127.0.0.1:${server.address().port}`
 }
 const request = (method = 'eth_blockNumber', id = 7) => ({ jsonrpc: '2.0', id, method, params: [] })
-async function fixture() {
+async function fixture({ sharedReference = false } = {}) {
   let clock = Date.now()
   const logs = []
   const state = { primary: {}, backup: {}, reference: {} }
@@ -37,7 +37,8 @@ async function fixture() {
             hash: state[role].hash ?? hash,
           }
         } else result = '0x100'
-        return state[role].rpcError ? { jsonrpc: '2.0', id: c.id, error: { code: -32000, message: 'execution reverted' } }
+        const blockFailure = state[role].blockLookupError && c.method === 'eth_getBlockByNumber' && c.params[0] === '0x100'
+        return state[role].rpcError || blockFailure ? { jsonrpc: '2.0', id: c.id, error: { code: -32000, message: 'execution reverted' } }
           : { jsonrpc: '2.0', id: c.id, result }
       }
       res.setHeader('content-type', 'application/json')
@@ -45,7 +46,7 @@ async function fixture() {
     })) }
   }
   endpoints.backup.token = 'upstream-private-key'
-  const gateway = createGateway({ ...endpoints, token, chainId: '0x66eee', timeoutMs: 1000 }, {
+  const gateway = createGateway({ ...endpoints, reference: sharedReference ? endpoints.backup : endpoints.reference, token, chainId: '0x66eee', timeoutMs: 1000 }, {
     now: () => clock, log: log => logs.push(log),
   })
   const url = await listen(gateway.server)
@@ -159,4 +160,34 @@ test('Alchemy backup outage does not prevent primary qualification against indep
   assert.equal(f.state.primary, true)
   assert.equal(f.state.backup, false)
   assert.equal((await f.send(request(), '/primary')).status, 200)
+})
+
+test('minimal configuration reuses the Alchemy backup URL and credentials for reference', () => {
+  const env = { RPC_GATEWAY_TOKEN: token, RPC_PRIMARY_URL: 'http://10.0.1.1:8547', RPC_BACKUP_URL: 'https://arb-sepolia.g.alchemy.com/v2', RPC_BACKUP_TOKEN: 'fixture-only' }
+  const config = configFromEnv(env)
+  assert.equal(config.reference, config.backup)
+  assert.equal(config.reference.token, 'fixture-only')
+  assert.equal(configFromEnv({ ...env, RPC_REFERENCE_URL: env.RPC_BACKUP_URL }).reference.url, env.RPC_BACKUP_URL)
+  assert.throws(() => configFromEnv({ ...env, RPC_REFERENCE_TOKEN: 'orphan-token' }))
+})
+
+test('shared reference qualifies primary and avoids duplicate standby probes', async () => {
+  const f = await fixture({ sharedReference: true })
+  const before = calls.length
+  await f.probe()
+  assert.equal(f.state.primary, true)
+  const backupCalls = calls.slice(before).filter(c => c.role === 'backup')
+  assert.equal(backupCalls.filter(c => c.body.method === 'eth_chainId').length, 1)
+  assert.equal(backupCalls.length, 8)
+})
+
+test('a failed primary checkpoint query preserves the healthy shared backup', async () => {
+  const f = await fixture({ sharedReference: true })
+  f.upstream.primary.blockLookupError = true
+  await f.probe()
+  assert.equal(f.state.primary, false)
+  assert.equal(f.state.backup, true)
+  assert.equal((await f.send(request(), '/primary')).status, 503)
+  assert.equal((await f.send()).status, 200)
+  assert.equal(calls.at(-1).role, 'backup')
 })

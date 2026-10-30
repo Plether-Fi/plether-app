@@ -35,13 +35,22 @@ class BootstrapPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 node.validate_config({**self.config, **change}, self.parent)
 
-    def test_parent_dependencies_are_distinct_https_non_alchemy_services(self):
+    def test_parent_dependencies_require_https_and_optional_backup_is_distinct(self):
         for key in self.parent:
-            for value in ['http://fixture.invalid', 'https://eth-sepolia.g.alchemy.com/v2', 'https://user:password@fixture.invalid']:
+            for value in ['http://fixture.invalid', 'https://user:password@fixture.invalid']:
                 with self.assertRaises(ValueError):
                     node.validate_config(self.config, {**self.parent, key: value})
         with self.assertRaises(ValueError):
             node.validate_config(self.config, {**self.parent, 'secondary_beacon_url': self.parent['beacon_url']})
+
+    def test_minimal_pilot_accepts_alchemy_and_needs_no_second_beacon_provider(self):
+        parent = {
+            'execution_url': 'https://eth-sepolia.g.alchemy.com/v2',
+            'beacon_url': 'https://eth-sepoliabeacon.g.alchemy.com/v2',
+        }
+        node.validate_config(self.config, parent)
+        self.assertEqual(node.nitro_config(self.config, parent)['parent-chain']['blob-client'], {'beacon-url': parent['beacon_url']})
+        node.validate_config(self.config, {**parent, 'secondary_beacon_url': ''})
 
     def test_ebs_root_or_partition_is_never_selected_as_instance_store(self):
         disk = {'name': 'nvme1n1', 'model': 'Amazon EC2 NVMe Instance Storage', 'size': 3750000000000, 'type': 'disk'}

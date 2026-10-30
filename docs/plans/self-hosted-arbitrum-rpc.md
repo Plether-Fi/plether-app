@@ -2,13 +2,14 @@
 
 Prepared 28 October 2026. Repository baseline: `c07f01ce`.
 
-## Implementation status — 29 October 2026
+## Implementation status — 30 October 2026
 
 The first implementation increment adds opt-in Sepolia node infrastructure,
 verified snapshot bootstrap, a redundant private TLS gateway and bounded
 administration. It leaves application routing and polling untouched while the
 node qualifies. See the [pilot runbook](../../infra/rpc/README.md) for exact inputs,
-qualification limits and the QuickNode/Chainstack upstream recommendation.
+qualification limits and the minimal upstream setup. The user chose to reuse
+the existing Alchemy account and defer additional paid providers.
 No AWS resources have been provisioned or reservations purchased. Parent-chain
 credentials and a certificate for the private RPC hostname are still required.
 The later application compatibility, AA verification, browser routing and faster
@@ -28,6 +29,10 @@ This supersedes the earlier archive-first sizing proposal.
   and tax; the target is not a hard invoice cap.
 - Serve live reads, logs, receipts, simulation and signed transaction submission
   locally; retain Alchemy for outage fallback and historical state/backfills.
+- For the pilot, also reuse Alchemy for Ethereum execution/beacon data and the
+  gateway reference. No new provider subscriptions or paid plan upgrades are
+  authorized. A second beacon endpoint and separate reference are optional.
+  Verify existing entitlement and usage headroom before launch.
 - Keep indexed application history in PostgreSQL. Replace V3 trace-derived
   oracle enrichment with validated event-derived fields.
 - Include faster active-screen polling in the rollout: target 2 seconds for
@@ -36,9 +41,11 @@ This supersedes the earlier archive-first sizing proposal.
 - Qualify Sepolia first. Arbitrum One remains the later, separately sized phase;
   no archive-node purchase is part of the selected approach.
 
-The accepted tradeoff is that Alchemy may receive normal historical/recovery
-traffic. Removing it from the primary live RPC path is the immediate objective;
-complete historical-provider independence is outside this rollout.
+The accepted tradeoff is that Alchemy receives parent-chain, health-reference
+and historical/recovery traffic. Serving the primary application RPC workload
+locally is the immediate objective. Alchemy outage independence is deferred;
+any plan upgrade must be discussed before spending. AWS node/bootstrap costs
+remain part of the existing budget.
 
 ## Clarification: historical traces do not require an archive primary
 
@@ -104,10 +111,11 @@ This is technically feasible. The main work is provider routing, historical
 data compatibility, account-abstraction recovery, and operating a large stateful
 service. A replacement URL alone does not complete the migration.
 
-Use non-Alchemy parent execution/beacon services so a node's L1 dependency does
-not silently preserve the same primary dependency. Keep native AA verification
-independent. Existing application Ethereum `RPC_URL` traffic is a separate
-scope and must not be described as migrated by changing `PERPS_RPC_URL`.
+The simple pilot explicitly retains Alchemy as its L1 execution/beacon and
+health-reference dependency. Diversifying those services is deferred. Preserve
+native AA's existing provider checks and keep its single-provider exception off.
+Existing application Ethereum `RPC_URL` traffic is a separate scope and must
+not be described as migrated by changing `PERPS_RPC_URL`.
 
 ## What the repository requires
 
@@ -118,7 +126,7 @@ not inspected.
 | Dependency | Current behavior | Required change |
 | --- | --- | --- |
 | Arbitrum RPC | `PERPS_RPC_URL` feeds API and perps workers | Route normal traffic to the own node, with authenticated Alchemy fallback |
-| Ethereum RPC | `RPC_URL` serves the separate core/Ethereum path | Move to a non-Alchemy primary or scope this as a separate remaining dependency |
+| Ethereum RPC | `RPC_URL` serves the separate core/Ethereum path | Retain existing access; this separate path is outside the simple RPC pilot |
 | Historical state | Vault performance and insights need old `eth_call`; some activity previews use execution block minus one | Keep a separate authenticated Alchemy history route; qualify oldest baseline/deployment there, and recent/safe state on the own node |
 | Transaction traces | Legacy/missing execution evidence and advisory diagnostics use `debug_traceTransaction`; V3 economics are in finalization logs | Keep optional traces on a qualified route; do not require deep tracing on the live primary |
 | Bundler receipts | Legacy AA recovery sends `eth_getUserOperationReceipt` to the Arbitrum chain endpoint | Separate bundler receipt lookup from execution RPC; Nitro does not replace the bundler |
@@ -156,11 +164,11 @@ flowchart LR
   Gateway --> Node[Plether pruned Sepolia node]
   Gateway -. outage fallback .-> Alchemy[Alchemy RPC]
   History[Historical state and legacy traces] --> Alchemy
-  Node --> L1[Non-Alchemy Ethereum execution and beacon RPC]
+  Node --> L1[Existing Alchemy Ethereum execution and beacon RPC]
   Node --> Feed[Arbitrum sequencer feed and submission endpoint]
   AA[AA verification] --> Own[Direct own-node verification endpoint]
   Own --> Node
-  AA --> Independent[Independent non-Alchemy RPC operator]
+  AA --> Independent[Existing separate AA verification provider]
   Recovery[AA receipt recovery] --> Receipts[Bundler or durable EntryPoint receipt index]
 ```
 
@@ -222,12 +230,12 @@ pre-upgrade data restore path. Image rollback alone may not reverse database
 changes. [Stable release](https://github.com/OffchainLabs/nitro/releases/tag/v3.12.2),
 [support policy](https://docs.arbitrum.io/run-a-node/nitro-support-policy)
 
-**Parent chain.** Initially buy non-Alchemy Ethereum execution and beacon/blob
+**Parent chain.** Initially reuse existing Alchemy execution and beacon/blob
 access; use Ethereum Sepolia for Arbitrum Sepolia and Ethereum mainnet for One.
 Qualify historical blob availability and current subnet/retention requirements,
-including recovery from an old snapshot. Configure and test provider failover
-for both execution and beacon services. Using Alchemy as the sole L1 upstream
-would preserve the dependency through the own node. Self-hosting execution plus
+including recovery from an old snapshot. Qualify existing endpoint access and
+quota before launch; a second beacon endpoint is optional. Alchemy remains a
+live L1 dependency, an accepted pilot tradeoff. Self-hosting execution plus
 consensus clients is a later work package with separate compute, storage and
 maintenance estimates. [Beacon providers](https://docs.arbitrum.io/run-a-node/l1-ethereum-beacon-chain-rpc-providers),
 [historical blobs](https://docs.arbitrum.io/run-a-node/beacon-nodes-historical-blobs)
@@ -272,7 +280,7 @@ sustained lag, with L1 derivation providing catch-up.
    An ALB alone does not validate JSON-RPC semantics or node freshness.
 
 3. **Make health semantic:** expected chain ID, `eth_syncing`, latest head lag
-   against an independent reference, agreed block hashes, parent derivation
+   against the Alchemy reference, agreed block hashes, parent derivation
    progress, and `safe`/`finalized` behavior. A responsive stale node must leave
    rotation. Retry transport/rate-limit/transient failures within a deadline;
    do not hide contract reverts, invalid parameters or chain disagreement by
@@ -296,8 +304,10 @@ sustained lag, with L1 derivation providing catch-up.
    into live execution, historical state, optional trace and bundler/recovery
    probes; only relevant capabilities gate the primary live endpoint.
 
-6. **Keep AA verification independent.** Supply a direct own-node endpoint and
-   an independently operated non-Alchemy endpoint for the two security legs.
+6. **Preserve AA verification.** Keep the existing pair during qualification.
+   A later change may use the direct own-node endpoint and Alchemy as the
+   separately operated second endpoint; qualify the shared L1 dependency and
+   retain fail-closed behavior. An additional paid verifier is deferred.
    Decouple the AA primary configuration from the ordinary failover alias where
    necessary; add credential plumbing to AA clients that currently use
    unauthenticated `newClient`. Never route both verification legs through the
@@ -452,7 +462,7 @@ Before routing normal traffic, require:
 - V3 normal trade confirmations, fees, VPI and oracle-confidence-spread fields
   remain correct with historical transaction tracing disabled. Preserve the
   canonical event/receipt data and keep legacy enrichment explicitly separate.
-- Exact-block calls, receipts and log sets agree with the independent reference;
+- Exact-block calls, receipts and log sets agree with the configured reference;
   no unexplained canonical-data mismatch is accepted. Compare trace semantics
   consumed by Plether, rather than provider-specific formatting.
 - Sustained operation at **2× projected peak with faster polling enabled**
@@ -550,8 +560,9 @@ usage. The selected Sepolia configuration is a pruned `i4i.4xlarge`.
 Target **$1,300–1,500/month AWS before contingency**. Temporary bootstrap EBS,
 backup request charges, extra ALB capacity and public ingress costs use their
 actual measured quantities. Local chain storage is included in EC2; no separate
-full-size EBS data disk is added to this design. Alchemy capacity, parent-chain
-execution/beacon services, an independent AA verifier, labor and tax are extra.
+full-size EBS data disk is added to this design. Existing Alchemy usage, labor
+and tax are extra. Additional paid parent-chain services and verifier
+subscriptions are deferred; no upgrade is authorized for the simple pilot.
 
 Underlying regional rates: [ALB](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-southeast-1/index.json),
 [Fargate](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonECS/current/ap-southeast-1/index.json),

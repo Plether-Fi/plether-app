@@ -15,11 +15,14 @@ locals {
     region           = var.aws_region
   })
   rpc_parameter_prefix = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter"
-  rpc_gateway_secrets = merge({
-    RPC_GATEWAY_TOKEN = local.rpc.gateway_token_parameter
-    RPC_BACKUP_URL    = local.rpc.backup_url_parameter
-    RPC_REFERENCE_URL = local.rpc.reference_url_parameter
-  }, local.rpc.backup_token_parameter == "" ? {} : { RPC_BACKUP_TOKEN = local.rpc.backup_token_parameter }, local.rpc.reference_token_parameter == "" ? {} : { RPC_REFERENCE_TOKEN = local.rpc.reference_token_parameter })
+  rpc_gateway_secrets = merge(
+    {
+      RPC_GATEWAY_TOKEN = local.rpc.gateway_token_parameter
+      RPC_BACKUP_URL    = local.rpc.backup_url_parameter
+    }, local.rpc.backup_token_parameter == "" ? {} : { RPC_BACKUP_TOKEN = local.rpc.backup_token_parameter },
+    local.rpc.reference_url_parameter == "" ? {} : { RPC_REFERENCE_URL = local.rpc.reference_url_parameter },
+    local.rpc.reference_token_parameter == "" ? {} : { RPC_REFERENCE_TOKEN = local.rpc.reference_token_parameter }
+  )
 }
 
 resource "terraform_data" "rpc_guard" {

@@ -24,45 +24,40 @@ Use `AWS_PROFILE=plether` with Terraform and the named CLI profile for AWS,
 following [AGENTS.md](../../AGENTS.md). Terraform 1.16.x is required. Do not
 use a default profile or change the existing authentication configuration.
 
-## Provider recommendation
+## Minimal provider setup selected 30 October 2026
 
-Recommend **QuickNode Build, month-to-month**, for Ethereum Sepolia execution
-and beacon access. Its Ethereum APIs include Sepolia, and its blob-sidecar
-documentation explicitly states complete historical coverage. The public Build
-price is $49/month on monthly billing; 80M credits and 50 requests/second are
-included. Do not commit annually before measuring catch-up and steady-state use.
+Reuse the existing Alchemy account for Ethereum Sepolia execution and beacon
+data, and for Arbitrum backup, historical access and gateway health comparison.
+No QuickNode, Chainstack or other paid subscription is required for this pilot.
+Use one beacon endpoint; a second endpoint is optional. Leave
+`reference_url_parameter` and `reference_token_parameter` empty to reuse the
+backup URL and authentication. Shared probe results are reused rather than
+making duplicate backup/reference health calls.
 
-Recommend **Chainstack Growth, month-to-month**, as the second operator: an
-Ethereum Sepolia beacon backup and an Arbitrum Sepolia reference endpoint.
-The advertised base is $49/month, 20M request units, 250 requests/second and
-10 endpoints. Its Arbitrum endpoint can later be evaluated as the independent
-AA verifier. That AA migration is separate from this pilot.
+The own node answers ordinary application reads from local Arbitrum state.
+It still depends on Alchemy for Ethereum data and its health reference. This
+pilot reduces direct application RPC dependence but does not survive every
+Alchemy outage. In particular, a new/unqualified node cannot be promoted
+without its reference; an already qualified node can continue while its head
+is recent. Native AA retains its existing separate-provider checks and fails
+closed on provider disagreement/loss. The gateway does not replace those checks
+or enable a single-provider AA exception.
 
-Allow approximately **$98/month in base external-provider fees**, plus method-
-weighted usage, overages and any separately quoted beacon/blob entitlement.
-This is outside the modeled AWS bill and is a recommendation, not a purchase
-or confirmation of the account-specific service entitlement.
+Alchemy publishes an Ethereum Sepolia Beacon API. Account/network entitlement,
+historical blobs needed from the selected snapshot, full data-subnet coverage
+and available quota must be qualified before launching AWS. Existing usage may
+increase; reusing the account is not a guarantee of zero marginal API charges.
+If current access is insufficient, report the exact gap before any paid upgrade.
+Do not add a new provider or upgrade Alchemy under this pilot authorization.
 
-Before purchasing/launching, verify Ethereum Sepolia chain ID, beacon network,
-historical blobs from the chosen snapshot's parent-chain checkpoint, complete
-data-subnet coverage, request limits, and primary/backup behavior with actual
-credentials. The published Arbitrum table distinguishes mainnet historical
-support from Sepolia beacon support; it does not prove Sepolia historical
-coverage for every provider. Qualify that coverage on both beacon endpoints.
+Sources checked 30 October 2026:
 
-Sources checked 29 October 2026:
+- [Alchemy supported networks and endpoint formats](https://www.alchemy.com/docs/reference/node-supported-chains)
+- [Alchemy Sepolia Beacon](https://www.alchemy.com/rpc/ethereum-sepolia-beacon)
+- [Arbitrum blob/subnet requirements](https://docs.arbitrum.io/run-a-node/beacon-nodes-historical-blobs)
 
-- [QuickNode networks and APIs](https://www.quicknode.com/docs/ethereum/api-overview)
-- [QuickNode historical blob API](https://www.quicknode.com/docs/ethereum/eth-v1-beacon-blob_sidecars-id)
-- [QuickNode pricing](https://www.quicknode.com/pricing)
-- [Chainstack pricing](https://chainstack.com/pricing/)
-- [Arbitrum provider matrix](https://docs.arbitrum.io/run-a-node/l1-ethereum-beacon-chain-rpc-providers)
-- [Blob/subnet requirements](https://docs.arbitrum.io/run-a-node/beacon-nodes-historical-blobs)
-
-The gateway's reference endpoint is separate from its Alchemy backup, so an
-Alchemy outage does not block primary-node promotion. Native AA must still
-perform its own independent safe-block verification; the router's health checks
-are not a replacement for that security property.
+The earlier two-vendor recommendation is deferred. A separately operated
+reference and beacon backup can be added later without changing AA policy.
 
 ## Inputs and secrets
 
@@ -94,29 +89,29 @@ Terraform or command-line literals:
 | `/plether/sepolia/rpc-node/gateway-token` | Random token of at least 32 characters |
 | `/plether/sepolia/rpc-node/backup-url` | Dedicated Alchemy Arbitrum Sepolia origin URL |
 | `/plether/sepolia/rpc-node/backup-token` | Optional bearer token if the backup URL is keyless |
-| `/plether/sepolia/rpc-node/reference-url` | Independent non-Alchemy Arbitrum Sepolia HTTPS origin |
-| `/plether/sepolia/rpc-node/reference-token` | Optional bearer token for that reference |
+| `/plether/sepolia/rpc-node/reference-url` | Optional separate Arbitrum Sepolia origin; omit for the pilot |
+| `/plether/sepolia/rpc-node/reference-token` | Optional token, only when a separate reference URL is configured |
 
 Do not use `/plether/sepolia/perps-rpc-url` as the backup parameter: changing
 that live alias during cutover would make the gateway point back to itself.
-The reference must be a separately operated origin, not another gateway alias.
-The code rejects Alchemy reference hostnames and URLs identical to the backup.
+Optional reference URLs must be actual upstream origins, not another gateway
+alias. When omitted, the backup origin and its token serve both roles.
 
 Parent JSON (example structure, no credentials):
 
 ```json
 {
-  "execution_url": "https://execution-provider.example/PRIVATE_ENDPOINT/",
-  "beacon_url": "https://beacon-provider.example/PRIVATE_ENDPOINT/",
-  "secondary_beacon_url": "https://second-beacon-provider.example/PRIVATE_ENDPOINT/"
+  "execution_url": "https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY",
+  "beacon_url": "https://eth-sepoliabeacon.g.alchemy.com/v2/YOUR_KEY"
 }
 ```
 
 The initial adapter accepts HTTPS endpoints with URL-based provider credentials.
 It does not implement per-provider custom authentication headers. Check that
-the selected provider endpoints fit this contract before provisioning. Configure
-an HA execution origin, and qualify its provider-level failover; this increment
-does not implement automatic switching between two L1 execution origins.
+the existing account's endpoints fit this contract before provisioning. An
+optional `secondary_beacon_url` must differ from the first endpoint. The minimal
+pilot has no automatic failover between L1 execution providers and retains its
+existing Alchemy dependency.
 
 For a SecureString, use a protected local file and `--value file://...`:
 

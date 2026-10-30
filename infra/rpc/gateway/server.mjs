@@ -133,12 +133,21 @@ export function createGateway(config, dependencies = {}) {
     if (probing) return
     probing = true
     const signal = AbortSignal.timeout(Math.min(timeoutMs, probeMs))
+    const comparisonCheck = inspect(reference, config.chainId, signal)
+    const backupCheck = (reference === config.backup ? comparisonCheck : inspect(config.backup, config.chainId, signal)).then(
+      value => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }),
+    )
+    async function updateBackup() {
+      const backup = await backupCheck
+      state.backup = backup.status === 'fulfilled'
+      if (state.backup) {
+        const age = BigInt(Math.floor(now() / 1000)) - BigInt(backup.value.latest.timestamp)
+        state.backup = age >= -5n && age <= 15n
+      }
+    }
     try {
-      const backupCheck = inspect(config.backup, config.chainId, signal).then(
-        value => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }),
-      )
       const [primary, comparison] = await Promise.allSettled([
-        inspect(config.primary, config.chainId, signal), inspect(reference, config.chainId, signal),
+        inspect(config.primary, config.chainId, signal), comparisonCheck,
       ])
       let agrees = false
       if (primary.status === 'fulfilled' && comparison.status === 'fulfilled') {
@@ -169,22 +178,17 @@ export function createGateway(config, dependencies = {}) {
         const age = BigInt(Math.floor(now() / 1000)) - BigInt(primary.value.latest.timestamp)
         agrees &&= age >= -5n && age <= 15n
       }
-      const backup = await backupCheck
-      state.backup = backup.status === 'fulfilled'
-      if (backup.status === 'fulfilled') {
-        const age = BigInt(Math.floor(now() / 1000)) - BigInt(backup.value.latest.timestamp)
-        state.backup &&= age >= -5n && age <= 15n
-      }
+      await updateBackup()
       state.passes = agrees ? state.passes + 1 : 0
       state.primary = agrees && state.passes >= 2
       state.checkedAt = now()
       log({ event: 'rpc_probe', primary_ready: state.primary, backup_ready: state.backup, primary_unhealthy: state.primary ? 0 : 1 })
     } catch {
       state.primary = false
-      state.backup = false
+      await updateBackup()
       state.passes = 0
       state.checkedAt = now()
-      log({ event: 'rpc_probe', primary_ready: false, backup_ready: false, primary_unhealthy: 1 })
+      log({ event: 'rpc_probe', primary_ready: false, backup_ready: state.backup, primary_unhealthy: 1 })
     } finally { probing = false }
   }
 
@@ -247,17 +251,20 @@ export function configFromEnv(env) {
       || url.username || url.password || url.hash) throw new Error('invalid endpoint')
     return value
   }
-  const referenceUrl = endpoint(env.RPC_REFERENCE_URL, false)
-  const referenceHost = new URL(referenceUrl).hostname
-  if (referenceHost === 'alchemy.com' || referenceHost.endsWith('.alchemy.com') || referenceUrl === env.RPC_BACKUP_URL) {
-    throw new Error('reference must be separate from the Alchemy backup')
-  }
+  const backup = { url: endpoint(env.RPC_BACKUP_URL, false), token: env.RPC_BACKUP_TOKEN }
+  if (env.RPC_REFERENCE_TOKEN && !env.RPC_REFERENCE_URL) throw new Error('reference token requires a reference URL')
+  const referenceUrl = env.RPC_REFERENCE_URL ? endpoint(env.RPC_REFERENCE_URL, false) : backup.url
+  const referenceToken = env.RPC_REFERENCE_TOKEN ?? (referenceUrl === backup.url ? backup.token : undefined)
+  // The minimal pilot deliberately shares its existing Alchemy origin. A
+  // separately operated reference remains optional for a later rollout.
+  const reference = referenceUrl === backup.url && referenceToken === backup.token
+    ? backup : { url: referenceUrl, token: referenceToken }
   return {
     token: env.RPC_GATEWAY_TOKEN,
     chainId: '0x66eee', // Arbitrum Sepolia 421614; this pilot cannot select mainnet.
     primary: { url: endpoint(env.RPC_PRIMARY_URL, true) },
-    backup: { url: endpoint(env.RPC_BACKUP_URL, false), token: env.RPC_BACKUP_TOKEN },
-    reference: { url: referenceUrl, token: env.RPC_REFERENCE_TOKEN },
+    backup,
+    reference,
   }
 }
 
