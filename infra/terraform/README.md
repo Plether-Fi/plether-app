@@ -1,5 +1,10 @@
 # Plether AWS infrastructure
 
+The opt-in Arbitrum Sepolia node and private gateway are documented in the
+[RPC pilot runbook](../rpc/README.md). They default to disabled and do not
+change application RPC URLs. Follow repository `AGENTS.md` for the current
+`plether` CLI profile and deployment authentication instructions.
+
 The company AWS account is `932542905614`. Regional infrastructure and state
 live in Asia Pacific (Singapore), `ap-southeast-1`.
 
