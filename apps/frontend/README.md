@@ -1,10 +1,8 @@
 # Plether Frontend
 
-The V3 source branch uses a checksum-pinned SDK 0.2.0 artifact without registry
-publication. See `../../config/perps/ORDER_V3_TIMING.md` for current source provenance and local
-verification. Deployment and published-SDK details below describe the existing
-release; no deployment pins are changed by the V3 source work.
-
+Current perps source uses the checksum-pinned SDK 0.4.0 and the prepared
+MockUSDG release. See `../../config/perps/ORDER_V3_TIMING.md` for provenance.
+Perps stays unavailable until verified deployment evidence is reviewed.
 
 React web application for trading plDXY-BEAR and plDXY-BULL tokens.
 
@@ -188,3 +186,24 @@ Operations are never automatically rebuilt or sent through the owner EOA.
 ## License
 
 AGPL-3.0-only
+
+### Preparing a MockUSDG perps release
+
+The frontend selects `config/perps/mock-usdg-prepared.json`: canonical schema 4,
+order interface 3 and six-decimal MockUSDG metadata. Its null deployment pins
+keep perps trading, funding and vault hooks unavailable. Spot remains separately
+configured. Historical USDC manifests are archived evidence; current perps
+consumers do not accept their keys or ABI.
+
+The breaking SDK 0.4.0 and current APIs use `settlementToken`, `Assets` and
+`AssetAtoms`, including `settlementTokenSupportsEip3009: false` and null EIP-712
+domain settings. No compatibility aliases remain. After a separately reviewed
+activation, the funding flow mints 100,000 MockUSDG to the confirmed Trading
+Account, checks the token runtime hash, and deposits with exact approval. The
+owner wallet pays testnet ETH and confirms the mint; a failed deposit can reuse
+the minted balance. Mock bridge funding and GDN rewards are unavailable.
+
+Use `node scripts/prepare-perps-release.mjs` from the repository root to generate
+a candidate only after verified deployed evidence exists. Read
+[`docs/runbooks/perps-mock-usdg.md`](../../docs/runbooks/perps-mock-usdg.md) for
+package/ABI provenance, activation guards and the unapplied SQL migration.

@@ -182,7 +182,7 @@ export function mergeLatestBasketPoint(
   const livePoint: BasketHistoryPoint = {
     timestamp: latest.timestamp,
     basketPrice: latest.basketPrice,
-    volumeUsdc: latest.timestamp === lastPoint?.timestamp ? lastPoint.volumeUsdc : '0',
+    volumeAssets: latest.timestamp === lastPoint?.timestamp ? lastPoint.volumeAssets : '0',
     components: latest.components,
   }
   if (!lastPoint) return [livePoint]

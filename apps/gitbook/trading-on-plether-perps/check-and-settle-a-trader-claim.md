@@ -1,6 +1,6 @@
 # Check and settle a trader claim
 
-A trader claim records USDC[^usdc] owed to the **Trading Account** when the liquidity pool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
+A trader claim records USDG[^usdg] owed to the **Trading Account** when the liquidity pool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
 
 Claims can arise from:
 
@@ -28,12 +28,12 @@ Plether does not divide a fresh payout between an immediate credit and a new cla
 For example:
 
 ```
-Position margin released:            2,000 USDC
-Fresh pool-funded payout:         500 USDC
-Cash available for fresh payouts:      300 USDC
+Position margin released:            2,000 USDG
+Fresh pool-funded payout:         500 USDG
+Cash available for fresh payouts:      300 USDG
 ```
 
-The `2,000 USDC` of position margin follows the normal account path. The complete `500 USDC` fresh payout becomes a trader claim.
+The `2,000 USDG` of position margin follows the normal account path. The complete `500 USDG` fresh payout becomes a trader claim.
 
 Additional complete fresh payouts that cannot be funded immediately are recorded in full and added to the account’s existing claim balance.
 
@@ -59,7 +59,7 @@ Before settlement, the same-account claim supports price equity but remains sepa
 | Price health           | Included for the same account  |
 | Price-loss backing     | Included for the same account  |
 
-The claim remains denominated in USDC. It does not accrue interest or yield and has no expiry.
+The claim remains denominated in USDG. It does not accrue interest or yield and has no expiry.
 
 Claims are included in the protocol’s liability and LP-withdrawal[^lp] accounting while they remain outstanding.
 
@@ -80,22 +80,22 @@ The test applies to aggregate claims rather than one account at a time.
 Assume:
 
 ```
-Your claim:                            600 USDC
-Another account’s claim:              400 USDC
-Total outstanding claims:           1,000 USDC
-Recognized pool assets:           900 USDC
+Your claim:                            600 USDG
+Another account’s claim:              400 USDG
+Total outstanding claims:           1,000 USDG
+Recognized pool assets:           900 USDG
 ```
 
-Although the liquidity pool could physically cover your individual `600 USDC` claim, neither claim can settle because aggregate coverage is short by `100 USDC`.
+Although the liquidity pool could physically cover your individual `600 USDG` claim, neither claim can settle because aggregate coverage is short by `100 USDG`.
 
-If recognized assets later reach `1,000 USDC`, both claims become available.
+If recognized assets later reach `1,000 USDG`, both claims become available.
 
 If you settle first:
 
 ```
-Your claim paid:                       600 USDC
-Pool assets remaining:            400 USDC
-Outstanding claims remaining:          400 USDC
+Your claim paid:                       600 USDG
+Pool assets remaining:            400 USDG
+Outstanding claims remaining:          400 USDG
 ```
 
 The remaining claim stays fully covered.
@@ -128,7 +128,7 @@ The card does not pre-approve settlement or show aggregate pool coverage. Liquid
 
 #### 3. Select Settle Claim
 
-The current card submits the complete claim balance; there is no amount field or separate settlement-review modal. The destination is the Trading Account’s Margin Account. Transferring the credited USDC to the owner wallet requires a separate withdrawal.
+The current card submits the complete claim balance; there is no amount field or separate settlement-review modal. The destination is the Trading Account’s Margin Account. Transferring the credited USDG to the owner wallet requires a separate withdrawal.
 
 #### 4. Authorize the sponsored operation
 
@@ -136,7 +136,7 @@ The connected wallet signs the settlement authorization, and Plether submits the
 
 It does not require:
 
-* A USDC approval
+* A USDG approval
 * A Pyth price update
 * An acceptable price
 * An execution fee or keeper[^keeper] reward
@@ -154,33 +154,33 @@ After confirmation:
 * Available to Trade and Withdrawable should be recalculated.
 * Any carry associated with an open position should be updated.
 
-![Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free settlement otherwise.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
+![Covered HousePool cash is sent to the Margin Clearinghouse, which credits PnL pledge for a live position or free USDG otherwise.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
-The sponsored settlement operation does not transfer USDC directly to the owner wallet.
+The sponsored settlement operation does not transfer USDG directly to the owner wallet.
 
 ### Carry when you have an open position
 
 Plether checkpoints carry before crediting a claim to an account with an open position.
 
-Carry is collected from existing free settlement before the claim credit. Position margin and the claim cannot cover carry. The visible change in total Settlement balance may therefore be smaller than the settled claim.
+Before the claim credit, carry is collected from active position margin first, then eligible free USDG. The claim itself and other reserved funds cannot pay carry. The visible increase in total USDG balance may therefore be smaller than the settled claim, and the carry deduction reduces the position margin backing price losses.
 
 For example:
 
 ```
-Trader claim settled:               +5,000 USDC
-Carry collected:                      −120 USDC
-Net account balance change:         +4,880 USDC
+Trader claim settled:               +5,000 USDG
+Carry collected:                      −120 USDG
+Net account balance change:         +4,880 USDG
 ```
 
-The claim itself is still settled for the full `5,000 USDC`.
+The claim itself is still settled for the full `5,000 USDG`.
 
-If free settlement cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry. It can independently make the account liquidatable; it does not reduce position price equity.
+If active position margin and eligible free USDG cannot fully cover carry at the checkpoint, the unpaid amount remains recorded as unsettled carry and can independently make the account liquidatable. Carry already collected from position margin has also reduced price equity. The later claim credit becomes new position margin; it does not retroactively fund that carry checkpoint.
 
-### Withdraw the credited USDC
+### Withdraw the credited USDG
 
 After settlement, the credited amount follows the normal Margin Account rules.
 
-To move available USDC to your wallet:
+To move available USDG to your wallet:
 
 1. Open the **Margin Account**.
 2. Select **Withdraw**.
@@ -212,11 +212,11 @@ V2 nets that claim before consuming collectible PnL pledge. It does not use the 
 Example:
 
 ```
-Existing trader claim:               3,000 USDC
-Realized price loss:                 1,200 USDC
-Claim consumed:                      1,200 USDC
-Remaining trader claim:              1,800 USDC
-Price-loss write-off:                     0 USDC
+Existing trader claim:               3,000 USDG
+Realized price loss:                 1,200 USDG
+Claim consumed:                      1,200 USDG
+Remaining trader claim:              1,800 USDG
+Price-loss write-off:                     0 USDG
 ```
 
 This consumption does not produce a Margin Account credit because the claim is being netted against an account obligation.
@@ -250,17 +250,17 @@ The active Trading Account currently has no claim. It may have been:
 
 Connect the owner wallet that controls the claim-owning Trading Account. The wallet authorizes settlement; the sponsored operation is submitted from the Trading Account.
 
-#### Wallet USDC did not increase
+#### Wallet USDG did not increase
 
-Successful settlement credits the Margin Account. Use a separate withdrawal to transfer the USDC to your wallet.
+Successful settlement credits the Margin Account. Use a separate withdrawal to transfer the USDG to your wallet.
 
 #### Account balance increased by less than the claim
 
-Check whether carry was collected during the same transaction. Review the claim amount, carry update, free USDC and position margin together.
+Check whether carry was collected during the same transaction. Review the claim amount, carry update, free USDG and position margin together.
 
 #### Claim settled but withdrawal is unavailable
 
-The credited USDC may be required by an open position, pending order or carry obligation. The normal Margin Account withdrawal checks still apply.
+The credited USDG may be required by an open position, pending order or carry obligation. The normal Margin Account withdrawal checks still apply.
 
 ### Worked example
 
@@ -269,43 +269,43 @@ A trader reduces a profitable LONG USD position.
 At execution:
 
 ```
-Position margin released:            2,000 USDC
-Fresh trader payout:                   800 USDC
-Recognized pool assets:         45,000 USDC
-Existing aggregate claims:           44,500 USDC
-Cash free above existing claims:        500 USDC
+Position margin released:            2,000 USDG
+Fresh trader payout:                   800 USDG
+Recognized pool assets:         45,000 USDG
+Existing aggregate claims:           44,500 USDG
+Cash free above existing claims:        500 USDG
 ```
 
-Only `500 USDC` is free above existing claims, so the complete `800 USDC` fresh payout becomes a new trader claim.
+Only `500 USDG` is free above existing claims, so the complete `800 USDG` fresh payout becomes a new trader claim.
 
 After execution:
 
 ```
-Trader claim balance:                  800 USDC
-Total outstanding claims:           45,300 USDC
-Recognized pool assets:        45,000 USDC
+Trader claim balance:                  800 USDG
+Total outstanding claims:           45,300 USDG
+Recognized pool assets:        45,000 USDG
 ```
 
-Settlement remains unavailable because claims exceed recognized assets by `300 USDC`.
+Settlement remains unavailable because claims exceed recognized assets by `300 USDG`.
 
-Later, recognized assets rise to `45,300 USDC`. The claim becomes serviceable, although the current claim card does not show that coverage status in advance.
+Later, recognized assets rise to `45,300 USDG`. The claim becomes serviceable, although the current claim card does not show that coverage status in advance.
 
 After the trader selects **Settle Claim**:
 
 ```
-Trader claim balance:                    0 USDC
-Margin Account credit:                +800 USDC
-Pool assets remaining:         44,500 USDC
-Outstanding claims remaining:       44,500 USDC
+Trader claim balance:                    0 USDG
+Margin Account credit:                +800 USDG
+Pool assets remaining:         44,500 USDG
+Outstanding claims remaining:       44,500 USDG
 ```
 
 The remaining claims continue to be fully covered.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^tvl]: Total value locked, the headline value of assets deposited in a protocol.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

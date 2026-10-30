@@ -29,7 +29,7 @@ Confidence has two roles: **reject excessive uncertainty**, then **price accepte
 | Open or increase SHORT USD | Lower |
 | Reduce or close SHORT USD | Higher |
 
-The adjustment is embedded in the execution price, rather than charged as a separate USDC fee. Because account valuation uses the neutral mark, a new position can show an immediate unrealized loss even if the index has not moved.
+The adjustment is embedded in the execution price, rather than charged as a separate USDG fee. Because account valuation uses the neutral mark, a new position can show an immediate unrealized loss even if the index has not moved.
 
 The Execution limit applies to the adjusted price. Separate costs, including the execution fee, virtual price impact (VPI), carry and execution reward, are covered in [Trading costs: fees, carry and VPI](trading-costs-fees-carry-and-vpi.md).
 
@@ -68,7 +68,7 @@ A pending close leaves the position open: price exposure, carry and liquidation 
 
 During `oracleFrozen`, voluntary reductions and closes waive the post-commit observation requirement and the adverse confidence price shift. Confidence limits, bounded staleness, component alignment and acceptable-price checks remain active.
 
-The frozen-close spread is a separate USDC charge paid to liquidity providers; normal signed VPI also remains active. [Market states and oracle closures](market-states-and-oracle-closures.md) covers the schedule, spread and settlement rules.
+The frozen-close spread is a separate USDG charge paid to liquidity providers; normal signed VPI also remains active. [Market states and oracle closures](market-states-and-oracle-closures.md) covers the schedule, spread and settlement rules.
 
 [Liquidations](margin-leverage-and-liquidation.md) retain their own adverse confidence and freshness policy, including during frozen operation, and do not pay the voluntary frozen-close spread.
 

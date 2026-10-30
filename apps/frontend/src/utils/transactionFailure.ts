@@ -116,7 +116,7 @@ export function transactionFailureCode(error: unknown): string {
 /** Keep useful application copy, but never print a provider diagnostic dump. */
 export function readableTransactionMessage(message: string | undefined): string {
   if (!message || /^(unknown error|transaction failed|unknown reason)$/i.test(message.trim()) || message.length > 600 || /\S{120}/.test(message)
-    || /request arguments:|request body:|raw call arguments:|\bviem@|https?:\/\/|\b0x[\da-f]{40,}|\b(signature|calldata|paymasterData)\s*[:=]/i.test(message)) {
+    || /current account state:|request arguments:|request body:|raw call arguments:|\bviem@|https?:\/\/|\b0x[\da-f]{40,}|\b(signature|calldata|paymasterData)\s*[:=]/i.test(message)) {
     return TRANSACTION_FAILURE_MESSAGES.UNKNOWN
   }
   return message

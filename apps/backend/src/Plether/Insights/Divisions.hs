@@ -108,7 +108,7 @@ publishDivisionWeek start now baseline closing previous scores = do
             row = object
               [ "address" .= address, "displayName" .= Null, "tier" .= (tiers !! next)
               , "previousTier" .= (tiers !! old), "nonQualifyingWeeks" .= nextStreak
-              , "weeklyPnlUsdc" .= show (lsPnl score), "adjustedEquityUsdc" .= show (lsAdjustedEquity score)
+              , "weeklyPnlAssets" .= show (lsPnl score), "adjustedEquityAssets" .= show (lsAdjustedEquity score)
               , "activeDays" .= lsActiveDays score, "qualifying" .= qualifies, "rank" .= rank, "movement" .= movement
               ]
          in (address, old, next, row)

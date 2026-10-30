@@ -9,6 +9,7 @@ module Plether.Perps.Release
   , perpsV2PositionProtectionBook
   , perpsV2PublicLens
   , validatePerpsV2ReleaseConfig
+  , orderV3IntentDomain
   , verifyPerpsV3ReleaseBindings
   ) where
 
@@ -80,6 +81,7 @@ validatePerpsV2ReleaseConfig
   -> Integer
   -> Either Text ()
 validatePerpsV2ReleaseConfig chainId router lifecycleBook engine clearinghouse housePool startBlock = do
+  unless Manifest.releaseIsDeployed $ Left "Perps release is prepared; deployment is required"
   expectNumber "PERPS_CHAIN_ID" chainId Manifest.releaseChainId
   expectAddress "PERPS_ORDER_ROUTER" router perpsV2OrderRouter
   case lifecycleBook of
@@ -125,6 +127,9 @@ verifyPerpsV3ReleaseBindings client chainId router maybeLifecycle engine clearin
                 , ("Lifecycle Engine", lifecycle, "ENGINE()", engine)
                 , ("Lifecycle Clearinghouse", lifecycle, "CLEARINGHOUSE()", clearinghouse)
                 , ("Lifecycle HousePool", lifecycle, "HOUSE_POOL()", housePool)
+                , ("Clearinghouse USDG token", clearinghouse, "settlementAsset()", Manifest.settlementTokenAddress)
+                , ("Engine USDG token", engine, "settlementToken()", Manifest.settlementTokenAddress)
+                , ("HousePool USDG token", housePool, "settlementToken()", Manifest.settlementTokenAddress)
                 , ("Engine Clearinghouse", engine, "clearinghouse()", clearinghouse)
                 , ("Engine Pool", engine, "pool()", housePool)
                 , ("Public lens Engine", perpsV2PublicLens, "ENGINE()", engine)
@@ -161,7 +166,8 @@ verifyAddressAt client blockNumber (Right ()) (label, target, signature, expecte
 
 runtimeHashes :: [(Text, Text, Text)]
 runtimeHashes =
-  [ ("OrderRouter", perpsV2OrderRouter, Manifest.orderRouterCodeHash)
+  [ ("SettlementToken", Manifest.settlementTokenAddress, Manifest.settlementTokenCodeHash)
+  , ("OrderRouter", perpsV2OrderRouter, Manifest.orderRouterCodeHash)
   , ("OrderLifecycleBook", perpsV2OrderLifecycleBook, Manifest.orderLifecycleBookCodeHash)
   , ("PolicyEvaluator", perpsV2PolicyEvaluator, Manifest.cfdOrderPolicyEvaluatorCodeHash)
   , ("PositionProtectionBook", perpsV2PositionProtectionBook, Manifest.positionProtectionBookCodeHash)
@@ -199,4 +205,4 @@ verifyRuntimeHashAt client blockNumber (Right ()) (label, address, expected) = d
 
 -- Must match OrderLifecycleBook.INTENT_TYPEHASH; checked before sponsorship is enabled.
 orderV3IntentDomain :: Text
-orderV3IntentDomain = "PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyUsdc,uint256 maxExecutionNotionalUsdc,uint256 maxGrossAccountDebitUsdc,uint256 maxActionChargeUsdc,uint256 maxExplicitFeesUsdc,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceUsdc,uint256 minPostPositionEquityUsdc,uint32 maxPostLeverageBps)"
+orderV3IntentDomain = "PletherOrderIntentV3(uint256 chainId,address router,address account,bytes32 clientOrderId,uint8 side,uint256 sizeDelta,uint256 marginDelta,uint256 targetPrice,bool isClose,uint64 submitBy,uint32 executionWindowSeconds,uint8 allowedExecutionModes,bytes32 expectedConfigHash,uint256 maxExecutionBountyAssets,uint256 maxExecutionNotionalAssets,uint256 maxGrossAccountDebitAssets,uint256 maxActionChargeAssets,uint256 maxExplicitFeesAssets,uint256 maxPostPositionSize,uint256 minPostSettlementBalanceAssets,uint256 minPostPositionEquityAssets,uint32 maxPostLeverageBps)"

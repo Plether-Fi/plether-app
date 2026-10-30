@@ -2,7 +2,7 @@
 
 The **Current Position** panel shows executed exposure and price performance. The **Margin Account** shows the collateral supporting that position.
 
-Plether checks price equity, carry coverage and reserve backing separately. Position margin and same-account claims support price losses. Free USDC[^usdc] covers carry; committed-order funds and reserves do not increase price equity.
+Plether checks price equity after accrued carry, uncovered carry and reserve backing. Active position margin pays carry first, followed by eligible free USDG[^usdg]. Position margin remaining after carry and same-account claims support price losses; claims, committed-order funds and reserves cannot pay carry.
 
 A useful reading order is:
 
@@ -100,7 +100,7 @@ Entry notional stays unchanged between size-changing executions. An increase rec
 
 Entry price is the size-weighted average execution price of the remaining position.
 
-For an increase, `size` means contract quantity rather than displayed USDC exposure:
+For an increase, `size` means contract quantity rather than displayed USDG exposure:
 
 ```
 New average entry
@@ -158,7 +158,7 @@ Pending carry:
 
 * Reduces account equity as it accrues
 * Continues during stale and frozen oracle periods
-* Can consume eligible free USDC when realized; position margin remains protected
+* Consumes active position margin first when realized, then eligible free USDG
 * Reduces the settlement result of a close
 * Can move an account toward liquidation without a price change
 
@@ -168,7 +168,7 @@ A partial reduction settles carry accrued by the entire position through executi
 
 ### Position margin and leverage
 
-Position leverage is calculated from the contract notional and USDC assigned to the position:
+Position leverage is calculated from the contract notional and USDG assigned to the position:
 
 ```
 Position leverage
@@ -186,13 +186,13 @@ Equity leverage
 current contract notional ÷ Position equity
 ```
 
-Equity leverage uses position margin, same-account claims and exact price PnL. Free USDC and carry do not enter its denominator.
+Equity leverage uses position margin after accrued carry, same-account claims and exact price PnL. Free USDG is excluded, but carry reduces the margin included in its denominator.
 
 Two accounts with the same position leverage can therefore have different liquidation buffers.
 
 #### Adding position margin
 
-Select the edit control beside **Leverage** to move free Margin Account USDC into the position-margin bucket.
+Select the edit control beside **Leverage** to move free Margin Account USDG into the position-margin bucket.
 
 Adding position margin:
 
@@ -201,9 +201,9 @@ Adding position margin:
 * Reduces the LP-backed[^lp] carry base
 * Can lower future carry accrual
 
-This moves free settlement into price-risk backing and increases the price buffer. The maximum subtracts projected carry first. Keep free funds for future carry, since position margin cannot pay it.
+This moves free USDG into price-risk backing after accrued carry is collected. Carry consumes existing position margin first, then eligible free USDG; the form’s maximum uses the free amount remaining after that projection. Future carry can consume the newly assigned margin too.
 
-Depositing adds free settlement and improves carry coverage. Assigning funds to position margin increases the price-loss buffer.
+Depositing adds free USDG as a fallback for carry beyond active position margin. Assigning funds to position margin increases the price-loss buffer after the carry checkpoint; a deposit alone does not protect existing margin from carry.
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
@@ -215,31 +215,31 @@ The `Margin Account` card in the trade ticket currently shows four values:
 
 | Field                  | Meaning                                                                |
 | ---------------------- | ---------------------------------------------------------------------- |
-| **Settlement balance** | All clearinghouse USDC, including locked margin and reserves; excludes price PnL and claims |
-| **Position equity**    | Signed position margin + same-account claim + exact price PnL |
+| **USDG balance** | All clearinghouse USDG, including locked margin and reserves; excludes price PnL and claims |
+| **Position equity**    | Signed position margin after accrued carry + same-account claim + exact price PnL |
 | **Unrealized PnL**     | Price-only PnL of the open position                                    |
 | **Maintenance margin** | Current equity requirement for avoiding liquidation                    |
 | **Withdrawable**       | Amount currently permitted to leave the protocol                       |
 
 `Available to Trade` is a separate context row above the exposure input. Aggregate pending-order margin and execution-reward reserves are not shown as rows in the current card; use **Open Orders** to identify active commitments. Assigned position margin appears in `Edit Position Margin`, and a claim appears in a separate **Trader claim** card when one exists.
 
-### Settlement balance and Position equity
+### USDG balance and Position equity
 
-**Settlement balance** is all USDC credited to the clearinghouse account, including free funds, assigned margin and locked reserves. It excludes unrealized PnL and unsettled claims.
+**USDG balance** is all USDG credited to the clearinghouse account, including free funds, assigned margin and locked reserves. It excludes unrealized PnL and unsettled claims.
 
 For an open position:
 
 ```
-Position equity = assigned position margin + same-account trader claim + exact price PnL
+Position equity = position margin after accrued carry + same-account trader claim + exact price PnL
 ```
 
-The UI preserves negative signed position equity. This figure excludes free settlement, pending-order funds and reserves. Carry is paid from free settlement and checked separately; negative VPI requires its dedicated reserve.
+The UI preserves negative signed position equity. It includes position margin after accrued carry and excludes free USDG, pending-order funds and reserves. Carry consumes active margin first, then eligible free USDG. Any uncovered carry is checked separately; negative VPI requires its dedicated reserve.
 
-When no position exists, Position equity is omitted. Settlement balance remains visible. A failed or invalidated account snapshot makes current risk metrics unavailable until a successful refresh.
+When no position exists, Position equity is omitted. USDG balance remains visible. A failed or invalidated account snapshot makes current risk metrics unavailable until a successful refresh.
 
 ### Available to Trade
 
-Available to Trade is unencumbered settlement USDC:
+Available to Trade is unencumbered settlement USDG:
 
 ```
 Available to Trade
@@ -268,7 +268,7 @@ Pending carry may still be collected when the next account action checkpoints th
 
 Withdrawable is the maximum amount currently permitted to leave the Margin Account.
 
-For a flat account, it generally equals free USDC after active reservations.
+For a flat account, it generally equals free USDG after active reservations.
 
 With an open position, Plether also checks:
 
@@ -280,7 +280,7 @@ With an open position, Plether also checks:
 * Degraded mode
 * Existing account reservations
 
-The contract returns the full free settlement remaining after projected carry only if the position clears the stricter of initial margin and the active maintenance/FAD requirement and the other withdrawal checks pass. Otherwise it returns zero. Free settlement does not enter position equity, so withdrawing free funds does not move the price threshold.
+The contract returns the free USDG remaining after margin-first carry projection only if the position clears the stricter of initial margin and the active maintenance/FAD requirement and the other withdrawal checks pass. Otherwise it returns zero. Withdrawing free funds does not itself reduce position equity; carry realized during the action can reduce position margin and move the price threshold.
 
 Withdrawable can be lower than Available to Trade. It becomes zero for an account with an open position when:
 
@@ -305,22 +305,18 @@ After execution, the required amount moves into the active position-margin bucke
 
 ### Execution-reward reserves
 
-Every queued order reserves an execution reward.
+Opening and increasing orders reserve an execution reward from free USDG.
 
-Once reserved, that USDC:
+Once reserved, that USDG:
 
 * Leaves Available to Trade
 * Remains separate from price equity and cannot cover carry
 * Pays the account that performs terminal processing
 * Remains payable after execution, terminal failure or expiry
 
-A close uses free USDC first. When permitted by close-path risk checks, it can source the reward from assigned position margin.
+Reductions and full closes reserve and pay no keeper execution reward, including TP/SL close orders. There is no close-reward debit from position margin. TP/SL triggering may have its own separately configured reward.
 
-The current ticket still checks the quoted reward against `Available to Trade` before review. Position-margin sourcing is a protocol fallback rather than a selectable interface option.
-
-Position-margin sourcing lowers position margin and account health immediately while the full exposure remains open.
-
-A failed close still pays the execution reward. Review health again before submitting a replacement.
+A close commitment still realizes carry from active position margin first, then eligible free USDG. If position margin falls at commitment, review the carry deduction and refreshed health metrics before submitting another action.
 
 ### Trader claims
 
@@ -387,7 +383,7 @@ Liquidation buffer
 position equity − maintenance margin
 ```
 
-This is the amount by which equity currently exceeds the requirement. Both sides of the equation can change: Price PnL, pledged margin and claims move position equity; price and market state can move maintenance margin. Carry coverage is checked separately.
+This is the amount by which equity currently exceeds the requirement. Both sides can change: price PnL, position margin after accrued carry and claims move position equity; price and market state can move maintenance margin. Uncovered carry and dedicated reserve backing remain separate checks.
 
 ### Liquidation price
 
@@ -444,8 +440,8 @@ Before execution:
 * The complete position remains exposed.
 * Carry continues to accrue.
 * Liquidation remains possible.
-* The close execution reward remains reserved.
-* Position margin may already be lower if it funded the reward.
+* No close-execution reward is reserved.
+* Position margin may already be lower because carry was collected.
 
 A pending close does not reduce live exposure.
 
@@ -460,33 +456,34 @@ If liquidation happens first:
 
 ### Worked example
 
-Suppose settlement contains 3,000 USDC: 1,500 assigned margin, 500 committed-order margin, 10 dedicated VPI reserve, 20 liquidation reserve and 0.20 execution reserve. The same account also has a 250 USDC claim, a 600 USDC price loss, and 40 USDC pending carry.
+Suppose settlement contains 3,000 USDG: 1,500 assigned margin, 500 committed-order margin, 10 dedicated VPI reserve, 20 liquidation reserve and a 0.20 execution-reward reserve for the pending opening order. The same account also has a 250 USDG claim, a 600 USDG price loss, and 40 USDG pending carry.
 
 ```
-Free settlement = 3,000 − 1,500 − 500 − 10 − 20 − 0.20 = 969.80 USDC
-Position equity = 1,500 + 250 − 600 = 1,150 USDC
-Maintenance margin = 750 USDC
-Price health ratio = 1,150 ÷ 750 = 153.3%
-Price liquidation buffer = 1,150 − 750 = 400 USDC
-Free settlement after carry = 969.80 − 40 = 929.80 USDC
+Free USDG before carry = 3,000 − 1,500 − 500 − 10 − 20 − 0.20 = 969.80 USDG
+Position margin after carry = 1,500 − 40 = 1,460 USDG
+Free USDG after carry = 969.80 USDG
+Position equity = 1,460 + 250 − 600 = 1,110 USDG
+Maintenance margin = 750 USDG
+Price health ratio = 1,110 ÷ 750 = 148.0%
+Price liquidation buffer = 1,110 − 750 = 360 USDG
 ```
 
-If position equity also passes the applicable initial-margin withdrawal check, the mark is eligible and protocol state permits withdrawal, 929.80 USDC can be withdrawable. Use the contract-returned amount; withdrawal is not computed by subtracting maintenance from all account funds.
+All 40 USDG of carry is covered by active position margin, so free USDG stays at 969.80. If the resulting position also passes the applicable initial-margin withdrawal check, the mark is eligible and protocol state permits withdrawal, that 969.80 USDG can be withdrawable. Use the contract-returned amount; withdrawal is not computed by subtracting maintenance from all account funds.
 
-Settling the 250 USDC claim while this position stays open increases assigned margin to 1,750 USDC and reduces the claim to zero. Position equity remains 1,150 USDC before further price changes. Depositing free funds improves carry coverage but does not move the price threshold.
+With no further accrued carry, settling the 250 USDG claim while this position stays open increases assigned margin from 1,460 to 1,710 USDG and reduces the claim to zero. Position equity stays at 1,110 USDG before further price changes: the claim has become assigned margin rather than additional equity. Depositing free funds adds a carry fallback but does not automatically move the price threshold.
 
 ### Common readings
 
 | What you see                                            | Likely explanation                                                                                |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Position equity is higher than Available to Trade       | Pledged margin, claims and price PnL differ from spendable free settlement |
+| Position equity is higher than Available to Trade       | Pledged margin, claims and price PnL differ from spendable free USDG |
 | Available to Trade is higher than Withdrawable          | Withdrawal must preserve initial-margin headroom and pass mark/state checks                       |
-| Position leverage stays unchanged after depositing USDC | The deposit entered free account collateral rather than assigned position margin                  |
-| Health improves while position leverage stays unchanged | Claims or price PnL improved price equity; free USDC only improves carry coverage                                                            |
-| Position margin fell after submitting a close           | A permitted close reward used position margin; carry only uses free settlement                     |
+| Position leverage stays unchanged after depositing USDG | The deposit entered free account collateral rather than assigned position margin                  |
+| Health improves while position leverage stays unchanged | Claims or price PnL improved price equity; carry can reduce the assigned margin even while free USDG remains                                                            |
+| Position margin fell after submitting a close           | Accrued carry was collected from active position margin first                     |
 | Pending close is visible but exposure is unchanged      | Reductions take effect at execution                                                               |
 | Liquidation price shows “Not in range”                  | No threshold exists inside `0.00–2.00` under the current inputs                                   |
-| A claim exists beside low Position equity               | Same-account claims already support position equity, but are not free settlement                                      |
+| A claim exists beside low Position equity               | Same-account claims already support position equity, but are not free USDG                                      |
 | Withdrawable is zero despite positive Position equity   | Mark freshness, degraded mode or post-withdraw margin checks are blocking withdrawal              |
 
 ### A practical monitoring routine
@@ -499,16 +496,16 @@ Settling the 250 USDC claim while this position stays open increases assigned ma
 6. Review pending orders and remember that each one has a reserved execution reward.
 7. Read Available to Trade and Withdrawable separately.
 8. Account for continued exposure while a close is pending.
-9. Deposit additional USDC or reduce exposure before reaching the maintenance boundary.
+9. Deposit additional USDG or reduce exposure before reaching the maintenance boundary.
 10. Recheck the account after every order reaches a terminal state.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

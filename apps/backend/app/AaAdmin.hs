@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Exception (SomeException, displayException, try)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -24,6 +26,7 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   args <- getArgs
   case args of
     ["attest-kms"] -> attestKms

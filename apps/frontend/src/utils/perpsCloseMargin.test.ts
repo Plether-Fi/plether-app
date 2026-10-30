@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { parseEventLogs, toHex, type RpcTransactionReceipt } from 'viem'
 import { formatTransactionReceipt } from 'viem'
 import waiver from '../../../../scripts/fixtures/v3-insights-close-waiver.json'
@@ -6,6 +6,15 @@ import rebate from '../../../../scripts/fixtures/v3-insights-close-rebate.json'
 import { PERPS_ORDER_LIFECYCLE_BOOK_ABI } from '../contracts/abis'
 import type { PerpsOrderHistoryRow } from '../hooks/usePerpsHistory'
 import { deriveCloseMarginReleased } from './perpsCloseMargin'
+
+// Synthetic receipt emitters are independent of the inactive production release.
+vi.mock('../contracts/perpsAddresses', async () => {
+  const { default: release } = await import('../contracts/__tests__/fixtures/perps-canonical-release.json')
+  return { PERPS_ARBITRUM_SEPOLIA: {
+    orderLifecycleBook: release.contracts.orderLifecycleBook.address,
+    marginClearinghouse: release.contracts.marginClearinghouse.address,
+  } }
+})
 
 function fixture(raw = waiver) {
   const transaction = formatTransactionReceipt(raw.receipt as RpcTransactionReceipt)

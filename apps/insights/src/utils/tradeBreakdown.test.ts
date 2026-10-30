@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import waiver from '../../../../scripts/fixtures/insights-close-waiver.json'
-import rebate from '../../../../scripts/fixtures/insights-close-rebate.json'
+import { waiver } from '../test/receiptEconomics'
+import { rebate } from '../test/receiptEconomics'
 import type { TradeExecution } from '../api/types'
-import { deriveTradeBreakdown, formatTradeUsdc } from './tradeBreakdown'
+import { deriveTradeBreakdown, formatTradeAssets } from './tradeBreakdown'
 
 export const waiverExecution = waiver.execution as TradeExecution
 export const rebateExecution = rebate.execution as TradeExecution
@@ -29,7 +29,7 @@ describe('executed trade reconciliation', () => {
   })
   it('does not claim a fee-specific waiver without collection evidence', () => {
     const e = clone(waiverExecution)
-    delete e.settlements[0].protocolFeeCollectedUsdc
+    delete e.settlements[0].protocolFeeCollectedAssets
     expect(deriveTradeBreakdown(e, 'Close')!.lines).toContainEqual({ label: 'Charges waived', value: 882780318n })
     expect(deriveTradeBreakdown(e, 'Close')!.effectiveFee).toBeNull()
   })
@@ -42,16 +42,16 @@ describe('executed trade reconciliation', () => {
   })
   it('does not label costs withheld from price profit as waived', () => {
     const e = clone(); e.settlements = []
-    Object.assign(e.receipt, { realizedPnlUsdc: '100000000', executionFeeUsdc: '1000000', vpiUsdc: '2000000', carryUsdc: '0',
-      executionBountyUsdc: '200000', preSettlementBalanceUsdc: '1000000000', postSettlementBalanceUsdc: '1096800000' })
+    Object.assign(e.receipt, { realizedPnlAssets: '100000000', executionFeeAssets: '1000000', vpiAssets: '2000000', carryAssets: '0',
+      executionBountyAssets: '200000', preSettlementBalanceAssets: '1000000000', postSettlementBalanceAssets: '1096800000' })
     const result = deriveTradeBreakdown(e, 'Close')!
     expect(result.adjustment).toBe(0n)
     expect(result.notice).toBeNull()
   })
   it.each(['Open', 'open'])('omits realized P&L for an %s/increase and includes its costs', type => {
     const e = clone(); e.settlements = []
-    Object.assign(e.receipt, { realizedPnlUsdc: '0', vpiUsdc: '1000000', executionFeeUsdc: '400000', carryUsdc: '10000',
-      executionBountyUsdc: '200000', preSettlementBalanceUsdc: '1000000000', postSettlementBalanceUsdc: '998390000' })
+    Object.assign(e.receipt, { realizedPnlAssets: '0', vpiAssets: '1000000', executionFeeAssets: '400000', carryAssets: '10000',
+      executionBountyAssets: '200000', preSettlementBalanceAssets: '1000000000', postSettlementBalanceAssets: '998390000' })
     const result = deriveTradeBreakdown(e, type)!
     expect(result.lines.some(line => line.label === 'Directional realized P&L')).toBe(false)
     expect(result.actual).toBe(-1610000n)
@@ -59,9 +59,9 @@ describe('executed trade reconciliation', () => {
   })
   it('supports partial closes and claim payouts', () => {
     const e = clone()
-    const difference = BigInt(e.receipt.postSettlementBalanceUsdc) - BigInt(e.receipt.preSettlementBalanceUsdc)
-    e.receipt.postSettlementBalanceUsdc = e.receipt.preSettlementBalanceUsdc
-    e.receipt.postTraderClaimBalanceUsdc = difference.toString()
+    const difference = BigInt(e.receipt.postSettlementBalanceAssets) - BigInt(e.receipt.preSettlementBalanceAssets)
+    e.receipt.postSettlementBalanceAssets = e.receipt.preSettlementBalanceAssets
+    e.receipt.postTraderClaimBalanceAssets = difference.toString()
     e.receipt.postPositionSize = '1000'
     const result = deriveTradeBreakdown(e, 'Close')!
     expect(result.actual).toBe(5474976305n)
@@ -70,11 +70,11 @@ describe('executed trade reconciliation', () => {
   })
   it('counts a frozen-spread waiver once, preserving gross VPI separately', () => {
     const e = clone(waiverExecution)
-    Object.assign(e.receipt, { realizedPnlUsdc: '0', executionFeeUsdc: '1000000', vpiUsdc: '-2000000', carryUsdc: '0',
-      frozenSpreadUsdc: '5000000', executionBountyUsdc: '0', preSettlementBalanceUsdc: '10000000', postSettlementBalanceUsdc: '8000000' })
+    Object.assign(e.receipt, { realizedPnlAssets: '0', executionFeeAssets: '1000000', vpiAssets: '-2000000', carryAssets: '0',
+      frozenSpreadAssets: '5000000', executionBountyAssets: '0', preSettlementBalanceAssets: '10000000', postSettlementBalanceAssets: '8000000' })
     e.settlements = [
-      { kind: 'ActionChargeSettled', assessedUsdc: '4000000', recoveredUsdc: '2000000', waivedUsdc: '2000000' },
-      { kind: 'FrozenCloseSpreadSettled', assessedUsdc: '5000000', recoveredUsdc: '1000000', waivedUsdc: '2000000' },
+      { kind: 'ActionChargeSettled', assessedAssets: '4000000', recoveredAssets: '2000000', waivedAssets: '2000000' },
+      { kind: 'FrozenCloseSpreadSettled', assessedAssets: '5000000', recoveredAssets: '1000000', waivedAssets: '2000000' },
     ]
     const result = deriveTradeBreakdown(e, 'Close')!
     expect(result.actual).toBe(-2000000n)
@@ -83,29 +83,29 @@ describe('executed trade reconciliation', () => {
   })
   it('explains an unpaid rebate with a negative adjustment', () => {
     const e = clone()
-    e.settlements[0].recoveredUsdc = '0'; e.settlements[0].waivedUsdc = '889031888'
-    e.receipt.postSettlementBalanceUsdc = (BigInt(e.receipt.postSettlementBalanceUsdc) - 889031888n).toString()
+    e.settlements[0].recoveredAssets = '0'; e.settlements[0].waivedAssets = '889031888'
+    e.receipt.postSettlementBalanceAssets = (BigInt(e.receipt.postSettlementBalanceAssets) - 889031888n).toString()
     expect(deriveTradeBreakdown(e, 'Close')!.lines).toContainEqual({ label: 'Rebate not paid', value: -889031888n })
     expect(deriveTradeBreakdown(e, 'Close')!.unexplained).toBe(0n)
   })
   it('preserves unknown adjustments without guessing their cause', () => {
-    const e = clone(); e.receipt.postSettlementBalanceUsdc = (BigInt(e.receipt.postSettlementBalanceUsdc) + 100n).toString()
+    const e = clone(); e.receipt.postSettlementBalanceAssets = (BigInt(e.receipt.postSettlementBalanceAssets) + 100n).toString()
     expect(deriveTradeBreakdown(e, 'Close')!.lines).toContainEqual({ label: 'Other settlement adjustment', value: 100n })
   })
   it('rejects missing, malformed, or unsupported evidence', () => {
     expect(deriveTradeBreakdown(null, 'Close')).toBeNull()
     for (const mutate of [
-      (e: TradeExecution) => { delete e.receipt.executionFeeUsdc },
-      (e: TradeExecution) => { e.receipt.executionFeeUsdc = 'NaN' },
-      (e: TradeExecution) => { e.receipt.executionFeeUsdc = '-1' },
+      (e: TradeExecution) => { delete e.receipt.executionFeeAssets },
+      (e: TradeExecution) => { e.receipt.executionFeeAssets = 'NaN' },
+      (e: TradeExecution) => { e.receipt.executionFeeAssets = '-1' },
       (e: TradeExecution) => { e.protocolVersion = 'unknown' },
       (e: TradeExecution) => { e.settlements.push(e.settlements[0]) },
-      (e: TradeExecution) => { e.settlements[0].waivedUsdc = '9000000000' },
+      (e: TradeExecution) => { e.settlements[0].waivedAssets = '9000000000' },
     ]) { const e = clone(); mutate(e); expect(deriveTradeBreakdown(e, 'Close')).toBeNull() }
   })
   it('formats exact amounts and never rounds a tiny nonzero cost to zero', () => {
-    expect(formatTradeUsdc(-1n, true)).toBe('−<0.01 USDC')
-    expect(formatTradeUsdc(0n)).toBe('0.00 USDC')
-    expect(formatTradeUsdc(866453105n, false, true)).toBe('866.453105 USDC')
+    expect(formatTradeAssets(-1n, true)).toBe('−<0.01 USDG')
+    expect(formatTradeAssets(0n)).toBe('0.00 USDG')
+    expect(formatTradeAssets(866453105n, false, true)).toBe('866.453105 USDG')
   })
 })

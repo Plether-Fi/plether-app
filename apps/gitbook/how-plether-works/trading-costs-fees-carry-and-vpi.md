@@ -1,6 +1,6 @@
 # Trading costs: fees, carry and VPI
 
-A Plether trade has one oracle-derived[^oracle] execution price, but several separate USDC[^usdc] adjustments.
+A Plether trade has one oracle-derived[^oracle] execution price, but several separate USDG[^usdg] adjustments.
 
 The distinction matters:
 
@@ -9,9 +9,9 @@ The distinction matters:
 * VPI[^vpi] prices the change in pool imbalance.
 * The frozen-close spread compensates LPs[^lp] when a voluntary close settles during `oracleFrozen`.
 * Carry[^carry] pays LPs for capital committed through time.
-* The execution reward pays whoever processes the delayed order.
+* The execution reward on an open or increase pays whoever processes that order. Reductions and closes have zero execution reward.
 
-Only the oracle adjustment changes the price recorded on the position. The other items change the USDC economics around that price.
+Only the oracle adjustment changes the price recorded on the position. The other items change the USDG economics around that price.
 
 ![Oracle price determines price PnL. Fees, carry, VPI and frozen spread are separate action economics, not a synthetic execution price.](../.gitbook/assets/diagrams/trading-price-and-settlement-costs.svg)
 
@@ -19,16 +19,16 @@ Only the oracle adjustment changes the price recorded on the position. The other
 
 Plether sponsors the network gas for eligible trader actions, subject to availability and policy limits. The connected wallet authorizes the action, the Trading Account submits it through a UserOperation[^useroperation], and Plether pays the eligible native-token network cost.
 
-That sponsorship is separate from the trade’s USDC economics:
+That sponsorship is separate from the trade’s USDG economics:
 
 | Category                         | Denomination          | Who pays or receives it                                                        |
 | -------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
 | **Sponsored network gas**        | Network native token  | Plether pays for an eligible sponsored operation                               |
-| **Execution fee**                | USDC                  | Trader is assessed the protocol-designated fee after successful execution       |
-| **VPI**                          | USDC                  | Trader pays or receives value against the liquidity pool                             |
-| **Carry**                        | USDC                  | Trader pays the liquidity pool over time                                             |
-| **Order execution reward**       | USDC                  | Trading Account reserves it for the order executor or clearer                   |
-| **Frozen-close spread**          | USDC                  | Trader pays the liquidity pool when applicable                                       |
+| **Execution fee**                | USDG                  | Trader is assessed the protocol-designated fee after successful execution       |
+| **VPI**                          | USDG                  | Trader pays or receives value against the liquidity pool                             |
+| **Carry**                        | USDG                  | Trader pays the liquidity pool over time                                             |
+| **Order execution reward**       | USDG                  | Trading Account reserves it for an opening or increasing order                   |
+| **Frozen-close spread**          | USDG                  | Trader pays the liquidity pool when applicable                                       |
 | **Direct oracle-update costs**   | Native token          | A permissionless contract caller pays unless that exact operation is sponsored  |
 
 Gas sponsorship does not make trading free. It removes the owner wallet’s native-gas prerequisite for eligible actions; it does not remove margin requirements, trading costs, losses or settlement obligations.
@@ -45,11 +45,11 @@ See [Gas-sponsored trading and your Plether Trading Account](../trading-on-pleth
 | VPI                          | Successful position-size change                             | Trader ↔ liquidity pool                          |
 | Frozen-close spread          | Voluntary reduction or close executed during `oracleFrozen` | Liquidity pool; entirely LP-owned                |
 | Carry                        | Continuously while LP capital supports a position           | Liquidity pool                                   |
-| Order execution reward       | Reserved in USDC when an order is committed                 | Order executor or clearer                   |
+| Order execution reward       | Reserved in USDG when an open or increase is committed                 | Order executor or clearer                   |
 | Liquidation bounty           | Successful liquidation                                      | Liquidation keeper                          |
 | Oracle confidence adjustment | Opens, live/FAD voluntary closes and liquidations           | Changes execution or liquidation price; not a separate fee |
 
-These USDC costs and price adjustments should not be combined with sponsored network gas or into one unexplained “price impact” number. They perform different jobs and behave differently.
+These USDG costs and price adjustments should not be combined with sponsored network gas or into one unexplained “price impact” number. They perform different jobs and behave differently.
 
 ### Protocol execution fee
 
@@ -97,7 +97,7 @@ The fee is protocol-designated, but terminal settlement remains physical-cash-fi
 
 Virtual Price Impact, or VPI, prices how a trade changes the directional liability carried by the liquidity pool.
 
-It is “virtual” because Plether does not move the oracle price or execute through an AMM[^amm]. VPI is settled as a separate USDC adjustment.
+It is “virtual” because Plether does not move the oracle price or execute through an AMM[^amm]. VPI is settled as a separate USDG adjustment.
 
 #### The VPI curve
 
@@ -110,7 +110,7 @@ Skew cost(K)
 
 Where:
 
-* `K` is the absolute USDC-valued difference between aggregate LONG USD and SHORT USD open interest;
+* `K` is the absolute USDG-valued difference between aggregate LONG USD and SHORT USD open interest;
 * `L` is current pool depth, implemented as total pool assets;
 * `k` is the configured VPI factor.
 
@@ -184,7 +184,7 @@ The order’s acceptable-price setting controls the oracle-derived execution pri
 * the execution reward.
 
 ```
-Oracle price protection ≠ maximum USDC trade-cost protection
+Oracle price protection ≠ maximum USDG trade-cost protection
 ```
 
 VPI is calculated from the market state at execution. It can change while an order waits in the queue.
@@ -291,9 +291,9 @@ The active rate is part of the 48-hour timelocked risk configuration. It must re
 
 V2 does not use a single fee → trading loss → spread collateral queue. It separates price-loss backing from action-charge funding:
 
-![Price losses consume same-account trader claims, then collectible PnL pledge. Action charges use separate sources and cannot consume PnL pledge.](../.gitbook/assets/diagrams/protocol-close-collection-order.svg)
+![Carry consumes active position margin first, then free USDG. Price losses then use claims and remaining collectible pledge; later action charges can use safely released margin, not residual position backing.](../.gitbook/assets/diagrams/protocol-close-collection-order.svg)
 
-A price loss consumes the same account’s nettable trader claim, then collectible PnL pledge. Action charges first offset a price gain and then use their eligible reserves and free settlement. PnL pledge is not available to pay those charges.
+Carry is first collected from active position margin, then eligible free USDG. After that checkpoint, price loss consumes the same account’s nettable trader claim, then remaining collectible PnL pledge. Fees, VPI, frozen spread and any unpaid carry form the separate close action charge. It offsets a price gain first, then uses eligible reserves, free USDG and margin safely released by the close; it cannot consume margin still backing a residual position.
 
 A partial reduction cannot waive action charges. On a full close, eligible committed-order margin is an additional action source and any remaining uncollectible action charge can be waived, including frozen spread.
 
@@ -303,13 +303,13 @@ The waived amount:
 * Does not become a trader claim
 * Does not become LP revenue or an LP receivable
 
-Price loss beyond the terminal collectible cap is recorded as a price-loss write-off, separately from waived action charges. Frozen-spread recovery is attributed after execution fee, carry and positive VPI, subject to the net action charge.
+Price loss beyond the terminal collectible cap is recorded as a price-loss write-off, separately from waived action charges. Frozen-spread recovery is attributed after execution fee, any carry still unpaid after the initial carry collection, and positive VPI, subject to the net action charge.
 
 The onchain close preview exposes:
 
-* `frozenSpreadUsdc` — total spread assessed
-* `frozenSpreadPaidUsdc` — amount retained or collected for LPs
-* `frozenSpreadWaivedUsdc` — terminally uncollectible amount waived
+* **Assessed spread (USDG)** — total spread assessed
+* **Paid spread (USDG)** — amount retained or collected for LPs
+* **Waived spread (USDG)** — terminally uncollectible amount waived
 
 For a valid close:
 
@@ -321,16 +321,7 @@ assessed spread
 
 All three values are zero outside `oracleFrozen`.
 
-A successful close with a nonzero assessment emits:
-
-```
-FrozenCloseSpreadSettled(
-    account,
-    assessedUsdc,
-    paidUsdc,
-    waivedUsdc
-)
-```
+A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
 
 The spread is selected by the market state at execution, not commitment. A close committed during FAD-only operation but executed after `oracleFrozen` begins pays the active spread. A close executed after frozen operation ends does not.
 
@@ -371,7 +362,7 @@ Borrow base = 0
 
 No new carry accrues on that basis.
 
-Free USDC covers carry obligations but does not support price equity. Assigning it as position margin increases price-risk backing and can reduce the borrow base; retain free funds for future carry.
+Carry consumes active position margin first, reducing the margin that supports price equity, then eligible free USDG. Assigning free funds as position margin can increase price-risk backing after that carry checkpoint and reduce the borrow base; it does not shield the new margin from future carry.
 
 > Carry is the price of keeping LP capital committed—not a payment from losing traders to winning traders.
 
@@ -460,12 +451,13 @@ Not executing a transaction does not pause carry.
 
 Carry accrues against the stored borrow base between checkpoints rather than recalculating the entire basis from every new mark price.
 
-Pending carry is a separate obligation against eligible free settlement. It can:
+Pending carry is projected against active position margin first, then eligible free USDG. It can:
 
-* reduce withdrawable USDC;
+* reduce withdrawable USDG;
 * lower the payout from a close;
 * make an increase invalid;
-* consume eligible free settlement, while position margin stays protected;
+* reduce position margin and price equity even while free USDG remains;
+* consume eligible free USDG after position margin is exhausted;
 * contribute to liquidation without an index move.
 
 ### When carry is realized
@@ -477,7 +469,7 @@ Relevant actions include:
 * increasing a position;
 * reducing or closing;
 * adding position margin;
-* depositing or withdrawing account USDC;
+* depositing or withdrawing account USDG;
 * changing collateral reservations;
 * changing pool assets;
 * changing carry-related parameters.
@@ -494,21 +486,23 @@ Any voluntary reduction—including a partial close—settles all carry accrued 
 
 ### How carry is collected
 
-Carry is collected only from eligible free settlement. Position margin, claims, order commitments and dedicated reserves cannot cover it. Any uncovered remainder persists as carry debt and independently makes the position eligible for liquidation, even if its price equity exceeds maintenance.
+At a carry checkpoint, Plether collects from active position margin first, then eligible free USDG. Claims, committed-order margin and dedicated reserves cannot fund that checkpoint. Carry taken from position margin reduces price equity and can move the liquidation threshold. Any amount still uncovered remains carry debt and is a separate liquidation condition.
 
-A deposit can settle existing carry immediately. An Add Margin action realizes carry first, then moves the requested free funds into position margin. Fully covered carry does not reduce price equity.
+Before a close is priced and settled, the same margin-first collection is applied. Any carry still unpaid enters the close’s action charge. A partial close must settle that charge without waiver; a terminal full close follows the separate recovery and waiver rules.
+
+A deposit can trigger carry collection immediately, but existing active position margin is used before the deposited free funds. An Add Margin action likewise realizes carry before assigning the requested free USDG. Even fully collected carry reduces price equity to the extent it came from position margin.
 
 Realized carry enters the liquidity pool as LP trading revenue.
 
 ### How additional margin affects carry
 
-Moving free USDC into assigned margin increases price equity without changing total settlement custody. It leaves less free settlement available for carry.
+After the carry checkpoint, moving free USDG into assigned margin increases price equity without another transfer into Plether. It leaves less free USDG for actions, and future carry can consume that assigned margin before using free funds.
 
 It can still reduce future carry:
 
 ![For the same maximum-profit exposure, more assigned PnL pledge lowers max(maximum profit minus pledge, zero), reducing future carry at a given index growth.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
 
-Adding position margin therefore improves price-risk backing and can reduce future carry. Keep enough free settlement for carry collection.
+Adding position margin therefore improves price-risk backing after accrued carry and can reduce future carry. Continue monitoring the projected margin: future carry can consume it even when free USDG remains.
 
 ### Opening and increasing
 
@@ -625,30 +619,25 @@ Any remaining positive value is preserved for the trader. Any remaining uncovere
 
 ### The order execution reward
 
-The interface and this documentation call this the **Execution reward**. It is reserved for the account that executes or clears the order.
+The **Execution reward** is separate from the protocol execution fee. An open or increase reserves it from free USDG at commitment, using commit-time contract notional and the configured minimum and maximum amounts.
 
-It is separate from the protocol execution fee.
+Reductions and full closes have **zero keeper execution reward**, including close orders created by TP/SL. They reserve no close-execution bounty from free USDG or position margin and pay none on success, terminal failure or expiry. A configured TP/SL trigger reward and the liquidation bounty are separate incentives.
 
-For an opening or increase, the reward is quoted from the order’s commit-time contract notional, subject to configured minimum and maximum amounts.
+For an opening or increasing order:
 
-For a close, it is a configured fixed amount.
-
-The reward is reserved immediately when the order is committed:
-
-* open-order rewards come from free USDC;
-* close-order rewards use free USDC first and may use eligible position margin;
+* the quoted reward is reserved immediately from free USDG;
 * successful execution pays the reward to the executor;
 * terminal failure or expiry can still pay the executor or clearer;
 * a temporarily blocked order keeps its reward reserved;
-* liquidation forfeits pending-order rewards to the protocol treasury.
+* liquidation forfeits the pending opening-order reward to the protocol treasury.
 
-A failed order does not pay the protocol execution fee, VPI or frozen-close spread because no trade occurred. It can still lose its execution reward because the queue entry had to be processed and cleared.
+A failed order does not pay the protocol execution fee, VPI or frozen-close spread because no trade occurred. A failed opening order can still pay its reserved execution reward. A failed reduction or close pays no execution reward; carry already collected at commitment remains paid.
 
 ### Oracle confidence adjustment
 
 For opens and live or FAD-only voluntary closes, Plether executes against the side adverse to the trader within the accepted oracle confidence interval.
 
-This behaves like a small execution spread, but it is neither a separate USDC fee nor the frozen-close spread.
+This behaves like a small execution spread, but it is neither a separate USDG fee nor the frozen-close spread.
 
 It changes the execution price itself and can therefore indirectly affect:
 
@@ -673,19 +662,19 @@ The trade preview shows:
 For VPI:
 
 ```
-12.3 USDC  = charge
-−12.3 USDC = rebate
+12.3 USDG  = charge
+−12.3 USDG = rebate
 ```
 
-Positive values are displayed without a `+` sign. Small non-zero costs may appear as `0.0 USDC` because preview values are rounded.
+Positive values are displayed without a `+` sign. Small non-zero costs may appear as `0.0 USDG` because preview values are rounded.
 
 After a supported reduction or close executes, **Final Result** uses the executed receipt to show **Protocol execution fee**, **Execution reward**, signed **VPI charge** or **VPI rebate**, **Carry**, **Frozen spread charged** and **Close result before settlement adjustments**. **Actual account change** is the recorded Margin Account balance change plus the trader claim change. When it differs from the calculated result, a neutral **Settlement adjustment** explains the difference without classifying it as bad debt or an uncollected fee. Opening trades keep the existing execution summary.
 
 At contract level, close previews expose frozen-market settlement separately:
 
-* `frozenSpreadUsdc` — assessed
-* `frozenSpreadPaidUsdc` — amount retained or collected for LPs
-* `frozenSpreadWaivedUsdc` — waived
+* **Assessed spread (USDG)** — assessed
+* **Paid spread (USDG)** — amount retained or collected for LPs
+* **Waived spread (USDG)** — waived
 
 A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record. **Final Result** shows **Frozen spread charged**, the assessed spread minus the waived amount, with VPI shown separately. When the waived amount is nonzero, it also shows **Frozen spread assessed** and **Frozen spread waived**. Only the charged amount reduces **Close result before settlement adjustments**; the VPI rebate remains a separate offset.
 
@@ -694,7 +683,7 @@ A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, p
 The current interface uses **Cost of carry** in two places:
 
 * In the market header, it shows the configured maximum annualized base rate.
-* In **Current Position**, it shows accrued unpaid carry in USDC.
+* In **Current Position**, it shows accrued unpaid carry in USDG.
 
 The header does not currently show the position’s live side-utilization-adjusted annualized rate.
 
@@ -707,7 +696,7 @@ The current interface does not fully itemize:
 * accumulated VPI subject to possible clawback;
 * fees and carry in persistent order history.
 
-The execution-reward preview is also derived from frontend defaults rather than reading every live router parameter.
+Before preparation, the opening execution-reward estimate uses frontend defaults. A prepared review uses the quoted reward from the exact request. Reduce/close execution rewards are zero throughout review, signing and execution progress.
 
 Treat the commit preview as an estimate. The onchain result and updated clearinghouse balance are authoritative.
 
@@ -764,17 +753,17 @@ Before closing, distinguish:
 * **VPI** prices the trade’s change in pool imbalance.
 * **Carry** pays LPs for bounded payout capacity committed through time.
 * **Frozen-close spreads** compensate LPs for voluntary exits executed against bounded stale oracle data.
-* **Execution rewards** pay keepers to process the delayed-order queue.
+* **Opening-order execution rewards** pay keepers to process opens and increases; reductions and closes have zero execution reward.
 
 None of these changes the underlying foreign-exchange market.
 
-The oracle decides the price. Fees, VPI, carry and any frozen-close spread decide the USDC economics around it.
+The oracle decides the price. Fees, VPI, carry and any frozen-close spread decide the USDG economics around it.
 
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

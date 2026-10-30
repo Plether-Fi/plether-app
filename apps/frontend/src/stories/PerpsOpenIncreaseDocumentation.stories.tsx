@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { ComponentProps, ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
@@ -15,7 +16,7 @@ import type {
 type TicketProps = ComponentProps<typeof PerpsTradeTicket>
 type OpenPreviewFixture = NonNullable<TicketProps['openPreviewFixture']>
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const POSITION_UNIT = 10n ** 18n
 const ORACLE_PRICE = 98_300_000n
 const CURRENT_EXPOSURE = 8_200n
@@ -49,30 +50,30 @@ const currentLongPosition = {
   direction: 'long',
   size: CURRENT_EXPOSURE * POSITION_UNIT,
   entryPrice: 98_750_000n,
-  marginUsdc: 1_640n * USDC,
-  unrealizedPnlUsdc: 54_250_000n,
-  maintenanceMarginUsdc: 80_950_000n,
+  marginAssets: 1_640n * ASSETS,
+  unrealizedPnlAssets: 54_250_000n,
+  maintenanceMarginAssets: 80_950_000n,
   liquidatable: false,
-  estimatedNotionalUsdc: 8_060n * USDC,
-  entryNotionalUsdc: 8_095n * USDC,
-  dxyExposureUsdc: CURRENT_EXPOSURE * USDC,
+  estimatedNotionalAssets: 8_060n * ASSETS,
+  entryNotionalAssets: 8_095n * ASSETS,
+  dxyExposureAssets: CURRENT_EXPOSURE * ASSETS,
   displayDxyPrice: 101_700_000n,
   liquidationPrice: 112_000_000n,
-  pendingCarryUsdc: 4_200_000n,
+  pendingCarryAssets: 4_200_000n,
 } satisfies PerpsPosition
 
 const executedLongPosition = {
   ...currentLongPosition,
   size: RESULTING_EXPOSURE * POSITION_UNIT,
   entryPrice: 98_571_970n,
-  marginUsdc: 2_619_600_000n,
-  unrealizedPnlUsdc: 36_400_000n,
-  maintenanceMarginUsdc: 130_120_000n,
-  estimatedNotionalUsdc: 12_972_960_000n,
-  entryNotionalUsdc: 13_011_500_000n,
-  dxyExposureUsdc: RESULTING_EXPOSURE * USDC,
+  marginAssets: 2_619_600_000n,
+  unrealizedPnlAssets: 36_400_000n,
+  maintenanceMarginAssets: 130_120_000n,
+  estimatedNotionalAssets: 12_972_960_000n,
+  entryNotionalAssets: 13_011_500_000n,
+  dxyExposureAssets: RESULTING_EXPOSURE * ASSETS,
   liquidationPrice: 104_000_000n,
-  pendingCarryUsdc: 0n,
+  pendingCarryAssets: 0n,
 } satisfies PerpsPosition
 
 const executedIncreaseHistory = [
@@ -99,21 +100,21 @@ function openingPreviewFixture(): OpenPreviewFixture {
     failureCategory: 0,
     executionPrice: 98_280_000n,
     sizeDelta: 2_000n * POSITION_UNIT,
-    notionalUsdc: 1_966n * USDC,
-    marginDeltaUsdc: 393_200_000n,
-    vpiUsdc: 1_400_000n,
-    executionFeeUsdc: 786_400n,
-    tradeCostUsdc: 2_186_400n,
-    poolRebatePayoutUsdc: 0n,
-    pendingCarryUsdc: 0n,
-    initialMarginRequirementUsdc: 393_200_000n,
-    maintenanceMarginUsdc: 19_660_000n,
+    notionalAssets: 1_966n * ASSETS,
+    marginDeltaAssets: 393_200_000n,
+    vpiAssets: 1_400_000n,
+    executionFeeAssets: 786_400n,
+    tradeCostAssets: 2_186_400n,
+    poolRebatePayoutAssets: 0n,
+    pendingCarryAssets: 0n,
+    initialMarginRequirementAssets: 393_200_000n,
+    maintenanceMarginAssets: 19_660_000n,
     postSize: 2_000n * POSITION_UNIT,
-    postMarginUsdc: 393_200_000n,
+    postMarginAssets: 393_200_000n,
     postEntryPrice: 98_280_000n,
     postVpiAccrued: 1_400_000n,
-    postUnrealizedPnlUsdc: 0n,
-    postEquityUsdc: 391_800_000n,
+    postUnrealizedPnlAssets: 0n,
+    postEquityAssets: 391_800_000n,
     postHealthBps: 9_400n,
     postLiquidatable: false,
     hasLiquidationPrice: true,
@@ -128,13 +129,13 @@ const marketArgs = {
   adverseConfidenceMultiplierBps: '2000',
   oracleFreshness: 'fresh' as const,
   oracleFreshnessTooltip: 'validated oracle basket updated 18s ago',
-  availableToTradeRaw: 18_420n * USDC,
+  availableToTradeRaw: 18_420n * ASSETS,
   availableToTradeAmount: '18 420',
-  settlementBalanceUsdcRaw: 18_420n * USDC,
-  withdrawableUsdcRaw: 18_420n * USDC,
-  walletUsdcRaw: 25_000n * USDC,
-  longOpenCapacityUsdc: 250_000n * USDC,
-  shortOpenCapacityUsdc: 250_000n * USDC,
+  settlementBalanceAssetsRaw: 18_420n * ASSETS,
+  withdrawableAssetsRaw: 18_420n * ASSETS,
+  walletAssetsRaw: 25_000n * ASSETS,
+  longOpenCapacityAssets: 250_000n * ASSETS,
+  shortOpenCapacityAssets: 250_000n * ASSETS,
   maintenanceMarginBps: 100n,
   executionFeeBps: 4n,
 }
@@ -185,12 +186,12 @@ function MarketHeader() {
           directionalLimit: {
             usagePercent: 87,
             side: 'long',
-            totalExposure: <TokenAmount amount="8.36M" />,
-            netExposure: <TokenAmount amount="3.07M" />,
-            limit: <TokenAmount amount="3.53M" />,
+            totalExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="8.36M" />,
+            netExposure: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.07M" />,
+            limit: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3.53M" />,
           },
         },
-        { label: 'Free pool liquidity', value: <TokenAmount amount="6.3M" /> },
+        { label: 'Free pool liquidity', value: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="6.3M" /> },
       ]}
     />
   )
@@ -210,8 +211,8 @@ export const MarketAndAccountReadiness: Story = {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
           <PerpsAccountPanel
             isConnected
-            equityUsdc={18_420n * USDC}
-            freeBuyingPowerUsdc={18_420n * USDC}
+            equityAssets={18_420n * ASSETS}
+            freeBuyingPowerAssets={18_420n * ASSETS}
           />
           <PerpsTradeTicket
             {...marketArgs}
@@ -300,9 +301,9 @@ function PositionSnapshot({
         </span>
       </header>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 py-5">
-        <ComparisonMetric label="Total exposure" value={<TokenAmount amount={exposure} />} tone="positive" />
+        <ComparisonMetric label="Total exposure" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={exposure} />} tone="positive" />
         <ComparisonMetric label="Average entry price" value={averageEntry} />
-        <ComparisonMetric label="Position margin" value={<TokenAmount amount={margin} />} />
+        <ComparisonMetric label="Position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={margin} />} />
         <ComparisonMetric label="Leverage" value={leverage} />
         <ComparisonMetric label="Liquidation price" value={liquidationPrice} tone="accent" />
       </dl>
@@ -341,7 +342,7 @@ export const IncreaseProjectionComparison: Story = {
           <div>
             <div className="text-xs font-medium uppercase tracking-wide text-[#FFAB96]">Increase preview</div>
             <h1 className="mt-1 text-2xl font-semibold text-content-primary">
-              Add <TokenAmount amount="5 000" /> of Long exposure
+              Add <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="5 000" /> of Long exposure
             </h1>
             <p className="mt-2 text-sm text-content-secondary">
               The current position remains unchanged until the committed order executes.
@@ -385,11 +386,11 @@ export const IncreaseProjectionComparison: Story = {
             </div>
             <dl className="space-y-2">
               <PreviewSummaryRow label="Direction" value="Long" tone="positive" />
-              <PreviewSummaryRow label="Exposure being added" value={<TokenAmount amount="5 000" />} />
+              <PreviewSummaryRow label="Exposure being added" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="5 000" />} />
               <PreviewSummaryRow label="Estimated execution price" value="1.0172" />
               <PreviewSummaryRow label="Max slippage" value="0.1%" />
               <PreviewSummaryRow label="Execution limit" value="1.0180" tone="accent" />
-              <PreviewSummaryRow label="Submitted margin" value={<TokenAmount amount="983" />} />
+              <PreviewSummaryRow label="Submitted margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="983" />} />
             </dl>
           </section>
 
@@ -398,12 +399,12 @@ export const IncreaseProjectionComparison: Story = {
               Estimated costs and reservation
             </div>
             <dl className="space-y-2">
-              <PreviewSummaryRow label="Protocol execution fee" value={<TokenAmount amount="2.0" />} />
-              <PreviewSummaryRow label="VPI / Price impact" value={<TokenAmount amount="1.4" />} />
+              <PreviewSummaryRow label="Protocol execution fee" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="2.0" />} />
+              <PreviewSummaryRow label="VPI / Price impact" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1.4" />} />
               <PreviewSummaryRow label="Adverse confidence adjustment" value="~0.0207%" />
-              <PreviewSummaryRow label="Pending carry checkpoint" value={<TokenAmount amount="4.2" />} />
-              <PreviewSummaryRow label="Execution reward" value={<TokenAmount amount="0.2" />} />
-              <PreviewSummaryRow label="Reserved from Available to Trade" value={<TokenAmount amount="983.2" />} tone="accent" />
+              <PreviewSummaryRow label="Pending carry checkpoint" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="4.2" />} />
+              <PreviewSummaryRow label="Execution reward" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="0.2" />} />
+              <PreviewSummaryRow label="Reserved from Available to Trade" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="983.2" />} tone="accent" />
             </dl>
           </section>
         </div>
@@ -420,11 +421,11 @@ export const PendingRevealWithManualFinalization: Story = {
       side: 0,
       direction: 'long',
       sizeDelta: ADDED_EXPOSURE * POSITION_UNIT,
-      marginDeltaUsdc: 983n * USDC,
+      marginDeltaAssets: 983n * ASSETS,
       acceptablePrice: 98_200_000n,
       isReduceOnly: false,
       status: 1,
-      estimatedNotionalUsdc: 4_915n * USDC,
+      estimatedNotionalAssets: 4_915n * ASSETS,
       commitTime: BigInt(nowSeconds - 42),
       expiryTime: BigInt(nowSeconds + 2_958),
     } satisfies PerpsPendingOrder
@@ -459,15 +460,15 @@ export const ExecutedPositionAndOrderHistory: Story = {
         <OperationStateCard
           title="Increase executed"
           stage="Delayed order result"
-          message="Order 72 added 5 000 USDC of Long exposure. The combined position and matching terminal order record now show the same execution result."
+          message={`Order 72 added 5 000 ${PERPS_SETTLEMENT_TOKEN_LABEL} of Long exposure. The combined position and matching terminal order record now show the same execution result.`}
           tone="success"
           identifierLabel="Execution"
-          identifier="1.0172 · 5 000 USDC · Order 72"
+          identifier={`1.0172 · 5 000 ${PERPS_SETTLEMENT_TOKEN_LABEL} · Order 72`}
         />
         <PerpsAccountPanel
           isConnected
-          equityUsdc={2_659_400_000n}
-          freeBuyingPowerUsdc={36_400_000n}
+          equityAssets={2_659_400_000n}
+          freeBuyingPowerAssets={36_400_000n}
           position={executedLongPosition}
         />
         <PerpsAccountPanel

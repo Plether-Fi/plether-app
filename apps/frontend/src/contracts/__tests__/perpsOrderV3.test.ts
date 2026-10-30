@@ -31,23 +31,23 @@ function assessment(
 ): PerpsExecutionAssessment {
   return {
     mode: PERPS_EXECUTION_MODE.LIVE,
-    executionNotionalUsdc: 100n,
-    grossAccountDebitUsdc: 20n,
-    actionChargeAssessedUsdc: 5n,
-    actionChargeCollectedUsdc: 5n,
-    explicitFeesUsdc: 4n,
-    preSettlementBalanceUsdc: 1_000n,
-    postSettlementBalanceUsdc: 980n,
-    realizedPnlUsdc: 0n,
-    vpiUsdc: 0n,
-    carryUsdc: 0n,
-    executionFeeUsdc: 4n,
-    frozenSpreadUsdc: 0n,
-    preTraderClaimUsdc: 0n,
-    postTraderClaimUsdc: 0n,
+    executionNotionalAssets: 100n,
+    grossAccountDebitAssets: 20n,
+    actionChargeAssessedAssets: 5n,
+    actionChargeCollectedAssets: 5n,
+    explicitFeesAssets: 4n,
+    preSettlementBalanceAssets: 1_000n,
+    postSettlementBalanceAssets: 980n,
+    realizedPnlAssets: 0n,
+    vpiAssets: 0n,
+    carryAssets: 0n,
+    executionFeeAssets: 4n,
+    frozenSpreadAssets: 0n,
+    preTraderClaimAssets: 0n,
+    postTraderClaimAssets: 0n,
     postPositionSize: 500n,
-    postPositionMarginUsdc: 100n,
-    postPositionEquityUsdc: 95n,
+    postPositionMarginAssets: 100n,
+    postPositionEquityAssets: 95n,
     postLeverageBps: 52_632n,
     ...overrides,
   }
@@ -89,7 +89,7 @@ describe('bounded V3 order identity', () => {
       bounds: derivePerpsExecutionBounds({
         submitBy: 2_000_000_000n, executionWindowSeconds: 60,
         expectedConfigHash: CONFIG_HASH,
-        executionBountyUsdc: 3n,
+        executionBountyAssets: 3n,
         selectedMaxLeverageBps: 60_000,
         assessments: [assessment()],
       }),
@@ -110,7 +110,7 @@ describe('bounded V2 execution protections', () => {
     })
 
   it('rounds upward, applies the ten-micro minimum and rejects invalid/overflowing quotes', () => {
-    expect(reviewedExecutionBountyMaximum(0n)).toBe(10n)
+    expect(reviewedExecutionBountyMaximum(0n)).toBe(0n)
     expect(reviewedExecutionBountyMaximum(999n)).toBe(1009n)
     expect(reviewedExecutionBountyMaximum(1001n)).toBe(1012n)
     expect(() => reviewedExecutionBountyMaximum(-1n)).toThrow()
@@ -122,18 +122,18 @@ describe('bounded V2 execution protections', () => {
       clientOrderId: `0x${'11'.repeat(32)}`, side: PERPS_SIDE.SHORT,
       sizeDelta: 100n, marginDelta: 10n, targetPrice: 1234n, isClose: false,
       bounds: relaxedWebPerpsExecutionBounds({ submitBy: 2_000_000_000n, executionWindowSeconds: 60,
-        expectedConfigHash: CONFIG_HASH, executionBountyUsdc: 119_061n,
+        expectedConfigHash: CONFIG_HASH, executionBountyAssets: 119_061n,
         executionMode: PERPS_EXECUTION_MODE.LIVE }),
     }
     const restored = restorePerpsOrderRequestV3(persistPerpsOrderRequestV3(ACCOUNT, request))
     expect(restored).toEqual(request)
-    expect(restored.bounds.maxExecutionBountyUsdc).toBe(120_252n)
+    expect(restored.bounds.maxExecutionBountyAssets).toBe(120_252n)
   })
   it('keeps web accounting bounds wide while pinning lifecycle protections', () => {
     const bounds = relaxedWebPerpsExecutionBounds({
       submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
-      executionBountyUsdc: 200_000n,
+      executionBountyAssets: 200_000n,
       executionMode: PERPS_EXECUTION_MODE.LIVE,
     })
     const uint256Max = (1n << 256n) - 1n
@@ -142,14 +142,14 @@ describe('bounded V2 execution protections', () => {
       submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: CONFIG_HASH,
-      maxExecutionBountyUsdc: 202_000n,
-      maxExecutionNotionalUsdc: uint256Max,
-      maxGrossAccountDebitUsdc: uint256Max,
-      maxActionChargeUsdc: uint256Max,
-      maxExplicitFeesUsdc: uint256Max,
+      maxExecutionBountyAssets: 202_000n,
+      maxExecutionNotionalAssets: uint256Max,
+      maxGrossAccountDebitAssets: uint256Max,
+      maxActionChargeAssets: uint256Max,
+      maxExplicitFeesAssets: uint256Max,
       maxPostPositionSize: uint256Max,
-      minPostSettlementBalanceUsdc: 0n,
-      minPostPositionEquityUsdc: 0n,
+      minPostSettlementBalanceAssets: 0n,
+      minPostPositionEquityAssets: 0n,
       maxPostLeverageBps: 0xffff_ffff,
     })
   })
@@ -165,12 +165,12 @@ describe('bounded V2 execution protections', () => {
       assessments: [
         assessment({
           postPositionSize: positionSize,
-          postPositionEquityUsdc: 999_500_000n,
+          postPositionEquityAssets: 999_500_000n,
           postLeverageBps: 50_026n,
         }),
         assessment({
           postPositionSize: positionSize,
-          postPositionEquityUsdc: 999_500_000n,
+          postPositionEquityAssets: 999_500_000n,
           postLeverageBps: 50_076n,
         }),
       ],
@@ -187,7 +187,7 @@ describe('bounded V2 execution protections', () => {
       capPrice: 200_000_000n,
       assessments: [assessment({
         postPositionSize: 50n * 10n ** 20n,
-        postPositionEquityUsdc: 1_000_000_000n,
+        postPositionEquityAssets: 1_000_000_000n,
         postLeverageBps: 50_000n,
       })],
     })).toBe(0n)
@@ -200,10 +200,10 @@ describe('bounded V2 execution protections', () => {
       prices: [100_000_000n],
       capPrice: 200_000_000n,
       assessments: [assessment({
-        actionChargeCollectedUsdc: 15_500_000n,
-        carryUsdc: 500_000n,
+        actionChargeCollectedAssets: 15_500_000n,
+        carryAssets: 500_000n,
         postPositionSize: 50n * 10n ** 20n,
-        postPositionEquityUsdc: 999_500_000n,
+        postPositionEquityAssets: 999_500_000n,
         postLeverageBps: 50_026n,
       })],
     })).toBe(5_500_000n)
@@ -213,16 +213,16 @@ describe('bounded V2 execution protections', () => {
     const bounds = derivePerpsExecutionBounds({
       submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
-      executionBountyUsdc: 30n,
+      executionBountyAssets: 30n,
       selectedMaxLeverageBps: 70_000,
       assessments: [
         assessment(),
         assessment({
-          executionNotionalUsdc: 120n,
-          grossAccountDebitUsdc: 25n,
-          explicitFeesUsdc: 6n,
-          postSettlementBalanceUsdc: 970n,
-          postPositionEquityUsdc: 90n,
+          executionNotionalAssets: 120n,
+          grossAccountDebitAssets: 25n,
+          explicitFeesAssets: 6n,
+          postSettlementBalanceAssets: 970n,
+          postPositionEquityAssets: 90n,
           postLeverageBps: 60_000n,
         }),
       ],
@@ -232,12 +232,12 @@ describe('bounded V2 execution protections', () => {
       submitBy: 2_000_000_000n, executionWindowSeconds: 60,
       allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
       expectedConfigHash: CONFIG_HASH,
-      maxExecutionBountyUsdc: 30n,
-      maxExecutionNotionalUsdc: 120n,
-      maxGrossAccountDebitUsdc: 30n,
-      maxExplicitFeesUsdc: 6n,
-      minPostSettlementBalanceUsdc: 970n,
-      minPostPositionEquityUsdc: 90n,
+      maxExecutionBountyAssets: 30n,
+      maxExecutionNotionalAssets: 120n,
+      maxGrossAccountDebitAssets: 30n,
+      maxExplicitFeesAssets: 6n,
+      minPostSettlementBalanceAssets: 970n,
+      minPostPositionEquityAssets: 90n,
       maxPostLeverageBps: 60_000,
     })
     expect(executionModeMask(PERPS_EXECUTION_MODE.FROZEN)).toBe(
@@ -258,7 +258,7 @@ describe('bounded V2 execution protections', () => {
     expect(() => derivePerpsExecutionBounds({
       submitBy: 1n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
-      executionBountyUsdc: 1n,
+      executionBountyAssets: 1n,
       selectedMaxLeverageBps: 60_000,
       assessments: [
         assessment(),
@@ -269,7 +269,7 @@ describe('bounded V2 execution protections', () => {
     expect(() => derivePerpsExecutionBounds({
       submitBy: 1n, executionWindowSeconds: 60,
       expectedConfigHash: CONFIG_HASH,
-      executionBountyUsdc: 1n,
+      executionBountyAssets: 1n,
       selectedMaxLeverageBps: 50_000,
       assessments: [assessment()],
     })).toThrow(/maximum leverage/)

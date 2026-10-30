@@ -1,3 +1,4 @@
+import { PERPS_RELEASE_IS_DEPLOYED, PERPS_SETTLEMENT_TOKEN, PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import { useEffect, useRef, useState } from 'react'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
@@ -9,6 +10,9 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
 import { useTestnetFunding, type TestnetFundingPhase } from '../hooks/useTestnetFunding'
 import { Button, Input, Modal } from './ui'
+
+const DIRECT_MOCK_MINT = PERPS_SETTLEMENT_TOKEN.isMock && PERPS_SETTLEMENT_TOKEN.name === 'Mock USDG'
+const MOCK_TOKEN_LABEL = PERPS_SETTLEMENT_TOKEN_LABEL
 
 interface TestnetWelcomeModalViewProps {
   isOpen: boolean
@@ -77,15 +81,15 @@ export function TestnetWelcomeModalView({
             isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
             disabled={
               isWalletConnected &&
-              (!isRecipientReady || isDeposited || (!!activeClaim && !isPendingClaim && !submitError))
+              (!isRecipientReady || (!DIRECT_MOCK_MINT && (isDeposited || (!!activeClaim && !isPendingClaim && !submitError))))
             }
             className="w-full"
           >
             {isRecipientReady ? (
-              fundingPhase === 'waiting' ? 'Waiting for mock USDC'
-                : fundingPhase === 'depositing' ? 'Depositing mock USDC'
-                : isDeposited ? 'Mock USDC deposited'
-                : isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
+              fundingPhase === 'waiting' ? `Waiting for ${MOCK_TOKEN_LABEL}`
+                : fundingPhase === 'depositing' ? `Depositing ${MOCK_TOKEN_LABEL}`
+                : isDeposited && !DIRECT_MOCK_MINT ? `${MOCK_TOKEN_LABEL} deposited`
+                : isPendingClaim ? 'Check confirmation' : `Get 100,000 ${MOCK_TOKEN_LABEL}`
             ) : isWalletConnected ? (
               recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
             ) : (
@@ -109,29 +113,23 @@ export function TestnetWelcomeModalView({
       }
     >
       <div className="space-y-5 panel-padding text-sm text-content-secondary">
-        <p>
-          This is a testnet version of Plether Perps, built for trying deposits, trades, and order
-          execution without real funds.
-        </p>
+        <p>Try deposits and trades on Arbitrum Sepolia with test USDG.</p>
         <p>
           {!isWalletConnected
-            ? `Connect your wallet to continue. Once connected, we will fill your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address so you can request 100,000 mock USDC on Arbitrum Sepolia.`
+            ? 'Connect your wallet to get 100,000 USDG.'
             : recipientError
-              ? 'Your wallet is connected, but Plether could not prepare the Trading Account address that should receive the test funds.'
+              ? 'We could not prepare your Trading Account. Please refresh and try again.'
             : isRecipientReady
-              ? `Your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address is shown below. We will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.${isTradingAccountRecipient ? ' Once the tokens arrive, we will automatically start the sponsored deposit into your Margin Account. Confirm in your wallet if prompted.' : ''}`
-              : 'Your wallet is connected. Plether is preparing the Trading Account address that will receive the test funds.'}
+              ? `We will send 100,000 USDG to your ${isTradingAccountRecipient ? 'Trading Account and deposit it into your Margin Account' : 'wallet'}. Confirm in your wallet when prompted.`
+              : 'Preparing your Trading Account to receive USDG.'}
         </p>
-        <p>
-          Testnet balances and positions have no real-world value and could be reset at any time.
-          {isTradingAccountRecipient
-            ? ' Eligible trader actions are gas-sponsored while sponsorship is available.'
-            : ' Use a wallet that supports Arbitrum Sepolia because it will pay network gas.'}
-        </p>
-        <p>
-          Thanks for being here early. This is a safe testnet environment, so try things freely.
-          Nothing here has real-world value, and every bit of feedback helps.
-        </p>
+        {DIRECT_MOCK_MINT ? (
+          <p>
+            You can get more USDG anytime. Your wallet needs Arbitrum Sepolia ETH for the mint transaction.
+            {isTradingAccountRecipient ? ' Plether covers gas for the deposit.' : ''}
+          </p>
+        ) : null}
+        <p>Test funds have no real value. Balances and positions may be reset.</p>
 
         {isRecipientReady ? (
           <Input
@@ -170,31 +168,29 @@ export function TestnetWelcomeModalView({
           >
             <p className="font-medium">
               {isDeposited
-                ? 'Mock USDC deposited into your Margin Account. You are ready to trade.'
+                ? `${MOCK_TOKEN_LABEL} deposited into your Margin Account. You are ready to trade.`
                 : isPendingClaim
                 ? 'Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.'
                 : activeClaim.status === 'already_funded'
-                ? `Mock USDC is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                ? `${MOCK_TOKEN_LABEL} is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
                 : activeClaim.status === 'already_claimed'
-                  ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
-                  : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
+                  ? `${MOCK_TOKEN_LABEL} was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                  : `${MOCK_TOKEN_LABEL} minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
               {isDeposited
                 ? 'Your sponsored deposit is confirmed.'
                 : isAutomaticFunding
                 ? fundingPhase === 'depositing'
-                  ? 'Depositing mock USDC into your Margin Account. Confirm in your wallet if prompted.'
-                  : 'Waiting for mock USDC to arrive. Your sponsored deposit will start automatically.'
+                  ? `Depositing ${MOCK_TOKEN_LABEL} into your Margin Account. Confirm in your wallet if prompted.`
+                  : `Waiting for ${MOCK_TOKEN_LABEL} to arrive. Your sponsored deposit will start automatically.`
                 : isPendingClaim
-                ? 'Use “Check confirmation” below to refresh this transaction safely. Funds are not available until confirmation completes.'
-                : isTradingAccountRecipient
-                ? 'Next, use the sponsored deposit flow to move those funds into the Trading Account’s Margin Account before placing orders.'
-                : 'Next, deposit those funds into the exchange margin account before placing orders.'}
+                ? 'Use “Check confirmation” to refresh the transaction status.'
+                : 'Deposit your USDG into your Margin Account to start trading.'}
             </p>
             {!isPendingClaim && isTradingAccountRecipient ? (
               <p className="text-content-secondary">
-                Plether sponsors eligible perps operations. A later owner-wallet transfer back to the Trading Account, such as after withdrawing MockUSDC, requires Arbitrum Sepolia ETH for gas.
+                Plether covers gas for eligible trades. Wallet transfers need Arbitrum Sepolia ETH for gas.
               </p>
             ) : !isPendingClaim ? (
               <p className="text-content-secondary">
@@ -228,6 +224,10 @@ export function TestnetWelcomeModalView({
 }
 
 export function TestnetWelcomeModal() {
+  return PERPS_RELEASE_IS_DEPLOYED ? <LiveTestnetWelcomeModal /> : null
+}
+
+function LiveTestnetWelcomeModal() {
   const { address: connectedAddress, isConnected } = useAccount()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured

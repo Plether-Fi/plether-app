@@ -66,12 +66,12 @@ spec = do
       queryContains pendingPerpsExecutionEvidenceSql "ORDER BY lane ASC, lane_order ASC"
 
     it "projects exact execution VPI independently from activity data" $ do
-      queryContains perpsOrderBaseSelectSql "o.execution_vpi_usdc"
-      queryContains perpsOrderBaseSelectSql "data->>'vpiUsdc'"
+      queryContains perpsOrderBaseSelectSql "o.execution_vpi_assets"
+      queryContains perpsOrderBaseSelectSql "data->>'vpiAssets'"
 
     it "hydrates legacy receipt economics with the indexed execution bounty" $ do
-      queryContains perpsOrderBaseSelectSql "data->>'executionBountyUsdc'"
-      queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyUsdc'"
+      queryContains perpsOrderBaseSelectSql "data->>'executionBountyAssets'"
+      queryContains perpsOrderBaseSelectSql "jsonb_build_object('executionBountyAssets'"
       queryContains perpsOrderBaseSelectSql "e.event_name = 'IntentRegistered'"
 
     it "projects the canonical terminal event block hash" $ do
@@ -108,8 +108,8 @@ spec = do
           , "terminalTimestamp" .= (1_785_437_841 :: Integer)
           , "terminalStatus" .= ("Executed" :: String)
           , "executionPrice" .= ("98391251" :: String)
-          , "vpiUsdc" .= ("182822887" :: String)
-          , "frozenCloseSpreadUsdc" .= ("0" :: String)
+          , "vpiAssets" .= ("182822887" :: String)
+          , "frozenCloseSpreadAssets" .= ("0" :: String)
           , "executionEconomicsVersion" .= (2 :: Int)
           , "executionOraclePrice" .= ("98391482" :: String)
           , "executionOracleFrozen" .= False
@@ -121,15 +121,15 @@ spec = do
           , "terminalReason" .= ("Executed" :: String)
           , "executionMode" .= ("Live" :: String)
           , "receiptEconomics" .= object
-              [ "executionBountyUsdc" .= ("200000" :: String)
-              , "vpiUsdc" .= ("182822887" :: String)
-              , "frozenSpreadUsdc" .= ("0" :: String)
+              [ "executionBountyAssets" .= ("200000" :: String)
+              , "vpiAssets" .= ("182822887" :: String)
+              , "frozenSpreadAssets" .= ("0" :: String)
               ]
           , "activityType" .= ("Close" :: String)
           , "activitySizeDelta" .= ("98308614058332359914207" :: String)
           , "activityPrice" .= ("98391251" :: String)
-          , "activityVpiUsdc" .= ("-182822887" :: String)
-          , "activityPnlUsdc" .= ("104909054" :: String)
+          , "activityVpiAssets" .= ("-182822887" :: String)
+          , "activityPnlAssets" .= ("104909054" :: String)
           ]
 
   describe "account order indexed-through proof" $ do
@@ -162,8 +162,8 @@ executedOrderRow =
     , porTerminalStatus = "Executed"
     , porFailureReason = Nothing
     , porExecutionPrice = Just 98_391_251
-    , porExecutionVpiUsdc = Just 182_822_887
-    , porExecutionFrozenCloseSpreadUsdc = Just 0
+    , porExecutionVpiAssets = Just 182_822_887
+    , porExecutionFrozenCloseSpreadAssets = Just 0
     , porExecutionEconomicsVersion = Just 2
     , porExecutionOraclePrice = Just 98_391_482
     , porExecutionOracleFrozen = Nothing
@@ -177,16 +177,16 @@ executedOrderRow =
     , porExecutionMode = Just "Live"
     , porFailedConstraint = Nothing
     , porReceiptEconomics = Just $ object
-        [ "executionBountyUsdc" .= ("200000" :: String)
-        , "vpiUsdc" .= ("182822887" :: String)
-        , "frozenSpreadUsdc" .= ("0" :: String)
+        [ "executionBountyAssets" .= ("200000" :: String)
+        , "vpiAssets" .= ("182822887" :: String)
+        , "frozenSpreadAssets" .= ("0" :: String)
         ]
     , porCleanupActor = Nothing
     , porActivityType = Just "Close"
     , porActivitySizeDelta = Just 98_308_614_058_332_359_914_207
     , porActivityPrice = Just 98_391_251
-    , porActivityVpiUsdc = Just (-182_822_887)
-    , porActivityPnlUsdc = Just 104_909_054
+    , porActivityVpiAssets = Just (-182_822_887)
+    , porActivityPnlAssets = Just 104_909_054
     , porSortBlock = 293_014_724
     }
 
@@ -229,7 +229,7 @@ testConfig =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+    , cfgPerpsSettlementToken = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
     , cfgPerpsOrderRouter = "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
@@ -276,7 +276,7 @@ testReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "perps-history-test"
     , crmChainId = 421614
-    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmSettlementToken = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , crmOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , crmMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"

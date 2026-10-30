@@ -162,55 +162,8 @@ jobs:
         working-directory: apps/frontend
         run: |
           test -s dist/perps-aa-manifest.json
-          jq -e '
-            def common_keys:
-              ["version", "chainId", "orderInterfaceVersion", "entryPoint", "entryPointVersion",
-               "smartAccountMode", "smartAccountVersion", "smartAccountIndex",
-               "smartAccountFactory", "usdc", "usdcSupportsEip3009",
-               "usdcEip712Name", "usdcEip712Version", "marginClearinghouse",
-               "cfdEngine", "orderRouter", "orderLifecycleBook",
-               "positionProtectionBook", "policyEvaluator",
-               "userOperationExplorerUrlTemplate",
-               "transactionExplorerUrlTemplate", "testnetFaucet",
-               "sponsorshipEnabled"];
-            def exact_keys($expected): (keys | sort) == ($expected | sort);
-            def nonzero_address:
-              type == "string" and
-              test("^0x[0-9A-Fa-f]{40}$") and
-              ascii_downcase != "0x0000000000000000000000000000000000000000";
-            def common_profile:
-              .chainId == 421614 and
-              (.entryPoint | ascii_downcase) == "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" and
-              .entryPointVersion == "0.8" and
-              .smartAccountMode == "simple" and
-              .smartAccountVersion == "permissionless-simple-v0.8" and
-              .smartAccountIndex == "0" and
-              (.smartAccountFactory | ascii_downcase) == "0x13e9ed32155810fdbd067d4522c492d6f68e5944" and
-              .orderRouter == "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8" and
-              .orderLifecycleBook == "0x519f57a34fb440c42bfd2d8328d2f80349af3872" and
-              .positionProtectionBook == "0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312" and
-              .policyEvaluator == "0xf550cada6b7d477b23069c8b4f254d19088f28c8" and
-              .sponsorshipEnabled == true;
-            def pimlico_transport:
-              exact_keys(common_keys + ["pimlicoRpcUrl"]) and
-              .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
-              ((has("bundlerRpcUrl") or has("paymasterRpcUrl") or
-                has("paymasterAddress") or has("paymasterVersion")) | not);
-            def native_transport:
-              exact_keys(common_keys + ["bundlerRpcUrl", "paymasterRpcUrl",
-                                        "paymasterAddress", "paymasterVersion", "preparationRpcVersion"]) and
-              .bundlerRpcUrl == "/api/perps/v1/aa/rpc" and
-              .paymasterRpcUrl == "/api/perps/v1/aa/rpc" and
-              (.paymasterAddress | nonzero_address) and
-              (.paymasterAddress | ascii_downcase) == "0x9761091045616a388f5fe1433721b272c78fe31b" and
-              .paymasterVersion == "plether-verifying-v1" and
-              .preparationRpcVersion == 1 and
-              (has("pimlicoRpcUrl") | not);
-            common_profile and
-            .version == "perps-aa-arbitrum-sepolia-20261012-v131-v2" and
-            .orderInterfaceVersion == 3 and
-            (pimlico_transport or native_transport)
-          ' dist/perps-aa-manifest.json >/dev/null
+          node ../../scripts/validate-perps-deployment.mjs aa \
+            ../../config/perps/mock-usdg-prepared.json dist/perps-aa-manifest.json public/perps-aa-manifest.json
 
       - name: Validate testnet backend origin
         id: backend-origin
@@ -250,19 +203,20 @@ jobs:
             "$SEPOLIA_BACKEND_URL/api/aa/status" > aa-status.json
           jq --exit-status \
             --slurpfile manifest dist/perps-aa-manifest.json \
+            --slurpfile core ../../config/perps/mock-usdg-prepared.json \
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and
-              .deploymentBlock == 318398363 and
-              .usdc == $manifest[0].usdc and
+              .deploymentBlock == $core[0].release.deploymentBlock and
+              .settlementToken == $manifest[0].settlementToken and
               .orderRouter == $manifest[0].orderRouter and
               .orderLifecycleBook == $manifest[0].orderLifecycleBook and
               .cfdEngine == $manifest[0].cfdEngine and
               .marginClearinghouse == $manifest[0].marginClearinghouse and
-              .housePool == "0x587c9863bb46fd5282a4ca2ea99589e3e8543962" and
+              .housePool == $core[0].contracts.housePool.address and
               .policyEvaluator == $manifest[0].policyEvaluator and
-              .positionProtectionBook == "0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312" and
-              .perpsPublicLens == "0x5502e241ddde4fd00313947e1d2f941764c92959" and
+              .positionProtectionBook == $manifest[0].positionProtectionBook and
+              .perpsPublicLens == $core[0].contracts.perpsPublicLens.address and
               .calldataPolicy == "bounded-v3" and
               .bindingsVerified == true and
               .sponsorshipEnabled == true

@@ -1,101 +1,51 @@
-import { describe, expect, it } from 'vitest'
-import { PERPS_CFD_ENGINE_LENS_ABI } from '../abis'
-
-describe('perps CFD engine lens ABI', () => {
-  it('keeps the frozen close spread preview fields appended after the legacy tuple', () => {
-    const previewClose = PERPS_CFD_ENGINE_LENS_ABI.find((item) => (
-      item.type === 'function' && item.name === 'previewClose'
-    ))
-    const output = previewClose?.outputs[0]
-
-    expect(output && 'components' in output ? output.components.slice(-3) : undefined).toEqual([
-      { name: 'frozenSpreadUsdc', type: 'uint256' },
-      { name: 'frozenSpreadPaidUsdc', type: 'uint256' },
-      { name: 'frozenSpreadWaivedUsdc', type: 'uint256' },
-    ])
-    expect(output && 'components' in output ? output.components : []).toHaveLength(24)
-  })
-})
-
-// Extracted verbatim from the checksum-verified v1.2.3 release ABI bundle.
-import releaseAbi from './fixtures/perps-v1.2.3.json'
-import {
-  PERPS_CFD_ENGINE_ABI,
-  PERPS_MARGIN_CLEARINGHOUSE_ABI,
-  PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
-} from '../abis'
-
-describe('v1.2.3 return layouts', () => {
-  const bindings = {
-    riskParams: PERPS_CFD_ENGINE_ABI,
-    getOrderReservation: PERPS_MARGIN_CLEARINGHOUSE_ABI,
-    quoteMaxOpen: PERPS_CFD_ENGINE_LENS_ABI,
-    previewLiquidation: PERPS_CFD_ENGINE_LENS_ABI,
-    getAccountLedgerSnapshot: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
-    getAccountCollateralView: PERPS_CFD_ENGINE_ACCOUNT_LENS_ABI,
-  }
-  type Parameter = { name?: string; type: string; components?: readonly Parameter[] }
-  const layout = (parameters: readonly Parameter[]): unknown => parameters.map(parameter => ({
-    name: parameter.name,
-    type: parameter.type,
-    ...(parameter.components ? { components: layout(parameter.components) } : {}),
-  }))
-
-  for (const name of Object.keys(bindings) as (keyof typeof bindings)[]) {
-    it(`matches the released ${name} output fields and order`, () => {
-      const binding = bindings[name].find(item => item.type === 'function' && item.name === name)
-      expect(binding && 'outputs' in binding).toBe(true)
-      if (!binding || !('outputs' in binding)) return
-      const expected = releaseAbi[name].outputs
-      // The outer tuple's Solidity variable name is not part of its decoded value.
-      const fields = (outputs: readonly Parameter[]) => outputs[0]?.components ?? outputs
-      expect(layout(fields(binding.outputs))).toEqual(layout(fields(expected)))
-    })
-  }
-})
-
 import { createHash } from 'node:crypto'
-import type { Abi, AbiParameter } from 'viem'
+import { describe, expect, it } from 'vitest'
+import type { Abi } from 'viem'
 import * as perpsBindings from '../abis/Perps'
 import { TRANCHE_VAULT_READ_ABI } from '../abis/TrancheVault'
-import releaseBindings from './fixtures/perps-v1.2.3-bindings.json'
-import sourceBindings from './fixtures/perps-v3-source-abis.json'
+import sourceBindings from './fixtures/perps-canonical-source-abis.json'
+import provenance from './fixtures/perps-canonical-source-abis.provenance.json'
 
-// Digests are computed from the matching entries in the checksum-verified
-// release bundle. Parameter names and Solidity internalType do not affect the
-// wire format; tuple order, event indexing, mutability and types do.
-describe('v1.2.3 application ABI compatibility', () => {
+function withoutInternalType(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutInternalType)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => key !== 'internalType')
+      .map(([key, child]) => [key, withoutInternalType(child)]))
+  }
+  return value
+}
+
+// These are compiled-source checks. Historical release fixtures remain unchanged
+// and are not evidence that the prepared deployment exists onchain.
+describe('canonical perps consumer ABIs', () => {
   const bindings = { ...perpsBindings, TRANCHE_VAULT_READ_ABI }
-  const parameter = (value: AbiParameter & { indexed?: boolean }): unknown => ({
-    type: value.type,
-    ...(value.indexed !== undefined ? { indexed: value.indexed } : {}),
-    ...('components' in value ? { components: value.components.map(parameter) } : {}),
-  })
-  for (const [name, expected] of Object.entries(releaseBindings.bindings)) {
-    it(`matches all released entries used by ${name}`, () => {
+
+  for (const [name, source] of Object.entries(sourceBindings)) {
+    it(`matches the compiled fields, overloads and errors used by ${name}`, () => {
       const abi = bindings[name as keyof typeof bindings] as Abi
-      if (name in sourceBindings) {
-        const source = sourceBindings[name as keyof typeof sourceBindings]
-        for (const entry of abi) {
-          const compiled = source.find(candidate => candidate.type === entry.type && ('name' in candidate ? candidate.name : undefined) === ('name' in entry ? entry.name : undefined) && JSON.stringify('inputs' in candidate ? candidate.inputs.map(parameter) : undefined) === JSON.stringify('inputs' in entry ? entry.inputs.map(parameter) : undefined))
-          expect(compiled, `${name}.${'name' in entry ? entry.name : entry.type}`).toBeDefined()
-          if (!compiled) continue
-          const wire = (item: { type: string; name?: string; inputs?: readonly AbiParameter[]; outputs?: readonly AbiParameter[]; stateMutability?: string; anonymous?: boolean }) => ({ type: item.type, name: item.name, inputs: item.inputs?.map(parameter), outputs: item.outputs?.map(parameter), stateMutability: item.stateMutability, anonymous: item.type === 'event' ? (item.anonymous ?? false) : undefined })
-          expect(wire(entry)).toEqual(wire(compiled))
-        }
-        return
-      }
-      const layouts = abi.map(entry => ({
-        type: entry.type,
-        name: 'name' in entry ? entry.name : undefined,
-        inputs: 'inputs' in entry ? entry.inputs.map(parameter) : undefined,
-        outputs: 'outputs' in entry ? entry.outputs.map(parameter) : undefined,
-        stateMutability: 'stateMutability' in entry ? entry.stateMutability : undefined,
-        anonymous: entry.type === 'event' ? (entry.anonymous ?? false) : undefined,
-      })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-      expect(abi).toHaveLength(expected.entries)
-      expect(createHash('sha256').update(JSON.stringify(layouts)).digest('hex'))
-        .toBe(expected.layoutSha256)
+      const compiled = withoutInternalType(source) as Abi
+      expect(abi.length).toBeGreaterThan(0)
+      for (const entry of abi) expect(compiled).toContainEqual(entry)
+      expect(abi.filter(entry => entry.type === 'error'))
+        .toEqual(compiled.filter(entry => entry.type === 'error'))
+      expect(JSON.stringify(abi)).not.toMatch(/usdc/i)
+    })
+
+    it(`records the actual compiled source digest for ${name}`, () => {
+      const digest = createHash('sha256').update(JSON.stringify(source)).digest('hex')
+      expect(Object.values(provenance.contracts).some(contract => contract.abiSha256 === digest)).toBe(true)
     })
   }
+
+  it('records source provenance without claiming an existing deployment', () => {
+    expect(provenance.kind).toBe('compiled-source-abis')
+    expect(provenance.deployed).toBe(false)
+    for (const contract of Object.values(provenance.contracts)) {
+      expect(contract.compilerVersion).toMatch(/^0\.8\.35\+/)
+      expect(contract.sourceSha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(contract.validation).toContain('runtime deployment not verified')
+      expect(contract).not.toHaveProperty('runtimeCodeHash')
+    }
+  })
 })

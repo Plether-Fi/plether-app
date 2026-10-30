@@ -1,3 +1,5 @@
+// Historical bytecode replay only: retain the original token names and schema.
+// Current deployment consumers must use the canonical schema-4 release.
 import assert from 'node:assert/strict'
 import { before, after, test } from 'node:test'
 import fs from 'node:fs'

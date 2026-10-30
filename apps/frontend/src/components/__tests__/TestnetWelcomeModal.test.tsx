@@ -34,7 +34,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
 
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Get 100,000 mock USDC' })
+      screen.queryByRole('button', { name: 'Get 100,000 USDG' })
     ).not.toBeInTheDocument()
 
     const connectButton = screen.getByRole('button', { name: 'Connect Wallet' })
@@ -64,7 +64,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(screen.getByRole('textbox')).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Connect Wallet' })).not.toBeInTheDocument()
 
-    const fundingButton = screen.getByRole('button', { name: 'Get 100,000 mock USDC' })
+    const fundingButton = screen.getByRole('button', { name: 'Get 100,000 USDG' })
     expect(fundingButton).toHaveClass('bg-positive')
   })
 
@@ -132,7 +132,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
       />
     )
 
-    expect(screen.getByText('Mock USDC is already available for this wallet.')).toBeInTheDocument()
+    expect(screen.getByText('USDG is already available for this wallet.')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^0x/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Deposit' })).toBeInTheDocument()
   })
@@ -193,7 +193,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
       />
     )
     expect(screen.getByRole('button', {
-      name: phase === 'waiting' ? 'Waiting for mock USDC' : 'Depositing mock USDC',
+      name: phase === 'waiting' ? 'Waiting for USDG' : 'Depositing USDG',
     })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -216,8 +216,8 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
         onDeposit={vi.fn()}
       />
     )
-    expect(screen.getByText('Mock USDC deposited into your Margin Account. You are ready to trade.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Mock USDC deposited' })).toBeDisabled()
+    expect(screen.getByText('USDG deposited into your Margin Account. You are ready to trade.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Get 100,000 USDG' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Start trading' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
   })
@@ -239,7 +239,7 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
 
     expect(screen.getByText(TESTNET_FAUCET_TIMEOUT_MESSAGE)).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Get 100,000 mock USDC' })
+      screen.getByRole('button', { name: 'Get 100,000 USDG' })
     ).toBeEnabled()
   })
 })

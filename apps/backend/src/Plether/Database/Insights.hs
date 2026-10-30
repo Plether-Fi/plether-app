@@ -104,7 +104,7 @@ import Plether.Insights.Competition
   , finalizationBlockers
   , competitionRulesForSlug
   , july2026CompetitionSlug
-  , minimumProfitUsdc
+  , minimumProfitAssets
   , pendingCompetitionReleaseManifestText
   , participantEligibilityText
   , september2026CompetitionSlug
@@ -118,8 +118,8 @@ import Plether.Utils.Address (isValidAddress)
 -- Immutable values used only to migrate the already-published July row. A
 -- startup for a newer competition must never copy its active deployment into
 -- historical rows that predate these columns.
-julyUsdcAddress, julyReleaseRouter, julyMarginClearinghouseAddress, julyAccountLensAddress :: Text
-julyUsdcAddress = "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
+julySettlementTokenAddress, julyReleaseRouter, julyMarginClearinghouseAddress, julyAccountLensAddress :: Text
+julySettlementTokenAddress = "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
 julyReleaseRouter = "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
 julyMarginClearinghouseAddress = "0x19c2f60f6312eaf9acde4c2b04551a05ca9be76e"
 julyAccountLensAddress = "0xc4c886a6f1d7cb22c833ac1b29f29da43afbccd1"
@@ -129,7 +129,7 @@ julyReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = july2026CompetitionSlug
     , crmChainId = 421_614
-    , crmUsdc = julyUsdcAddress
+    , crmSettlementToken = julySettlementTokenAddress
     , crmOrderRouter = julyReleaseRouter
     , crmMarginClearinghouse = julyMarginClearinghouseAddress
     , crmAccountLens = julyAccountLensAddress
@@ -149,7 +149,7 @@ data CompetitionSeedMetadata = CompetitionSeedMetadata
   , csmName :: Text
   , csmChainId :: Integer
   , csmReleaseRouter :: Text
-  , csmUsdcAddress :: Text
+  , csmSettlementTokenAddress :: Text
   , csmMarginClearinghouseAddress :: Text
   , csmAccountLensAddress :: Text
   , csmReleaseManifest :: Text
@@ -158,7 +158,7 @@ data CompetitionSeedMetadata = CompetitionSeedMetadata
   , csmScoreCutoffTimestamp :: Integer
   , csmResultsTimestamp :: Integer
   , csmPaymentDeadlineTimestamp :: Integer
-  , csmStartingBalanceUsdc :: Integer
+  , csmStartingBalanceAssets :: Integer
   , csmMinimumProfitBps :: Integer
   , csmMinimumActiveDays :: Int
   , csmFxSessionBoundaryUtcMinutes :: Int
@@ -167,11 +167,11 @@ data CompetitionSeedMetadata = CompetitionSeedMetadata
   , csmTargetXHandle :: Maybe Text
   , csmScoringVersion :: Text
   , csmRulesVersion :: Text
-  , csmFirstPrizeUsdc :: Integer
-  , csmSecondPrizeUsdc :: Integer
-  , csmThirdPrizeUsdc :: Integer
-  , csmFourthPrizeUsdc :: Integer
-  , csmFifthPrizeUsdc :: Integer
+  , csmFirstPrizeAssets :: Integer
+  , csmSecondPrizeAssets :: Integer
+  , csmThirdPrizeAssets :: Integer
+  , csmFourthPrizeAssets :: Integer
+  , csmFifthPrizeAssets :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -224,7 +224,7 @@ instance ToRow CompetitionSeedInsert where
     , toField csmName
     , toField csmChainId
     , toField csmReleaseRouter
-    , toField csmUsdcAddress
+    , toField csmSettlementTokenAddress
     , toField csmMarginClearinghouseAddress
     , toField csiAccountLensAddress
     , toField csmReleaseManifest
@@ -236,17 +236,17 @@ instance ToRow CompetitionSeedInsert where
     , toField csmRegistrationCloseTimestamp
     , toField csmMinimumXAccountAgeDays
     , toField csmTargetXHandle
-    , toField csmStartingBalanceUsdc
+    , toField csmStartingBalanceAssets
     , toField csmMinimumProfitBps
     , toField csmMinimumActiveDays
     , toField csmFxSessionBoundaryUtcMinutes
     , toField csmScoringVersion
     , toField csmRulesVersion
-    , toField csmFirstPrizeUsdc
-    , toField csmSecondPrizeUsdc
-    , toField csmThirdPrizeUsdc
-    , toField csmFourthPrizeUsdc
-    , toField csmFifthPrizeUsdc
+    , toField csmFirstPrizeAssets
+    , toField csmSecondPrizeAssets
+    , toField csmThirdPrizeAssets
+    , toField csmFourthPrizeAssets
+    , toField csmFifthPrizeAssets
     , toField csiReleaseBound
     ]
 
@@ -255,7 +255,7 @@ data CompetitionRow = CompetitionRow
   , icrName :: Text
   , icrChainId :: Integer
   , icrReleaseRouter :: Text
-  , icrUsdcAddress :: Text
+  , icrSettlementTokenAddress :: Text
   , icrMarginClearinghouseAddress :: Text
   , icrAccountLensAddress :: Text
   , icrReleaseReady :: Bool
@@ -273,17 +273,17 @@ data CompetitionRow = CompetitionRow
   , icrStartBlockHash :: Maybe Text
   , icrScoreCutoffBlock :: Maybe Integer
   , icrScoreCutoffBlockHash :: Maybe Text
-  , icrStartingBalanceUsdc :: Integer
+  , icrStartingBalanceAssets :: Integer
   , icrMinimumProfitBps :: Integer
   , icrMinimumActiveDays :: Int
   , icrFxSessionBoundaryUtcMinutes :: Int
   , icrScoringVersion :: Text
   , icrRulesVersion :: Text
-  , icrFirstPrizeUsdc :: Integer
-  , icrSecondPrizeUsdc :: Integer
-  , icrThirdPrizeUsdc :: Integer
-  , icrFourthPrizeUsdc :: Integer
-  , icrFifthPrizeUsdc :: Integer
+  , icrFirstPrizeAssets :: Integer
+  , icrSecondPrizeAssets :: Integer
+  , icrThirdPrizeAssets :: Integer
+  , icrFourthPrizeAssets :: Integer
+  , icrFifthPrizeAssets :: Integer
   , icrFinalized :: Bool
   , icrUpdatedTimestamp :: Integer
   , icrParticipantCount :: Integer
@@ -394,27 +394,27 @@ data LeaderboardRow = LeaderboardRow
   , ilrEligibilityStatus :: Text
   , ilrEligibilityReason :: Maybe Text
   , ilrFundingIntegrityClear :: Bool
-  , ilrFinalPnlUsdc :: Maybe Integer
+  , ilrFinalPnlAssets :: Maybe Integer
   , ilrRoiBps :: Maybe Integer
-  , ilrStartingAccountValueUsdc :: Maybe Integer
-  , ilrCurrentAccountValueUsdc :: Maybe Integer
-  , ilrDepositsUsdc :: Integer
-  , ilrWithdrawalsUsdc :: Integer
-  , ilrManualAdjustmentsUsdc :: Integer
+  , ilrStartingAccountValueAssets :: Maybe Integer
+  , ilrCurrentAccountValueAssets :: Maybe Integer
+  , ilrDepositsAssets :: Integer
+  , ilrWithdrawalsAssets :: Integer
+  , ilrManualAdjustmentsAssets :: Integer
   , ilrActiveDays :: Int
-  , ilrVolumeUsdc :: Integer
+  , ilrVolumeAssets :: Integer
   , ilrExecutedTrades :: Integer
   , ilrLiquidations :: Integer
-  , ilrRealizedPnlUsdc :: Integer
+  , ilrRealizedPnlAssets :: Integer
   , ilrLatestSnapshotBlock :: Maybe Integer
   , ilrLatestSnapshotTimestamp :: Maybe Integer
   , ilrHasOpenPosition :: Maybe Bool
   , ilrLatestSnapshotKind :: Maybe Text
   , ilrPositionSide :: Maybe Text
   , ilrPositionSizeDelta :: Maybe Text
-  , ilrPositionMarginUsdc :: Maybe Text
+  , ilrPositionMarginAssets :: Maybe Text
   , ilrPositionEntryPrice :: Maybe Text
-  , ilrPositionUnrealizedPnlUsdc :: Maybe Text
+  , ilrPositionUnrealizedPnlAssets :: Maybe Text
   , ilrPositionLiquidatable :: Maybe Bool
   }
   deriving stock (Show, Eq)
@@ -457,10 +457,10 @@ data InsightsActivityRow = InsightsActivityRow
   , iarSide :: Maybe Int
   , iarPrice :: Maybe Integer
   , iarSizeDelta :: Maybe Integer
-  , iarAmountUsdc :: Maybe Integer
-  , iarPnlUsdc :: Maybe Integer
-  , iarExecutionFeeUsdc :: Maybe Integer
-  , iarVpiUsdc :: Maybe Integer
+  , iarAmountAssets :: Maybe Integer
+  , iarPnlAssets :: Maybe Integer
+  , iarExecutionFeeAssets :: Maybe Integer
+  , iarVpiAssets :: Maybe Integer
   , iarTxHash :: Text
   , iarBlockNumber :: Integer
   , iarTimestamp :: Integer
@@ -573,7 +573,7 @@ instance FromRow FinalizationCanonicalityTarget where
 
 integritySchemaSql :: Query
 integritySchemaSql = fromString $(do
-  let path = "config/migrations/insights-integrity-epoch-v1.sql"
+  let path = "config/migrations/insights-integrity-epoch-v2.sql"
   qAddDependentFile path
   runIO (readFile path) >>= lift)
 
@@ -589,11 +589,16 @@ snapshotBatchAccessIndexSql =
   \ ON insights_account_snapshots(competition_slug, snapshot_kind, block_number, wallet)"
 
 ensureInsightsSchema :: Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
-ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest = do
+ensureInsightsSchema conn rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest = do
+  legacyColumns <- query_ conn
+    "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name IN ('perps_orders','perps_account_activity','insights_competitions','insights_account_snapshots','insights_manual_adjustments','insights_finalized_standings','aa_close_assistance') AND (column_name ~ '_usdc$' OR column_name = 'usdc_address')) OR to_regclass('perps_usdc_transfers') IS NOT NULL"
+      :: IO [Only Bool]
+  unless (legacyColumns == [Only False]) $
+    fail "Legacy perps database identifiers require the explicit perps-settlement-assets-v1.sql migration before startup"
   let releaseBound = competitionReleaseIsBound rules releaseManifest
   when releaseBound $ do
     validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
-    validateOfficialAddress "PERPS_USDC" usdcAddress
+    validateOfficialAddress "PERPS_SETTLEMENT_TOKEN" settlementTokenAddress
     validateOfficialAddress "PERPS_MARGIN_CLEARINGHOUSE" marginClearinghouseAddress
     validateOfficialAddress "PERPS_ACCOUNT_LENS" accountLensAddress
   _ <- execute_ conn
@@ -602,7 +607,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ name TEXT NOT NULL,\
     \ chain_id BIGINT NOT NULL,\
     \ release_router TEXT NOT NULL,\
-    \ usdc_address TEXT NOT NULL,\
+    \ settlement_token_address TEXT NOT NULL,\
     \ margin_clearinghouse_address TEXT NOT NULL,\
     \ account_lens_address TEXT,\
     \ release_manifest TEXT,\
@@ -622,17 +627,17 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ start_snapshot_block_hash TEXT,\
     \ score_cutoff_block BIGINT,\
     \ score_cutoff_block_hash TEXT,\
-    \ starting_balance_usdc NUMERIC(78,0) NOT NULL,\
+    \ starting_balance_assets NUMERIC(78,0) NOT NULL,\
     \ minimum_profit_bps BIGINT NOT NULL,\
     \ minimum_active_days INTEGER NOT NULL,\
     \ fx_session_boundary_utc_minutes INTEGER NOT NULL DEFAULT 1320,\
     \ scoring_version TEXT NOT NULL,\
     \ rules_version TEXT NOT NULL,\
-    \ first_prize_usdc NUMERIC(78,0) NOT NULL,\
-    \ second_prize_usdc NUMERIC(78,0) NOT NULL,\
-    \ third_prize_usdc NUMERIC(78,0) NOT NULL,\
-    \ fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,\
-    \ fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,\
+    \ first_prize_assets NUMERIC(78,0) NOT NULL,\
+    \ second_prize_assets NUMERIC(78,0) NOT NULL,\
+    \ third_prize_assets NUMERIC(78,0) NOT NULL,\
+    \ fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,\
+    \ fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,\
     \ finalized BOOLEAN NOT NULL DEFAULT FALSE,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
@@ -653,7 +658,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \   registration_open_timestamp IS NULL OR NULLIF(BTRIM(privacy_notice_version), '') IS NOT NULL)\
     \ )"
   _ <- execute_ conn
-    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS usdc_address TEXT"
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS settlement_token_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS margin_clearinghouse_address TEXT"
   _ <- execute_ conn
@@ -683,9 +688,9 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS privacy_notice_version TEXT"
   _ <- execute_ conn
-    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0"
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0"
   _ <- execute_ conn
-    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0"
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fx_session_boundary_utc_minutes INTEGER"
   _ <- execute conn
@@ -728,27 +733,27 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \   CHECK (registration_open_timestamp IS NULL OR NULLIF(BTRIM(privacy_notice_version), '') IS NOT NULL);\
     \ END IF; END $$"
   _ <- execute conn
-    "UPDATE insights_competitions SET usdc_address = COALESCE(usdc_address, ?),\
+    "UPDATE insights_competitions SET settlement_token_address = COALESCE(settlement_token_address, ?),\
     \ margin_clearinghouse_address = COALESCE(margin_clearinghouse_address, ?)\
-    \ WHERE slug = ? AND (usdc_address IS NULL OR margin_clearinghouse_address IS NULL)"
-    (julyUsdcAddress, julyMarginClearinghouseAddress, july2026CompetitionSlug)
+    \ WHERE slug = ? AND (settlement_token_address IS NULL OR margin_clearinghouse_address IS NULL)"
+    (julySettlementTokenAddress, julyMarginClearinghouseAddress, july2026CompetitionSlug)
   _ <- execute conn
-    "UPDATE insights_competitions SET usdc_address = COALESCE(usdc_address, ?),\
+    "UPDATE insights_competitions SET settlement_token_address = COALESCE(settlement_token_address, ?),\
     \ margin_clearinghouse_address = COALESCE(margin_clearinghouse_address, ?)\
     \ WHERE slug = ? AND LOWER(release_router) = LOWER(?)\
-    \ AND (usdc_address IS NULL OR margin_clearinghouse_address IS NULL)"
-    ( normalizeAddress usdcAddress
+    \ AND (settlement_token_address IS NULL OR margin_clearinghouse_address IS NULL)"
+    ( normalizeAddress settlementTokenAddress
     , normalizeAddress marginClearinghouseAddress
     , crSlug rules
     , normalizeAddress releaseRouter
     )
   unresolvedAddressRows <- query_ conn
     "SELECT slug FROM insights_competitions\
-    \ WHERE usdc_address IS NULL OR margin_clearinghouse_address IS NULL"
+    \ WHERE settlement_token_address IS NULL OR margin_clearinghouse_address IS NULL"
   unless (null (unresolvedAddressRows :: [Only Text])) $
     ioError $ userError "Insights competition address migration found an unknown release; migrate that immutable row explicitly before startup"
   _ <- execute_ conn
-    "ALTER TABLE insights_competitions ALTER COLUMN usdc_address SET NOT NULL"
+    "ALTER TABLE insights_competitions ALTER COLUMN settlement_token_address SET NOT NULL"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ALTER COLUMN margin_clearinghouse_address SET NOT NULL"
   _ <- execute_ conn
@@ -799,9 +804,9 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ block_hash TEXT NOT NULL,\
     \ timestamp BIGINT NOT NULL,\
     \ has_open_position BOOLEAN NOT NULL,\
-    \ signed_net_equity_usdc NUMERIC(78,0) NOT NULL,\
-    \ terminal_reachable_usdc NUMERIC(78,0) NOT NULL,\
-    \ trader_claims_usdc NUMERIC(78,0) NOT NULL,\
+    \ signed_net_equity_assets NUMERIC(78,0) NOT NULL,\
+    \ terminal_reachable_assets NUMERIC(78,0) NOT NULL,\
+    \ trader_claims_assets NUMERIC(78,0) NOT NULL,\
     \ raw_data JSONB NOT NULL,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
@@ -840,7 +845,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ id BIGSERIAL PRIMARY KEY,\
     \ competition_slug TEXT NOT NULL,\
     \ wallet VARCHAR(42) NOT NULL,\
-    \ amount_usdc NUMERIC(78,0) NOT NULL,\
+    \ amount_assets NUMERIC(78,0) NOT NULL,\
     \ reason TEXT NOT NULL,\
     \ created_by TEXT NOT NULL,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
@@ -879,13 +884,13 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
     \ competition_rank BIGINT, prize_place BIGINT, prize_tie_count BIGINT,\
     \ wallet VARCHAR(42) NOT NULL, alias TEXT, eligibility_status TEXT NOT NULL, eligibility_reason TEXT,\
-    \ funding_integrity_clear BOOLEAN NOT NULL, final_pnl_usdc NUMERIC(78,0), roi_bps BIGINT,\
-    \ starting_value_usdc NUMERIC(78,0), current_value_usdc NUMERIC(78,0),\
-    \ deposits_usdc NUMERIC(78,0) NOT NULL, withdrawals_usdc NUMERIC(78,0) NOT NULL, adjustment_usdc NUMERIC(78,0) NOT NULL,\
-    \ active_days INTEGER NOT NULL, volume_usdc NUMERIC(78,0) NOT NULL, executed_trades BIGINT NOT NULL,\
-    \ liquidations BIGINT NOT NULL, realized_pnl_usdc NUMERIC(78,0) NOT NULL, block_number BIGINT, timestamp BIGINT,\
+    \ funding_integrity_clear BOOLEAN NOT NULL, final_pnl_assets NUMERIC(78,0), roi_bps BIGINT,\
+    \ starting_value_assets NUMERIC(78,0), current_value_assets NUMERIC(78,0),\
+    \ deposits_assets NUMERIC(78,0) NOT NULL, withdrawals_assets NUMERIC(78,0) NOT NULL, adjustment_assets NUMERIC(78,0) NOT NULL,\
+    \ active_days INTEGER NOT NULL, volume_assets NUMERIC(78,0) NOT NULL, executed_trades BIGINT NOT NULL,\
+    \ liquidations BIGINT NOT NULL, realized_pnl_assets NUMERIC(78,0) NOT NULL, block_number BIGINT, timestamp BIGINT,\
     \ has_open_position BOOLEAN, snapshot_kind TEXT, position_side TEXT, position_size_delta TEXT,\
-    \ position_margin_usdc TEXT, position_entry_price TEXT, position_unrealized_pnl_usdc TEXT, position_liquidatable BOOLEAN,\
+    \ position_margin_assets TEXT, position_entry_price TEXT, position_unrealized_pnl_assets TEXT, position_liquidatable BOOLEAN,\
     \ materialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (competition_slug, wallet)\
     \ )"
   -- Funding-integrity review consumes the immutable wallet-completion proof
@@ -909,7 +914,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     , competitionReleaseManifestText julyReleaseManifest
     , july2026CompetitionSlug
     )
-  seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest
+  seedCompetition conn rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest
   unresolvedLensRows <- query_ conn
     "SELECT slug FROM insights_competitions WHERE account_lens_address IS NULL OR release_manifest IS NULL"
   unless (null (unresolvedLensRows :: [Only Text])) $
@@ -931,8 +936,8 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ SELECT COUNT(*)::integer FROM insights_account_snapshots s\
     \ WHERE s.competition_slug = b.competition_slug AND s.snapshot_kind = b.snapshot_kind\
     \ AND s.block_number = b.block_number AND LOWER(s.block_hash) = LOWER(b.block_hash)\
-    \ AND (s.has_open_position OR s.signed_net_equity_usdc <> 0\
-    \   OR s.terminal_reachable_usdc <> 0 OR s.trader_claims_usdc <> 0))\
+    \ AND (s.has_open_position OR s.signed_net_equity_assets <> 0\
+    \   OR s.terminal_reachable_assets <> 0 OR s.trader_claims_assets <> 0))\
     \ WHERE b.account_state_count IS NULL"
   _ <- execute_ conn
     "ALTER TABLE insights_snapshot_batches ALTER COLUMN account_lens_address SET NOT NULL"
@@ -966,14 +971,14 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
   pure ()
 
 seedCompetition :: Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
-seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest =
+seedCompetition conn rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest =
   withTransaction conn $ do
     let releaseBound = competitionReleaseIsBound rules releaseManifest
         pendingAddress = "0x0000000000000000000000000000000000000000"
-        (seedRouter, seedUsdc, seedClearinghouse, seedLens, seedManifest)
+        (seedRouter, seedAssets, seedClearinghouse, seedLens, seedManifest)
           | releaseBound =
               ( releaseRouter
-              , usdcAddress
+              , settlementTokenAddress
               , marginClearinghouseAddress
               , accountLensAddress
               , releaseManifest
@@ -985,7 +990,7 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
               , pendingAddress
               , releaseManifest
                   { crmReleaseId = "release-pending"
-                  , crmUsdc = pendingAddress
+                  , crmSettlementToken = pendingAddress
                   , crmOrderRouter = pendingAddress
                   , crmMarginClearinghouse = pendingAddress
                   , crmAccountLens = pendingAddress
@@ -1015,7 +1020,7 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
             rules
             chainId
             seedRouter
-            seedUsdc
+            seedAssets
             seedClearinghouse
             seedLens
             seedManifest
@@ -1026,12 +1031,12 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
         insertedExpected = if releaseBound then expected else pendingExpected
     _ <- execute conn
       "INSERT INTO insights_competitions (\
-      \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, release_manifest,\
+      \ slug, name, chain_id, release_router, settlement_token_address, margin_clearinghouse_address, account_lens_address, release_manifest,\
       \ start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
       \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp,\
-      \ minimum_x_account_age_days, target_x_handle, starting_balance_usdc,\
+      \ minimum_x_account_age_days, target_x_handle, starting_balance_assets,\
       \ minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
-      \ first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc, release_bound_at)\
+      \ first_prize_assets, second_prize_assets, third_prize_assets, fourth_prize_assets, fifth_prize_assets, release_bound_at)\
       \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,\
       \ NULL,\
       \ ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN NOW() ELSE NULL END)\
@@ -1081,7 +1086,7 @@ bindPendingCompetitionRelease conn expected = do
           && csmReleaseManifest expected == competitionReleaseManifestText september2026ReleaseManifest
           && csmStartTimestamp expected >= Manifest.releaseVolumeHistoryStartTimestamp
   affected <- execute conn
-    "UPDATE insights_competitions SET release_router = ?, usdc_address = ?,\
+    "UPDATE insights_competitions SET release_router = ?, settlement_token_address = ?,\
     \ margin_clearinghouse_address = ?, account_lens_address = ?, release_manifest = ?,\
     \ release_bound_at = NOW(), updated_at = NOW()\
     \ WHERE slug = ? AND release_bound_at IS NULL AND NOT finalized\
@@ -1091,7 +1096,7 @@ bindPendingCompetitionRelease conn expected = do
     \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
     \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)"
     ( csmReleaseRouter expected
-    , csmUsdcAddress expected
+    , csmSettlementTokenAddress expected
     , csmMarginClearinghouseAddress expected
     , csmAccountLensAddress expected
     , csmReleaseManifest expected
@@ -1118,7 +1123,7 @@ validateCompetitionRulesSeed expected stored =
     isReleaseMismatch mismatch =
       csmmField mismatch
         `elem` [ "release_router"
-               , "usdc_address"
+               , "settlement_token_address"
                , "margin_clearinghouse_address"
                , "account_lens_address"
                , "release_manifest"
@@ -1159,13 +1164,13 @@ competitionSeedMetadataFor
   -> Text
   -> CompetitionReleaseManifest
   -> CompetitionSeedMetadata
-competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest =
+competitionSeedMetadataFor rules chainId releaseRouter settlementTokenAddress marginClearinghouseAddress accountLensAddress releaseManifest =
   CompetitionSeedMetadata
     { csmSlug = crSlug rules
     , csmName = crName rules
     , csmChainId = chainId
     , csmReleaseRouter = normalizeAddress releaseRouter
-    , csmUsdcAddress = normalizeAddress usdcAddress
+    , csmSettlementTokenAddress = normalizeAddress settlementTokenAddress
     , csmMarginClearinghouseAddress = normalizeAddress marginClearinghouseAddress
     , csmAccountLensAddress = normalizeAddress accountLensAddress
     , csmReleaseManifest = competitionReleaseManifestText releaseManifest
@@ -1174,7 +1179,7 @@ competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearin
     , csmScoreCutoffTimestamp = epoch $ crScoreCutoffAt rules
     , csmResultsTimestamp = epoch $ crResultsAt rules
     , csmPaymentDeadlineTimestamp = epoch $ crPaymentDeadlineAt rules
-    , csmStartingBalanceUsdc = crStartingBalanceUsdc rules
+    , csmStartingBalanceAssets = crStartingBalanceAssets rules
     , csmMinimumProfitBps = crLegacyMinimumProfitBps rules
     , csmMinimumActiveDays = crMinimumActiveDays rules
     , csmFxSessionBoundaryUtcMinutes = crFxSessionBoundaryUtcMinutes rules
@@ -1183,11 +1188,11 @@ competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearin
     , csmTargetXHandle = crTargetXHandle rules
     , csmScoringVersion = crScoringVersion rules
     , csmRulesVersion = crRulesVersion rules
-    , csmFirstPrizeUsdc = prizeAt 0 rules
-    , csmSecondPrizeUsdc = prizeAt 1 rules
-    , csmThirdPrizeUsdc = prizeAt 2 rules
-    , csmFourthPrizeUsdc = prizeAt 3 rules
-    , csmFifthPrizeUsdc = prizeAt 4 rules
+    , csmFirstPrizeAssets = prizeAt 0 rules
+    , csmSecondPrizeAssets = prizeAt 1 rules
+    , csmThirdPrizeAssets = prizeAt 2 rules
+    , csmFourthPrizeAssets = prizeAt 3 rules
+    , csmFifthPrizeAssets = prizeAt 4 rules
     }
 
 competitionSeedMismatches
@@ -1199,7 +1204,7 @@ competitionSeedMismatches expected stored = concat
   , mismatch "name" csmName
   , mismatchShow "chain_id" csmChainId
   , mismatch "release_router" csmReleaseRouter
-  , mismatch "usdc_address" csmUsdcAddress
+  , mismatch "settlement_token_address" csmSettlementTokenAddress
   , mismatch "margin_clearinghouse_address" csmMarginClearinghouseAddress
   , mismatch "account_lens_address" csmAccountLensAddress
   , mismatch "release_manifest" csmReleaseManifest
@@ -1208,7 +1213,7 @@ competitionSeedMismatches expected stored = concat
   , mismatchShow "score_cutoff_timestamp" csmScoreCutoffTimestamp
   , mismatchShow "results_timestamp" csmResultsTimestamp
   , mismatchShow "payment_deadline_timestamp" csmPaymentDeadlineTimestamp
-  , mismatchShow "starting_balance_usdc" csmStartingBalanceUsdc
+  , mismatchShow "starting_balance_assets" csmStartingBalanceAssets
   , mismatchShow "minimum_profit_bps" csmMinimumProfitBps
   , mismatchShow "minimum_active_days" csmMinimumActiveDays
   , mismatchShow "fx_session_boundary_utc_minutes" csmFxSessionBoundaryUtcMinutes
@@ -1217,11 +1222,11 @@ competitionSeedMismatches expected stored = concat
   , mismatchShow "target_x_handle" csmTargetXHandle
   , mismatch "scoring_version" csmScoringVersion
   , mismatch "rules_version" csmRulesVersion
-  , mismatchShow "first_prize_usdc" csmFirstPrizeUsdc
-  , mismatchShow "second_prize_usdc" csmSecondPrizeUsdc
-  , mismatchShow "third_prize_usdc" csmThirdPrizeUsdc
-  , mismatchShow "fourth_prize_usdc" csmFourthPrizeUsdc
-  , mismatchShow "fifth_prize_usdc" csmFifthPrizeUsdc
+  , mismatchShow "first_prize_assets" csmFirstPrizeAssets
+  , mismatchShow "second_prize_assets" csmSecondPrizeAssets
+  , mismatchShow "third_prize_assets" csmThirdPrizeAssets
+  , mismatchShow "fourth_prize_assets" csmFourthPrizeAssets
+  , mismatchShow "fifth_prize_assets" csmFifthPrizeAssets
   ]
   where
     mismatch fieldName getter
@@ -1303,23 +1308,23 @@ isLegacySeptemberPrizeOnlyMismatch expected stored =
   csmSlug expected == september2026CompetitionSlug
     && csmSlug stored == september2026CompetitionSlug
     && prizeAmounts expected
-      == map (* usdcScale) [600, 500, 400, 300, 200]
+      == map (* assetScale) [600, 500, 400, 300, 200]
     && prizeAmounts stored
-      == map (* usdcScale) [600, 300, 100, 0, 0]
+      == map (* assetScale) [600, 300, 100, 0, 0]
     && map csmmField (competitionSeedMismatches expected stored)
-      == [ "second_prize_usdc"
-         , "third_prize_usdc"
-         , "fourth_prize_usdc"
-         , "fifth_prize_usdc"
+      == [ "second_prize_assets"
+         , "third_prize_assets"
+         , "fourth_prize_assets"
+         , "fifth_prize_assets"
          ]
   where
-    usdcScale = 1_000_000
+    assetScale = 1_000_000
     prizeAmounts metadata =
-      [ csmFirstPrizeUsdc metadata
-      , csmSecondPrizeUsdc metadata
-      , csmThirdPrizeUsdc metadata
-      , csmFourthPrizeUsdc metadata
-      , csmFifthPrizeUsdc metadata
+      [ csmFirstPrizeAssets metadata
+      , csmSecondPrizeAssets metadata
+      , csmThirdPrizeAssets metadata
+      , csmFourthPrizeAssets metadata
+      , csmFifthPrizeAssets metadata
       ]
 
 -- This is the X-account age requirement used by the pre-launch September
@@ -1354,10 +1359,10 @@ isLegacySeptemberPrizeAndXAccountAgeMismatch expected stored =
     && csmMinimumXAccountAgeDays stored == Just 90
     && map csmmField (competitionSeedMismatches expected stored)
       == [ "minimum_x_account_age_days"
-         , "second_prize_usdc"
-         , "third_prize_usdc"
-         , "fourth_prize_usdc"
-         , "fifth_prize_usdc"
+         , "second_prize_assets"
+         , "third_prize_assets"
+         , "fourth_prize_assets"
+         , "fifth_prize_assets"
          ]
 
 validateOrMigrateCompetitionSeed
@@ -1405,17 +1410,17 @@ validateOrMigrateCompetitionSeed conn expected stored =
             [Only True] -> do
               affected <- execute conn
                 "UPDATE insights_competitions SET minimum_x_account_age_days = ?,\
-                \ first_prize_usdc = ?, second_prize_usdc = ?, third_prize_usdc = ?,\
-                \ fourth_prize_usdc = ?, fifth_prize_usdc = ?, updated_at = NOW()\
+                \ first_prize_assets = ?, second_prize_assets = ?, third_prize_assets = ?,\
+                \ fourth_prize_assets = ?, fifth_prize_assets = ?, updated_at = NOW()\
                 \ WHERE slug = ? AND minimum_x_account_age_days = 90\
-                \ AND first_prize_usdc = 600000000 AND second_prize_usdc = 300000000\
-                \ AND third_prize_usdc = 100000000 AND fourth_prize_usdc = 0 AND fifth_prize_usdc = 0"
+                \ AND first_prize_assets = 600000000 AND second_prize_assets = 300000000\
+                \ AND third_prize_assets = 100000000 AND fourth_prize_assets = 0 AND fifth_prize_assets = 0"
                 ( csmMinimumXAccountAgeDays expected
-                , csmFirstPrizeUsdc expected
-                , csmSecondPrizeUsdc expected
-                , csmThirdPrizeUsdc expected
-                , csmFourthPrizeUsdc expected
-                , csmFifthPrizeUsdc expected
+                , csmFirstPrizeAssets expected
+                , csmSecondPrizeAssets expected
+                , csmThirdPrizeAssets expected
+                , csmFourthPrizeAssets expected
+                , csmFifthPrizeAssets expected
                 , csmSlug expected
                 )
               unless (affected == 1) $
@@ -1438,15 +1443,15 @@ validateOrMigrateCompetitionSeed conn expected stored =
           case safeRows of
             [Only True] -> do
               affected <- execute conn
-                "UPDATE insights_competitions SET first_prize_usdc = ?, second_prize_usdc = ?,\
-                \ third_prize_usdc = ?, fourth_prize_usdc = ?, fifth_prize_usdc = ?, updated_at = NOW()\
-                \ WHERE slug = ? AND first_prize_usdc = ? AND second_prize_usdc = ?\
-                \ AND third_prize_usdc = ? AND fourth_prize_usdc = 0 AND fifth_prize_usdc = 0"
-                ( csmFirstPrizeUsdc expected
-                , csmSecondPrizeUsdc expected
-                , csmThirdPrizeUsdc expected
-                , csmFourthPrizeUsdc expected
-                , csmFifthPrizeUsdc expected
+                "UPDATE insights_competitions SET first_prize_assets = ?, second_prize_assets = ?,\
+                \ third_prize_assets = ?, fourth_prize_assets = ?, fifth_prize_assets = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND first_prize_assets = ? AND second_prize_assets = ?\
+                \ AND third_prize_assets = ? AND fourth_prize_assets = 0 AND fifth_prize_assets = 0"
+                ( csmFirstPrizeAssets expected
+                , csmSecondPrizeAssets expected
+                , csmThirdPrizeAssets expected
+                , csmFourthPrizeAssets expected
+                , csmFifthPrizeAssets expected
                 , csmSlug expected
                 , 600_000_000 :: Integer
                 , 300_000_000 :: Integer
@@ -2058,9 +2063,9 @@ accountSnapshotParameters AccountSnapshotInput {..} =
       , normalizeAddress asiBlockHash
       , asiTimestamp
       , esHasOpenPosition
-      , esSignedNetEquityUsdc
-      , esTerminalReachableUsdc
-      , esTraderClaimsUsdc
+      , esSignedNetEquityAssets
+      , esTerminalReachableAssets
+      , esTraderClaimsAssets
       , encode asiRawData
       )
 
@@ -2068,16 +2073,16 @@ accountSnapshotStageInsertQuery :: Query
 accountSnapshotStageInsertQuery =
   "INSERT INTO pg_temp.insights_snapshot_stage (\
   \ competition_slug, wallet, snapshot_kind, chain_id, release_router, block_number,\
-  \ block_hash, timestamp, has_open_position, signed_net_equity_usdc,\
-  \ terminal_reachable_usdc, trader_claims_usdc, raw_data)\
+  \ block_hash, timestamp, has_open_position, signed_net_equity_assets,\
+  \ terminal_reachable_assets, trader_claims_assets, raw_data)\
   \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 accountSnapshotPublishQuery :: Query
 accountSnapshotPublishQuery =
   "INSERT INTO insights_account_snapshots (competition_slug,wallet,snapshot_kind,chain_id,release_router,\
-  \ block_number,block_hash,timestamp,has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data)\
+  \ block_number,block_hash,timestamp,has_open_position,signed_net_equity_assets,terminal_reachable_assets,trader_claims_assets,raw_data)\
   \ SELECT competition_slug,wallet,snapshot_kind,chain_id,release_router,block_number,block_hash,timestamp,\
-  \ has_open_position,signed_net_equity_usdc,terminal_reachable_usdc,trader_claims_usdc,raw_data\
+  \ has_open_position,signed_net_equity_assets,terminal_reachable_assets,trader_claims_assets,raw_data\
   \ FROM pg_temp.insights_snapshot_stage"
 
 accountSnapshotConflictQuery :: Query
@@ -2086,17 +2091,17 @@ accountSnapshotConflictQuery =
   \ chain_id = EXCLUDED.chain_id,\
   \ release_router = EXCLUDED.release_router, block_hash = EXCLUDED.block_hash,\
   \ timestamp = EXCLUDED.timestamp, has_open_position = EXCLUDED.has_open_position,\
-  \ signed_net_equity_usdc = EXCLUDED.signed_net_equity_usdc,\
-  \ terminal_reachable_usdc = EXCLUDED.terminal_reachable_usdc,\
-  \ trader_claims_usdc = EXCLUDED.trader_claims_usdc, raw_data = EXCLUDED.raw_data,\
+  \ signed_net_equity_assets = EXCLUDED.signed_net_equity_assets,\
+  \ terminal_reachable_assets = EXCLUDED.terminal_reachable_assets,\
+  \ trader_claims_assets = EXCLUDED.trader_claims_assets, raw_data = EXCLUDED.raw_data,\
   \ updated_at = NOW()\
   \ WHERE ROW(insights_account_snapshots.chain_id,insights_account_snapshots.release_router,\
   \ insights_account_snapshots.block_hash,insights_account_snapshots.timestamp,insights_account_snapshots.has_open_position,\
-  \ insights_account_snapshots.signed_net_equity_usdc,insights_account_snapshots.terminal_reachable_usdc,\
-  \ insights_account_snapshots.trader_claims_usdc,insights_account_snapshots.raw_data)\
+  \ insights_account_snapshots.signed_net_equity_assets,insights_account_snapshots.terminal_reachable_assets,\
+  \ insights_account_snapshots.trader_claims_assets,insights_account_snapshots.raw_data)\
   \ IS DISTINCT FROM ROW(EXCLUDED.chain_id,EXCLUDED.release_router,EXCLUDED.block_hash,EXCLUDED.timestamp,\
-  \ EXCLUDED.has_open_position,EXCLUDED.signed_net_equity_usdc,EXCLUDED.terminal_reachable_usdc,\
-  \ EXCLUDED.trader_claims_usdc,EXCLUDED.raw_data)"
+  \ EXCLUDED.has_open_position,EXCLUDED.signed_net_equity_assets,EXCLUDED.terminal_reachable_assets,\
+  \ EXCLUDED.trader_claims_assets,EXCLUDED.raw_data)"
 
 publishAccountSnapshotBatch :: Connection -> [AccountSnapshotInput] -> IO ()
 publishAccountSnapshotBatch conn snapshots = void $ publishAccountSnapshotBatchMeasured conn snapshots
@@ -2263,9 +2268,9 @@ getSnapshotPublicationHealth conn slug = withTransaction conn $ do
 equityHasAccountState :: EquitySnapshot -> Bool
 equityHasAccountState EquitySnapshot {..} =
   esHasOpenPosition
-    || esSignedNetEquityUsdc /= 0
-    || esTerminalReachableUsdc /= 0
-    || esTraderClaimsUsdc /= 0
+    || esSignedNetEquityAssets /= 0
+    || esTerminalReachableAssets /= 0
+    || esTraderClaimsAssets /= 0
 
 hasCompleteAccountSnapshotBatch
   :: Connection
@@ -2405,7 +2410,7 @@ insertManualAdjustment
   -> Text
   -> Text
   -> IO (Maybe Integer)
-insertManualAdjustment conn slug wallet amountUsdc reason createdBy = do
+insertManualAdjustment conn slug wallet amountAssets reason createdBy = do
   withTransaction conn $ do
     mutable <- competitionIsMutableForUpdate conn slug
     if not mutable
@@ -2413,9 +2418,9 @@ insertManualAdjustment conn slug wallet amountUsdc reason createdBy = do
       else do
         rows <- query conn
           "INSERT INTO insights_manual_adjustments\
-          \ (competition_slug, wallet, amount_usdc, reason, created_by)\
+          \ (competition_slug, wallet, amount_assets, reason, created_by)\
           \ VALUES (?, ?, ?, ?, ?) RETURNING id"
-          (slug, normalizeAddress wallet, amountUsdc, reason, createdBy)
+          (slug, normalizeAddress wallet, amountAssets, reason, createdBy)
         pure $ case rows of
           [Only adjustmentId] -> Just adjustmentId
           _ -> Nothing
@@ -2470,7 +2475,7 @@ getCompetitionLeaderboard conn slug requestedSearch limitRows offsetRows =
                 <> leaderboardOrderBy)
               (slug, pattern, pattern, limitRows, offsetRows)
     False -> do
-      profitThreshold <- competitionMinimumProfitUsdc slug
+      profitThreshold <- competitionMinimumProfitAssets slug
       case normalizeLeaderboardSearch requestedSearch of
         Nothing ->
           query conn
@@ -2493,16 +2498,16 @@ getCompetitionWallet conn slug wallet = do
       (finalizedStandingsSelect <> " WHERE competition_slug = ? AND wallet = ? LIMIT 1")
       (slug, normalizeAddress wallet)
     else do
-      profitThreshold <- competitionMinimumProfitUsdc slug
+      profitThreshold <- competitionMinimumProfitAssets slug
       query conn
         (leaderboardQuery <> " WHERE wallet = ? LIMIT 1")
         (profitThreshold, slug, normalizeAddress wallet)
   pure $ firstRow rows
 
-competitionMinimumProfitUsdc :: Text -> IO Integer
-competitionMinimumProfitUsdc slug =
+competitionMinimumProfitAssets :: Text -> IO Integer
+competitionMinimumProfitAssets slug =
   case competitionRulesForSlug slug of
-    Just rules -> pure $ minimumProfitUsdc rules
+    Just rules -> pure $ minimumProfitAssets rules
     Nothing -> ioError $ userError $
       "Insights competition rules are not defined in code for slug " <> T.unpack slug
 
@@ -2617,8 +2622,8 @@ fundingIntegrityCtes =
   \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
   \ ORDER BY b.published_at DESC LIMIT 1\
   \ ), baseline AS MATERIALIZED (\
-  \ SELECT s.wallet, GREATEST(0, CASE WHEN s.has_open_position THEN s.signed_net_equity_usdc\
-  \  ELSE s.terminal_reachable_usdc END + s.trader_claims_usdc) AS value_usdc,\
+  \ SELECT s.wallet, GREATEST(0, CASE WHEN s.has_open_position THEN s.signed_net_equity_assets\
+  \  ELSE s.terminal_reachable_assets END + s.trader_claims_assets) AS value_assets,\
   \ s.has_open_position, COALESCE(NULLIF(s.raw_data->>'pendingOrderCount', '')::integer, 0) AS pending_order_count,\
   \ s.block_number AS baseline_block FROM start_batch b\
   \ CROSS JOIN LATERAL (SELECT snapshot.* FROM insights_account_snapshots snapshot\
@@ -2626,11 +2631,11 @@ fundingIntegrityCtes =
   \ AND snapshot.block_number=b.block_number AND LOWER(snapshot.block_hash)=LOWER(b.block_hash) OFFSET 0) s\
   \ ), roster AS MATERIALIZED (\
   \ SELECT p.wallet, p.trader_reference, t.slug, t.chain_id, t.release_router, t.configured_start_block,\
-  \ t.usdc_address, t.margin_clearinghouse_address, t.starting_balance_usdc, t.start_timestamp,\
+  \ t.settlement_token_address, t.margin_clearinghouse_address, t.starting_balance_assets, t.start_timestamp,\
   \ t.score_cutoff_timestamp, t.registration_close_timestamp\
   \ FROM insights_competition_participants p JOIN target t ON t.slug=p.competition_slug\
   \ ), participants AS NOT MATERIALIZED (\
-  \ SELECT r.*, b.value_usdc, COALESCE(b.has_open_position,FALSE) AS has_open_position,\
+  \ SELECT r.*, b.value_assets, COALESCE(b.has_open_position,FALSE) AS has_open_position,\
   \ COALESCE(b.pending_order_count,0) AS pending_order_count,b.baseline_block,\
   \ (r.registration_close_timestamp IS NULL OR app.registration_id IS NOT NULL) AS verified_registration\
   \ FROM roster r LEFT JOIN baseline b ON b.wallet=r.wallet\
@@ -2639,12 +2644,12 @@ fundingIntegrityCtes =
   \ ), canonical_mints AS (\
   \ SELECT p.wallet, x.tx_hash, x.block_number, x.block_hash, x.tx_index, x.log_index\
   \ FROM roster p JOIN testnet_faucet_claims fc\
-  \  ON LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(p.usdc_address)\
-  \ JOIN perps_usdc_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
-  \  AND LOWER(x.token_address) = LOWER(p.usdc_address) AND LOWER(x.tx_hash) = LOWER(fc.tx_hash)\
+  \  ON LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(p.settlement_token_address)\
+  \ JOIN perps_asset_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
+  \  AND LOWER(x.token_address) = LOWER(p.settlement_token_address) AND LOWER(x.tx_hash) = LOWER(fc.tx_hash)\
   \  AND x.block_number = fc.mint_block_number AND x.from_address = '0x0000000000000000000000000000000000000000'\
-  \  AND LOWER(x.to_address) = LOWER(p.wallet) AND x.amount = p.starting_balance_usdc\
-  \ WHERE fc.status = 'success' AND fc.amount = p.starting_balance_usdc\
+  \  AND LOWER(x.to_address) = LOWER(p.wallet) AND x.amount = p.starting_balance_assets\
+  \ WHERE fc.status = 'success' AND fc.amount = p.starting_balance_assets\
   \  AND NULLIF(BTRIM(fc.tx_hash), '') IS NOT NULL AND fc.mint_block_number IS NOT NULL\
   \  AND x.block_number >= p.configured_start_block AND x.timestamp < p.score_cutoff_timestamp\
   \ ), mint_counts AS (\
@@ -2656,52 +2661,52 @@ fundingIntegrityCtes =
   \ ), transfer_matches AS MATERIALIZED (\
   \ SELECT x.tx_hash COLLATE \"C\" AS tx_hash, x.block_number, x.block_hash COLLATE \"C\" AS block_hash,\
   \ x.amount, LOWER(x.from_address) COLLATE \"C\" AS from_address, LOWER(x.to_address) COLLATE \"C\" AS to_address, MIN(x.log_index) AS transfer_log_index, COUNT(*) AS transfer_count\
-  \ FROM perps_usdc_transfers x JOIN target t ON t.chain_id=x.chain_id AND t.release_router=x.release_router\
-  \ AND LOWER(x.token_address)=LOWER(t.usdc_address)\
+  \ FROM perps_asset_transfers x JOIN target t ON t.chain_id=x.chain_id AND t.release_router=x.release_router\
+  \ AND LOWER(x.token_address)=LOWER(t.settlement_token_address)\
   \ GROUP BY x.tx_hash COLLATE \"C\",x.block_number,x.block_hash COLLATE \"C\",x.amount,LOWER(x.from_address) COLLATE \"C\",LOWER(x.to_address) COLLATE \"C\"\
   \ ), flow_peers AS MATERIALIZED (\
-  \ SELECT account,activity_type,tx_hash,block_number,block_hash,amount_usdc,\
+  \ SELECT account,activity_type,tx_hash,block_number,block_hash,amount_assets,\
   \ COUNT(*) FILTER (WHERE canonical_emitter) AS peer_count FROM (\
   \ SELECT peer.account COLLATE \"C\" AS account,peer.activity_type COLLATE \"C\" AS activity_type,\
-  \ peer.tx_hash COLLATE \"C\" AS tx_hash,peer.block_number,peer.block_hash COLLATE \"C\" AS block_hash,peer.amount_usdc,\
+  \ peer.tx_hash COLLATE \"C\" AS tx_hash,peer.block_number,peer.block_hash COLLATE \"C\" AS block_hash,peer.amount_assets,\
   \ (LOWER(COALESCE(peer.contract_address,''))=LOWER(t.margin_clearinghouse_address)\
-  \ AND LOWER(COALESCE(peer.data->>'asset',''))=LOWER(t.usdc_address)) AS canonical_emitter\
+  \ AND LOWER(COALESCE(peer.data->>'asset',''))=LOWER(t.settlement_token_address)) AS canonical_emitter\
   \ FROM perps_account_activity peer JOIN target t ON t.chain_id=peer.chain_id AND t.release_router=peer.release_router\
   \ WHERE peer.activity_type IN ('Deposit','Withdraw') OFFSET 0) evidence\
-  \ GROUP BY account,activity_type,tx_hash,block_number,block_hash,amount_usdc\
+  \ GROUP BY account,activity_type,tx_hash,block_number,block_hash,amount_assets\
   \ ), funding_activity AS MATERIALIZED (\
-  \ SELECT a.account,a.activity_type,a.amount_usdc,a.tx_hash,a.block_number,a.block_hash,a.tx_index,a.log_index,\
+  \ SELECT a.account,a.activity_type,a.amount_assets,a.tx_hash,a.block_number,a.block_hash,a.tx_index,a.log_index,\
   \ (LOWER(COALESCE(a.contract_address,''))=LOWER(t.margin_clearinghouse_address)\
-  \ AND LOWER(COALESCE(a.data->>'asset',''))=LOWER(t.usdc_address) AND a.amount_usdc>0) AS canonical_emitter\
+  \ AND LOWER(COALESCE(a.data->>'asset',''))=LOWER(t.settlement_token_address) AND a.amount_assets>0) AS canonical_emitter\
   \ FROM perps_account_activity a JOIN target t ON a.chain_id=t.chain_id AND a.release_router=t.release_router\
   \ WHERE a.activity_type IN ('Deposit','Withdraw') AND a.block_number>=t.configured_start_block\
   \ AND a.timestamp<t.score_cutoff_timestamp\
   \ ), close_assistance AS MATERIALIZED (\
-  \ SELECT DISTINCT g.account,g.transaction_hash,g.block_number,g.block_hash,g.deposit_log_index,g.amount_usdc\
+  \ SELECT DISTINCT g.account,g.transaction_hash,g.block_number,g.block_hash,g.deposit_log_index,g.amount_assets\
   \ FROM aa_close_assistance g JOIN target t ON g.chain_id=t.chain_id AND g.router=t.release_router WHERE g.verified\
   \ ), flow_rows AS (\
-  \ SELECT p.wallet, a.activity_type, a.amount_usdc, a.tx_hash, a.block_number, a.block_hash, (assistance.account IS NOT NULL) AS close_assistance,\
-  \ a.tx_index, a.log_index, matches.transfer_log_index, p.starting_balance_usdc, mc.mint_count, mc.first_event[1] AS mint_block, mc.first_event[2] AS mint_tx, mc.first_event[3] AS mint_log, baseline.baseline_block,\
+  \ SELECT p.wallet, a.activity_type, a.amount_assets, a.tx_hash, a.block_number, a.block_hash, (assistance.account IS NOT NULL) AS close_assistance,\
+  \ a.tx_index, a.log_index, matches.transfer_log_index, p.starting_balance_assets, mc.mint_count, mc.first_event[1] AS mint_block, mc.first_event[2] AS mint_tx, mc.first_event[3] AS mint_log, baseline.baseline_block,\
   \ (a.canonical_emitter\
   \  AND COALESCE(matches.transfer_count, 0) = 1\
   \  AND COALESCE(peers.peer_count, 0) = 1 OR (assistance.account IS NOT NULL)) AS verified\
   \ FROM roster p JOIN funding_activity a ON a.account = p.wallet\
   \ LEFT JOIN close_assistance assistance ON assistance.account=a.account AND assistance.transaction_hash=LOWER(a.tx_hash)\
   \ AND assistance.block_number=a.block_number AND assistance.block_hash=LOWER(a.block_hash)\
-  \ AND assistance.deposit_log_index=a.log_index AND assistance.amount_usdc=a.amount_usdc AND a.activity_type='Deposit'\
+  \ AND assistance.deposit_log_index=a.log_index AND assistance.amount_assets=a.amount_assets AND a.activity_type='Deposit'\
   \ LEFT JOIN mint_counts mc ON mc.wallet=p.wallet\
   \ LEFT JOIN baseline ON baseline.wallet=p.wallet\
   \ LEFT JOIN transfer_matches matches ON matches.tx_hash=LOWER(a.tx_hash)\
-  \ AND matches.block_number=a.block_number AND matches.block_hash=LOWER(a.block_hash) AND matches.amount=a.amount_usdc\
+  \ AND matches.block_number=a.block_number AND matches.block_hash=LOWER(a.block_hash) AND matches.amount=a.amount_assets\
   \ AND matches.from_address=LOWER(CASE WHEN a.activity_type='Deposit' THEN p.wallet ELSE p.margin_clearinghouse_address END)\
   \ AND matches.to_address=LOWER(CASE WHEN a.activity_type='Deposit' THEN p.margin_clearinghouse_address ELSE p.wallet END)\
   \ LEFT JOIN flow_peers peers ON peers.account=p.wallet AND peers.activity_type=a.activity_type AND peers.tx_hash=a.tx_hash\
-  \ AND peers.block_number=a.block_number AND peers.block_hash=a.block_hash AND peers.amount_usdc=a.amount_usdc\
+  \ AND peers.block_number=a.block_number AND peers.block_hash=a.block_hash AND peers.amount_assets=a.amount_assets\
   \ ), running_funding AS (\
-  \ SELECT wallet,block_number,tx_index,log_index,activity_type,amount_usdc,close_assistance,verified,\
-  \ starting_balance_usdc,mint_count,mint_block,mint_tx,mint_log,baseline_block,\
+  \ SELECT wallet,block_number,tx_index,log_index,activity_type,amount_assets,close_assistance,verified,\
+  \ starting_balance_assets,mint_count,mint_block,mint_tx,mint_log,baseline_block,\
   \ SUM(CASE WHEN NOT verified OR close_assistance THEN 0\
-  \ WHEN activity_type='Deposit' THEN amount_usdc ELSE -amount_usdc END)\
+  \ WHEN activity_type='Deposit' THEN amount_assets ELSE -amount_assets END)\
   \ OVER (PARTITION BY wallet COLLATE \"C\" ORDER BY block_number,tx_index,log_index) AS running_net\
   \ FROM flow_rows f\
   \ ), flow_summary AS (\
@@ -2709,13 +2714,13 @@ fundingIntegrityCtes =
   \ COUNT(*) FILTER (WHERE f.block_number <= f.baseline_block) AS baseline_flow_count,\
   \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance) AS deposit_count,\
   \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance AND f.block_number <= f.baseline_block) AS baseline_deposit_count,\
-  \ COALESCE(SUM(CASE WHEN f.close_assistance THEN 0 WHEN f.activity_type = 'Deposit' THEN f.amount_usdc ELSE -f.amount_usdc END)\
+  \ COALESCE(SUM(CASE WHEN f.close_assistance THEN 0 WHEN f.activity_type = 'Deposit' THEN f.amount_assets ELSE -f.amount_assets END)\
   \  FILTER (WHERE f.verified AND f.block_number <= f.baseline_block), 0) AS baseline_flow_net,\
   \ COUNT(*) FILTER (WHERE NOT f.verified) AS unverified_flow_count,\
-  \ COUNT(*) FILTER (WHERE f.verified AND f.activity_type = 'Deposit' AND f.amount_usdc = f.starting_balance_usdc\
+  \ COUNT(*) FILTER (WHERE f.verified AND f.activity_type = 'Deposit' AND f.amount_assets = f.starting_balance_assets\
   \  AND f.mint_count = 1 AND ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)\
   \  AND f.block_number <= f.baseline_block) AS baseline_official_count,\
-  \ COUNT(*) FILTER (WHERE f.verified AND f.activity_type = 'Deposit' AND f.amount_usdc = f.starting_balance_usdc\
+  \ COUNT(*) FILTER (WHERE f.verified AND f.activity_type = 'Deposit' AND f.amount_assets = f.starting_balance_assets\
   \  AND f.mint_count = 1 AND ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)\
   \  AND f.block_number > f.baseline_block) AS post_official_count,\
   \ COUNT(*) FILTER (WHERE f.activity_type = 'Deposit' AND NOT f.close_assistance AND f.mint_count = 1\
@@ -2725,7 +2730,7 @@ fundingIntegrityCtes =
   \ ), allocation AS (\
   \ SELECT DISTINCT ON (f.wallet COLLATE \"C\") f.wallet, f.block_number, f.tx_index, f.log_index\
   \ FROM flow_rows f WHERE f.verified AND f.activity_type = 'Deposit'\
-  \  AND f.amount_usdc = f.starting_balance_usdc AND f.mint_count = 1\
+  \  AND f.amount_assets = f.starting_balance_assets AND f.mint_count = 1\
   \  AND ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)\
   \ ORDER BY f.wallet COLLATE \"C\", f.block_number, f.tx_index, f.log_index\
   \ ), first_trade AS (\
@@ -2735,27 +2740,27 @@ fundingIntegrityCtes =
   \ WHERE a.timestamp >= p.start_timestamp AND a.timestamp < p.score_cutoff_timestamp\
   \ ORDER BY p.wallet COLLATE \"C\", a.block_number, a.tx_index, a.log_index\
   \ ), verified_deposits AS MATERIALIZED (\
-  \ SELECT DISTINCT wallet, tx_hash, block_number, block_hash, amount_usdc, transfer_log_index\
+  \ SELECT DISTINCT wallet, tx_hash, block_number, block_hash, amount_assets, transfer_log_index\
   \ FROM flow_rows WHERE verified AND activity_type = 'Deposit'\
   \ ), premature_outbound AS (\
   \ SELECT p.wallet COLLATE \"C\" AS wallet, COUNT(*) AS invalid_count FROM roster p JOIN allocation al ON al.wallet = p.wallet\
   \ JOIN first_mint m ON m.wallet = p.wallet\
-  \ JOIN perps_usdc_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
-  \ AND LOWER(x.token_address) = LOWER(p.usdc_address) AND LOWER(x.from_address) = LOWER(p.wallet)\
+  \ JOIN perps_asset_transfers x ON x.chain_id = p.chain_id AND x.release_router = p.release_router\
+  \ AND LOWER(x.token_address) = LOWER(p.settlement_token_address) AND LOWER(x.from_address) = LOWER(p.wallet)\
   \ AND ROW(x.block_number, x.tx_index, x.log_index) > ROW(m.block_number, m.tx_index, m.log_index)\
   \ AND ROW(x.block_number, x.tx_index, x.log_index) < ROW(al.block_number, al.tx_index, al.log_index)\
   \ LEFT JOIN verified_deposits d ON d.wallet = p.wallet AND d.tx_hash = x.tx_hash\
-  \ AND d.block_number = x.block_number AND d.block_hash = x.block_hash AND d.amount_usdc = x.amount\
+  \ AND d.block_number = x.block_number AND d.block_hash = x.block_hash AND d.amount_assets = x.amount\
   \ AND d.transfer_log_index = x.log_index AND LOWER(x.to_address) = LOWER(p.margin_clearinghouse_address)\
   \ WHERE x.amount > 0 AND d.wallet IS NULL GROUP BY p.wallet COLLATE \"C\"\
   \ ), facts AS (\
-  \ SELECT p.wallet, p.trader_reference, p.value_usdc, p.has_open_position, p.pending_order_count, p.starting_balance_usdc,\
+  \ SELECT p.wallet, p.trader_reference, p.value_assets, p.has_open_position, p.pending_order_count, p.starting_balance_assets,\
   \ COALESCE(mc.mint_count, 0) AS mint_count, COALESCE(fs.baseline_flow_count, 0) AS baseline_flow_count,\
   \ COALESCE(fs.deposit_count, 0) AS deposit_count, COALESCE(fs.baseline_deposit_count, 0) AS baseline_deposit_count,\
   \ COALESCE(fs.baseline_flow_net, 0) AS baseline_flow_net,\
   \ COALESCE(fs.unverified_flow_count, 0) AS unverified_flow_count, COALESCE(fs.baseline_official_count, 0) AS baseline_official_count,\
-  \ COALESCE(fs.baseline_official_count, 0) * p.starting_balance_usdc AS baseline_official_amount, COALESCE(fs.post_official_count, 0) AS post_official_count,\
-  \ COALESCE(fs.post_official_count, 0) * p.starting_balance_usdc AS post_official_amount, COALESCE(fs.pre_mint_deposit_count, 0) AS pre_mint_deposit_count,\
+  \ COALESCE(fs.baseline_official_count, 0) * p.starting_balance_assets AS baseline_official_amount, COALESCE(fs.post_official_count, 0) AS post_official_count,\
+  \ COALESCE(fs.post_official_count, 0) * p.starting_balance_assets AS post_official_amount, COALESCE(fs.pre_mint_deposit_count, 0) AS pre_mint_deposit_count,\
   \ COALESCE(fs.max_net_amount, 0) AS max_net_amount,\
   \ COALESCE(po.invalid_count, 0) AS premature_outbound_count, al.block_number AS allocation_block,\
   \ al.tx_index AS allocation_tx, al.log_index AS allocation_log, tr.block_number AS trade_block,\
@@ -2765,28 +2770,28 @@ fundingIntegrityCtes =
   \ LEFT JOIN premature_outbound po ON po.wallet = p.wallet LEFT JOIN allocation al ON al.wallet = p.wallet\
   \ LEFT JOIN first_trade tr ON tr.wallet = p.wallet\
   \ ), computed AS (SELECT wallet, trader_reference, TO_JSONB(ARRAY_REMOVE(ARRAY[\
-  \ CASE WHEN value_usdc IS NULL THEN 'baseline_unavailable' END,\
+  \ CASE WHEN value_assets IS NULL THEN 'baseline_unavailable' END,\
   \ CASE WHEN NOT verified_registration THEN 'missing_verified_registration' END,\
   \ CASE WHEN has_open_position THEN 'baseline_open_position' END,\
   \ CASE WHEN pending_order_count > 0 THEN 'baseline_pending_orders' END,\
-  \ CASE WHEN value_usdc IS NOT NULL AND value_usdc NOT IN (0, starting_balance_usdc) THEN 'invalid_starting_bankroll' END,\
+  \ CASE WHEN value_assets IS NOT NULL AND value_assets NOT IN (0, starting_balance_assets) THEN 'invalid_starting_bankroll' END,\
   \ CASE WHEN mint_count <> 1 THEN 'official_mint_count_invalid' END,\
   \ CASE WHEN deposit_count <> 1 THEN 'unofficial_capital_used' END,\
   \ CASE WHEN pre_mint_deposit_count > 0 THEN 'deposit_before_official_mint' END,\
-  \ CASE WHEN value_usdc = starting_balance_usdc AND baseline_official_count <> 1 THEN 'baseline_official_allocation_count_invalid' END,\
-  \ CASE WHEN value_usdc = starting_balance_usdc AND baseline_official_amount <> starting_balance_usdc THEN 'baseline_official_allocation_amount_invalid' END,\
-  \ CASE WHEN value_usdc = starting_balance_usdc AND baseline_flow_net <> starting_balance_usdc THEN 'baseline_funding_flow_mismatch' END,\
-  \ CASE WHEN value_usdc = starting_balance_usdc AND post_official_count > 0 THEN 'unexpected_official_deposit' END,\
-  \ CASE WHEN value_usdc = 0 AND (baseline_flow_count <> 0 OR baseline_deposit_count <> 0) THEN 'unexpected_prebaseline_funding' END,\
-  \ CASE WHEN value_usdc = 0 AND baseline_flow_net <> 0 THEN 'zero_baseline_funding_flow_mismatch' END,\
-  \ CASE WHEN value_usdc = 0 AND post_official_count <> 1 THEN 'official_allocation_count_invalid' END,\
-  \ CASE WHEN value_usdc = 0 AND post_official_amount <> starting_balance_usdc THEN 'official_allocation_amount_invalid' END,\
-  \ CASE WHEN value_usdc = 0 AND trade_block IS NOT NULL\
+  \ CASE WHEN value_assets = starting_balance_assets AND baseline_official_count <> 1 THEN 'baseline_official_allocation_count_invalid' END,\
+  \ CASE WHEN value_assets = starting_balance_assets AND baseline_official_amount <> starting_balance_assets THEN 'baseline_official_allocation_amount_invalid' END,\
+  \ CASE WHEN value_assets = starting_balance_assets AND baseline_flow_net <> starting_balance_assets THEN 'baseline_funding_flow_mismatch' END,\
+  \ CASE WHEN value_assets = starting_balance_assets AND post_official_count > 0 THEN 'unexpected_official_deposit' END,\
+  \ CASE WHEN value_assets = 0 AND (baseline_flow_count <> 0 OR baseline_deposit_count <> 0) THEN 'unexpected_prebaseline_funding' END,\
+  \ CASE WHEN value_assets = 0 AND baseline_flow_net <> 0 THEN 'zero_baseline_funding_flow_mismatch' END,\
+  \ CASE WHEN value_assets = 0 AND post_official_count <> 1 THEN 'official_allocation_count_invalid' END,\
+  \ CASE WHEN value_assets = 0 AND post_official_amount <> starting_balance_assets THEN 'official_allocation_amount_invalid' END,\
+  \ CASE WHEN value_assets = 0 AND trade_block IS NOT NULL\
   \  AND ROW(allocation_block, allocation_tx, allocation_log) >= ROW(trade_block, trade_tx, trade_log)\
   \  THEN 'official_allocation_not_before_trading' END,\
   \ CASE WHEN unverified_flow_count > 0 THEN 'unverified_funding_flow' END,\
   \ CASE WHEN premature_outbound_count > 0 THEN 'official_funds_left_before_allocation' END,\
-  \ CASE WHEN max_net_amount > starting_balance_usdc THEN 'funding_capacity_exceeded' END\
+  \ CASE WHEN max_net_amount > starting_balance_assets THEN 'funding_capacity_exceeded' END\
   \ ]::TEXT[], NULL)) AS flags FROM facts)\
   \ ")
 
@@ -2804,16 +2809,16 @@ fundingIntegrityRefreshSqlLegacy =
   \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
   \ ORDER BY b.published_at DESC LIMIT 1\
   \ ), baseline AS (\
-  \ SELECT s.wallet, GREATEST(0, CASE WHEN s.has_open_position THEN s.signed_net_equity_usdc\
-  \   ELSE s.terminal_reachable_usdc END + s.trader_claims_usdc) AS value_usdc,\
+  \ SELECT s.wallet, GREATEST(0, CASE WHEN s.has_open_position THEN s.signed_net_equity_assets\
+  \   ELSE s.terminal_reachable_assets END + s.trader_claims_assets) AS value_assets,\
   \ s.has_open_position, COALESCE(NULLIF(s.raw_data->>'pendingOrderCount', '')::integer, 0) AS pending_order_count,\
   \ s.block_number AS baseline_block\
   \ FROM insights_account_snapshots s JOIN start_batch b ON b.competition_slug = s.competition_slug\
   \ AND b.snapshot_kind = s.snapshot_kind AND b.block_number = s.block_number\
   \ AND LOWER(b.block_hash) = LOWER(s.block_hash)\
   \ ), facts AS (\
-  \ SELECT p.wallet, b.value_usdc, COALESCE(b.has_open_position, FALSE) AS has_open_position,\
-  \ COALESCE(b.pending_order_count, 0) AS pending_order_count, t.starting_balance_usdc,\
+  \ SELECT p.wallet, b.value_assets, COALESCE(b.has_open_position, FALSE) AS has_open_position,\
+  \ COALESCE(b.pending_order_count, 0) AS pending_order_count, t.starting_balance_assets,\
   \ COALESCE(pre.official_count, 0) AS baseline_official_count,\
   \ COALESCE(pre.official_amount, 0) AS baseline_official_amount,\
   \ COALESCE(pre.unverified_count, 0) AS baseline_unverified_count,\
@@ -2826,62 +2831,62 @@ fundingIntegrityRefreshSqlLegacy =
   \ FROM insights_competition_participants p JOIN target t ON t.slug = p.competition_slug\
   \ LEFT JOIN baseline b ON b.wallet = p.wallet\
   \ LEFT JOIN LATERAL (\
-  \   SELECT COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND a.amount_usdc = t.starting_balance_usdc\
+  \   SELECT COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)) AS official_count,\
-  \   COALESCE(SUM(a.amount_usdc) FILTER (WHERE a.activity_type = 'Deposit' AND a.amount_usdc = t.starting_balance_usdc\
+  \   COALESCE(SUM(a.amount_assets) FILTER (WHERE a.activity_type = 'Deposit' AND a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)), 0) AS official_amount,\
-  \   COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT (a.amount_usdc = t.starting_balance_usdc\
+  \   COUNT(*) FILTER (WHERE a.activity_type = 'Deposit' AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_assets=a.amount_assets AND a.activity_type='Deposit') AND NOT (a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number))) AS unverified_count,\
-  \   COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END), 0) AS net_amount\
+  \   COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_assets=a.amount_assets AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_assets ELSE -a.amount_assets END), 0) AS net_amount\
   \   FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
   \   AND a.account = p.wallet AND a.activity_type IN ('Deposit', 'Withdraw')\
   \   AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
+  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.settlement_token_address)\
   \   AND b.baseline_block IS NOT NULL AND a.block_number <= b.baseline_block\
   \ ) pre ON TRUE\
   \ LEFT JOIN LATERAL (\
-  \   SELECT COUNT(*) FILTER (WHERE a.amount_usdc = t.starting_balance_usdc\
+  \   SELECT COUNT(*) FILTER (WHERE a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)) AS official_count,\
-  \   COALESCE(SUM(a.amount_usdc) FILTER (WHERE a.amount_usdc = t.starting_balance_usdc\
+  \   COALESCE(SUM(a.amount_assets) FILTER (WHERE a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)), 0) AS official_amount,\
-  \   COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT (a.amount_usdc = t.starting_balance_usdc\
+  \   COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_assets=a.amount_assets AND a.activity_type='Deposit') AND NOT (a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc\
-  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.usdc_address)\
-  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \       WHERE LOWER(fc.address) = LOWER(p.wallet) AND LOWER(fc.token_address) = LOWER(t.settlement_token_address)\
+  \       AND fc.status = 'success' AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number))) AS unverified_count\
   \   FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
   \   AND a.account = p.wallet AND a.activity_type = 'Deposit'\
   \   AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
+  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.settlement_token_address)\
   \   AND b.baseline_block IS NOT NULL AND a.block_number > b.baseline_block\
   \   AND a.timestamp < t.score_cutoff_timestamp\
   \ ) d ON TRUE\
   \ LEFT JOIN LATERAL (\
   \   SELECT a.block_number AS allocation_block, a.tx_index AS allocation_tx, a.log_index AS allocation_log\
   \   FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
-  \   AND a.account = p.wallet AND a.activity_type = 'Deposit' AND a.amount_usdc = t.starting_balance_usdc\
+  \   AND a.account = p.wallet AND a.activity_type = 'Deposit' AND a.amount_assets = t.starting_balance_assets\
   \   AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
+  \   AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.settlement_token_address)\
   \   AND b.baseline_block IS NOT NULL AND a.block_number > b.baseline_block\
   \   AND a.timestamp < t.score_cutoff_timestamp\
   \   AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc WHERE LOWER(fc.address) = LOWER(p.wallet)\
-  \     AND LOWER(fc.token_address) = LOWER(t.usdc_address) AND fc.status = 'success'\
-  \     AND fc.amount = t.starting_balance_usdc AND fc.tx_hash IS NOT NULL\
+  \     AND LOWER(fc.token_address) = LOWER(t.settlement_token_address) AND fc.status = 'success'\
+  \     AND fc.amount = t.starting_balance_assets AND fc.tx_hash IS NOT NULL\
   \     AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)\
   \   ORDER BY a.block_number, a.tx_index, a.log_index LIMIT 1\
   \ ) allocation ON TRUE\
@@ -2889,12 +2894,12 @@ fundingIntegrityRefreshSqlLegacy =
   \   SELECT COUNT(*) AS unverified_count FROM perps_account_activity a\
   \   WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router AND a.account = p.wallet\
   \   AND a.activity_type = 'Deposit' AND a.timestamp < t.score_cutoff_timestamp\
-  \   AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') AND NOT COALESCE((LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \     AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
-  \     AND a.amount_usdc = t.starting_balance_usdc\
+  \   AND NOT EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_assets=a.amount_assets AND a.activity_type='Deposit') AND NOT COALESCE((LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
+  \     AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.settlement_token_address)\
+  \     AND a.amount_assets = t.starting_balance_assets\
   \     AND EXISTS (SELECT 1 FROM testnet_faucet_claims fc WHERE LOWER(fc.address) = LOWER(p.wallet)\
-  \       AND LOWER(fc.token_address) = LOWER(t.usdc_address) AND fc.status = 'success'\
-  \       AND fc.amount = t.starting_balance_usdc AND NULLIF(BTRIM(fc.tx_hash), '') IS NOT NULL\
+  \       AND LOWER(fc.token_address) = LOWER(t.settlement_token_address) AND fc.status = 'success'\
+  \       AND fc.amount = t.starting_balance_assets AND NULLIF(BTRIM(fc.tx_hash), '') IS NOT NULL\
   \       AND fc.mint_block_number IS NOT NULL AND fc.mint_block_number < a.block_number)), FALSE)\
   \ ) provenance ON TRUE\
   \ LEFT JOIN LATERAL (\
@@ -2906,57 +2911,57 @@ fundingIntegrityRefreshSqlLegacy =
   \ ) tr ON TRUE\
   \ LEFT JOIN LATERAL (\
   \   SELECT COALESCE(MAX(running_net), 0) AS max_net_amount FROM (\
-  \     SELECT SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_usdc=a.amount_usdc AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_usdc ELSE -a.amount_usdc END)\
+  \     SELECT SUM(CASE WHEN EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account AND g.transaction_hash=LOWER(a.tx_hash) AND g.block_number=a.block_number AND g.block_hash=LOWER(a.block_hash) AND g.deposit_log_index=a.log_index AND g.amount_assets=a.amount_assets AND a.activity_type='Deposit') THEN 0 WHEN a.activity_type = 'Deposit' THEN a.amount_assets ELSE -a.amount_assets END)\
   \       OVER (ORDER BY a.block_number, a.tx_index, a.log_index) AS running_net\
   \     FROM perps_account_activity a WHERE a.chain_id = t.chain_id AND a.release_router = t.release_router\
   \     AND a.account = p.wallet AND a.activity_type IN ('Deposit', 'Withdraw')\
   \     AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \     AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.usdc_address)\
+  \     AND jsonb_exists(a.data, 'asset') AND LOWER(a.data->>'asset') = LOWER(t.settlement_token_address)\
   \     AND a.timestamp < t.score_cutoff_timestamp\
   \   ) ordered_flows\
   \ ) cap ON TRUE\
   \ ), computed AS (\
   \ SELECT wallet, TO_JSONB(ARRAY_REMOVE(ARRAY[\
-  \   CASE WHEN value_usdc IS NULL THEN 'baseline_unavailable' END,\
+  \   CASE WHEN value_assets IS NULL THEN 'baseline_unavailable' END,\
   \   CASE WHEN has_open_position THEN 'baseline_open_position' END,\
   \   CASE WHEN pending_order_count > 0 THEN 'baseline_pending_orders' END,\
-  \   CASE WHEN value_usdc IS NOT NULL AND value_usdc NOT IN (0, starting_balance_usdc) THEN 'invalid_starting_bankroll' END,\
-  \   CASE WHEN value_usdc = starting_balance_usdc AND baseline_official_count <> 1 THEN 'baseline_official_allocation_count_invalid' END,\
-  \   CASE WHEN value_usdc = starting_balance_usdc AND baseline_official_count = 1\
-  \     AND baseline_official_amount <> starting_balance_usdc THEN 'baseline_official_allocation_amount_invalid' END,\
-  \   CASE WHEN value_usdc = starting_balance_usdc AND baseline_flow_net <> starting_balance_usdc\
+  \   CASE WHEN value_assets IS NOT NULL AND value_assets NOT IN (0, starting_balance_assets) THEN 'invalid_starting_bankroll' END,\
+  \   CASE WHEN value_assets = starting_balance_assets AND baseline_official_count <> 1 THEN 'baseline_official_allocation_count_invalid' END,\
+  \   CASE WHEN value_assets = starting_balance_assets AND baseline_official_count = 1\
+  \     AND baseline_official_amount <> starting_balance_assets THEN 'baseline_official_allocation_amount_invalid' END,\
+  \   CASE WHEN value_assets = starting_balance_assets AND baseline_flow_net <> starting_balance_assets\
   \     THEN 'baseline_funding_flow_mismatch' END,\
-  \   CASE WHEN value_usdc = 0 AND baseline_official_count <> 0 THEN 'unexpected_prebaseline_official_allocation' END,\
-  \   CASE WHEN value_usdc = 0 AND baseline_flow_net <> 0 THEN 'zero_baseline_funding_flow_mismatch' END,\
+  \   CASE WHEN value_assets = 0 AND baseline_official_count <> 0 THEN 'unexpected_prebaseline_official_allocation' END,\
+  \   CASE WHEN value_assets = 0 AND baseline_flow_net <> 0 THEN 'zero_baseline_funding_flow_mismatch' END,\
   \   CASE WHEN baseline_unverified_count > 0 THEN 'unverified_prebaseline_deposit_provenance' END,\
-  \   CASE WHEN value_usdc = starting_balance_usdc AND official_count > 0 THEN 'unexpected_official_deposit' END,\
-  \   CASE WHEN value_usdc = 0 AND official_count <> 1 THEN 'official_allocation_count_invalid' END,\
-  \   CASE WHEN value_usdc = 0 AND official_count = 1 AND official_amount <> starting_balance_usdc THEN 'official_allocation_amount_invalid' END,\
-  \   CASE WHEN value_usdc = 0 AND official_count = 1 AND trade_block IS NOT NULL\
+  \   CASE WHEN value_assets = starting_balance_assets AND official_count > 0 THEN 'unexpected_official_deposit' END,\
+  \   CASE WHEN value_assets = 0 AND official_count <> 1 THEN 'official_allocation_count_invalid' END,\
+  \   CASE WHEN value_assets = 0 AND official_count = 1 AND official_amount <> starting_balance_assets THEN 'official_allocation_amount_invalid' END,\
+  \   CASE WHEN value_assets = 0 AND official_count = 1 AND trade_block IS NOT NULL\
   \     AND ROW(allocation_block, allocation_tx, allocation_log) >= ROW(trade_block, trade_tx, trade_log)\
   \     THEN 'official_allocation_not_before_trading' END,\
   \   CASE WHEN unverified_count > 0 OR any_unverified_count > 0 THEN 'unverified_deposit_provenance' END,\
-  \   CASE WHEN max_net_amount > starting_balance_usdc THEN 'funding_capacity_exceeded' END\
+  \   CASE WHEN max_net_amount > starting_balance_assets THEN 'funding_capacity_exceeded' END\
   \ ]::TEXT[], NULL)) AS flags FROM facts\
   \ ) UPDATE insights_competition_participants p SET integrity_flags = c.flags, updated_at = NOW()\
   \ FROM computed c, target t WHERE p.competition_slug = t.slug AND p.wallet = c.wallet")
 
 competitionSeedMetadataSelect :: Query
 competitionSeedMetadataSelect =
-  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, release_manifest,\
+  "SELECT slug, name, chain_id, release_router, settlement_token_address, margin_clearinghouse_address, account_lens_address, release_manifest,\
   \ start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp, results_timestamp,\
-  \ payment_deadline_timestamp, starting_balance_usdc, minimum_profit_bps, minimum_active_days,\
+  \ payment_deadline_timestamp, starting_balance_assets, minimum_profit_bps, minimum_active_days,\
   \ fx_session_boundary_utc_minutes, registration_close_timestamp, minimum_x_account_age_days, target_x_handle,\
-  \ scoring_version, rules_version, first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc\
+  \ scoring_version, rules_version, first_prize_assets, second_prize_assets, third_prize_assets, fourth_prize_assets, fifth_prize_assets\
   \ FROM insights_competitions"
 
 competitionSelect :: Query
 competitionSelect =
-  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, release_bound_at IS NOT NULL, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
+  "SELECT slug, name, chain_id, release_router, settlement_token_address, margin_clearinghouse_address, account_lens_address, release_bound_at IS NOT NULL, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
   \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp, minimum_x_account_age_days, target_x_handle, privacy_notice_version,\
   \ start_block, start_block_hash, score_cutoff_block, score_cutoff_block_hash,\
-  \ starting_balance_usdc, minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
-  \ first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc, finalized,\
+  \ starting_balance_assets, minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
+  \ first_prize_assets, second_prize_assets, third_prize_assets, fourth_prize_assets, fifth_prize_assets, finalized,\
   \ EXTRACT(EPOCH FROM updated_at)::bigint,\
   \ (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = insights_competitions.slug)::bigint,\
   \ CASE WHEN finalized THEN 'current' WHEN integrity_checked_at IS NULL THEN 'pending'\
@@ -2977,7 +2982,7 @@ competitionSelect =
 leaderboardQuery :: Query
 leaderboardQuery =
   ("WITH target AS (\
-  \ SELECT c.*, ?::NUMERIC AS code_minimum_profit_usdc FROM insights_competitions c WHERE slug = ?\
+  \ SELECT c.*, ?::NUMERIC AS code_minimum_profit_assets FROM insights_competitions c WHERE slug = ?\
   \ ), start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
@@ -3002,27 +3007,27 @@ leaderboardQuery =
   \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)))\
   \ ORDER BY b.block_number DESC, CASE WHEN b.snapshot_kind = 'final' THEN 0 ELSE 1 END, b.published_at DESC LIMIT 1\
   \ ), start_snapshots AS (\
-  \ SELECT s.wallet, s.has_open_position, s.signed_net_equity_usdc,\
-  \ s.terminal_reachable_usdc, s.trader_claims_usdc, s.block_number, s.timestamp\
+  \ SELECT s.wallet, s.has_open_position, s.signed_net_equity_assets,\
+  \ s.terminal_reachable_assets, s.trader_claims_assets, s.block_number, s.timestamp\
   \ FROM insights_account_snapshots s JOIN start_batch b ON b.competition_slug = s.competition_slug\
   \   AND b.snapshot_kind = s.snapshot_kind AND b.block_number = s.block_number\
   \   AND LOWER(b.block_hash) = LOWER(s.block_hash) AND b.chain_id = s.chain_id AND b.release_router = s.release_router\
   \ ), current_snapshots AS (\
-  \ SELECT s.wallet, s.snapshot_kind, s.has_open_position, s.signed_net_equity_usdc,\
-  \ s.terminal_reachable_usdc, s.trader_claims_usdc, s.block_number, s.timestamp, s.raw_data\
+  \ SELECT s.wallet, s.snapshot_kind, s.has_open_position, s.signed_net_equity_assets,\
+  \ s.terminal_reachable_assets, s.trader_claims_assets, s.block_number, s.timestamp, s.raw_data\
   \ FROM insights_account_snapshots s JOIN current_batch b ON b.competition_slug = s.competition_slug\
   \   AND b.snapshot_kind = s.snapshot_kind AND b.block_number = s.block_number\
   \   AND LOWER(b.block_hash) = LOWER(s.block_hash) AND b.chain_id = s.chain_id AND b.release_router = s.release_router\
   \ ), flows AS (\
   \ SELECT a.account AS wallet,\
-  \ COALESCE(SUM(a.amount_usdc) FILTER (WHERE a.activity_type = 'Deposit'), 0) AS deposits_usdc,\
-  \ COALESCE(SUM(a.amount_usdc) FILTER (WHERE a.activity_type = 'Withdraw'), 0) AS withdrawals_usdc\
+  \ COALESCE(SUM(a.amount_assets) FILTER (WHERE a.activity_type = 'Deposit'), 0) AS deposits_assets,\
+  \ COALESCE(SUM(a.amount_assets) FILTER (WHERE a.activity_type = 'Withdraw'), 0) AS withdrawals_assets\
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
   \ AND a.activity_type IN ('Deposit', 'Withdraw')\
   \ AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \ AND (LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
+  \ AND (LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.settlement_token_address)\
   \   OR (t.slug = 'testnet-trading-2026' AND NOT jsonb_exists(a.data, 'asset')))\
   \ AND (t.start_block IS NULL OR a.block_number >= t.start_block)\
   \ AND a.block_number <= cb.block_number\
@@ -3036,12 +3041,12 @@ leaderboardQuery =
   \       + MOD(1440 - t.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')) BETWEEN 1 AND 5) AS active_days,\
   \ FLOOR(COALESCE(SUM(CASE WHEN a.activity_type IN ('Open', 'Close', 'Liquidated')\
   \   AND a.size_delta IS NOT NULL AND a.price IS NOT NULL\
-  \   THEN ABS(a.size_delta) * a.price / 100000000000000000000 ELSE 0 END), 0)) AS volume_usdc,\
+  \   THEN ABS(a.size_delta) * a.price / 100000000000000000000 ELSE 0 END), 0)) AS volume_assets,\
   \ COUNT(*) FILTER (WHERE a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0) AS executed_trades,\
   \ COUNT(*) FILTER (WHERE a.activity_type = 'Liquidated') AS liquidations,\
-  \ COALESCE(SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated')), 0) AS realized_pnl_usdc,\
-  \ GREATEST(0, -COALESCE(SUM((a.data->>'vpiUsdc')::numeric)\
-  \   FILTER (WHERE a.activity_type IN ('Open', 'Close')), 0)) AS net_vpi_rebate_usdc\
+  \ COALESCE(SUM(a.pnl_assets) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated')), 0) AS realized_pnl_assets,\
+  \ GREATEST(0, -COALESCE(SUM((a.data->>'vpiAssets')::numeric)\
+  \   FILTER (WHERE a.activity_type IN ('Open', 'Close')), 0)) AS net_vpi_rebate_assets\
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
@@ -3049,7 +3054,7 @@ leaderboardQuery =
   \ AND a.block_number <= cb.block_number\
   \ GROUP BY a.account\
   \ ), adjustments AS (\
-  \ SELECT m.wallet, COALESCE(SUM(m.amount_usdc), 0) AS amount_usdc\
+  \ SELECT m.wallet, COALESCE(SUM(m.amount_assets), 0) AS amount_assets\
   \ FROM insights_manual_adjustments m JOIN target t ON t.slug = m.competition_slug\
   \ WHERE m.voided_at IS NULL GROUP BY m.wallet\
   \ ), raw AS (\
@@ -3057,48 +3062,48 @@ leaderboardQuery =
   \ (t.finalized OR (t.integrity_checked_epoch = t.integrity_input_epoch\
   \ AND t.integrity_checked_at >= statement_timestamp() - t.integrity_max_age_seconds * INTERVAL '1 second')) IS TRUE AS integrity_current,\
   \ t.slug AS competition_slug,\
-  \ t.starting_balance_usdc AS competition_starting_balance_usdc,\
-  \ t.code_minimum_profit_usdc AS competition_minimum_profit_usdc,\
+  \ t.starting_balance_assets AS competition_starting_balance_assets,\
+  \ t.code_minimum_profit_assets AS competition_minimum_profit_assets,\
   \ t.minimum_active_days AS competition_minimum_active_days,\
-  \ ((t.first_prize_usdc > 0)::INT + (t.second_prize_usdc > 0)::INT + (t.third_prize_usdc > 0)::INT\
-  \   + (t.fourth_prize_usdc > 0)::INT + (t.fifth_prize_usdc > 0)::INT) AS competition_prize_places,\
+  \ ((t.first_prize_assets > 0)::INT + (t.second_prize_assets > 0)::INT + (t.third_prize_assets > 0)::INT\
+  \   + (t.fourth_prize_assets > 0)::INT + (t.fifth_prize_assets > 0)::INT) AS competition_prize_places,\
   \ CASE WHEN ss.wallet IS NULL THEN NULL ELSE GREATEST(0,\
-  \   CASE WHEN ss.has_open_position THEN ss.signed_net_equity_usdc ELSE ss.terminal_reachable_usdc END + ss.trader_claims_usdc) END AS starting_value_usdc,\
+  \   CASE WHEN ss.has_open_position THEN ss.signed_net_equity_assets ELSE ss.terminal_reachable_assets END + ss.trader_claims_assets) END AS starting_value_assets,\
   \ CASE WHEN cs.wallet IS NULL THEN NULL ELSE GREATEST(0,\
-  \   CASE WHEN cs.has_open_position THEN cs.signed_net_equity_usdc ELSE cs.terminal_reachable_usdc END + cs.trader_claims_usdc) END AS current_value_usdc,\
-  \ COALESCE(f.deposits_usdc, 0) AS deposits_usdc, COALESCE(f.withdrawals_usdc, 0) AS withdrawals_usdc,\
-  \ CASE WHEN t.slug = 'testnet-trading-2026' THEN COALESCE(adj.amount_usdc, 0) ELSE 0 END AS adjustment_usdc,\
+  \   CASE WHEN cs.has_open_position THEN cs.signed_net_equity_assets ELSE cs.terminal_reachable_assets END + cs.trader_claims_assets) END AS current_value_assets,\
+  \ COALESCE(f.deposits_assets, 0) AS deposits_assets, COALESCE(f.withdrawals_assets, 0) AS withdrawals_assets,\
+  \ CASE WHEN t.slug = 'testnet-trading-2026' THEN COALESCE(adj.amount_assets, 0) ELSE 0 END AS adjustment_assets,\
   \ COALESCE(ast.active_days, 0) AS active_days,\
-  \ COALESCE(ast.volume_usdc, 0) AS volume_usdc, COALESCE(ast.executed_trades, 0) AS executed_trades,\
-  \ COALESCE(ast.liquidations, 0) AS liquidations, COALESCE(ast.realized_pnl_usdc, 0) AS realized_pnl_usdc,\
-  \ COALESCE(ast.net_vpi_rebate_usdc, 0) AS net_vpi_rebate_usdc,\
+  \ COALESCE(ast.volume_assets, 0) AS volume_assets, COALESCE(ast.executed_trades, 0) AS executed_trades,\
+  \ COALESCE(ast.liquidations, 0) AS liquidations, COALESCE(ast.realized_pnl_assets, 0) AS realized_pnl_assets,\
+  \ COALESCE(ast.net_vpi_rebate_assets, 0) AS net_vpi_rebate_assets,\
   \ cs.block_number, cs.timestamp, cs.has_open_position, cs.snapshot_kind,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'side' ELSE NULL END AS position_side,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'size' ELSE NULL END AS position_size_delta,\
-  \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'margin' ELSE NULL END AS position_margin_usdc,\
+  \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'margin' ELSE NULL END AS position_margin_assets,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'entryPrice' ELSE NULL END AS position_entry_price,\
-  \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'unrealizedPnlUsdc' ELSE NULL END AS position_unrealized_pnl_usdc,\
+  \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'unrealizedPnlAssets' ELSE NULL END AS position_unrealized_pnl_assets,\
   \ CASE WHEN cs.has_open_position THEN (cs.raw_data->>'liquidatable')::boolean ELSE NULL END AS position_liquidatable\
   \ FROM insights_competition_participants p JOIN target t ON t.slug = p.competition_slug\
   \ LEFT JOIN start_snapshots ss ON ss.wallet = p.wallet LEFT JOIN current_snapshots cs ON cs.wallet = p.wallet\
   \ LEFT JOIN flows f ON f.wallet = p.wallet LEFT JOIN activity_stats ast ON ast.wallet = p.wallet\
   \ LEFT JOIN adjustments adj ON adj.wallet = p.wallet\
   \ ), scored AS (\
-  \ SELECT raw.*, CASE WHEN starting_value_usdc IS NULL OR current_value_usdc IS NULL THEN NULL\
-  \ ELSE current_value_usdc - starting_value_usdc - deposits_usdc + withdrawals_usdc + adjustment_usdc - net_vpi_rebate_usdc END AS final_pnl_usdc\
+  \ SELECT raw.*, CASE WHEN starting_value_assets IS NULL OR current_value_assets IS NULL THEN NULL\
+  \ ELSE current_value_assets - starting_value_assets - deposits_assets + withdrawals_assets + adjustment_assets - net_vpi_rebate_assets END AS final_pnl_assets\
   \ FROM raw\
   \ ), ranked AS (\
-  \ SELECT scored.*, CASE WHEN final_pnl_usdc IS NULL\
+  \ SELECT scored.*, CASE WHEN final_pnl_assets IS NULL\
   \   OR (competition_slug = 'testnet-trading-2026' AND executed_trades = 0) THEN NULL\
   \ ELSE RANK() OVER (ORDER BY CASE WHEN competition_slug = 'testnet-trading-2026'\
-  \   AND executed_trades = 0 THEN 1 ELSE 0 END, final_pnl_usdc DESC NULLS LAST) END AS competition_rank\
+  \   AND executed_trades = 0 THEN 1 ELSE 0 END, final_pnl_assets DESC NULLS LAST) END AS competition_rank\
   \ FROM scored\
   \ ), prize_candidates AS (\
-  \ SELECT wallet, RANK() OVER (ORDER BY final_pnl_usdc DESC) AS prize_place,\
-  \ COUNT(*) OVER (PARTITION BY final_pnl_usdc) AS prize_tie_count\
-  \ FROM ranked WHERE final_pnl_usdc IS NOT NULL AND eligibility_status = 'eligible'\
+  \ SELECT wallet, RANK() OVER (ORDER BY final_pnl_assets DESC) AS prize_place,\
+  \ COUNT(*) OVER (PARTITION BY final_pnl_assets) AS prize_tie_count\
+  \ FROM ranked WHERE final_pnl_assets IS NOT NULL AND eligibility_status = 'eligible'\
   \ AND integrity_current AND jsonb_array_length(integrity_flags) = 0\
-  \ AND final_pnl_usdc >= competition_minimum_profit_usdc\
+  \ AND final_pnl_assets >= competition_minimum_profit_assets\
   \ AND active_days >= competition_minimum_active_days\
   \ ), with_prizes AS (\
   \ SELECT ranked.*, CASE WHEN pc.prize_place <= competition_prize_places THEN pc.prize_place ELSE NULL END AS prize_place,\
@@ -3106,13 +3111,13 @@ leaderboardQuery =
   \ FROM ranked LEFT JOIN prize_candidates pc ON pc.wallet = ranked.wallet\
   \ )\
   \ SELECT competition_rank, prize_place, prize_tie_count, wallet, alias, eligibility_status, eligibility_reason,\
-  \ integrity_current AND jsonb_array_length(integrity_flags) = 0 AS funding_integrity_clear, final_pnl_usdc,\
-  \ CASE WHEN final_pnl_usdc IS NULL OR competition_starting_balance_usdc = 0 THEN NULL\
-  \ ELSE TRUNC(final_pnl_usdc * 10000 / competition_starting_balance_usdc)::bigint END AS roi_bps,\
-  \ starting_value_usdc, current_value_usdc, deposits_usdc, withdrawals_usdc, adjustment_usdc,\
-  \ active_days, volume_usdc, executed_trades, liquidations, realized_pnl_usdc, block_number, timestamp, has_open_position, snapshot_kind,\
-  \ position_side, position_size_delta, position_margin_usdc, position_entry_price,\
-  \ position_unrealized_pnl_usdc, position_liquidatable\
+  \ integrity_current AND jsonb_array_length(integrity_flags) = 0 AS funding_integrity_clear, final_pnl_assets,\
+  \ CASE WHEN final_pnl_assets IS NULL OR competition_starting_balance_assets = 0 THEN NULL\
+  \ ELSE TRUNC(final_pnl_assets * 10000 / competition_starting_balance_assets)::bigint END AS roi_bps,\
+  \ starting_value_assets, current_value_assets, deposits_assets, withdrawals_assets, adjustment_assets,\
+  \ active_days, volume_assets, executed_trades, liquidations, realized_pnl_assets, block_number, timestamp, has_open_position, snapshot_kind,\
+  \ position_side, position_size_delta, position_margin_assets, position_entry_price,\
+  \ position_unrealized_pnl_assets, position_liquidatable\
   \ FROM with_prizes")
 
 leaderboardQuerySql :: Query
@@ -3121,11 +3126,11 @@ leaderboardQuerySql = leaderboardQuery
 finalizedStandingsSelect :: Query
 finalizedStandingsSelect =
   "SELECT competition_rank, prize_place, prize_tie_count, wallet, alias, eligibility_status, eligibility_reason,\
-  \ funding_integrity_clear, final_pnl_usdc, roi_bps, starting_value_usdc, current_value_usdc,\
-  \ deposits_usdc, withdrawals_usdc, adjustment_usdc, active_days, volume_usdc, executed_trades,\
-  \ liquidations, realized_pnl_usdc, block_number, timestamp, has_open_position, snapshot_kind,\
-  \ position_side, position_size_delta, position_margin_usdc, position_entry_price,\
-  \ position_unrealized_pnl_usdc, position_liquidatable FROM insights_finalized_standings"
+  \ funding_integrity_clear, final_pnl_assets, roi_bps, starting_value_assets, current_value_assets,\
+  \ deposits_assets, withdrawals_assets, adjustment_assets, active_days, volume_assets, executed_trades,\
+  \ liquidations, realized_pnl_assets, block_number, timestamp, has_open_position, snapshot_kind,\
+  \ position_side, position_size_delta, position_margin_assets, position_entry_price,\
+  \ position_unrealized_pnl_assets, position_liquidatable FROM insights_finalized_standings"
 
 materializeFinalizedStandings :: Connection -> Text -> IO (Either Text Integer)
 materializeFinalizedStandings conn slug = do
@@ -3139,14 +3144,14 @@ materializeFinalizedStandings conn slug = do
       | existingCount == participantCount -> validateComplete participantCount
       | existingCount /= 0 -> pure $ Left "finalized standings are partially materialized"
       | otherwise -> do
-          profitThreshold <- competitionMinimumProfitUsdc slug
+          profitThreshold <- competitionMinimumProfitAssets slug
           inserted <- execute conn
             ("INSERT INTO insights_finalized_standings (competition_slug, competition_rank, prize_place, prize_tie_count,\
-             \ wallet, alias, eligibility_status, eligibility_reason, funding_integrity_clear, final_pnl_usdc, roi_bps,\
-             \ starting_value_usdc, current_value_usdc, deposits_usdc, withdrawals_usdc, adjustment_usdc, active_days,\
-             \ volume_usdc, executed_trades, liquidations, realized_pnl_usdc, block_number, timestamp, has_open_position,\
-             \ snapshot_kind, position_side, position_size_delta, position_margin_usdc, position_entry_price,\
-             \ position_unrealized_pnl_usdc, position_liquidatable) SELECT ?, standings.* FROM ("
+             \ wallet, alias, eligibility_status, eligibility_reason, funding_integrity_clear, final_pnl_assets, roi_bps,\
+             \ starting_value_assets, current_value_assets, deposits_assets, withdrawals_assets, adjustment_assets, active_days,\
+             \ volume_assets, executed_trades, liquidations, realized_pnl_assets, block_number, timestamp, has_open_position,\
+             \ snapshot_kind, position_side, position_size_delta, position_margin_assets, position_entry_price,\
+             \ position_unrealized_pnl_assets, position_liquidatable) SELECT ?, standings.* FROM ("
               <> leaderboardQuery
               <> ") standings")
             (slug, profitThreshold, slug)
@@ -3165,8 +3170,8 @@ materializeFinalizedStandings conn slug = do
       rows <- query conn
         "SELECT COUNT(*) FROM insights_finalized_standings s\
         \ JOIN insights_competitions c ON c.slug = s.competition_slug\
-        \ WHERE s.competition_slug = ? AND s.final_pnl_usdc IS NOT NULL\
-        \ AND s.starting_value_usdc IS NOT NULL AND s.current_value_usdc IS NOT NULL\
+        \ WHERE s.competition_slug = ? AND s.final_pnl_assets IS NOT NULL\
+        \ AND s.starting_value_assets IS NOT NULL AND s.current_value_assets IS NOT NULL\
         \ AND s.block_number IS NOT NULL AND s.timestamp IS NOT NULL\
         \ AND s.snapshot_kind = 'final' AND s.block_number = c.score_cutoff_block\
         \ AND c.score_cutoff_block_hash IS NOT NULL"
@@ -3179,7 +3184,7 @@ materializeFinalizedStandings conn slug = do
 leaderboardOrderBy :: Query
 leaderboardOrderBy =
   " ORDER BY CASE WHEN competition_slug = 'testnet-trading-2026' AND executed_trades = 0 THEN 1 ELSE 0 END,\
-  \ final_pnl_usdc DESC NULLS LAST, wallet ASC LIMIT ? OFFSET ?"
+  \ final_pnl_assets DESC NULLS LAST, wallet ASC LIMIT ? OFFSET ?"
 
 leaderboardOrderBySql :: Query
 leaderboardOrderBySql = leaderboardOrderBy
@@ -3201,8 +3206,8 @@ walletActivityQuery =
   \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)))\
   \ ORDER BY b.block_number DESC, CASE WHEN b.snapshot_kind = 'final' THEN 0 ELSE 1 END, b.published_at DESC LIMIT 1\
   \ )\
-  \ SELECT a.activity_type, a.side, a.price, a.size_delta, a.amount_usdc, a.pnl_usdc,\
-  \ (a.data->>'executionFeeUsdc')::numeric, (a.data->>'vpiUsdc')::numeric,\
+  \ SELECT a.activity_type, a.side, a.price, a.size_delta, a.amount_assets, a.pnl_assets,\
+  \ (a.data->>'executionFeeAssets')::numeric, (a.data->>'vpiAssets')::numeric,\
   \ a.tx_hash, a.block_number, a.timestamp, a.log_index, execution.payload,\
   \ CASE WHEN EXTRACT(ISODOW FROM ((to_timestamp(a.timestamp) AT TIME ZONE 'UTC')\
   \   + MOD(1440 - c.fx_session_boundary_utc_minutes, 1440) * INTERVAL '1 minute')) BETWEEN 1 AND 5\
@@ -3380,6 +3385,6 @@ firstRow = \case
 
 prizeAt :: Int -> CompetitionRules -> Integer
 prizeAt index rules =
-  case drop index $ crPrizeUsdc rules of
+  case drop index $ crPrizeAssets rules of
     prize : _ -> prize
     [] -> 0

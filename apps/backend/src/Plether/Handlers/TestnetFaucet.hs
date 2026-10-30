@@ -195,7 +195,7 @@ claimTestnetFaucetWithin pool client cfg rawAddress =
       pure $ Left $ E.internalError "FAUCET_PRIVATE_KEY is not configured"
     Just privateKey -> do
       let address = T.toLower rawAddress
-          token = T.toLower $ cfgPerpsUsdc cfg
+          token = T.toLower $ cfgPerpsSettlementToken cfg
       existingResult <-
         runFaucetStage "claim_lookup" eitherOutcome $
           withFaucetDb pool $ \conn -> getTestnetFaucetClaim conn address token

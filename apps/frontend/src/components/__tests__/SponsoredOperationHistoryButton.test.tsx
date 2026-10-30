@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
 import { PerpsAaRuntimeContext, type PerpsAaSmartAccountRuntime } from '../../perps-aa/runtimeContext'
-import deployedManifest from '../../../public/perps-aa-manifest.json'
+import deployedManifest from '../../contracts/__tests__/fixtures/perps-canonical-aa.json'
 
 vi.mock('../../hooks/usePerpsHistory', () => ({ usePerpsHistory: () => ({ orderHistory: [], refetch: vi.fn() }) }))
 

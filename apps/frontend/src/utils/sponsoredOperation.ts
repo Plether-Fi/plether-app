@@ -21,6 +21,8 @@ export function sponsoredOperationActionLabel(
     'create-protection': 'Add TP/SL',
     'replace-protection': 'Edit TP/SL',
     'cancel-protection': 'Cancel TP/SL',
+    'amend-protection-close-limits': 'Edit TP/SL close limits',
+    'cancel-protection-and-close': 'Cancel TP/SL and close position',
     'cancel-order': 'Cancel order',
     'add-margin': 'Add position margin',
     withdraw: 'Withdraw margin',

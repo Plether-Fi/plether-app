@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1273" viewBox="0 0 640 1273" role="img" aria-labelledby="pnl-and-close-settlement-outcomes-title pnl-and-close-settlement-outcomes-desc" focusable="false">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1424" viewBox="0 0 640 1424" role="img" aria-labelledby="pnl-and-close-settlement-outcomes-title pnl-and-close-settlement-outcomes-desc" focusable="false">
 <title id="pnl-and-close-settlement-outcomes-title">Price PnL is not cash settlement</title>
 <desc id="pnl-and-close-settlement-outcomes-desc">Unrealized price PnL contributes to price-risk equity. A close separates realized price PnL from action costs; positive residual price payouts may be funded or recorded as claims. A net action rebate is limited by available cash. An unpaid rebate is waived; it does not become a trader claim.</desc>
 <style>text{font-family:Arial,Helvetica,sans-serif}</style>
-<rect width="640" height="1273" rx="16" fill="#FFF5F9"/>
+<rect width="640" height="1424" rx="16" fill="#FFF5F9"/>
 <text x="32" y="54" font-size="22" font-weight="700" fill="#250917" data-max-width="576">PLETHER / PNL &amp; ACCOUNTING</text>
 <text x="32" y="110" font-size="36" font-weight="700" fill="#250917" data-max-width="576">Price PnL is not cash</text>
 <text x="32" y="155" font-size="36" font-weight="700" fill="#250917" data-max-width="576">settlement</text>
@@ -18,40 +18,48 @@
 <circle cx="47" cy="422" r="14" fill="#9A8890"/>
 <circle cx="47" cy="422" r="5" fill="#250917"/>
 <text x="80" y="431" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Price-risk equity</text>
-<text x="80" y="468" font-size="24" font-weight="400" fill="#250917" data-max-width="528">PnL pledge + nettable own claim + unrealized</text>
-<text x="80" y="500" font-size="24" font-weight="400" fill="#250917" data-max-width="528">price PnL.</text>
+<text x="80" y="468" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Position margin after accrued carry +</text>
+<text x="80" y="500" font-size="24" font-weight="400" fill="#250917" data-max-width="528">nettable own claim + unrealized price PnL.</text>
 <text x="32" y="556" font-size="24" font-weight="700" fill="#250917" data-max-width="576">When a close executes</text>
-<rect x="32" y="582" width="278" height="507" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
-<rect x="44" y="586" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
-<text x="48" y="624" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Price gain</text>
-<path d="M48 645 L294 645" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="48" y="675" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Withhold action</text>
-<text x="48" y="708" font-size="26" font-weight="700" fill="#250917" data-max-width="246">costs</text>
-<text x="48" y="747" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Any residual price</text>
-<text x="48" y="779" font-size="24" font-weight="400" fill="#250917" data-max-width="246">payout is funded in</text>
-<text x="48" y="811" font-size="24" font-weight="400" fill="#250917" data-max-width="246">full or recorded as a</text>
-<text x="48" y="843" font-size="24" font-weight="400" fill="#250917" data-max-width="246">claim.</text>
-<path d="M56 860 V879 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<text x="48" y="923" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit the right</text>
-<text x="48" y="956" font-size="26" font-weight="700" fill="#250917" data-max-width="246">bucket</text>
-<text x="48" y="995" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Open remainder: PnL</text>
-<text x="48" y="1027" font-size="24" font-weight="400" fill="#250917" data-max-width="246">pledge. No position:</text>
-<text x="48" y="1059" font-size="24" font-weight="400" fill="#250917" data-max-width="246">settlement.</text>
-<rect x="330" y="582" width="278" height="507" rx="12" fill="#FFAB96" stroke="none"/>
-<text x="346" y="624" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Price loss</text>
-<path d="M346 645 L592 645" stroke="#9A8890" stroke-width="2" fill="none"/>
-<text x="346" y="675" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Net claim, then</text>
-<text x="346" y="708" font-size="26" font-weight="700" fill="#250917" data-max-width="246">pledge</text>
-<text x="346" y="747" font-size="24" font-weight="400" fill="#250917" data-max-width="246">The terminal cap</text>
-<text x="346" y="779" font-size="24" font-weight="400" fill="#250917" data-max-width="246">limits collection.</text>
-<path d="M354 796 V815 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-<text x="346" y="859" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Settle costs</text>
-<text x="346" y="892" font-size="26" font-weight="700" fill="#250917" data-max-width="246">separately</text>
-<text x="346" y="931" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Fees, carry and VPI</text>
-<text x="346" y="963" font-size="24" font-weight="400" fill="#250917" data-max-width="246">use their eligible</text>
-<text x="346" y="995" font-size="24" font-weight="400" fill="#250917" data-max-width="246">action funds.</text>
-<rect x="32" y="1113" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
-<text x="50" y="1151" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">A net action rebate is limited by available</text>
-<text x="50" y="1183" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">cash. An unpaid rebate is waived; it does not</text>
-<text x="50" y="1215" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">become a trader claim.</text>
+<circle cx="47" cy="599" r="14" fill="#9A8890"/>
+<circle cx="47" cy="599" r="5" fill="#250917"/>
+<text x="80" y="608" font-size="26" font-weight="700" fill="#250917" data-max-width="528">Collect accrued carry</text>
+<text x="80" y="645" font-size="24" font-weight="400" fill="#250917" data-max-width="528">Active position margin first, then eligible</text>
+<text x="80" y="677" font-size="24" font-weight="400" fill="#250917" data-max-width="528">free USDG. Carry not collected joins the</text>
+<text x="80" y="709" font-size="24" font-weight="400" fill="#250917" data-max-width="528">action charge.</text>
+<rect x="32" y="733" width="278" height="507" rx="12" fill="#FFF5F9" stroke="#9A8890"/>
+<rect x="44" y="737" width="254" height="6" rx="3" fill="#00FF99" stroke="none"/>
+<text x="48" y="775" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Price gain</text>
+<path d="M48 796 L294 796" stroke="#9A8890" stroke-width="2" fill="none"/>
+<text x="48" y="826" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Withhold action</text>
+<text x="48" y="859" font-size="26" font-weight="700" fill="#250917" data-max-width="246">costs</text>
+<text x="48" y="898" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Any residual price</text>
+<text x="48" y="930" font-size="24" font-weight="400" fill="#250917" data-max-width="246">payout is funded in</text>
+<text x="48" y="962" font-size="24" font-weight="400" fill="#250917" data-max-width="246">full or recorded as a</text>
+<text x="48" y="994" font-size="24" font-weight="400" fill="#250917" data-max-width="246">claim.</text>
+<path d="M56 1011 V1030 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="48" y="1074" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Credit the right</text>
+<text x="48" y="1107" font-size="26" font-weight="700" fill="#250917" data-max-width="246">bucket</text>
+<text x="48" y="1146" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Open remainder: PnL</text>
+<text x="48" y="1178" font-size="24" font-weight="400" fill="#250917" data-max-width="246">pledge. No position:</text>
+<text x="48" y="1210" font-size="24" font-weight="400" fill="#250917" data-max-width="246">settlement.</text>
+<rect x="330" y="733" width="278" height="507" rx="12" fill="#FFAB96" stroke="none"/>
+<text x="346" y="775" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Price loss</text>
+<path d="M346 796 L592 796" stroke="#9A8890" stroke-width="2" fill="none"/>
+<text x="346" y="826" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Net claim, then</text>
+<text x="346" y="859" font-size="26" font-weight="700" fill="#250917" data-max-width="246">pledge</text>
+<text x="346" y="898" font-size="24" font-weight="400" fill="#250917" data-max-width="246">The terminal cap</text>
+<text x="346" y="930" font-size="24" font-weight="400" fill="#250917" data-max-width="246">limits collection.</text>
+<path d="M354 947 V966 m-5 -5 5 5 5 -5" stroke="#250917" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<text x="346" y="1010" font-size="26" font-weight="700" fill="#250917" data-max-width="246">Settle costs</text>
+<text x="346" y="1043" font-size="26" font-weight="700" fill="#250917" data-max-width="246">separately</text>
+<text x="346" y="1082" font-size="24" font-weight="400" fill="#250917" data-max-width="246">Fees, VPI and unpaid</text>
+<text x="346" y="1114" font-size="24" font-weight="400" fill="#250917" data-max-width="246">carry use eligible</text>
+<text x="346" y="1146" font-size="24" font-weight="400" fill="#250917" data-max-width="246">action funds,</text>
+<text x="346" y="1178" font-size="24" font-weight="400" fill="#250917" data-max-width="246">including safely</text>
+<text x="346" y="1210" font-size="24" font-weight="400" fill="#250917" data-max-width="246">released margin.</text>
+<rect x="32" y="1264" width="576" height="128" rx="12" fill="#250917" stroke="none"/>
+<text x="50" y="1302" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">A net action rebate is limited by available</text>
+<text x="50" y="1334" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">cash. An unpaid rebate is waived; it does not</text>
+<text x="50" y="1366" font-size="24" font-weight="400" fill="#FFF5F9" data-max-width="540">become a trader claim.</text>
 </svg>

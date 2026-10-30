@@ -61,7 +61,7 @@ export function protectionWorkerProvenance(release) {
   assert.match(release.version, /^v\d+\.\d+\.\d+$/)
   assert.match(release.sourceCommit, /^[a-f0-9]{40}$/)
   assert.match(release.bundleSha256, /^[a-f0-9]{64}$/)
-  return `The protection-worker ABI is generated separately from the deployed Core release bundle:\n\n\`\`\`bash\nnode scripts/generate-protection-worker-abi.mjs /path/to/perps-${release.version}-arbitrum-sepolia.tar.gz\n\`\`\`\n\nThe generator verifies the bundle SHA-256 against\n\`config/perps/arbitrum-sepolia-v3.json\` before extracting the\nPositionProtectionBook, OrderRouter, OrderLifecycleBook and PletherOracle ABIs.\nDeployment source: \`${release.sourceCommit}\`.\nBundle SHA-256: \`${release.bundleSha256}\`.\nThe AA package release is independent of this deployment-specific ABI bundle;\npackage migration does not regenerate worker artifacts.`
+  return `The protection-worker ABI is generated together with frontend consumers from the reviewed Core source build:\n\n\`\`\`bash\nnode scripts/generate-perps-consumer-abis.mjs --artifacts-dir /path/to/plether-core/packages/perps/out --source-root /path/to/plether-core/packages/perps\n\`\`\`\n\nUse --check to verify reproducibility. Deployment source: \`${release.sourceCommit}\`.\nThe independently reviewed deployment bundle SHA-256 is \`${release.bundleSha256}\`.\nPackage migration does not regenerate worker artifacts.`
 }
 
 export function migrateDiagramEvidence(text, sourceUrl) {
@@ -71,7 +71,8 @@ export function migrateDiagramEvidence(text, sourceUrl) {
 }
 
 export function migrateSources(directory, record) {
-  const { release } = readJson(path.join(directory, 'config/perps/arbitrum-sepolia-v3.json'))
+  const { release } = readJson(path.join(directory, 'config/perps/mock-usdg-prepared.json'))
+  assert.ok(['deployed', 'seeded', 'active'].includes(release.phase), 'Registry migration documentation requires verified deployed evidence')
   const edit = (file, change) => {
     const target = path.join(directory, file)
     writeFileSync(target, change(readFileSync(target, 'utf8')))

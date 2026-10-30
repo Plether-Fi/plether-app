@@ -15,7 +15,7 @@ describe('tranche vault ABI', () => {
     expect(convertToAssets).toMatchObject({
       stateMutability: 'view',
       inputs: [{ name: 'shares', type: 'uint256' }],
-      outputs: [{ name: 'assets', type: 'uint256' }],
+      outputs: [{ name: '', type: 'uint256' }],
     })
   })
 
@@ -71,14 +71,14 @@ describe('tranche vault ABI', () => {
     ]))
     expect(poolNames).toEqual(expect.arrayContaining([
       'getPendingTrancheState',
-      'maxSeniorExposureUsdc',
+      'maxSeniorExposureAssets',
       'maxSeniorShareBps',
       'seniorRateBps',
       'getSeniorDepositCapacity',
-      'reservedSeniorDepositAssetsUsdc',
+      'reservedSeniorDepositAssets',
       'areSeniorDepositReservationsWithinLimits',
-      'minTrancheDepositUsdc',
+      'minTrancheDepositAssets',
     ]))
-    expect(JSON.stringify(poolLiquidityView)).toContain('currentTerminalDeficitUsdc')
+    expect(JSON.stringify(poolLiquidityView)).toContain('currentTerminalDeficitAssets')
   })
 })

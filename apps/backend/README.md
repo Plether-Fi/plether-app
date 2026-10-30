@@ -1,3 +1,25 @@
+The current perps backend targets the prepared MockUSDG release in
+`config/perps/mock-usdg-prepared.json`. Perps, AA, testnet-faucet and Insights
+routes return HTTP 503 while that release is prepared. Perps workers stop before
+opening RPC or database connections. Spot API routes remain available. A future
+activation requires verified schema-four deployment pins and a rebuilt binary;
+environment overrides cannot activate the prepared manifest.
+
+The new API uses `settlementToken` for token identity and `Assets` for amounts
+(for example `executionBountyAssets` and `amountAssets`). Amounts remain integer
+six-decimal USDG units. `PERPS_SETTLEMENT_TOKEN` replaces the old perps token
+environment variable; no legacy aliases are accepted. Tuple order-interface
+version stays three; receipt/config/digest domains remain V5/V5/V6.
+
+For an existing database, review and apply
+`config/migrations/perps-settlement-assets-v1.sql` explicitly during an offline
+upgrade. It renames perps/Insights/AA identifiers and the transfer table, without
+changing balances, asset addresses or historical event evidence. Startup rejects
+legacy identifiers instead of creating parallel empty columns. The migration was
+authored only and has not been run. Keep historical releases on their historical
+application version; current consumers have no historical receipt adapter. A new
+release gets its own indexed history from its verified deployment block.
+
 # Plether API Backend
 
 Haskell/Scotty backend API for the Plether DeFi protocol. Aggregates on-chain data from Ethereum to reduce frontend RPC calls.
@@ -344,7 +366,7 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_USDC=0x4b44312d1f94d3d79a36a875691d768dd6c0575f \
+PERPS_SETTLEMENT_TOKEN=0x4b44312d1f94d3d79a36a875691d768dd6c0575f \
 PERPS_ORDER_ROUTER=0x9b9ddc783780a14e4930dbbcd94d6356a82725e8 \
 PERPS_ORDER_LIFECYCLE_BOOK=0x519f57a34fb440c42bfd2d8328d2f80349af3872 \
 PERPS_MARGIN_CLEARINGHOUSE=0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7 \
@@ -361,7 +383,7 @@ participant; values above `100` are rejected at startup.
 
 Insights persists these configured contract addresses with the competition.
 Deposit and withdrawal adjustments count only events emitted by that exact
-MarginClearinghouse for that exact mock-USDC asset.
+MarginClearinghouse for that exact MockUSDG.
 
 Register the scored Plether Trading Account (which may differ from the
 controlling wallet) and manage the post-competition review with the audited
@@ -522,38 +544,38 @@ Local URLs:
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
-| `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
+| `PERPS_RPC_URL` | Keeper/faucet | Unavailable until deployment | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
 | `RPC_AUTH_TOKEN` | No | - | Optional bearer token for `RPC_URL`; keeps provider credentials out of endpoint URLs |
-| `PERPS_RPC_AUTH_TOKEN` | No | - | Optional bearer token for `PERPS_RPC_URL`; intentionally separate from `RPC_AUTH_TOKEN` |
+| `PERPS_RPC_AUTH_TOKEN` | No | Unavailable until deployment | Optional bearer token for `PERPS_RPC_URL`; intentionally separate from `RPC_AUTH_TOKEN` |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
-| `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `PERPS_CHAIN_ID` | No | Unavailable until deployment | Chain ID used for keeper transaction signing |
 | `VAULT_HISTORY_HOUSE_POOL_ADDRESS` | No | Arbitrum Sepolia HousePool deployment | HousePool identity used to isolate vault-performance snapshots across deployments |
 | `VAULT_HISTORY_SENIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Senior Vault deployment | Senior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
 | `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `318398363` | Earliest block eligible for the configured vault deployment's history |
 | `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
-| `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
-| `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
-| `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | `0x519f57a34fb440c42bfd2d8328d2f80349af3872` | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
-| `PERPS_HOUSE_POOL` | No | v1.3.1 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
-| `PERPS_SENIOR_VAULT` | With active LP settlement | v1.3.1 Arbitrum Sepolia Senior Vault | Must match both the Settlement Monitor and HousePool binding |
-| `PERPS_JUNIOR_VAULT` | With active LP settlement | v1.3.1 Arbitrum Sepolia Junior Vault | Must match both the Settlement Monitor and HousePool binding |
-| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.3.1 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
-| `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
-| `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
-| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
-| `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
-| `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
-| `PERPS_INDEXER_START_BLOCK` | No | `318398363` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
-| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia mock-USDC signer; configuring it also requires the dedicated proxy token |
+| `PERPS_SETTLEMENT_TOKEN` | No | Unavailable until deployment | Perps MockUSDG minted by the testnet faucet |
+| `PERPS_ORDER_ROUTER` | No | Unavailable until deployment | Perps order router address |
+| `PERPS_ORDER_LIFECYCLE_BOOK` | With managed sponsorship | Unavailable until deployment | Pinned V2 lifecycle-book address used for canonical intent and finalization receipts |
+| `PERPS_HOUSE_POOL` | No | Unavailable until deployment | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SENIOR_VAULT` | With active LP settlement | Unavailable until deployment | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_JUNIOR_VAULT` | With active LP settlement | Unavailable until deployment | Must match both the Settlement Monitor and HousePool binding |
+| `PERPS_SETTLEMENT_MONITOR_LENS` | No | Unavailable until deployment | Operational LP settlement facade; never configure the monitor sidecar |
+| `PERPS_CFD_ENGINE` | No | Unavailable until deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
+| `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Unavailable until deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Unavailable until deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored MockUSDG transfers |
+| `PERPS_PLETHER_ORACLE` | No | Unavailable until deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_ACCOUNT_LENS` | No | Unavailable until deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
+| `PERPS_INDEXER_START_BLOCK` | No | Unavailable until deployment | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia MockUSDG signer; configuring it also requires the dedicated proxy token |
 | `FAUCET_PROXY_ORIGIN_TOKEN` | With faucet signer | - | Dedicated secret required from the exact trusted Pages/Vite faucet proxy path |
 | `FAUCET_CLIENT_REQUESTS_PER_HOUR` | No | `20` | Rolling-hour accepted request limit per pseudonymous trusted client IP |
 | `FAUCET_GLOBAL_REQUESTS_PER_HOUR` | No | `200` | Rolling-hour accepted request limit across the single API process |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
-| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; enable only after `/api/aa/status` verifies the bounded-V2 release |
+| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; enable only after `/api/aa/status` verifies the bounded-V3 release |
 | `AA_IP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-IP issuance limit; recovery reads receive four times this budget |
 | `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
 | `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
@@ -584,10 +606,10 @@ Local URLs:
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FUTURE_PUBLISH_MAX_RETRIES` | No | `2` | Newer exact blocks tried when a merged Pyth publish time is ahead of the selected block timestamp (`0`–`5`) |
 | `LIQUIDATION_WORKER_FUTURE_PUBLISH_RETRY_MAX_SECONDS` | No | `10` | Maximum delay before each future-publish exact-block retry (`1`–`30` seconds) |
-| `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
-| `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
-| `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
-| `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer delay after every successful iteration |
+| `PERPS_INDEXER_RPC_URLS` | No | Unavailable until deployment | Fallback RPC URL list for Perps history indexing |
+| `PERPS_INDEXER_CONFIRMATIONS` | No | Unavailable until deployment | Blocks to wait before indexing Perps history |
+| `PERPS_INDEXER_BATCH_SIZE` | No | Unavailable until deployment | Maximum block span per Perps history indexing pass |
+| `PERPS_INDEXER_POLL_SECONDS` | No | Unavailable until deployment | Perps history indexer delay after every successful iteration |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
 | `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
@@ -600,13 +622,13 @@ Local URLs:
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
-| `PERPS_CANDLE_WRITE_MODE` | No | `off` | OHLCV write mode: `off` keeps legacy-only ingestion; `dual` writes legacy data and rollups |
-| `PERPS_CANDLE_READ_MODE` | No | `legacy` | Candle API read mode: `legacy` keeps rollup routes closed; `rollup` enables allowlisted intervals only with strict coverage. `shadow` is reserved and currently performs no comparison or traffic switch. |
-| `PERPS_CANDLE_READ_INTERVALS` | No | empty | Comma/space-separated canonical intervals eligible for strict rollup reads; empty exposes no rollup interval |
-| `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | `0` | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
-| `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
-| `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
-| `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
+| `PERPS_CANDLE_WRITE_MODE` | No | Unavailable until deployment | OHLCV write mode: `off` keeps legacy-only ingestion; `dual` writes legacy data and rollups |
+| `PERPS_CANDLE_READ_MODE` | No | Unavailable until deployment | Candle API read mode: `legacy` keeps rollup routes closed; `rollup` enables allowlisted intervals only with strict coverage. `shadow` is reserved and currently performs no comparison or traffic switch. |
+| `PERPS_CANDLE_READ_INTERVALS` | No | Unavailable until deployment | Comma/space-separated canonical intervals eligible for strict rollup reads; empty exposes no rollup interval |
+| `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | Unavailable until deployment | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
+| `PERPS_CANDLE_STRICT_COVERAGE` | No | Unavailable until deployment | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
+| `PERPS_CANDLE_LATENESS_SECONDS` | No | Unavailable until deployment | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
+| `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | Unavailable until deployment | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
 
 Vault performance history, vault activity, UserOperation receipt recovery, and
 transaction tracing all use the server-side Alchemy `PERPS_RPC_URL` (or the
@@ -712,7 +734,7 @@ the backend alert is a receipt-based secondary signal.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/aa/status` | Public bounded-V2 release fingerprint, startup binding verification state, and sponsorship kill-switch state |
+| `GET /api/aa/status` | Public bounded-V3 release fingerprint, startup binding verification state, and sponsorship kill-switch state |
 | `POST /api/aa/pimlico` | Authenticated, fail-closed Pimlico JSON-RPC proxy for the approved Arbitrum Sepolia SimpleAccount and Plether action surface |
 | `POST /api/aa/rpc` | Authenticated native JSON-RPC gateway for the private Alto bundler and Plether verifying paymaster; disabled until the reviewed Sepolia canary is configured |
 
@@ -769,7 +791,7 @@ positive decimal representation: signs, whitespace, and leading zeroes are
 rejected. Historical candle cursors are positive Unix timestamps
 aligned to `interval * 500`; responses are ascending and expose
 `previousCursor`, coverage/finalization watermarks, and `datasetGeneration`.
-Historical pages contain finalized price rows only. `volumeUsdc` and
+Historical pages contain finalized price rows only. `volumeAssets` and
 `tradeCount` are nullable on both native historical and mutable current candles:
 before current-router volume coverage, null means unknown; inside complete
 coverage, zero means the indexer proved no trades in that bucket. Per-candle
@@ -801,7 +823,7 @@ do not store per-component point metadata, and is therefore accepted only for
 the UI's bounded `range=24h`, `interval=3600`,
 `includeComponents=true` request. Other component shapes return `400` rather
 than starting an unbounded raw-source scan. This compatibility response does
-not query market activity: its point `volumeUsdc` values are deliberately zero
+not query market activity: its point `volumeAssets` values are deliberately zero
 and non-authoritative, and its volume query timing/row metrics remain zero.
 `GET /api/perps/market/stats` is the authoritative source for rolling 24-hour
 volume. Browsers refresh the component payload no more often than every five
@@ -819,26 +841,26 @@ minutes.
 Leaderboard query params: `limit` and integer offset `cursor`. Wallet detail
 accepts `activityLimit`.
 
-`finalPnlUsdc` is the cash-flow-adjusted net competition result with the total
+`finalPnlAssets` is the cash-flow-adjusted net competition result with the total
 VPI contribution capped at zero. Indexed VPI is positive for charges and negative
-for rebates: subtract `max(0, -sum(vpiUsdc))` over opens and closes in the
+for rebates: subtract `max(0, -sum(vpiAssets))` over opens and closes in the
 competition window through the scored snapshot. Net VPI costs remain in P&L;
 account values and execution breakdowns retain actual rebates. Ranking, ROI,
 and prize eligibility all use this adjusted score. The separate
-`realizedPnlUsdc` field sums directional close/liquidation P&L before execution
+`realizedPnlAssets` field sums directional close/liquidation P&L before execution
 fees, VPI, carry, rewards, and manual competition adjustments.
 
 September snapshots value the full account: settlement less execution-bounty
 reservations, plus unrealized price P&L and trader claims, less pending carry.
 Free collateral and locked liquidation/order reserves remain account assets.
-The account lens's `netEquityUsdc` is position risk equity, not account equity;
+The account lens's `netEquityAssets` is position risk equity, not account equity;
 it already includes claims and only reflects carry consumed from the pledge.
 When carry exhausts that pledge, the worker reads the full pending charge from
 the V2 engine lens's zero-size `previewOpen` diagnostic at the same block.
 All reads must succeed and the block hash is rechecked before publication.
 
 Corrected snapshots carry `accountValuationVersion: full-account-v2` and
-`pendingCarryUsdc` in their raw data. After an upgrade, the worker automatically
+`pendingCarryAssets` in their raw data. After an upgrade, the worker automatically
 recaptures unversioned September start/final batches before treating them as
 complete; live batches refresh normally. July and finalized standings retain
 their historical valuation.

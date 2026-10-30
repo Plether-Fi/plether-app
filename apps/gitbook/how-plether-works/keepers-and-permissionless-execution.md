@@ -70,9 +70,9 @@ The current Plether interface leaves order finalization and expired-order cleanu
 
 ### Keeper incentives and costs
 
-An order reserves an execution reward in USDC[^usdc] when it is committed. When an order executes, or when a terminally failed or expired order is cleared, the reward is credited to that caller's Plether Margin Account. A successful liquidator receives the applicable liquidation bounty instead.
+An open or increase reserves an execution reward in USDG[^usdg] when it is committed. When that order executes, or when its terminal failure or expiry is processed, the reward is credited to the caller's Plether Margin Account. Reductions and full closes, including TP/SL close orders, reserve and pay no execution reward. TP/SL triggering has a separate configured reward. A successful liquidator receives the applicable liquidation bounty instead.
 
-The operator pays the transaction costs required to attempt the action, including network gas and, where applicable, the Pyth update fee. A reward is not guaranteed profit. Costs can exceed rewards, and transactions can revert or lose a race to another keeper. Operators should model fees, failure rates, competition and infrastructure costs before running a live service.
+The operator pays the transaction costs required to attempt the action, including network gas and, where applicable, the Pyth update fee. Processing a reduction or close does not earn an order-execution reward. Where a reward applies, it is not guaranteed profit: costs can exceed it, and transactions can revert or lose a race to another keeper. Operators should model fees, failure rates, competition and infrastructure costs before running a live service.
 
 #### Hermes access is a separate operating cost
 
@@ -171,7 +171,7 @@ A keeper's authority begins and ends with submitting calls that anyone may submi
 
 That is the core design: **open execution, constrained by onchain verification.**
 
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 [^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^pyth]: Plether's external price-data provider for the six currency feeds used to calculate its index.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.

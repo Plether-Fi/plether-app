@@ -16,7 +16,7 @@ interface TradingRegimeStoryProps {
   regime: TradingRegime
 }
 
-const USDC = 1_000_000n
+const ASSETS = 1_000_000n
 const POSITION_SIZE = 1_000n * 10n ** 18n
 const REDUCE_SIZE = 500n * 10n ** 18n
 const ORACLE_PRICE = 100_000_000n
@@ -64,40 +64,40 @@ const currentPosition = {
   direction: 'long' as const,
   size: POSITION_SIZE,
   entryPrice: 99_500_000n,
-  marginUsdc: 250n * USDC,
-  unrealizedPnlUsdc: 5n * USDC,
-  maintenanceMarginUsdc: 10n * USDC,
+  marginAssets: 250n * ASSETS,
+  unrealizedPnlAssets: 5n * ASSETS,
+  maintenanceMarginAssets: 10n * ASSETS,
   liquidatable: false,
-  estimatedNotionalUsdc: 1_000n * USDC,
-  entryNotionalUsdc: 995n * USDC,
-  dxyExposureUsdc: 1_000n * USDC,
+  estimatedNotionalAssets: 1_000n * ASSETS,
+  entryNotionalAssets: 995n * ASSETS,
+  dxyExposureAssets: 1_000n * ASSETS,
 }
 
 function closePreviewFixture({
   executionPrice,
-  frozenSpreadUsdc = 0n,
-  frozenSpreadPaidUsdc = 0n,
-  frozenSpreadWaivedUsdc = 0n,
+  frozenSpreadAssets = 0n,
+  frozenSpreadPaidAssets = 0n,
+  frozenSpreadWaivedAssets = 0n,
 }: {
   executionPrice: bigint
-  frozenSpreadUsdc?: bigint
-  frozenSpreadPaidUsdc?: bigint
-  frozenSpreadWaivedUsdc?: bigint
+  frozenSpreadAssets?: bigint
+  frozenSpreadPaidAssets?: bigint
+  frozenSpreadWaivedAssets?: bigint
 }): ClosePreviewFixture {
   return {
     valid: true,
     invalidReason: 0,
     executionPrice,
     sizeDelta: REDUCE_SIZE,
-    realizedPnlUsdc: 2_500_000n,
-    vpiDeltaUsdc: -750_000n,
-    vpiUsdc: 0n,
-    executionFeeUsdc: 200_000n,
+    realizedPnlAssets: 2_500_000n,
+    vpiDeltaAssets: -750_000n,
+    vpiAssets: 0n,
+    executionFeeAssets: 200_000n,
     remainingSize: POSITION_SIZE - REDUCE_SIZE,
-    remainingMargin: 125n * USDC,
-    frozenSpreadUsdc,
-    frozenSpreadPaidUsdc,
-    frozenSpreadWaivedUsdc,
+    remainingMargin: 125n * ASSETS,
+    frozenSpreadAssets,
+    frozenSpreadPaidAssets,
+    frozenSpreadWaivedAssets,
   }
 }
 
@@ -107,8 +107,8 @@ const liveClosePreview = closePreviewFixture({
 
 const frozenClosePreview = closePreviewFixture({
   executionPrice: ORACLE_PRICE,
-  frozenSpreadUsdc: 2_500_000n,
-  frozenSpreadPaidUsdc: 2_500_000n,
+  frozenSpreadAssets: 2_500_000n,
+  frozenSpreadPaidAssets: 2_500_000n,
 })
 
 const REGIME_CONFIG = {
@@ -188,14 +188,14 @@ function RegimePanel({ regime }: TradingRegimeStoryProps) {
           closePreviewFixture={config.closePreviewFixture}
           oracleFreshness={config.oracleFreshness}
           oracleFreshnessTooltip={config.oracleFreshnessTooltip}
-          availableToTradeRaw={1_500n * USDC}
+          availableToTradeRaw={1_500n * ASSETS}
           availableToTradeAmount="1 500"
-          settlementBalanceUsdcRaw={1_255n * USDC}
-          withdrawableUsdcRaw={1_000n * USDC}
-          walletUsdcRaw={2_000n * USDC}
+          settlementBalanceAssetsRaw={1_255n * ASSETS}
+          withdrawableAssetsRaw={1_000n * ASSETS}
+          walletAssetsRaw={2_000n * ASSETS}
           currentPosition={currentPosition}
-          longOpenCapacityUsdc={250_000n * USDC}
-          shortOpenCapacityUsdc={250_000n * USDC}
+          longOpenCapacityAssets={250_000n * ASSETS}
+          shortOpenCapacityAssets={250_000n * ASSETS}
           maintenanceMarginBps={100n}
           initialMarginBps={200n}
           executionFeeBps={4n}

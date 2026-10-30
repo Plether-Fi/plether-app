@@ -28,12 +28,12 @@ const component: BasketComponentPrice = {
 function historyPoint(
   timestamp: number,
   basketPrice: string,
-  volumeUsdc = '0'
+  volumeAssets = '0'
 ): BasketHistoryPoint {
   return {
     timestamp,
     basketPrice,
-    volumeUsdc,
+    volumeAssets,
     components: [component],
   }
 }
@@ -158,7 +158,7 @@ describe('DXY basket chart display transform', () => {
 
     expect(merged).toHaveLength(2)
     expect(merged.at(-1)?.basketPrice).toBe('96000000')
-    expect(merged.at(-1)?.volumeUsdc).toBe('123000000')
+    expect(merged.at(-1)?.volumeAssets).toBe('123000000')
     expect(merged.at(-1)?.components?.[0]?.publishTime).toBe(121)
   })
 

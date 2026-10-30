@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { requireDeployedRelease } from './release.mjs'
 import { setTimeout } from 'node:timers/promises'
 import pg from 'pg'
 import { createPublicClient, createWalletClient, http } from 'viem'
@@ -20,8 +21,9 @@ function flag(name) {
 function log(level, event, attributes) { console.log(json({ timestamp: new Date().toISOString(), level, event, service: 'plether-position-protection-worker', ...attributes })) }
 
 async function main() {
-  const releasePath = process.env.PERPS_RELEASE_MANIFEST ?? new URL('../../../config/perps/arbitrum-sepolia-v3.json', import.meta.url)
+  const releasePath = process.env.PERPS_RELEASE_MANIFEST ?? new URL('../../../config/perps/mock-usdg-prepared.json', import.meta.url)
   const release = JSON.parse(fs.readFileSync(releasePath, 'utf8'))
+  requireDeployedRelease(release)
   if (!process.env.PERPS_RPC_URL || !process.env.DATABASE_URL) throw new Error('PERPS_RPC_URL and DATABASE_URL are required')
   const executionEnabled = flag('PROTECTION_WORKER_EXECUTION_ENABLED')
   const privateKey = process.env.PROTECTION_WORKER_PRIVATE_KEY

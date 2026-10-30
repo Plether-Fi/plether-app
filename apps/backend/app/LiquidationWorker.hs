@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Exception (SomeException, catch, displayException, fromException, throwIO)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -35,6 +37,7 @@ main = runMain `catch` handleUnexpectedFailure
 
 runMain :: IO ()
 runMain = do
+  Manifest.requireDeployedRelease
   args <- parseArgs <$> getArgs
   eConfig <- loadConfig
   case eConfig of

@@ -8,7 +8,7 @@ import {
 } from '../api'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
-import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
+import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_ASSETS_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
 import {
@@ -49,9 +49,9 @@ function tupleValue(value: unknown, index: number, key: string): unknown {
   return undefined
 }
 
-function formatCompactUsdc(amount: bigint | undefined): string | undefined {
+function formatCompactAssets(amount: bigint | undefined): string | undefined {
   if (amount === undefined) return undefined
-  return formatCompactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
+  return formatCompactNumber(Number(formatUnits(amount, PERPS_DECIMALS.ASSETS)))
 }
 
 function parseBigIntString(value: string | undefined): bigint | undefined {
@@ -84,43 +84,43 @@ function percentChangeTone(value: number | undefined): 'positive' | 'negative' |
   return 'default'
 }
 
-function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
+function openInterestNotionalAssets(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
   if (openInterest === undefined || markPrice === undefined) return undefined
-  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
+  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_ASSETS_SCALE
 }
 
-function openCapacityUsdc({
-  selectedOpenInterestUsdc,
-  oppositeOpenInterestUsdc,
-  poolAssetsUsdc,
+function openCapacityAssets({
+  selectedOpenInterestAssets,
+  oppositeOpenInterestAssets,
+  poolAssets,
   maxSkewRatio,
 }: {
-  selectedOpenInterestUsdc: bigint | undefined
-  oppositeOpenInterestUsdc: bigint | undefined
-  poolAssetsUsdc: bigint | undefined
+  selectedOpenInterestAssets: bigint | undefined
+  oppositeOpenInterestAssets: bigint | undefined
+  poolAssets: bigint | undefined
   maxSkewRatio: bigint | undefined
 }): bigint | undefined {
   if (
-    selectedOpenInterestUsdc === undefined ||
-    oppositeOpenInterestUsdc === undefined ||
-    poolAssetsUsdc === undefined ||
+    selectedOpenInterestAssets === undefined ||
+    oppositeOpenInterestAssets === undefined ||
+    poolAssets === undefined ||
     maxSkewRatio === undefined
   ) {
     return undefined
   }
 
-  const maxSkewUsdc = (poolAssetsUsdc * maxSkewRatio) / WAD
-  return maxSkewUsdc + oppositeOpenInterestUsdc > selectedOpenInterestUsdc
-    ? maxSkewUsdc + oppositeOpenInterestUsdc - selectedOpenInterestUsdc
+  const maxSkewAssets = (poolAssets * maxSkewRatio) / WAD
+  return maxSkewAssets + oppositeOpenInterestAssets > selectedOpenInterestAssets
+    ? maxSkewAssets + oppositeOpenInterestAssets - selectedOpenInterestAssets
     : 0n
 }
 
-function minNewPositionNotionalUsdc(
-  minBountyUsdc: bigint | undefined,
+function minNewPositionNotionalAssets(
+  minBountyAssets: bigint | undefined,
   bountyBps: bigint | undefined
 ): bigint | undefined {
-  if (minBountyUsdc === undefined || bountyBps === undefined || bountyBps === 0n) return undefined
-  return (minBountyUsdc * 10_000n + bountyBps - 1n) / bountyBps
+  if (minBountyAssets === undefined || bountyBps === undefined || bountyBps === 0n) return undefined
+  return (minBountyAssets * 10_000n + bountyBps - 1n) / bountyBps
 }
 
 function protocolPhaseToMarketPhase(
@@ -236,7 +236,7 @@ export function usePerpsMarket() {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'minOpenNotionalUsdc',
+        functionName: 'minOpenNotionalAssets',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -273,7 +273,7 @@ export function usePerpsMarket() {
     const bearSide = readResult(dynamicContractData, 3)
     const riskParams = readResult(engineConfigurationData, 0)
     const executionFeeBps = readResult(engineConfigurationData, 1) as bigint | undefined
-    const minOpenNotionalUsdc = readResult(routerConfigurationData, 0) as bigint | undefined
+    const minOpenNotionalAssets = readResult(routerConfigurationData, 0) as bigint | undefined
 
     const markPrice = tupleValue(protocolStatus, 1, 'lastMarkPrice') as bigint | undefined
     const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
@@ -281,11 +281,11 @@ export function usePerpsMarket() {
     const tradingActive = tupleValue(protocolStatus, 5, 'tradingActive') as boolean | undefined
     const oracleFrozen = tupleValue(protocolStatus, 3, 'oracleFrozen') as boolean | undefined
     const fadWindow = tupleValue(protocolStatus, 4, 'fadWindow') as boolean | undefined
-    const poolAssetsUsdc = tupleValue(poolLiquidity, 0, 'totalAssetsUsdc') as bigint | undefined
-    const freeUsdc = tupleValue(poolLiquidity, 1, 'freeUsdc') as bigint | undefined
-    const seniorPrincipalUsdc = tupleValue(poolLiquidity, 5, 'seniorPrincipalUsdc') as bigint | undefined
-    const juniorPrincipalUsdc = tupleValue(poolLiquidity, 6, 'juniorPrincipalUsdc') as bigint | undefined
-    const seniorHighWaterMarkUsdc = tupleValue(poolLiquidity, 7, 'seniorHighWaterMarkUsdc') as bigint | undefined
+    const poolAssets = tupleValue(poolLiquidity, 0, 'totalAssets') as bigint | undefined
+    const freeAssets = tupleValue(poolLiquidity, 1, 'freeAssets') as bigint | undefined
+    const seniorPrincipalAssets = tupleValue(poolLiquidity, 5, 'seniorPrincipalAssets') as bigint | undefined
+    const juniorPrincipalAssets = tupleValue(poolLiquidity, 6, 'juniorPrincipalAssets') as bigint | undefined
+    const seniorHighWaterMarkAssets = tupleValue(poolLiquidity, 7, 'seniorHighWaterMarkAssets') as bigint | undefined
     const bullOpenInterest = tupleValue(bullSide, 1, 'openInterest') as bigint | undefined
     const bearOpenInterest = tupleValue(bearSide, 1, 'openInterest') as bigint | undefined
     const maxSkewRatio = tupleValue(riskParams, 1, 'maxSkewRatio') as bigint | undefined
@@ -294,20 +294,20 @@ export function usePerpsMarket() {
     const fadMarginBps = tupleValue(riskParams, 4, 'fadMarginBps') as bigint | undefined
     const maintenanceMarginBps = fadWindow ? fadMarginBps : maintMarginBps
     const baseCarryBps = tupleValue(riskParams, 5, 'baseCarryBps') as bigint | undefined
-    const minBountyUsdc = tupleValue(riskParams, 6, 'minBountyUsdc') as bigint | undefined
+    const minBountyAssets = tupleValue(riskParams, 6, 'minBountyAssets') as bigint | undefined
     const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
-    const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
-    const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const bullOpenInterestAssets = openInterestNotionalAssets(bullOpenInterest, markPrice)
+    const bearOpenInterestAssets = openInterestNotionalAssets(bearOpenInterest, markPrice)
     const directionalLimit = calculatePerpsDirectionalLimit({
-      longOpenInterestUsdc: bullOpenInterestUsdc,
-      shortOpenInterestUsdc: bearOpenInterestUsdc,
-      poolAssetsUsdc,
+      longOpenInterestAssets: bullOpenInterestAssets,
+      shortOpenInterestAssets: bearOpenInterestAssets,
+      poolAssets,
       maxSkewRatio,
     })
     const poolCapital = calculatePerpsPoolCapital({
-      juniorPrincipalUsdc,
-      seniorPrincipalUsdc,
-      seniorHighWaterMarkUsdc,
+      juniorPrincipalAssets,
+      seniorPrincipalAssets,
+      seniorHighWaterMarkAssets,
     })
     // The component-rich hourly response already carries the basket price at
     // every point. Reuse it for the headline change instead of polling a
@@ -320,17 +320,17 @@ export function usePerpsMarket() {
       basketComponentHistory24h?.data.points,
       latestBasket?.data
     )
-    const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
-    const longOpenCapacityUsdc = openCapacityUsdc({
-      selectedOpenInterestUsdc: bullOpenInterestUsdc,
-      oppositeOpenInterestUsdc: bearOpenInterestUsdc,
-      poolAssetsUsdc,
+    const volume24hAssets = parseBigIntString(marketStats?.data.volume24hAssets)
+    const longOpenCapacityAssets = openCapacityAssets({
+      selectedOpenInterestAssets: bullOpenInterestAssets,
+      oppositeOpenInterestAssets: bearOpenInterestAssets,
+      poolAssets,
       maxSkewRatio,
     })
-    const shortOpenCapacityUsdc = openCapacityUsdc({
-      selectedOpenInterestUsdc: bearOpenInterestUsdc,
-      oppositeOpenInterestUsdc: bullOpenInterestUsdc,
-      poolAssetsUsdc,
+    const shortOpenCapacityAssets = openCapacityAssets({
+      selectedOpenInterestAssets: bearOpenInterestAssets,
+      oppositeOpenInterestAssets: bullOpenInterestAssets,
+      poolAssets,
       maxSkewRatio,
     })
 
@@ -350,22 +350,22 @@ export function usePerpsMarket() {
       addresses: PERPS_ARBITRUM_SEPOLIA,
       raw: {
         markPrice,
-        poolAssetsUsdc,
-        freeUsdc,
-        seniorPrincipalUsdc,
-        juniorPrincipalUsdc,
-        seniorHighWaterMarkUsdc,
+        poolAssets,
+        freeAssets,
+        seniorPrincipalAssets,
+        juniorPrincipalAssets,
+        seniorHighWaterMarkAssets,
         bullOpenInterest,
         bearOpenInterest,
-        bullOpenInterestUsdc,
-        bearOpenInterestUsdc,
-        longOpenCapacityUsdc,
-        shortOpenCapacityUsdc,
+        bullOpenInterestAssets,
+        bearOpenInterestAssets,
+        longOpenCapacityAssets,
+        shortOpenCapacityAssets,
         maxSkewRatio,
         maintenanceMarginBps,
         initialMarginBps,
-        minOpenNotionalUsdc,
-        minNewPositionNotionalUsdc: minNewPositionNotionalUsdc(minBountyUsdc, bountyBps),
+        minOpenNotionalAssets,
+        minNewPositionNotionalAssets: minNewPositionNotionalAssets(minBountyAssets, bountyBps),
         baseCarryBps,
         executionFeeBps,
         basketComponents: latestBasket?.data.components,
@@ -378,29 +378,29 @@ export function usePerpsMarket() {
       isBasketComponentsError: isLatestBasketError,
       oracleFreshness,
       oracleFreshnessTime,
-      longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
-      shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
+      longOpenInterest: formatCompactAssets(bullOpenInterestAssets),
+      shortOpenInterest: formatCompactAssets(bearOpenInterestAssets),
       directionalLimit: directionalLimit
         ? {
             usagePercent: directionalLimit.usagePercent,
             side: directionalLimit.side,
-            totalExposure: formatCompactUsdc(
-              directionalLimit.side === 'short' ? bearOpenInterestUsdc : bullOpenInterestUsdc
+            totalExposure: formatCompactAssets(
+              directionalLimit.side === 'short' ? bearOpenInterestAssets : bullOpenInterestAssets
             ),
-            netExposure: formatCompactUsdc(directionalLimit.netExposureUsdc),
-            limit: formatCompactUsdc(directionalLimit.limitUsdc),
+            netExposure: formatCompactAssets(directionalLimit.netExposureAssets),
+            limit: formatCompactAssets(directionalLimit.limitAssets),
           }
         : undefined,
       priceChange24h: formatPercentChange(priceChange24hValue),
       priceChange24hTone: percentChangeTone(priceChange24hValue),
-      volume24h: formatCompactUsdc(volume24hUsdc),
-      availableLiquidity: formatCompactUsdc(freeUsdc),
+      volume24h: formatCompactAssets(volume24hAssets),
+      availableLiquidity: formatCompactAssets(freeAssets),
       poolCapital: poolCapital
         ? {
             ...poolCapital,
-            juniorPrincipal: formatCompactUsdc(juniorPrincipalUsdc),
-            seniorPrincipal: formatCompactUsdc(seniorPrincipalUsdc),
-            seniorImpairment: formatCompactUsdc(poolCapital.seniorImpairmentUsdc),
+            juniorPrincipal: formatCompactAssets(juniorPrincipalAssets),
+            seniorPrincipal: formatCompactAssets(seniorPrincipalAssets),
+            seniorImpairment: formatCompactAssets(poolCapital.seniorImpairmentAssets),
           }
         : undefined,
       costOfCarry: formatBpsAsPercent(baseCarryBps),

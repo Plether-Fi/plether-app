@@ -316,7 +316,7 @@ spec = do
 
     it "pins the source V3 OrderFinalized topic" $ do
       hexText orderFinalizedTopic
-        `shouldBe` "d61f6da063fd4f0ef756e190c6fd287c56de22ed48a5c8ba9044aaf23b273287"
+        `shouldBe` "bc222cbec31354fa718658f6ac96c4f666d34aaf42c0ba8b824d285081930b9f"
 
     it "decodes the V5 summary without inventing execution economics" $ do
       let receiptHash = BS.replicate 32 0xaa
@@ -324,33 +324,18 @@ spec = do
       decodeOrderTerminalSummary bytes `shouldBe` Right (OrderTerminalOutcome 2 1 Nothing 11897980 Nothing Nothing receiptHash)
       decodeOrderTerminalSummary (BS.replicate (27 * 32) 0) `shouldSatisfy` isDecodeError
 
-    it "decodes the canonical terminal outcome getter" $ do
+    it "accepts the current oracle-failure pending and batch-stop reason" $ do
+      let hash = BS.replicate 32 0
+      decodeOrderExecutionResult (mconcat [encodeUint256 1, encodeUint256 1, encodeUint256 0, encodeUint256 10, hash])
+        `shouldBe` Right (OrderExecutionResult 1 1 0 10 hash)
+      decodeOrderBatchResult (mconcat $ map encodeUint256 [1, 0, 10])
+        `shouldBe` Right (OrderBatchResult 1 0 10)
+    it "accepts the current reservation-mismatch terminal reason" $ do
       let receiptHash = BS.replicate 32 0xaa
-          outcomeWord :: Int -> BS.ByteString
-          outcomeWord index
-            | index == 5 = encodeUint256 3
-            | index == 6 = encodeUint256 2
-            | index == 7 = encodeUint256 1
-            | index == 10 = encodeUint256 303858802
-            | index == 15 = encodeUint256 101250000
-            | index == 20 = encodeUint256 4
-            | index == 22 = receiptHash
-            | otherwise = encodeUint256 0
-      decodeOrderTerminalOutcome (mconcat $ map outcomeWord [0 .. 26])
-        `shouldBe` Right
-          OrderTerminalOutcome
-            { otoLifecycleStatus = 3
-            , otoTerminalReason = 2
-            , otoExecutionMode = Just 1
-            , otoTerminalBlock = 303858802
-            , otoExecutionPrice = Just 101250000
-            , otoFailedConstraint = Just 4
-            , otoReceiptHash = receiptHash
-            }
-
-    it "rejects a non-terminal outcome" $ do
-      decodeOrderTerminalOutcome (BS.replicate (27 * 32) 0)
-        `shouldSatisfy` isDecodeError
+      decodeOrderTerminalSummary (mconcat [encodeUint256 1, encodeUint256 10, encodeUint256 3, encodeUint256 10, receiptHash])
+        `shouldBe` Right (OrderTerminalOutcome 3 10 Nothing 10 Nothing Nothing receiptHash)
+    it "rejects a non-terminal summary" $
+      decodeOrderTerminalSummary (BS.replicate (5 * 32) 0) `shouldSatisfy` isDecodeError
 
   describe "decodePerpsOrderEvent" $ do
     it "decodes OrderCommitted" $ do
@@ -478,7 +463,7 @@ spec = do
                   , encodeAddress account
                   , clientOrderId
                   ]
-              , rpcLogData = mconcat $ map eventWord [0 .. 72]
+              , rpcLogData = mconcat $ map eventWord [0 .. 70]
               }
       decodePerpsOrderEvent logEntry
         `shouldBe` Just
@@ -543,7 +528,7 @@ spec = do
             { lbiIndex = 3
             , lbiAccount = account
             , lbiResult = LiquidationBatchFailed
-            , lbiKeeperBountyUsdc = 77
+            , lbiKeeperBountyAssets = 77
             , lbiErrorSelector = selector
             }
 

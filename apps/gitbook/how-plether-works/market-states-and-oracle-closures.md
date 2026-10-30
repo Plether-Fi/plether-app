@@ -64,7 +64,7 @@ The following assumes the protocol is active and all other account, liquidity, q
 | Execute a reduction or close              | Live historical pricing                     | Live historical pricing                 | Frozen-market pricing plus the 0.50% frozen-close spread  | Blocked                                                 |
 | Liquidate                                 | Live liquidation policy                     | Live policy with closure margin         | Frozen policy with closure margin; no frozen-close spread | Blocked                                                 |
 | Add margin                                | Allowed                                     | Allowed                                 | Allowed                                                   | Allowed                                                 |
-| Withdraw USDC with an open position       | Requires fresh mark and sufficient headroom | Requires live mark and closure headroom | Requires mark within frozen limit                         | Blocked                                                 |
+| Withdraw USDG with an open position       | Requires fresh mark and sufficient headroom | Requires live mark and closure headroom | Requires mark within frozen limit                         | Blocked                                                 |
 | Withdraw from an account with no position | Subject to free and reserved balances       | Same                                    | Same                                                      | Same                                                    |
 
 Data availability is an overlay rather than a separate calendar phase. An oracle problem can occur while the calendar says **Open**, and valid bounded data can remain available while the calendar says **Oracle frozen**.
@@ -152,7 +152,7 @@ Frozen operation does not switch to a one-way VPI curve:
 * A close that reduces directional imbalance can receive a bounded VPI rebate
 * The existing lifetime rebate clamp remains unchanged
 
-Separately, a voluntary close or reduction executed while `oracleFrozen` is assessed a fixed spread on the USDC[^usdc] value of the notional[^notional] being reduced:
+Separately, a voluntary close or reduction executed while `oracleFrozen` is assessed a fixed spread on the USDG[^usdg] value of the notional[^notional] being reduced:
 
 ```
 Frozen-close spread
@@ -178,9 +178,9 @@ The state at execution determines whether the spread applies. A close committed 
 
 Frozen spread is part of the action charge. Attribution of recovered spread follows the prior charges shown below; this is not a shared collateral queue for price losses:
 
-![Frozen-close spread is an action charge, not a price change. Recovered spread is attributed only after execution fee, carry and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
+![Frozen-close spread is an action charge, not a price change. Recovery follows execution fee, carry left unpaid after initial collection, and positive VPI; unrecovered spread is waived.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
 
-V2 settles price losses separately, using the same account’s nettable trader claim and then collectible PnL pledge. Action charges cannot consume that pledge.
+Carry consumes active position margin first, then eligible free USDG, before close accounting. Price losses then use the same account’s nettable trader claim and remaining collectible PnL pledge. Other close charges, including any unpaid carry, can use margin safely released by the close; they cannot consume the margin still backing a residual position.
 
 A partial reduction must settle its action charge without waiver. If eligible action funds are insufficient after any withholding from a price gain, the reduction does not execute.
 
@@ -196,9 +196,9 @@ Price losses beyond the terminal collectible cap are recorded separately as pric
 
 Close previews expose the result separately:
 
-* `frozenSpreadUsdc` — spread assessed
-* `frozenSpreadPaidUsdc` — spread collected for LPs
-* `frozenSpreadWaivedUsdc` — spread waived on a terminal full close
+* **Assessed spread (USDG)** — spread assessed
+* **Paid spread (USDG)** — spread collected for LPs
+* **Waived spread (USDG)** — spread waived on a terminal full close
 
 For a valid close:
 
@@ -210,16 +210,7 @@ spread assessed
 
 All three values are zero outside `oracleFrozen`.
 
-A successful close with a nonzero assessment emits:
-
-```
-FrozenCloseSpreadSettled(
-    account,
-    assessedUsdc,
-    paidUsdc,
-    waivedUsdc
-)
-```
+A successful close with a nonzero assessment records the assessed, paid and waived USDG amounts in its onchain result.
 
 “Fixed” means that the percentage does not respond dynamically to VPI, skew or staleness. It does not mean that the parameter is immutable. Changes require the protocol’s timelocked risk-configuration process.
 
@@ -255,7 +246,7 @@ The affected order normally remains pending until:
 * The order expires and is cleared
 * Another terminal condition applies
 
-A close intent may still be committed if the protocol has a stored mark and can reserve its execution reward. Commitment does not imply that the close can currently execute.
+A close intent may still be committed if the protocol has a stored mark and passes the close-commit checks. Reductions and closes have zero keeper execution reward; no reward reserve is required. Commitment still checkpoints carry and does not imply that the close can currently execute.
 
 ### A live-market oracle outage is not frozen mode
 
@@ -364,11 +355,11 @@ This is a liveness risk, not debt forgiveness. The position remains open, carry 
 
 ### Adding and withdrawing trader margin
 
-Depositing USDC into the Margin Account and adding margin to an existing position remain available even when the oracle is stale.
+Depositing USDG into the Margin Account and adding margin to an existing position remain available even when the oracle is stale.
 
 These actions reduce risk and do not require a current index price.
 
-Withdrawing USDC from an account that has an open position is different. It requires:
+Withdrawing USDG from an account that has an open position is different. It requires:
 
 * A sufficiently recent mark for the active market state
 * A non-degraded protocol
@@ -377,7 +368,7 @@ Withdrawing USDC from an account that has an open position is different. It requ
 
 During close-only, the closure margin requirement is included in this check.
 
-If the mark is over-stale, withdrawal from an account with an open position is blocked. An account with no position may still withdraw unreserved USDC without requiring an oracle price.
+If the mark is over-stale, withdrawal from an account with an open position is blocked. An account with no position may still withdraw unreserved USDG without requiring an oracle price.
 
 ### What closures mean for LPs
 
@@ -410,8 +401,8 @@ The trader frozen-close spread and the tranche-specific LP withdrawal surcharge 
 
 A tranche-specific frozen surcharge applies when an eligible queued withdrawal is funded under frozen pricing:
 
-* Redeeming a fixed number of shares returns less USDC
-* Withdrawing a target USDC amount requires more shares in the request-time quote
+* Redeeming a fixed number of shares returns less USDG
+* Withdrawing a target USDG amount requires more shares in the request-time quote
 
 The retained value stays in the same tranche for the benefit of its incumbent LPs.
 
@@ -424,14 +415,14 @@ The current settings are:
 
 These are timelocked pool parameters and should be read from the live contract or interface before acting.
 
-The interface blocks new deposit requests while the oracle is frozen, and deposit activation is deferred until the entry gates—including live pricing—clear. Deposits do not pay the frozen withdrawal surcharge. For withdrawals, the preview includes the current temporary fee in the share quote. The queued share amount is fixed; if pricing or fee state changes before processing, the final USDC receipt changes rather than the vault pulling additional shares.
+The interface blocks new deposit requests while the oracle is frozen, and deposit activation is deferred until the entry gates—including live pricing—clear. Deposits do not pay the frozen withdrawal surcharge. For withdrawals, the preview includes the current temporary fee in the share quote. The queued share amount is fixed; if pricing or fee state changes before processing, the final USDG receipt changes rather than the vault pulling additional shares.
 
 #### Oracle data over-stale
 
 When trader liabilities require a mark and the available mark exceeds the frozen limit:
 
 * Hourly deposit and withdrawal processing can be blocked
-* Pending withdrawals can remain in **Waiting for USDC**
+* Pending withdrawals can remain in **Waiting for USDG**
 * Available withdrawal liquidity can fall to zero
 
 If there are no open trader liabilities requiring mark-to-market accounting, freshness may not be required solely for LP reconciliation. All other tranche, liquidity and lifecycle restrictions still apply.
@@ -479,7 +470,7 @@ Calendar mode and oracle freshness are not the only controls. Other protocol ove
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Router paused                   | Blocks new opening and increase commitments; reductions, queued execution, liquidations and mark updates remain available where otherwise valid |
 | Liquidity pool paused                | Blocks new LP deposits; eligible LP withdrawals and trader operations are evaluated separately                                                  |
-| Degraded mode                   | Blocks new trader risk and new LP deposits; otherwise-eligible LP withdrawal requests can still queue, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears the mode |
+| Degraded mode                   | Blocks new trader risk and new LP deposits; otherwise-eligible LP withdrawal requests can still queue, but no new withdrawal USDG is allocated until effective solvency recovers and the protocol owner explicitly clears the mode |
 | Trading inactive or configuring | The market is not yet active for new trader risk                                                                                                |
 | Oracle stale                    | Blocks actions requiring a valid current or bounded-frozen price                                                                                |
 
@@ -588,9 +579,9 @@ The purpose is not to pretend the FX market remains open. It is to keep the prot
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^utc]: Coordinated Universal Time, the time standard used by the protocol schedule.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
-[^lp]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
+[^usdg]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
 [^bps]: Basis points; 100 bps equals 1%.
 [^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.

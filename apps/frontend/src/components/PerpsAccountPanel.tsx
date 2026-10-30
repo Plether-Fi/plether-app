@@ -3,9 +3,9 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTrade
 import { usePerpsTrading } from '../hooks'
 import { usePerpsCloseMargin } from '../hooks/usePerpsCloseMargin'
 import { usePerpsIdentity } from '../perps-aa'
-import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_SETTLEMENT_TOKEN_LABEL, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsPositionSize, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsPositionSize, formatPerpsSummaryAssets, formatPerpsAssets, formatSignedPerpsSummaryAssets, parsePerpsAssets, perpsSideLabel } from '../utils/perps'
 import {
   derivePerpsCloseReconciliation,
   type PerpsCloseReconciliation,
@@ -33,7 +33,7 @@ interface PositionRow {
   leverage: string
   liquidationPrice: ReactNode
   pnl: ReactNode
-  costOfCarryUsdc: ReactNode
+  costOfCarryAssets: ReactNode
   tone?: 'positive' | 'negative'
 }
 
@@ -73,9 +73,9 @@ interface PerpsAccountPanelProps {
   pendingOrders?: PerpsPendingOrder[]
   orderHistory?: PerpsOrderHistoryRow[]
   tradeHistory?: PerpsTradeHistoryRow[]
-  equityUsdc?: bigint
-  freeBuyingPowerUsdc?: bigint
-  traderClaimBalanceUsdc?: bigint
+  equityAssets?: bigint
+  freeBuyingPowerAssets?: bigint
+  traderClaimBalanceAssets?: bigint
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
@@ -101,8 +101,8 @@ const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 
 const OPEN_ORDERS: OrderRow[] = [
-  { market: 'plDXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
-  { market: 'plDXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: <TokenAmount amount="3 000" /> },
+  { market: 'plDXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 500" /> },
+  { market: 'plDXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="3 000" /> },
 ]
 
 const ORDER_HISTORY: OrderRow[] = [
@@ -113,7 +113,7 @@ const ORDER_HISTORY: OrderRow[] = [
     side: 'Long',
     type: 'Open',
     price: '0.9850',
-    size: <TokenAmount amount="2 500" />,
+    size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="2 500" />,
     status: 'Executed',
     commitTxHash: '0x0000000000000000000000000000000000000000000000000000000000000101',
     revealTxHash: '0x0000000000000000000000000000000000000000000000000000000000000201',
@@ -125,15 +125,15 @@ const ORDER_HISTORY: OrderRow[] = [
     side: 'Short',
     type: 'Close',
     price: '0.9790',
-    size: <TokenAmount amount="1 200" />,
+    size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 200" />,
     status: 'Expired',
     commitTxHash: '0x0000000000000000000000000000000000000000000000000000000000000100',
   },
 ]
 
 const TRADE_HISTORY: TradeRow[] = [
-  { time: '12:42', market: 'plDXY Perp', side: 'Open Long', price: '0.9912', size: <TokenAmount amount="1 000" /> },
-  { time: '11:08', market: 'plDXY Perp', side: 'Close Long', price: '0.9931', size: <TokenAmount amount="650" />, pnl: <TokenAmount amount="+12.2" /> },
+  { time: '12:42', market: 'plDXY Perp', side: 'Open Long', price: '0.9912', size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="1 000" /> },
+  { time: '11:08', market: 'plDXY Perp', side: 'Close Long', price: '0.9931', size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="650" />, pnl: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount="+12.2" /> },
 ]
 
 function pnlToneClass(tone: PositionRow['tone']): string {
@@ -170,25 +170,25 @@ function formatLiquidationDistance(currentPrice: bigint | undefined, liquidation
 }
 
 function formatPositionLeverage(position: PerpsPosition): string {
-  return formatPositionLeverageForMargin(position, position.marginUsdc)
+  return formatPositionLeverageForMargin(position, position.marginAssets)
 }
 
-function formatPositionLeverageForMargin(position: PerpsPosition, marginUsdc: bigint): string {
-  if (marginUsdc <= 0n) return '--'
+function formatPositionLeverageForMargin(position: PerpsPosition, marginAssets: bigint): string {
+  if (marginAssets <= 0n) return '--'
 
-  const notionalUsdc = position.estimatedNotionalUsdc ?? position.entryNotionalUsdc
-  if (notionalUsdc === undefined) return '--'
+  const notionalAssets = position.estimatedNotionalAssets ?? position.entryNotionalAssets
+  if (notionalAssets === undefined) return '--'
 
-  return `${formatPerpsNumber(Number(notionalUsdc) / Number(marginUsdc), 2)}x`
+  return `${formatPerpsNumber(Number(notionalAssets) / Number(marginAssets), 2)}x`
 }
 
-function formatEquityLeverage(position: PerpsPosition, equityUsdc?: bigint): string {
-  if (equityUsdc === undefined || equityUsdc <= 0n) return 'Unavailable'
+function formatEquityLeverage(position: PerpsPosition, equityAssets?: bigint): string {
+  if (equityAssets === undefined || equityAssets <= 0n) return 'Unavailable'
 
-  const notionalUsdc = position.estimatedNotionalUsdc ?? position.entryNotionalUsdc
-  if (notionalUsdc === undefined) return '--'
+  const notionalAssets = position.estimatedNotionalAssets ?? position.entryNotionalAssets
+  if (notionalAssets === undefined) return '--'
 
-  return `${formatPerpsNumber(Number(notionalUsdc) / Number(equityUsdc), 2)}x`
+  return `${formatPerpsNumber(Number(notionalAssets) / Number(equityAssets), 2)}x`
 }
 
 function LiquidationPriceValue({ currentPrice, liquidationPrice, threshold, capPrice = 200_000_000n }: {
@@ -370,8 +370,8 @@ function PositionView({
   positionProtection,
   protectionCapPrice,
   onManageProtection,
-  equityUsdc,
-  freeBuyingPowerUsdc,
+  equityAssets,
+  freeBuyingPowerAssets,
   isConnected,
   isLoading,
   initialPositionMarginModalOpen,
@@ -382,8 +382,8 @@ function PositionView({
   positionProtection?: PositionProtection
   protectionCapPrice?: bigint
   onManageProtection?: () => void
-  equityUsdc?: bigint
-  freeBuyingPowerUsdc?: bigint
+  equityAssets?: bigint
+  freeBuyingPowerAssets?: bigint
   isConnected?: boolean
   isLoading?: boolean
   initialPositionMarginModalOpen?: boolean
@@ -402,14 +402,14 @@ function PositionView({
   if (isLoading) return <LoadingState label="position data" />
   if (!position?.exists) return <EmptyState label="current position" />
 
-  const positionMarginAmountRaw = parsePerpsUsdc(positionMarginAmount)
+  const positionMarginAmountRaw = parsePerpsAssets(positionMarginAmount)
   const riskUnavailable = position.riskStatus === 'unavailable'
-  const carryProjection = !riskUnavailable && freeBuyingPowerUsdc !== undefined && position.pendingCarryUsdc !== undefined
-    ? projectCarry(position.marginUsdc, freeBuyingPowerUsdc, position.pendingCarryUsdc)
+  const carryProjection = !riskUnavailable && freeBuyingPowerAssets !== undefined && position.pendingCarryAssets !== undefined
+    ? projectCarry(position.marginAssets, freeBuyingPowerAssets, position.pendingCarryAssets)
     : undefined
-  const positionMarginLimitRaw = carryProjection?.freeSettlementUsdc ?? 0n
+  const positionMarginLimitRaw = carryProjection?.freeSettlementAssets ?? 0n
   const isPositionMarginTooHigh = positionMarginAmountRaw > positionMarginLimitRaw
-  const resultingPositionMargin = (carryProjection?.positionMarginUsdc ?? position.marginUsdc) + positionMarginAmountRaw
+  const resultingPositionMargin = (carryProjection?.positionMarginAssets ?? position.marginAssets) + positionMarginAmountRaw
   const canSubmitPositionMargin =
     positionMarginAmountRaw > 0n &&
     !isPositionMarginTooHigh &&
@@ -440,24 +440,24 @@ function PositionView({
     }
   }
 
-  const currentPnl = position.unrealizedPnlUsdc
+  const currentPnl = position.unrealizedPnlAssets
   const pendingCarryTooltip = (
     <span>
-      Pending carry is paid from active position margin first, then eligible free settlement.
+      Pending carry is paid from active position margin first, then eligible free USDG.
       This reduces the margin backing price losses. If both sources cannot cover carry, the account can become liquidatable.
       Claims and other reserved funds do not cover carry.
     </span>
   )
   const liquidationTooltip = (
     <span>
-      Price liquidation occurs when position margin after carry plus same-account claims and price PnL reach maintenance margin. Free settlement does not increase this price buffer.
+      Price liquidation occurs when position margin after carry plus same-account claims and price PnL reach maintenance margin. Free USDG does not increase this price buffer.
       <br />
       <br />
       <strong>Not in range</strong> means there is no liquidation threshold inside the protocol&apos;s
       bounded oracle price range from price risk alone. Uncovered carry or insufficient VPI reserve can still make the account liquidatable.
     </span>
   )
-  const effectiveAccountLeverage = formatEquityLeverage(position, equityUsdc)
+  const effectiveAccountLeverage = formatEquityLeverage(position, equityAssets)
   const leverageTooltip = (
     <span>
       Position leverage is the position&apos;s current protocol accounting value divided by its assigned margin.
@@ -480,7 +480,7 @@ function PositionView({
   const currentPosition: PositionRow = {
     market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
-    size: <TokenAmount amount={formatPerpsSummaryUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} wrap />,
+    size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsSummaryAssets(position.dxyExposureAssets ?? position.estimatedNotionalAssets)} wrap />,
     orderQuantity: <TokenAmount amount={formatPerpsPositionSize(position.size)} token="plDXY" wrap />,
     entry: formatDisplayDxyPrice(position.entryPrice),
     leverage: riskUnavailable ? 'Unavailable' : formatPositionLeverage(position),
@@ -492,8 +492,8 @@ function PositionView({
         capPrice={position.capPrice}
       />
     ),
-    pnl: <TokenAmount amount={formatSignedPerpsSummaryUsdc(currentPnl)} wrap />,
-    costOfCarryUsdc: <TokenAmount amount={formatPerpsSummaryUsdc(position.pendingCarryUsdc)} wrap />,
+    pnl: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatSignedPerpsSummaryAssets(currentPnl)} wrap />,
+    costOfCarryAssets: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsSummaryAssets(position.pendingCarryAssets)} wrap />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
   const editPositionMarginAction = (
@@ -541,7 +541,7 @@ function PositionView({
       {riskUnavailable ? <p role="status" className="mb-3 text-sm text-content-secondary">Account risk unavailable. Waiting for a current account snapshot.</p> : null}
       {position.liquidatable ? <div role="alert" className="mb-3 border border-brand-orange/40 p-3 text-sm text-brand-orange">
         <strong>Liquidatable</strong> — {riskUnavailable ? 'Last known contract status; current risk data is unavailable.' : 'The contract reports this position is eligible for liquidation.'}
-        {!riskUnavailable && (position.uncoveredCarryUsdc ?? 0n) > 0n ? <p>Position margin plus free settlement does not cover accrued carry.</p> : null}
+        {!riskUnavailable && (position.uncoveredCarryAssets ?? 0n) > 0n ? <p>Position margin plus free USDG does not cover accrued carry.</p> : null}
         {!riskUnavailable && position.vpiReserveUnderfunded ? <p>The dedicated VPI reserve is insufficient.</p> : null}
       </div> : null}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
@@ -575,7 +575,7 @@ function PositionView({
         />
         <AccountMetric
           label="Cost of carry"
-          value={currentPosition.costOfCarryUsdc}
+          value={currentPosition.costOfCarryAssets}
           tooltip={pendingCarryTooltip}
           tooltipDocsLink={DOCS_LINKS.positionCostOfCarry}
         />
@@ -584,7 +584,7 @@ function PositionView({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-medium text-content-primary">TP/SL <span className="ml-2 font-normal text-content-secondary">{protectionStatusLabel(positionProtection?.status)}</span></p>
-            <p className="mt-1 text-xs text-content-secondary">{positionProtection ? `Take profit ${positionProtection.takeProfitTriggerPrice ? protectionPrice(positionProtection.takeProfitTriggerPrice, protectionCapPrice) : 'not set'} · Stop loss ${positionProtection.stopLossTriggerPrice ? protectionPrice(positionProtection.stopLossTriggerPrice, protectionCapPrice) : 'not set'} · USDC` : 'No automatic exit triggers on this position.'}</p>
+            <p className="mt-1 text-xs text-content-secondary">{positionProtection ? `Take profit ${positionProtection.takeProfitTriggerPrice ? protectionPrice(positionProtection.takeProfitTriggerPrice, protectionCapPrice) : 'not set'} · Stop loss ${positionProtection.stopLossTriggerPrice ? protectionPrice(positionProtection.stopLossTriggerPrice, protectionCapPrice) : 'not set'} · ${PERPS_SETTLEMENT_TOKEN_LABEL}` : 'No automatic exit triggers on this position.'}</p>
           </div>
           <Button size="sm" variant="secondary" onClick={onManageProtection}>{positionProtection ? 'Manage TP/SL' : 'Add TP/SL'}</Button>
         </div>
@@ -593,7 +593,7 @@ function PositionView({
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>
         {' '}
-        <span>Position margin after carry and same-account claims back price losses. Carry consumes position margin first, then free settlement.</span>
+        <span>Position margin after carry and same-account claims back price losses. Carry consumes position margin first, then free USDG.</span>
       </p>
       <Modal
         isOpen={isPositionMarginModalOpen}
@@ -627,7 +627,7 @@ function PositionView({
       >
         <div className="space-y-5">
           <p className="text-sm leading-5 text-content-secondary">
-            This moves free USDC into position margin, increasing the price-loss buffer without changing position size. The maximum accounts for accrued carry consuming existing position margin first, then free settlement. Future carry can reduce the new margin too.
+            This moves free {PERPS_SETTLEMENT_TOKEN_LABEL} into position margin, increasing the price-loss buffer without changing position size. The maximum accounts for accrued carry consuming existing position margin first, then free USDG. Future carry can reduce the new margin too.
           </p>
 
           <div className="border border-brand-border/20 bg-app-bg p-4 text-sm leading-5 text-content-secondary">
@@ -641,8 +641,8 @@ function PositionView({
               inputMode="decimal"
               value={positionMarginAmount}
               placeholder="0"
-              rightElement={<TokenLabel token="USDC" />}
-              error={isPositionMarginTooHigh ? 'Amount exceeds free settlement after accrued carry.' : undefined}
+              rightElement={<TokenLabel token={PERPS_SETTLEMENT_TOKEN_LABEL} />}
+              error={isPositionMarginTooHigh ? 'Amount exceeds free USDG after accrued carry.' : undefined}
               onChange={(event) => {
                 const nextValue = event.target.value
                 if (!isPositionMarginInput(nextValue)) return
@@ -658,20 +658,20 @@ function PositionView({
                 className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
                 disabled={positionMarginLimitRaw <= 0n || positionMarginStatus === 'pending'}
                 onClick={() => {
-                  setPositionMarginAmount(formatPerpsUsdc(positionMarginLimitRaw, 6))
+                  setPositionMarginAmount(formatPerpsAssets(positionMarginLimitRaw, 6))
                   setPositionMarginError(undefined)
                 }}
               >
-                Max: {formatPerpsUsdc(positionMarginLimitRaw, 2)} USDC
+                Max: {formatPerpsAssets(positionMarginLimitRaw, 2)} {PERPS_SETTLEMENT_TOKEN_LABEL}
               </button>
             </div>
           </div>
 
           <dl className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
-            <AccountSummaryRow label="Free settlement after carry" value={<TokenAmount amount={formatPerpsUsdc(positionMarginLimitRaw)} />} />
-            <AccountSummaryRow label="Current position margin" value={<TokenAmount amount={formatPerpsUsdc(position.marginUsdc)} />} />
-            <AccountSummaryRow label="Resulting position margin" value={<TokenAmount amount={formatPerpsUsdc(resultingPositionMargin)} />} />
-            <AccountSummaryRow label="Current leverage" value={riskUnavailable ? 'Unavailable' : formatPositionLeverageForMargin(position, position.marginUsdc)} />
+            <AccountSummaryRow label="Free USDG after carry" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(positionMarginLimitRaw)} />} />
+            <AccountSummaryRow label="Current position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(position.marginAssets)} />} />
+            <AccountSummaryRow label="Resulting position margin" value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(resultingPositionMargin)} />} />
+            <AccountSummaryRow label="Current leverage" value={riskUnavailable ? 'Unavailable' : formatPositionLeverageForMargin(position, position.marginAssets)} />
             <AccountSummaryRow label="Resulting leverage" value={riskUnavailable ? 'Unavailable' : formatPositionLeverageForMargin(position, resultingPositionMargin)} />
           </dl>
 
@@ -830,7 +830,7 @@ function CloseExecutionDetails({ order }: { order: PerpsOrderHistoryRow }) {
           <dd className="text-content-primary">
             {order.size === '--' || order.size === 'Not executed'
               ? order.size
-              : <TokenAmount amount={order.size} />}
+              : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={order.size} />}
           </dd>
         </div>
         <div className="flex items-start justify-between gap-4">
@@ -850,9 +850,9 @@ function CloseHistoryReconciliation({ order, reconciliation }: {
   order: PerpsOrderHistoryRow
   reconciliation: PerpsCloseReconciliation
 }) {
-  const releasedPositionMarginUsdc = usePerpsCloseMargin(order)
+  const releasedPositionMarginAssets = usePerpsCloseMargin(order)
   return <PerpsCloseReconciliationDetails
-    reconciliation={{ ...reconciliation, releasedPositionMarginUsdc }}
+    reconciliation={{ ...reconciliation, releasedPositionMarginAssets }}
     executionDetails={<CloseExecutionDetails order={order} />}
   />
 }
@@ -973,7 +973,7 @@ function TraderClaimCard({
         <div>
           <div className="text-xs font-medium uppercase text-content-secondary">Trader claim</div>
           <div className="mt-1 text-lg font-semibold text-content-primary">
-            <TokenAmount amount={formatPerpsUsdc(amount)} /> USDC
+            <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(amount)} />
           </div>
           <p className="mt-1 text-xs text-content-secondary">
             {hasPosition ? 'This claim supports position equity. Settlement converts it to position margin while the position is open.' : 'Settle the claim into account funds before withdrawing it.'}
@@ -1003,9 +1003,9 @@ function AccountTabContent({
   positionProtection,
   protectionCapPrice,
   onManageProtection,
-  equityUsdc,
-  freeBuyingPowerUsdc,
-  traderClaimBalanceUsdc,
+  equityAssets,
+  freeBuyingPowerAssets,
+  traderClaimBalanceAssets,
   pendingOrders,
   orderHistory,
   tradeHistory,
@@ -1038,13 +1038,13 @@ function AccountTabContent({
     direction: 'long',
     size: 0n,
     entryPrice: 98740000n,
-    marginUsdc: 0n,
-    unrealizedPnlUsdc: 284120000n,
-    maintenanceMarginUsdc: 0n,
+    marginAssets: 0n,
+    unrealizedPnlAssets: 284120000n,
+    maintenanceMarginAssets: 0n,
     liquidatable: false,
-    estimatedNotionalUsdc: 8200000000n,
+    estimatedNotionalAssets: 8200000000n,
     liquidationPrice: 110000000n,
-    pendingCarryUsdc: 0n,
+    pendingCarryAssets: 0n,
   }
   const liveOpenOrders = pendingOrders?.map((order) => ({
     orderId: order.orderId,
@@ -1052,7 +1052,7 @@ function AccountTabContent({
     side: perpsSideLabel(order.side),
     type: order.isReduceOnly ? 'Reduce' : 'Open',
     price: order.acceptablePrice === 0n ? 'Market' : formatDisplayDxyPrice(order.acceptablePrice),
-    size: <TokenAmount amount={formatPerpsUsdc(order.estimatedNotionalUsdc)} />,
+    size: <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatPerpsAssets(order.estimatedNotionalAssets)} />,
     status: `Status ${order.status.toString()}`,
     expiryTime: order.expiryTime,
   }))
@@ -1063,7 +1063,7 @@ function AccountTabContent({
     side: order.side,
     type: order.type,
     price: order.price,
-    size: order.size === '--' || order.size === 'Not executed' ? order.size : <TokenAmount amount={order.size} />,
+    size: order.size === '--' || order.size === 'Not executed' ? order.size : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={order.size} />,
     status: order.status,
     commitTxHash: order.commitTxHash,
     revealTxHash: order.revealTxHash,
@@ -1086,8 +1086,8 @@ function AccountTabContent({
       market: trade.market,
       side: trade.side,
       price: trade.price,
-      size: trade.size === '--' ? '--' : <TokenAmount amount={trade.size} />,
-      pnl: trade.pnl === undefined ? undefined : <TokenAmount amount={trade.pnl} />,
+      size: trade.size === '--' ? '--' : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={trade.size} />,
+      pnl: trade.pnl === undefined ? undefined : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={trade.pnl} />,
       txHash: trade.txHash,
       closeOrder,
       reconciliation: derivePerpsCloseReconciliation(closeOrder?.receiptEconomics),
@@ -1098,7 +1098,7 @@ function AccountTabContent({
     return (
       <div className="space-y-4">
         <TraderClaimCard
-          amount={traderClaimBalanceUsdc}
+          amount={traderClaimBalanceAssets}
           hasPosition={position?.exists}
           onAccountRefresh={onAccountRefresh}
         />
@@ -1107,8 +1107,8 @@ function AccountTabContent({
           positionProtection={positionProtection}
           protectionCapPrice={protectionCapPrice}
           onManageProtection={onManageProtection}
-          equityUsdc={equityUsdc}
-          freeBuyingPowerUsdc={freeBuyingPowerUsdc}
+          equityAssets={equityAssets}
+          freeBuyingPowerAssets={freeBuyingPowerAssets}
           isConnected={isConnected}
           isLoading={isLoading}
           initialPositionMarginModalOpen={initialPositionMarginModalOpen}

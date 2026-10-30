@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ReactNode } from 'react'
 import { Button } from '../components/ui'
@@ -20,7 +21,7 @@ const meta: Meta<typeof PerpsTradingAccountPanel> = {
     ownerWalletAddress: OWNER,
     tradingAccountAddress: ACCOUNT,
     accountModel: 'smart-account',
-    marginAccountUsdc: '12 480.25',
+    marginAccountAssets: '12 480.25',
   },
 }
 
@@ -128,14 +129,14 @@ export const FirstDepositAuthorization: Story = {
           ownerWalletAddress={OWNER}
           tradingAccountAddress={ACCOUNT}
           accountModel="smart-account"
-          marginAccountUsdc="0.00"
+          marginAccountAssets="0.00"
           sponsorshipStatus="available"
         />
         <div className="grid gap-4 md:grid-cols-2">
           <OperationStateCard
-            title="USDC transfer authorization"
+            title={`${PERPS_SETTLEMENT_TOKEN_LABEL} transfer authorization`}
             stage="Wallet authorization"
-            message="Authorize exactly 10 000 USDC for transfer from the Owner Wallet to the Trading Account."
+            message={`Authorize exactly 10 000 ${PERPS_SETTLEMENT_TOKEN_LABEL} for transfer from the Owner Wallet to the Trading Account.`}
             tone="success"
             identifierLabel="Destination"
             identifier={ACCOUNT}
@@ -143,10 +144,10 @@ export const FirstDepositAuthorization: Story = {
           <OperationStateCard
             title="Sponsored deposit operation"
             stage="Trading Account operation"
-            message="Receive the authorized USDC, approve the clearinghouse and deposit the complete amount into the Margin Account as one atomic batch."
+            message={`Receive the authorized ${PERPS_SETTLEMENT_TOKEN_LABEL}, approve the clearinghouse and deposit the complete amount into the Margin Account as one atomic batch.`}
             tone="pending"
             identifierLabel="Amount"
-            identifier="10 000 USDC"
+            identifier={`10 000 ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
           />
         </div>
       </div>
@@ -162,13 +163,13 @@ export const WithdrawalConfirmation: Story = {
           ownerWalletAddress={OWNER}
           tradingAccountAddress={ACCOUNT}
           accountModel="smart-account"
-          marginAccountUsdc="12 480.25"
+          marginAccountAssets="12 480.25"
           sponsorshipStatus="available"
         />
         <OperationStateCard
-          title="Withdraw 1 500.00 USDC"
+          title={`Withdraw 1 500.00 ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
           stage="Wallet confirmation"
-          message={`The sponsored operation withdraws eligible Margin Account USDC through the Trading Account and atomically transfers it to the verified owner wallet ${OWNER}.`}
+          message={`The sponsored operation withdraws eligible Margin Account ${PERPS_SETTLEMENT_TOKEN_LABEL} through the Trading Account and atomically transfers it to the verified owner wallet ${OWNER}.`}
           tone="pending"
           identifierLabel="Trading Account"
           identifier={ACCOUNT}

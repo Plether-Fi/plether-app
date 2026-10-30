@@ -22,7 +22,9 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, env, stdio: 'inherit' })
 const work = mkdtempSync(path.join(tmpdir(), 'plether-v3-local-'))
 run(process.execPath, ['scripts/verify-vendored-perps-aa-client.mjs'], root)
-run('forge', ['build', '--root', 'packages/perps', '--skip', 'test', '--skip', 'script', 'packages/shared/test-support/MockUSDC.sol', 'packages/shared/test-support/MockPyth.sol'], core)
+// MockUSDG is defined in the deployment source. Compile it into the perps artifact
+// directory for the local harness; compiling does not execute the deployment script.
+run('forge', ['build', '--root', 'packages/perps', '--skip', 'test', '--', path.join(core, 'script/DeployPerpsArbitrumSepolia.s.sol'), path.join(core, 'packages/shared/test-support/MockPyth.sol')], core)
 run('forge', ['build', '--root', 'packages/perps-aa', '--skip', 'test', '--skip', 'script'], core)
 run('cabal', ['build', 'lib:plether-api'], backend)
 const policy = path.join(work, 'order-v3-policy')

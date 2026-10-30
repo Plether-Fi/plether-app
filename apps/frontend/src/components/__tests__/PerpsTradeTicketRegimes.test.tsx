@@ -35,17 +35,17 @@ vi.mock('../../hooks/usePerpsOrderPreparation', async importOriginal => {
     const tuple = mockReadContractsData?.[0]?.result as readonly unknown[] | undefined
     const result = prepared()
     result.reviewSummary = {
-      requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
-      commitmentCarryUsdc: 10_000n, requiredFundingUsdc: 200_000n, availableFundingUsdc: 1_000_000n,
+      requiredMarginAssets: 0n, executionBountyAssets: 200_000n,
+      commitmentCarryAssets: 10_000n, requiredFundingAssets: 200_000n, availableFundingAssets: 1_000_000n,
       worstPostLeverageBps: 50_000n, reviewedBlockNumber: 1n, reviewedBlockHash: '0x12', reviewedPrice: 100_000_000n,
       currentAssessment: {
-        mode: 1, executionNotionalUsdc: 500_000_000n, grossAccountDebitUsdc: 200_000n,
-        actionChargeAssessedUsdc: 0n, actionChargeCollectedUsdc: 0n, explicitFeesUsdc: 0n,
-        preSettlementBalanceUsdc: 500_000_000n, postSettlementBalanceUsdc: 499_800_000n,
-        realizedPnlUsdc: 0n, vpiUsdc: tuple?.[5] as bigint ?? 0n, carryUsdc: 0n,
-        executionFeeUsdc: 0n, frozenSpreadUsdc: tuple?.[21] as bigint ?? 0n,
-        preTraderClaimUsdc: 0n, postTraderClaimUsdc: 0n, postPositionSize: 500n * 10n ** 18n,
-        postPositionMarginUsdc: 250_000_000n, postPositionEquityUsdc: 250_000_000n, postLeverageBps: 50_000n,
+        mode: 1, executionNotionalAssets: 500_000_000n, grossAccountDebitAssets: 200_000n,
+        actionChargeAssessedAssets: 0n, actionChargeCollectedAssets: 0n, explicitFeesAssets: 0n,
+        preSettlementBalanceAssets: 500_000_000n, postSettlementBalanceAssets: 499_800_000n,
+        realizedPnlAssets: 0n, vpiAssets: tuple?.[5] as bigint ?? 0n, carryAssets: 0n,
+        executionFeeAssets: 0n, frozenSpreadAssets: tuple?.[21] as bigint ?? 0n,
+        preTraderClaimAssets: 0n, postTraderClaimAssets: 0n, postPositionSize: 500n * 10n ** 18n,
+        postPositionMarginAssets: 250_000_000n, postPositionEquityAssets: 250_000_000n, postLeverageBps: 50_000n,
       },
     }
     return { matches: true, status: 'ready', result, retry: vi.fn() }
@@ -153,26 +153,26 @@ const currentPosition = {
   direction: 'long' as const,
   size: 1_000n * 10n ** 18n,
   entryPrice: 100_000_000n,
-  marginUsdc: 500_000_000n,
-  unrealizedPnlUsdc: 0n,
-  maintenanceMarginUsdc: 10_000_000n,
+  marginAssets: 500_000_000n,
+  unrealizedPnlAssets: 0n,
+  maintenanceMarginAssets: 10_000_000n,
   liquidatable: false,
-  estimatedNotionalUsdc: 1_000_000_000n,
-  entryNotionalUsdc: 1_000_000_000n,
-  dxyExposureUsdc: 1_000_000_000n,
+  estimatedNotionalAssets: 1_000_000_000n,
+  entryNotionalAssets: 1_000_000_000n,
+  dxyExposureAssets: 1_000_000_000n,
   vpiAccrued: 60_000_000n,
 }
 
 function closePreviewTuple({
-  vpiDeltaUsdc = -1_000_000n,
-  frozenSpreadUsdc = 0n,
-  frozenSpreadPaidUsdc = 0n,
-  frozenSpreadWaivedUsdc = 0n,
+  vpiDeltaAssets = -1_000_000n,
+  frozenSpreadAssets = 0n,
+  frozenSpreadPaidAssets = 0n,
+  frozenSpreadWaivedAssets = 0n,
 }: {
-  vpiDeltaUsdc?: bigint
-  frozenSpreadUsdc?: bigint
-  frozenSpreadPaidUsdc?: bigint
-  frozenSpreadWaivedUsdc?: bigint
+  vpiDeltaAssets?: bigint
+  frozenSpreadAssets?: bigint
+  frozenSpreadPaidAssets?: bigint
+  frozenSpreadWaivedAssets?: bigint
 } = {}) {
   return [
     true,
@@ -180,7 +180,7 @@ function closePreviewTuple({
     100_000_000n,
     500n * 10n ** 18n,
     0n,
-    vpiDeltaUsdc,
+    vpiDeltaAssets,
     0n,
     40_000n,
     0n,
@@ -196,9 +196,9 @@ function closePreviewTuple({
     false,
     1_000_000_000n,
     500_000_000n,
-    frozenSpreadUsdc,
-    frozenSpreadPaidUsdc,
-    frozenSpreadWaivedUsdc,
+    frozenSpreadAssets,
+    frozenSpreadPaidAssets,
+    frozenSpreadWaivedAssets,
   ] as const
 }
 
@@ -208,13 +208,13 @@ function closeTicket({
   marketPhase,
   oraclePriceRaw = 100_000_000n,
   oracleFrozen,
-  finalVpiUsdc,
+  finalVpiAssets,
   positionVpiAccrued = 60_000_000n,
   showCurrentPosition = true,
   size = '500',
   isFullClose = true,
   postPositionSize = 0n,
-  postPositionMarginUsdc = 0n,
+  postPositionMarginAssets = 0n,
   includeMarginSnapshot = true,
   receiptEconomics,
 }: {
@@ -223,52 +223,52 @@ function closeTicket({
   marketPhase: 'close-only' | 'open'
   oraclePriceRaw?: bigint
   oracleFrozen: boolean
-  finalVpiUsdc?: bigint
+  finalVpiAssets?: bigint
   positionVpiAccrued?: bigint
   showCurrentPosition?: boolean
   size?: string
   isFullClose?: boolean
   postPositionSize?: bigint
-  postPositionMarginUsdc?: bigint
+  postPositionMarginAssets?: bigint
   includeMarginSnapshot?: boolean
   receiptEconomics?: PerpsOrderReceiptEconomics
 }) {
-  const frozenSpreadAssessedUsdc = oracleFrozen ? 12_345_678n : 0n
-  const frozenSpreadPaidUsdc = oracleFrozen ? 10_000_000n : 0n
-  const settledVpiUsdc = finalVpiUsdc ?? 0n
-  const realizedPnlUsdc = oracleFrozen ? -30_000_000n : 30_000_000n
-  const carryUsdc = 4_000_000n
-  const executionFeeUsdc = 1_000_000n
-  const netAssessedUsdc = carryUsdc + executionFeeUsdc + settledVpiUsdc + frozenSpreadAssessedUsdc
-  const actionChargeAssessedUsdc = netAssessedUsdc > 0n ? netAssessedUsdc : 0n
-  const toCollectUsdc = actionChargeAssessedUsdc
-    - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
-    - (frozenSpreadAssessedUsdc - frozenSpreadPaidUsdc)
-  const actionChargeCollectedUsdc = toCollectUsdc > 0n ? toCollectUsdc : 0n
-  const netCloseResultUsdc = realizedPnlUsdc
-    - settledVpiUsdc
-    - carryUsdc
-    - executionFeeUsdc
-    - frozenSpreadPaidUsdc
-  const preSettlementBalanceUsdc = 1_000_000_000n
+  const frozenSpreadAssessedAssets = oracleFrozen ? 12_345_678n : 0n
+  const frozenSpreadPaidAssets = oracleFrozen ? 10_000_000n : 0n
+  const settledVpiAssets = finalVpiAssets ?? 0n
+  const realizedPnlAssets = oracleFrozen ? -30_000_000n : 30_000_000n
+  const carryAssets = 4_000_000n
+  const executionFeeAssets = 1_000_000n
+  const netAssessedAssets = carryAssets + executionFeeAssets + settledVpiAssets + frozenSpreadAssessedAssets
+  const actionChargeAssessedAssets = netAssessedAssets > 0n ? netAssessedAssets : 0n
+  const toCollectAssets = actionChargeAssessedAssets
+    - (realizedPnlAssets > 0n ? realizedPnlAssets : 0n)
+    - (frozenSpreadAssessedAssets - frozenSpreadPaidAssets)
+  const actionChargeCollectedAssets = toCollectAssets > 0n ? toCollectAssets : 0n
+  const netCloseResultAssets = realizedPnlAssets
+    - settledVpiAssets
+    - carryAssets
+    - executionFeeAssets
+    - frozenSpreadPaidAssets
+  const preSettlementBalanceAssets = 1_000_000_000n
   const finalReceiptEconomics = {
-    executionNotionalUsdc: '500000000',
-    executionBountyUsdc: '0',
-    realizedPnlUsdc: realizedPnlUsdc.toString(),
-    vpiUsdc: settledVpiUsdc.toString(),
-    carryUsdc: carryUsdc.toString(),
-    executionFeeUsdc: executionFeeUsdc.toString(),
-    frozenSpreadUsdc: frozenSpreadAssessedUsdc.toString(),
-    actionChargeAssessedUsdc: actionChargeAssessedUsdc.toString(),
-    actionChargeCollectedUsdc: actionChargeCollectedUsdc.toString(),
-    grossAccountDebitUsdc: (actionChargeCollectedUsdc + (realizedPnlUsdc < 0n ? -realizedPnlUsdc : 0n)).toString(),
-    preSettlementBalanceUsdc: preSettlementBalanceUsdc.toString(),
-    postSettlementBalanceUsdc: (preSettlementBalanceUsdc + netCloseResultUsdc).toString(),
-    preTraderClaimBalanceUsdc: '0',
-    postTraderClaimBalanceUsdc: '0',
+    executionNotionalAssets: '500000000',
+    executionBountyAssets: '0',
+    realizedPnlAssets: realizedPnlAssets.toString(),
+    vpiAssets: settledVpiAssets.toString(),
+    carryAssets: carryAssets.toString(),
+    executionFeeAssets: executionFeeAssets.toString(),
+    frozenSpreadAssets: frozenSpreadAssessedAssets.toString(),
+    actionChargeAssessedAssets: actionChargeAssessedAssets.toString(),
+    actionChargeCollectedAssets: actionChargeCollectedAssets.toString(),
+    grossAccountDebitAssets: (actionChargeCollectedAssets + (realizedPnlAssets < 0n ? -realizedPnlAssets : 0n)).toString(),
+    preSettlementBalanceAssets: preSettlementBalanceAssets.toString(),
+    postSettlementBalanceAssets: (preSettlementBalanceAssets + netCloseResultAssets).toString(),
+    preTraderClaimBalanceAssets: '0',
+    postTraderClaimBalanceAssets: '0',
     postPositionSize: postPositionSize.toString(),
-    postPositionMarginUsdc: postPositionMarginUsdc.toString(),
-    postPositionEquityUsdc: '0',
+    postPositionMarginAssets: postPositionMarginAssets.toString(),
+    postPositionEquityAssets: '0',
     postLeverageBps: '0',
   } satisfies PerpsOrderReceiptEconomics
 
@@ -302,13 +302,13 @@ function closeTicket({
       initialFinalReceiptEconomics={
         lifecycleState === 'executed' ? (receiptEconomics ?? finalReceiptEconomics) : undefined
       }
-      initialCommittedPrePositionMarginUsdc={
+      initialCommittedPrePositionMarginAssets={
         lifecycleState === 'executed' && includeMarginSnapshot
-          ? currentPosition.marginUsdc
+          ? currentPosition.marginAssets
           : undefined
       }
-      initialFinalVpiUsdc={
-        lifecycleState === 'executed' ? finalVpiUsdc : undefined
+      initialFinalVpiAssets={
+        lifecycleState === 'executed' ? finalVpiAssets : undefined
       }
       oraclePriceRaw={oraclePriceRaw}
       oraclePriceDisplay="1.0000"
@@ -339,16 +339,16 @@ function commitPreviewQueries() {
 describe('perps ticket oracle regime matrix', () => {
   it('keeps new-order TP/SL optional and preserves inputs while toggled off', () => {
     render(<PerpsTradeTicket currentPositionAmount="0" oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n}
-      protectionConfiguration={{ enabled: true, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }} />)
-    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+      protectionConfiguration={{ enabled: true, triggerBountyAssets: 200_000n, executionBountyAssets: 200_000n }} />)
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
     fireEvent.click(toggle)
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     fireEvent.click(toggle)
-    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     fireEvent.click(toggle)
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveAttribute('aria-invalid', 'false')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveAttribute('aria-invalid', 'false')
   })
 
   it('keeps attached TP/SL visible but disabled on an existing position', () => {
@@ -373,13 +373,13 @@ describe('perps ticket oracle regime matrix', () => {
   it('hides TP/SL only while reduce only is selected and preserves the draft', () => {
     render(<PerpsTradeTicket oraclePriceRaw={100_000_000n} protectionCapPrice={200_000_000n} protectionConfiguration={{ enabled: true }} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Take profit / stop loss' }))
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
     expect(screen.queryByRole('checkbox', { name: 'Take profit / stop loss' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Reduce only' }))
     expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBeChecked()
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
   })
 
   it('restores the disabled checkbox when reduce only is cleared on an existing position', () => {
@@ -394,15 +394,15 @@ describe('perps ticket oracle regime matrix', () => {
     const view = render(<PerpsTradeTicket {...props} />)
     const toggle = screen.getByRole('checkbox', { name: 'Take profit / stop loss' })
     fireEvent.click(toggle)
-    fireEvent.change(screen.getByLabelText('Take profit (USDC)'), { target: { value: '1.1' } })
+    fireEvent.change(screen.getByLabelText('Take profit (USDG)'), { target: { value: '1.1' } })
     view.rerender(<PerpsTradeTicket {...props} currentPosition={currentPosition} />)
     expect(screen.getByRole('checkbox', { name: 'Take profit / stop loss' })).toBe(toggle)
     expect(toggle).toBeDisabled()
     expect(toggle).not.toBeChecked()
-    expect(screen.queryByLabelText('Take profit (USDC)')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Take profit (USDG)')).not.toBeInTheDocument()
     view.rerender(<PerpsTradeTicket {...props} />)
     expect(toggle).toBeEnabled()
-    expect(screen.getByLabelText('Take profit (USDC)')).toHaveValue('1.1')
+    expect(screen.getByLabelText('Take profit (USDG)')).toHaveValue('1.1')
   })
 
   beforeEach(() => {
@@ -605,12 +605,12 @@ describe('perps ticket oracle regime matrix', () => {
     {
       caseName: 'net-paid balance',
       positionVpiAccrued: 60_000_000n,
-      positionBalance: 'Net paid 60.0 USDC',
+      positionBalance: 'Net paid 60.0 USDG',
     },
     {
       caseName: 'existing provisional credit',
       positionVpiAccrued: -40_000_000n,
-      positionBalance: 'Provisional credit 40.0 USDC',
+      positionBalance: 'Provisional credit 40.0 USDG',
     },
   ])('shows the position VPI balance for a $caseName', ({
     positionVpiAccrued,
@@ -637,18 +637,18 @@ describe('perps ticket oracle regime matrix', () => {
     const positionVpiInfo = preview.getByLabelText('Position VPI balance info')
     fireEvent.focus(positionVpiInfo)
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'A provisional credit has already been added to settlement, remains excluded from risk equity'
+      'A provisional credit has already been added to your USDG balance, remains excluded from risk equity'
     )
   })
 
   it.each([
-    ['charge', 1_250_000n, 'Pay 1.3 USDC'],
-    ['credit', -1_250_000n, 'Credit 1.3 USDC'],
+    ['charge', 1_250_000n, 'Pay 1.3 USDG'],
+    ['credit', -1_250_000n, 'Credit 1.3 USDG'],
     ['zero adjustment', 0n, 'No VPI'],
-  ] as const)('shows an estimated close VPI %s as an account action', (_case, vpiDeltaUsdc, expected) => {
+  ] as const)('shows an estimated close VPI %s as an account action', (_case, vpiDeltaAssets, expected) => {
     mockReadContractsData = [{
       status: 'success',
-      result: closePreviewTuple({ vpiDeltaUsdc }),
+      result: closePreviewTuple({ vpiDeltaAssets }),
     }]
 
     renderCloseTicket({
@@ -659,7 +659,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(screen.getAllByText('VPI')).toHaveLength(2)
     const preview = commitPreviewQueries()
     const vpiRow = preview.getByText('VPI').closest('div')
-    if (vpiDeltaUsdc === 0n) {
+    if (vpiDeltaAssets === 0n) {
       expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
     } else {
       expect(within(vpiRow!).getByLabelText(expected)).toBeInTheDocument()
@@ -667,7 +667,7 @@ describe('perps ticket oracle regime matrix', () => {
 
     fireEvent.focus(preview.getByLabelText('VPI info'))
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement'
+      'positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account in USDG'
     )
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'not sent directly to the owner wallet'
@@ -772,9 +772,9 @@ describe('perps ticket oracle regime matrix', () => {
     mockReadContractsData = [{
       status: 'success',
       result: closePreviewTuple({
-        frozenSpreadUsdc: 12_345_678n,
-        frozenSpreadPaidUsdc: 10_000_000n,
-        frozenSpreadWaivedUsdc: 2_345_678n,
+        frozenSpreadAssets: 12_345_678n,
+        frozenSpreadPaidAssets: 10_000_000n,
+        frozenSpreadWaivedAssets: 2_345_678n,
       }),
     }]
 
@@ -839,9 +839,9 @@ describe('perps ticket oracle regime matrix', () => {
     mockReadContractsData = [{
       status: 'success',
       result: closePreviewTuple({
-        frozenSpreadUsdc: 12_345_678n,
-        frozenSpreadPaidUsdc: 10_000_000n,
-        frozenSpreadWaivedUsdc: 2_345_678n,
+        frozenSpreadAssets: 12_345_678n,
+        frozenSpreadPaidAssets: 10_000_000n,
+        frozenSpreadWaivedAssets: 2_345_678n,
       }),
     }]
 
@@ -916,18 +916,18 @@ describe('perps ticket oracle regime matrix', () => {
     ['charge', 12_345_678n, 'VPI charge', '-12.35'],
     ['credit', -12_345_678n, 'VPI rebate', '+12.35'],
     ['zero adjustment', 0n, 'VPI', '0'],
-  ] as const)('shows settled close VPI as a %s', (_case, finalVpiUsdc, label, expected) => {
+  ] as const)('shows settled close VPI as a %s', (_case, finalVpiAssets, label, expected) => {
     renderCloseTicket({
       lifecycleState: 'executed',
       marketPhase: 'open',
       oracleFrozen: false,
-      finalVpiUsdc,
+      finalVpiAssets,
     })
 
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
-      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDC')
+      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDG')
     expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
@@ -945,7 +945,7 @@ describe('perps ticket oracle regime matrix', () => {
       oracleFrozen: false,
       isFullClose: false,
       postPositionSize: 500n * 10n ** 18n,
-      postPositionMarginUsdc: 250_000_000n,
+      postPositionMarginAssets: 250_000_000n,
     }
     const { unmount } = renderCloseTicket(input)
 

@@ -50,7 +50,7 @@
     "viem": "2.45.2",
     "wagmi": "^3.2.0",
     "zustand": "^5.0.9",
-    "@plether-fi/perps-aa-client": "file:vendor/perps-aa-client/plether-fi-perps-aa-client-0.2.0.tgz"
+    "@plether-fi/perps-aa-client": "file:vendor/perps-aa-client/plether-fi-perps-aa-client-0.4.0.tgz"
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.0.0",

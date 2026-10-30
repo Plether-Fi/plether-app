@@ -1,8 +1,11 @@
+vi.mock('../../contracts/perpsAddresses', async () => (await import('../../test/perpsReleaseFixture')).fixturePerpsAddresses)
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, getAddress, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAddress, type AbiParameter, type Address, type Hex } from 'viem'
+import { hashOrderReceiptV5, orderLifecycleV5Abi, type OrderReceiptV5 } from '@plether-fi/perps-aa-client'
+import { relaxedProtectionCloseLimits } from '../../contracts/positionProtection'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -85,15 +88,15 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0x4b44312d1f94d3d79a36a875691d768dd6c0575f',
-    usdcSupportsEip3009: false,
-    usdcEip712Name: null,
-    usdcEip712Version: null,
-    marginClearinghouse: '0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7',
-    cfdEngine: '0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb',
-    orderRouter: '0x9b9ddc783780a14e4930dbbcd94d6356a82725e8',
+    settlementToken: '0x0000000000000000000000000000000000000001',
+    settlementTokenSupportsEip3009: false,
+    settlementTokenEip712Name: null,
+    settlementTokenEip712Version: null,
+    marginClearinghouse: '0x0000000000000000000000000000000000000002',
+    cfdEngine: '0x0000000000000000000000000000000000000003',
+    orderRouter: '0x0000000000000000000000000000000000000017',
     orderLifecycleBook: '0x1111111111111111111111111111111111111111',
-    positionProtectionBook: '0xa7e2132ff262ac97cdeaeeb158f0ee5c8c30e312',
+    positionProtectionBook: '0x0000000000000000000000000000000000000019',
     policyEvaluator: '0x2222222222222222222222222222222222222222',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
@@ -205,14 +208,14 @@ function preparedOrder(): PreparedPerpsOrderV3 {
       submitBy: 1_700_000_300n, executionWindowSeconds: 60,
       allowedExecutionModes: 1,
       expectedConfigHash: CONFIG_HASH,
-      maxExecutionBountyUsdc: 10_000n,
-      maxExecutionNotionalUsdc: 1_000_000_000n,
-      maxGrossAccountDebitUsdc: 200_010_000n,
-      maxActionChargeUsdc: 2_000_000n,
-      maxExplicitFeesUsdc: 2_000_000n,
+      maxExecutionBountyAssets: 10_000n,
+      maxExecutionNotionalAssets: 1_000_000_000n,
+      maxGrossAccountDebitAssets: 200_010_000n,
+      maxActionChargeAssets: 2_000_000n,
+      maxExplicitFeesAssets: 2_000_000n,
       maxPostPositionSize: 100_000_000_000_000_000_000n,
-      minPostSettlementBalanceUsdc: 700_000_000n,
-      minPostPositionEquityUsdc: 198_000_000n,
+      minPostSettlementBalanceAssets: 700_000_000n,
+      minPostPositionEquityAssets: 198_000_000n,
       maxPostLeverageBps: 50_000,
     },
   } as const
@@ -222,14 +225,14 @@ function preparedOrder(): PreparedPerpsOrderV3 {
     orderRouter: PERPS_ARBITRUM_SEPOLIA.orderRouter,
     orderLifecycleBook: ORDER_LIFECYCLE_BOOK,
     request,
-    executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+    executionBountyAssets: request.bounds.maxExecutionBountyAssets,
     reviewedBlockNumber: 123n,
     reviewedBlockHash: REVIEWED_BLOCK_HASH,
     reviewedPrice: 98_300_000n,
     protection: {
       submitBy: request.bounds.submitBy, executionWindowSeconds: 60,
       executionMode: 1,
-      executionBountyUsdc: request.bounds.maxExecutionBountyUsdc,
+      executionBountyAssets: request.bounds.maxExecutionBountyAssets,
     },
   }
 }
@@ -237,9 +240,9 @@ function preparedOrder(): PreparedPerpsOrderV3 {
 function commitInput() {
   return {
     direction: 'long' as const,
-    notionalUsdc: 1_000_000_000n,
+    notionalAssets: 1_000_000_000n,
     sizeDelta: 100_000_000_000_000_000_000n,
-    marginUsdc: 200_000_000n,
+    marginAssets: 200_000_000n,
     oraclePrice: 98_300_000n,
     slippagePercent: 0.1,
     isClose: false,
@@ -250,7 +253,7 @@ function commitInput() {
 
 describe('usePerpsTrading', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mocks.identityReady = false
     mocks.intentResolution = 0
     mocks.resolvedOrderId = 0n
@@ -274,10 +277,10 @@ describe('usePerpsTrading', () => {
           return 10n
         case 'getTraderAccount':
           return {
-            equityUsdc: 900_000_000n,
-            withdrawableUsdc: 500_000_000n,
-            pendingOrderMarginUsdc: 250_000_000n,
-            pendingExecutionBountyUsdc: 10_000n,
+            equityAssets: 900_000_000n,
+            withdrawableAssets: 500_000_000n,
+            pendingOrderMarginAssets: 250_000_000n,
+            pendingExecutionBountyAssets: 10_000n,
           }
         case 'previewOpenRevertCode':
           return 0
@@ -297,7 +300,7 @@ describe('usePerpsTrading', () => {
   })
 
   describe('position protection management', () => {
-    const params = { takeProfitTriggerPrice: 98_500_000n, stopLossTriggerPrice: 0n }
+    const params = { takeProfitTriggerPrice: 98_500_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }
 
     beforeEach(() => {
       mocks.identityReady = true
@@ -371,7 +374,7 @@ describe('usePerpsTrading', () => {
       const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
       await expect(result.current.managePositionProtection({ action: 'create', params })).rejects.toMatchObject({
-        message: expect.stringContaining('Not enough free USDC settlement balance to reserve TP/SL keeper rewards. Deposit USDC into your margin account and retry.\n\nSupport reference: '),
+        message: expect.stringContaining('Not enough free USDG to reserve TP/SL keeper rewards. Deposit USDG into your margin account and retry.\n\nSupport reference: '),
         cause: failure,
       })
       expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -417,7 +420,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     mocks.getBlock.mockResolvedValue({ number: 456n, timestamp: 1_700_000_600n })
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 110_000_000n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).resolves.toMatchObject({ orderId: 42n, protectionId: 7n })
     const finalized = { ...input.preparedOrder.request, bounds: { ...input.preparedOrder.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
@@ -430,7 +433,7 @@ describe('usePerpsTrading', () => {
     mocks.intentResolution = 1
     mocks.resolvedOrderId = 42n
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).rejects.toThrow('cannot be resubmitted')
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
@@ -440,7 +443,7 @@ describe('usePerpsTrading', () => {
     mocks.identityReady = true
     mocks.protectionParent = 43n
     const input = commitInput()
-    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n }, triggerBountyUsdc: 200_000n, executionBountyUsdc: 200_000n }
+    input.preparedOrder.positionProtection = { book: PERPS_ARBITRUM_SEPOLIA.positionProtectionBook, params: { takeProfitTriggerPrice: 90_000_000n, stopLossTriggerPrice: 0n, closeLimits: relaxedProtectionCloseLimits() }, triggerBountyAssets: 200_000n, executionBountyAssets: 0n }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
     await expect(result.current.commitOrder(input)).rejects.toThrow('unique protection record')
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledOnce()
@@ -449,8 +452,8 @@ describe('usePerpsTrading', () => {
   it('never exposes a direct owner-wallet approval path', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.approveUsdcForMargin(25_000_000n))
-      .rejects.toThrow('Direct USDC approvals are disabled')
+    await expect(result.current.approveSettlementTokenForMargin(25_000_000n))
+      .rejects.toThrow('Direct USDG approvals are disabled')
   })
 
   it('blocks order submission until the Trading Account is ready', async () => {
@@ -573,7 +576,7 @@ describe('usePerpsTrading', () => {
     await expect(result.current.commitOrder({
       ...commitInput(),
       sizeDelta: unalignedSizeDelta,
-      marginUsdc: 0n,
+      marginAssets: 0n,
       isClose: true,
       preparedOrder: closePreparedOrder,
     })).rejects.toThrow('Order size must use 100 plDXY increments')
@@ -588,9 +591,9 @@ describe('usePerpsTrading', () => {
 
     await expect(result.current.prepareOrder({
       direction: 'long',
-      notionalUsdc: 1_000_000_000n,
+      notionalAssets: 1_000_000_000n,
       sizeDelta: 100_000_000_000_000_000_001n,
-      marginUsdc: 0n,
+      marginAssets: 0n,
       oraclePrice: 98_300_000n,
       slippagePercent: 0.1,
       isClose: true,
@@ -610,49 +613,55 @@ describe('usePerpsTrading', () => {
       .rejects.toThrow('Expired-order cleanup is keeper-operated')
   })
 
-  it('reads terminal constraint evidence directly from the lifecycle book', async () => {
+  it('authenticates terminal evidence using the receipt clock rather than the RPC log block', async () => {
     mocks.identityReady = true
-    mocks.readContract.mockResolvedValueOnce({
-      account: ACCOUNT,
-      clientOrderId: CLIENT_ORDER_ID,
-      status: 3,
-      reason: 8,
-      executionMode: 1,
-      terminalBlock: 11_604_786n,
-      terminalTime: 1_788_167_807n,
-      executionPrice: 98_750_341n,
-      failedConstraint: 2,
-      receiptHash: `0x${'46'.repeat(32)}`,
-    })
-    mocks.getContractEvents.mockResolvedValueOnce([{
-      blockNumber: 11_604_786n,
-      args: { account: ACCOUNT, terminalTime: 1_788_167_807n, receiptHash: `0x${'46'.repeat(32)}`,
-        receipt: { account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, status: 3, reason: 8, executionMode: 1,
-          executionPrice: 98_750_341n, failure: { constraint: 2 } } },
-    }])
+    const safeBlock = 302_300_000n
+    const terminalBlock = 11_604_786n
+    const terminalTime = 1_788_167_807n
+    const rpcLogBlock = 302_299_900n
+    const event = orderLifecycleV5Abi.find(item => item.type === 'event' && item.name === 'OrderFinalized')!
+    function zero(parameter: AbiParameter): unknown {
+      if (parameter.type === 'tuple' && 'components' in parameter) return Object.fromEntries(parameter.components.map(part => [part.name, zero(part)]))
+      if (parameter.type === 'address') return `0x${'00'.repeat(20)}`
+      if (parameter.type === 'bool') return false
+      if (parameter.type.startsWith('bytes')) return `0x${'00'.repeat(Number(parameter.type.slice(5)))}`
+      return Number(parameter.type.replace(/\D/g, '')) <= 48 ? 0 : 0n
+    }
+    const empty = zero(event.inputs[6]) as OrderReceiptV5
+    const receipt: OrderReceiptV5 = { ...empty, orderId: 12n, account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID,
+      status: 3, reason: 8, executionMode: 1, executionPrice: 98_750_341n,
+      failure: { ...empty.failure, constraint: 2 } }
+    const receiptHash = hashOrderReceiptV5({ chainId: 421614n, book: ORDER_LIFECYCLE_BOOK,
+      router: PERPS_ARBITRUM_SEPOLIA.orderRouter, terminalBlock, terminalTime, receipt })
+    mocks.getBlock.mockResolvedValue({ number: safeBlock, timestamp: 1_788_168_000n })
+    mocks.readContract.mockResolvedValue({ account: ACCOUNT, status: 3, reason: 8, terminalBlock, receiptHash })
+    const log = {
+      address: ORDER_LIFECYCLE_BOOK, blockNumber: rpcLogBlock,
+      topics: encodeEventTopics({ abi: orderLifecycleV5Abi, eventName: 'OrderFinalized', args: {
+        orderId: receipt.orderId, account: receipt.account, clientOrderId: receipt.clientOrderId,
+      } }),
+      data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, terminalBlock, terminalTime, receipt]),
+      args: { ...receipt, terminalBlock, terminalTime, receiptHash, receipt },
+    }
+    mocks.getContractEvents.mockResolvedValue([log])
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.readOrderLifecycleOutcome(12n)).resolves.toEqual({
-      orderId: 12n,
-      account: ACCOUNT,
-      clientOrderId: CLIENT_ORDER_ID,
-      status: 3,
-      terminalReason: 8,
-      executionMode: 1,
-      terminalBlock: 11_604_786n,
-      terminalTime: 1_788_167_807n,
-      executionPrice: 98_750_341n,
-      failedConstraint: 2,
-      receiptHash: `0x${'46'.repeat(32)}`,
+      orderId: 12n, account: ACCOUNT, clientOrderId: CLIENT_ORDER_ID, status: 3,
+      terminalReason: 8, executionMode: 1, terminalBlock, terminalTime,
+      executionPrice: 98_750_341n, failedConstraint: 2, receiptHash,
     })
-    expect(mocks.readContract).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address: ORDER_LIFECYCLE_BOOK,
-        functionName: 'terminalOutcome',
-        args: [12n],
-        blockNumber: 123n,
-      })
-    )
+    expect(mocks.readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: ORDER_LIFECYCLE_BOOK, functionName: 'terminalOutcome', args: [12n], blockNumber: safeBlock,
+    }))
+    expect(mocks.getContractEvents).toHaveBeenCalledWith(expect.objectContaining({
+      fromBlock: safeBlock - 10_000n, toBlock: safeBlock,
+    }))
+
+    mocks.getContractEvents.mockResolvedValue([{ ...log,
+      data: encodeAbiParameters(event.inputs.filter(part => !part.indexed), [receiptHash, rpcLogBlock, terminalTime, receipt]),
+    }])
+    await expect(result.current.readOrderLifecycleOutcome(12n)).rejects.toThrow('authenticated history')
   })
 
   it('forwards managed sponsored operation status changes', async () => {
@@ -772,7 +781,11 @@ describe('usePerpsTrading', () => {
     const input = commitInput()
     input.isClose = isClose
     input.preparedOrder.request.isClose = isClose
-    if (isClose) input.preparedOrder.request.marginDelta = 0n
+    if (isClose) {
+      input.preparedOrder.request.marginDelta = 0n
+      input.preparedOrder.request.bounds.minPostSettlementBalanceAssets = 0n
+      input.preparedOrder.request.bounds.maxExecutionBountyAssets = 0n
+    }
     const reviewed = structuredClone(input.preparedOrder)
     const expected = { ...reviewed.request, bounds: { ...reviewed.request.bounds, submitBy: 1_700_000_720n, executionWindowSeconds: 60 } }
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
@@ -904,19 +917,18 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
-  it('shows commit diagnostics when an undecoded pre-submission simulation fails', async () => {
+  it('returns a support reference without exposing a diagnostic dump when pre-submission simulation fails', async () => {
     mocks.identityReady = true
     mocks.simulateContract.mockRejectedValueOnce(new Error('Transaction failed'))
 
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
-    await expect(result.current.commitOrder(commitInput())).rejects.toThrow([
-      'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.',
-      'No transaction hash was returned by the wallet/RPC, so no mined transaction could be checked.',
-      'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
-      'Latest open preview still passes.',
-      'A fresh commit simulation still passes, so this looks like a wallet/RPC submission failure rather than a contract rejection. Retry the commit; if your wallet still shows a pending request, reject it first or reconnect the wallet.',
-    ].join('\n'))
+    const failure = await result.current.commitOrder(commitInput()).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toMatch(
+      /^We could not determine why this transaction failed\. Check account activity before retrying, or contact support with your support reference\.\n\nSupport reference: tx-[0-9a-f-]{36}$/
+    )
+    expect(mocks.simulateContract).toHaveBeenCalledTimes(2)
 
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })

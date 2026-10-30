@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { requireDeployedRelease } from './release.mjs'
 import { createHash } from 'node:crypto'
 import { setTimeout } from 'node:timers/promises'
 import pg from 'pg'
@@ -23,7 +24,8 @@ async function main() {
   const rawInventory = process.env.AA_FUNDING_MONITORS ?? '[]'
   const monitors = parseMonitors(rawInventory)
   const inventoryId = createHash('sha256').update(rawInventory).digest('hex')
-  const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '/app/config/perps/arbitrum-sepolia-v3.json','utf8'))
+  const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '/app/config/perps/mock-usdg-prepared.json','utf8'))
+  requireDeployedRelease(release)
   if (!process.env.DATABASE_URL || !process.env.PERPS_RPC_URL) throw new Error('Funding dependencies missing')
   const client = createPublicClient({ transport: http(process.env.PERPS_RPC_URL, {
     timeout: 3000, retryCount: 0,

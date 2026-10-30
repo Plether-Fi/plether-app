@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Concurrent (forkIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -67,6 +69,7 @@ defaultPollSeconds = 12
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   cliArgs <- getArgs
   case IndexerOptions.parsePerpsIndexerInvocation cliArgs of
     Left err -> do
@@ -106,7 +109,7 @@ runConfiguredIndexer
 runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
   let configuredAddresses =
         defaultPerpsAddresses
-          { paUsdc = cfgPerpsUsdc cfg
+          { paSettlementToken = cfgPerpsSettlementToken cfg
           , paOrderRouter = cfgPerpsOrderRouter cfg
           , paOrderLifecycleBook = cfgPerpsOrderLifecycleBook cfg
           , paCfdEngine = cfgPerpsCfdEngine cfg
@@ -129,7 +132,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
       releaseManifest =
         (cfgInsightsCompetitionReleaseManifest cfg)
           { crmChainId = cfgPerpsChainId cfg
-          , crmUsdc = paUsdc addresses
+          , crmSettlementToken = paSettlementToken addresses
           , crmOrderRouter = paOrderRouter addresses
           , crmMarginClearinghouse = paMarginClearinghouse addresses
           , crmAccountLens = cfgPerpsAccountLens cfg
@@ -226,7 +229,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg = do
               vaultIndexerCfg =
                 VaultActivityIndexerConfig
                   { vaicDeployment = vaultDeployment
-                  , vaicAssetAddress = cfgPerpsUsdc cfg
+                  , vaicAssetAddress = cfgPerpsSettlementToken cfg
                   , vaicPublicLensAddress = perpsV2PublicLens
                   , vaicConfirmations = cfgVaultHistoryConfirmations cfg
                   -- The vault loop has an independent cadence and range budget;
@@ -305,7 +308,7 @@ loadEnvArgs = do
     , "PERPS_INDEXER_CONFIRMATIONS"
     , "PERPS_INDEXER_BATCH_SIZE"
     , "PERPS_INDEXER_POLL_SECONDS"
-    , "PERPS_USDC"
+    , "PERPS_SETTLEMENT_TOKEN"
     , "PERPS_ORDER_ROUTER"
     , "PERPS_ORDER_LIFECYCLE_BOOK"
     , "PERPS_CFD_ENGINE"

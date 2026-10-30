@@ -1,5 +1,7 @@
 module Main (main) where
 
+import qualified Plether.Perps.Manifest as Manifest
+
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -22,6 +24,7 @@ import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
+  Manifest.requireDeployedRelease
   eConfig <- loadConfig
   case eConfig of
     Left err -> putStrLn $ "Configuration error: " <> err
@@ -43,7 +46,7 @@ main = do
                   (cfgInsightsCompetitionRules cfg)
                   (cfgPerpsChainId cfg)
                   (cfgPerpsOrderRouter cfg)
-                  (cfgPerpsUsdc cfg)
+                  (cfgPerpsSettlementToken cfg)
                   (cfgPerpsMarginClearinghouse cfg)
                   (cfgPerpsAccountLens cfg)
                   (cfgInsightsCompetitionReleaseManifest cfg)

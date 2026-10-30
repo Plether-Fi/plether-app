@@ -17,15 +17,13 @@ on:
         default: false
         type: boolean
       close_assistance_mode:
-        description: Sepolia close assistance issuance (disabled for the v1.3.0 replacement)
+        description: Sepolia close assistance state (canonical MockUSDG supports disabled only)
         required: false
         default: disabled
         type: choice
         options:
           - preserve
           - disabled
-          - canary
-          - all
       deployment_scope:
         description: Deploy every backend service or only the API
         required: false
@@ -1406,39 +1404,8 @@ jobs:
               )] | length) == 1
             ' task-def.json > /dev/null
 
-      - name: Patch Sepolia API task definition
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
-        run: |
-          jq \
-            --arg container "${{ matrix.container_name }}" \
-            '
-            def upsert_env($name; $value):
-              .environment = (
-                ((.environment // []) | map(select(.name != $name)))
-                + [{"name": $name, "value": $value}]
-              );
-            def upsert_secret($name; $valueFrom):
-              .secrets = (
-                ((.secrets // []) | map(select(.name != $name)))
-                + [{"name": $name, "valueFrom": $valueFrom}]
-              );
-
-            .containerDefinitions |= map(
-              if .name == $container then
-                (.secrets // [] | map(select(.name == "PERPS_RPC_URL")) | .[0].valueFrom) as $rpcSecret
-                |
-                upsert_env("CHAIN_ID"; "421614")
-                | upsert_env("INDEXER_START_BLOCK"; "280884700")
-                | upsert_secret("RPC_URL"; $rpcSecret)
-              else
-                .
-              end
-            )
-            ' task-def.json > task-def.patched.json
-          mv task-def.patched.json task-def.json
-
       - name: Check out reviewed public AA deployment policy
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -1446,13 +1413,15 @@ jobs:
           sparse-checkout: |
             .github/scripts
             apps/backend/deployments
+            scripts
+            config/perps
           path: deployment-policy
 
       - name: Configure exact Sepolia close assistance release
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true' && inputs.close_assistance_mode != 'preserve'
         env:
           CLOSE_ASSISTANCE_MODE: ${{ inputs.close_assistance_mode }}
-        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/apps/backend/deployments/close-assistance-arbitrum-sepolia.json "$CLOSE_ASSISTANCE_MODE"
+        run: python3 deployment-policy/.github/scripts/configure-close-assistance.py task-def.json deployment-policy/config/perps/mock-usdg-prepared.json "$CLOSE_ASSISTANCE_MODE"
 
       - name: Configure liquidation worker reliability controls
         if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
@@ -1494,104 +1463,9 @@ jobs:
             --task-definition plether-sepolia \
             --query taskDefinition > canonical-api-task-def.json
 
-          jq --exit-status \
-            --arg releaseId "testnet-trading-2026-09" \
-            --slurpfile canonical canonical-api-task-def.json \
-            '
-            def env_map:
-              reduce (.environment // [])[] as $entry ({}; .[$entry.name] = $entry.value);
-            def address_names: [
-              "PERPS_USDC",
-              "PERPS_ORDER_ROUTER",
-              "PERPS_ORDER_LIFECYCLE_BOOK",
-              "PERPS_HOUSE_POOL",
-              "PERPS_PLETHER_ORACLE",
-              "PERPS_CFD_ENGINE",
-              "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR",
-              "PERPS_CFD_ENGINE_LENS",
-              "PERPS_MARGIN_CLEARINGHOUSE",
-              "PERPS_ACCOUNT_LENS"
-            ];
-            def manifest_names:
-              address_names + [
-                "PERPS_INDEXER_START_BLOCK",
-                "INSIGHTS_ACTIVE_COMPETITION_SLUG",
-                "INSIGHTS_COMPETITION_RELEASE_ID"
-              ];
-            def valid_address:
-              type == "string"
-              and test("^0x[0-9A-Fa-f]{40}$")
-              and ascii_downcase != "0x0000000000000000000000000000000000000000";
-            def valid_september_manifest($env):
-              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
-              and $env.INSIGHTS_COMPETITION_RELEASE_ID == $releaseId
-              and ([address_names[] as $name | $env[$name] | valid_address] | all)
-              and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
-              and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
-            def valid_bounded_v3_release($env):
-              (($env.PERPS_USDC // "") | ascii_downcase) == "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
-              and (($env.PERPS_ORDER_ROUTER // "") | ascii_downcase) == "0x9b9ddc783780a14e4930dbbcd94d6356a82725e8"
-              and (($env.PERPS_ORDER_LIFECYCLE_BOOK // "") | ascii_downcase) == "0x519f57a34fb440c42bfd2d8328d2f80349af3872"
-              and (($env.PERPS_CFD_ENGINE // "") | ascii_downcase) == "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
-              and (($env.PERPS_MARGIN_CLEARINGHOUSE // "") | ascii_downcase) == "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-              and (($env.PERPS_HOUSE_POOL // "") | ascii_downcase) == "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
-              and $env.PERPS_INDEXER_START_BLOCK == "318398363";
-            def valid_registration_only_manifest($env):
-              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
-              and (($env.INSIGHTS_COMPETITION_RELEASE_ID // "") == "");
-            def same_manifest($actual; $expected):
-              [manifest_names[] as $name | $actual[$name] == $expected[$name]] | all;
-            def release_consumer:
-              .name == "plether-api"
-              or .name == "plether-perps-indexer"
-              or .name == "plether-insights-worker";
-
-            ($canonical[0].containerDefinitions
-              | map(select(.name == "plether-api"))
-              | .[0] // null) as $canonicalApi
-            | if $canonicalApi == null then
-                error("canonical Sepolia API task definition has no plether-api container")
-              else
-                ($canonicalApi | env_map) as $expected
-                | if valid_bounded_v3_release($expected) | not then
-                    error("canonical Sepolia API task definition does not use the pinned bounded-V2 release")
-                  elif ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
-                    true
-                  elif valid_registration_only_manifest($expected) then
-                    [.containerDefinitions[] | select(release_consumer)] as $consumers
-                    | if ($consumers | length) == 0 then
-                        true
-                      elif ([
-                        $consumers[]
-                        |
-                        (. | env_map) as $actual
-                        | valid_registration_only_manifest($actual)
-                          and same_manifest($actual; $expected)
-                      ] | all) then
-                        true
-                      else
-                        error("task definition release consumers do not match the canonical September registration-only manifest")
-                      end
-                  elif valid_september_manifest($expected) | not then
-                    error("canonical Sepolia API task definition has an invalid September release manifest")
-                  else
-                    [.containerDefinitions[] | select(release_consumer)] as $consumers
-                    | if ($consumers | length) == 0 then
-                        true
-                      elif ([
-                        $consumers[]
-                        |
-                        (. | env_map) as $actual
-                        | valid_september_manifest($actual)
-                          and same_manifest($actual; $expected)
-                      ] | all) then
-                        true
-                      else
-                        error("task definition release consumers do not match the canonical September manifest")
-                      end
-                  end
-              end
-            ' task-def.json > /dev/null
+          node deployment-policy/scripts/validate-perps-deployment.mjs backend \
+            deployment-policy/config/perps/mock-usdg-prepared.json \
+            task-def.json canonical-api-task-def.json
 
       - name: Require active Alto with reviewed validation policy for public native API
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'

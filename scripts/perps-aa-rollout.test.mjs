@@ -1,14 +1,15 @@
 import test from 'node:test'
+import { prepareRelease, terraformBindings } from './prepare-perps-release.mjs'
+import { validateAaDeployment, validateBackendDeployment } from './validate-perps-deployment.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { protectionWorkerProvenance } from './migrate-perps-aa-client.mjs'
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
 const manifestText = read('apps/frontend/public/perps-aa-manifest.json')
 const manifest = JSON.parse(manifestText)
-const { release, contracts } = JSON.parse(read('config/perps/arbitrum-sepolia-v3.json'))
+const coreManifest = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
 const runbook = read('docs/runbooks/self-hosted-aa-rollout.md')
 
 test('client provenance matches the dependency, lockfile and installed artifact', () => {
@@ -35,57 +36,60 @@ test('client provenance matches the dependency, lockfile and installed artifact'
   }
 })
 
-test('native activation preserves every reviewed candidate binding and enables fast preparation', () => {
-  const candidates = [...runbook.matchAll(/```json\n([\s\S]*?)\n```/g)]
-    .map(match => JSON.parse(match[1]))
-    .filter(value => value.paymasterVersion === 'plether-verifying-v1')
-  assert.equal(candidates.length, 1)
-  assert.equal('pimlicoRpcUrl' in manifest, false)
-  assert.deepEqual(manifest, {
-    ...candidates[0],
-    paymasterAddress: '0x9761091045616A388f5fE1433721B272c78fe31b',
-    preparationRpcVersion: 1,
-  })
-  assert.equal(manifest.bundlerRpcUrl, '/api/perps/v1/aa/rpc')
-  assert.equal(manifest.paymasterRpcUrl, manifest.bundlerRpcUrl)
+const deployed = () => {
+  const core = JSON.parse(read('apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-release.json'))
+  core.release.manifestSha256 = 'a'.repeat(64)
+  core.release.bundleSha256 = 'b'.repeat(64)
+  core.integration = { orderInterfaceVersion: 3, aaManifestVersion: 'perps-aa-canonical-test-v2', volumeHistoryStartTimestamp: 1800000000 }
+  const aa = JSON.parse(read('apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-aa.json'))
+  return { core, aa: prepareRelease(core, { integration: core.integration, bundleSha256: core.release.bundleSha256, aa }, core.release.manifestSha256)['perps-aa-manifest.json'] }
+}
+
+test('prepared release cannot pass either deployment guard', () => {
+  assert.equal(coreManifest.release.phase, 'prepared')
+  assert.equal(manifest.sponsorshipEnabled, false)
+  assert.equal(manifest.settlementToken, null)
+  assert.equal(manifest.paymasterAddress, null)
+  assert.throws(() => validateAaDeployment(coreManifest, manifest), /Prepared manifests/)
+  assert.throws(() => validateBackendDeployment(coreManifest, {}, {}), /Prepared manifests/)
 })
 
-test('deployment validator accepts the activated capability and rejects altered native profiles', () => {
-  const workflow = read('.github/workflows/deploy-frontend.yml')
-  const section = workflow.split('name: Validate testnet AA manifest')[1].split('name: Validate testnet backend origin')[0]
-  const filter = section.match(/jq -e '([\s\S]*?)' dist\/perps-aa-manifest.json/)[1]
-  const accepts = value => spawnSync('jq', ['-e', filter], { input: JSON.stringify(value), encoding: 'utf8' }).status === 0
-  assert.equal(accepts(manifest), true)
-  const { preparationRpcVersion, ...withoutCapability } = manifest
-  for (const invalid of [withoutCapability, { ...manifest, preparationRpcVersion: 2 },
-    { ...manifest, paymasterAddress: '0x1111111111111111111111111111111111111111' },
-    { ...manifest, pimlicoRpcUrl: '/api/perps/v1/aa/pimlico' },
-    { ...manifest, unknown: true }]) assert.equal(accepts(invalid), false)
+test('frontend deployment validates the complete canonical AA identity', () => {
+  const { core, aa } = deployed()
+  validateAaDeployment(core, aa, aa)
+  assert.throws(() => validateAaDeployment(core, { ...aa, paymasterAddress: '0x' + 'e'.repeat(40) }, aa), /reviewed source/)
+  validateAaDeployment(core, { ...aa, sponsorshipEnabled: true })
+  for (const invalid of [
+    { ...aa, settlementToken: '0x' + 'f'.repeat(40) },
+    { ...aa, settlementTokenSupportsEip3009: true },
+    { ...aa, orderInterfaceVersion: 2 },
+    { ...aa, preparationRpcVersion: 2 },
+    { ...aa, unknown: true },
+    { ...aa, usdc: aa.settlementToken },
+  ]) assert.throws(() => validateAaDeployment(core, invalid))
+  assert.match(read('.github/workflows/deploy-frontend.yml'), /validate-perps-deployment\.mjs aa/)
 })
 
-test('rollout identity and public artifact checksum match the deployment', () => {
-  for (const [label, contract] of Object.entries({
-    USDC: 'mockUsdc', 'Order router': 'orderRouter', 'CFD engine': 'cfdEngine',
-    'Margin clearinghouse': 'marginClearinghouse', 'Order lifecycle book': 'orderLifecycleBook',
-    'Policy evaluator': 'cfdOrderPolicyEvaluator', 'Position protection book': 'positionProtectionBook',
-  })) assert.ok(runbook.includes(`| ${label} | \`${contracts[contract].address}\` |`), label)
-  assert.ok(runbook.includes(`Core deployment: **${release.version}**`))
-  assert.ok(runbook.includes(`deployment block \`${release.deploymentBlock}\``))
-  assert.ok(runbook.includes(`\`${release.sourceCommit}\``))
-  const versions = [...runbook.matchAll(/perps-aa-arbitrum-sepolia-\d{8}-v131-v2/g)].map(match => match[0])
-  assert.ok(versions.length > 0)
-  assert.deepEqual([...new Set(versions)], [manifest.version])
-  const checksum = createHash('sha256').update(manifestText).digest('hex')
+test('backend deployment rejects mixed releases, retired keys and duplicate configuration', () => {
+  const { core } = deployed()
+  const env = Object.fromEntries(Object.entries(terraformBindings).map(([key, name]) => [key.toUpperCase(), core.contracts[name].address]))
+  Object.assign(env, { PERPS_CHAIN_ID: '421614', PERPS_INDEXER_START_BLOCK: String(core.release.deploymentBlock), VAULT_HISTORY_DEPLOYMENT_BLOCK: String(core.release.deploymentBlock), INSIGHTS_ACTIVE_COMPETITION_SLUG: 'future-competition', INSIGHTS_COMPETITION_RELEASE_ID: 'future-competition' })
+  const task = () => ({ containerDefinitions: [{ name: 'plether-api', environment: Object.entries(env).map(([name, value]) => ({ name, value })) }] })
+  validateBackendDeployment(core, task(), task())
+  const wrong = task(); wrong.containerDefinitions[0].environment.find(entry => entry.name === 'PERPS_SETTLEMENT_TOKEN').value = '0x' + 'f'.repeat(40)
+  assert.throws(() => validateBackendDeployment(core, wrong, task()), /PERPS_SETTLEMENT_TOKEN/)
+  const duplicate = task(); duplicate.containerDefinitions[0].environment.push(duplicate.containerDefinitions[0].environment[0])
+  assert.throws(() => validateBackendDeployment(core, duplicate, task()), /Duplicate/)
+  const legacy = task(); legacy.containerDefinitions[0].environment.push({ name: 'PERPS_USDC', value: env.PERPS_SETTLEMENT_TOKEN })
+  assert.throws(() => validateBackendDeployment(core, legacy, task()), /Retired/)
+  const competition = task(); competition.containerDefinitions[0].environment.find(entry => entry.name === 'INSIGHTS_COMPETITION_RELEASE_ID').value = 'old-competition'
+  assert.throws(() => validateBackendDeployment(core, competition, task()), /INSIGHTS_COMPETITION_RELEASE_ID/)
+  assert.match(read('.github/workflows/deploy-backend.yml'), /validate-perps-deployment\.mjs backend/)
+})
+
+test('historical rollout checksum remains verifiable without selecting it at runtime', () => {
+  const historical = read('config/perps/evidence/v1.3.1/perps-aa-manifest.json')
+  const checksum = createHash('sha256').update(historical).digest('hex')
   assert.ok(runbook.includes(`  ${checksum}\n`))
-})
-
-test('package migration retains current checksum-verified worker provenance', () => {
-  const provenance = protectionWorkerProvenance(release)
-  assert.ok(read('docs/runbooks/position-protection.md').includes(provenance))
-  assert.ok(provenance.includes(`/path/to/perps-${release.version}-arbitrum-sepolia.tar.gz`))
-  assert.ok(provenance.includes(release.bundleSha256))
-  assert.ok(provenance.includes(release.sourceCommit))
-  const future = { ...release, version: 'v9.0.0', sourceCommit: 'a'.repeat(40), bundleSha256: 'b'.repeat(64) }
-  assert.ok(protectionWorkerProvenance(future).includes('perps-v9.0.0-arbitrum-sepolia.tar.gz'))
-  assert.throws(() => protectionWorkerProvenance({ ...release, bundleSha256: null }))
+  assert.notEqual(JSON.parse(historical).settlementToken, manifest.settlementToken)
 })

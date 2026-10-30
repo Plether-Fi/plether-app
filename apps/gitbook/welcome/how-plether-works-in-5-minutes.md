@@ -1,15 +1,15 @@
 # How Plether works in 5 minutes
 
-> **Traders take a view on the dollar.** [**LPs**](#user-content-fn-1)[^1] **underwrite it. Plether keeps the obligation measurable and accounts for everything in** [**USDC**](#user-content-fn-2)[^2]**.**
+> **Traders take a view on the dollar.** [**LPs**](#user-content-fn-1)[^1] **underwrite it. Plether keeps the obligation measurable and accounts for everything in** [**USDG**](#user-content-fn-2)[^2]**.**
 
 Plether is an oracle-priced[^3] perpetual market, not an order book.
 
-Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against Plether's shared USDC liquidity pool.
+Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against Plether's shared USDG liquidity pool.
 
 Four components connect them:
 
 1. A currency basket measures the direction of the dollar.
-2. Traders deposit USDC as margin.
+2. Traders deposit USDG as margin.
 3. Delayed orders determine when and how positions execute.
 4. Senior and Junior LP capital backs trader payouts.
 
@@ -43,9 +43,9 @@ The dollar index price has fixed lower and upper bounds. This limits the maximum
 
 ### 2. Traders deposit margin
 
-Every position starts with USDC margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
+Every position starts with USDG margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
 
-Position margin and same-account trader claims back price losses. A deposit adds free settlement for carry and actions. Assigning free USDC to position margin increases the price-loss buffer and can reduce future carry; keep free funds available for carry collection.
+Position margin after accrued carry and same-account trader claims back price losses. Carry consumes active position margin first, then eligible free USDG. A deposit adds free USDG for actions and any carry left after position margin is exhausted. Assigning free USDG to position margin increases the price-loss buffer and can reduce future carry; later carry can reduce that margin again.
 
 Each Trading Account can hold one live direction at a time. A trader can:
 
@@ -88,7 +88,7 @@ A position has several separate economic components:
 | **Directional PnL**  | Gains or loses value as the dollar moves relative to the basket  |
 | **Margin**           | Supports the position and absorbs losses                         |
 | **Execution fee**    | Protocol fee charged when position size changes                  |
-| **Price impact**     | Applies a separate USDC charge or rebate based on pool imbalance |
+| **Price impact**     | Applies a separate USDG charge or rebate based on pool imbalance |
 | **Carry**            | Time-based cost for using LP-backed capital                      |
 | **Execution reward** | Pays the account that processes the delayed order                |
 
@@ -98,7 +98,7 @@ Plether uses virtual price impact to respond to directional imbalance.
 
 A trade that adds to the pool’s existing imbalance can pay a VPI charge. A trade that reduces that imbalance can receive a bounded VPI rebate. This signed VPI treatment also remains active for eligible frozen-market closes.
 
-VPI changes the trade’s USDC economics. It does not change the oracle execution price recorded on the position or move the external oracle price.
+VPI changes the trade’s USDG economics. It does not change the oracle execution price recorded on the position or move the external oracle price.
 
 #### Carry instead of funding
 
@@ -112,13 +112,13 @@ When collected, realized carry becomes pool trading revenue.
 
 #### Liquidation
 
-A position is eligible for liquidation when position margin plus same-account claims and exact price PnL is at or below maintenance. Uncovered carry or insufficient VPI reserve can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
+A position is eligible for liquidation when position margin after accrued carry plus same-account claims and exact price PnL is at or below maintenance. Carry can therefore bring the position closer to liquidation without a price move. Carry left uncovered after both position margin and eligible free USDG are exhausted, or an insufficient VPI reserve, can independently trigger liquidation. The price threshold does not guarantee the eventual execution price, which also uses the adverse oracle-confidence policy.
 
 Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, an existing trader claim belonging to the same Trading Account can be netted against the terminal shortfall; any remainder becomes pool bad debt.
 
 ### 5. LPs provide the counterparty capital
 
-The liquidity pool holds the USDC that backs trader payouts. LPs enter through two tranches[^9] with different positions in the loss waterfall.
+The liquidity pool holds the USDG that backs trader payouts. LPs enter through two tranches[^9] with different positions in the loss waterfall.
 
 | Tranche    | Return profile                                      | Loss position                                 |
 | ---------- | --------------------------------------------------- | --------------------------------------------- |
@@ -135,7 +135,7 @@ LP entry and exit use hourly vault processing:
 
 * Deposits and withdrawals whose transactions are included onchain strictly before the five-minute cutoff target the next processing window; inclusion at or after the cutoff rolls into the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so the confirmed request record is authoritative.
 * A processed deposit creates shares that the LP moves from vault escrow to the owner wallet.
-* A processed withdrawal creates USDC that the LP moves to the owner wallet. Senior requests are funded before Junior requests.
+* A processed withdrawal creates USDG that the LP moves to the owner wallet. Senior requests are funded before Junior requests.
 * Successful deposit activation starts a one-hour source cooldown. Claiming processed shares preserves that activation timestamp and cannot weaken a newer wallet cooldown; after expiry, an available direct route can queue the claimable lot for withdrawal without a wallet transfer. Withdrawal cancellation and return of a zero-value remainder restart the wallet cooldown. An ordinary wallet transfer propagates the sender's existing timestamp instead of starting a fresh hour.
 * Capital reserved for trader payouts or claims cannot fund LP withdrawals.
 * Processing can wait on free pool cash, solvency, oracle state, protocol health or an explicit hourly-processing pause.
@@ -166,7 +166,7 @@ The dollar market does not trade like crypto. Plether changes behavior around FX
 | **Market-close runway** | New risk is blocked and a higher margin requirement applies; closes and liquidations continue                                                                                                                                                                                                                       |
 | **Oracle frozen**       | Opens remain blocked; eligible closes and liquidations use conservative frozen-market rules; carry continues                                                                                                                                                                                                        |
 | **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                                                                                                                                                                                                                             |
-| **Degraded**            | New risk and LP deposits are blocked; LP withdrawal requests may still queue, but no new withdrawal USDC is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. Closes, liquidations and recapitalization continue. |
+| **Degraded**            | New risk and LP deposits are blocked; LP withdrawal requests may still queue, but no new withdrawal USDG is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. Closes, liquidations and recapitalization continue. |
 
 Frozen-market execution prioritizes risk reduction over normal live-price guarantees. Voluntary closes use special pricing rules and a fixed LP-owned frozen-close spread; liquidations keep their separate adverse-confidence policy and do not pay that spread.
 
@@ -178,9 +178,9 @@ Frozen-market execution prioritizes risk reduction over normal live-price guaran
 4. **Carry pays for LP-backed exposure; it is not trader-to-trader funding.**
 5. **Bounded liability makes risk measurable. It does not make trading or LPing risk-free.**
 
-[^1]: Liquidity provider, a participant that supplies USDC capital to the liquidity pool.
+[^1]: Liquidity provider, a participant that supplies USDG capital to the liquidity pool.
 
-[^2]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^2]: USDG is used for margin and settlement. The testnet uses MockUSDG, a test token with no real-world value.
 
 [^3]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 
@@ -190,7 +190,7 @@ Frozen-market execution prioritizes risk reduction over normal live-price guaran
 
 [^6]: Foreign exchange, the market for trading one currency against another.
 
-[^7]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes pool directional imbalance.
+[^7]: Virtual Price Impact, a separate USDG charge or rebate based on how a trade changes pool directional imbalance.
 
 [^8]: The time-based cost charged on the portion of a position financed by LP capital.
 

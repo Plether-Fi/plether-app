@@ -32,13 +32,13 @@ spec = do
       queryContains leaderboardQuerySql "eligibility_status = 'eligible'"
       queryContains leaderboardQuerySql "active_days >= competition_minimum_active_days"
       queryContains leaderboardQuerySql "pc.prize_place <= competition_prize_places"
-      queryContains leaderboardQuerySql "(t.fifth_prize_usdc > 0)::INT"
+      queryContains leaderboardQuerySql "(t.fifth_prize_assets > 0)::INT"
 
     it "uses the exact code-defined profit threshold instead of persisted basis points" $ do
-      queryContains leaderboardQuerySql "?::NUMERIC AS code_minimum_profit_usdc"
-      queryContains leaderboardQuerySql "final_pnl_usdc >= competition_minimum_profit_usdc"
+      queryContains leaderboardQuerySql "?::NUMERIC AS code_minimum_profit_assets"
+      queryContains leaderboardQuerySql "final_pnl_assets >= competition_minimum_profit_assets"
       queryDoesNotContain leaderboardQuerySql
-        "competition_starting_balance_usdc * competition_minimum_profit_bps"
+        "competition_starting_balance_assets * competition_minimum_profit_bps"
 
     it "preserves July's zero-trade display while ranking every September participant" $ do
       queryContains leaderboardQuerySql
@@ -46,16 +46,16 @@ spec = do
       queryContains leaderboardOrderBySql
         "competition_slug = 'testnet-trading-2026' AND executed_trades = 0"
       queryDoesNotContain leaderboardQuerySql
-        "final_pnl_usdc IS NULL OR executed_trades = 0 THEN NULL"
-      queryContains leaderboardOrderBySql "final_pnl_usdc DESC NULLS LAST"
+        "final_pnl_assets IS NULL OR executed_trades = 0 THEN NULL"
+      queryContains leaderboardOrderBySql "final_pnl_assets DESC NULLS LAST"
 
     it "uses one published snapshot batch as the event projection upper bound" $ do
       queryContains leaderboardQuerySql "a.block_number <= cb.block_number"
       queryContains walletActivityQuerySql "a.block_number <= b.block_number"
 
     it "projects indexed execution fee and signed VPI into wallet activity" $ do
-      queryContains walletActivityQuerySql "a.data->>'executionFeeUsdc'"
-      queryContains walletActivityQuerySql "a.data->>'vpiUsdc'"
+      queryContains walletActivityQuerySql "a.data->>'executionFeeAssets'"
+      queryContains walletActivityQuerySql "a.data->>'vpiAssets'"
       queryContains insightsDataStatusQuerySql "perps-history-costs-v2:finalized-abi3:"
 
     it "serializes execution fee and signed VPI as lossless decimal strings" $ do
@@ -65,10 +65,10 @@ spec = do
           , iarSide = Just 1
           , iarPrice = Just 96_866_388
           , iarSizeDelta = Just 4_513_034_696_886_011_329_166_042
-          , iarAmountUsdc = Nothing
-          , iarPnlUsdc = Just 3_424_490_727
-          , iarExecutionFeeUsdc = Just 1_748_645_480
-          , iarVpiUsdc = Just (-4_487_207_153)
+          , iarAmountAssets = Nothing
+          , iarPnlAssets = Just 3_424_490_727
+          , iarExecutionFeeAssets = Just 1_748_645_480
+          , iarVpiAssets = Just (-4_487_207_153)
           , iarTxHash = "0xabc"
           , iarBlockNumber = 290_862_399
           , iarTimestamp = 1_784_901_245
@@ -81,9 +81,9 @@ spec = do
           , "side" .= (1 :: Int)
           , "price" .= ("96866388" :: String)
           , "sizeDelta" .= ("4513034696886011329166042" :: String)
-          , "pnlUsdc" .= ("3424490727" :: String)
-          , "executionFeeUsdc" .= ("1748645480" :: String)
-          , "vpiUsdc" .= ("-4487207153" :: String)
+          , "pnlAssets" .= ("3424490727" :: String)
+          , "executionFeeAssets" .= ("1748645480" :: String)
+          , "vpiAssets" .= ("-4487207153" :: String)
           , "txHash" .= ("0xabc" :: String)
           , "blockNumber" .= ("290862399" :: String)
           , "timestamp" .= (1_784_901_245 :: Integer)
@@ -97,14 +97,14 @@ spec = do
       queryContains leaderboardQuerySql
         "t.slug = 'testnet-trading-2026' AND NOT jsonb_exists(a.data, 'asset')"
 
-    it "requires an explicit exact USDC asset for September cash flows" $ do
+    it "requires an explicit exact USDG for September cash flows" $ do
       queryContains leaderboardQuerySql
-        "LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)"
+        "LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.settlement_token_address)"
       queryDoesNotContain leaderboardQuerySql
         "OR NOT jsonb_exists(a.data, 'asset')"
 
     it "aggregates realized directional P&L for the public net-P&L reconciliation" $
-      queryContains leaderboardQuerySql "SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated'))"
+      queryContains leaderboardQuerySql "SUM(a.pnl_assets) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated'))"
 
     it "accepts a complete all-zero live or final account state" $ do
       queryDoesNotContain leaderboardQuerySql "b.account_state_count > 0 OR NOT EXISTS"
@@ -125,8 +125,8 @@ spec = do
       queryContains integrityCalculationSql "baseline_pending_orders"
       queryContains integrityCalculationSql "JOIN testnet_faucet_claims fc"
       queryContains integrityCalculationSql "fc.status = 'success'"
-      queryContains integrityCalculationSql "fc.amount = p.starting_balance_usdc"
-      queryContains integrityCalculationSql "JOIN perps_usdc_transfers x"
+      queryContains integrityCalculationSql "fc.amount = p.starting_balance_assets"
+      queryContains integrityCalculationSql "JOIN perps_asset_transfers x"
       queryContains integrityCalculationSql
         "ROW(f.block_number,f.tx_index,f.log_index) > ROW(f.mint_block,f.mint_tx,f.mint_log)"
       queryContains integrityCalculationSql "d.transfer_log_index = x.log_index"

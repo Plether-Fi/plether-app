@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const identityMocks = vi.hoisted(() => ({
   isAaManifestConfigured: false,
-  usdcSupportsEip3009: false,
+  settlementTokenSupportsEip3009: false,
 }))
 
 const maxQuoteMocks = vi.hoisted(() => ({
@@ -41,7 +41,7 @@ vi.mock('../../perps-aa', async () => {
       manifest: identityMocks.isAaManifestConfigured
         ? {
             smartAccountMode: 'simple',
-            usdcSupportsEip3009: identityMocks.usdcSupportsEip3009,
+            settlementTokenSupportsEip3009: identityMocks.settlementTokenSupportsEip3009,
             userOperationExplorerUrlTemplate:
               'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
           }
@@ -84,42 +84,42 @@ const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
 const V2_RECEIPT_HASH = `0x${'34'.repeat(32)}` as `0x${string}`
 
 function closeReceiptEconomics({
-  realizedPnlUsdc,
-  vpiUsdc,
-  carryUsdc,
-  executionFeeUsdc,
-  preSettlementBalanceUsdc,
-  postSettlementBalanceUsdc,
+  realizedPnlAssets,
+  vpiAssets,
+  carryAssets,
+  executionFeeAssets,
+  preSettlementBalanceAssets,
+  postSettlementBalanceAssets,
 }: {
-  realizedPnlUsdc: bigint
-  vpiUsdc: bigint
-  carryUsdc: bigint
-  executionFeeUsdc: bigint
-  preSettlementBalanceUsdc: bigint
-  postSettlementBalanceUsdc: bigint
+  realizedPnlAssets: bigint
+  vpiAssets: bigint
+  carryAssets: bigint
+  executionFeeAssets: bigint
+  preSettlementBalanceAssets: bigint
+  postSettlementBalanceAssets: bigint
 }): PerpsOrderReceiptEconomics {
-  const netChargeUsdc = carryUsdc + vpiUsdc + executionFeeUsdc
-  const actionChargeAssessedUsdc = netChargeUsdc > 0n ? netChargeUsdc : 0n
-  const toCollectUsdc = actionChargeAssessedUsdc - (realizedPnlUsdc > 0n ? realizedPnlUsdc : 0n)
-  const actionChargeCollectedUsdc = toCollectUsdc > 0n ? toCollectUsdc : 0n
+  const netChargeAssets = carryAssets + vpiAssets + executionFeeAssets
+  const actionChargeAssessedAssets = netChargeAssets > 0n ? netChargeAssets : 0n
+  const toCollectAssets = actionChargeAssessedAssets - (realizedPnlAssets > 0n ? realizedPnlAssets : 0n)
+  const actionChargeCollectedAssets = toCollectAssets > 0n ? toCollectAssets : 0n
   return {
-    executionNotionalUsdc: '100000000000',
-    executionBountyUsdc: '0',
-    realizedPnlUsdc: realizedPnlUsdc.toString(),
-    vpiUsdc: vpiUsdc.toString(),
-    carryUsdc: carryUsdc.toString(),
-    executionFeeUsdc: executionFeeUsdc.toString(),
-    frozenSpreadUsdc: '0',
-    actionChargeAssessedUsdc: actionChargeAssessedUsdc.toString(),
-    actionChargeCollectedUsdc: actionChargeCollectedUsdc.toString(),
-    grossAccountDebitUsdc: (actionChargeCollectedUsdc + (realizedPnlUsdc < 0n ? -realizedPnlUsdc : 0n)).toString(),
-    preSettlementBalanceUsdc: preSettlementBalanceUsdc.toString(),
-    postSettlementBalanceUsdc: postSettlementBalanceUsdc.toString(),
-    preTraderClaimBalanceUsdc: '0',
-    postTraderClaimBalanceUsdc: '0',
+    executionNotionalAssets: '100000000000',
+    executionBountyAssets: '0',
+    realizedPnlAssets: realizedPnlAssets.toString(),
+    vpiAssets: vpiAssets.toString(),
+    carryAssets: carryAssets.toString(),
+    executionFeeAssets: executionFeeAssets.toString(),
+    frozenSpreadAssets: '0',
+    actionChargeAssessedAssets: actionChargeAssessedAssets.toString(),
+    actionChargeCollectedAssets: actionChargeCollectedAssets.toString(),
+    grossAccountDebitAssets: (actionChargeCollectedAssets + (realizedPnlAssets < 0n ? -realizedPnlAssets : 0n)).toString(),
+    preSettlementBalanceAssets: preSettlementBalanceAssets.toString(),
+    postSettlementBalanceAssets: postSettlementBalanceAssets.toString(),
+    preTraderClaimBalanceAssets: '0',
+    postTraderClaimBalanceAssets: '0',
     postPositionSize: '0',
-    postPositionMarginUsdc: '0',
-    postPositionEquityUsdc: '0',
+    postPositionMarginAssets: '0',
+    postPositionEquityAssets: '0',
     postLeverageBps: '0',
   }
 }
@@ -199,7 +199,7 @@ describe('perps lifecycle labels', () => {
     globalThis.localStorage.clear()
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
-    identityMocks.usdcSupportsEip3009 = false
+    identityMocks.settlementTokenSupportsEip3009 = false
     wagmiMocks.readContractsData = undefined
     useSponsoredOperationStore.setState({
       operations: [],
@@ -226,25 +226,25 @@ describe('perps lifecycle labels', () => {
           submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
-          maxExecutionBountyUsdc: 10_000n,
-          maxExecutionNotionalUsdc: 100_000_000n,
-          maxGrossAccountDebitUsdc: 120_010_000n,
-          maxActionChargeUsdc: 1_000_000n,
-          maxExplicitFeesUsdc: 1_000_000n,
+          maxExecutionBountyAssets: 10_000n,
+          maxExecutionNotionalAssets: 100_000_000n,
+          maxGrossAccountDebitAssets: 120_010_000n,
+          maxActionChargeAssets: 1_000_000n,
+          maxExplicitFeesAssets: 1_000_000n,
           maxPostPositionSize: 100_000_000n,
-          minPostSettlementBalanceUsdc: 800_000_000n,
-          minPostPositionEquityUsdc: 20_000_000n,
+          minPostSettlementBalanceAssets: 800_000_000n,
+          minPostPositionEquityAssets: 20_000_000n,
           maxPostLeverageBps: 50_000,
         },
       },
-      executionBountyUsdc: 10_000n,
+      executionBountyAssets: 10_000n,
       reviewedBlockNumber: 123n,
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 100_000_000n,
       protection: {
         submitBy: BigInt(Math.floor(Date.now() / 1_000) + 300), executionWindowSeconds: 60,
         executionMode: 1,
-        executionBountyUsdc: 10_000n,
+        executionBountyAssets: 10_000n,
       },
     })
   })
@@ -365,6 +365,77 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     await waitFor(() => expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: expired })))
     expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { label: 'partial close', quantity: 100n, isClose: true, reward: 0n, display: '0.0 USDG' },
+    { label: 'full close', quantity: 1_000n, isClose: true, reward: 0n, display: '0.0 USDG' },
+    { label: 'opening order', quantity: 100n, isClose: false, reward: 500_000n, display: '0.5 USDG' },
+  ])('keeps the reviewed execution reward through the $label lifecycle', async ({ quantity, isClose, reward, display }) => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{ status: 'success', result: { valid: true } }]
+    const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
+    const postSize = isClose ? (1_000n - quantity) * 10n ** 18n : quantity * 10n ** 18n
+    reviewed.request = {
+      ...reviewed.request, sizeDelta: quantity * 10n ** 18n, isClose,
+      marginDelta: isClose ? 0n : reviewed.request.marginDelta,
+      bounds: { ...reviewed.request.bounds, maxExecutionBountyAssets: reward },
+    }
+    reviewed.executionBountyAssets = reward
+    reviewed.protection.executionBountyAssets = reward
+    reviewed.reviewSummary = {
+      executionBountyAssets: reward, requiredMarginAssets: reviewed.request.marginDelta,
+      requiredFundingAssets: reviewed.request.marginDelta + reward, availableFundingAssets: 1_000_000_000n,
+      commitmentCarryAssets: 0n, worstPostLeverageBps: 50_000n,
+      reviewedBlockNumber: reviewed.reviewedBlockNumber, reviewedBlockHash: reviewed.reviewedBlockHash,
+      reviewedPrice: reviewed.reviewedPrice,
+      currentAssessment: {
+        mode: 1, executionNotionalAssets: quantity * 1_000_000n, grossAccountDebitAssets: reward,
+        actionChargeAssessedAssets: 0n, actionChargeCollectedAssets: 0n, explicitFeesAssets: 0n,
+        preSettlementBalanceAssets: 1_000_000_000n, postSettlementBalanceAssets: 1_000_000_000n - reward,
+        realizedPnlAssets: 0n, vpiAssets: 0n, carryAssets: 0n, executionFeeAssets: 0n, frozenSpreadAssets: 0n,
+        preTraderClaimAssets: 0n, postTraderClaimAssets: 0n, postPositionSize: postSize,
+        postPositionMarginAssets: 500_000_000n, postPositionEquityAssets: 500_000_000n, postLeverageBps: 50_000n,
+      },
+    }
+    perpsTradingMocks.prepareOrder.mockClear().mockResolvedValue(reviewed)
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise(() => {}))
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
+    const props = {
+      enableLiveTrading: true, initialReviewOpen: true,
+      initialDirection: isClose ? 'short' as const : 'long' as const,
+      initialOrderQuantity: quantity.toString(),
+      oraclePriceRaw: 100_000_000n, oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 1_000_000_000n,
+      currentPosition: isClose ? {
+        exists: true, side: 0, direction: 'long' as const, size: 1_000n * 10n ** 18n,
+        entryPrice: 100_000_000n, marginAssets: 500_000_000n, unrealizedPnlAssets: 0n,
+        maintenanceMarginAssets: 10_000_000n, liquidatable: false,
+      } : undefined,
+    }
+    const view = render(<PerpsTradeTicket {...props} />)
+    const expectReward = () => {
+      const row = within(screen.getByRole('dialog')).getByText('Estimated execution reward').closest('div')
+      expect(row?.textContent?.replace(/\s/g, '')).toContain(display.replace(/\s/g, ''))
+    }
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
+    expectReward()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    expect(screen.getByText('Preparing sponsored transaction')).toBeInTheDocument()
+    expectReward()
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0][0]
+    act(() => commitInput.onStatus('awaiting-signature'))
+    expectReward()
+    await act(async () => {
+      commitInput.onIncluded({ account: V2_ACCOUNT, clientOrderId: reviewed.request.clientOrderId,
+        hash: `0x${'ab'.repeat(32)}`, orderId: 42n })
+    })
+    expect(screen.getByText('Settlement Details')).toBeInTheDocument()
+    expectReward()
+    // Account polling can clear a closed position before its result is shown.
+    view.rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={110_000_000n} />)
+    expectReward()
   })
 
   async function startDelayedSponsoredCommit() {
@@ -806,14 +877,14 @@ describe('perps lifecycle labels', () => {
             direction: 'long',
             size: 2_000n * 10n ** 18n,
             entryPrice: 98300000n,
-            marginUsdc: 400000000n,
-            unrealizedPnlUsdc: -250000n,
-            maintenanceMarginUsdc: 0n,
+            marginAssets: 400000000n,
+            unrealizedPnlAssets: -250000n,
+            maintenanceMarginAssets: 0n,
             liquidatable: false,
-            estimatedNotionalUsdc: 1999920000n,
-            entryNotionalUsdc: 2000000000n,
-            dxyExposureUsdc: 2069380000n,
-            pendingCarryUsdc: 1250000n,
+            estimatedNotionalAssets: 1999920000n,
+            entryNotionalAssets: 2000000000n,
+            dxyExposureAssets: 2069380000n,
+            pendingCarryAssets: 1250000n,
           }}
         />
       </>
@@ -822,7 +893,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
     expect(screen.queryByText('Contract notional')).not.toBeInTheDocument()
     expect(screen.getAllByText('Order quantity').length).toBeGreaterThan(0)
-    expect(screen.getByText('Trade executed at 1.0089 USDC')).toBeInTheDocument()
+    expect(screen.getByText('Trade executed at 1.0089 USDG')).toBeInTheDocument()
     const initialConfetti = document.querySelector('[data-finalization-confetti]')
     expect(initialConfetti).toHaveAttribute('aria-hidden', 'true')
 
@@ -911,13 +982,13 @@ describe('perps lifecycle labels', () => {
       initialDirection: reduceOnly ? positionDirection : positionDirection === 'long' ? 'short' as const : 'long' as const,
       initialOrderQuantity: '100', oraclePriceRaw: 100_000_000n,
       oraclePublishTime: Math.floor(Date.now() / 1_000), availableToTradeRaw: 100_000_000n,
-      minOpenNotionalUsdc: 0n, minNewPositionNotionalUsdc: 0n,
+      minOpenNotionalAssets: 0n, minNewPositionNotionalAssets: 0n,
     }
     const { rerender } = render(<PerpsTradeTicket {...props} currentPosition={{
       exists: true, side: prepared.request.side, direction: positionDirection,
       size: (fullClose ? 100n : 200n) * 10n ** 18n, entryPrice: 100_000_000n,
-      marginUsdc: 40_000_000n, estimatedNotionalUsdc: 200_000_000n,
-      unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 0n, liquidatable: false,
+      marginAssets: 40_000_000n, estimatedNotionalAssets: 200_000_000n,
+      unrealizedPnlAssets: 0n, maintenanceMarginAssets: 0n, liquidatable: false,
     }} />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
@@ -925,7 +996,7 @@ describe('perps lifecycle labels', () => {
     // The account refresh can remove the closed position; the result must retain its side.
     rerender(<PerpsTradeTicket {...props} currentPosition={undefined} oraclePriceRaw={101_000_000n} />)
     const sideLabel = positionDirection === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
-    expect(screen.getByText(`${sideLabel} position ${fullClose ? 'closed' : 'reduced'} at 1.0000 USDC`)).toBeInTheDocument()
+    expect(screen.getByText(`${sideLabel} position ${fullClose ? 'closed' : 'reduced'} at 1.0000 USDG`)).toBeInTheDocument()
     expect(within(screen.getByRole('dialog')).getByText('Position side').closest('div')).toHaveTextContent(sideLabel)
   })
 
@@ -956,7 +1027,7 @@ describe('perps lifecycle labels', () => {
     rerender(<PerpsTradeTicket {...props} oraclePriceRaw={105_000_000n} />)
     fireEvent.change(screen.getByLabelText('Leverage'), { target: { value: '10' } })
     fireEvent.blur(screen.getByLabelText('Leverage'))
-    expect(within(screen.getByRole('dialog')).getByText('Margin posted').closest('div')).toHaveTextContent('2 129.4USDC')
+    expect(within(screen.getByRole('dialog')).getByText('Margin posted').closest('div')).toHaveTextContent('2 129.4USDG')
     expect(perpsTradingMocks.commitOrder).toHaveBeenCalledWith(expect.objectContaining({ preparedOrder: prepared }))
   })
 
@@ -1105,7 +1176,7 @@ describe('perps lifecycle labels', () => {
 
   it('does not repeat the execution reward in execution protections', async () => {
     const reviewed = await perpsTradingMocks.prepareOrder()
-    reviewed.request.bounds.maxExecutionBountyUsdc = 120_252n
+    reviewed.request.bounds.maxExecutionBountyAssets = 120_252n
     perpsTradingMocks.prepareOrder.mockResolvedValue(reviewed)
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
@@ -1135,7 +1206,7 @@ describe('perps lifecycle labels', () => {
     expect(protections).not.toBeNull()
     expect(within(protections!).getByText('Pinned regime')).toBeInTheDocument()
     expect(within(protections!).getByText('Maximum execution reward')).toBeInTheDocument()
-    expect(within(protections!).getByText('0.120252 USDC')).toBeInTheDocument()
+    expect(within(protections!).getByText('0.120252 USDG')).toBeInTheDocument()
     expect(within(protections!).queryByText('Execution reward')).not.toBeInTheDocument()
   })
 
@@ -1242,14 +1313,14 @@ describe('perps lifecycle labels', () => {
     const revealTxHash = '0x7500000000000000000000000000000000000000000000000000000000000001' as const
     const receiptEconomics = scenario === 'adjustment' ? closeSettlementAdjustmentReceipt : {
       ...closeReceiptEconomics({
-        realizedPnlUsdc: 30_000_000n,
-        vpiUsdc: 2_000_000n,
-        carryUsdc: 4_000_000n,
-        executionFeeUsdc: 1_000_000n,
-        preSettlementBalanceUsdc: 100_000_000n,
-        postSettlementBalanceUsdc: 100_000_000n,
+        realizedPnlAssets: 30_000_000n,
+        vpiAssets: 2_000_000n,
+        carryAssets: 4_000_000n,
+        executionFeeAssets: 1_000_000n,
+        preSettlementBalanceAssets: 100_000_000n,
+        postSettlementBalanceAssets: 100_000_000n,
       }),
-      postTraderClaimBalanceUsdc: '23000000',
+      postTraderClaimBalanceAssets: '23000000',
     }
 
     render(
@@ -1270,7 +1341,7 @@ describe('perps lifecycle labels', () => {
           commitTxHash: '0x7400000000000000000000000000000000000000000000000000000000000001',
           revealTxHash,
           receiptHash: V2_RECEIPT_HASH,
-          receiptEconomics: { ...receiptEconomics, totalPositionVpiUsdc: '123000000' },
+          receiptEconomics: { ...receiptEconomics, totalPositionVpiAssets: '123000000' },
           activitySizeDeltaRaw: 650n * 10n ** 18n,
         }]}
         tradeHistory={[{
@@ -1324,13 +1395,13 @@ describe('perps lifecycle labels', () => {
           direction: 'long',
           size: 1_500n * 10n ** 18n,
           entryPrice: 98300000n,
-          marginUsdc: 300000000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 0n,
+          marginAssets: 300000000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 0n,
           liquidatable: false,
-          estimatedNotionalUsdc: 1499470000n,
-          entryNotionalUsdc: 1500000000n,
-          dxyExposureUsdc: 1553249999n,
+          estimatedNotionalAssets: 1499470000n,
+          entryNotionalAssets: 1500000000n,
+          dxyExposureAssets: 1553249999n,
         }}
       />
     )
@@ -1359,9 +1430,9 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={100_000_000n}
-        longOpenCapacityUsdc={1_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={100_000_000n}
+        longOpenCapacityAssets={1_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={100_000_000n}
       />
     )
 
@@ -1398,8 +1469,8 @@ describe('perps lifecycle labels', () => {
     render(<PerpsTradeTicket
       enableLiveTrading initialOrderQuantity="0"
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
-      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
-      minOpenNotionalUsdc={100_000_000n} minNewPositionNotionalUsdc={100_000_000n}
+      availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
+      minOpenNotionalAssets={100_000_000n} minNewPositionNotionalAssets={100_000_000n}
     />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
@@ -1428,7 +1499,7 @@ describe('perps lifecycle labels', () => {
     render(<PerpsTradeTicket
       enableLiveTrading initialOrderQuantity="0"
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
-      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
+      availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
     />)
     fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Order quantity' }), { target: { value: '300' } })
@@ -1449,7 +1520,7 @@ describe('perps lifecycle labels', () => {
     render(<PerpsTradeTicket
       enableLiveTrading initialOrderQuantity="0"
       oraclePriceRaw={100_000_000n} oraclePublishTime={Math.floor(Date.now() / 1_000)}
-      availableToTradeRaw={100_000_000n} longOpenCapacityUsdc={1_000_000_000n}
+      availableToTradeRaw={100_000_000n} longOpenCapacityAssets={1_000_000_000n}
     />)
     fireEvent.click(screen.getByRole('button', { name: 'Max: 400 plDXY' }))
     fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
@@ -1468,17 +1539,17 @@ describe('perps lifecycle labels', () => {
       result: { valid: true },
     }]
     const reviewSummary = {
-      requiredMarginUsdc: 30_000_000n,
-      executionBountyUsdc: 10_000n,
-      requiredFundingUsdc: 30_010_000n,
-      availableFundingUsdc: 20_020_000n,
+      requiredMarginAssets: 30_000_000n,
+      executionBountyAssets: 10_000n,
+      requiredFundingAssets: 30_010_000n,
+      availableFundingAssets: 20_020_000n,
       worstPostLeverageBps: 50_000n,
       reviewedBlockNumber: 123n,
       reviewedBlockHash: `0x${'56'.repeat(32)}` as `0x${string}`,
       reviewedPrice: 100_000_000n,
       currentAssessment: {
-        executionFeeUsdc: 40_000n,
-        vpiUsdc: 1_000_000n,
+        executionFeeAssets: 40_000n,
+        vpiAssets: 1_000_000n,
       } as PerpsExecutionAssessment,
     }
     const reviewedPreparedOrder = {
@@ -1497,25 +1568,25 @@ describe('perps lifecycle labels', () => {
           submitBy: BigInt(Math.floor(Date.now() / 1_000) + 60), executionWindowSeconds: 60,
           allowedExecutionModes: 1,
           expectedConfigHash: `0x${'34'.repeat(32)}`,
-          maxExecutionBountyUsdc: 10_000n,
-          maxExecutionNotionalUsdc: (1n << 256n) - 1n,
-          maxGrossAccountDebitUsdc: (1n << 256n) - 1n,
-          maxActionChargeUsdc: (1n << 256n) - 1n,
-          maxExplicitFeesUsdc: (1n << 256n) - 1n,
+          maxExecutionBountyAssets: 10_000n,
+          maxExecutionNotionalAssets: (1n << 256n) - 1n,
+          maxGrossAccountDebitAssets: (1n << 256n) - 1n,
+          maxActionChargeAssets: (1n << 256n) - 1n,
+          maxExplicitFeesAssets: (1n << 256n) - 1n,
           maxPostPositionSize: (1n << 256n) - 1n,
-          minPostSettlementBalanceUsdc: 0n,
-          minPostPositionEquityUsdc: 0n,
+          minPostSettlementBalanceAssets: 0n,
+          minPostPositionEquityAssets: 0n,
           maxPostLeverageBps: 0xffff_ffff,
         },
       },
-      executionBountyUsdc: 10_000n,
+      executionBountyAssets: 10_000n,
       reviewedBlockNumber: 123n,
       reviewedBlockHash: `0x${'56'.repeat(32)}`,
       reviewedPrice: 100_000_000n,
       protection: {
         submitBy: BigInt(Math.floor(Date.now() / 1_000) + 60), executionWindowSeconds: 60,
         executionMode: 1,
-        executionBountyUsdc: 10_000n,
+        executionBountyAssets: 10_000n,
       },
       reviewSummary,
     } satisfies PreparedPerpsOrderV3
@@ -1539,9 +1610,9 @@ describe('perps lifecycle labels', () => {
 
     const dialog = screen.getByRole('dialog')
     await waitFor(() => {
-      expect(within(dialog).getByText(/Deposit 9.99 USDC more or reduce the order/)).toBeInTheDocument()
+      expect(within(dialog).getByText(/Deposit 9.99 USDG more or reduce the order/)).toBeInTheDocument()
     })
-    expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDC')
+    expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDG')
     expect(within(dialog).queryByText('Total funding required')).not.toBeInTheDocument()
     expect(within(dialog).queryByText('Available account funding')).not.toBeInTheDocument()
     expect(within(dialog).getByText('Highest reviewed leverage').closest('div')).toHaveTextContent('5x')
@@ -1553,11 +1624,11 @@ describe('perps lifecycle labels', () => {
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{ status: 'success', result: {
       valid: true, executionPrice: 100_000_000n,
-      postSize: 100n * 10n ** 18n, postMarginUsdc: 20_120_724n,
+      postSize: 100n * 10n ** 18n, postMarginAssets: 20_120_724n,
     } }]
     const error = new PerpsOrderReviewError({
-      requiredMarginUsdc: 20_000_000n, executionBountyUsdc: 10_000n,
-      requiredFundingUsdc: 20_010_000n, availableFundingUsdc: 100_000_000n,
+      requiredMarginAssets: 20_000_000n, executionBountyAssets: 10_000n,
+      requiredFundingAssets: 20_010_000n, availableFundingAssets: 100_000_000n,
       worstPostLeverageBps: 50_001n, reviewedBlockNumber: 123n,
       reviewedBlockHash: `0x${'56'.repeat(32)}`, reviewedPrice: 100_000_000n,
       currentAssessment: { postLeverageBps: 49_700n } as PerpsExecutionAssessment,
@@ -1587,14 +1658,14 @@ describe('perps lifecycle labels', () => {
       } }]
       const original = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
       const reviewSummary = {
-        commitmentCarryUsdc: 1_250_000n,
-        requiredMarginUsdc: 0n, executionBountyUsdc: 200_000n,
-        requiredFundingUsdc: 200_000n, availableFundingUsdc: 100_000_000n,
+        commitmentCarryAssets: 1_250_000n,
+        requiredMarginAssets: 0n, executionBountyAssets: 200_000n,
+        requiredFundingAssets: 200_000n, availableFundingAssets: 100_000_000n,
         worstPostLeverageBps: fullClose ? 0n : 50_300n,
         reviewedBlockNumber: 123n, reviewedBlockHash: original.reviewedBlockHash,
         reviewedPrice: 100_000_000n,
         currentAssessment: {
-          executionFeeUsdc: 0n, frozenSpreadUsdc: 0n, postSettlementBalanceUsdc: 12_345_000n, postTraderClaimUsdc: 2_000_000n,
+          executionFeeAssets: 0n, frozenSpreadAssets: 0n, postSettlementBalanceAssets: 12_345_000n, postTraderClaimAssets: 2_000_000n,
           postPositionSize: fullClose ? 0n : 100n * 10n ** 18n,
           postLeverageBps: fullClose ? 0n : 49_700n,
         } as PerpsExecutionAssessment,
@@ -1607,11 +1678,11 @@ describe('perps lifecycle labels', () => {
         initialReduceOnly={kind === 'reduce-only'} initialDirection={kind === 'reduce-only' ? 'long' : 'short'}
         initialLeverage={5} oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)} availableToTradeRaw={100_000_000n}
-        minOpenNotionalUsdc={0n} minNewPositionNotionalUsdc={0n}
+        minOpenNotionalAssets={0n} minNewPositionNotionalAssets={0n}
         currentPosition={{ exists: true, side: 0, direction: 'long',
           size: (fullClose ? 100n : 200n) * 10n ** 18n, entryPrice: 100_000_000n,
-          marginUsdc: 40_000_000n, estimatedNotionalUsdc: 200_000_000n,
-          unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 0n, liquidatable: false,
+          marginAssets: 40_000_000n, estimatedNotionalAssets: 200_000_000n,
+          unrealizedPnlAssets: 0n, maintenanceMarginAssets: 0n, liquidatable: false,
         }} />)
       expect(screen.queryByLabelText('Leverage')).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Margin Call Simulator')).not.toBeInTheDocument()
@@ -1622,10 +1693,10 @@ describe('perps lifecycle labels', () => {
           .toHaveTextContent(fullClose ? 'Position closed' : '5.03x')
       })
       expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
-      expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginUsdc: 0n }))
-      expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDC')
-      expect(within(dialog).getByText('Settlement after execution').closest('div')).toHaveTextContent('12.3USDC')
-      expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDC')
+      expect(perpsTradingMocks.prepareOrder).toHaveBeenCalledWith(expect.objectContaining({ isClose: true, marginAssets: 0n }))
+      expect(within(dialog).getByText('Commitment carry').closest('div')).toHaveTextContent('1.25USDG')
+      expect(within(dialog).getByText('USDG after execution').closest('div')).toHaveTextContent('12.3USDG')
+      expect(within(dialog).getByText('Estimated fee').closest('div')).toHaveTextContent('0.0USDG')
     }
   )
 
@@ -1635,21 +1706,21 @@ describe('perps lifecycle labels', () => {
     render(
       <PerpsTradeTicket
         enableLiveTrading
-        walletUsdcRaw={1000000000n}
-        settlementBalanceUsdcRaw={1000000000n}
+        walletAssetsRaw={1000000000n}
+        settlementBalanceAssetsRaw={1000000000n}
         currentPosition={{
           exists: true,
           side: 0,
           direction: 'long',
           size: 0n,
           entryPrice: 98300000n,
-          marginUsdc: 400000000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 0n,
+          marginAssets: 400000000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 0n,
           liquidatable: false,
-          estimatedNotionalUsdc: 2000000000n,
-          entryNotionalUsdc: 2000000000n,
-          dxyExposureUsdc: 2069380000n,
+          estimatedNotionalAssets: 2000000000n,
+          entryNotionalAssets: 2000000000n,
+          dxyExposureAssets: 2069380000n,
         }}
       />
     )
@@ -1667,7 +1738,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
   })
 
-  it('combines owner and Trading Account USDC in the supported deposit flow', () => {
+  it('combines owner and Trading Account USDG in the supported deposit flow', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
 
@@ -1676,8 +1747,8 @@ describe('perps lifecycle labels', () => {
         enableLiveTrading
         availableToTradeRaw={0n}
         availableToTradeAmount="0"
-        ownerWalletUsdcRaw={100000000000n}
-        tradingAccountUsdcRaw={100000000000n}
+        ownerWalletAssetsRaw={100000000000n}
+        tradingAccountAssetsRaw={100000000000n}
       />
     )
 
@@ -1686,9 +1757,9 @@ describe('perps lifecycle labels', () => {
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText('Available to deposit')).toBeInTheDocument()
     expect(within(dialog).getByText('Available to trade')).toBeInTheDocument()
-    expect(within(dialog).getByText('Owner Wallet USDC')).toBeInTheDocument()
+    expect(within(dialog).getByText('Owner Wallet USDG')).toBeInTheDocument()
     expect(within(dialog).queryByText('Trading Account balance')).not.toBeInTheDocument()
-    expect(within(dialog).getByText('Trading Account USDC')).toBeInTheDocument()
+    expect(within(dialog).getByText('Trading Account USDG')).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('200 000')
   })
 
@@ -1703,8 +1774,8 @@ describe('perps lifecycle labels', () => {
         enableLiveTrading
         availableToTradeRaw={0n}
         availableToTradeAmount="0"
-        ownerWalletUsdcRaw={100000000000n}
-        tradingAccountUsdcRaw={25000000000n}
+        ownerWalletAssetsRaw={100000000000n}
+        tradingAccountAssetsRaw={25000000000n}
       />
     )
 
@@ -1743,8 +1814,8 @@ describe('perps lifecycle labels', () => {
         enableLiveTrading
         availableToTradeRaw={0n}
         availableToTradeAmount="0"
-        ownerWalletUsdcRaw={50000000000n}
-        tradingAccountUsdcRaw={0n}
+        ownerWalletAssetsRaw={50000000000n}
+        tradingAccountAssetsRaw={0n}
       />
     )
 
@@ -1775,12 +1846,12 @@ describe('perps lifecycle labels', () => {
         initialOrderQuantity="100"
         oraclePriceRaw={98434897n}
         oraclePublishTime={1781267148}
-        minOpenNotionalUsdc={100000000n}
-        minNewPositionNotionalUsdc={1000000000n}
+        minOpenNotionalAssets={100000000n}
+        minNewPositionNotionalAssets={1000000000n}
       />
     )
 
-    expect(screen.getByText('Minimum new position is 1 117.22 USDC.')).toBeInTheDocument()
+    expect(screen.getByText('Minimum new position is 1 117.22 USDG.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
@@ -1794,15 +1865,15 @@ describe('perps lifecycle labels', () => {
         initialOrderQuantity="1 000"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
-        longOpenCapacityUsdc={0n}
-        shortOpenCapacityUsdc={2_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={1_000_000_000n}
+        longOpenCapacityAssets={0n}
+        shortOpenCapacityAssets={2_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={1_000_000_000n}
       />
     )
 
     expect(screen.getByText(
-      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum position size of 1 000 USDC. Opening more Long exposure would worsen the market imbalance. You can open a Short plDXY Perp position instead, which helps rebalance the market.'
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum position size of 1 000 USDG. Opening more Long exposure would worsen the market imbalance. You can open a Short plDXY Perp position instead, which helps rebalance the market.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
@@ -1817,28 +1888,28 @@ describe('perps lifecycle labels', () => {
         initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
-        longOpenCapacityUsdc={0n}
-        shortOpenCapacityUsdc={2_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={1_000_000_000n}
+        longOpenCapacityAssets={0n}
+        shortOpenCapacityAssets={2_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={1_000_000_000n}
         currentPosition={{
           exists: true,
           side: 0,
           direction: 'long',
           size: 1_000_000_000_000_000_000_000n,
           entryPrice: 100_000_000n,
-          marginUsdc: 100_000_000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 10_000_000n,
+          marginAssets: 100_000_000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 10_000_000n,
           liquidatable: false,
-          estimatedNotionalUsdc: 1_000_000_000n,
-          dxyExposureUsdc: 1_000_000_000n,
+          estimatedNotionalAssets: 1_000_000_000n,
+          dxyExposureAssets: 1_000_000_000n,
         }}
       />
     )
 
     expect(screen.getByText(
-      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum increase size of 100 USDC. Opening more Long exposure would worsen the market imbalance. You can reduce or close your current Long position. After closing it, you can open a Short plDXY Perp position, which helps rebalance the market.'
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum increase size of 100 USDG. Opening more Long exposure would worsen the market imbalance. You can reduce or close your current Long position. After closing it, you can open a Short plDXY Perp position, which helps rebalance the market.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
@@ -1860,13 +1931,13 @@ describe('perps lifecycle labels', () => {
           direction: 'long',
           size: fullPositionSize,
           entryPrice: 98309486n,
-          marginUsdc: 299399778n,
-          unrealizedPnlUsdc: 1083653n,
-          maintenanceMarginUsdc: 14994720n,
+          marginAssets: 299399778n,
+          unrealizedPnlAssets: 1083653n,
+          maintenanceMarginAssets: 14994720n,
           liquidatable: false,
-          estimatedNotionalUsdc: 1499470000n,
-          entryNotionalUsdc: 1500556701n,
-          dxyExposureUsdc: 1553250000n,
+          estimatedNotionalAssets: 1499470000n,
+          entryNotionalAssets: 1500556701n,
+          dxyExposureAssets: 1553250000n,
         }}
         pendingOrders={[
           {
@@ -1874,7 +1945,7 @@ describe('perps lifecycle labels', () => {
             side: 0,
             direction: 'long',
             sizeDelta: fullPositionSize,
-            marginDeltaUsdc: 0n,
+            marginDeltaAssets: 0n,
             acceptablePrice: 98336728n,
             isReduceOnly: true,
             status: 1,
@@ -1910,13 +1981,13 @@ describe('perps lifecycle labels', () => {
           direction: 'long',
           size: 2_000n * 10n ** 18n,
           entryPrice: 98_300_000n,
-          marginUsdc: 400_000_000n,
-          unrealizedPnlUsdc: 48_250_000n,
-          maintenanceMarginUsdc: 20_000_000n,
+          marginAssets: 400_000_000n,
+          unrealizedPnlAssets: 48_250_000n,
+          maintenanceMarginAssets: 20_000_000n,
           liquidatable: false,
-          estimatedNotionalUsdc: 1_966_000_000n,
-          entryNotionalUsdc: 1_966_000_000n,
-          dxyExposureUsdc: 2_034_000_000n,
+          estimatedNotionalAssets: 1_966_000_000n,
+          entryNotionalAssets: 1_966_000_000n,
+          dxyExposureAssets: 2_034_000_000n,
         }}
       />
     )
@@ -1928,7 +1999,7 @@ describe('perps lifecycle labels', () => {
 
   it('keeps a near-max reduction partial until Max selects the exact full close', () => {
     const positionSize = 5_000n * 10n ** 18n
-    const positionExposureUsdc = 5_071_000_000n
+    const positionExposureAssets = 5_071_000_000n
 
     render(
       <PerpsTradeTicket
@@ -1942,13 +2013,13 @@ describe('perps lifecycle labels', () => {
           direction: 'long',
           size: positionSize,
           entryPrice: 98_580_000n,
-          marginUsdc: 1_000_000_000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 50_000_000n,
+          marginAssets: 1_000_000_000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 50_000_000n,
           liquidatable: false,
-          estimatedNotionalUsdc: 4_929_000_000n,
-          entryNotionalUsdc: 4_929_000_000n,
-          dxyExposureUsdc: positionExposureUsdc,
+          estimatedNotionalAssets: 4_929_000_000n,
+          entryNotionalAssets: 4_929_000_000n,
+          dxyExposureAssets: positionExposureAssets,
         }}
       />
     )
@@ -1984,26 +2055,26 @@ describe('perps lifecycle labels', () => {
         initialOrderQuantity="1000"
         oraclePriceRaw={98_580_000n}
         oraclePublishTime={1_700_000_000}
-        minNewPositionNotionalUsdc={1_000_000_000n}
+        minNewPositionNotionalAssets={1_000_000_000n}
         currentPosition={{
           exists: true,
           side: 0,
           direction: 'long',
           size: 5_000n * 10n ** 18n,
           entryPrice: 98_580_000n,
-          marginUsdc: 1_000_000_000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 50_000_000n,
+          marginAssets: 1_000_000_000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 50_000_000n,
           liquidatable: false,
-          estimatedNotionalUsdc: 4_929_000_000n,
-          entryNotionalUsdc: 4_929_000_000n,
-          dxyExposureUsdc: 5_071_000_000n,
+          estimatedNotionalAssets: 4_929_000_000n,
+          entryNotionalAssets: 4_929_000_000n,
+          dxyExposureAssets: 5_071_000_000n,
         }}
       />
     )
 
     expect(screen.getByText(
-      'Minimum partial reduction is 1 115.62 USDC. Use Max to close the full position.'
+      'Minimum partial reduction is 1 115.62 USDG. Use Max to close the full position.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
 
@@ -2037,27 +2108,27 @@ describe('perps lifecycle labels', () => {
         initialOrderQuantity="0"
         oraclePriceRaw={98_580_000n}
         oraclePublishTime={1_700_000_000}
-        minNewPositionNotionalUsdc={1_000_000_000n}
+        minNewPositionNotionalAssets={1_000_000_000n}
         currentPosition={{
           exists: true,
           side: 0,
           direction: 'long',
           size: 2_000n * 10n ** 18n,
           entryPrice: 98_580_000n,
-          marginUsdc: 400_000_000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 20_000_000n,
+          marginAssets: 400_000_000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 20_000_000n,
           liquidatable: false,
-          estimatedNotionalUsdc: 1_971_600_000n,
-          entryNotionalUsdc: 1_971_600_000n,
-          dxyExposureUsdc: 2_028_400_000n,
+          estimatedNotionalAssets: 1_971_600_000n,
+          entryNotionalAssets: 1_971_600_000n,
+          dxyExposureAssets: 2_028_400_000n,
         }}
         pendingOrders={[{
           orderId: 77n,
           side: 0,
           direction: 'long',
           sizeDelta: 1_200n * 10n ** 18n,
-          marginDeltaUsdc: 0n,
+          marginDeltaAssets: 0n,
           acceptablePrice: 98_580_000n,
           isReduceOnly: true,
           status: 1,
@@ -2071,7 +2142,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox', { name: 'Order quantity' }))
       .toHaveValue('800')
     expect(screen.getByText(
-      'Minimum partial reduction is 1 115.62 USDC. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
+      'Minimum partial reduction is 1 115.62 USDG. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
     )).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Review Close' })).not.toBeInTheDocument()
@@ -2086,8 +2157,8 @@ describe('perps lifecycle labels', () => {
         invalidReason: 0,
         executionPrice: 97_190_495n,
         sizeDelta: 3_389_329_558_583_534_648_693_500n,
-        realizedPnlUsdc: 5_751_556_687n,
-        executionFeeUsdc: 200_000n,
+        realizedPnlAssets: 5_751_556_687n,
+        executionFeeAssets: 200_000n,
         remainingSize: 0n,
         remainingMargin: 0n,
       },
@@ -2107,18 +2178,18 @@ describe('perps lifecycle labels', () => {
           direction: 'long',
           size: 3_389_329_558_583_534_648_693_500n,
           entryPrice: 97_360_191n,
-          marginUsdc: 99_884_165_044n,
-          unrealizedPnlUsdc: 5_751_556_687n,
-          maintenanceMarginUsdc: 9_882_318_525n,
+          marginAssets: 99_884_165_044n,
+          unrealizedPnlAssets: 5_751_556_687n,
+          maintenanceMarginAssets: 9_882_318_525n,
           liquidatable: false,
-          estimatedNotionalUsdc: 3_294_106_175_168n,
-          entryNotionalUsdc: 3_299_857_731_856n,
-          dxyExposureUsdc: 3_484_552_941_998n,
+          estimatedNotionalAssets: 3_294_106_175_168n,
+          entryNotionalAssets: 3_299_857_731_856n,
+          dxyExposureAssets: 3_484_552_941_998n,
         }}
       />
     )
 
-    expect(screen.queryByText('Deposit 0.2 USDC more before committing this order.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Deposit 0.2 USDG more before committing this order.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
   })
 
@@ -2162,21 +2233,21 @@ describe('perps lifecycle labels', () => {
     render(
       <PerpsAccountPanel
         isConnected
-        freeBuyingPowerUsdc={250000000n}
+        freeBuyingPowerAssets={250000000n}
         position={{
           exists: true,
           side: 0,
           direction: 'long',
           size: 0n,
           entryPrice: 101240000n,
-          marginUsdc: 400000000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 0n,
+          marginAssets: 400000000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 0n,
           liquidatable: false,
-          estimatedNotionalUsdc: 2000000000n,
-          entryNotionalUsdc: 2000000000n,
-          dxyExposureUsdc: 2096930000n,
-          pendingCarryUsdc: 0n,
+          estimatedNotionalAssets: 2000000000n,
+          entryNotionalAssets: 2000000000n,
+          dxyExposureAssets: 2096930000n,
+          pendingCarryAssets: 0n,
         }}
       />
     )
@@ -2184,7 +2255,7 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
 
     expect(screen.getByText('Edit Position Margin')).toBeInTheDocument()
-    expect(screen.getByText(/This moves free USDC into position margin/)).toBeInTheDocument()
+    expect(screen.getByText(/This moves free USDG into position margin/)).toBeInTheDocument()
     expect(screen.getByText(/Direct margin removal is not supported/i)).toBeInTheDocument()
     expect(screen.queryByText(/by the current contracts/i)).not.toBeInTheDocument()
     expect(screen.getByText('Current position margin')).toBeInTheDocument()
@@ -2203,15 +2274,15 @@ describe('perps lifecycle labels', () => {
       direction: 'long' as const,
       size: 2_000n * 10n ** 18n,
       entryPrice: 98_300_000n,
-      marginUsdc: 400_000_000n,
-      unrealizedPnlUsdc: 48_250_000n,
-      maintenanceMarginUsdc: 20_000_000n,
+      marginAssets: 400_000_000n,
+      unrealizedPnlAssets: 48_250_000n,
+      maintenanceMarginAssets: 20_000_000n,
       liquidatable: false,
-      estimatedNotionalUsdc: 2_000_000_000n,
-      entryNotionalUsdc: 2_000_000_000n,
-      dxyExposureUsdc: 2_034_000_000n,
+      estimatedNotionalAssets: 2_000_000_000n,
+      entryNotionalAssets: 2_000_000_000n,
+      dxyExposureAssets: 2_034_000_000n,
       displayDxyPrice: 101_700_000n,
-      pendingCarryUsdc: 1_250_000n,
+      pendingCarryAssets: 1_250_000n,
     }
 
     function ClosePositionFlow() {
@@ -2249,7 +2320,7 @@ describe('perps lifecycle labels', () => {
   it('keeps a position-panel full close valid when the oracle price refreshes', async () => {
     mockIsConnected = true
     const positionSize = 2_000n * 10n ** 18n
-    const positionSizeToUsdcScale = 10n ** 20n
+    const positionSizeToAssetsScale = 10n ** 20n
     const priceCap = 200_000_000n
 
     const reviewed = await perpsTradingMocks.prepareOrder() as PreparedPerpsOrderV3
@@ -2264,8 +2335,8 @@ describe('perps lifecycle labels', () => {
         invalidReason: 0,
         executionPrice: 98_300_000n,
         sizeDelta: positionSize,
-        realizedPnlUsdc: 48_250_000n,
-        executionFeeUsdc: 200_000n,
+        realizedPnlAssets: 48_250_000n,
+        executionFeeAssets: 200_000n,
         remainingSize: 0n,
         remainingMargin: 0n,
       },
@@ -2278,22 +2349,22 @@ describe('perps lifecycle labels', () => {
     function FullCloseWithOracleRefresh() {
       const [requestId, setRequestId] = useState(0)
       const [oraclePrice, setOraclePrice] = useState(98_300_000n)
-      const dxyExposureUsdc = (positionSize * (priceCap - oraclePrice)) / positionSizeToUsdcScale
+      const dxyExposureAssets = (positionSize * (priceCap - oraclePrice)) / positionSizeToAssetsScale
       const position = {
         exists: true,
         side: 0,
         direction: 'long' as const,
         size: positionSize,
         entryPrice: 98_300_000n,
-        marginUsdc: 400_000_000n,
-        unrealizedPnlUsdc: 48_250_000n,
-        maintenanceMarginUsdc: 20_000_000n,
+        marginAssets: 400_000_000n,
+        unrealizedPnlAssets: 48_250_000n,
+        maintenanceMarginAssets: 20_000_000n,
         liquidatable: false,
-        estimatedNotionalUsdc: (positionSize * oraclePrice) / positionSizeToUsdcScale,
-        entryNotionalUsdc: 1_966_000_000n,
-        dxyExposureUsdc,
+        estimatedNotionalAssets: (positionSize * oraclePrice) / positionSizeToAssetsScale,
+        entryNotionalAssets: 1_966_000_000n,
+        dxyExposureAssets,
         displayDxyPrice: priceCap - oraclePrice,
-        pendingCarryUsdc: 1_250_000n,
+        pendingCarryAssets: 1_250_000n,
       }
 
       return (
@@ -2362,14 +2433,14 @@ describe('perps lifecycle labels', () => {
           direction: 'short',
           size: 0n,
           entryPrice: 101240000n,
-          marginUsdc: 400000000n,
-          unrealizedPnlUsdc: 0n,
-          maintenanceMarginUsdc: 0n,
+          marginAssets: 400000000n,
+          unrealizedPnlAssets: 0n,
+          maintenanceMarginAssets: 0n,
           liquidatable: false,
-          estimatedNotionalUsdc: 2000000000n,
-          entryNotionalUsdc: 2000000000n,
-          dxyExposureUsdc: 2096930000n,
-          pendingCarryUsdc: 0n,
+          estimatedNotionalAssets: 2000000000n,
+          entryNotionalAssets: 2000000000n,
+          dxyExposureAssets: 2096930000n,
+          pendingCarryAssets: 0n,
         }}
       />
     )
@@ -2545,11 +2616,11 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 2_000_000_000n,
-      walletUsdcRaw: 2_000_000_000n,
-      settlementBalanceUsdcRaw: 2_000_000_000n,
-      withdrawableUsdcRaw: 2_000_000_000n,
-      minOpenNotionalUsdc: 100_000_000n,
-      minNewPositionNotionalUsdc: 100_000_000n,
+      walletAssetsRaw: 2_000_000_000n,
+      settlementBalanceAssetsRaw: 2_000_000_000n,
+      withdrawableAssetsRaw: 2_000_000_000n,
+      minOpenNotionalAssets: 100_000_000n,
+      minNewPositionNotionalAssets: 100_000_000n,
     }
 
     render(<PerpsTradeTicket {...baseProps} />)
@@ -2614,14 +2685,14 @@ describe('perps lifecycle labels', () => {
             oraclePriceRaw={97_330_315n}
             oraclePublishTime={Math.floor(Date.now() / 1000)}
             availableToTradeRaw={2_000_000_000n}
-            walletUsdcRaw={2_000_000_000n}
-            settlementBalanceUsdcRaw={2_000_000_000n}
-            withdrawableUsdcRaw={2_000_000_000n}
-            minOpenNotionalUsdc={100_000_000n}
-            minNewPositionNotionalUsdc={100_000_000n}
+            walletAssetsRaw={2_000_000_000n}
+            settlementBalanceAssetsRaw={2_000_000_000n}
+            withdrawableAssetsRaw={2_000_000_000n}
+            minOpenNotionalAssets={100_000_000n}
+            minNewPositionNotionalAssets={100_000_000n}
             onAccountRefresh={async () => {
               await onAccountRefresh()
-              setPosition('1 000 USDC')
+              setPosition('1 000 USDG')
             }}
           />
         </>
@@ -2641,7 +2712,7 @@ describe('perps lifecycle labels', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 USDC')
+      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 USDG')
       expect(screen.getByText('Final Result')).toBeInTheDocument()
     })
   })
@@ -2737,7 +2808,7 @@ describe('perps lifecycle labels', () => {
       executionOraclePriceRaw: 97_330_315n,
       executionMode: 'Live',
       oracleDerivationVersion: 1,
-      vpiUsdcRaw: 12_345_678n,
+      vpiAssetsRaw: 12_345_678n,
       executionEconomicsVersion: 2,
     }
     const baseProps = {
@@ -2750,11 +2821,11 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 2_000_000_000n,
-      walletUsdcRaw: 2_000_000_000n,
-      settlementBalanceUsdcRaw: 2_000_000_000n,
-      withdrawableUsdcRaw: 2_000_000_000n,
-      minOpenNotionalUsdc: 100_000_000n,
-      minNewPositionNotionalUsdc: 100_000_000n,
+      walletAssetsRaw: 2_000_000_000n,
+      settlementBalanceAssetsRaw: 2_000_000_000n,
+      withdrawableAssetsRaw: 2_000_000_000n,
+      minOpenNotionalAssets: 100_000_000n,
+      minNewPositionNotionalAssets: 100_000_000n,
       onAccountRefresh,
     }
 
@@ -2807,7 +2878,7 @@ describe('perps lifecycle labels', () => {
           executionOraclePriceRaw: undefined,
           executionOracleFrozen: undefined,
           oracleDerivationVersion: undefined,
-          vpiUsdcRaw: undefined,
+          vpiAssetsRaw: undefined,
           executionEconomicsVersion: undefined,
         }]}
       />
@@ -2853,7 +2924,7 @@ describe('perps lifecycle labels', () => {
           executionOraclePriceRaw: undefined,
           executionOracleFrozen: undefined,
           oracleDerivationVersion: undefined,
-          vpiUsdcRaw: undefined,
+          vpiAssetsRaw: undefined,
           executionEconomicsVersion: undefined,
         }]}
       />
@@ -2909,14 +2980,14 @@ describe('perps lifecycle labels', () => {
       executionMode: 'Live',
       receiptHash: V2_RECEIPT_HASH,
       receiptEconomics: closeReceiptEconomics({
-        realizedPnlUsdc: 200_000_000n,
-        vpiUsdc: 182_822_887n,
-        carryUsdc: 10_000_000n,
-        executionFeeUsdc: 1_000_000n,
-        preSettlementBalanceUsdc: 1_000_000_000n,
-        postSettlementBalanceUsdc: 1_006_177_113n,
+        realizedPnlAssets: 200_000_000n,
+        vpiAssets: 182_822_887n,
+        carryAssets: 10_000_000n,
+        executionFeeAssets: 1_000_000n,
+        preSettlementBalanceAssets: 1_000_000_000n,
+        postSettlementBalanceAssets: 1_006_177_113n,
       }),
-      vpiUsdcRaw: 182_822_887n,
+      vpiAssetsRaw: 182_822_887n,
       executionEconomicsVersion: 2,
     }
     perpsTradingMocks.waitForPerpsOrderTerminal
@@ -2944,11 +3015,11 @@ describe('perps lifecycle labels', () => {
       oraclePriceRaw: 98_391_482n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 200_000_000_000n,
-      walletUsdcRaw: 2_000_000_000n,
-      settlementBalanceUsdcRaw: 200_000_000_000n,
-      withdrawableUsdcRaw: 2_000_000_000n,
-      minOpenNotionalUsdc: 100_000_000n,
-      minNewPositionNotionalUsdc: 100_000_000n,
+      walletAssetsRaw: 2_000_000_000n,
+      settlementBalanceAssetsRaw: 200_000_000_000n,
+      withdrawableAssetsRaw: 2_000_000_000n,
+      minOpenNotionalAssets: 100_000_000n,
+      minNewPositionNotionalAssets: 100_000_000n,
       onAccountRefresh,
     }
 
@@ -2985,7 +3056,7 @@ describe('perps lifecycle labels', () => {
           executionOraclePriceRaw: undefined,
           executionOracleFrozen: false,
           oracleDerivationVersion: 1,
-          vpiUsdcRaw: undefined,
+          vpiAssetsRaw: undefined,
           executionEconomicsVersion: 2,
         }]}
       />
@@ -3033,11 +3104,11 @@ describe('perps lifecycle labels', () => {
       initialOrderQuantity: '1 000',
       oraclePriceRaw: 98_391_482n,
       availableToTradeRaw: 2_000_000_000n,
-      walletUsdcRaw: 2_000_000_000n,
-      settlementBalanceUsdcRaw: 2_000_000_000n,
-      withdrawableUsdcRaw: 2_000_000_000n,
-      minOpenNotionalUsdc: 100_000_000n,
-      minNewPositionNotionalUsdc: 100_000_000n,
+      walletAssetsRaw: 2_000_000_000n,
+      settlementBalanceAssetsRaw: 2_000_000_000n,
+      withdrawableAssetsRaw: 2_000_000_000n,
+      minOpenNotionalAssets: 100_000_000n,
+      minNewPositionNotionalAssets: 100_000_000n,
       onAccountRefresh,
     }
     const { rerender } = render(
@@ -3120,11 +3191,11 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
-        walletUsdcRaw={2_000_000_000n}
-        settlementBalanceUsdcRaw={2_000_000_000n}
-        withdrawableUsdcRaw={2_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={100_000_000n}
+        walletAssetsRaw={2_000_000_000n}
+        settlementBalanceAssetsRaw={2_000_000_000n}
+        withdrawableAssetsRaw={2_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={100_000_000n}
       />
     )
 
@@ -3170,11 +3241,11 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
-        walletUsdcRaw={2_000_000_000n}
-        settlementBalanceUsdcRaw={2_000_000_000n}
-        withdrawableUsdcRaw={2_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={100_000_000n}
+        walletAssetsRaw={2_000_000_000n}
+        settlementBalanceAssetsRaw={2_000_000_000n}
+        withdrawableAssetsRaw={2_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={100_000_000n}
       />
     )
 
@@ -3207,7 +3278,7 @@ describe('perps lifecycle labels', () => {
         clientOrderId: V2_CLIENT_ORDER_ID,
         terminalReason: 'Slippage',
         executionPriceRaw: 97_936_552n,
-        receiptEconomics: { executionBountyUsdc: '200000', executionFeeUsdc: '0' },
+        receiptEconomics: { executionBountyAssets: '200000', executionFeeAssets: '0' },
         revealTxHash: `0x${'ab'.repeat(32)}`,
       },
     })
@@ -3230,8 +3301,8 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText(/Your price protection prevented the trade/)).toBeInTheDocument()
     expect(screen.getByText('1.02063448')).toBeInTheDocument()
     expect(screen.getByText('Maximum acceptable price').closest('div')).toHaveTextContent('Not available')
-    expect(screen.getByText('Execution reward charged').closest('div')).toHaveTextContent('0.2 USDC')
-    expect(screen.getByText('Trading execution fee charged').closest('div')).toHaveTextContent('0 USDC')
+    expect(screen.getByText('Execution reward charged').closest('div')).toHaveTextContent('0.2 USDG')
+    expect(screen.getByText('Trading execution fee charged').closest('div')).toHaveTextContent('0 USDG')
     expect(screen.getByText('Finalization tx').closest('div')?.querySelector('a')).toHaveAttribute(
       'href', `https://arbitrum-sepolia.blockscout.com/tx/0x${'ab'.repeat(32)}`,
     )
@@ -3326,11 +3397,11 @@ describe('perps lifecycle labels', () => {
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
         availableToTradeRaw={2_000_000_000n}
-        walletUsdcRaw={2_000_000_000n}
-        settlementBalanceUsdcRaw={2_000_000_000n}
-        withdrawableUsdcRaw={2_000_000_000n}
-        minOpenNotionalUsdc={100_000_000n}
-        minNewPositionNotionalUsdc={100_000_000n}
+        walletAssetsRaw={2_000_000_000n}
+        settlementBalanceAssetsRaw={2_000_000_000n}
+        withdrawableAssetsRaw={2_000_000_000n}
+        minOpenNotionalAssets={100_000_000n}
+        minNewPositionNotionalAssets={100_000_000n}
       />
     )
 
@@ -3371,11 +3442,11 @@ describe('perps lifecycle labels', () => {
   })
   it('shows exact risk thresholds, unavailable reads, and non-price liquidation separately', () => {
     const position = { exists: true, side: 0, direction: 'long' as const, size: 10_000n * 10n ** 18n,
-      entryPrice: 100_000_000n, marginUsdc: 250_000_000n, unrealizedPnlUsdc: 0n, maintenanceMarginUsdc: 10_000_000n,
+      entryPrice: 100_000_000n, marginAssets: 250_000_000n, unrealizedPnlAssets: 0n, maintenanceMarginAssets: 10_000_000n,
       liquidatable: false, riskStatus: 'ready' as const, liquidationPrice: 102_397_603n,
-      liquidationThreshold: { status: 'boundary' as const, price: 102_397_603n }, pendingCarryUsdc: 20_000_000n }
+      liquidationThreshold: { status: 'boundary' as const, price: 102_397_603n }, pendingCarryAssets: 20_000_000n }
     const close = vi.fn()
-    const { rerender } = render(<PerpsAccountPanel isConnected position={position} freeBuyingPowerUsdc={750_000_000n} onClosePosition={close} />)
+    const { rerender } = render(<PerpsAccountPanel isConnected position={position} freeBuyingPowerAssets={750_000_000n} onClosePosition={close} />)
     expect(screen.getByTitle('Exact liquidation threshold: 0.97602397')).toHaveTextContent('0.9760')
     fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
     fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
@@ -3386,7 +3457,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Account risk unavailable')
     fireEvent.click(screen.getByRole('button', { name: 'Close position' }))
     expect(close).toHaveBeenCalledOnce()
-    rerender(<PerpsAccountPanel isConnected position={{ ...position, liquidatable: true, liquidationPrice: undefined, liquidationThreshold: { status: 'out-of-range' }, uncoveredCarryUsdc: 1n, vpiReserveUnderfunded: true }} />)
+    rerender(<PerpsAccountPanel isConnected position={{ ...position, liquidatable: true, liquidationPrice: undefined, liquidationThreshold: { status: 'out-of-range' }, uncoveredCarryAssets: 1n, vpiReserveUnderfunded: true }} />)
     expect(screen.getByText('Not in range')).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent('Liquidatable')
     expect(screen.getByRole('alert')).toHaveTextContent('does not cover accrued carry')
@@ -3395,15 +3466,15 @@ describe('perps lifecycle labels', () => {
 
   it('separates settlement from signed position equity and hides equity when flat', () => {
     const position = { exists: true, side: 0, direction: 'long' as const, size: 10_000n * 10n ** 18n,
-      entryPrice: 100_000_000n, marginUsdc: 250_000_000n, unrealizedPnlUsdc: -255_000_000n,
-      maintenanceMarginUsdc: 10_000_000n, liquidatable: true }
-    const { rerender } = render(<PerpsTradeTicket settlementBalanceUsdcRaw={1_000_000_000n} positionEquityUsdcRaw={-5_000_000n} currentPosition={position} />)
+      entryPrice: 100_000_000n, marginAssets: 250_000_000n, unrealizedPnlAssets: -255_000_000n,
+      maintenanceMarginAssets: 10_000_000n, liquidatable: true }
+    const { rerender } = render(<PerpsTradeTicket settlementBalanceAssetsRaw={1_000_000_000n} positionEquityAssetsRaw={-5_000_000n} currentPosition={position} />)
     expect(screen.queryByText('Portfolio value')).not.toBeInTheDocument()
-    expect(screen.getByText('Settlement balance').parentElement).toHaveTextContent('1 000')
+    expect(screen.getByText('USDG balance').parentElement).toHaveTextContent('1 000')
     expect(screen.getByText('Position equity').parentElement).toHaveTextContent('-5')
-    rerender(<PerpsTradeTicket settlementBalanceUsdcRaw={1_000_000_000n} />)
+    rerender(<PerpsTradeTicket settlementBalanceAssetsRaw={1_000_000_000n} />)
     expect(screen.queryByText('Position equity')).not.toBeInTheDocument()
-    expect(screen.getByText('Settlement balance')).toBeVisible()
+    expect(screen.getByText('USDG balance')).toBeVisible()
   })
 
 })

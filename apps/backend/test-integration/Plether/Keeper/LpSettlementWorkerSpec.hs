@@ -1236,7 +1236,7 @@ workerConfig mode =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = fixtureChainId
-    , cfgPerpsUsdc = usdc
+    , cfgPerpsSettlementToken = settlementToken
     , cfgPerpsOrderRouter = router
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = engine
@@ -1283,7 +1283,7 @@ releaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "lp-worker-test"
     , crmChainId = fixtureChainId
-    , crmUsdc = usdc
+    , crmSettlementToken = settlementToken
     , crmOrderRouter = router
     , crmMarginClearinghouse = clearinghouse
     , crmAccountLens = accountLens
@@ -1339,9 +1339,9 @@ runtimeCodeHash = bytesHex . keccak256 . runtimeCode
 runtimeCode :: Word8 -> BS.ByteString
 runtimeCode tag = BS.pack [0x60, tag, 0x60, 0x00, 0xf3]
 
-usdc, router, engine, lens, sidecar, clearinghouse, oracle, accountLens :: Text
+settlementToken, router, engine, lens, sidecar, clearinghouse, oracle, accountLens :: Text
 housePool, monitor, seniorVault, juniorVault :: Text
-usdc = "0x1111111111111111111111111111111111111111"
+settlementToken = "0x1111111111111111111111111111111111111111"
 router = "0x2222222222222222222222222222222222222222"
 engine = "0x3333333333333333333333333333333333333333"
 lens = "0x4444444444444444444444444444444444444444"

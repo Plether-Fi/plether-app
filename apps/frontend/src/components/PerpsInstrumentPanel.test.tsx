@@ -81,14 +81,14 @@ describe('PerpsInstrumentPanel price details', () => {
             directionalLimit: {
               usagePercent: 87,
               side: 'long',
-              totalExposure: '882.9M USDC',
-              netExposure: '307.2M USDC',
-              limit: '353.1M USDC',
+              totalExposure: '882.9M USDG',
+              netExposure: '307.2M USDG',
+              limit: '353.1M USDG',
             },
           },
           {
             label: 'Free pool liquidity',
-            value: '6.3M USDC',
+            value: '6.3M USDG',
             hoverDetailsType: 'pool-liquidity',
             hoverDetailsLabel: 'Free pool liquidity details',
             hoverDetails: <div>Capital waterfall</div>,
@@ -136,12 +136,12 @@ describe('PerpsInstrumentPanel directional limit', () => {
             directionalLimit: {
               usagePercent: 87,
               side: 'long',
-              totalExposure: '882.9M USDC',
-              netExposure: '307.2M USDC',
-              limit: '353.1M USDC',
+              totalExposure: '882.9M USDG',
+              netExposure: '307.2M USDG',
+              limit: '353.1M USDG',
             },
           },
-          { label: 'Free pool liquidity', value: '6.3M USDC' },
+          { label: 'Free pool liquidity', value: '6.3M USDG' },
           { label: 'Cost of carry', value: '5.24%' },
         ]}
       />
@@ -172,7 +172,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(screen.getByRole('img', { name: '87% used; 13% remaining' })).toBeVisible()
     expect(screen.getByText('Total LONG exposure')).toBeVisible()
     expect(screen.getByText('Net LONG exposure')).toBeVisible()
-    expect(screen.getByText('882.9M USDC')).toBeVisible()
+    expect(screen.getByText('882.9M USDG')).toBeVisible()
     expect(screen.getByText(
       'Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs, can change before execution, and other checks apply.'
     )).toBeVisible()
@@ -217,9 +217,9 @@ describe('PerpsInstrumentPanel directional limit', () => {
           directionalLimit: {
             usagePercent: 62,
             side: 'short',
-            totalExposure: '580.8M USDC',
-            netExposure: '225.4M USDC',
-            limit: '363.3M USDC',
+            totalExposure: '580.8M USDG',
+            netExposure: '225.4M USDG',
+            limit: '363.3M USDG',
           },
         }]}
       />
@@ -237,9 +237,9 @@ describe('PerpsInstrumentPanel directional limit', () => {
           directionalLimit: {
             usagePercent: 0,
             side: 'balanced',
-            totalExposure: '529.8M USDC',
-            netExposure: '0 USDC',
-            limit: '353.1M USDC',
+            totalExposure: '529.8M USDG',
+            netExposure: '0 USDG',
+            limit: '353.1M USDG',
           },
         }]}
       />

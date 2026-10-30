@@ -125,6 +125,16 @@ npm run lint
 npm run build
 ```
 
+## Deployment
+
+Insights deployment is manual-only. Pushes and merges to `master` do not publish
+the application. Deploy after confirming that the backend supports the API fields
+used by the selected frontend release:
+
+```sh
+gh workflow run deploy-insights.yml --repo Plether-Fi/plether-app --ref master
+```
+
 Cloudflare Pages serves the SPA through `public/_worker.js`. Configure
 `INSIGHTS_BACKEND_URL` as a clean HTTPS origin; HTTP, credentials, paths, query
 parameters, and fragments are rejected. API requests preserve the complete

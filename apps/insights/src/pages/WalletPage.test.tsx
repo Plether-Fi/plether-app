@@ -1,8 +1,8 @@
 import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import waiver from '../../../../scripts/fixtures/insights-close-waiver.json'
-import rebate from '../../../../scripts/fixtures/insights-close-rebate.json'
+import { waiver } from '../test/receiptEconomics'
+import { rebate } from '../test/receiptEconomics'
 import { WalletPage } from './WalletPage'
 
 const apiMocks = vi.hoisted(() => ({
@@ -47,7 +47,7 @@ beforeEach(() => {
         liquidations: 0,
         prizePlace: null,
         prizePlaces: [],
-        prizeAmountUsdc: null,
+        prizeAmountAssets: null,
         eligible: false,
         eligibilityStatus: 'pending',
         eligibilityReasons: [],
@@ -57,7 +57,7 @@ beforeEach(() => {
       activity: [
         {
           id: 'open',
-          execution: { ...waiver.execution, receipt: { ...waiver.execution.receipt, realizedPnlUsdc: '0' } },
+          execution: { ...waiver.execution, receipt: { ...waiver.execution.receipt, realizedPnlAssets: '0' } },
           type: 'Open',
           occurredAt: '2026-07-20T12:00:00Z',
           market: 'DXY',
@@ -165,11 +165,11 @@ describe('WalletPage activity costs', () => {
 
     const [headerRow, openRow, , closeRow, , depositRow] = screen.getAllByRole('row')
     expect(within(headerRow).getByText('Protocol fee assessed')).toBeInTheDocument()
-    expect(within(openRow).getByText('1,105.09 USDC')).toBeInTheDocument()
-    expect(within(openRow).getByText('Charge 6,708.30 USDC')).toHaveClass('text-brand-orange')
-    expect(within(closeRow).getByText('866.45 USDC')).toBeInTheDocument()
-    expect(within(closeRow).getByText('Rebate 1,755.48 USDC')).toHaveClass('text-positive')
-    expect(within(depositRow).queryByText('866.45 USDC')).not.toBeInTheDocument()
+    expect(within(openRow).getByText('1,105.09 USDG')).toBeInTheDocument()
+    expect(within(openRow).getByText('Charge 6,708.30 USDG')).toHaveClass('text-brand-orange')
+    expect(within(closeRow).getByText('866.45 USDG')).toBeInTheDocument()
+    expect(within(closeRow).getByText('Rebate 1,755.48 USDG')).toHaveClass('text-positive')
+    expect(within(depositRow).queryByText('866.45 USDG')).not.toBeInTheDocument()
     expect(screen.getAllByText('Fee deducted from rebate').length).toBeGreaterThanOrEqual(2)
     expect(screen.queryByText('Trade breakdown')).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'View breakdown' })).toHaveLength(4)

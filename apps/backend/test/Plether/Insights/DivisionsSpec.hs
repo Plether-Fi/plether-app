@@ -69,10 +69,10 @@ parseFixture = withObject "fixture" $ \f -> do
     end <- i .: "closingBlock" >>= block (start + 5 * 86400 - 1)
     scores <- i .: "accounts" >>= traverse (withObject "account" $ \a -> do
       wallet <- a .: "address"
-      initial <- read <$> a .: "startingEquityUsdc"
-      final <- read <$> a .: "closingEquityUsdc"
-      deposits <- read <$> a .: "depositsUsdc"
-      withdrawals <- read <$> a .: "withdrawalsUsdc"
+      initial <- read <$> a .: "startingEquityAssets"
+      final <- read <$> a .: "closingEquityAssets"
+      deposits <- read <$> a .: "depositsAssets"
+      withdrawals <- read <$> a .: "withdrawalsAssets"
       trades <- a .: "executedTradeTimes" :: Parser [Text]
       let adjusted = initial + deposits - withdrawals
       pure $ LiveScore wallet adjusted (final - adjusted) (length trades))

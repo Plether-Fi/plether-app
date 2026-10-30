@@ -8,4 +8,3 @@ export function WalletMetric({ label, children }: { label: string; children: Rea
     </div>
   )
 }
-

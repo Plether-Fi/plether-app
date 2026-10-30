@@ -5,4 +5,3 @@ export function CurrentBadge({ tier, loading, unavailable }: { tier: Tier | unde
   if (tier) return <TierBadge tier={tier} showLabel />
   return <span className="text-xs text-content-tertiary">{loading ? 'Loading badge…' : unavailable ? 'Badge unavailable' : 'Not yet awarded'}</span>
 }
-

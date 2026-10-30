@@ -1,172 +1,32 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { zeroAddress } from 'viem'
 import publicManifest from '../../../public/perps-aa-manifest.json'
-import {
-  PERPS_ARBITRUM_SEPOLIA,
-  PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK,
-} from '../perpsAddresses'
+import prepared from '../../../../../config/perps/mock-usdg-prepared.json'
+import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK, PERPS_RELEASE, PERPS_RELEASE_IS_DEPLOYED } from '../perpsAddresses'
 
-interface PinnedContract {
-  address: string
-  runtimeCodeHash: string
-}
-
-interface PinnedRelease {
-  schemaVersion: number
-  network: { chainId: number }
-  release: {
-    sourceRepository: string
-    sourceArtifact: string
-    tag: string
-    manifestSha256: string
-    sourceCommit: string
-    deploymentBlock: number
-  }
-  contracts: Record<string, PinnedContract>
-}
-
-const repositoryRoot = path.resolve(process.cwd(), '../..')
-const pinnedRelease = JSON.parse(readFileSync(
-  path.join(repositoryRoot, 'config/perps/arbitrum-sepolia-v3.json'),
-  'utf8'
-)) as PinnedRelease
-
-describe('pinned bounded-V3 Sepolia release', () => {
-  it('retains authoritative plether-core provenance and runtime hashes', () => {
-    expect(pinnedRelease).toMatchObject({
-      schemaVersion: 3,
-      network: { chainId: 421614 },
-      release: {
-        sourceRepository: 'Plether-Fi/plether-core',
-        sourceArtifact: 'deployments/releases/2026-10-12-perps-arbitrum-sepolia-v1.3.1/manifest.json',
-        version: 'v1.3.1',
-        manifestSha256: '843c8b0fae594d8e4de63e6b22c62e23750866164c700d2deefcf588df0f40b7',
-        sourceCommit: 'cf86189bcca4813f39d6405a338b77176783eb42',
-        deploymentBlock: 318398363,
-      },
-    })
-    for (const contract of Object.values(pinnedRelease.contracts)) {
-      expect(contract.runtimeCodeHash).toMatch(/^0x[0-9a-f]{64}$/)
+const root = path.resolve(process.cwd(), '../..')
+describe('prepared canonical release safety', () => {
+  it('does not present an undeployed graph as active', () => {
+    expect(PERPS_RELEASE_IS_DEPLOYED).toBe(false)
+    expect(PERPS_RELEASE.release.phase).toBe('prepared')
+    expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(0)
+    expect(PERPS_ARBITRUM_SEPOLIA.settlementToken).toBe(zeroAddress)
+    for (const pin of Object.values(prepared.contracts)) {
+      expect(pin.address).toBeNull()
+      expect(pin.runtimeCodeHash).toBeNull()
     }
+    expect(publicManifest.sponsorshipEnabled).toBe(false)
+    expect(publicManifest.settlementToken).toBeNull()
+    expect(publicManifest.paymasterAddress).toBeNull()
   })
-
-  it('keeps the frontend registry and public manifest on the same release', () => {
-    expect(PERPS_ARBITRUM_SEPOLIA_DEPLOYMENT_BLOCK).toBe(pinnedRelease.release.deploymentBlock)
-    expect(publicManifest).toMatchObject({
-      version: 'perps-aa-arbitrum-sepolia-20261012-v131-v2',
-      chainId: pinnedRelease.network.chainId,
-      orderRouter: pinnedRelease.contracts.orderRouter.address,
-      orderLifecycleBook: pinnedRelease.contracts.orderLifecycleBook.address,
-      policyEvaluator: pinnedRelease.contracts.cfdOrderPolicyEvaluator.address,
-      sponsorshipEnabled: true,
-    })
-    expect(PERPS_ARBITRUM_SEPOLIA).toMatchObject({
-      usdc: pinnedRelease.contracts.mockUsdc.address,
-      marginClearinghouse: pinnedRelease.contracts.marginClearinghouse.address,
-      cfdEngine: pinnedRelease.contracts.cfdEngine.address,
-      housePool: pinnedRelease.contracts.housePool.address,
-      orderRouter: pinnedRelease.contracts.orderRouter.address,
-      orderLifecycleBook: pinnedRelease.contracts.orderLifecycleBook.address,
-      policyEvaluator: pinnedRelease.contracts.cfdOrderPolicyEvaluator.address,
-      positionProtectionBook: pinnedRelease.contracts.positionProtectionBook.address,
-      perpsPublicLens: pinnedRelease.contracts.perpsPublicLens.address,
-    })
-  })
-
-  it('keeps Terraform and deployment workflows fail-closed on V3', () => {
-    const terraformExample = readFileSync(
-      path.join(repositoryRoot, 'infra/terraform/terraform.tfvars.sepolia.example'),
-      'utf8'
-    )
-    const terraformEcs = readFileSync(
-      path.join(repositoryRoot, 'infra/terraform/ecs.tf'),
-      'utf8'
-    )
-    const backendWorkflow = readFileSync(
-      path.join(repositoryRoot, '.github/workflows/deploy-backend.yml'),
-      'utf8'
-    )
-    const frontendWorkflow = readFileSync(
-      path.join(repositoryRoot, '.github/workflows/deploy-frontend.yml'),
-      'utf8'
-    )
-    const backendRelease = readFileSync(
-      path.join(repositoryRoot, 'apps/backend/src/Plether/Perps/Release.hs'),
-      'utf8'
-    )
-
-    const terraformBindings = [
-      ['perps_usdc', pinnedRelease.contracts.mockUsdc.address],
-      ['perps_order_router', pinnedRelease.contracts.orderRouter.address],
-      ['perps_order_lifecycle_book', pinnedRelease.contracts.orderLifecycleBook.address],
-      ['perps_cfd_engine', pinnedRelease.contracts.cfdEngine.address],
-      ['perps_margin_clearinghouse', pinnedRelease.contracts.marginClearinghouse.address],
-      ['perps_house_pool', pinnedRelease.contracts.housePool.address],
-    ] as const
-    for (const [field, address] of terraformBindings) {
-      expect(terraformExample).toMatch(
-        new RegExp(`${field}\\s*=\\s*"${address}"`, 'i')
-      )
-      expect(backendWorkflow.toLowerCase()).toContain(address.toLowerCase())
-    }
-    expect(terraformExample).toContain(
-      `perps_indexer_start_block      = "${pinnedRelease.release.deploymentBlock}"`
-    )
-    expect(backendWorkflow).not.toContain(
-      'upsert_env("AA_SPONSORSHIP_ENABLED"; "true")'
-    )
-    const apiTaskDefinition = terraformEcs.slice(
-      terraformEcs.indexOf('resource "aws_ecs_task_definition" "api"'),
-      terraformEcs.indexOf('resource "aws_ecs_service" "api"')
-    )
-    expect(apiTaskDefinition).toContain(
-      '{ name = "PERPS_HOUSE_POOL", value = var.perps_house_pool }'
-    )
-    const insightsTaskDefinition = terraformEcs.slice(
-      terraformEcs.indexOf('resource "aws_ecs_task_definition" "insights_worker"'),
-      terraformEcs.indexOf('resource "aws_ecs_service" "insights_worker"')
-    )
-    const consolidatedWorkersTaskDefinition = terraformEcs.slice(
-      terraformEcs.indexOf('resource "aws_ecs_task_definition" "workers"'),
-      terraformEcs.indexOf('resource "aws_ecs_service" "workers"')
-    )
-    const perpsIndexerTaskDefinition = terraformEcs.slice(
-      terraformEcs.indexOf('resource "aws_ecs_task_definition" "perps_indexer"'),
-      terraformEcs.indexOf('resource "aws_ecs_service" "perps_indexer"')
-    )
-    const consolidatedPerpsIndexer = consolidatedWorkersTaskDefinition.slice(
-      consolidatedWorkersTaskDefinition.indexOf('name             = "plether-perps-indexer"'),
-      consolidatedWorkersTaskDefinition.indexOf('name             = "plether-insights-worker"')
-    )
-    for (const taskDefinition of [
-      insightsTaskDefinition,
-      consolidatedWorkersTaskDefinition,
-      perpsIndexerTaskDefinition,
-      consolidatedPerpsIndexer,
-    ]) {
-      expect(taskDefinition).toContain(
-        '{ name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book }'
-      )
-      expect(taskDefinition).toContain(
-        '{ name = "PERPS_HOUSE_POOL", value = var.perps_house_pool }'
-      )
-    }
-    expect(backendWorkflow).toContain('"PERPS_HOUSE_POOL",')
-    expect(backendRelease).toContain('Manifest.releaseAaManifestVersion')
-    expect(backendRelease).toContain('Manifest.orderLifecycleBookAddress')
-    expect(backendRelease).toContain('Manifest.cfdOrderPolicyEvaluatorCodeHash')
-    expect(backendRelease).not.toMatch(/0x[0-9a-fA-F]{40,64}/)
-    const backendManifest = readFileSync(
-      path.join(repositoryRoot, 'apps/backend/src/Plether/Perps/Manifest.hs'),
-      'utf8'
-    )
-    expect(backendManifest).toContain('manifestText ["contracts", "orderLifecycleBook", "address"]')
-    expect(backendManifest).toContain('manifestText ["contracts", "cfdOrderPolicyEvaluator", "runtimeCodeHash"]')
-    expect(pinnedRelease).toMatchObject({
-      integration: { aaManifestVersion: publicManifest.version },
-    })
-    expect(frontendWorkflow).toContain('/api/aa/status')
-    expect(frontendWorkflow).toContain('calldataPolicy == "bounded-v3"')
+  it('retains historical deployment artifacts without selecting them', () => {
+    const historical = JSON.parse(readFileSync(path.join(root, 'config/perps/arbitrum-sepolia-v3.json'), 'utf8')) as { release: { version: string; sourceCommit: string } }
+    expect(historical.release.version).toBe('v1.3.1')
+    expect(historical.release.sourceCommit).toBe('cf86189bcca4813f39d6405a338b77176783eb42')
+    const registry = readFileSync(path.join(root, 'apps/frontend/src/contracts/perpsAddresses.ts'), 'utf8')
+    expect(registry).toContain('mock-usdg-prepared.json')
+    expect(registry).not.toContain('arbitrum-sepolia-v3.json')
   })
 })

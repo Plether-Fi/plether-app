@@ -105,13 +105,13 @@ spec = do
         BasketHistoryPoint
           { bhpTimestamp = 120
           , bhpBasketPrice = 101_660_000
-          , bhpVolumeUsdc = 12_345_678
+          , bhpVolumeAssets = 12_345_678
           , bhpComponents = Nothing
           }
         `shouldBe` object
           [ "timestamp" .= (120 :: Integer)
           , "basketPrice" .= ("101660000" :: String)
-          , "volumeUsdc" .= ("12345678" :: String)
+          , "volumeAssets" .= ("12345678" :: String)
           ]
 
   describe "basket candle pagination" $ do
@@ -177,9 +177,9 @@ spec = do
           , bcRawHighPrice = 102_000_000
           , bcRawLowPrice = 100_000_000
           , bcRawClosePrice = 101_500_000
-          , bcVolumeUsdc = Just 12_345_678
-          , bcLongFlowVolumeUsdc = Just 5_000_000
-          , bcShortFlowVolumeUsdc = Just 4_000_000
+          , bcVolumeAssets = Just 12_345_678
+          , bcLongFlowVolumeAssets = Just 5_000_000
+          , bcShortFlowVolumeAssets = Just 4_000_000
           , bcTradeCount = Just 4
           , bcSampleCount = 59
           , bcQuality = "observed"
@@ -193,9 +193,9 @@ spec = do
           , "rawHighPrice" .= ("102000000" :: String)
           , "rawLowPrice" .= ("100000000" :: String)
           , "rawClosePrice" .= ("101500000" :: String)
-          , "volumeUsdc" .= ("12345678" :: String)
-          , "longFlowVolumeUsdc" .= ("5000000" :: String)
-          , "shortFlowVolumeUsdc" .= ("4000000" :: String)
+          , "volumeAssets" .= ("12345678" :: String)
+          , "longFlowVolumeAssets" .= ("5000000" :: String)
+          , "shortFlowVolumeAssets" .= ("4000000" :: String)
           , "tradeCount" .= (4 :: Integer)
           , "sampleCount" .= (59 :: Integer)
           , "quality" .= ("observed" :: String)
@@ -213,9 +213,9 @@ spec = do
               , bcRawHighPrice = 101_000_000
               , bcRawLowPrice = 101_000_000
               , bcRawClosePrice = 101_000_000
-              , bcVolumeUsdc = Nothing
-              , bcLongFlowVolumeUsdc = Nothing
-              , bcShortFlowVolumeUsdc = Nothing
+              , bcVolumeAssets = Nothing
+              , bcLongFlowVolumeAssets = Nothing
+              , bcShortFlowVolumeAssets = Nothing
               , bcTradeCount = Nothing
               , bcSampleCount = 1
               , bcQuality = "observed"
@@ -229,9 +229,9 @@ spec = do
         , "rawHighPrice" .= ("101000000" :: String)
         , "rawLowPrice" .= ("101000000" :: String)
         , "rawClosePrice" .= ("101000000" :: String)
-        , "volumeUsdc" .= (Nothing :: Maybe String)
-        , "longFlowVolumeUsdc" .= (Nothing :: Maybe String)
-        , "shortFlowVolumeUsdc" .= (Nothing :: Maybe String)
+        , "volumeAssets" .= (Nothing :: Maybe String)
+        , "longFlowVolumeAssets" .= (Nothing :: Maybe String)
+        , "shortFlowVolumeAssets" .= (Nothing :: Maybe String)
         , "tradeCount" .= (Nothing :: Maybe Integer)
         , "sampleCount" .= (1 :: Integer)
         , "quality" .= ("observed" :: String)

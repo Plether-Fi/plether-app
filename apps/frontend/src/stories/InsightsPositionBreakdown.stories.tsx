@@ -6,9 +6,17 @@ import type { WalletActivity } from '../../../insights/src/api/types'
 import examples from './fixtures/insights-position-breakdowns.json'
 import './InsightsPositionBreakdown.css'
 
-// Snapshot of indexed executions for the account used in the fee investigation.
-// Keep stories offline and render the same components as the Insights activity page.
-const [open, waivedClose, rebateClose] = examples as WalletActivity[]
+// Preserve the original indexed evidence and translate field names only at this
+// offline story boundary, so current components receive the canonical asset keys.
+function currentFixtureKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(currentFixtureKeys)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key.replace(/Usdc$/, 'Assets'), currentFixtureKeys(entry),
+  ]))
+}
+
+const [open, waivedClose, rebateClose] = currentFixtureKeys(examples) as WalletActivity[]
 
 function Comparison({ items }: { items: WalletActivity[] }) {
   return <main className="min-h-screen bg-app-bg px-4 py-8 text-content-primary sm:px-8">

@@ -117,8 +117,8 @@ runScenario manager pool apiApplication chain = do
       receiptHashA
       evidenceA
     assertReceiptEconomics order evidenceA
-    assertField order "activityVpiUsdc" $
-      String $ decimal $ efActivityVpiUsdc evidenceA
+    assertField order "activityVpiAssets" $
+      String $ decimal $ efActivityVpiAssets evidenceA
   indexedOrders <- getApiJson apiApplication ordersPath
   assertPath indexedOrders ["data", "indexedThroughBlock"] $
     String $ decimal terminalBlockNumber
@@ -146,8 +146,8 @@ runScenario manager pool apiApplication chain = do
     , "terminalBlockNumber"
     , "terminalBlockHash"
     , "executionPrice"
-    , "vpiUsdc"
-    , "frozenCloseSpreadUsdc"
+    , "vpiAssets"
+    , "frozenCloseSpreadAssets"
     , "executionEconomicsVersion"
     , "executionOraclePrice"
     , "executionOracleFrozen"
@@ -155,7 +155,7 @@ runScenario manager pool apiApplication chain = do
     , "oracleMaxPublishTime"
     , "oracleDerivationVersion"
     , "activityType"
-    , "activityVpiUsdc"
+    , "activityVpiAssets"
     ]
   committedWait <- getApiJson apiApplication waitPath
   assertPath committedWait ["data", "timedOut"] $ Bool True
@@ -372,10 +372,10 @@ assertCanonicalTerminal order commitTxHash txHash blockHash receiptHash evidence
 
 assertReceiptEconomics :: Value -> EvidenceFixture -> Expectation
 assertReceiptEconomics order evidence = do
-  assertPath order ["receiptEconomics", "vpiUsdc"] $
-    String $ decimal $ efVpiUsdc evidence
-  assertPath order ["receiptEconomics", "frozenSpreadUsdc"] $
-    String $ decimal $ efFrozenCloseSpreadUsdc evidence
+  assertPath order ["receiptEconomics", "vpiAssets"] $
+    String $ decimal $ efVpiAssets evidence
+  assertPath order ["receiptEconomics", "frozenSpreadAssets"] $
+    String $ decimal $ efFrozenCloseSpreadAssets evidence
   assertField order "executionEconomicsVersion" $
     Aeson.toJSON (2 :: Int)
 
@@ -468,7 +468,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsRpcUrl = rpcUrl
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
-    , cfgPerpsUsdc = testClearinghouse
+    , cfgPerpsSettlementToken = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsOrderLifecycleBook = Just testLifecycleBook
     , cfgPerpsCfdEngine = testEngine
@@ -515,7 +515,7 @@ testCompetitionReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = crSlug july2026Competition
     , crmChainId = testChainId
-    , crmUsdc = testClearinghouse
+    , crmSettlementToken = testClearinghouse
     , crmOrderRouter = testRouter
     , crmMarginClearinghouse = testClearinghouse
     , crmAccountLens = testLens

@@ -118,30 +118,30 @@ captureAtBlocks client pool cfg multicallSize cursor baseline current = do
     \ORDER BY LOWER(account)"
     (chain, router, upper)
   let addresses = [wallet | Only wallet <- wallets]
-  -- Every flow is checked against the indexed USDC transfer and the exact
+  -- Every flow is checked against the indexed USDG transfer and the exact
   -- clearinghouse. Assisted-close deposits are internal and excluded.
   flowRows <- withDb pool $ \conn -> query conn
-    "SELECT LOWER(a.account), a.activity_type, a.amount_usdc::text, \
+    "SELECT LOWER(a.account), a.activity_type, a.amount_assets::text, \
     \LOWER(COALESCE(a.contract_address,'')), LOWER(COALESCE(a.data->>'asset','')), \
-    \(SELECT COUNT(*) FROM perps_usdc_transfers x WHERE x.chain_id=a.chain_id \
+    \(SELECT COUNT(*) FROM perps_asset_transfers x WHERE x.chain_id=a.chain_id \
     \AND x.release_router=a.release_router AND x.tx_hash=a.tx_hash \
     \AND x.block_number=a.block_number AND x.block_hash=a.block_hash \
-    \AND LOWER(x.token_address)=LOWER(?) AND x.amount=a.amount_usdc \
+    \AND LOWER(x.token_address)=LOWER(?) AND x.amount=a.amount_assets \
     \AND LOWER(x.from_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(a.account) ELSE LOWER(?) END \
     \AND LOWER(x.to_address)=CASE WHEN a.activity_type='Deposit' THEN LOWER(?) ELSE LOWER(a.account) END), \
     \EXISTS (SELECT 1 FROM aa_close_assistance g WHERE g.verified \
     \AND g.chain_id=a.chain_id AND g.router=a.release_router AND g.account=a.account \
     \AND g.transaction_hash=a.tx_hash AND g.block_number=a.block_number \
     \AND g.block_hash=a.block_hash AND g.deposit_log_index=a.log_index \
-    \AND g.amount_usdc=a.amount_usdc) \
+    \AND g.amount_assets=a.amount_assets) \
     \FROM perps_account_activity a WHERE a.chain_id=? AND a.release_router=? \
     \AND a.block_number>? AND a.block_number<=? AND a.activity_type IN ('Deposit','Withdraw')"
-    (cfgPerpsUsdc cfg, cfgPerpsMarginClearinghouse cfg, cfgPerpsMarginClearinghouse cfg,
+    (cfgPerpsSettlementToken cfg, cfgPerpsMarginClearinghouse cfg, cfgPerpsMarginClearinghouse cfg,
      chain, router, rpcBlockNumber baseline, upper)
   let parseFlow (wallet, kind, amountText, emitter, asset, matches, assisted) = do
         amount <- readMaybe (T.unpack amountText)
         if amount <= 0 || emitter /= T.toLower (cfgPerpsMarginClearinghouse cfg)
-            || asset /= T.toLower (cfgPerpsUsdc cfg) || matches /= (1 :: Int64)
+            || asset /= T.toLower (cfgPerpsSettlementToken cfg) || matches /= (1 :: Int64)
             || (assisted && kind /= ("Deposit" :: Text))
           then Nothing else Just (wallet, kind, amount, assisted)
   case traverse parseFlow (flowRows :: [(Text, Text, Text, Text, Text, Int64, Bool)]) of

@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
 
--- Sepolia testnet mock USDC faucet claims
+-- Sepolia testnet MockUSDG faucet claims
 CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     address VARCHAR(42) NOT NULL,
     amount BIGINT NOT NULL,
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
 CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
 
 -- Release-scoped, reorg-replayed history used to prove competition funding.
-CREATE TABLE IF NOT EXISTS perps_usdc_transfers (
+CREATE TABLE IF NOT EXISTS perps_asset_transfers (
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
     token_address TEXT NOT NULL,
@@ -153,18 +153,18 @@ CREATE TABLE IF NOT EXISTS perps_usdc_transfers (
     timestamp BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (chain_id, release_router, tx_hash, log_index),
-    CONSTRAINT perps_usdc_transfers_canonical_values
+    CONSTRAINT perps_asset_transfers_canonical_values
         CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0),
-    CONSTRAINT perps_usdc_transfers_canonical_addresses
+    CONSTRAINT perps_asset_transfers_canonical_addresses
         CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$'
             AND from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'),
-    CONSTRAINT perps_usdc_transfers_canonical_hashes
+    CONSTRAINT perps_asset_transfers_canonical_hashes
         CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
 );
-CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_inbound
-    ON perps_usdc_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index);
-CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_outbound
-    ON perps_usdc_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index);
+CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_inbound
+    ON perps_asset_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index);
+CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_outbound
+    ON perps_asset_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index);
 
 CREATE TABLE IF NOT EXISTS perps_indexer_state (
     indexer_name TEXT NOT NULL,
@@ -1427,7 +1427,7 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     name TEXT NOT NULL,
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
-    usdc_address TEXT NOT NULL,
+    settlement_token_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
     account_lens_address TEXT NOT NULL,
     release_manifest TEXT NOT NULL,
@@ -1449,17 +1449,17 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     start_snapshot_block_hash TEXT,
     score_cutoff_block BIGINT,
     score_cutoff_block_hash TEXT,
-    starting_balance_usdc NUMERIC(78,0) NOT NULL,
+    starting_balance_assets NUMERIC(78,0) NOT NULL,
     minimum_profit_bps BIGINT NOT NULL,
     minimum_active_days INTEGER NOT NULL,
     fx_session_boundary_utc_minutes INTEGER NOT NULL DEFAULT 1320,
     scoring_version TEXT NOT NULL,
     rules_version TEXT NOT NULL,
-    first_prize_usdc NUMERIC(78,0) NOT NULL,
-    second_prize_usdc NUMERIC(78,0) NOT NULL,
-    third_prize_usdc NUMERIC(78,0) NOT NULL,
-    fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
-    fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
+    first_prize_assets NUMERIC(78,0) NOT NULL,
+    second_prize_assets NUMERIC(78,0) NOT NULL,
+    third_prize_assets NUMERIC(78,0) NOT NULL,
+    fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,
+    fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0,
     finalized BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1483,9 +1483,9 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
 );
 
 ALTER TABLE insights_competitions
-    ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS fourth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0;
 ALTER TABLE insights_competitions
-    ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS fifth_prize_assets NUMERIC(78,0) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS insights_competition_participants (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
@@ -1534,9 +1534,9 @@ CREATE TABLE IF NOT EXISTS insights_account_snapshots (
     block_hash TEXT NOT NULL,
     timestamp BIGINT NOT NULL,
     has_open_position BOOLEAN NOT NULL,
-    signed_net_equity_usdc NUMERIC(78,0) NOT NULL,
-    terminal_reachable_usdc NUMERIC(78,0) NOT NULL,
-    trader_claims_usdc NUMERIC(78,0) NOT NULL,
+    signed_net_equity_assets NUMERIC(78,0) NOT NULL,
+    terminal_reachable_assets NUMERIC(78,0) NOT NULL,
+    trader_claims_assets NUMERIC(78,0) NOT NULL,
     raw_data JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1573,7 +1573,7 @@ CREATE TABLE IF NOT EXISTS insights_manual_adjustments (
     id BIGSERIAL PRIMARY KEY,
     competition_slug TEXT NOT NULL,
     wallet VARCHAR(42) NOT NULL,
-    amount_usdc NUMERIC(78,0) NOT NULL,
+    amount_assets NUMERIC(78,0) NOT NULL,
     reason TEXT NOT NULL,
     created_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1619,27 +1619,27 @@ CREATE TABLE IF NOT EXISTS insights_finalized_standings (
     eligibility_status TEXT NOT NULL,
     eligibility_reason TEXT,
     funding_integrity_clear BOOLEAN NOT NULL,
-    final_pnl_usdc NUMERIC(78,0),
+    final_pnl_assets NUMERIC(78,0),
     roi_bps BIGINT,
-    starting_value_usdc NUMERIC(78,0),
-    current_value_usdc NUMERIC(78,0),
-    deposits_usdc NUMERIC(78,0) NOT NULL,
-    withdrawals_usdc NUMERIC(78,0) NOT NULL,
-    adjustment_usdc NUMERIC(78,0) NOT NULL,
+    starting_value_assets NUMERIC(78,0),
+    current_value_assets NUMERIC(78,0),
+    deposits_assets NUMERIC(78,0) NOT NULL,
+    withdrawals_assets NUMERIC(78,0) NOT NULL,
+    adjustment_assets NUMERIC(78,0) NOT NULL,
     active_days INTEGER NOT NULL,
-    volume_usdc NUMERIC(78,0) NOT NULL,
+    volume_assets NUMERIC(78,0) NOT NULL,
     executed_trades BIGINT NOT NULL,
     liquidations BIGINT NOT NULL,
-    realized_pnl_usdc NUMERIC(78,0) NOT NULL,
+    realized_pnl_assets NUMERIC(78,0) NOT NULL,
     block_number BIGINT,
     timestamp BIGINT,
     has_open_position BOOLEAN,
     snapshot_kind TEXT,
     position_side TEXT,
     position_size_delta TEXT,
-    position_margin_usdc TEXT,
+    position_margin_assets TEXT,
     position_entry_price TEXT,
-    position_unrealized_pnl_usdc TEXT,
+    position_unrealized_pnl_assets TEXT,
     position_liquidatable BOOLEAN,
     materialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (competition_slug, wallet)
@@ -2985,7 +2985,7 @@ CREATE TABLE IF NOT EXISTS aa_close_assistance (
     chain_id BIGINT NOT NULL DEFAULT 421614 CHECK (chain_id = 421614),
     router VARCHAR(42) NOT NULL, account VARCHAR(42) NOT NULL, client_order_id VARCHAR(66) NOT NULL,
     request_hash VARCHAR(66) NOT NULL, lens VARCHAR(42) NOT NULL,
-    amount_usdc BIGINT NOT NULL CHECK (amount_usdc BETWEEN 1 AND 200000),
+    amount_assets BIGINT NOT NULL CHECK (amount_assets BETWEEN 1 AND 200000),
     verified BOOLEAN NOT NULL DEFAULT FALSE,
     transaction_hash VARCHAR(66), block_number BIGINT, block_hash VARCHAR(66), deposit_log_index BIGINT, order_id BIGINT,
     CHECK (NOT verified OR (transaction_hash IS NOT NULL AND block_number IS NOT NULL
@@ -3049,14 +3049,14 @@ ALTER TABLE insights_competitions
 CREATE OR REPLACE FUNCTION insights_integrity_metadata_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF ROW(NEW.chain_id, NEW.release_router, NEW.release_manifest, NEW.account_lens_address,
-         NEW.usdc_address, NEW.margin_clearinghouse_address, NEW.start_block, NEW.start_block_hash,
+         NEW.settlement_token_address, NEW.margin_clearinghouse_address, NEW.start_block, NEW.start_block_hash,
          NEW.start_snapshot_block_hash, NEW.score_cutoff_block, NEW.score_cutoff_block_hash,
-         NEW.start_timestamp, NEW.score_cutoff_timestamp, NEW.starting_balance_usdc, NEW.registration_close_timestamp)
+         NEW.start_timestamp, NEW.score_cutoff_timestamp, NEW.starting_balance_assets, NEW.registration_close_timestamp)
      IS DISTINCT FROM
      ROW(OLD.chain_id, OLD.release_router, OLD.release_manifest, OLD.account_lens_address,
-         OLD.usdc_address, OLD.margin_clearinghouse_address, OLD.start_block, OLD.start_block_hash,
+         OLD.settlement_token_address, OLD.margin_clearinghouse_address, OLD.start_block, OLD.start_block_hash,
          OLD.start_snapshot_block_hash, OLD.score_cutoff_block, OLD.score_cutoff_block_hash,
-         OLD.start_timestamp, OLD.score_cutoff_timestamp, OLD.starting_balance_usdc, OLD.registration_close_timestamp) THEN
+         OLD.start_timestamp, OLD.score_cutoff_timestamp, OLD.starting_balance_assets, OLD.registration_close_timestamp) THEN
     NEW.integrity_input_epoch := OLD.integrity_input_epoch + 1;
   END IF;
   RETURN NEW;
@@ -3116,8 +3116,8 @@ END $$;
 DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_account_activity;
 CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_account_activity
 REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
-DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_usdc_transfers;
-CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_usdc_transfers
+DROP TRIGGER IF EXISTS insights_integrity_history_epoch ON perps_asset_transfers;
+CREATE TRIGGER insights_integrity_history_epoch AFTER DELETE ON perps_asset_transfers
 REFERENCING OLD TABLE AS removed_history FOR EACH STATEMENT EXECUTE FUNCTION insights_integrity_history_epoch();
 
 CREATE OR REPLACE FUNCTION insights_integrity_cursor_epoch() RETURNS trigger LANGUAGE plpgsql AS $$

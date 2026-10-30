@@ -6,8 +6,8 @@ const pool = {
   markPrice: 100_000_000n,
   longOpenInterest: 600n * 10n ** 18n,
   shortOpenInterest: 400n * 10n ** 18n,
-  juniorPrincipalUsdc: 200n * 10n ** 6n,
-  seniorPrincipalUsdc: 800n * 10n ** 6n,
+  juniorPrincipalAssets: 200n * 10n ** 6n,
+  seniorPrincipalAssets: 800n * 10n ** 6n,
 }
 
 describe('JuniorMarketExposure price availability', () => {

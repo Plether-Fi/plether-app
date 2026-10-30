@@ -1,45 +1,49 @@
-import { formatUnits, parseAbi, parseUnits, type Address } from 'viem'
+import { formatUnits, maxUint256, parseAbi, parseUnits, type Address } from 'viem'
 import type { PositionProtectionParams } from '@plether-fi/perps-aa-client'
 import type { LiquidationThreshold } from '../utils/perpsRisk'
 import type { PerpsDirection } from '../utils/perps'
 
 export type { PositionProtectionParams }
 export interface ProtectionDraft { mode: 'price' | 'percent'; takeProfit: string; stopLoss: string; takeProfitMode?: 'price' | 'percent'; stopLossMode?: 'price' | 'percent' }
+/** Explicitly retains the web ticket's relaxed financial bounds for protected closes. */
+export function relaxedProtectionCloseLimits(): PositionProtectionParams['closeLimits'] {
+  return { maxExecutionNotionalAssets: maxUint256, maxGrossAccountDebitAssets: maxUint256, maxActionChargeAssets: maxUint256, maxExplicitFeesAssets: maxUint256 }
+}
 export const EMPTY_PROTECTION_DRAFT: ProtectionDraft = { mode: 'price', takeProfit: '', stopLoss: '' }
 export interface ProtectionPositionBasis {
   /** Raw basket entry price (8 decimals), quantity (18), and position margin (6). */
   entryPrice: bigint
   size: bigint
-  marginUsdc: bigint
+  marginAssets: bigint
 }
 
 export function hasProtectionPositionBasis(position?: ProtectionPositionBasis): position is ProtectionPositionBasis {
-  return position !== undefined && position.entryPrice > 0n && position.size > 0n && position.marginUsdc > 0n
+  return position !== undefined && position.entryPrice > 0n && position.size > 0n && position.marginAssets > 0n
 }
 
 /** Signed gross return on position margin, in percentage units with 4 decimals. */
 export function protectionReturnPercent(rawPrice: bigint, direction: PerpsDirection, position?: ProtectionPositionBasis): bigint | undefined {
   if (!hasProtectionPositionBasis(position)) return undefined
   const change = direction === 'long' ? position.entryPrice - rawPrice : rawPrice - position.entryPrice
-  return change * position.size * 1_000_000n / (position.marginUsdc * 10n ** 20n)
+  return change * position.size * 1_000_000n / (position.marginAssets * 10n ** 20n)
 }
 export const PROTECTION_STATUS = ['None', 'PendingOpen', 'Armed', 'Triggered', 'Executed', 'Failed', 'Cancelled', 'Liquidated', 'Latched'] as const
 export const PROTECTION_LEG = ['None', 'TakeProfit', 'StopLoss'] as const
 export const PROTECTION_CONFIG_ABI = parseAbi([
-  'function positionProtectionTriggerBountyUsdc() view returns (uint256)',
-  'function closeOrderExecutionBountyUsdc() view returns (uint256)',
+  'function positionProtectionTriggerBountyAssets() view returns (uint256)',
 ])
 export const PROTECTION_RELEASE_ENABLED = import.meta.env.VITE_PERPS_POSITION_PROTECTION_ENABLED === 'true'
 
-export interface PositionProtection extends PositionProtectionParams {
+export interface PositionProtection {
+  takeProfitTriggerPrice: bigint
+  stopLossTriggerPrice: bigint
   protectionId: bigint
   parentOrderId: bigint
   linkedOrderId: bigint
   account: Address
   side: number
   size: bigint
-  triggerBountyUsdc: bigint
-  executionBountyUsdc: bigint
+  triggerBountyAssets: bigint
   armedAt: bigint
   armedBlock: bigint
   triggerMarkPrice: bigint
@@ -49,15 +53,17 @@ export interface PositionProtection extends PositionProtectionParams {
 }
 
 export interface PersistedProtectionIntent {
-  version: 1
+  version: 2
   book: Address
   protectionId?: string
   takeProfitTriggerPrice: string
   stopLossTriggerPrice: string
+  closeLimits: { maxExecutionNotionalAssets: string; maxGrossAccountDebitAssets: string; maxActionChargeAssets: string; maxExplicitFeesAssets: string }
 }
 
 export function persistProtectionIntent(book: Address, params: PositionProtectionParams, protectionId?: bigint): PersistedProtectionIntent {
-  return { version: 1, book, protectionId: protectionId?.toString(), takeProfitTriggerPrice: params.takeProfitTriggerPrice.toString(), stopLossTriggerPrice: params.stopLossTriggerPrice.toString() }
+  return { version: 2, book, protectionId: protectionId?.toString(), takeProfitTriggerPrice: params.takeProfitTriggerPrice.toString(), stopLossTriggerPrice: params.stopLossTriggerPrice.toString(),
+    closeLimits: { maxExecutionNotionalAssets: params.closeLimits.maxExecutionNotionalAssets.toString(), maxGrossAccountDebitAssets: params.closeLimits.maxGrossAccountDebitAssets.toString(), maxActionChargeAssets: params.closeLimits.maxActionChargeAssets.toString(), maxExplicitFeesAssets: params.closeLimits.maxExplicitFeesAssets.toString() } }
 }
 
 export function validateProtectionParams(params: PositionProtectionParams, direction: PerpsDirection, rawMark: bigint, cap: bigint, liquidationPrice?: bigint, liquidationThreshold?: LiquidationThreshold): void {
@@ -74,7 +80,7 @@ export function validateProtectionParams(params: PositionProtectionParams, direc
   if (sl !== 0n && liquidationThreshold?.status === 'unavailable') throw new Error('Waiting for current account risk data to validate the stop loss.')
   if (liquidationThreshold?.status === 'boundary') liquidationPrice = liquidationThreshold.price
   if (sl !== 0n && liquidationPrice !== undefined && (direction === 'long' ? sl >= liquidationPrice : sl <= liquidationPrice)) {
-    throw new Error(`Stop loss must be ${direction === 'long' ? 'above' : 'below'} the liquidation price (${formatUnits(cap - liquidationPrice, 8)} USDC). Liquidation would occur before this stop loss.`)
+    throw new Error(`Stop loss must be ${direction === 'long' ? 'above' : 'below'} the liquidation price (${formatUnits(cap - liquidationPrice, 8)}). Liquidation would occur before this stop loss.`)
   }
 }
 
@@ -99,20 +105,22 @@ export function protectionParamsFromInputs(input: {
       if (!hasProtectionPositionBasis(input.position) || input.position.entryPrice >= input.cap) {
         throw new Error('Waiting for position entry price, size and margin to calculate return percentages. You can enter a trigger price instead.')
       }
-      const priceChange = input.position.marginUsdc * amount * 10n ** 20n / (input.position.size * 1_000_000n)
+      const priceChange = input.position.marginAssets * amount * 10n ** 20n / (input.position.size * 1_000_000n)
       display = input.cap - input.position.entryPrice + (increase ? 1n : -1n) * priceChange
     }
     if (display <= 0n || display >= input.cap) throw new Error('Trigger price must be between zero and the price cap')
     return input.cap - display
   }
-  const params = { takeProfitTriggerPrice: price(input.takeProfit, 'tp'), stopLossTriggerPrice: price(input.stopLoss, 'sl') }
+  // Match the web ticket's existing relaxed economic bounds explicitly in the signed protection.
+  const params = { takeProfitTriggerPrice: price(input.takeProfit, 'tp'), stopLossTriggerPrice: price(input.stopLoss, 'sl'),
+    closeLimits: relaxedProtectionCloseLimits() }
   validateProtectionParams(params, input.direction, input.rawMark, input.cap, input.liquidationPrice, input.liquidationThreshold)
   return params
 }
 
 export function parsePositionProtection(value: unknown): PositionProtection | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const keys = ['protectionId', 'parentOrderId', 'linkedOrderId', 'account', 'side', 'size', 'takeProfitTriggerPrice', 'stopLossTriggerPrice', 'triggerBountyUsdc', 'executionBountyUsdc', 'armedAt', 'armedBlock', 'triggerMarkPrice', 'triggerPublishTime', 'triggeredLeg', 'status'] as const
+  const keys = ['protectionId', 'parentOrderId', 'linkedOrderId', 'account', 'side', 'size', 'takeProfitTriggerPrice', 'stopLossTriggerPrice', 'triggerBountyAssets', 'armedAt', 'armedBlock', 'triggerMarkPrice', 'triggerPublishTime', 'triggeredLeg', 'status'] as const
   const record = Object.fromEntries(keys.map((key, index) => [key, Array.isArray(value) ? value[index] : (value as Record<string, unknown>)[key]]))
   if (typeof record.protectionId !== 'bigint' || record.protectionId === 0n) return undefined
   return record as unknown as PositionProtection

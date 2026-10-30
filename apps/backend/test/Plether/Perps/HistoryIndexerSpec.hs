@@ -32,7 +32,7 @@ import Plether.Perps.HistoryIndexer
   , indexerIterationDelayMicros
   , orderFailReasonName
   , parsePerpsLog
-  , parseUsdcTransfer
+  , parseAssetTransfer
   , perpsContractAddressesFor
   , terminalStatus
   , transferTopic
@@ -53,7 +53,7 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "settlement receipt enrichment" $ do
-    it "verifies the V3 waived-fee close and its internal treasury credit" $ do
+    it "verifies current waived-charge amounts without attributing unbound treasury credits" $ do
       receipt <- fixtureReceipt "waiver"
       let result = decodeFixtureReceipt receipt
       case result of
@@ -61,26 +61,26 @@ spec = do
           map fst identities `shouldBe` [1551]
           oid `shouldBe` 1551
           kind `shouldBe` "ActionChargeSettled"
-          KeyMap.lookup "waivedUsdc" payload `shouldBe` Just (String "882780318")
-          KeyMap.lookup "protocolFeeCollectedUsdc" payload `shouldBe` Just (String "222311115")
+          KeyMap.lookup "waivedAssets" payload `shouldBe` Just (String "882780318")
+          KeyMap.lookup "protocolFeeCollectedAssets" payload `shouldBe` Nothing
         other -> expectationFailure $ show other
     it "verifies the gross rebate was reduced before payment" $ do
       receipt <- fixtureReceipt "rebate"
       case decodeFixtureReceipt receipt of
         Right (_, [(_, kind, _, _, Object payload)]) -> do
           kind `shouldBe` "ActionRebateSettled"
-          KeyMap.lookup "recoveredUsdc" payload `shouldBe` Just (String "889031888")
-          KeyMap.lookup "waivedUsdc" payload `shouldBe` Just (String "0")
+          KeyMap.lookup "recoveredAssets" payload `shouldBe` Just (String "889031888")
+          KeyMap.lookup "waivedAssets" payload `shouldBe` Just (String "0")
         other -> expectationFailure $ show other
     it "rejects a receipt from a different canonical block" $ do
       receipt <- fixtureReceipt "waiver"
-      decodeSettlementReceipt defaultPerpsAddresses (receiptText "transactionHash" receipt) 309072000
+      decodeSettlementReceipt fixtureAddresses (receiptText "transactionHash" receipt) 309072000
         ("0x" <> Text.replicate 64 "0") receipt `shouldSatisfy` isLeftResult
     it "rejects malformed settlement logs and duplicate log identities" $ do
       receipt <- fixtureReceipt "waiver"
       let mapLogs f (Object r) = Object $ adjustKey (\case Array logs -> Array $ fmap f logs; v -> v) "logs" r
           mapLogs _ v = v
-          corrupt (Object e) | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar defaultPerpsAddresses) =
+          corrupt (Object e) | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar fixtureAddresses) =
             Object $ KeyMap.insert "data" (String "0x00") e
           corrupt v = v
           duplicate (Object e) = Object $ KeyMap.insert "logIndex" (String "0x1") e
@@ -91,7 +91,7 @@ spec = do
       receipt <- fixtureReceipt "waiver"
       let corrupt (Object r) = Object $ adjustKey (\case
             Array logs -> Array $ fmap (\case
-              Object e | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar defaultPerpsAddresses) ->
+              Object e | KeyMap.lookup "address" e == Just (String $ paCfdEngineSettlementSidecar fixtureAddresses) ->
                 Object $ adjustKey (\case
                   Array topics -> toJSON $ zipWith (\i value -> if i == (1 :: Int) then String ("0x" <> Text.replicate 64 "0") else value) [0..] (toList topics)
                   value -> value) "topics" e
@@ -205,21 +205,23 @@ spec = do
         `shouldBe` Left "Replay log field is not canonical hex bytes: transaction input"
 
     it "requires exact replay trade-cost preview result lengths" $ do
-      decodeReplayTradeCosts "Open" (BS.replicate (10 * 32) 0)
+      decodeReplayTradeCosts "Open" (BS.replicate (24 * 32) 0)
         `shouldBe` Right (TradeCosts 0 0)
-      decodeReplayTradeCosts "Open" (BS.replicate (10 * 32 + 32) 0)
-        `shouldBe` Left "Replay open preview result must contain exactly 10 ABI words"
-      decodeReplayTradeCosts "Close" (BS.replicate (8 * 32 - 1) 0)
-        `shouldBe` Left "Replay close preview result must contain exactly 8 ABI words"
+      decodeReplayTradeCosts "Open" (BS.replicate (10 * 32) 0)
+        `shouldBe` Left "Replay open preview result must contain exactly 24 ABI words"
+      decodeReplayTradeCosts "Close" (BS.replicate (26 * 32) 0)
+        `shouldBe` Right (TradeCosts 0 0)
+      decodeReplayTradeCosts "Close" (BS.replicate (8 * 32) 0)
+        `shouldBe` Left "Replay close preview result must contain exactly 26 ABI words"
 
-    it "encodes the exact six Open preview arguments in canonical positions" $ do
+    it "encodes the exact five Open preview arguments in canonical positions" $ do
       let parsed =
             ParsedPositionActivity
               "Open" testAccount 1 (Just 101) (Just 202) (Just 303) Nothing (object [])
       case replayPreviewCallData parsed of
         Nothing -> expectationFailure "expected Open preview calldata"
         Just encoded -> do
-          BS.length encoded `shouldBe` 4 + 6 * 32
+          BS.length encoded `shouldBe` 4 + 5 * 32
           BS.drop 4 encoded
             `shouldBe` BS.concat
               [ addressWord testAccount
@@ -227,7 +229,6 @@ spec = do
               , word 202
               , word 303
               , word 101
-              , word 0
               ]
 
   describe "canCertifyIndexedRange" $ do
@@ -321,8 +322,12 @@ spec = do
               else if index == 14 then word 101_250_000
               else if index == 19 then word 200_000
               else if index == 25 then word 4
+              else if index == 67 then word 1700000300
+              else if index == 68 then word 60
+              else if index == 69 then word 1700000200
+              else if index == 70 then word 1700000260
               else word 0
-            | index <- [0 :: Int .. 72]
+            | index <- [0 :: Int .. 70]
             ]
       parsePerpsLog
         (mkLog intentRegisteredTopic [word 42, addressTopic, clientOrderId] intentData)
@@ -338,8 +343,11 @@ spec = do
             account == testAccount
               && clientId == clientOrderIdText
               && receiptHash == "0x" <> Text.replicate 32 "aa"
-              && textField "executionBountyUsdc" economics == Just "200000"
-              && textField "executionBountyUsdc" payload == Just "200000"
+              && textField "executionBountyAssets" economics == Just "200000"
+              && textField "executionBountyAssets" payload == Just "200000"
+              && textField "submitBy" payload == Just "1700000300"
+              && textField "commitTimestamp" payload == Just "1700000200"
+              && textField "executionDeadline" payload == Just "1700000260"
           _ -> False
 
     it "parses position lifecycle activity" $ do
@@ -376,7 +384,7 @@ spec = do
                   [ "account" .= testAccount
                   , "asset" .= testAsset
                   , "contractAddress" .= testEmitter
-                  , "amountUsdc" .= ("100000000" :: Text)
+                  , "amountAssets" .= ("100000000" :: Text)
                   ]
           _ -> False
 
@@ -387,16 +395,16 @@ spec = do
 
     it "parses only the exact canonical ERC-20 Transfer ABI" $ do
       let valid = mkLog transferTopic [word 0, addressTopic] (word 100_000_000)
-      parseUsdcTransfer valid
+      parseAssetTransfer valid
         `shouldBeParsedAs` \case
-          ParsedUsdcTransfer fromAddress toAddress 100_000_000 _ ->
+          ParsedAssetTransfer fromAddress toAddress 100_000_000 _ ->
             fromAddress == "0x0000000000000000000000000000000000000000"
               && toAddress == testAccount
           _ -> False
-      parseUsdcTransfer valid {rlTopics = rlTopics valid <> [word 1]} `shouldBe` Nothing
-      parseUsdcTransfer valid {rlTopics = [transferTopic, BS.tail (word 0), addressTopic]} `shouldBe` Nothing
-      parseUsdcTransfer valid {rlData = BS.take 31 $ rlData valid} `shouldBe` Nothing
-      parseUsdcTransfer valid {rlData = rlData valid <> BS.singleton 0} `shouldBe` Nothing
+      parseAssetTransfer valid {rlTopics = rlTopics valid <> [word 1]} `shouldBe` Nothing
+      parseAssetTransfer valid {rlTopics = [transferTopic, BS.tail (word 0), addressTopic]} `shouldBe` Nothing
+      parseAssetTransfer valid {rlData = BS.take 31 $ rlData valid} `shouldBe` Nothing
+      parseAssetTransfer valid {rlData = rlData valid <> BS.singleton 0} `shouldBe` Nothing
 
   describe "orderFailReasonName" $ do
     it "matches deployed OrderFailReason ordinals" $ do
@@ -572,8 +580,7 @@ intentRegisteredTopic = keccak256Text
   "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 
 orderFinalizedTopic :: ByteString
-orderFinalizedTopic = keccak256Text
-  "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
+orderFinalizedTopic = either error id $ B16.decode "bc222cbec31354fa718658f6ac96c4f666d34aaf42c0ba8b824d285081930b9f"
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"
@@ -593,9 +600,20 @@ depositTopic = keccak256Text "Deposit(address,address,uint256)"
 withdrawTopic :: ByteString
 withdrawTopic = keccak256Text "Withdraw(address,address,uint256)"
 
+-- Test-only identities; never used as release pins or runtime defaults.
+fixtureAddresses :: PerpsAddresses
+fixtureAddresses = defaultPerpsAddresses
+  { paSettlementToken = "0x1111111111111111111111111111111111111111"
+  , paOrderRouter = "0x2222222222222222222222222222222222222222"
+  , paCfdEngine = "0x3333333333333333333333333333333333333333"
+  , paCfdEngineSettlementSidecar = "0x4444444444444444444444444444444444444444"
+  , paMarginClearinghouse = "0x5555555555555555555555555555555555555555"
+  , paOrderLifecycleBook = Just "0x6666666666666666666666666666666666666666"
+  }
+
 fixtureReceipt :: String -> IO Value
 fixtureReceipt name = do
-  decoded <- eitherDecodeFileStrict' ("../../scripts/fixtures/v3-insights-close-" <> name <> ".json")
+  decoded <- eitherDecodeFileStrict' ("test/fixtures/token-neutral-close-" <> name <> ".json")
   case decoded of
     Right (Object fixture) | Just receipt <- KeyMap.lookup "receipt" fixture -> pure receipt
     other -> fail $ "Invalid receipt fixture: " <> show other
@@ -607,7 +625,7 @@ receiptText key (Object value) = case KeyMap.lookup key value of
 receiptText _ _ = ""
 
 decodeFixtureReceipt :: Value -> Either Text ([(Integer, Text)], [(RpcLog, Text, Text, Integer, Value)])
-decodeFixtureReceipt receipt = decodeSettlementReceipt defaultPerpsAddresses
+decodeFixtureReceipt receipt = decodeSettlementReceipt fixtureAddresses
   (receiptText "transactionHash" receipt)
   (if receiptText "transactionHash" receipt == "0xa583ee512122717defccf27f420f17ac10e1e887777132b67f31d5edbaac8bbd" then 309072000 else 309002622)
   (receiptText "blockHash" receipt) receipt

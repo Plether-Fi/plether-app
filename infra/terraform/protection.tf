@@ -80,7 +80,7 @@ resource "aws_ecs_task_definition" "protection_worker" {
       { name = "PROTECTION_WORKER_PRIVATE_KEY", valueFrom = aws_ssm_parameter.protection_worker_private_key[0].arn }
     ] : [])
     environment = [
-      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/arbitrum-sepolia-v3.json" },
+      { name = "PERPS_RELEASE_MANIFEST", value = "/app/config/perps/mock-usdg-prepared.json" },
       { name = "PROTECTION_WORKER_EXECUTION_ENABLED", value = tostring(var.protection_worker_execution_enabled) },
       { name = "PROTECTION_WORKER_CONFIRMATIONS", value = "12" },
       { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },

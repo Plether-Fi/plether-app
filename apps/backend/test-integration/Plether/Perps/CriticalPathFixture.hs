@@ -117,11 +117,11 @@ data EvidenceFixture = EvidenceFixture
   { efExecutionPrice :: Integer
   , efOraclePrice :: Integer
   , efOraclePublishTime :: Integer
-  , efVpiUsdc :: Integer
-  , efFrozenCloseSpreadUsdc :: Integer
+  , efVpiAssets :: Integer
+  , efFrozenCloseSpreadAssets :: Integer
   , efOracleFrozen :: Bool
-  , efActivityVpiUsdc :: Integer
-  , efActivityExecutionFeeUsdc :: Integer
+  , efActivityVpiAssets :: Integer
+  , efActivityExecutionFeeAssets :: Integer
   }
   deriving (Show, Eq)
 
@@ -310,7 +310,7 @@ dispatchRpc debugTraceCountRef unexpectedRef state methodName params =
           checkedParams
             unexpectedRef
             methodName
-            expectedUsdcTransferLogsParams
+            expectedAssetTransferLogsParams
             params
             (Aeson.toJSON ([] :: [Value]))
     "eth_getBlockByNumber" ->
@@ -490,7 +490,7 @@ intentRegisteredData =
 
 orderFinalizedData :: BranchFixture -> EvidenceFixture -> BS.ByteString
 orderFinalizedData branch evidence =
-  mconcat $ map eventWord [0 :: Int .. 72]
+  mconcat $ map eventWord [0 :: Int .. 70]
  where
   eventWord index
     | index == 0 = encodeUint256 $ bfReceiptHashWord branch
@@ -502,9 +502,9 @@ orderFinalizedData branch evidence =
     | index == 14 = encodeUint256 $ efExecutionPrice evidence
     | index == 29 = encodeUint256 100_000_000
     | index == 30 = encodeInt256 (-75_000_000)
-    | index == 31 = encodeInt256 $ efVpiUsdc evidence
-    | index == 33 = encodeUint256 $ efActivityExecutionFeeUsdc evidence
-    | index == 34 = encodeUint256 $ efFrozenCloseSpreadUsdc evidence
+    | index == 31 = encodeInt256 $ efVpiAssets evidence
+    | index == 33 = encodeUint256 $ efActivityExecutionFeeAssets evidence
+    | index == 34 = encodeUint256 $ efFrozenCloseSpreadAssets evidence
     | otherwise = encodeUint256 0
 
 rpcLog
@@ -652,10 +652,10 @@ settlementCalldata evidence =
     <> mconcat
       ( replaceAt
           11
-          (encodeUint256 $ efFrozenCloseSpreadUsdc evidence)
+          (encodeUint256 $ efFrozenCloseSpreadAssets evidence)
           ( replaceAt
               9
-              (encodeInt256 $ efVpiUsdc evidence)
+              (encodeInt256 $ efVpiAssets evidence)
               ( replaceAt
                   2
                   (encodeUint256 0)
@@ -677,10 +677,10 @@ closePreviewResult evidence =
   mconcat $
     replaceAt
       7
-      (encodeUint256 $ efActivityExecutionFeeUsdc evidence)
+      (encodeUint256 $ efActivityExecutionFeeAssets evidence)
       ( replaceAt
           5
-          (encodeInt256 $ efActivityVpiUsdc evidence)
+          (encodeInt256 $ efActivityVpiAssets evidence)
           (replicate 8 $ encodeUint256 0)
       )
 
@@ -716,11 +716,11 @@ expectedLogsParams =
         ]
     ]
 
-expectedUsdcTransferLogsParams :: Value
-expectedUsdcTransferLogsParams =
+expectedAssetTransferLogsParams :: Value
+expectedAssetTransferLogsParams =
   Aeson.toJSON
     [ object
-        [ "address" .= [testUsdc]
+        [ "address" .= [testAssets]
         , "topics" .= [[String $ hexText transferTopic]]
         , "fromBlock" .= ("0x64" :: Text)
         , "toBlock" .= ("0x65" :: Text)
@@ -839,7 +839,7 @@ branchB =
 testAddresses :: PerpsAddresses
 testAddresses =
   PerpsAddresses
-    { paUsdc = testUsdc
+    { paSettlementToken = testAssets
     , paOrderRouter = testRouter
     , paOrderLifecycleBook = Just testLifecycleBook
     , paCfdEngine = testEngine
@@ -853,9 +853,9 @@ testChainId, testOrderId :: Integer
 testChainId = 987_654_321
 testOrderId = 42
 
-testAccount, testUsdc, testRouter, testLifecycleBook, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
+testAccount, testAssets, testRouter, testLifecycleBook, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
 testAccount = fixedAddress 0xa1
-testUsdc = fixedAddress 0xa2
+testAssets = fixedAddress 0xa2
 testRouter = fixedAddress 0xb1
 testLifecycleBook = fixedAddress 0xb7
 testEngine = fixedAddress 0xb2
@@ -901,28 +901,28 @@ evidenceA =
     { efExecutionPrice = 98_391_251
     , efOraclePrice = 98_391_482
     , efOraclePublishTime = 1_785_437_834
-    , efVpiUsdc = 182_822_887
-    , efFrozenCloseSpreadUsdc = 0
+    , efVpiAssets = 182_822_887
+    , efFrozenCloseSpreadAssets = 0
     , efOracleFrozen = False
-    , efActivityVpiUsdc = -444_000_000
-    , efActivityExecutionFeeUsdc = 1_748_645_480
+    , efActivityVpiAssets = -444_000_000
+    , efActivityExecutionFeeAssets = 1_748_645_480
     }
 evidenceB =
   EvidenceFixture
     { efExecutionPrice = 98_400_000
     , efOraclePrice = 98_399_000
     , efOraclePublishTime = 1_785_437_934
-    , efVpiUsdc = -123_456_789
-    , efFrozenCloseSpreadUsdc = 3_940_366
+    , efVpiAssets = -123_456_789
+    , efFrozenCloseSpreadAssets = 3_940_366
     , efOracleFrozen = True
-    , efActivityVpiUsdc = 777_000_000
-    , efActivityExecutionFeeUsdc = 1_900_000_000
+    , efActivityVpiAssets = 777_000_000
+    , efActivityExecutionFeeAssets = 1_900_000_000
     }
 conflictingEvidence =
   evidenceA
     { efOraclePrice = 77_777_777
-    , efVpiUsdc = 9_999_999_999
-    , efFrozenCloseSpreadUsdc = 8_888_888
+    , efVpiAssets = 9_999_999_999
+    , efFrozenCloseSpreadAssets = 8_888_888
     , efOracleFrozen = True
     }
 
@@ -941,7 +941,7 @@ intentRegisteredTopic =
     "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint32,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)),(uint64,uint32,uint64,uint64))"
 orderFinalizedTopic =
   hexText $ keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint8),(uint64,uint32,uint64,uint64)))"
 positionClosedTopic =
   hexText $ keccak256Text "PositionClosed(address,uint8,uint256,uint256,int256)"
 

@@ -1,7 +1,7 @@
 import { concatHex, numberToHex, type Address, type Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import type { SponsoredOperation } from '../operationStore'
-import deployedManifest from '../../../public/perps-aa-manifest.json'
+import deployedManifest from '../../contracts/__tests__/fixtures/perps-canonical-aa.json'
 import type { PerpsAaDeploymentManifestV2 } from '../manifest'
 import {
   createSponsorshipAuthority,

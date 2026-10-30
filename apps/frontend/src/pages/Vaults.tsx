@@ -17,6 +17,7 @@ import {
   type VaultHistoryTranche,
 } from '../api'
 import { VaultAssetChart } from '../components/VaultAssetChart'
+import { PerpsDeploymentPending } from '../components/PerpsDeploymentPending'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { JuniorMarketExposure } from '../components/JuniorMarketExposure'
@@ -32,6 +33,8 @@ import {
   TRANCHE_VAULT_READ_ABI,
 } from '../contracts/abis'
 import {
+  PERPS_SETTLEMENT_TOKEN_LABEL,
+  PERPS_RELEASE_IS_DEPLOYED,
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
@@ -42,7 +45,7 @@ import {
   decodeTrancheQueueView,
   decodeTrancheView,
 } from '../contracts/vaultViewAdapters'
-import { PERPS_POSITION_SIZE_TO_USDC_SCALE } from '../contracts/perpsConstants'
+import { PERPS_POSITION_SIZE_TO_ASSETS_SCALE } from '../contracts/perpsConstants'
 import {
   useSwitchToArbitrumSepolia,
   useVaultActivity,
@@ -176,7 +179,7 @@ const SENIOR_SHARE_VALUE_FACTORS: {
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
-      label: 'Oracle, contract, or stablecoin losses after Junior is exhausted',
+      label: 'Oracle, contract, or USDG losses after Junior is exhausted',
       tooltip: 'A failure affects Senior share value only when it causes a recognized pool loss that remains after Junior has been exhausted.',
       docsLink: DOCS_LINKS.lpRisks,
     },
@@ -190,7 +193,7 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
   increase: [
     {
       label: 'Collectible marked and collected trader losses',
-      tooltip: 'A collateral-capped collectible marked loss can increase accounting value before collection. Once collected, it also adds physical USDC to the pool.',
+      tooltip: `A collateral-capped collectible marked loss can increase accounting value before collection. Once collected, it also adds physical ${PERPS_SETTLEMENT_TOKEN_LABEL} to the pool.`,
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
@@ -242,11 +245,11 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
     },
     {
       label: 'Annual maintenance fee dilution',
-      tooltip: 'The fee is paid by adding fee shares to effective Junior supply. This dilutes each existing holder without transferring USDC out of Junior principal.',
+      tooltip: `The fee is paid by adding fee shares to effective Junior supply. This dilutes each existing holder without transferring ${PERPS_SETTLEMENT_TOKEN_LABEL} out of Junior principal.`,
       docsLink: DOCS_LINKS.lpReturns,
     },
     {
-      label: 'Oracle, contract, or stablecoin losses',
+      label: 'Oracle, contract, or USDG losses',
       tooltip: 'These failures reduce share value only when they cause a recognized loss. As the first-loss tranche, Junior absorbs that loss before Senior.',
       docsLink: DOCS_LINKS.lpRisks,
     },
@@ -274,32 +277,32 @@ const VAULT_GOVERNANCE_TIMELOCKS = [
 interface PoolSnapshot {
   longOpenInterest?: bigint
   shortOpenInterest?: bigint
-  totalAssetsUsdc?: bigint
-  freeUsdc?: bigint
-  withdrawalReservedUsdc?: bigint
-  pendingRecapitalizationUsdc?: bigint
-  pendingTradingRevenueUsdc?: bigint
-  seniorPrincipalUsdc?: bigint
-  juniorPrincipalUsdc?: bigint
-  seniorHighWaterMarkUsdc?: bigint
-  currentTerminalDeficitUsdc?: bigint
+  totalAssets?: bigint
+  freeAssets?: bigint
+  withdrawalReservedAssets?: bigint
+  pendingRecapitalizationAssets?: bigint
+  pendingTradingRevenueAssets?: bigint
+  seniorPrincipalAssets?: bigint
+  juniorPrincipalAssets?: bigint
+  seniorHighWaterMarkAssets?: bigint
+  currentTerminalDeficitAssets?: bigint
   markFresh?: boolean
   oracleFrozen?: boolean
   degradedMode?: boolean
   seniorImpaired?: boolean
-  seniorImpairmentGapUsdc?: bigint
-  seniorPoolWithdrawCapUsdc?: bigint
-  juniorPoolWithdrawCapUsdc?: bigint
-  maxSeniorExposureUsdc?: bigint
+  seniorImpairmentGapAssets?: bigint
+  seniorPoolWithdrawCapAssets?: bigint
+  juniorPoolWithdrawCapAssets?: bigint
+  maxSeniorExposureAssets?: bigint
   maxSeniorShareBps?: bigint
   seniorRateBps?: bigint
-  seniorDepositCapacityUsdc?: bigint
-  reservedSeniorDepositAssetsUsdc?: bigint
+  seniorDepositCapacityAssets?: bigint
+  reservedSeniorDepositAssets?: bigint
   seniorReservationsWithinLimits?: boolean
-  minTrancheDepositUsdc?: bigint
+  minTrancheDepositAssets?: bigint
   markPrice?: bigint
-  longOpenCapacityUsdc?: bigint
-  shortOpenCapacityUsdc?: bigint
+  longOpenCapacityAssets?: bigint
+  shortOpenCapacityAssets?: bigint
 }
 
 interface TrancheLiveData {
@@ -325,7 +328,7 @@ interface TrancheLiveData {
   frozenLpFeeBps?: bigint
   depositEnabled?: boolean
   withdrawEnabled?: boolean
-  poolWithdrawCapUsdc?: bigint
+  poolWithdrawCapAssets?: bigint
   sharePrice?: number
   hasCoreData: boolean
   hasDepositData: boolean
@@ -335,7 +338,7 @@ interface TrancheLiveData {
 interface VaultsSnapshot {
   status: DataStatus
   pool: PoolSnapshot
-  walletUsdc?: bigint
+  walletAssets?: bigint
   hasLivePoolData: boolean
   tranches: Record<TrancheId, TrancheLiveData>
   refresh: () => void
@@ -358,9 +361,9 @@ interface VaultRequestsViewState {
   refresh: () => void
 }
 
-const USDC_DECIMALS = 6
+const ASSETS_DECIMALS = 6
 const SHARE_DECIMALS = 9
-const LENS_SHARE_PRICE_DECIMALS = 18 + USDC_DECIMALS - SHARE_DECIMALS
+const LENS_SHARE_PRICE_DECIMALS = 18 + ASSETS_DECIMALS - SHARE_DECIMALS
 const SHARE_PRICE_PROBE = 10n ** 27n
 const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60
 const VAULT_EPOCH_DURATION_SECONDS = 60 * 60
@@ -400,7 +403,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
       },
       {
         label: 'Withdrawals',
-        text: 'Senior withdrawals are funded before Junior whenever USDC is available',
+        text: `Senior withdrawals are funded before Junior whenever ${PERPS_SETTLEMENT_TOKEN_LABEL} is available`,
       },
     ],
     riskItems: [
@@ -479,37 +482,37 @@ function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
 }
 
-function openInterestNotionalUsdc(
+function openInterestNotionalAssets(
   openInterest: bigint | undefined,
   markPrice: bigint | undefined
 ): bigint | undefined {
   if (openInterest === undefined || markPrice === undefined) return undefined
-  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
+  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_ASSETS_SCALE
 }
 
-function openCapacityUsdc({
-  selectedOpenInterestUsdc,
-  oppositeOpenInterestUsdc,
-  poolAssetsUsdc,
+function openCapacityAssets({
+  selectedOpenInterestAssets,
+  oppositeOpenInterestAssets,
+  poolAssets,
   maxSkewRatio,
 }: {
-  selectedOpenInterestUsdc: bigint | undefined
-  oppositeOpenInterestUsdc: bigint | undefined
-  poolAssetsUsdc: bigint | undefined
+  selectedOpenInterestAssets: bigint | undefined
+  oppositeOpenInterestAssets: bigint | undefined
+  poolAssets: bigint | undefined
   maxSkewRatio: bigint | undefined
 }): bigint | undefined {
   if (
-    selectedOpenInterestUsdc === undefined
-    || oppositeOpenInterestUsdc === undefined
-    || poolAssetsUsdc === undefined
+    selectedOpenInterestAssets === undefined
+    || oppositeOpenInterestAssets === undefined
+    || poolAssets === undefined
     || maxSkewRatio === undefined
   ) {
     return undefined
   }
 
-  const maxSkewUsdc = (poolAssetsUsdc * maxSkewRatio) / WAD
-  return maxSkewUsdc + oppositeOpenInterestUsdc > selectedOpenInterestUsdc
-    ? maxSkewUsdc + oppositeOpenInterestUsdc - selectedOpenInterestUsdc
+  const maxSkewAssets = (poolAssets * maxSkewRatio) / WAD
+  return maxSkewAssets + oppositeOpenInterestAssets > selectedOpenInterestAssets
+    ? maxSkewAssets + oppositeOpenInterestAssets - selectedOpenInterestAssets
     : 0n
 }
 
@@ -520,14 +523,14 @@ function calculateSharePrice(
   if (totalAssets === undefined || totalSupply === undefined || totalSupply === 0n) {
     return undefined
   }
-  const assets = Number(formatUnits(totalAssets, USDC_DECIMALS))
+  const assets = Number(formatUnits(totalAssets, ASSETS_DECIMALS))
   const shares = Number(formatUnits(totalSupply, SHARE_DECIMALS))
   return shares > 0 ? assets / shares : undefined
 }
 
 function calculateConvertedSharePrice(convertedAssets: bigint | undefined): number | undefined {
   if (convertedAssets === undefined) return undefined
-  const assets = Number(formatUnits(convertedAssets, USDC_DECIMALS))
+  const assets = Number(formatUnits(convertedAssets, ASSETS_DECIMALS))
   const shares = Number(formatUnits(SHARE_PRICE_PROBE, SHARE_DECIMALS))
   return Number.isFinite(assets) && shares > 0 ? assets / shares : undefined
 }
@@ -617,21 +620,21 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [readAccount],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'allowance',
         args: [readAccount, PERPS_ARBITRUM_SEPOLIA.seniorVault],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        address: PERPS_ARBITRUM_SEPOLIA.settlementToken,
         abi: ERC20_ABI,
         functionName: 'allowance',
         args: [readAccount, PERPS_ARBITRUM_SEPOLIA.juniorVault],
@@ -724,7 +727,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.housePool,
         abi: PERPS_HOUSE_POOL_ABI,
-        functionName: 'maxSeniorExposureUsdc',
+        functionName: 'maxSeniorExposureAssets',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -742,7 +745,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.housePool,
         abi: PERPS_HOUSE_POOL_ABI,
-        functionName: 'reservedSeniorDepositAssetsUsdc',
+        functionName: 'reservedSeniorDepositAssets',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -754,7 +757,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.housePool,
         abi: PERPS_HOUSE_POOL_ABI,
-        functionName: 'minTrancheDepositUsdc',
+        functionName: 'minTrancheDepositAssets',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -807,7 +810,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const juniorUserShares = asBigInt(readResult(results, 8))
     const juniorMaxRequestDeposit = asBigInt(readResult(results, 9))
     const juniorMaxRequestRedeem = asBigInt(readResult(results, 10))
-    const walletUsdc = asBigInt(readResult(results, 11))
+    const walletAssets = asBigInt(readResult(results, 11))
     const seniorAllowance = asBigInt(readResult(results, 12))
     const juniorAllowance = asBigInt(readResult(results, 13))
     const seniorRequestWindow = readResult(results, 14)
@@ -823,32 +826,32 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const seniorQueue = decodeTrancheQueueView(readResult(results, 24))
     const juniorQueue = decodeTrancheQueueView(readResult(results, 25))
     const pendingTrancheState = decodePendingTrancheState(readResult(results, 26))
-    const maxSeniorExposureUsdc = asBigInt(readResult(results, 27))
+    const maxSeniorExposureAssets = asBigInt(readResult(results, 27))
     const maxSeniorShareBps = asBigInt(readResult(results, 28))
-    const seniorDepositCapacityUsdc = asBigInt(readResult(results, 29))
-    const reservedSeniorDepositAssetsUsdc = asBigInt(readResult(results, 30))
+    const seniorDepositCapacityAssets = asBigInt(readResult(results, 29))
+    const reservedSeniorDepositAssets = asBigInt(readResult(results, 30))
     const seniorReservationsWithinLimits = asBoolean(readResult(results, 31))
-    const minTrancheDepositUsdc = asBigInt(readResult(results, 32))
+    const minTrancheDepositAssets = asBigInt(readResult(results, 32))
     const seniorLastDepositTime = asBigInt(readResult(results, 33))
     const seniorWithdrawalCooldown = asBigInt(readResult(results, 34))
     const juniorLastDepositTime = asBigInt(readResult(results, 35))
     const juniorWithdrawalCooldown = asBigInt(readResult(results, 36))
     const seniorRateBps = asBigInt(readResult(results, 37))
-    const totalAssetsUsdc = poolView?.totalAssetsUsdc
-    const freeUsdc = poolView?.freeUsdc
-    const withdrawalReservedUsdc = poolView?.withdrawalReservedUsdc
-    const pendingRecapitalizationUsdc = poolView?.pendingRecapitalizationUsdc
-    const pendingTradingRevenueUsdc = poolView?.pendingTradingRevenueUsdc
-    const seniorPrincipalUsdc = poolView?.seniorPrincipalUsdc
-    const juniorPrincipalUsdc = poolView?.juniorPrincipalUsdc
-    const seniorHighWaterMarkUsdc = poolView?.seniorHighWaterMarkUsdc
-    const currentTerminalDeficitUsdc = poolView?.currentTerminalDeficitUsdc
+    const totalAssets = poolView?.totalAssets
+    const freeAssets = poolView?.freeAssets
+    const withdrawalReservedAssets = poolView?.withdrawalReservedAssets
+    const pendingRecapitalizationAssets = poolView?.pendingRecapitalizationAssets
+    const pendingTradingRevenueAssets = poolView?.pendingTradingRevenueAssets
+    const seniorPrincipalAssets = poolView?.seniorPrincipalAssets
+    const juniorPrincipalAssets = poolView?.juniorPrincipalAssets
+    const seniorHighWaterMarkAssets = poolView?.seniorHighWaterMarkAssets
+    const currentTerminalDeficitAssets = poolView?.currentTerminalDeficitAssets
     const markFresh = poolView?.markFresh
     const oracleFrozen = poolView?.oracleFrozen
     const degradedMode = poolView?.degradedMode
-    const seniorAssets = seniorTranche?.totalAssetsUsdc ?? directSeniorAssets
+    const seniorAssets = seniorTranche?.totalAssets ?? directSeniorAssets
     const seniorSupply = seniorTranche?.totalShares ?? directSeniorSupply
-    const juniorAssets = juniorTranche?.totalAssetsUsdc ?? directJuniorAssets
+    const juniorAssets = juniorTranche?.totalAssets ?? directJuniorAssets
     const juniorSupply = juniorTranche?.totalShares ?? directJuniorSupply
     const markPrice = protocolStatus?.lastMarkPrice
     const inferredCurrentEpoch = BigInt(Math.floor(Date.now() / 3_600_000))
@@ -862,47 +865,47 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
       ?? asBigInt(tupleValue(seniorRequestWindow, 1, 'nextRequestCutoffTime'))
     const juniorNextRequestCutoffTime = juniorQueue?.nextRequestCutoffTime
       ?? asBigInt(tupleValue(juniorRequestWindow, 1, 'nextRequestCutoffTime'))
-    const seniorPoolWithdrawCapUsdc = pendingTrancheState?.maxSeniorWithdrawUsdc
-      ?? seniorTranche?.maxWithdrawUsdc
-    const juniorPoolWithdrawCapUsdc = pendingTrancheState?.maxJuniorWithdrawUsdc
-      ?? juniorTranche?.maxWithdrawUsdc
+    const seniorPoolWithdrawCapAssets = pendingTrancheState?.maxSeniorWithdrawAssets
+      ?? seniorTranche?.maxWithdrawAssets
+    const juniorPoolWithdrawCapAssets = pendingTrancheState?.maxJuniorWithdrawAssets
+      ?? juniorTranche?.maxWithdrawAssets
     const bullOpenInterest = asBigInt(tupleValue(bullSide, 1, 'openInterest'))
     const bearOpenInterest = asBigInt(tupleValue(bearSide, 1, 'openInterest'))
     const maxSkewRatio = asBigInt(tupleValue(riskParams, 1, 'maxSkewRatio'))
-    const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
-    const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
-    const longOpenCapacityUsdc = openCapacityUsdc({
-      selectedOpenInterestUsdc: bullOpenInterestUsdc,
-      oppositeOpenInterestUsdc: bearOpenInterestUsdc,
-      poolAssetsUsdc: totalAssetsUsdc,
+    const bullOpenInterestAssets = openInterestNotionalAssets(bullOpenInterest, markPrice)
+    const bearOpenInterestAssets = openInterestNotionalAssets(bearOpenInterest, markPrice)
+    const longOpenCapacityAssets = openCapacityAssets({
+      selectedOpenInterestAssets: bullOpenInterestAssets,
+      oppositeOpenInterestAssets: bearOpenInterestAssets,
+      poolAssets: totalAssets,
       maxSkewRatio,
     })
-    const shortOpenCapacityUsdc = openCapacityUsdc({
-      selectedOpenInterestUsdc: bearOpenInterestUsdc,
-      oppositeOpenInterestUsdc: bullOpenInterestUsdc,
-      poolAssetsUsdc: totalAssetsUsdc,
+    const shortOpenCapacityAssets = openCapacityAssets({
+      selectedOpenInterestAssets: bearOpenInterestAssets,
+      oppositeOpenInterestAssets: bullOpenInterestAssets,
+      poolAssets: totalAssets,
       maxSkewRatio,
     })
-    const seniorImpaired = seniorPrincipalUsdc !== undefined
-      && seniorHighWaterMarkUsdc !== undefined
-      ? seniorPrincipalUsdc < seniorHighWaterMarkUsdc
+    const seniorImpaired = seniorPrincipalAssets !== undefined
+      && seniorHighWaterMarkAssets !== undefined
+      ? seniorPrincipalAssets < seniorHighWaterMarkAssets
       : undefined
-    const seniorImpairmentGapUsdc = seniorImpaired
-      && seniorPrincipalUsdc !== undefined
-      && seniorHighWaterMarkUsdc !== undefined
-      ? seniorHighWaterMarkUsdc - seniorPrincipalUsdc
+    const seniorImpairmentGapAssets = seniorImpaired
+      && seniorPrincipalAssets !== undefined
+      && seniorHighWaterMarkAssets !== undefined
+      ? seniorHighWaterMarkAssets - seniorPrincipalAssets
       : seniorImpaired === false
         ? 0n
         : undefined
     const hasLivePoolData = [
-      totalAssetsUsdc,
-      freeUsdc,
-      withdrawalReservedUsdc,
-      pendingRecapitalizationUsdc,
-      pendingTradingRevenueUsdc,
-      seniorPrincipalUsdc,
-      juniorPrincipalUsdc,
-      seniorHighWaterMarkUsdc,
+      totalAssets,
+      freeAssets,
+      withdrawalReservedAssets,
+      pendingRecapitalizationAssets,
+      pendingTradingRevenueAssets,
+      seniorPrincipalAssets,
+      juniorPrincipalAssets,
+      seniorHighWaterMarkAssets,
       markFresh,
       oracleFrozen,
       degradedMode,
@@ -929,34 +932,34 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
       pool: {
         longOpenInterest: bullOpenInterest,
         shortOpenInterest: bearOpenInterest,
-        totalAssetsUsdc,
-        freeUsdc,
-        withdrawalReservedUsdc,
-        pendingRecapitalizationUsdc,
-        pendingTradingRevenueUsdc,
-        seniorPrincipalUsdc,
-        juniorPrincipalUsdc,
-        seniorHighWaterMarkUsdc,
-        currentTerminalDeficitUsdc,
+        totalAssets,
+        freeAssets,
+        withdrawalReservedAssets,
+        pendingRecapitalizationAssets,
+        pendingTradingRevenueAssets,
+        seniorPrincipalAssets,
+        juniorPrincipalAssets,
+        seniorHighWaterMarkAssets,
+        currentTerminalDeficitAssets,
         markFresh,
         oracleFrozen,
         degradedMode,
         seniorImpaired,
-        seniorImpairmentGapUsdc,
-        seniorPoolWithdrawCapUsdc,
-        juniorPoolWithdrawCapUsdc,
-        maxSeniorExposureUsdc,
+        seniorImpairmentGapAssets,
+        seniorPoolWithdrawCapAssets,
+        juniorPoolWithdrawCapAssets,
+        maxSeniorExposureAssets,
         maxSeniorShareBps,
         seniorRateBps,
-        seniorDepositCapacityUsdc,
-        reservedSeniorDepositAssetsUsdc,
+        seniorDepositCapacityAssets,
+        reservedSeniorDepositAssets,
         seniorReservationsWithinLimits,
-        minTrancheDepositUsdc,
+        minTrancheDepositAssets,
         markPrice,
-        longOpenCapacityUsdc,
-        shortOpenCapacityUsdc,
+        longOpenCapacityAssets,
+        shortOpenCapacityAssets,
       },
-      walletUsdc,
+      walletAssets,
       hasLivePoolData,
       tranches: {
         senior: {
@@ -986,7 +989,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           frozenLpFeeBps: seniorTranche?.frozenLpFeeBps,
           depositEnabled: seniorTranche?.depositEnabled,
           withdrawEnabled: seniorTranche?.withdrawEnabled,
-          poolWithdrawCapUsdc: seniorPoolWithdrawCapUsdc,
+          poolWithdrawCapAssets: seniorPoolWithdrawCapAssets,
           sharePrice: calculateLensSharePrice(seniorTranche?.sharePrice)
             ?? calculateConvertedSharePrice(seniorConvertedAssets)
             ?? calculateSharePrice(seniorAssets, seniorSupply),
@@ -1021,7 +1024,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           frozenLpFeeBps: juniorTranche?.frozenLpFeeBps,
           depositEnabled: juniorTranche?.depositEnabled,
           withdrawEnabled: juniorTranche?.withdrawEnabled,
-          poolWithdrawCapUsdc: juniorPoolWithdrawCapUsdc,
+          poolWithdrawCapAssets: juniorPoolWithdrawCapAssets,
           sharePrice: calculateLensSharePrice(juniorTranche?.sharePrice)
             ?? calculateConvertedSharePrice(juniorConvertedAssets)
             ?? calculateSharePrice(juniorAssets, juniorSupply),
@@ -1037,18 +1040,18 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
   }, [data, isLoading, refetch])
 }
 
-function formatCompactUsdc(amount: bigint | undefined): string {
+function formatCompactAssets(amount: bigint | undefined): string {
   if (amount === undefined) return '--'
-  const value = Number(formatUnits(amount, USDC_DECIMALS))
+  const value = Number(formatUnits(amount, ASSETS_DECIMALS))
   return new Intl.NumberFormat('en-US', {
     notation: 'compact',
     maximumFractionDigits: 3,
   }).format(value)
 }
 
-function formatFullUsdc(amount: bigint | undefined, maximumFractionDigits = 2): string {
+function formatFullAssets(amount: bigint | undefined, maximumFractionDigits = 2): string {
   if (amount === undefined) return '--'
-  const value = Number(formatUnits(amount, USDC_DECIMALS))
+  const value = Number(formatUnits(amount, ASSETS_DECIMALS))
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: Math.min(2, maximumFractionDigits),
     maximumFractionDigits,
@@ -1056,13 +1059,13 @@ function formatFullUsdc(amount: bigint | undefined, maximumFractionDigits = 2): 
 }
 
 function formatCompactUsd(amount: bigint | undefined): ReactNode {
-  const formatted = formatCompactUsdc(amount)
-  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
+  const formatted = formatCompactAssets(amount)
+  return formatted === '--' ? formatted : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): ReactNode {
-  const formatted = formatFullUsdc(amount, maximumFractionDigits)
-  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
+  const formatted = formatFullAssets(amount, maximumFractionDigits)
+  return formatted === '--' ? formatted : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function formatVaultLimit(amount: bigint | undefined): ReactNode {
@@ -1148,8 +1151,8 @@ function formatPositionValue(value: number | undefined): ReactNode {
   }).format(value)
 
   return (
-    <span title={`${exactAmount} USDC`} aria-label={`${exactAmount} USDC`}>
-      <TokenAmount amount={compactAmount} />
+    <span title={`${exactAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`} aria-label={`${exactAmount} ${PERPS_SETTLEMENT_TOKEN_LABEL}`}>
+      <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={compactAmount} />
     </span>
   )
 }
@@ -1166,7 +1169,7 @@ function formatPositionShares(amount: bigint | undefined, token: string): ReactN
 
 function formatSharePrice(value: number | undefined): ReactNode {
   if (value === undefined) return '--'
-  return <TokenAmount amount={value.toFixed(4)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value.toFixed(4)} />
 }
 
 interface VaultChartPoint {
@@ -1196,7 +1199,7 @@ function formatHistorySharePrice(value: number): ReactNode {
     minimumFractionDigits: 4,
     maximumFractionDigits: 6,
   }).format(value)
-  return <TokenAmount amount={formatted} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatted} />
 }
 
 function performanceTone(value: number): 'default' | 'positive' | 'negative' {
@@ -1266,9 +1269,9 @@ function getCompleteVaultPerformance(
   }
 }
 
-function parseUsdc(value: string): bigint {
+function parseAssets(value: string): bigint {
   try {
-    return value.trim() ? parseUnits(value, USDC_DECIMALS) : 0n
+    return value.trim() ? parseUnits(value, ASSETS_DECIMALS) : 0n
   } catch {
     return 0n
   }
@@ -1368,7 +1371,7 @@ function getDepositUnavailableStatus(
     }
   }
 
-  if ((pool.currentTerminalDeficitUsdc ?? 0n) > 0n) {
+  if ((pool.currentTerminalDeficitAssets ?? 0n) > 0n) {
     return {
       reason: 'The shared trading pool has an unresolved shortfall, so it cannot accept new deposits.',
       availability: 'After the shortfall is resolved and balances are verified. There is no fixed reopening time.',
@@ -1614,7 +1617,7 @@ function MiniPerformanceChart({
           setActiveIndex(null)
         }}
       >
-        <title>{trancheName} USDC share price over the last seven days</title>
+        <title>{trancheName} {PERPS_SETTLEMENT_TOKEN_LABEL} share price over the last seven days</title>
         {yTicks.map((tick) => {
           const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
           return (
@@ -1932,15 +1935,15 @@ function formatActivityDate(timestamp: string): string {
 }
 
 function activityAmount(activity: VaultOverviewActivityItem): ReactNode {
-  if (activity.amountUsdc !== undefined) {
-    const amount = formatFullUsdc(activity.amountUsdc, 2)
+  if (activity.amountAssets !== undefined) {
+    const amount = formatFullAssets(activity.amountAssets, 2)
     return (
       <span
-        title={activity.amountIsEstimate ? 'Current USDC estimate; the final value is set when this withdrawal is processed.' : undefined}
+        title={activity.amountIsEstimate ? `Current ${PERPS_SETTLEMENT_TOKEN_LABEL} estimate; the final value is set when this withdrawal is processed.` : undefined}
         className="inline-flex items-baseline gap-1"
       >
         {activity.amountIsEstimate ? <span aria-hidden="true">≈</span> : null}
-        <TokenAmount amount={amount} />
+        <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount} />
       </span>
     )
   }
@@ -1990,30 +1993,30 @@ function VaultActivitySection({
   const trancheName = tranche === 'senior' ? 'Senior' : 'Junior'
   const scopedHolders = useMemo(() => {
     const attributedHolders = holders.flatMap((holder) => {
-      const currentNavUsdc = tranche === 'senior'
-        ? holder.seniorNavUsdc
-        : holder.juniorNavUsdc
+      const currentNavAssets = tranche === 'senior'
+        ? holder.seniorNavAssets
+        : holder.juniorNavAssets
       const attributedPercentage = tranche === 'senior'
         ? holder.seniorShareOfAttributedValue
         : holder.juniorShareOfAttributedValue
-      return currentNavUsdc > 0n ? [{ ...holder, currentNavUsdc, attributedPercentage }] : []
+      return currentNavAssets > 0n ? [{ ...holder, currentNavAssets, attributedPercentage }] : []
     })
-    const attributedNavUsdc = attributedHolders.reduce(
-      (total, holder) => total + holder.currentNavUsdc,
+    const attributedNavAssets = attributedHolders.reduce(
+      (total, holder) => total + holder.currentNavAssets,
       0n,
     )
 
     return attributedHolders.map((holder) => ({
       ...holder,
       shareOfVaultNav: holder.attributedPercentage ?? (
-        attributedNavUsdc > 0n
-          ? Number(holder.currentNavUsdc * 1_000_000n / attributedNavUsdc) / 10_000
+        attributedNavAssets > 0n
+          ? Number(holder.currentNavAssets * 1_000_000n / attributedNavAssets) / 10_000
           : 0
       ),
     })).sort((left, right) => (
-      left.currentNavUsdc > right.currentNavUsdc
+      left.currentNavAssets > right.currentNavAssets
         ? -1
-        : left.currentNavUsdc < right.currentNavUsdc ? 1 : 0
+        : left.currentNavAssets < right.currentNavAssets ? 1 : 0
     ))
   }, [holders, tranche])
   const scopedActivity = useMemo(() => (
@@ -2109,7 +2112,7 @@ function VaultActivitySection({
                           </a>
                         </td>
                         <td className="panel-padding-x py-4 text-sm font-semibold text-content-primary">
-                          <TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} />
+                          <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatFullAssets(holder.currentNavAssets, 2)} />
                         </td>
                         <td className="panel-padding-x py-4">
                           <span className="inline-flex items-center gap-3 text-sm font-semibold text-content-primary">
@@ -2138,7 +2141,7 @@ function VaultActivitySection({
                     <div className="flex items-end justify-between gap-4">
                       <div>
                         <p className="text-[10px] uppercase tracking-[0.12em] text-content-secondary">Current value</p>
-                        <p className="mt-1 font-semibold text-content-primary"><TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} /></p>
+                        <p className="mt-1 font-semibold text-content-primary"><TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={formatFullAssets(holder.currentNavAssets, 2)} /></p>
                       </div>
                       <span className="inline-flex items-center gap-2 text-sm font-semibold text-content-primary">
                         <DistributionRing percentage={holder.shareOfVaultNav} />
@@ -2276,14 +2279,14 @@ export function VaultsOverview({
   const seniorPerformance = getCompleteVaultPerformance(history, 'senior')
   const juniorPerformance = getCompleteVaultPerformance(history, 'junior')
   const poolCapital = calculatePerpsPoolCapital({
-    juniorPrincipalUsdc: pool.juniorPrincipalUsdc,
-    seniorPrincipalUsdc: pool.seniorPrincipalUsdc,
-    seniorHighWaterMarkUsdc: pool.seniorHighWaterMarkUsdc,
+    juniorPrincipalAssets: pool.juniorPrincipalAssets,
+    seniorPrincipalAssets: pool.seniorPrincipalAssets,
+    seniorHighWaterMarkAssets: pool.seniorHighWaterMarkAssets,
   })
-  const freeLiquidityRatio = pool.totalAssetsUsdc !== undefined
-    && pool.totalAssetsUsdc > 0n
-    && pool.freeUsdc !== undefined
-    ? (Number(pool.freeUsdc) / Number(pool.totalAssetsUsdc)) * 100
+  const freeLiquidityRatio = pool.totalAssets !== undefined
+    && pool.totalAssets > 0n
+    && pool.freeAssets !== undefined
+    ? (Number(pool.freeAssets) / Number(pool.totalAssets)) * 100
     : undefined
   return (
     <div className="page-stack">
@@ -2297,7 +2300,7 @@ export function VaultsOverview({
               Provide liquidity that keeps the market running.
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-content-secondary">
-              Deposit USDC into the Senior or Junior Vault. Both supply the same trading pool, but
+              Deposit {PERPS_SETTLEMENT_TOKEN_LABEL} into the Senior or Junior Vault. Both supply the same trading pool, but
               they take different positions when profits, losses, and withdrawal funds are shared.
             </p>
           </div>
@@ -2318,22 +2321,22 @@ export function VaultsOverview({
         <dl className="grid grid-cols-1 gap-x-4 gap-y-6 panel-padding sm:grid-cols-2 lg:grid-cols-4">
           <PoolStat
             label="Total pool funds"
-            value={formatCompactUsd(pool.totalAssetsUsdc)}
-            tooltip="The total USDC currently held by the shared trading pool."
+            value={formatCompactUsd(pool.totalAssets)}
+            tooltip={`The total ${PERPS_SETTLEMENT_TOKEN_LABEL} currently held by the shared trading pool.`}
             stackedOnMobile
           />
           <PoolStat
             label="Reserved funds"
-            value={formatCompactUsd(pool.withdrawalReservedUsdc)}
+            value={formatCompactUsd(pool.withdrawalReservedAssets)}
             subvalue="Set aside for trader payouts"
-            tooltip="USDC reserved for trader withdrawals and other protected payments."
+            tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} reserved for trader withdrawals and other protected payments.`}
             stackedOnMobile
           />
           <PoolStat
             label="Available liquidity"
-            value={formatCompactUsd(pool.freeUsdc)}
+            value={formatCompactUsd(pool.freeAssets)}
             subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of pool funds`}
-            tooltip="USDC available after amounts reserved for trader withdrawals and other protected payments."
+            tooltip={`${PERPS_SETTLEMENT_TOKEN_LABEL} available after amounts reserved for trader withdrawals and other protected payments.`}
             stackedOnMobile
             startsTabletRow
           />
@@ -2361,7 +2364,7 @@ export function VaultsOverview({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
             Choose a vault
           </p>
-          <h2 className="mt-1 text-2xl font-semibold text-content-primary">USDC vaults</h2>
+          <h2 className="mt-1 text-2xl font-semibold text-content-primary">{PERPS_SETTLEMENT_TOKEN_LABEL} vaults</h2>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -2394,14 +2397,14 @@ export function VaultsOverview({
         </div>
         <div className="border border-brand-border/30 bg-surface-panel panel-padding">
           <PerpsPoolLiquidityDetails
-            poolAssetsUsdc={pool.totalAssetsUsdc}
-            freeUsdc={pool.freeUsdc}
-            juniorPrincipal={formatCompactUsd(pool.juniorPrincipalUsdc)}
-            seniorPrincipal={formatCompactUsd(pool.seniorPrincipalUsdc)}
+            poolAssets={pool.totalAssets}
+            freeAssets={pool.freeAssets}
+            juniorPrincipal={formatCompactUsd(pool.juniorPrincipalAssets)}
+            seniorPrincipal={formatCompactUsd(pool.seniorPrincipalAssets)}
             juniorSharePercent={poolCapital?.juniorSharePercent}
             seniorSharePercent={poolCapital?.seniorSharePercent}
             seniorStatus={poolCapital?.seniorStatus}
-            seniorImpairment={formatCompactUsd(poolCapital?.seniorImpairmentUsdc)}
+            seniorImpairment={formatCompactUsd(poolCapital?.seniorImpairmentAssets)}
             isJuniorExhausted={poolCapital?.isJuniorExhausted}
             isEmpty={poolCapital?.isEmpty}
             isLoading={snapshot.status === 'syncing'}
@@ -2504,11 +2507,11 @@ export function OverviewTab({
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
   const poolWithdrawCap = tranche.id === 'senior'
-    ? pool.seniorPoolWithdrawCapUsdc
-    : pool.juniorPoolWithdrawCapUsdc
+    ? pool.seniorPoolWithdrawCapAssets
+    : pool.juniorPoolWithdrawCapAssets
   const depositMode = getDepositMode(liveData)
-  const depositState = pool.currentTerminalDeficitUsdc !== undefined
-    && pool.currentTerminalDeficitUsdc > 0n
+  const depositState = pool.currentTerminalDeficitAssets !== undefined
+    && pool.currentTerminalDeficitAssets > 0n
     ? 'Pool shortfall'
     : depositMode
   const withdrawalCooldownRemaining = useWithdrawalCooldownRemaining(
@@ -2569,7 +2572,7 @@ export function OverviewTab({
         <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
-            <DetailRow label="Asset" value="USDC" />
+            <DetailRow label="Asset" value={PERPS_SETTLEMENT_TOKEN_LABEL} />
             <DetailRow label="Vault share symbol" value={<TokenLabel token={tranche.token} />} />
             <DetailRow label="Processing" value="Every hour" />
             <DetailRow label="Network" value="Arbitrum Sepolia" />
@@ -2648,11 +2651,11 @@ export function OverviewTab({
                 />
                 <DetailRow
                   label="Remaining Senior capacity"
-                  value={formatVaultLimit(pool.seniorDepositCapacityUsdc)}
+                  value={formatVaultLimit(pool.seniorDepositCapacityAssets)}
                 />
                 <DetailRow
                   label="Maximum Senior value"
-                  value={formatVaultLimit(pool.maxSeniorExposureUsdc)}
+                  value={formatVaultLimit(pool.maxSeniorExposureAssets)}
                 />
                 <DetailRow
                   label="Maximum Senior share of pool capital"
@@ -2662,7 +2665,7 @@ export function OverviewTab({
                 />
                 <DetailRow
                   label="Amount reserved for pending deposits"
-                  value={formatFullUsd(pool.reservedSeniorDepositAssetsUsdc)}
+                  value={formatFullUsd(pool.reservedSeniorDepositAssets)}
                 />
                 <DetailRow
                   label="Pending deposits within current limits"
@@ -2713,15 +2716,15 @@ export function OverviewTab({
         <section className="border border-brand-border/30 bg-surface-panel panel-padding">
           <h3 className="text-lg font-semibold text-content-primary">Shared pool status</h3>
           <dl className="mt-3">
-            <DetailRow label="Total pool funds" value={formatFullUsd(pool.totalAssetsUsdc, 0)} />
-            <DetailRow label="Available liquidity" value={formatFullUsd(pool.freeUsdc, 0)} />
-            <DetailRow label="Reserved for trader withdrawals" value={formatFullUsd(pool.withdrawalReservedUsdc, 0)} />
-            <DetailRow label="Trading revenue awaiting distribution" value={formatFullUsd(pool.pendingTradingRevenueUsdc)} />
-            <DetailRow label="Funds awaiting loss recovery" value={formatFullUsd(pool.pendingRecapitalizationUsdc)} />
+            <DetailRow label="Total pool funds" value={formatFullUsd(pool.totalAssets, 0)} />
+            <DetailRow label="Available liquidity" value={formatFullUsd(pool.freeAssets, 0)} />
+            <DetailRow label="Reserved for trader withdrawals" value={formatFullUsd(pool.withdrawalReservedAssets, 0)} />
+            <DetailRow label="Trading revenue awaiting distribution" value={formatFullUsd(pool.pendingTradingRevenueAssets)} />
+            <DetailRow label="Funds awaiting loss recovery" value={formatFullUsd(pool.pendingRecapitalizationAssets)} />
             <DetailRow
               label="Unresolved pool shortfall"
-              value={formatFullUsd(pool.currentTerminalDeficitUsdc)}
-              valueClassName={(pool.currentTerminalDeficitUsdc ?? 0n) > 0n
+              value={formatFullUsd(pool.currentTerminalDeficitAssets)}
+              valueClassName={(pool.currentTerminalDeficitAssets ?? 0n) > 0n
                 ? 'text-brand-orange'
                 : 'text-positive'}
             />
@@ -2783,11 +2786,11 @@ export function OverviewTab({
             </p>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <DetailMetric label="Current Senior capital" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
-            <DetailMetric label="Protected balance" value={formatCompactUsd(pool.seniorHighWaterMarkUsdc)} />
+            <DetailMetric label="Current Senior capital" value={formatCompactUsd(pool.seniorPrincipalAssets)} />
+            <DetailMetric label="Protected balance" value={formatCompactUsd(pool.seniorHighWaterMarkAssets)} />
             <DetailMetric
               label="Amount still to recover"
-              value={formatCompactUsd(pool.seniorImpairmentGapUsdc)}
+              value={formatCompactUsd(pool.seniorImpairmentGapAssets)}
               tone={pool.seniorImpaired === true ? 'negative' : pool.seniorImpaired === false ? 'positive' : 'default'}
             />
           </div>
@@ -2805,12 +2808,12 @@ export function OverviewTab({
             </p>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <DetailMetric label="Junior capital" value={formatCompactUsd(pool.juniorPrincipalUsdc)} />
-            <DetailMetric label="Senior priority balance" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
+            <DetailMetric label="Junior capital" value={formatCompactUsd(pool.juniorPrincipalAssets)} />
+            <DetailMetric label="Senior priority balance" value={formatCompactUsd(pool.seniorPrincipalAssets)} />
             <DetailMetric
               label="Available for Junior withdrawals"
-              value={formatCompactUsd(pool.juniorPoolWithdrawCapUsdc)}
-              tone={(pool.juniorPoolWithdrawCapUsdc ?? 0n) > 0n ? 'positive' : 'warning'}
+              value={formatCompactUsd(pool.juniorPoolWithdrawCapAssets)}
+              tone={(pool.juniorPoolWithdrawCapAssets ?? 0n) > 0n ? 'positive' : 'warning'}
             />
           </div>
         </section>
@@ -3134,7 +3137,7 @@ function PerformanceChart({
           }}
           style={{ touchAction: 'pan-y' }}
         >
-          <title>{tranche.name} USDC share price over the last seven days</title>
+          <title>{tranche.name} {PERPS_SETTLEMENT_TOKEN_LABEL} share price over the last seven days</title>
           {yTicks.map((tick) => {
             const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
             return (
@@ -3252,8 +3255,8 @@ function PerformanceChart({
         ) : null}
       </div>
       <figcaption id={`${tranche.id}-performance-summary`} className="sr-only">
-        {tranche.name} share price moved from {startingPrice.toFixed(6)} USDC to{' '}
-        {performance.points[performance.points.length - 1].sharePrice.toFixed(6)} USDC over seven
+        {tranche.name} share price moved from {startingPrice.toFixed(6)} {PERPS_SETTLEMENT_TOKEN_LABEL} to{' '}
+        {performance.points[performance.points.length - 1].sharePrice.toFixed(6)} {PERPS_SETTLEMENT_TOKEN_LABEL} over seven
         days, a return of {formatSignedPercent(performance.return7d)} and a realized APY of{' '}
         {formatSignedPercent(performance.apy7d)}. Focus the chart and use the arrow, Home, or End keys
         to inspect hourly checkpoints.
@@ -3401,7 +3404,7 @@ export function ActivityTab({
   const withdrawalCooldownActive = isConnected
     && (liveData.userShares ?? 0n) > 0n
     && withdrawalCooldownRemaining > 0
-  const claimableUsdc = redeemRequests.reduce(
+  const claimableAssets = redeemRequests.reduce(
     (total, request) => total + request.claimableAssets,
     0n
   )
@@ -3502,9 +3505,9 @@ export function ActivityTab({
             tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
           />
           <DetailMetric
-            label="USDC ready for wallet"
-            value={isConnected ? formatFullUsd(claimableUsdc) : '--'}
-            tone={claimableUsdc > 0n ? 'positive' : 'default'}
+            label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready for wallet`}
+            value={isConnected ? formatFullUsd(claimableAssets) : '--'}
+            tone={claimableAssets > 0n ? 'positive' : 'default'}
           />
         </div>
       </section>
@@ -3515,7 +3518,7 @@ export function ActivityTab({
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending deposits</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                The vault holds your USDC until the next eligible hourly processing time.
+                The vault holds your {PERPS_SETTLEMENT_TOKEN_LABEL} until the next eligible hourly processing time.
               </p>
             </div>
             {depositRequests.length > 0 ? (
@@ -3592,7 +3595,7 @@ export function ActivityTab({
                     ) : null}
                     {request.refundableAssets > 0n ? (
                       <RequestMetric
-                        label="USDC ready to return"
+                        label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready to return`}
                         value={formatFullUsd(request.refundableAssets)}
                         tone="warning"
                       />
@@ -3602,7 +3605,7 @@ export function ActivityTab({
                   <div className="space-y-4 border-t border-brand-border/20 pt-4">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.refundableAssets > 0n
-                        ? 'This deposit could not be completed. Return the held USDC to your wallet.'
+                        ? `This deposit could not be completed. Return the held ${PERPS_SETTLEMENT_TOKEN_LABEL} to your wallet.`
                         : request.claimableShares > 0n
                           ? directRedeemableShares > 0n
                             ? 'Your deposit is active and the withdrawal cooldown is complete. Queue a withdrawal or move shares to your wallet without restarting the cooldown.'
@@ -3671,7 +3674,7 @@ export function ActivityTab({
                             })
                           }}
                         >
-                          Return USDC to wallet
+                          Return {PERPS_SETTLEMENT_TOKEN_LABEL} to wallet
                         </Button>
                       ) : null}
                       {request.pendingAssets > 0n && !request.matured ? (
@@ -3710,7 +3713,7 @@ export function ActivityTab({
             <div>
               <h3 className="text-lg font-semibold text-content-primary">Pending withdrawals</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                Your shares can change in value until enough USDC is available for the withdrawal.
+                Your shares can change in value until enough {PERPS_SETTLEMENT_TOKEN_LABEL} is available for the withdrawal.
               </p>
             </div>
             {redeemRequests.length > 0 ? (
@@ -3726,11 +3729,11 @@ export function ActivityTab({
             {redeemRequests.map((request) => {
               const actionReady = request.claimableAssets > 0n || request.refundPending
               const statusLabel = request.claimableAssets > 0n
-                ? 'USDC ready'
+                ? `${PERPS_SETTLEMENT_TOKEN_LABEL} ready`
                 : request.refundPending
                   ? 'Shares ready to return'
                   : request.matured
-                    ? 'Waiting for USDC'
+                    ? `Waiting for ${PERPS_SETTLEMENT_TOKEN_LABEL}`
                     : 'Pending'
               const displayedShares = request.pendingShares > 0n
                 ? request.pendingShares
@@ -3762,13 +3765,13 @@ export function ActivityTab({
                     />
                     {!hasProcessedWithdrawal ? (
                       <RequestMetric
-                        label="Estimated USDC"
+                        label={`Estimated ${PERPS_SETTLEMENT_TOKEN_LABEL}`}
                         value={formatFullUsd(request.pendingAssetsEstimate)}
                       />
                     ) : null}
                     {request.claimableAssets > 0n ? (
                       <RequestMetric
-                        label="USDC ready for wallet"
+                        label={`${PERPS_SETTLEMENT_TOKEN_LABEL} ready for wallet`}
                         value={formatFullUsd(request.claimableAssets)}
                         tone="positive"
                       />
@@ -3785,12 +3788,12 @@ export function ActivityTab({
                   <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.claimableAssets > 0n
-                        ? 'USDC is ready and can now be moved to your wallet.'
+                        ? `${PERPS_SETTLEMENT_TOKEN_LABEL} is ready and can now be moved to your wallet.`
                         : request.refundPending
                           ? 'This withdrawal could not be funded. Return the remaining shares to your wallet.'
                           : request.matured
                             ? tranche.id === 'senior'
-                              ? 'The withdrawal is ready to process and is waiting for enough available USDC.'
+                              ? `The withdrawal is ready to process and is waiting for enough available ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
                               : 'The withdrawal is ready to process. Senior is funded first, so Junior may wait longer.'
                             : 'You can cancel before processing. The shares continue to gain or lose value while waiting.'}
                     </p>
@@ -3814,7 +3817,7 @@ export function ActivityTab({
                             })
                           }}
                         >
-                          Move USDC to wallet
+                          Move {PERPS_SETTLEMENT_TOKEN_LABEL} to wallet
                         </Button>
                       ) : null}
                       {request.refundPending ? (
@@ -4139,8 +4142,8 @@ function VaultRequestActionModal({
       case 'cancel-deposit':
         return {
           title: 'Cancel this deposit?',
-          description: 'The deposit is still pending. Cancelling returns the USDC held by the vault to your wallet.',
-          amountLabel: 'USDC returned',
+          description: `The deposit is still pending. Cancelling returns the ${PERPS_SETTLEMENT_TOKEN_LABEL} held by the vault to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           amount: formatFullUsd(action.assets),
           confirmLabel: 'Cancel deposit',
           confirmVariant: 'danger' as const,
@@ -4150,12 +4153,12 @@ function VaultRequestActionModal({
       case 'recover-deposit':
         return {
           title: 'Return this deposit?',
-          description: 'The deposit could not be completed. Return the refundable USDC held by the vault to your wallet.',
-          amountLabel: 'USDC returned',
+          description: `The deposit could not be completed. Return the refundable ${PERPS_SETTLEMENT_TOKEN_LABEL} held by the vault to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           amount: formatFullUsd(action.assets),
-          confirmLabel: 'Return USDC',
+          confirmLabel: `Return ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
           confirmVariant: 'primary' as const,
-          successTitle: 'USDC returned',
+          successTitle: `${PERPS_SETTLEMENT_TOKEN_LABEL} returned`,
           successDescription: <>{formatFullUsd(action.assets)} has been returned to your wallet.</>,
         }
       case 'claim-deposit':
@@ -4183,7 +4186,7 @@ function VaultRequestActionModal({
       case 'cancel-withdrawal':
         return {
           title: 'Cancel this withdrawal?',
-          description: 'This withdrawal is still waiting for USDC. Cancelling returns the shares held by the vault to your wallet and restarts the one-hour withdrawal cooldown for your entire position.',
+          description: `This withdrawal is still waiting for ${PERPS_SETTLEMENT_TOKEN_LABEL}. Cancelling returns the shares held by the vault to your wallet and restarts the one-hour withdrawal cooldown for your entire position.`,
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Cancel withdrawal',
@@ -4193,19 +4196,19 @@ function VaultRequestActionModal({
         }
       case 'claim-withdrawal':
         return {
-          title: 'Move your USDC to your wallet?',
-          description: 'USDC has been allocated to this withdrawal and is ready to move to your wallet.',
-          amountLabel: 'USDC moved',
+          title: `Move your ${PERPS_SETTLEMENT_TOKEN_LABEL} to your wallet?`,
+          description: `${PERPS_SETTLEMENT_TOKEN_LABEL} has been allocated to this withdrawal and is ready to move to your wallet.`,
+          amountLabel: `${PERPS_SETTLEMENT_TOKEN_LABEL} moved`,
           amount: formatFullUsd(action.assets),
-          confirmLabel: 'Move USDC',
+          confirmLabel: `Move ${PERPS_SETTLEMENT_TOKEN_LABEL}`,
           confirmVariant: 'primary' as const,
-          successTitle: 'USDC moved to wallet',
+          successTitle: `${PERPS_SETTLEMENT_TOKEN_LABEL} moved to wallet`,
           successDescription: <>{formatFullUsd(action.assets)} has been transferred to your wallet.</>,
         }
       case 'reclaim-withdrawal':
         return {
           title: 'Return your unfunded shares?',
-          description: `USDC could not be allocated to this part of the withdrawal. Returning the remaining shares to your wallet restarts the one-hour withdrawal cooldown for every ${tranche.token} share in your wallet.`,
+          description: `${PERPS_SETTLEMENT_TOKEN_LABEL} could not be allocated to this part of the withdrawal. Returning the remaining shares to your wallet restarts the one-hour withdrawal cooldown for every ${tranche.token} share in your wallet.`,
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Return shares',
@@ -4453,7 +4456,7 @@ export function VaultPreviewModal({
             </div>
             {mode === 'deposit' && needsApproval ? (
               <p className="text-center text-xs leading-5 text-content-secondary">
-                Your wallet will first ask you to approve this USDC amount, then confirm the deposit.
+                Your wallet will first ask you to approve this {PERPS_SETTLEMENT_TOKEN_LABEL} amount, then confirm the deposit.
               </p>
             ) : null}
           </div>
@@ -4475,7 +4478,7 @@ export function VaultPreviewModal({
         <div className="space-y-5">
           <p className="text-xl font-semibold leading-7 text-content-primary">
             You are {mode === 'deposit' ? 'depositing' : 'withdrawing'}{' '}
-            <TokenAmount amount={amount || '0.00'} /> {mode === 'deposit' ? 'into' : 'from'}{' '}
+            <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} /> {mode === 'deposit' ? 'into' : 'from'}{' '}
             {tranche.name}.
           </p>
 
@@ -4485,8 +4488,8 @@ export function VaultPreviewModal({
             </p>
             <div className="space-y-3">
               <PreviewRow
-                label={mode === 'deposit' ? 'USDC to deposit' : 'USDC to withdraw'}
-                value={<TokenAmount amount={amount || '0.00'} />}
+                label={mode === 'deposit' ? `${PERPS_SETTLEMENT_TOKEN_LABEL} to deposit` : `${PERPS_SETTLEMENT_TOKEN_LABEL} to withdraw`}
+                value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} />}
               />
               <PreviewRow
                 label={mode === 'withdraw' ? 'Estimated shares used' : 'Estimated shares received'}
@@ -4509,7 +4512,7 @@ export function VaultPreviewModal({
               ) : null}
               <PreviewRow
                 label="Processing"
-                value={mode === 'deposit' ? depositMode : 'Processed hourly when USDC is available'}
+                value={mode === 'deposit' ? depositMode : `Processed hourly when ${PERPS_SETTLEMENT_TOKEN_LABEL} is available`}
               />
               <PreviewRow label="Expected processing" value={targetSettlement} />
               {oracleFrozen === true ? (
@@ -4639,7 +4642,7 @@ function VaultActionPanel({
   const withdrawalCooldownActive = isConnected
     && (liveData.userShares ?? 0n) > 0n
     && withdrawalCooldownRemaining > 0
-  const amountRaw = parseUsdc(amount)
+  const amountRaw = parseAssets(amount)
   const depositMode = getDepositMode(liveData)
   const pendingActivationTimestamp = liveData.nextRequestEpoch !== undefined
     ? Number(liveData.nextRequestEpoch * 3_600n)
@@ -4688,10 +4691,10 @@ function VaultActionPanel({
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
-  const estimatedPositionUsdc = positionValue !== undefined && Number.isFinite(positionValue)
-    ? parseUnits(positionValue.toFixed(USDC_DECIMALS), USDC_DECIMALS)
+  const estimatedPositionAssets = positionValue !== undefined && Number.isFinite(positionValue)
+    ? parseUnits(positionValue.toFixed(ASSETS_DECIMALS), ASSETS_DECIMALS)
     : undefined
-  const maxAmount = mode === 'deposit' ? snapshot.walletUsdc : estimatedPositionUsdc
+  const maxAmount = mode === 'deposit' ? snapshot.walletAssets : estimatedPositionAssets
   const exceedsAvailable = isConnected && maxAmount !== undefined && amountRaw > maxAmount
   const liveDepositLimit = depositMode === 'Open for deposits'
     ? liveData.maxRequestDeposit
@@ -4702,8 +4705,8 @@ function VaultActionPanel({
   const invalidAmount = amountRaw <= 0n
   const belowMinimumDeposit = mode === 'deposit'
     && amountRaw > 0n
-    && snapshot.pool.minTrancheDepositUsdc !== undefined
-    && amountRaw < snapshot.pool.minTrancheDepositUsdc
+    && snapshot.pool.minTrancheDepositAssets !== undefined
+    && amountRaw < snapshot.pool.minTrancheDepositAssets
   const redeemLimitExceeded = mode === 'withdraw'
     && quotedSharesRaw !== undefined
     && liveData.maxRequestRedeem !== undefined
@@ -4712,13 +4715,13 @@ function VaultActionPanel({
     || !liveData.hasCoreData
     || (
       mode === 'deposit'
-        ? snapshot.walletUsdc === undefined || !liveData.hasDepositData
+        ? snapshot.walletAssets === undefined || !liveData.hasDepositData
         : !liveData.hasUserData
     )
   const safetyBlocked = mode === 'deposit' && (
     liveData.poolPaused === true
     || liveData.depositEnabled === false
-    || (snapshot.pool.currentTerminalDeficitUsdc ?? 0n) > 0n
+    || (snapshot.pool.currentTerminalDeficitAssets ?? 0n) > 0n
   )
   const depositUnavailable = mode === 'deposit'
     && depositMode !== 'Open for deposits'
@@ -4746,7 +4749,7 @@ function VaultActionPanel({
     : depositLimitExceeded
       ? 'Amount is above the current deposit limit.'
       : belowMinimumDeposit
-        ? `The minimum vault deposit is ${formatFullUsdc(snapshot.pool.minTrancheDepositUsdc)} USDC.`
+        ? `The minimum vault deposit is ${formatFullAssets(snapshot.pool.minTrancheDepositAssets)} ${PERPS_SETTLEMENT_TOKEN_LABEL}.`
         : redeemLimitExceeded
           ? 'Amount is above what you can currently withdraw.'
           : undefined
@@ -4852,7 +4855,7 @@ function VaultActionPanel({
       <aside className="border border-brand-border/30 bg-surface-panel">
         <div className="border-b border-brand-border/25 panel-padding">
           <div>
-            <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? 'Deposit USDC' : 'Withdraw USDC'}</h2>
+            <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? `Deposit ${PERPS_SETTLEMENT_TOKEN_LABEL}` : `Withdraw ${PERPS_SETTLEMENT_TOKEN_LABEL}`}</h2>
             <p className="mt-1 text-sm text-content-secondary">{tranche.name}</p>
           </div>
         </div>
@@ -4888,7 +4891,7 @@ function VaultActionPanel({
               setReviewQuote(undefined)
               setQuoteRefreshError(undefined)
             }}
-            token={{ symbol: 'USDC', decimals: USDC_DECIMALS }}
+            token={{ symbol: PERPS_SETTLEMENT_TOKEN_LABEL, decimals: ASSETS_DECIMALS }}
             balance={isConnected ? maxAmount : undefined}
             balanceLabel={mode === 'deposit' ? 'Wallet balance:' : 'Estimated position value:'}
             label={mode === 'deposit' ? 'Amount to deposit' : 'Amount to withdraw'}
@@ -4939,11 +4942,11 @@ function VaultActionPanel({
                   label="Position value"
                   value={positionValue === undefined
                     ? '--'
-                    : <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
+                    : <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
                 />
                 <PreviewRow
-                  label="Estimated USDC you’ll receive"
-                  value={<TokenAmount amount={amount || '0.00'} />}
+                  label={`Estimated ${PERPS_SETTLEMENT_TOKEN_LABEL} you’ll receive`}
+                  value={<TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={amount || '0.00'} />}
                 />
                 <PreviewRow label="Processing" value="Processed hourly; Senior withdrawals are funded first" />
               </>
@@ -4968,7 +4971,7 @@ function VaultActionPanel({
 
           {mode === 'deposit' && depositMode === 'Open for deposits' ? (
             <Alert variant="info" title="This deposit is processed hourly">
-              The vault holds your USDC immediately. You can cancel before it is processed.
+              The vault holds your {PERPS_SETTLEMENT_TOKEN_LABEL} immediately. You can cancel before it is processed.
               Once your shares are ready, move them to your wallet from Your position.
             </Alert>
           ) : null}
@@ -5199,8 +5202,8 @@ export function VaultDetailView({
   const performance = getCompleteVaultPerformance(history, tranche.id)
   const hasPerformance = performance !== undefined
   const poolWithdrawCap = tranche.id === 'senior'
-    ? snapshot.pool.seniorPoolWithdrawCapUsdc
-    : snapshot.pool.juniorPoolWithdrawCapUsdc
+    ? snapshot.pool.seniorPoolWithdrawCapAssets
+    : snapshot.pool.juniorPoolWithdrawCapAssets
   const sections = useMemo<{ id: DetailSectionId; anchor: string; label: string }[]>(() => [
     { id: 'overview', anchor: 'overview', label: 'Overview' },
     ...(tranche.id === 'junior'
@@ -5315,7 +5318,7 @@ export function VaultDetailView({
               ? (
                 <span>
                   Current Senior capacity: {formatVaultLimit(
-                    snapshot.pool.seniorDepositCapacityUsdc
+                    snapshot.pool.seniorDepositCapacityAssets
                   )}
                 </span>
               )
@@ -5546,7 +5549,7 @@ function InvalidVault() {
       <span className="material-symbols-outlined text-5xl text-brand-orange">search_off</span>
       <h1 className="mt-4 text-2xl font-semibold text-content-primary">Vault not found</h1>
       <p className="mt-2 text-sm leading-6 text-content-secondary">
-        Plether currently exposes the Senior and Junior USDC vaults.
+        Plether currently exposes the Senior and Junior {PERPS_SETTLEMENT_TOKEN_LABEL} vaults.
       </p>
       <Link
         to="/vaults"
@@ -5559,6 +5562,10 @@ function InvalidVault() {
 }
 
 export function Vaults() {
+  return PERPS_RELEASE_IS_DEPLOYED ? <LiveVaults /> : <PerpsDeploymentPending />
+}
+
+function LiveVaults() {
   const { trancheId } = useParams()
   const { address, isConnected } = useAccount()
   const chainId = useChainId()

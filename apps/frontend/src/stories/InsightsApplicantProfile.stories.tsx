@@ -43,7 +43,7 @@ const walletResponse: WalletResponse = {
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
     eligibilityReasons: ['3 of 5 active days', 'Integrity review pending'],

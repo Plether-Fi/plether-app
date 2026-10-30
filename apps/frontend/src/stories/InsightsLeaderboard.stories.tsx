@@ -1,3 +1,4 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { MemoryRouter } from 'react-router-dom'
 import { Leaderboard, LeaderboardTitle } from '../../../insights/src/components/Competition'
@@ -21,7 +22,7 @@ const standings: Standing[] = [
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
     eligibilityReasons: [],
@@ -39,10 +40,10 @@ const standings: Standing[] = [
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
-    eligibilityReasons: ['Below the +1.00 USDC prize threshold'],
+    eligibilityReasons: [`Below the +1.00 ${PERPS_SETTLEMENT_TOKEN_LABEL} prize threshold`],
   },
   {
     rank: 3,
@@ -57,10 +58,10 @@ const standings: Standing[] = [
     liquidations: 1,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
-    eligibilityReasons: ['Below the +1.00 USDC prize threshold'],
+    eligibilityReasons: [`Below the +1.00 ${PERPS_SETTLEMENT_TOKEN_LABEL} prize threshold`],
   },
   {
     rank: null,
@@ -75,7 +76,7 @@ const standings: Standing[] = [
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
     eligibilityReasons: ['Integrity review pending'],
@@ -93,7 +94,7 @@ const standings: Standing[] = [
     liquidations: 0,
     prizePlace: null,
     prizePlaces: [],
-    prizeAmountUsdc: null,
+    prizeAmountAssets: null,
     eligible: false,
     eligibilityStatus: 'pending',
     eligibilityReasons: ['Integrity review pending'],

@@ -1,5 +1,5 @@
-import type { OrderRequestV3 } from '@plether-fi/perps-aa-client'
-import { bytesToHex, type Address, type Hex } from 'viem'
+import type { OrderRequestV3, closePreviewV3Abi } from '@plether-fi/perps-aa-client'
+import { bytesToHex, type Address, type Hex, type ContractFunctionReturnType } from 'viem'
 import type { PositionProtectionParams } from './positionProtection'
 import type { SponsoredCloseFunding } from '../perps-aa/sponsoredClose'
 
@@ -88,47 +88,49 @@ export type PerpsExecutionBounds = OrderRequestV3['bounds']
 
 export interface PerpsExecutionAssessment {
   mode: PerpsExecutionMode
-  executionNotionalUsdc: bigint
-  grossAccountDebitUsdc: bigint
-  actionChargeAssessedUsdc: bigint
-  actionChargeCollectedUsdc: bigint
-  explicitFeesUsdc: bigint
-  preSettlementBalanceUsdc: bigint
-  postSettlementBalanceUsdc: bigint
-  realizedPnlUsdc: bigint
-  vpiUsdc: bigint
-  carryUsdc: bigint
-  executionFeeUsdc: bigint
-  frozenSpreadUsdc: bigint
-  preTraderClaimUsdc: bigint
-  postTraderClaimUsdc: bigint
+  executionNotionalAssets: bigint
+  grossAccountDebitAssets: bigint
+  actionChargeAssessedAssets: bigint
+  actionChargeCollectedAssets: bigint
+  explicitFeesAssets: bigint
+  preSettlementBalanceAssets: bigint
+  postSettlementBalanceAssets: bigint
+  realizedPnlAssets: bigint
+  vpiAssets: bigint
+  carryAssets: bigint
+  executionFeeAssets: bigint
+  frozenSpreadAssets: bigint
+  preTraderClaimAssets: bigint
+  postTraderClaimAssets: bigint
   postPositionSize: bigint
-  postPositionMarginUsdc: bigint
-  postPositionEquityUsdc: bigint
+  postPositionMarginAssets: bigint
+  postPositionEquityAssets: bigint
   postLeverageBps: bigint
 }
 
 export interface PerpsClosePreview {
-  commitmentCarryUsdc: bigint
-  executionBountyUsdc: bigint
+  commitment: ContractFunctionReturnType<typeof closePreviewV3Abi, 'view', 'previewClose'>['commitment']
+  commitmentCarryAssets: bigint
   assessment: PerpsExecutionAssessment
+  /** Exact retries contain no fresh commitment or execution economics. */
+  replayOrderId: bigint
 }
 
 export interface PerpsExecutionProtectionSummary {
   submitBy: bigint
   executionWindowSeconds: number
   executionMode: PerpsExecutionMode
-  executionBountyUsdc: bigint
+  executionBountyAssets: bigint
 }
 
 export interface PerpsOrderReviewSummary {
   sponsoredClose?: SponsoredCloseFunding
   /** Close commitment debit, separate from execution economics. Absent in older summaries. */
-  commitmentCarryUsdc?: bigint
-  requiredMarginUsdc: bigint
-  executionBountyUsdc: bigint
-  requiredFundingUsdc: bigint
-  availableFundingUsdc: bigint
+  commitmentCarryAssets?: bigint
+  requiredMarginAssets: bigint
+  executionBountyAssets: bigint
+  requiredFundingAssets: bigint
+  availableFundingAssets: bigint
   worstPostLeverageBps: bigint
   reviewedBlockNumber: bigint
   reviewedBlockHash: Hex
@@ -157,19 +159,19 @@ export interface PreparedPerpsOrderV3 {
   orderRouter: Address
   orderLifecycleBook: Address
   request: PerpsOrderRequestV3
-  executionBountyUsdc: bigint
+  executionBountyAssets: bigint
   reviewedBlockNumber: bigint
   reviewedBlockHash: Hex
   reviewedPrice: bigint
   protection: PerpsExecutionProtectionSummary
-  positionProtection?: { book: Address; params: PositionProtectionParams; triggerBountyUsdc: bigint; executionBountyUsdc: bigint }
+  positionProtection?: { book: Address; params: PositionProtectionParams; triggerBountyAssets: bigint; executionBountyAssets: bigint }
   /** Coherent-block economics used by the web review. Older persisted fixtures may omit it. */
   reviewSummary?: PerpsOrderReviewSummary
 }
 
 /** JSON-safe immutable request persisted before any UserOperation signature. */
 export interface PersistedPerpsOrderRequestV3 {
-  closeAssistance?: { amountUsdc: string; lens: Address; lensCodeHash: Hex; paymasterAddress: Address }
+  closeAssistance?: { amountAssets: string; lens: Address; lensCodeHash: Hex; paymasterAddress: Address }
   version: 3
   account: Address
   clientOrderId: Hex
@@ -182,20 +184,20 @@ export interface PersistedPerpsOrderRequestV3 {
   executionWindowSeconds: number
   allowedExecutionModes: number
   expectedConfigHash: Hex
-  maxExecutionBountyUsdc: string
-  maxExecutionNotionalUsdc: string
-  maxGrossAccountDebitUsdc: string
-  maxActionChargeUsdc: string
-  maxExplicitFeesUsdc: string
+  maxExecutionBountyAssets: string
+  maxExecutionNotionalAssets: string
+  maxGrossAccountDebitAssets: string
+  maxActionChargeAssets: string
+  maxExplicitFeesAssets: string
   maxPostPositionSize: string
-  minPostSettlementBalanceUsdc: string
-  minPostPositionEquityUsdc: string
+  minPostSettlementBalanceAssets: string
+  minPostPositionEquityAssets: string
   maxPostLeverageBps: number
 }
 
 const UINT256_MAX = (1n << 256n) - 1n
 const UINT32_MAX = 0xffff_ffff
-const POSITION_SIZE_TO_USDC_SCALE = 10n ** 20n
+const POSITION_SIZE_TO_ASSETS_SCALE = 10n ** 20n
 const ZERO_CLIENT_ORDER_ID = `0x${'0'.repeat(64)}`
 
 export function isPublicPerpsClientOrderId(clientOrderId: Hex): boolean {
@@ -234,21 +236,21 @@ export function permissivePerpsExecutionBounds(input: {
   submitBy: bigint
   executionWindowSeconds: number
   expectedConfigHash: Hex
-  executionBountyUsdc: bigint
+  executionBountyAssets: bigint
 }): PerpsExecutionBounds {
   return {
     submitBy: input.submitBy,
     executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.ALL,
     expectedConfigHash: input.expectedConfigHash,
-    maxExecutionBountyUsdc: input.executionBountyUsdc,
-    maxExecutionNotionalUsdc: UINT256_MAX,
-    maxGrossAccountDebitUsdc: UINT256_MAX,
-    maxActionChargeUsdc: UINT256_MAX,
-    maxExplicitFeesUsdc: UINT256_MAX,
+    maxExecutionBountyAssets: input.executionBountyAssets,
+    maxExecutionNotionalAssets: UINT256_MAX,
+    maxGrossAccountDebitAssets: UINT256_MAX,
+    maxActionChargeAssets: UINT256_MAX,
+    maxExplicitFeesAssets: UINT256_MAX,
     maxPostPositionSize: UINT256_MAX,
-    minPostSettlementBalanceUsdc: 0n,
-    minPostPositionEquityUsdc: 0n,
+    minPostSettlementBalanceAssets: 0n,
+    minPostPositionEquityAssets: 0n,
     maxPostLeverageBps: UINT32_MAX,
   }
 }
@@ -262,7 +264,7 @@ export function relaxedWebPerpsExecutionBounds(input: {
   submitBy: bigint
   executionWindowSeconds: number
   expectedConfigHash: Hex
-  executionBountyUsdc: bigint
+  executionBountyAssets: bigint
   executionMode: PerpsExecutionMode
 }): PerpsExecutionBounds {
   return {
@@ -270,21 +272,22 @@ export function relaxedWebPerpsExecutionBounds(input: {
     executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: executionModeMask(input.executionMode),
     expectedConfigHash: input.expectedConfigHash,
-    maxExecutionBountyUsdc: reviewedExecutionBountyMaximum(input.executionBountyUsdc),
-    maxExecutionNotionalUsdc: UINT256_MAX,
-    maxGrossAccountDebitUsdc: UINT256_MAX,
-    maxActionChargeUsdc: UINT256_MAX,
-    maxExplicitFeesUsdc: UINT256_MAX,
+    maxExecutionBountyAssets: reviewedExecutionBountyMaximum(input.executionBountyAssets),
+    maxExecutionNotionalAssets: UINT256_MAX,
+    maxGrossAccountDebitAssets: UINT256_MAX,
+    maxActionChargeAssets: UINT256_MAX,
+    maxExplicitFeesAssets: UINT256_MAX,
     maxPostPositionSize: UINT256_MAX,
-    minPostSettlementBalanceUsdc: 0n,
-    minPostPositionEquityUsdc: 0n,
+    minPostSettlementBalanceAssets: 0n,
+    minPostPositionEquityAssets: 0n,
     maxPostLeverageBps: UINT32_MAX,
   }
 }
 
-/** Six-decimal USDC: a reviewed ceiling, not a charge or a sponsorship gas cap. */
+/** Six-decimal USDG: a reviewed ceiling, not a charge or a sponsorship gas cap. */
 export function reviewedExecutionBountyMaximum(quote: bigint): bigint {
   if (quote < 0n || quote > UINT256_MAX) throw new Error('Invalid execution bounty quote')
+  if (quote === 0n) return 0n
   const percent = (quote + 99n) / 100n
   const maximum = quote + (percent > 10n ? percent : 10n)
   if (maximum > UINT256_MAX) throw new Error('Execution bounty maximum exceeds uint256')
@@ -336,28 +339,28 @@ export function deriveAdditionalPerpsMarginForLeverage(input: {
 
   const leverageBps = BigInt(input.selectedMaxLeverageBps)
   return maximum(input.assessments.map((assessment, index) => {
-    if (assessment.actionChargeCollectedUsdc < assessment.carryUsdc) {
+    if (assessment.actionChargeCollectedAssets < assessment.carryAssets) {
       throw new Error('Policy assessment action charges are inconsistent')
     }
     const assessmentPrice = input.prices[index] > input.capPrice
       ? input.capPrice
       : input.prices[index]
-    const postNotionalUsdc =
+    const postNotionalAssets =
       assessment.postPositionSize * assessmentPrice /
-      POSITION_SIZE_TO_USDC_SCALE
-    const requiredEquityUsdc = divideCeil(
-      postNotionalUsdc * 10_000n,
+      POSITION_SIZE_TO_ASSETS_SCALE
+    const requiredEquityAssets = divideCeil(
+      postNotionalAssets * 10_000n,
       leverageBps
     )
-    const equityDeficit = assessment.postPositionEquityUsdc < requiredEquityUsdc
-      ? requiredEquityUsdc - assessment.postPositionEquityUsdc
+    const equityDeficit = assessment.postPositionEquityAssets < requiredEquityAssets
+      ? requiredEquityAssets - assessment.postPositionEquityAssets
       : 0n
     if (equityDeficit === 0n) return 0n
 
-    const positiveTradeCostUsdc =
-      assessment.actionChargeCollectedUsdc - assessment.carryUsdc
-    const marginAbsorbedBeforeLocking = positiveTradeCostUsdc > input.marginDelta
-      ? positiveTradeCostUsdc - input.marginDelta
+    const positiveTradeCostAssets =
+      assessment.actionChargeCollectedAssets - assessment.carryAssets
+    const marginAbsorbedBeforeLocking = positiveTradeCostAssets > input.marginDelta
+      ? positiveTradeCostAssets - input.marginDelta
       : 0n
     return equityDeficit + marginAbsorbedBeforeLocking
   }))
@@ -367,7 +370,7 @@ export function derivePerpsExecutionBounds(input: {
   submitBy: bigint
   executionWindowSeconds: number
   expectedConfigHash: Hex
-  executionBountyUsdc: bigint
+  executionBountyAssets: bigint
   selectedMaxLeverageBps: number
   assessments: PerpsExecutionAssessment[]
 }): PerpsExecutionBounds {
@@ -378,7 +381,7 @@ export function derivePerpsExecutionBounds(input: {
   if (input.assessments.some((assessment) => assessment.mode !== mode)) {
     throw new Error('The execution regime changed during final review')
   }
-  if (input.assessments.some((assessment) => assessment.postPositionEquityUsdc < 0n)) {
+  if (input.assessments.some((assessment) => assessment.postPositionEquityAssets < 0n)) {
     throw new Error('The reviewed order can produce negative position equity')
   }
   const assessedLeverage = maximum(
@@ -396,28 +399,28 @@ export function derivePerpsExecutionBounds(input: {
     executionWindowSeconds: input.executionWindowSeconds,
     allowedExecutionModes: executionModeMask(mode),
     expectedConfigHash: input.expectedConfigHash,
-    maxExecutionBountyUsdc: input.executionBountyUsdc,
-    maxExecutionNotionalUsdc: maximum(
-      input.assessments.map((assessment) => assessment.executionNotionalUsdc)
+    maxExecutionBountyAssets: input.executionBountyAssets,
+    maxExecutionNotionalAssets: maximum(
+      input.assessments.map((assessment) => assessment.executionNotionalAssets)
     ),
-    maxGrossAccountDebitUsdc: maximum([
-      input.executionBountyUsdc,
-      ...input.assessments.map((assessment) => assessment.grossAccountDebitUsdc),
+    maxGrossAccountDebitAssets: maximum([
+      input.executionBountyAssets,
+      ...input.assessments.map((assessment) => assessment.grossAccountDebitAssets),
     ]),
-    maxActionChargeUsdc: maximum(
-      input.assessments.map((assessment) => assessment.actionChargeAssessedUsdc)
+    maxActionChargeAssets: maximum(
+      input.assessments.map((assessment) => assessment.actionChargeAssessedAssets)
     ),
-    maxExplicitFeesUsdc: maximum(
-      input.assessments.map((assessment) => assessment.explicitFeesUsdc)
+    maxExplicitFeesAssets: maximum(
+      input.assessments.map((assessment) => assessment.explicitFeesAssets)
     ),
     maxPostPositionSize: maximum(
       input.assessments.map((assessment) => assessment.postPositionSize)
     ),
-    minPostSettlementBalanceUsdc: minimum(
-      input.assessments.map((assessment) => assessment.postSettlementBalanceUsdc)
+    minPostSettlementBalanceAssets: minimum(
+      input.assessments.map((assessment) => assessment.postSettlementBalanceAssets)
     ),
-    minPostPositionEquityUsdc: minimum(
-      input.assessments.map((assessment) => assessment.postPositionEquityUsdc)
+    minPostPositionEquityAssets: minimum(
+      input.assessments.map((assessment) => assessment.postPositionEquityAssets)
     ),
     maxPostLeverageBps: Number(assessedLeverage),
   }
@@ -440,16 +443,16 @@ export function persistPerpsOrderRequestV3(
     executionWindowSeconds: request.bounds.executionWindowSeconds,
     allowedExecutionModes: request.bounds.allowedExecutionModes,
     expectedConfigHash: request.bounds.expectedConfigHash,
-    maxExecutionBountyUsdc: request.bounds.maxExecutionBountyUsdc.toString(),
-    maxExecutionNotionalUsdc: request.bounds.maxExecutionNotionalUsdc.toString(),
-    maxGrossAccountDebitUsdc: request.bounds.maxGrossAccountDebitUsdc.toString(),
-    maxActionChargeUsdc: request.bounds.maxActionChargeUsdc.toString(),
-    maxExplicitFeesUsdc: request.bounds.maxExplicitFeesUsdc.toString(),
+    maxExecutionBountyAssets: request.bounds.maxExecutionBountyAssets.toString(),
+    maxExecutionNotionalAssets: request.bounds.maxExecutionNotionalAssets.toString(),
+    maxGrossAccountDebitAssets: request.bounds.maxGrossAccountDebitAssets.toString(),
+    maxActionChargeAssets: request.bounds.maxActionChargeAssets.toString(),
+    maxExplicitFeesAssets: request.bounds.maxExplicitFeesAssets.toString(),
     maxPostPositionSize: request.bounds.maxPostPositionSize.toString(),
-    minPostSettlementBalanceUsdc:
-      request.bounds.minPostSettlementBalanceUsdc.toString(),
-    minPostPositionEquityUsdc:
-      request.bounds.minPostPositionEquityUsdc.toString(),
+    minPostSettlementBalanceAssets:
+      request.bounds.minPostSettlementBalanceAssets.toString(),
+    minPostPositionEquityAssets:
+      request.bounds.minPostPositionEquityAssets.toString(),
     maxPostLeverageBps: request.bounds.maxPostLeverageBps,
   }
 }
@@ -472,17 +475,17 @@ export function restorePerpsOrderRequestV3(
       executionWindowSeconds: persisted.executionWindowSeconds,
       allowedExecutionModes: persisted.allowedExecutionModes,
       expectedConfigHash: persisted.expectedConfigHash,
-      maxExecutionBountyUsdc: BigInt(persisted.maxExecutionBountyUsdc),
-      maxExecutionNotionalUsdc: BigInt(persisted.maxExecutionNotionalUsdc),
-      maxGrossAccountDebitUsdc: BigInt(persisted.maxGrossAccountDebitUsdc),
-      maxActionChargeUsdc: BigInt(persisted.maxActionChargeUsdc),
-      maxExplicitFeesUsdc: BigInt(persisted.maxExplicitFeesUsdc),
+      maxExecutionBountyAssets: BigInt(persisted.maxExecutionBountyAssets),
+      maxExecutionNotionalAssets: BigInt(persisted.maxExecutionNotionalAssets),
+      maxGrossAccountDebitAssets: BigInt(persisted.maxGrossAccountDebitAssets),
+      maxActionChargeAssets: BigInt(persisted.maxActionChargeAssets),
+      maxExplicitFeesAssets: BigInt(persisted.maxExplicitFeesAssets),
       maxPostPositionSize: BigInt(persisted.maxPostPositionSize),
-      minPostSettlementBalanceUsdc: BigInt(
-        persisted.minPostSettlementBalanceUsdc
+      minPostSettlementBalanceAssets: BigInt(
+        persisted.minPostSettlementBalanceAssets
       ),
-      minPostPositionEquityUsdc: BigInt(
-        persisted.minPostPositionEquityUsdc
+      minPostPositionEquityAssets: BigInt(
+        persisted.minPostPositionEquityAssets
       ),
       maxPostLeverageBps: persisted.maxPostLeverageBps,
     },
@@ -525,7 +528,7 @@ export const PERPS_FAILED_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
   [PERPS_FAILED_CONSTRAINT.ACTION_CHARGE]: 'Action charge',
   [PERPS_FAILED_CONSTRAINT.EXPLICIT_FEES]: 'Explicit fees',
   [PERPS_FAILED_CONSTRAINT.POST_POSITION_SIZE]: 'Post-position size',
-  [PERPS_FAILED_CONSTRAINT.POST_SETTLEMENT_BALANCE]: 'Post-settlement balance',
+  [PERPS_FAILED_CONSTRAINT.POST_SETTLEMENT_BALANCE]: 'USDG balance after settlement',
   [PERPS_FAILED_CONSTRAINT.POST_POSITION_EQUITY]: 'Post-position equity',
   [PERPS_FAILED_CONSTRAINT.POST_LEVERAGE]: 'Post leverage',
 }

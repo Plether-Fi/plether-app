@@ -41,10 +41,10 @@ interface RawVaultRequest {
 
 export interface VaultHolderDistribution {
   address: Address
-  currentNavUsdc: bigint
+  currentNavAssets: bigint
   shareOfVaultNav: number
-  seniorNavUsdc: bigint
-  juniorNavUsdc: bigint
+  seniorNavAssets: bigint
+  juniorNavAssets: bigint
   seniorShareOfAttributedValue?: number
   juniorShareOfAttributedValue?: number
 }
@@ -55,7 +55,7 @@ export interface VaultOverviewActivityItem {
   tranche: VaultActivityTranche
   account: Address
   requestId: bigint
-  amountUsdc?: bigint
+  amountAssets?: bigint
   shares?: bigint
   amountIsEstimate: boolean
   timestamp: string
@@ -350,15 +350,15 @@ export function useVaultActivity({
     const seniorAttributedShares = normalized.holderShareTotals.senior ?? fallbackSeniorShares
     const juniorAttributedShares = normalized.holderShareTotals.junior ?? fallbackJuniorShares
     return [...values.entries()].map(([address, value]) => {
-      const currentNavUsdc = value.senior + value.junior
+      const currentNavAssets = value.senior + value.junior
       return {
         address,
-        currentNavUsdc,
+        currentNavAssets,
         shareOfVaultNav: totalVaultNav > 0n
-          ? Number(currentNavUsdc * 1_000_000n / totalVaultNav) / 10_000
+          ? Number(currentNavAssets * 1_000_000n / totalVaultNav) / 10_000
           : 0,
-        seniorNavUsdc: value.senior,
-        juniorNavUsdc: value.junior,
+        seniorNavAssets: value.senior,
+        juniorNavAssets: value.junior,
         seniorShareOfAttributedValue: seniorAttributedShares > 0n
           ? Number(value.seniorShares * 1_000_000n / seniorAttributedShares) / 10_000
           : 0,
@@ -367,9 +367,9 @@ export function useVaultActivity({
           : 0,
       }
     }).sort((left, right) => (
-      left.currentNavUsdc > right.currentNavUsdc
+      left.currentNavAssets > right.currentNavAssets
         ? -1
-        : left.currentNavUsdc < right.currentNavUsdc ? 1 : 0
+        : left.currentNavAssets < right.currentNavAssets ? 1 : 0
     ))
   }, [
     juniorEffectiveSupply,
@@ -383,7 +383,7 @@ export function useVaultActivity({
   const activity = useMemo<VaultOverviewActivityItem[]>(() => (
     normalized.requests.map((request) => {
       const isSenior = request.tranche === 'senior'
-      const amountUsdc = request.kind === 'deposit'
+      const amountAssets = request.kind === 'deposit'
         ? request.rawAmount
         : sharesToAssets(
             request.rawAmount,
@@ -392,7 +392,7 @@ export function useVaultActivity({
           )
       return {
         ...request,
-        amountUsdc,
+        amountAssets,
         shares: request.kind === 'withdraw' ? request.rawAmount : undefined,
         amountIsEstimate: request.kind === 'withdraw',
       }

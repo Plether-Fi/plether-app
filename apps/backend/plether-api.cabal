@@ -10,10 +10,13 @@ category:           Web
 build-type:         Simple
 extra-source-files: schema.sql
                     test/fixtures/divisions-publications.json
-                    config/migrations/insights-integrity-epoch-v1.sql
+                    config/migrations/insights-integrity-epoch-v2.sql
+                    config/migrations/perps-settlement-assets-v1.sql
                     config/migrations/insights-snapshot-deferred-fk-v1.sql
-                    config/migrations/insights-integrity-indexes-v1.sql
+                    config/migrations/insights-integrity-indexes-v2.sql
                     test/fixtures/insights-funding-integrity-baseline.sql
+                    test/fixtures/token-neutral-close-waiver.json
+                    test/fixtures/token-neutral-close-rebate.json
 
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
@@ -376,6 +379,7 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.CloseAssistanceEvidenceSpec
         Plether.AA.GatewaySpec
         Plether.AA.RecoveryCapabilitySpec
         Plether.AA.PaymasterSpec
@@ -430,6 +434,8 @@ test-suite plether-api-test
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Perps.ReleaseSpec
+        Plether.Perps.ManifestSpec
+        Plether.Perps.ActivationSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.ObservationSpec
         Plether.Database.VaultPerformanceSpec

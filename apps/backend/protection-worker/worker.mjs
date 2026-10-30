@@ -181,10 +181,10 @@ export class ProtectionWorker {
           await this.observe(block, protection, 'trigger-ready')
           if (await this.submit('trigger', id, this.book, 'PositionProtectionBook', 'triggerPositionProtection', [id, payload.update_data], fee)) return
         } else if (protection.status === 8) {
-          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'outcome', [protection.linkedOrderId], block.number)
+          const outcome = await this.read(this.lifecycle, 'OrderLifecycleBook', 'terminalOutcome', [protection.linkedOrderId], block.number)
           if (outcome.reason !== 2 || outcome.status !== 3) {
             await this.observe(block, protection, 'operator-required', { outcomeReason: outcome.reason })
-            this.log('error', 'protection_operator_required', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), reason: outcome.reason, failureSelector: outcome.failureSelector, revertDataHash: outcome.revertDataHash }); continue
+            this.log('error', 'protection_operator_required', { protectionId: id.toString(), linkedOrderId: protection.linkedOrderId.toString(), reason: outcome.reason }); continue
           }
           const head = await this.read(this.router, 'OrderRouter', 'nextExecuteId', [], block.number)
           const tail = await this.read(this.router, 'OrderRouter', 'globalTailOrderId', [], block.number)

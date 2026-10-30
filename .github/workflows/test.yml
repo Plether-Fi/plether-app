@@ -85,7 +85,7 @@ jobs:
 
       - name: Check AA package migration tooling
         working-directory: .
-        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs
+        run: node --test scripts/migrate-perps-aa-client.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-preparation-benchmark.test.mjs scripts/prepare-perps-release.test.mjs
 
       - name: Install pinned local EVM for AA execution regressions
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
@@ -96,11 +96,11 @@ jobs:
         working-directory: .
         run: node --test scripts/aa-execution-regression.test.mjs
 
-      - name: Fetch immutable Core v1.2.3 lifecycle test source
+      - name: Fetch the SDK's immutable Core lifecycle source
         uses: actions/checkout@v4
         with:
           repository: Plether-Fi/plether-core
-          ref: ffe45937b7f38133133ad292c5435828bf99357d
+          ref: e35cf0e0e9b880e07812e36321dee98bd299dcbd
           path: .ci-core
           submodules: recursive
           persist-credentials: false

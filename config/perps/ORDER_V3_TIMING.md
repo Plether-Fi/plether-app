@@ -1,10 +1,11 @@
 # V3 order timing
 
-The active deployment is the complete v1.3.1 graph recorded in Core PR #112.
-The public manifest and deployment pins select that graph with
-`orderInterfaceVersion: 3`; source and runtime hashes are pinned in
-`arbitrum-sepolia-v3.json`. Core has seeded and activated this graph; the
-application address update does not broadcast contract activation.
+The current consumer configuration is `mock-usdg-prepared.json`, schema 4,
+order interface 3, phase `prepared`. Its null deployment pins keep perps unavailable
+until a verified new deployment is reviewed. Historical v1.3.1 evidence remains
+archived and is not a runtime fallback. The token-neutral source changes ABI
+names, selectors and signed field names; retaining interface 3, configuration V5,
+digest V6 and receipt V5 labels does not make historical contracts compatible.
 
 Confirmation fixes `submitBy = confirmationBlock.timestamp + 120` and
 `executionWindowSeconds = 60`. The existing 45-second signing and 30-second
@@ -29,11 +30,11 @@ Before app deployment and contract activation:
 2. Introduce the verified V3 release file, update the frontend address registry,
    backend embedded manifest, worker pins, Docker and infrastructure references,
    and close-preview pin together. Include `orderInterfaceVersion: 3` in the
-   public/API manifest and schema 3 in the protocol deployment manifest. Preserve
+   public/API manifest and schema 4 in the protocol deployment manifest. Preserve
    historical V2 files. AA transport version 2 is independent of order version 3.
 3. Regenerate bindings from those artifacts and run all ABI, sponsorship,
    submission/recovery, history and worker checks. The app consumes the pinned
-   SDK 0.2.0 artifact below. Registry publication is a separate release action.
+   SDK 0.4.0 artifact below. Registry publication is a separate release action.
 4. Use a fresh router-scoped indexer cursor and journal identity. Verify a delayed
    approval near `submitBy`, execution after `submitBy` within the full committed
    window, expiry, retries, protected-open and sponsored-close receipts.
@@ -48,9 +49,9 @@ components, and request/bounds types from one SDK artifact built by Core's
 `scripts/perps-aa-artifact.mjs`. There is no second app encoder or edited vendor
 source. Both close-preview consumers also share one generated ABI.
 
-- Source: `cf86189bcca4813f39d6405a338b77176783eb42`
-- Package: `@plether-fi/perps-aa-client@0.2.0`
-- Integrity: `sha512-2x9fG+Pw8Mx0AbWrZibEv4tGlnLub5i0E56CAXj2q8gOmxWpbFtwNYMp7A08M9oLgSGrNmS2xbSHK7RKp7Nrxg==`
+- Source: `e35cf0e0e9b880e07812e36321dee98bd299dcbd`
+- Package: `@plether-fi/perps-aa-client@0.4.0`
+- Integrity: `sha512-kE1ScY6Ef95xLAqGdh5eTHurV7jRs3iy9fIGcyKJnxzsqZNx+E0IZHtjxUVQZ5X+fqnPC9uaoGT71KhKoQTJtg==`
 - Provenance: `config/perps-aa-client-release.json` and
   `apps/frontend/vendor/perps-aa-client/release.json`
 
@@ -72,7 +73,7 @@ node scripts/test-order-v3-local.mjs /path/to/clean/pinned/plether-core
 The runner checks the Core source pin, builds production contracts and a test
 adapter around the real Haskell timing policy, starts its own loopback-only
 Anvil chain, and stops it on exit. No live RPC, fork, credentials, publication,
-or deployment workflow is used. Only MockUSDC/Pyth, readiness transport,
+or deployment workflow is used. Only MockUSDG/Pyth, readiness transport,
 telemetry, and the local relay replace external services. The real app review,
 native preparation journal, SDK, owner/sponsor signatures, reference EntryPoint
 and SimpleAccount, production paymaster/router/engine, and canonical recovery

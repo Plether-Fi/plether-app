@@ -10,9 +10,9 @@ export interface CloseAssistanceConfig {
 }
 
 export interface SponsoredCloseFunding {
-  amountUsdc: bigint
-  depositCarryUsdc: bigint
-  commitmentCarryUsdc: bigint
+  amountAssets: bigint
+  depositCarryAssets: bigint
+  commitmentCarryAssets: bigint
   config: CloseAssistanceConfig
 }
 

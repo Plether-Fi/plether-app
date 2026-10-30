@@ -20,8 +20,8 @@ function fixture(steps, { account = 'account', router = 'router', block = 1, tx 
     const id = block * 1000 + index
     const log = index * 10
     const economics = JSON.stringify({
-      ...(vpi === undefined ? {} : { vpiUsdc: String(vpi) }),
-      postPositionSize: String(postSize ?? size), executionBountyUsdc: '0', ...extraEconomics,
+      ...(vpi === undefined ? {} : { vpiAssets: String(vpi) }),
+      postPositionSize: String(postSize ?? size), executionBountyAssets: '0', ...extraEconomics,
     })
     return `
       INSERT INTO perps_account_activity VALUES
@@ -40,8 +40,8 @@ CREATE TEMP TABLE perps_orders (
   chain_id bigint, order_router text, account text, side integer, order_id bigint,
   commit_tx_hash text, commit_block_number bigint, commit_timestamp bigint,
   terminal_tx_hash text, terminal_block_number bigint, terminal_timestamp bigint, terminal_status text,
-  failure_reason text, execution_price numeric, execution_vpi_usdc numeric,
-  execution_frozen_close_spread_usdc numeric, execution_economics_version integer,
+  failure_reason text, execution_price numeric, execution_vpi_assets numeric,
+  execution_frozen_close_spread_assets numeric, execution_economics_version integer,
   execution_oracle_price numeric, execution_oracle_frozen boolean, oracle_min_publish_time bigint,
   oracle_max_publish_time bigint, oracle_derivation_version integer, client_order_id text,
   receipt_hash text, terminal_reason text, pending_reason text, execution_mode text, failed_constraint text,
@@ -49,7 +49,7 @@ CREATE TEMP TABLE perps_orders (
 );
 CREATE TEMP TABLE perps_account_activity (
   chain_id bigint, release_router text, account text, activity_type text, side integer, price numeric,
-  size_delta numeric, pnl_usdc numeric, tx_hash text, block_number bigint, log_index bigint, data jsonb, amount_usdc numeric
+  size_delta numeric, pnl_assets numeric, tx_hash text, block_number bigint, log_index bigint, data jsonb, amount_assets numeric
 );
 CREATE TEMP TABLE perps_events (
   chain_id bigint, release_router text, account text, tx_hash text, block_number bigint,
@@ -105,9 +105,9 @@ for (const { name, steps, expected } of cases) {
     const sql = setup + fixture(steps)
       + fixture(noise, { account: 'other', block: 2 })
       + fixture(noise, { router: 'other', block: 3 })
-      + `UPDATE perps_account_activity SET data = '{"vpiUsdc":"999999"}';
-        SELECT jsonb_build_object('total', receipt_economics->>'totalPositionVpiUsdc',
-          'lifetime', receipt_economics->>'positionLifetimeNetResultUsdc')
+      + `UPDATE perps_account_activity SET data = '{"vpiAssets":"999999"}';
+        SELECT jsonb_build_object('total', receipt_economics->>'totalPositionVpiAssets',
+          'lifetime', receipt_economics->>'positionLifetimeNetResultAssets')
         FROM (${query} AND o.account = 'account' ORDER BY o.order_id DESC LIMIT 1) result;
         ROLLBACK;`
     const result = spawnSync(process.env.PSQL_BIN ?? 'psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-d', process.env.PGDATABASE ?? 'postgres'], { input: sql, encoding: 'utf8' })
@@ -118,8 +118,8 @@ for (const { name, steps, expected } of cases) {
 
 function balances(before, after, claimBefore = 0, claimAfter = 0) {
   return {
-    preSettlementBalanceUsdc: String(before), postSettlementBalanceUsdc: String(after),
-    preTraderClaimBalanceUsdc: String(claimBefore), postTraderClaimBalanceUsdc: String(claimAfter),
+    preSettlementBalanceAssets: String(before), postSettlementBalanceAssets: String(after),
+    preTraderClaimBalanceAssets: String(claimBefore), postTraderClaimBalanceAssets: String(claimAfter),
   }
 }
 
@@ -130,16 +130,16 @@ test('lifetime result separates execution costs, between-trade carry, and extern
     { kind: 'Close', quantity: 75, vpi: -1, economics: balances(1024, 1044) },
   ]
   const sql = setup + fixture(steps) + `
-    INSERT INTO perps_account_activity (chain_id, release_router, account, activity_type, block_number, log_index, amount_usdc)
+    INSERT INTO perps_account_activity (chain_id, release_router, account, activity_type, block_number, log_index, amount_assets)
     VALUES (1, 'router', 'account', 'Deposit', 1, 5, 50),
       (1, 'router', 'account', 'Withdraw', 1, 15, 10),
       (1, 'router', 'other', 'Deposit', 1, 6, 999),
       (1, 'other', 'account', 'Deposit', 1, 7, 999),
       (1, 'router', 'account', 'Deposit', 0, 0, 999),
       (1, 'router', 'account', 'Deposit', 2, 0, 999);
-    SELECT jsonb_build_object('net', receipt_economics->>'positionLifetimeNetResultUsdc',
-      'trades', receipt_economics->>'positionLifetimeTradesResultUsdc',
-      'between', receipt_economics->>'positionLifetimeAccountAdjustmentUsdc')
+    SELECT jsonb_build_object('net', receipt_economics->>'positionLifetimeNetResultAssets',
+      'trades', receipt_economics->>'positionLifetimeTradesResultAssets',
+      'between', receipt_economics->>'positionLifetimeAccountAdjustmentAssets')
     FROM (${query} ORDER BY o.order_id DESC LIMIT 1) result;
     ROLLBACK;`
   const result = spawnSync(process.env.PSQL_BIN ?? 'psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-d', process.env.PGDATABASE ?? 'postgres'], { input: sql, encoding: 'utf8' })
@@ -156,9 +156,9 @@ test('claim settlement preserves lifetime result and a new position resets its b
     { kind: 'Close', quantity: 50, vpi: -1, economics: balances(1056, 1050, 0, 10) },
   ]
   const sql = setup + fixture(steps) + `
-    SELECT jsonb_build_object('net', receipt_economics->>'positionLifetimeNetResultUsdc',
-      'trades', receipt_economics->>'positionLifetimeTradesResultUsdc',
-      'between', receipt_economics->>'positionLifetimeAccountAdjustmentUsdc')
+    SELECT jsonb_build_object('net', receipt_economics->>'positionLifetimeNetResultAssets',
+      'trades', receipt_economics->>'positionLifetimeTradesResultAssets',
+      'between', receipt_economics->>'positionLifetimeAccountAdjustmentAssets')
     FROM (${query} ORDER BY o.order_id DESC LIMIT 1) result;
     ROLLBACK;`
   const result = spawnSync(process.env.PSQL_BIN ?? 'psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-d', process.env.PGDATABASE ?? 'postgres'], { input: sql, encoding: 'utf8' })

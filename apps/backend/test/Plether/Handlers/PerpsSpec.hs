@@ -228,7 +228,7 @@ spec = do
               ]
       bhLatestPrice history `shouldBe` Just 102_000_000
       bhIntervalSeconds history `shouldBe` 60
-      map bhpVolumeUsdc (bhPoints history) `shouldBe` [1_000_000, 3_000_000]
+      map bhpVolumeAssets (bhPoints history) `shouldBe` [1_000_000, 3_000_000]
       map bhpComponents (bhPoints history) `shouldBe` [Nothing, Nothing]
 
     it "accepts one bounded sparse range and preserves inception clipping" $ do
@@ -982,11 +982,11 @@ spec = do
   describe "basketHistoryPointsWithVolume" $ do
     it "matches activity volume by the requested interval bucket" $ do
       let points = basketHistoryPointsWithVolume 60 basketRows volumeRows
-      map bhpVolumeUsdc points `shouldBe` [123_456, 789]
+      map bhpVolumeAssets points `shouldBe` [123_456, 789]
 
     it "zero-fills candles without activity in their interval bucket" $ do
       let points = basketHistoryPointsWithVolume 60 basketRows (take 1 volumeRows)
-      map bhpVolumeUsdc points `shouldBe` [123_456, 0]
+      map bhpVolumeAssets points `shouldBe` [123_456, 0]
 
   describe "decodePythUpdateForAdmission" $ do
     it "prepares strict six-feed latest payload admission inputs" $ do
@@ -1162,7 +1162,7 @@ rollupConfig =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = ""
+    , cfgPerpsSettlementToken = ""
     , cfgPerpsOrderRouter = "0xrouter"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
@@ -1209,7 +1209,7 @@ rollupReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "perps-rollup-test"
     , crmChainId = 421614
-    , crmUsdc = ""
+    , crmSettlementToken = ""
     , crmOrderRouter = "0xrouter"
     , crmMarginClearinghouse = ""
     , crmAccountLens = ""
@@ -1248,11 +1248,11 @@ volumeRows :: [PerpsMarketVolumeBucketRow]
 volumeRows =
   [ PerpsMarketVolumeBucketRow
       { pmvbrBucket = 2
-      , pmvbrVolumeUsdc = 123_456
+      , pmvbrVolumeAssets = 123_456
       }
   , PerpsMarketVolumeBucketRow
       { pmvbrBucket = 3
-      , pmvbrVolumeUsdc = 789
+      , pmvbrVolumeAssets = 789
       }
   ]
 

@@ -1,29 +1,29 @@
-import { notionalUsdcToQuantizedSizeDelta } from './perps'
+import { notionalAssetsToQuantizedSizeDelta } from './perps'
 
 export interface ResolvePerpsSizeDeltaInput {
   isReducingCurrentPosition: boolean
   currentPositionSize?: bigint
-  notionalUsdc: bigint
-  maxNotionalUsdc: bigint
+  notionalAssets: bigint
+  maxNotionalAssets: bigint
   oraclePrice: bigint
 }
 
 export function resolvePerpsSizeDelta({
   isReducingCurrentPosition,
   currentPositionSize,
-  notionalUsdc,
-  maxNotionalUsdc,
+  notionalAssets,
+  maxNotionalAssets,
   oraclePrice,
 }: ResolvePerpsSizeDeltaInput): bigint {
   if (
     isReducingCurrentPosition &&
     currentPositionSize !== undefined &&
     currentPositionSize > 0n &&
-    maxNotionalUsdc > 0n &&
-    notionalUsdc >= maxNotionalUsdc
+    maxNotionalAssets > 0n &&
+    notionalAssets >= maxNotionalAssets
   ) {
     return currentPositionSize
   }
 
-  return notionalUsdcToQuantizedSizeDelta(notionalUsdc, oraclePrice)
+  return notionalAssetsToQuantizedSizeDelta(notionalAssets, oraclePrice)
 }

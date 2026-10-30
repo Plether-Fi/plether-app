@@ -12,13 +12,13 @@ import '../index.css'
 interface State {
   protocol: { phase: number; lastMarkPrice: bigint; tradingActive: boolean; oracleFrozen: boolean; fadWindow: boolean }
   position: PerpsPosition
-  account: { equityUsdc: bigint }
+  account: { equityAssets: bigint }
   protection?: PositionProtection
   configuration: ProtectionConfiguration
   cap: bigint
   trader: string
   pendingOrders: number
-  availableFreeSettlementUsdc: bigint | undefined
+  availableFreeSettlementAssets: bigint | undefined
   autoExecute: boolean
   log: { action: string; tx?: string; time: string }[]
 }
@@ -43,7 +43,7 @@ function LocalMarket() {
   const [price, setPrice] = useState('1')
   const [draft, setDraft] = useState({ ...EMPTY_PROTECTION_DRAFT, takeProfit: '1.1', stopLoss: '0.9' })
   let protectionPosition: ProtectionPositionBasis | undefined
-  try { protectionPosition = { entryPrice: state?.protocol.lastMarkPrice ?? 0n, size: parseUnits(size, 18), marginUsdc: parseUnits(margin, 6) } }
+  try { protectionPosition = { entryPrice: state?.protocol.lastMarkPrice ?? 0n, size: parseUnits(size, 18), marginAssets: parseUnits(margin, 6) } }
   catch { /* Keep incomplete quantity and margin inputs editable. */ }
   useEffect(() => {
     let active = true
@@ -70,7 +70,7 @@ function LocalMarket() {
     {error && <p role="alert" className="break-words border border-brand-orange p-3 text-brand-orange">{error}</p>}
     {!state ? <p>Preparing local market…</p> : <>
       <section className="space-y-3 border border-brand-border bg-surface-panel p-4">
-        <div className="flex flex-wrap justify-between gap-3"><h2 className="font-semibold">Market controls</h2><span>{state.protocol.tradingActive && !state.protocol.fadWindow && !state.protocol.oracleFrozen ? 'Market open' : 'Market restricted'} · Price {protectionPrice(state.protocol.lastMarkPrice, state.cap)} USDC</span></div>
+        <div className="flex flex-wrap justify-between gap-3"><h2 className="font-semibold">Market controls</h2><span>{state.protocol.tradingActive && !state.protocol.fadWindow && !state.protocol.oracleFrozen ? 'Market open' : 'Market restricted'} · Price {protectionPrice(state.protocol.lastMarkPrice, state.cap)} assets</span></div>
         <div className="flex flex-wrap items-center gap-3">
           <label>Displayed price <input aria-label="Market price" className={`${input} !w-32`} value={price} onChange={e => { setPrice(e.target.value) }} /></label>
           <button className={button} disabled={busy} onClick={() => { run('price', { price }) }}>Set price</button>
@@ -86,16 +86,16 @@ function LocalMarket() {
         <section className="space-y-4 border border-brand-border bg-surface-panel p-4">
           <h2 className="font-semibold">Open a protected position</h2>
           <div className="flex gap-2">{(['long', 'short'] as const).map(side => <button key={side} aria-pressed={direction === side} className={`${button} ${direction === side ? 'bg-[#FFAB96] !text-app-bg' : ''}`} onClick={() => { setDirection(side); setDraft({ ...EMPTY_PROTECTION_DRAFT, takeProfit: side === 'long' ? '1.1' : '0.9', stopLoss: side === 'long' ? '0.9' : '1.1' }) }}>{side === 'long' ? 'Long' : 'Short'}</button>)}</div>
-          <div className="grid grid-cols-2 gap-3"><label>Quantity · plDXY<input aria-label="Order quantity" className={input} value={size} onChange={e => { setSize(e.target.value) }} /></label><label>Margin · USDC<input aria-label="Order margin" className={input} value={margin} onChange={e => { setMargin(e.target.value) }} /></label></div>
+          <div className="grid grid-cols-2 gap-3"><label>Quantity · plDXY<input aria-label="Order quantity" className={input} value={size} onChange={e => { setSize(e.target.value) }} /></label><label>Margin · assets<input aria-label="Order margin" className={input} value={margin} onChange={e => { setMargin(e.target.value) }} /></label></div>
           <ProtectionInputs value={draft} onChange={setDraft} direction={direction} rawMark={state.protocol.lastMarkPrice} cap={state.cap} position={protectionPosition} disabled={busy || state.position.exists || state.pendingOrders > 0} />
           <button className={`${button} bg-[#FFAB96] !text-app-bg`} disabled={busy || state.position.exists || state.pendingOrders > 0} onClick={open}>{busy ? 'Submitting local transaction…' : 'Open with TP/SL on Anvil'}</button>
         </section>
         <section className="space-y-4 border border-brand-border bg-surface-panel p-4">
           <h2 className="font-semibold">Live on-chain state</h2>
-          <p>Account equity: {formatUnits(state.account.equityUsdc, 6)} USDC</p>
+          <p>Account equity: {formatUnits(state.account.equityAssets, 6)} assets</p>
           <p>{state.position.exists ? `${state.position.direction} · ${formatUnits(state.position.size, 18)} plDXY` : 'No open position'} · {state.pendingOrders} queued orders</p>
           <p role="status">Protection: {protectionStatusLabel(state.protection?.status)}</p>
-          <PositionProtectionManager protection={state.protection} position={state.position} rawMark={state.protocol.lastMarkPrice} cap={state.cap} configuration={state.configuration} pendingOrders={state.pendingOrders} availableFreeSettlementUsdc={state.availableFreeSettlementUsdc} accountAddress={state.trader} onManage={(request: ProtectionManagementRequest) => act('manage', request)} />
+          <PositionProtectionManager protection={state.protection} position={state.position} rawMark={state.protocol.lastMarkPrice} cap={state.cap} configuration={state.configuration} pendingOrders={state.pendingOrders} availableFreeSettlementAssets={state.availableFreeSettlementAssets} accountAddress={state.trader} onManage={(request: ProtectionManagementRequest) => act('manage', request)} />
         </section>
       </div>
       <section className="border border-brand-border p-4"><h2 className="mb-3 font-semibold">Local transaction log</h2><ul className="space-y-2 text-xs">{state.log.map(item => <li key={item.tx ?? item.time} className="break-all"><strong>{item.action}</strong> {item.tx}</li>)}</ul></section>

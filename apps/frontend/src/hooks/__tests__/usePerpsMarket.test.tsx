@@ -71,13 +71,13 @@ describe('usePerpsMarket', () => {
                 initMarginBps: 750n,
                 fadMarginBps: 1_000n,
                 baseCarryBps: 25n,
-                minBountyUsdc: 100_000n,
+                minBountyAssets: 100_000n,
                 bountyBps: 50n,
               },
             },
             { status: 'success', result: 15n },
           ]
-        : firstFunctionName === 'minOpenNotionalUsdc'
+        : firstFunctionName === 'minOpenNotionalAssets'
           ? [
               { status: 'success', result: 1_000_000n },
               { status: 'success', result: 10n },
@@ -99,7 +99,7 @@ describe('usePerpsMarket', () => {
     const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)
     const dynamicCall = calls.find((call) => call.contracts?.[0]?.functionName === 'getProtocolStatus')
     const riskParamsCall = calls.find((call) => call.contracts?.[0]?.functionName === 'riskParams')
-    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalUsdc')
+    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalAssets')
 
     expect(dynamicCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'getProtocolStatus',
@@ -120,7 +120,7 @@ describe('usePerpsMarket', () => {
     })
     expect(riskParamsCall?.query).not.toHaveProperty('refetchInterval')
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
-      'minOpenNotionalUsdc',
+      'minOpenNotionalAssets',
       'maxPendingOrders',
       'maxExecutionWindowSeconds',
     ])
@@ -134,7 +134,7 @@ describe('usePerpsMarket', () => {
     expect(mocks.usePerpsBasketHistory).toHaveBeenCalledWith('24h', 3_600, true)
     expect(mocks.usePerpsBasketHistory).toHaveBeenCalledTimes(1)
     expect(result.current.raw.executionFeeBps).toBe(15n)
-    expect(result.current.raw.minOpenNotionalUsdc).toBe(1_000_000n)
+    expect(result.current.raw.minOpenNotionalAssets).toBe(1_000_000n)
     expect(result.current.raw.maintenanceMarginBps).toBe(500n)
     expect(result.current.raw.initialMarginBps).toBe(750n)
 
@@ -242,7 +242,7 @@ describe('usePerpsMarket', () => {
 
   it('uses market stats rather than component history as authoritative 24h volume', () => {
     mocks.usePerpsMarketStats.mockReturnValue({
-      data: { data: { volume24hUsdc: '123000000' } },
+      data: { data: { volume24hAssets: '123000000' } },
       isLoading: false,
       refetch: mocks.refetchMarketStats,
     })
@@ -252,7 +252,7 @@ describe('usePerpsMarket', () => {
           points: [{
             timestamp: 100_000,
             basketPrice: '98000000',
-            volumeUsdc: '999999999999',
+            volumeAssets: '999999999999',
             components: [],
           }],
         },

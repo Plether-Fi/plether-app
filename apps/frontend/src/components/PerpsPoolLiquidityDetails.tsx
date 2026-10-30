@@ -1,11 +1,12 @@
+import { PERPS_SETTLEMENT_TOKEN_LABEL } from '../contracts/perpsAddresses'
 import type { ReactNode } from 'react'
-import { formatPerpsUsdc } from '../utils/perps'
+import { formatPerpsAssets } from '../utils/perps'
 import type { PerpsSeniorCapitalStatus } from '../utils/perpsPoolCapital'
 import { DocsLink, TokenAmount, type TooltipDocsLink } from './ui'
 
 export interface PerpsPoolLiquidityDetailsProps {
-  poolAssetsUsdc?: bigint
-  freeUsdc?: bigint
+  poolAssets?: bigint
+  freeAssets?: bigint
   juniorPrincipal?: ReactNode
   seniorPrincipal?: ReactNode
   juniorSharePercent?: number
@@ -21,14 +22,14 @@ export interface PerpsPoolLiquidityDetailsProps {
 function poolAmount(value: bigint | undefined, isLoading: boolean): ReactNode {
   if (isLoading) return '...'
   if (value === undefined) return '--'
-  return <TokenAmount amount={value > 0n && value < 10_000n ? '<0.01' : formatPerpsUsdc(value)} />
+  return <TokenAmount token={PERPS_SETTLEMENT_TOKEN_LABEL} amount={value > 0n && value < 10_000n ? '<0.01' : formatPerpsAssets(value)} />
 }
 
-function reservedShare(poolAssetsUsdc: bigint | undefined, reservedUsdc: bigint | undefined): string | undefined {
-  if (poolAssetsUsdc === undefined || poolAssetsUsdc <= 0n || reservedUsdc === undefined) return undefined
-  if (reservedUsdc > 0n && reservedUsdc * 1_000n < poolAssetsUsdc) return '<0.1%'
-  if (reservedUsdc < poolAssetsUsdc && reservedUsdc * 1_000n > poolAssetsUsdc * 999n) return '>99.9%'
-  const tenths = (reservedUsdc * 1_000n + poolAssetsUsdc / 2n) / poolAssetsUsdc
+function reservedShare(poolAssets: bigint | undefined, reservedAssets: bigint | undefined): string | undefined {
+  if (poolAssets === undefined || poolAssets <= 0n || reservedAssets === undefined) return undefined
+  if (reservedAssets > 0n && reservedAssets * 1_000n < poolAssets) return '<0.1%'
+  if (reservedAssets < poolAssets && reservedAssets * 1_000n > poolAssets * 999n) return '>99.9%'
+  const tenths = (reservedAssets * 1_000n + poolAssets / 2n) / poolAssets
   return `${(Number(tenths) / 10).toFixed(1)}%`
 }
 
@@ -84,8 +85,8 @@ function CapitalStatus({
 }
 
 export function PerpsPoolLiquidityDetails({
-  poolAssetsUsdc,
-  freeUsdc,
+  poolAssets,
+  freeAssets,
   juniorPrincipal,
   seniorPrincipal,
   juniorSharePercent,
@@ -100,11 +101,11 @@ export function PerpsPoolLiquidityDetails({
   const hasCapitalComposition = juniorSharePercent !== undefined && seniorSharePercent !== undefined
   const juniorLabel = displayPercent(juniorSharePercent)
   const seniorLabel = displayPercent(seniorSharePercent)
-  const reservedUsdc = poolAssetsUsdc !== undefined && freeUsdc !== undefined
-    && freeUsdc >= 0n && poolAssetsUsdc >= freeUsdc
-    ? poolAssetsUsdc - freeUsdc
+  const reservedAssets = poolAssets !== undefined && freeAssets !== undefined
+    && freeAssets >= 0n && poolAssets >= freeAssets
+    ? poolAssets - freeAssets
     : undefined
-  const reservedShareLabel = isLoading ? undefined : reservedShare(poolAssetsUsdc, reservedUsdc)
+  const reservedShareLabel = isLoading ? undefined : reservedShare(poolAssets, reservedAssets)
   const barLabel = hasCapitalComposition
     ? `Vault capital: Senior ${seniorLabel}; Junior ${juniorLabel}`
     : 'Vault capital breakdown unavailable'
@@ -113,23 +114,23 @@ export function PerpsPoolLiquidityDetails({
     <div className="w-full text-left">
       <dl className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 sm:gap-6">
         <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3">
-          <dt className="text-content-secondary">Total pool assets</dt>
-          <dd className="font-semibold text-content-primary">{poolAmount(poolAssetsUsdc, isLoading)}</dd>
-          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">Pool assets reported by the protocol.</dd>
+          <dt className="text-content-secondary">Total pool USDG</dt>
+          <dd className="font-semibold text-content-primary">{poolAmount(poolAssets, isLoading)}</dd>
+          <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">Pool USDG reported by the protocol.</dd>
         </div>
         <div className="grid min-w-0 grid-cols-[1fr_auto] content-start items-baseline gap-x-3 sm:border-l sm:border-brand-border/20 sm:pl-6">
-          <dt className="text-content-secondary">Reserved pool assets</dt>
-          <dd className="font-semibold text-content-primary">{poolAmount(reservedUsdc, isLoading)}</dd>
+          <dt className="text-content-secondary">Reserved pool USDG</dt>
+          <dd className="font-semibold text-content-primary">{poolAmount(reservedAssets, isLoading)}</dd>
           <dd className="col-span-2 mt-1 text-[11px] leading-4 text-content-secondary">
-            Total pool assets minus free liquidity: assets backing existing positions and other protocol obligations.
-            {reservedShareLabel !== undefined ? <span className="mt-1 block">Share of pool assets reserved: <span className="font-semibold text-content-primary">{reservedShareLabel}</span></span> : null}
+            Total pool USDG minus free liquidity: USDG backing existing positions and other protocol obligations.
+            {reservedShareLabel !== undefined ? <span className="mt-1 block">Share of pool USDG reserved: <span className="font-semibold text-content-primary">{reservedShareLabel}</span></span> : null}
           </dd>
         </div>
       </dl>
 
       <div className="mt-4 space-y-2 border-y border-brand-border/20 py-3 text-xs leading-5 text-content-secondary">
         <h3 className="font-semibold text-content-primary">What this means for trading</h3>
-        <p>Existing positions can reserve most of the pool’s assets. New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation.</p>
+        <p>Existing positions can reserve most of the pool’s USDG. New orders must satisfy both the directional limit and payout-backing requirements. Low free liquidity can restrict new exposure; some orders may still fit without increasing the pool’s maximum payout obligation.</p>
         <p>Use Max in the trade ticket to check your current estimated order size. Final acceptance depends on conditions when the order executes.</p>
       </div>
 

@@ -1,0 +1,21 @@
+{
+  "integration": {
+    "orderInterfaceVersion": 3,
+    "aaManifestVersion": null,
+    "volumeHistoryStartTimestamp": null
+  },
+  "bundleSha256": null,
+  "aa": {
+    "entryPoint": null,
+    "entryPointVersion": "0.8",
+    "bundlerRpcUrl": "/api/perps/v1/aa/rpc",
+    "paymasterRpcUrl": "/api/perps/v1/aa/rpc",
+    "paymasterAddress": null,
+    "paymasterVersion": "plether-verifying-v1",
+    "preparationRpcVersion": 1,
+    "smartAccountMode": "simple",
+    "smartAccountVersion": "permissionless-simple-v0.8",
+    "smartAccountIndex": "0",
+    "smartAccountFactory": null
+  }
+}

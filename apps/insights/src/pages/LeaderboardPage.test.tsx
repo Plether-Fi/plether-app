@@ -69,7 +69,7 @@ describe('Divisions leaderboard', () => {
   })
   it('shows Iron only after a completed week publishes it, regardless of current-week gains', () => {
     clock.now = Date.parse('2026-10-20T12:00:00Z')
-    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityUsdc: '99000000000' })]), null) })
+    query.mockReturnValue({ data: publishWeek(input(0, [account(1, { closingEquityAssets: '99000000000' })]), null) })
     liveQuery.mockReturnValue({ data: { status: 'ready', walletCount: 1, standings: [
       { address: account(1).address, rank: 1, weeklyReturnBps: 5000, activeDays: 2 },
     ] } })

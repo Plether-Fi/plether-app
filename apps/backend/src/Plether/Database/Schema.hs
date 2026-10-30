@@ -139,7 +139,7 @@ module Plether.Database.Schema
   , updatePerpsOrderLifecycleReceiptSql
   , executionModeOracleFrozen
   , insertPerpsActivity
-  , insertPerpsUsdcTransfer
+  , insertPerpsAssetTransfer
   , perpsOrderBaseSelectSql
   , getPerpsOrdersByAccount
   , getPerpsOrderById
@@ -158,7 +158,7 @@ module Plether.Database.Schema
   , assertPerpsReplayOrderCommittedExact
   , assertPerpsReplayOrderTerminalExact
   , assertPerpsReplayActivityExact
-  , assertPerpsReplayUsdcTransferExact
+  , assertPerpsReplayAssetTransferExact
   , assertPerpsReplayExpiredCleanupExact
   , assertPerpsReplayExpiredCleanupIfReadyExact
   , configurePerpsReplayTransaction
@@ -3754,8 +3754,8 @@ data PerpsOrderRow = PerpsOrderRow
   , porTerminalStatus :: Text
   , porFailureReason :: Maybe Text
   , porExecutionPrice :: Maybe Integer
-  , porExecutionVpiUsdc :: Maybe Integer
-  , porExecutionFrozenCloseSpreadUsdc :: Maybe Integer
+  , porExecutionVpiAssets :: Maybe Integer
+  , porExecutionFrozenCloseSpreadAssets :: Maybe Integer
   , porExecutionEconomicsVersion :: Maybe Int
   , porExecutionOraclePrice :: Maybe Integer
   , porExecutionOracleFrozen :: Maybe Bool
@@ -3773,8 +3773,8 @@ data PerpsOrderRow = PerpsOrderRow
   , porActivityType :: Maybe Text
   , porActivitySizeDelta :: Maybe Integer
   , porActivityPrice :: Maybe Integer
-  , porActivityVpiUsdc :: Maybe Integer
-  , porActivityPnlUsdc :: Maybe Integer
+  , porActivityVpiAssets :: Maybe Integer
+  , porActivityPnlAssets :: Maybe Integer
   , porSortBlock :: Integer
   }
   deriving stock (Show, Generic)
@@ -3849,8 +3849,8 @@ data PerpsActivityRow = PerpsActivityRow
   , parSide :: Maybe Int
   , parPrice :: Maybe Integer
   , parSizeDelta :: Maybe Integer
-  , parAmountUsdc :: Maybe Integer
-  , parPnlUsdc :: Maybe Integer
+  , parAmountAssets :: Maybe Integer
+  , parPnlAssets :: Maybe Integer
   , parTxHash :: Text
   , parBlockNumber :: Integer
   , parTimestamp :: Integer
@@ -3880,7 +3880,7 @@ instance FromRow PerpsActivityRow where
 
 data PerpsMarketVolumeBucketRow = PerpsMarketVolumeBucketRow
   { pmvbrBucket :: Integer
-  , pmvbrVolumeUsdc :: Integer
+  , pmvbrVolumeAssets :: Integer
   }
   deriving stock (Eq, Show, Generic)
 
@@ -3931,7 +3931,7 @@ data PerpsReplayHistorySnapshot = PerpsReplayHistorySnapshot
   { prhsEvents :: [Text]
   , prhsOrders :: [Text]
   , prhsActivity :: [Text]
-  , prhsUsdcTransfers :: [Text]
+  , prhsAssetTransfers :: [Text]
   }
   deriving stock (Eq, Show)
 
@@ -4078,14 +4078,14 @@ assertPerpsReplayActivityExact
   -> Integer
   -> Value
   -> IO ()
-assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
+assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountAssets pnlAssets txHash blockNumber blockHash txIndex logIndex timestamp payload = do
   rows <- query conn
     "SELECT 1::BIGINT FROM perps_account_activity WHERE event_key = ? \
     \AND chain_id = ? AND release_router = ? AND contract_address = ? AND account = ? \
     \AND actor IS NOT DISTINCT FROM ? AND activity_type = ? AND order_id IS NOT DISTINCT FROM ? \
     \AND side IS NOT DISTINCT FROM ? AND price IS NOT DISTINCT FROM ? \
-    \AND size_delta IS NOT DISTINCT FROM ? AND amount_usdc IS NOT DISTINCT FROM ? \
-    \AND pnl_usdc IS NOT DISTINCT FROM ? AND tx_hash = ? AND block_number = ? \
+    \AND size_delta IS NOT DISTINCT FROM ? AND amount_assets IS NOT DISTINCT FROM ? \
+    \AND pnl_assets IS NOT DISTINCT FROM ? AND tx_hash = ? AND block_number = ? \
     \AND block_hash = ? AND tx_index = ? AND log_index = ? AND timestamp = ? AND data = ?::jsonb"
     ( eventKey
     , chainId
@@ -4098,8 +4098,8 @@ assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventK
     , side
     , price
     , sizeDelta
-    , amountUsdc
-    , pnlUsdc
+    , amountAssets
+    , pnlAssets
     , T.toLower txHash
     , blockNumber
     , T.toLower blockHash
@@ -4110,7 +4110,7 @@ assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventK
     ) :: IO [Only Integer]
   assertExactlyOneReplayRow "account activity" rows
 
-assertPerpsReplayUsdcTransferExact
+assertPerpsReplayAssetTransferExact
   :: Connection
   -> Integer
   -> Text
@@ -4125,9 +4125,9 @@ assertPerpsReplayUsdcTransferExact
   -> Integer
   -> Integer
   -> IO ()
-assertPerpsReplayUsdcTransferExact conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
+assertPerpsReplayAssetTransferExact conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
   rows <- query conn
-    "SELECT 1::BIGINT FROM perps_usdc_transfers \
+    "SELECT 1::BIGINT FROM perps_asset_transfers \
     \WHERE chain_id = ? AND release_router = ? AND token_address = ? \
     \AND from_address = ? AND to_address = ? AND amount = ? AND tx_hash = ? \
     \AND block_number = ? AND block_hash = ? AND tx_index = ? AND log_index = ? AND timestamp = ?"
@@ -4144,7 +4144,7 @@ assertPerpsReplayUsdcTransferExact conn chainId releaseRouter tokenAddress fromA
     , logIndex
     , timestamp
     ) :: IO [Only Integer]
-  assertExactlyOneReplayRow "USDC transfer" rows
+  assertExactlyOneReplayRow "USDG transfer" rows
 
 assertPerpsReplayExpiredCleanupExact :: Connection -> Integer -> Text -> Integer -> IO ()
 assertPerpsReplayExpiredCleanupExact conn chainId orderRouter orderId =
@@ -4177,7 +4177,7 @@ assertPerpsReplayExpiredCleanupWithRequirement conn chainId orderRouter orderId 
     \ AND a.account = LOWER(e.account) AND a.actor = LOWER(e.cleanup_actor) \
     \ AND a.activity_type = 'Cleaned up expired order' AND a.order_id = ? \
     \ AND a.side = e.side AND a.price IS NULL AND a.size_delta IS NULL \
-    \ AND a.amount_usdc IS NULL AND a.pnl_usdc IS NULL AND a.tx_hash = LOWER(e.tx_hash) \
+    \ AND a.amount_assets IS NULL AND a.pnl_assets IS NULL AND a.tx_hash = LOWER(e.tx_hash) \
     \ AND a.block_number = e.block_number AND a.block_hash = LOWER(e.block_hash) \
     \ AND a.tx_index = e.tx_index AND a.log_index = e.log_index AND a.timestamp = e.timestamp \
     \ AND a.data = jsonb_build_object('orderId', ?::text, 'reason', 'Expired', 'actor', e.cleanup_actor)) \
@@ -4224,7 +4224,7 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
           "SELECT row_to_json(snapshot)::text FROM (\
           \ SELECT chain_id, order_router, order_id, account, side, commit_tx_hash, commit_block_number, \
           \ commit_timestamp, terminal_tx_hash, terminal_block_number, terminal_timestamp, terminal_status, \
-          \ failure_reason, execution_price, execution_vpi_usdc, execution_frozen_close_spread_usdc, \
+          \ failure_reason, execution_price, execution_vpi_assets, execution_frozen_close_spread_assets, \
           \ execution_economics_version, execution_oracle_price, execution_oracle_frozen, \
           \ oracle_min_publish_time, oracle_max_publish_time, oracle_derivation_version, \
           \ execution_evidence_last_attempt_at, cleanup_actor \
@@ -4237,7 +4237,7 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
         query conn
           "SELECT row_to_json(snapshot)::text FROM (\
           \ SELECT chain_id, release_router, contract_address, event_key, account, actor, activity_type, \
-          \ order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, \
+          \ order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, \
           \ tx_index, log_index, timestamp, data FROM perps_account_activity \
           \ WHERE chain_id = ? AND release_router = ? AND block_number BETWEEN ? AND ? \
           \ ORDER BY block_number, tx_index, log_index, event_key) snapshot"
@@ -4246,7 +4246,7 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
         query conn
           "SELECT row_to_json(snapshot)::text FROM (\
           \ SELECT chain_id, release_router, contract_address, event_key, account, actor, activity_type, \
-          \ order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, \
+          \ order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, \
           \ tx_index, log_index, timestamp, data FROM perps_account_activity \
           \ WHERE chain_id = ? AND release_router = ? \
           \ AND (block_number BETWEEN ? AND ? OR order_id IN ?) \
@@ -4256,7 +4256,7 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
   transfers <- query conn
     "SELECT row_to_json(snapshot)::text FROM (\
     \ SELECT chain_id, release_router, token_address, from_address, to_address, amount, tx_hash, \
-    \ block_number, block_hash, tx_index, log_index, timestamp FROM perps_usdc_transfers \
+    \ block_number, block_hash, tx_index, log_index, timestamp FROM perps_asset_transfers \
     \ WHERE chain_id = ? AND release_router = ? AND block_number BETWEEN ? AND ? \
     \ ORDER BY block_number, tx_index, log_index) snapshot"
     (chainId, router, fromBlock, toBlock) :: IO [Only Text]
@@ -4265,11 +4265,16 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
       { prhsEvents = map fromOnly events
       , prhsOrders = map fromOnly orders
       , prhsActivity = map fromOnly activity
-      , prhsUsdcTransfers = map fromOnly transfers
+      , prhsAssetTransfers = map fromOnly transfers
       }
 
 ensurePerpsHistorySchema :: Connection -> IO ()
 ensurePerpsHistorySchema conn = do
+  legacyColumns <- query_ conn
+    "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name IN ('perps_orders','perps_account_activity','insights_competitions','insights_account_snapshots','insights_manual_adjustments','insights_finalized_standings','aa_close_assistance') AND (column_name ~ '_usdc$' OR column_name = 'usdc_address')) OR to_regclass('perps_usdc_transfers') IS NOT NULL"
+      :: IO [Only Bool]
+  unless (legacyColumns == [Only False]) $
+    fail "Legacy perps database identifiers require the explicit perps-settlement-assets-v1.sql migration before startup"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_events (\
     \id SERIAL PRIMARY KEY,\
@@ -4323,8 +4328,8 @@ ensurePerpsHistorySchema conn = do
     \terminal_status TEXT NOT NULL DEFAULT 'Committed',\
     \failure_reason TEXT,\
     \execution_price NUMERIC,\
-    \execution_vpi_usdc NUMERIC,\
-    \execution_frozen_close_spread_usdc NUMERIC,\
+    \execution_vpi_assets NUMERIC,\
+    \execution_frozen_close_spread_assets NUMERIC,\
     \execution_economics_version INTEGER,\
     \execution_oracle_price NUMERIC,\
     \execution_oracle_frozen BOOLEAN,\
@@ -4339,9 +4344,9 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS order_router TEXT"
   _ <- execute_ conn
-    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_vpi_usdc NUMERIC"
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_vpi_assets NUMERIC"
   _ <- execute_ conn
-    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_frozen_close_spread_usdc NUMERIC"
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_frozen_close_spread_assets NUMERIC"
   _ <- execute_ conn
     "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_economics_version INTEGER"
   _ <- execute_ conn
@@ -4417,8 +4422,8 @@ ensurePerpsHistorySchema conn = do
     \side INTEGER,\
     \price NUMERIC,\
     \size_delta NUMERIC,\
-    \amount_usdc NUMERIC,\
-    \pnl_usdc NUMERIC,\
+    \amount_assets NUMERIC,\
+    \pnl_assets NUMERIC,\
     \tx_hash TEXT NOT NULL,\
     \block_number BIGINT NOT NULL,\
     \block_hash TEXT NOT NULL,\
@@ -4467,7 +4472,7 @@ ensurePerpsHistorySchema conn = do
     \ON perps_account_activity(chain_id, release_router, account, block_number) \
     \WHERE activity_type = 'Open'"
   _ <- execute_ conn
-    "CREATE TABLE IF NOT EXISTS perps_usdc_transfers (\
+    "CREATE TABLE IF NOT EXISTS perps_asset_transfers (\
     \chain_id BIGINT NOT NULL,\
     \release_router TEXT NOT NULL,\
     \token_address TEXT NOT NULL,\
@@ -4488,27 +4493,27 @@ ensurePerpsHistorySchema conn = do
     \CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')\
     \)"
   _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_inbound \
-    \ON perps_usdc_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index)"
+    "CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_inbound \
+    \ON perps_asset_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index)"
   _ <- execute_ conn
-    "CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_outbound \
-    \ON perps_usdc_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index)"
+    "CREATE INDEX IF NOT EXISTS idx_perps_asset_transfers_outbound \
+    \ON perps_asset_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index)"
   _ <- execute_ conn
     "DO $$ BEGIN \
-    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
-    \  AND conname = 'perps_usdc_transfers_canonical_values') THEN \
-    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_values \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_asset_transfers'::regclass \
+    \  AND conname = 'perps_asset_transfers_canonical_values') THEN \
+    \  ALTER TABLE perps_asset_transfers ADD CONSTRAINT perps_asset_transfers_canonical_values \
     \  CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0); \
     \ END IF; \
-    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
-    \  AND conname = 'perps_usdc_transfers_canonical_addresses') THEN \
-    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_addresses \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_asset_transfers'::regclass \
+    \  AND conname = 'perps_asset_transfers_canonical_addresses') THEN \
+    \  ALTER TABLE perps_asset_transfers ADD CONSTRAINT perps_asset_transfers_canonical_addresses \
     \  CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$' \
     \   AND from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'); \
     \ END IF; \
-    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
-    \  AND conname = 'perps_usdc_transfers_canonical_hashes') THEN \
-    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_hashes \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_asset_transfers'::regclass \
+    \  AND conname = 'perps_asset_transfers_canonical_hashes') THEN \
+    \  ALTER TABLE perps_asset_transfers ADD CONSTRAINT perps_asset_transfers_canonical_hashes \
     \  CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$'); \
     \ END IF; END $$"
   _ <- execute_ conn
@@ -4734,16 +4739,16 @@ upsertPerpsOrderTerminal
     \terminal_status = EXCLUDED.terminal_status,\
     \failure_reason = EXCLUDED.failure_reason,\
     \execution_price = EXCLUDED.execution_price,\
-    \execution_vpi_usdc = CASE WHEN \
+    \execution_vpi_assets = CASE WHEN \
     \  perps_orders.terminal_status = EXCLUDED.terminal_status \
     \  AND perps_orders.terminal_tx_hash = EXCLUDED.terminal_tx_hash \
     \  AND perps_orders.terminal_block_number = EXCLUDED.terminal_block_number \
-    \  THEN perps_orders.execution_vpi_usdc ELSE NULL END,\
-    \execution_frozen_close_spread_usdc = CASE WHEN \
+    \  THEN perps_orders.execution_vpi_assets ELSE NULL END,\
+    \execution_frozen_close_spread_assets = CASE WHEN \
     \  perps_orders.terminal_status = EXCLUDED.terminal_status \
     \  AND perps_orders.terminal_tx_hash = EXCLUDED.terminal_tx_hash \
     \  AND perps_orders.terminal_block_number = EXCLUDED.terminal_block_number \
-    \  THEN perps_orders.execution_frozen_close_spread_usdc ELSE NULL END,\
+    \  THEN perps_orders.execution_frozen_close_spread_assets ELSE NULL END,\
     \execution_economics_version = CASE WHEN \
     \  perps_orders.terminal_status = EXCLUDED.terminal_status \
     \  AND perps_orders.terminal_tx_hash = EXCLUDED.terminal_tx_hash \
@@ -4971,9 +4976,9 @@ updatePerpsOrderEconomicsEvidence
   -> IO ()
 updatePerpsOrderEconomicsEvidence
   conn chainId orderRouter orderId txHash blockNumber blockHash
-  vpiUsdc frozenCloseSpreadUsdc derivationVersion = do
+  vpiAssets frozenCloseSpreadAssets derivationVersion = do
     _ <- execute conn
-      "UPDATE perps_orders SET execution_vpi_usdc = ?, execution_frozen_close_spread_usdc = ?, \
+      "UPDATE perps_orders SET execution_vpi_assets = ?, execution_frozen_close_spread_assets = ?, \
       \execution_economics_version = ?, updated_at = NOW() \
       \WHERE chain_id = ? AND order_router = ? AND order_id = ? \
       \  AND terminal_status = 'Executed' AND terminal_tx_hash = ? AND terminal_block_number = ? \
@@ -4986,8 +4991,8 @@ updatePerpsOrderEconomicsEvidence
       \      AND e.tx_hash = perps_orders.terminal_tx_hash \
       \      AND e.block_number = perps_orders.terminal_block_number \
       \      AND e.block_hash = ?)"
-      ( vpiUsdc
-      , frozenCloseSpreadUsdc
+      ( vpiAssets
+      , frozenCloseSpreadAssets
       , derivationVersion
       , chainId
       , normalizeRouter orderRouter
@@ -5021,10 +5026,10 @@ insertPerpsActivity
   -> Integer
   -> Value
   -> IO ()
-insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
+insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountAssets pnlAssets txHash blockNumber blockHash txIndex logIndex timestamp payload = do
   _ <- execute conn
     "INSERT INTO perps_account_activity \
-    \(chain_id, release_router, contract_address, event_key, account, actor, activity_type, order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+    \(chain_id, release_router, contract_address, event_key, account, actor, activity_type, order_id, side, price, size_delta, amount_assets, pnl_assets, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
     \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (event_key) DO UPDATE SET \
     \contract_address = EXCLUDED.contract_address, data = EXCLUDED.data \
@@ -5043,8 +5048,8 @@ insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account 
     , side
     , price
     , sizeDelta
-    , amountUsdc
-    , pnlUsdc
+    , amountAssets
+    , pnlAssets
     , T.toLower txHash
     , blockNumber
     , T.toLower blockHash
@@ -5055,7 +5060,7 @@ insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account 
     )
   pure ()
 
-insertPerpsUsdcTransfer
+insertPerpsAssetTransfer
   :: Connection
   -> Integer
   -> Text
@@ -5070,17 +5075,17 @@ insertPerpsUsdcTransfer
   -> Integer
   -> Integer
   -> IO ()
-insertPerpsUsdcTransfer conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
+insertPerpsAssetTransfer conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
   affected <- execute conn
-    "INSERT INTO perps_usdc_transfers \
+    "INSERT INTO perps_asset_transfers \
     \(chain_id, release_router, token_address, from_address, to_address, amount, tx_hash, block_number, block_hash, tx_index, log_index, timestamp) \
     \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
     \ON CONFLICT (chain_id, release_router, tx_hash, log_index) DO UPDATE SET timestamp = EXCLUDED.timestamp \
-    \WHERE perps_usdc_transfers.token_address = EXCLUDED.token_address \
-    \AND perps_usdc_transfers.from_address = EXCLUDED.from_address AND perps_usdc_transfers.to_address = EXCLUDED.to_address \
-    \AND perps_usdc_transfers.amount = EXCLUDED.amount AND perps_usdc_transfers.block_number = EXCLUDED.block_number \
-    \AND perps_usdc_transfers.block_hash = EXCLUDED.block_hash AND perps_usdc_transfers.tx_index = EXCLUDED.tx_index \
-    \AND perps_usdc_transfers.timestamp = EXCLUDED.timestamp"
+    \WHERE perps_asset_transfers.token_address = EXCLUDED.token_address \
+    \AND perps_asset_transfers.from_address = EXCLUDED.from_address AND perps_asset_transfers.to_address = EXCLUDED.to_address \
+    \AND perps_asset_transfers.amount = EXCLUDED.amount AND perps_asset_transfers.block_number = EXCLUDED.block_number \
+    \AND perps_asset_transfers.block_hash = EXCLUDED.block_hash AND perps_asset_transfers.tx_index = EXCLUDED.tx_index \
+    \AND perps_asset_transfers.timestamp = EXCLUDED.timestamp"
     ( chainId
     , normalizeRouter releaseRouter
     , normalizeRouter tokenAddress
@@ -5095,7 +5100,7 @@ insertPerpsUsdcTransfer conn chainId releaseRouter tokenAddress fromAddress toAd
     , timestamp
     )
   unless (affected == 1) $
-    fail "Canonical USDC transfer conflicts with a previously indexed event identity"
+    fail "Canonical USDG transfer conflicts with a previously indexed event identity"
 
 perpsOrderBaseSelectSql :: Query
 -- Reconstruct lifetime accounting independently of the history page limit.
@@ -5106,18 +5111,18 @@ perpsOrderBaseSelectSql :: Query
 perpsOrderBaseSelectSql =
   "SELECT o.order_id, o.order_router, o.account, o.side, o.commit_tx_hash, o.commit_block_number, o.commit_timestamp, \
   \o.terminal_tx_hash, o.terminal_block_number, terminal_event.block_hash, o.terminal_timestamp, o.terminal_status, o.failure_reason, \
-  \o.execution_price, o.execution_vpi_usdc, o.execution_frozen_close_spread_usdc, o.execution_economics_version, \
+  \o.execution_price, o.execution_vpi_assets, o.execution_frozen_close_spread_assets, o.execution_economics_version, \
   \o.execution_oracle_price, o.execution_oracle_frozen, o.oracle_min_publish_time, o.oracle_max_publish_time, \
   \o.oracle_derivation_version, o.client_order_id, o.receipt_hash, o.terminal_reason, o.pending_reason, \
   \o.execution_mode, o.failed_constraint, CASE \
   \  WHEN o.receipt_economics IS NULL THEN NULL \
-  \  WHEN o.receipt_economics->>'executionBountyUsdc' IS NOT NULL THEN o.receipt_economics \
-  \  WHEN intent_event.execution_bounty_usdc IS NULL THEN o.receipt_economics \
-  \  ELSE o.receipt_economics || jsonb_build_object('executionBountyUsdc', intent_event.execution_bounty_usdc) \
-  \END || CASE WHEN position_vpi.total_vpi_usdc IS NULL THEN '{}'::jsonb \
-  \  ELSE jsonb_build_object('totalPositionVpiUsdc', position_vpi.total_vpi_usdc::text) END \
+  \  WHEN o.receipt_economics->>'executionBountyAssets' IS NOT NULL THEN o.receipt_economics \
+  \  WHEN intent_event.execution_bounty_assets IS NULL THEN o.receipt_economics \
+  \  ELSE o.receipt_economics || jsonb_build_object('executionBountyAssets', intent_event.execution_bounty_assets) \
+  \END || CASE WHEN position_vpi.total_vpi_assets IS NULL THEN '{}'::jsonb \
+  \  ELSE jsonb_build_object('totalPositionVpiAssets', position_vpi.total_vpi_assets::text) END \
   \  || COALESCE(position_vpi.lifetime_accounting, '{}'::jsonb) AS receipt_economics, o.cleanup_actor, \
-  \a.activity_type, a.size_delta, a.price, a.vpi_usdc, a.pnl_usdc, \
+  \a.activity_type, a.size_delta, a.price, a.vpi_assets, a.pnl_assets, \
   \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
   \FROM perps_orders o \
   \LEFT JOIN LATERAL (\
@@ -5137,14 +5142,14 @@ perpsOrderBaseSelectSql =
   \  ORDER BY e.log_index DESC LIMIT 1\
   \) previous_terminal_event ON terminal_event.log_index IS NOT NULL \
   \LEFT JOIN LATERAL (\
-  \  SELECT e.data->>'executionBountyUsdc' AS execution_bounty_usdc \
+  \  SELECT e.data->>'executionBountyAssets' AS execution_bounty_assets \
   \  FROM perps_events e \
   \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router AND e.order_id = o.order_id \
-  \    AND e.event_name = 'IntentRegistered' AND e.data->>'executionBountyUsdc' IS NOT NULL \
+  \    AND e.event_name = 'IntentRegistered' AND e.data->>'executionBountyAssets' IS NOT NULL \
   \  ORDER BY e.block_number DESC, e.tx_index DESC, e.log_index DESC LIMIT 1\
   \) intent_event ON TRUE \
   \LEFT JOIN LATERAL (\
-  \  SELECT activity_type, size_delta, price, a.block_number, a.log_index, (data->>'vpiUsdc')::numeric AS vpi_usdc, pnl_usdc \
+  \  SELECT activity_type, size_delta, price, a.block_number, a.log_index, (data->>'vpiAssets')::numeric AS vpi_assets, pnl_assets \
   \  FROM perps_account_activity a \
   \  WHERE a.chain_id = o.chain_id AND a.release_router = o.order_router AND a.account = o.account AND a.tx_hash = o.terminal_tx_hash \
   \    AND o.terminal_status = 'Executed' AND terminal_event.log_index IS NOT NULL \
@@ -5169,8 +5174,8 @@ perpsOrderBaseSelectSql =
   \    SELECT MIN(sequence) AS sequence FROM history WHERE pre_size = 0 AND activity_type = 'Open' \
   \  ), lifetime AS ( \
   \    SELECT h.*, receipt.economics, \
-  \      CASE WHEN h.sequence = 1 THEN o.receipt_economics->>'vpiUsdc' \
-  \        ELSE receipt.economics->>'vpiUsdc' END AS vpi \
+  \      CASE WHEN h.sequence = 1 THEN o.receipt_economics->>'vpiAssets' \
+  \        ELSE receipt.economics->>'vpiAssets' END AS vpi \
   \    FROM history h CROSS JOIN boundary b \
   \    LEFT JOIN LATERAL ( \
   \      SELECT e.data->'economics' AS economics \
@@ -5186,13 +5191,13 @@ perpsOrderBaseSelectSql =
   \      AND activity_type IN ('Open', 'Close') \
   \      AND (economics->>'postPositionSize')::numeric = pre_size \
   \        + CASE WHEN activity_type = 'Open' THEN size_delta ELSE -size_delta END, FALSE) AS size_valid, \
-  \      NOT EXISTS (SELECT 1 FROM unnest(ARRAY['preSettlementBalanceUsdc', 'postSettlementBalanceUsdc', \
-  \        'preTraderClaimBalanceUsdc', 'postTraderClaimBalanceUsdc']) key \
+  \      NOT EXISTS (SELECT 1 FROM unnest(ARRAY['preSettlementBalanceAssets', 'postSettlementBalanceAssets', \
+  \        'preTraderClaimBalanceAssets', 'postTraderClaimBalanceAssets']) key \
   \        WHERE NOT COALESCE(economics->>key ~ '^[0-9]+$', FALSE)) AS balances_valid \
   \    FROM lifetime \
   \  ), funding AS ( \
-  \    SELECT COALESCE(SUM(CASE WHEN f.activity_type = 'Deposit' THEN f.amount_usdc ELSE -f.amount_usdc END), 0) AS net, \
-  \      COALESCE(BOOL_AND(f.amount_usdc IS NOT NULL AND f.amount_usdc >= 0), TRUE) AS valid \
+  \    SELECT COALESCE(SUM(CASE WHEN f.activity_type = 'Deposit' THEN f.amount_assets ELSE -f.amount_assets END), 0) AS net, \
+  \      COALESCE(BOOL_AND(f.amount_assets IS NOT NULL AND f.amount_assets >= 0), TRUE) AS valid \
   \    FROM perps_account_activity f \
   \    WHERE f.chain_id = o.chain_id AND f.release_router = o.order_router AND f.account = o.account \
   \      AND f.activity_type IN ('Deposit', 'Withdraw') \
@@ -5200,21 +5205,21 @@ perpsOrderBaseSelectSql =
   \      AND (f.block_number, f.log_index) < (o.terminal_block_number, terminal_event.log_index) \
   \  ), accounting AS ( \
   \    SELECT COUNT(*) > 0 AND BOOL_AND(size_valid AND balances_valid) AS valid, \
-  \      SUM((economics->>'postSettlementBalanceUsdc')::numeric - (economics->>'preSettlementBalanceUsdc')::numeric \
-  \        + (economics->>'postTraderClaimBalanceUsdc')::numeric - (economics->>'preTraderClaimBalanceUsdc')::numeric) AS trades_net, \
-  \      (o.receipt_economics->>'postSettlementBalanceUsdc')::numeric \
-  \        + (o.receipt_economics->>'postTraderClaimBalanceUsdc')::numeric \
-  \        - (ARRAY_AGG((economics->>'preSettlementBalanceUsdc')::numeric ORDER BY sequence DESC))[1] \
-  \        - (ARRAY_AGG((economics->>'preTraderClaimBalanceUsdc')::numeric ORDER BY sequence DESC))[1] \
+  \      SUM((economics->>'postSettlementBalanceAssets')::numeric - (economics->>'preSettlementBalanceAssets')::numeric \
+  \        + (economics->>'postTraderClaimBalanceAssets')::numeric - (economics->>'preTraderClaimBalanceAssets')::numeric) AS trades_net, \
+  \      (o.receipt_economics->>'postSettlementBalanceAssets')::numeric \
+  \        + (o.receipt_economics->>'postTraderClaimBalanceAssets')::numeric \
+  \        - (ARRAY_AGG((economics->>'preSettlementBalanceAssets')::numeric ORDER BY sequence DESC))[1] \
+  \        - (ARRAY_AGG((economics->>'preTraderClaimBalanceAssets')::numeric ORDER BY sequence DESC))[1] \
   \        - (SELECT net FROM funding) AS lifetime_net \
   \    FROM validated \
   \  ) \
   \  SELECT CASE WHEN COUNT(*) > 0 AND BOOL_AND(size_valid AND COALESCE(vpi ~ '^(-[0-9]+|[0-9]+)$', FALSE)) \
-  \    THEN SUM(CASE WHEN vpi ~ '^(-[0-9]+|[0-9]+)$' THEN vpi::numeric END) END AS total_vpi_usdc, \
+  \    THEN SUM(CASE WHEN vpi ~ '^(-[0-9]+|[0-9]+)$' THEN vpi::numeric END) END AS total_vpi_assets, \
   \    (SELECT CASE WHEN accounting.valid AND funding.valid THEN jsonb_build_object( \
-  \      'positionLifetimeNetResultUsdc', lifetime_net::text, \
-  \      'positionLifetimeTradesResultUsdc', trades_net::text, \
-  \      'positionLifetimeAccountAdjustmentUsdc', (lifetime_net - trades_net)::text) END \
+  \      'positionLifetimeNetResultAssets', lifetime_net::text, \
+  \      'positionLifetimeTradesResultAssets', trades_net::text, \
+  \      'positionLifetimeAccountAdjustmentAssets', (lifetime_net - trades_net)::text) END \
   \      FROM accounting CROSS JOIN funding) AS lifetime_accounting \
   \  FROM validated \
   \) position_vpi ON TRUE \
@@ -5277,7 +5282,7 @@ getPerpsActivityByAccount conn chainId releaseRouter account startBlock limit cu
   where
     baseQuery :: Query
     baseQuery =
-      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_assets, pnl_assets, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
       \WHERE chain_id = ? AND release_router = ? AND account = ? AND block_number >= ? \
@@ -5285,7 +5290,7 @@ getPerpsActivityByAccount conn chainId releaseRouter account startBlock limit cu
 
     cursorQuery :: Query
     cursorQuery =
-      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_assets, pnl_assets, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
       \WHERE chain_id = ? AND release_router = ? AND account = ? AND block_number >= ? \
@@ -5474,7 +5479,7 @@ scopedIndexerName indexerName releaseRouter =
 deletePerpsHistoryFromBlock :: Connection -> Integer -> Text -> Integer -> IO ()
 deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
   _ <- execute conn
-    "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+    "DELETE FROM perps_asset_transfers WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
     "DELETE FROM perps_account_activity WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
@@ -5484,8 +5489,8 @@ deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
     (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
     "UPDATE perps_orders SET terminal_tx_hash = NULL, terminal_block_number = NULL, terminal_timestamp = NULL, \
-    \terminal_status = 'Committed', failure_reason = NULL, execution_price = NULL, execution_vpi_usdc = NULL, \
-    \execution_frozen_close_spread_usdc = NULL, execution_economics_version = NULL, execution_oracle_price = NULL, \
+    \terminal_status = 'Committed', failure_reason = NULL, execution_price = NULL, execution_vpi_assets = NULL, \
+    \execution_frozen_close_spread_assets = NULL, execution_economics_version = NULL, execution_oracle_price = NULL, \
     \execution_oracle_frozen = NULL, \
     \oracle_min_publish_time = NULL, oracle_max_publish_time = NULL, oracle_derivation_version = NULL, \
     \execution_evidence_last_attempt_at = NULL, settlement_evidence_version = NULL, \

@@ -3205,7 +3205,7 @@ candleApiConfig databaseUrl =
     , cfgPerpsRpcUrl = ""
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = testChainId
-    , cfgPerpsUsdc = ""
+    , cfgPerpsSettlementToken = ""
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
@@ -3252,7 +3252,7 @@ candleReleaseManifest =
   CompetitionReleaseManifest
     { crmReleaseId = "candle-rollup-integration"
     , crmChainId = testChainId
-    , crmUsdc = ""
+    , crmSettlementToken = ""
     , crmOrderRouter = testRouter
     , crmMarginClearinghouse = ""
     , crmAccountLens = ""

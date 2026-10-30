@@ -10,7 +10,7 @@ import {
   getWallet,
   InsightsApiError,
 } from './client'
-import rebate from '../../../../scripts/fixtures/insights-close-rebate.json'
+import { rebate } from '../test/receiptEconomics'
 import type { Competition } from './types'
 
 const competition: Competition = {
@@ -242,26 +242,26 @@ describe('Insights API client', () => {
         rank: 1,
         wallet: '0x1111111111111111111111111111111111111111',
         alias: 'Alice',
-        finalPnlUsdc: '1500000000',
+        finalPnlAssets: '1500000000',
         roiBps: 150,
-        volumeUsdc: '1000000000',
+        volumeAssets: '1000000000',
         executedTrades: 5,
         activeDays: 5,
         liquidations: 0,
         prizePlace: 1,
         prizePlaces: [1],
-        prizeAmountUsdc: '600000000',
+        prizeAmountAssets: '600000000',
         eligibilityStatus: 'eligible',
         prizeEligible: true,
-        currentAccountValueUsdc: '101500000000',
-        realizedPnlUsdc: '375000000',
+        currentAccountValueAssets: '101500000000',
+        realizedPnlAssets: '375000000',
         position: {
           market: 'plDXY Perp',
           side: 'long',
           sizeDelta,
-          marginUsdc: '1000000000',
+          marginAssets: '1000000000',
           entryPrice: price,
-          unrealizedPnlUsdc: '250000000',
+          unrealizedPnlAssets: '250000000',
           liquidatable: false,
         },
       },
@@ -271,8 +271,8 @@ describe('Insights API client', () => {
         side: 0,
         sizeDelta,
         price,
-        executionFeeUsdc: '1765060537',
-        vpiUsdc: '4854090357',
+        executionFeeAssets: '1765060537',
+        vpiAssets: '4854090357',
         txHash: '0xabc',
         logIndex: 7,
       }],
@@ -282,7 +282,7 @@ describe('Insights API client', () => {
     expect(response.wallet).toMatchObject({
       prizePlace: 1,
       prizePlaces: [1],
-      prizeAmountUsdc: '600000000',
+      prizeAmountAssets: '600000000',
       realizedPnl: '375000000',
       position: {
         side: 'long',
@@ -307,12 +307,12 @@ describe('Insights API client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       competition,
       wallet: { wallet: '0x1111111111111111111111111111111111111111', activeDays: 1, liquidations: 0 },
-      activity: [{ activityType: 'Close', occurredAt: '2026-09-15T02:27:59Z', executionFeeUsdc: '0', execution: rebate.execution }],
+      activity: [{ activityType: 'Close', occurredAt: '2026-09-15T02:27:59Z', executionFeeAssets: '0', execution: rebate.execution }],
     }), { status: 200 })))
     const response = await getWallet(competition.slug, '0x1111111111111111111111111111111111111111')
     expect(response.activity?.[0].executionFee).toBe('0')
     expect(response.activity?.[0].execution).toEqual(rebate.execution)
-    expect(response.activity?.[0].execution?.receipt.executionFeeUsdc).toBe('866453105')
+    expect(response.activity?.[0].execution?.receipt.executionFeeAssets).toBe('866453105')
   })
 
   it('normalizes protocol-fee aliases and signed close VPI', async () => {
@@ -320,15 +320,15 @@ describe('Insights API client', () => {
       competition,
       wallet: {
         wallet: '0x1111111111111111111111111111111111111111',
-        finalPnlUsdc: '0',
+        finalPnlAssets: '0',
         activeDays: 1,
         liquidations: 0,
       },
       activity: [{
         activityType: 'Close',
         occurredAt: '2026-07-20T12:00:00Z',
-        protocolFeeUsdc: '11280147',
-        vpiDeltaUsdc: '-30992947',
+        protocolFeeAssets: '11280147',
+        vpiDeltaAssets: '-30992947',
       }],
     }), { status: 200 })))
 
@@ -344,13 +344,13 @@ describe('Insights API client', () => {
       competition,
       wallet: {
         wallet: '0x1111111111111111111111111111111111111111',
-        finalPnlUsdc: '-5000000',
+        finalPnlAssets: '-5000000',
         activeDays: 1,
         liquidations: 0,
       },
       activity: [
-        { activityType: 'Close', occurredAt: '2026-07-20T12:00:00Z', pnlUsdc: '12000000' },
-        { activityType: 'Liquidated', occurredAt: '2026-07-20T13:00:00Z', pnlUsdc: '-3000000' },
+        { activityType: 'Close', occurredAt: '2026-07-20T12:00:00Z', pnlAssets: '12000000' },
+        { activityType: 'Liquidated', occurredAt: '2026-07-20T13:00:00Z', pnlAssets: '-3000000' },
       ],
     }), { status: 200 })))
 

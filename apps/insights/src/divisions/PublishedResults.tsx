@@ -24,11 +24,10 @@ export function Standings({ standings }: { standings: DivisionStanding[] }) {
       <td className="px-4 py-5"><TierBadge tier={row.tier} showLabel /></td>
       <td className="px-4 py-5 font-mono"><Link to={`/divisions/wallets/${row.address}`} className="text-brand-peach hover:underline focus-visible:underline" title={row.address} aria-label={`View trader ${row.address}`}>{shortAddress(row.address)}</Link></td>
       <td className="px-4 py-5">{row.displayName ? <span className="break-all">@{row.displayName.replace(/^@/, '')}</span> : <span className="text-content-tertiary" aria-label="Discord not linked">—</span>}</td>
-      <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlUsdc, row.adjustedEquityUsdc)}</td>
+      <td className="px-4 py-5 font-mono">{formatReturn(row.weeklyPnlAssets, row.adjustedEquityAssets)}</td>
       <td className="px-4 py-5">{row.activeDays} / 2</td>
-      <td className="px-4 py-5"><Pnl value={row.weeklyPnlUsdc} usdcKind="mock" /></td>
+      <td className="px-4 py-5"><Pnl value={row.weeklyPnlAssets} /></td>
       <td className="px-4 py-5"><span className={row.movement === 'promoted' ? 'text-positive' : 'text-content-secondary'}>{row.movement === 'promoted' ? `↑ ${row.previousTier} → ${row.tier}` : row.movement === 'demoted' ? `↓ ${row.previousTier} → ${row.tier}` : row.qualifying ? 'Qualified · tier held' : 'Non-qualifying'}</span>{row.nonQualifyingWeeks === 1 ? <p className="mt-1 text-xs text-brand-yellow">1 of 2 non-qualifying weeks</p> : null}</td>
     </tr>)}</tbody>
   </table></div>
 }
-

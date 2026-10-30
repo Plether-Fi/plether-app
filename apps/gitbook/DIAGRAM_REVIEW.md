@@ -2,6 +2,16 @@
 
 Reviewed on 2026-09-07. Covers all 30 current diagram assets and their article references, including the previously unreferenced LP quickstart waterfall. Historical, unused images outside `assets/diagrams` and application screenshots are not redesigned.
 
+The 2026-10-29 terminology refresh changes currency labels to USDG and rerenders the catalog with the existing exported `renderDiagram` function. It preserves the original semantic-review pin and source evidence. It does not certify the older economic explanations against the prepared USDG release.
+
+## Scoped USDG semantic corrections — 2026-10-30
+
+Ten diagrams were corrected against immutable Core commit `e35cf0e0e9b880e07812e36321dee98bd299dcbd`, the source of the vendored SDK 0.4.0. The correction covers carry collection from active position margin before eligible free USDG; price equity after that projection; safely released margin as a later close-action funding source; and zero execution rewards for reductions and closes, distinct from opening execution rewards and TP/SL trigger rewards.
+
+Primary evidence is `MarginClearinghouseAccountingLib.planCarryLossConsumption` and `projectCarryLoss`, `CfdEnginePlanLib._applyPendingCarryRealizationToSnapshot`, `planClose` and `_planCloseCashSources`, `CfdEngine.reserveCloseOrderExecutionBounty`, and `PositionProtectionBook.createPositionProtection` at that exact commit. The manifest's `scopedSemanticReviews` record lists the affected diagram IDs and immutable source links. Related carry, liquidation and worked-example prose was corrected alongside the diagrams.
+
+Only those catalog entries were rendered through the exported `renderDiagram` function, with article alt text and manifest evidence synchronized. The original `reviewedRelease` below remains intact; this scoped correction does not certify the remaining diagram semantics against the new release. The existing full-regeneration guard remains unchanged.
+
 ## Source of truth
 
 Contract semantics were checked against **Plether Core v1.2.2**, commit `d704122c779d4d681d0fa2be517707b7f7df3902`, the deployment pin at the time of that review. The source was read at that exact commit, not from a possibly newer working tree. This is a release-source review, not a claim that mutable live parameters were freshly queried.
@@ -23,11 +33,11 @@ Each of the 30 records in [the manifest](.gitbook/assets/diagrams/diagram-manife
 | Price risk | Use PnL pledge + nettable own claim + price PnL for V2 price-risk equity. Keep action charges separate. | `PositionRiskAccountingLib.buildExactPriceRiskState` |
 | Close funding | Replace the obsolete shared fee → base obligation → spread queue. Price losses net the same account’s claim before collectible pledge. Charges have separate eligible funds; partial closes cannot waive them. | `CfdEnginePlanLib._planIsolatedCloseSettlement`, `_planCloseActionSettlement` |
 | Frozen spread | Show recovery attribution after fee, carry and positive VPI, not an all-purpose collateral queue. Note net negative-VPI offsets and waiver. | `CfdEngineSettlementSidecar._recoveredFrozenSpreadUsdc` |
-| Payouts and claims | Residual price payouts are all-or-nothing after existing claims. A live-position credit is PnL pledge; a flat-account credit is free settlement. Unpaid action rebates are waived, not turned into claims. | `CfdEngine._payOrRecordTraderClaim`, `_settleTraderClaimBalance`; planner |
+| Payouts and claims | Residual price payouts are all-or-nothing after existing claims. A live-position credit is PnL pledge; a flat-account credit is free USDG. Unpaid action rebates are waived, not turned into claims. | `CfdEngine._payOrRecordTraderClaim`, `_settleTraderClaimBalance`; planner |
 | Margin release | Do not promise release of all pro-rata pledge on a partial loss. Preserve the remaining terminal collectible cap. | `CfdEnginePlanLib._maxPricePledgeUnlockPreservingTerminalCap` |
-| Carry | Explain the maximum-profit-minus-pledge borrow base, zero floor and constant-other-conditions assumption. Free USDC alone does not lower the assigned borrow base. | `PositionRiskAccountingLib.computeBorrowBaseUsdc`, `computeIndexedCarryUsdc` |
+| Carry | Explain the maximum-profit-minus-pledge borrow base, zero floor and constant-other-conditions assumption. Free USDG alone does not lower the assigned borrow base. | `PositionRiskAccountingLib.computeBorrowBaseUsdc`, `computeIndexedCarryUsdc` |
 | LP waterfall | Preserve Junior-first loss absorption and Senior high-water-mark restoration. Add that the separate coupon is capped by Junior principal, not guaranteed yield. | `HousePoolWaterfallAccountingLib.absorbLoss`, `distributeRevenue`, `paySeniorCoupon` |
-| Account flow | Distinguish wallet custody, free settlement, pledge and reserves. Remove the false implication that a deposit must pass through trading before withdrawal. | `MarginClearinghouse`; AA action builders |
+| Account flow | Distinguish wallet custody, free USDG, pledge and reserves. Remove the false implication that a deposit must pass through trading before withdrawal. | `MarginClearinghouse`; AA action builders |
 
 The directly related schedule, claim, collection and troubleshooting explanations were corrected alongside the graphs. This is not an independent audit of every older worked example, parameter or screenshot elsewhere in GitBook.
 

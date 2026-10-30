@@ -576,9 +576,9 @@ candleRowToApi BasketCandleRow {..} =
     , bcRawHighPrice = bcrRawHighPrice
     , bcRawLowPrice = bcrRawLowPrice
     , bcRawClosePrice = bcrRawClosePrice
-    , bcVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrVolumeNumerator
-    , bcLongFlowVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrLongFlowVolumeNumerator
-    , bcShortFlowVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrShortFlowVolumeNumerator
+    , bcVolumeAssets = (`div` 10 ^ (20 :: Int)) <$> bcrVolumeNumerator
+    , bcLongFlowVolumeAssets = (`div` 10 ^ (20 :: Int)) <$> bcrLongFlowVolumeNumerator
+    , bcShortFlowVolumeAssets = (`div` 10 ^ (20 :: Int)) <$> bcrShortFlowVolumeNumerator
     , bcTradeCount = bcrTradeCount
     , bcSampleCount = fromIntegral bcrSampleCount
     , bcQuality = candleQualityText bcrQuality
@@ -1397,7 +1397,7 @@ basketHistoryFromCandleRows generatedAt params rows =
       BasketHistoryPoint
         { bhpTimestamp = bcrBucketStart row
         , bhpBasketPrice = bcrRawClosePrice row
-        , bhpVolumeUsdc = maybe 0 (`div` 10 ^ (20 :: Int)) $ bcrVolumeNumerator row
+        , bhpVolumeAssets = maybe 0 (`div` 10 ^ (20 :: Int)) $ bcrVolumeNumerator row
         , bhpComponents = Nothing
         }
 
@@ -1424,14 +1424,14 @@ basketHistoryPointsWithVolume intervalSeconds rows volumeRows =
     interval = max 1 intervalSeconds
     volumeByBucket =
       Map.fromList
-        [ (pmvbrBucket row, pmvbrVolumeUsdc row)
+        [ (pmvbrBucket row, pmvbrVolumeAssets row)
         | row <- volumeRows
         ]
     rowToPoint BasketHistorySnapshotRow {..} =
       BasketHistoryPoint
         { bhpTimestamp = bhsrTimestamp
         , bhpBasketPrice = bhsrBasketPrice
-        , bhpVolumeUsdc = Map.findWithDefault 0 (bhsrTimestamp `div` interval) volumeByBucket
+        , bhpVolumeAssets = Map.findWithDefault 0 (bhsrTimestamp `div` interval) volumeByBucket
         , bhpComponents = bhsrComponents
         }
 

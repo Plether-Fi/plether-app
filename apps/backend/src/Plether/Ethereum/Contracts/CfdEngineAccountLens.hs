@@ -32,32 +32,32 @@ import Plether.Ethereum.Client
 -- | Complete account state returned by
 -- @CfdEngineAccountLens.getAccountLedgerSnapshot(address)@.
 --
--- All monetary values use the contracts' native USDC precision. The two
+-- All monetary values use the contracts' native USDG precision. The two
 -- signed fields are decoded as two's-complement @int256@ values.
 data AccountLedgerSnapshot = AccountLedgerSnapshot
-  { alsSettlementBalanceUsdc :: Integer
-  , alsFreeSettlementUsdc :: Integer
-  , alsActivePositionMarginUsdc :: Integer
-  , alsOtherLockedMarginUsdc :: Integer
-  , alsPositionMarginBucketUsdc :: Integer
-  , alsCommittedOrderMarginBucketUsdc :: Integer
-  , alsReservedSettlementBucketUsdc :: Integer
-  , alsExecutionBountyReserveUsdc :: Integer
-  , alsCommittedMarginUsdc :: Integer
-  , alsTraderClaimBalanceUsdc :: Integer
+  { alsSettlementBalanceAssets :: Integer
+  , alsFreeSettlementAssets :: Integer
+  , alsActivePositionMarginAssets :: Integer
+  , alsOtherLockedMarginAssets :: Integer
+  , alsPositionMarginBucketAssets :: Integer
+  , alsCommittedOrderMarginBucketAssets :: Integer
+  , alsReservedSettlementBucketAssets :: Integer
+  , alsExecutionBountyReserveAssets :: Integer
+  , alsCommittedMarginAssets :: Integer
+  , alsTraderClaimBalanceAssets :: Integer
   , alsPendingOrderCount :: Integer
-  , alsCloseReachableUsdc :: Integer
-  , alsLiquidationReachableSettlementUsdc :: Integer
-  , alsTerminalPriceCollectibleCapUsdc :: Integer
-  , alsAccountEquityUsdc :: Integer
-  , alsFreeBuyingPowerUsdc :: Integer
+  , alsCloseReachableAssets :: Integer
+  , alsLiquidationReachableSettlementAssets :: Integer
+  , alsTerminalPriceCollectibleCapAssets :: Integer
+  , alsAccountEquityAssets :: Integer
+  , alsFreeBuyingPowerAssets :: Integer
   , alsHasPosition :: Bool
   , alsSide :: Integer
   , alsSize :: Integer
   , alsMargin :: Integer
   , alsEntryPrice :: Integer
-  , alsUnrealizedPnlUsdc :: Integer
-  , alsNetEquityUsdc :: Integer
+  , alsUnrealizedPnlAssets :: Integer
+  , alsNetEquityAssets :: Integer
   , alsLiquidatable :: Bool
   }
   deriving stock (Show, Eq)
@@ -121,29 +121,29 @@ decodeAccountLedgerSnapshot bytes
   | otherwise =
       Right $
         AccountLedgerSnapshot
-          { alsSettlementBalanceUsdc = uintAt 0
-          , alsFreeSettlementUsdc = uintAt 1
-          , alsActivePositionMarginUsdc = uintAt 2
-          , alsOtherLockedMarginUsdc = uintAt 3
-          , alsPositionMarginBucketUsdc = uintAt 4
-          , alsCommittedOrderMarginBucketUsdc = uintAt 5
-          , alsReservedSettlementBucketUsdc = uintAt 6
-          , alsExecutionBountyReserveUsdc = uintAt 7
-          , alsCommittedMarginUsdc = uintAt 8
-          , alsTraderClaimBalanceUsdc = uintAt 9
+          { alsSettlementBalanceAssets = uintAt 0
+          , alsFreeSettlementAssets = uintAt 1
+          , alsActivePositionMarginAssets = uintAt 2
+          , alsOtherLockedMarginAssets = uintAt 3
+          , alsPositionMarginBucketAssets = uintAt 4
+          , alsCommittedOrderMarginBucketAssets = uintAt 5
+          , alsReservedSettlementBucketAssets = uintAt 6
+          , alsExecutionBountyReserveAssets = uintAt 7
+          , alsCommittedMarginAssets = uintAt 8
+          , alsTraderClaimBalanceAssets = uintAt 9
           , alsPendingOrderCount = uintAt 10
-          , alsCloseReachableUsdc = uintAt 11
-          , alsLiquidationReachableSettlementUsdc = uintAt 12
-          , alsTerminalPriceCollectibleCapUsdc = uintAt 13
-          , alsAccountEquityUsdc = uintAt 14
-          , alsFreeBuyingPowerUsdc = uintAt 15
+          , alsCloseReachableAssets = uintAt 11
+          , alsLiquidationReachableSettlementAssets = uintAt 12
+          , alsTerminalPriceCollectibleCapAssets = uintAt 13
+          , alsAccountEquityAssets = uintAt 14
+          , alsFreeBuyingPowerAssets = uintAt 15
           , alsHasPosition = boolAt 16
           , alsSide = uintAt 17
           , alsSize = uintAt 18
           , alsMargin = uintAt 19
           , alsEntryPrice = uintAt 20
-          , alsUnrealizedPnlUsdc = intAt 21
-          , alsNetEquityUsdc = intAt 22
+          , alsUnrealizedPnlAssets = intAt 21
+          , alsNetEquityAssets = intAt 22
           , alsLiquidatable = boolAt 23
           }
   where

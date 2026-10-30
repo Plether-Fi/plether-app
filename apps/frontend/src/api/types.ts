@@ -153,7 +153,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
-  volumeUsdc?: string;
+  volumeAssets?: string;
   components?: BasketComponentPrice[];
 }
 
@@ -189,11 +189,11 @@ export interface PerpsBasketCandle {
   rawLowPrice: string;
   rawClosePrice: string;
   /** Null means the volume source has not proved coverage for this bucket. */
-  volumeUsdc: string | null;
+  volumeAssets: string | null;
   /** Notional flowing toward long exposure: long opens plus short closes. */
-  longFlowVolumeUsdc: string | null;
+  longFlowVolumeAssets: string | null;
   /** Notional flowing toward short exposure: short opens plus long closes. */
-  shortFlowVolumeUsdc: string | null;
+  shortFlowVolumeAssets: string | null;
   /** Null means trade-count coverage is unknown, which is distinct from zero. */
   tradeCount: number | null;
   sampleCount: number;
@@ -272,7 +272,7 @@ export interface PerpsRevealPayload {
 export interface PerpsMarketStats {
   rangeSeconds: number;
   generatedAt: number;
-  volume24hUsdc: string;
+  volume24hAssets: string;
 }
 
 // =============================================================================

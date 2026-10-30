@@ -47,7 +47,7 @@ spec = do
       testnetFaucetEnabled (testConfig 1 421614) `shouldBe` True
 
   describe "testnetFaucetAmount" $
-    it "is 100,000 USDC with 6 decimals" $
+    it "is 100,000 USDG with 6 decimals" $
       testnetFaucetAmount `shouldBe` 100_000_000_000
 
   describe "faucet response status JSON" $
@@ -213,7 +213,7 @@ testConfig chainId perpsChainId =
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsRpcAuthToken = Nothing
     , cfgPerpsChainId = perpsChainId
-    , cfgPerpsUsdc = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
+    , cfgPerpsSettlementToken = "0x4b44312d1f94d3d79a36a875691d768dd6c0575f"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
@@ -260,7 +260,7 @@ faucetReleaseManifest chainId =
   CompetitionReleaseManifest
     { crmReleaseId = "testnet-faucet-test"
     , crmChainId = chainId
-    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmSettlementToken = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , crmOrderRouter = zeroAddress
     , crmMarginClearinghouse = zeroAddress
     , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
