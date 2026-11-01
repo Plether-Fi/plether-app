@@ -1,42 +1,40 @@
 # Arbitrum Sepolia perps release configuration
 
-`mock-usdg-prepared.json` is the only current perps consumer configuration. It
-selects canonical schema 4 and order interface 3 for a future MockUSDG deployment.
-Phase `prepared` and null addresses, runtime hashes, source commit and indexing
-boundary mean that perps consumers and deployment guards must remain disabled.
-They are not placeholders for the old deployment.
+`arbitrum-sepolia-v2.0.0.json` is the current perps consumer configuration. It
+selects Core v2.0.0 on Arbitrum Sepolia (421614), canonical schema 4 and order
+interface 3, using six-decimal MockUSDG. All 30 addresses and runtime hashes come
+from the published release manifest, including the new `cfdEnginePlanningReader`.
 
-The frontend registry and backend embedded manifest use this file. Cabal tracks
-it as a dependency; Docker copies the same file. Worker paths, Terraform guards
-and release tooling select it as well. Populate the full graph only from reviewed
-deployed evidence. See [the integration runbook](../../docs/runbooks/perps-mock-usdg.md)
-for offline candidate generation and later activation requirements.
+The frontend registry, backend embedded manifest, workers, Docker and deployment
+guards select this file. `infra/terraform/sepolia-core-v2.0.0.tfvars.json` contains
+the matching backend/vault bindings and deployment block 323658447. Volume starts
+at the first whole minute after that block: 1793185200 (2026-10-28 11:00 UTC).
+Terraform defaults remain unbound; applying the overlay is an operator step.
 
-Current token metadata is `settlementToken`; the token contract pin is
-`contracts.settlementToken`. Contract/SDK/API quantities use `Assets` and
-`AssetAtoms`, AA metadata uses `settlementToken*`, and environment/Terraform use
-`PERPS_SETTLEMENT_TOKEN` / `perps_settlement_token`. No current consumer accepts
-old token keys or historical schema variants. Six-decimal MockUSDG supports
-ordinary mint/approve/transfer/deposit, with no signed-token authorization or
-bridge funding. Rewards are not applicable.
+The original release asset is preserved byte-for-byte in
+`evidence/v2.0.0/manifest.json`; its SHA-256 matches GitHub's release digest.
+`consumer-bundle.json` hashes the app's ABI, SDK and deployment evidence. Its
+checksum is the app release's `bundleSha256`; it is an app evidence inventory,
+not an upstream compiler archive. The runtime verification records read-only
+checks of all 30 contracts at one safe block. ABI provenance separately identifies
+compiled source and does not claim bytecode reproduction.
 
-Current ABI consumers are generated from the breaking Core source, independently
-of deployment evidence. The V5 compact terminal summary is joined to the verified
-V5 `OrderFinalized` event; its receipt hash binds the event's terminal block.
-The token-neutral ABI is incompatible with the former deployment despite retaining
-order interface 3 and receipt/configuration V5 labels.
+The public AA manifest binds this market with a fresh version. Sponsorship is
+false and its paymaster remains null: Core's release does not deploy AA
+infrastructure. See [the integration runbook](../../docs/runbooks/perps-mock-usdg.md)
+for the remaining database, worker and AA rollout steps. This source update does
+not deploy services, apply Terraform, migrate databases or enable sponsorship.
+
+Current token metadata is `settlementToken`; the token pin is
+`contracts.settlementToken`. Quantities use `Assets` and `AssetAtoms`, AA metadata
+uses `settlementToken*`, and environment/Terraform use `PERPS_SETTLEMENT_TOKEN` /
+`perps_settlement_token`. MockUSDG supports mint/approve/transfer/deposit without
+signed-token authorization or bridge funding. Rewards are not applicable.
 
 ## Historical evidence
 
-The `arbitrum-sepolia-v1.json`, `arbitrum-sepolia-v2.json`,
-`arbitrum-sepolia-v3.json`, versioned provenance files and `evidence/` archives
-remain historical records. In particular, v1.3.1 deployed source
-`cf86189bcca4813f39d6405a338b77176783eb42` at L2 blocks 318398363–318398657.
-Its upstream manifest checksum and release-record commit remain in
-`arbitrum-sepolia-v3.provenance.json`; its public AA manifest is preserved under
-`evidence/v1.3.1/perps-aa-manifest.json`. Historical Terraform overlays preserve
-the exact deployment identity and are not current activation configuration.
-
-Do not relabel historical amounts or mutate these records to look canonical.
-Balances, claims, signed operations, vault obligations and competition history
-do not migrate automatically between deployments.
+`mock-usdg-prepared.json` is retained as an inactive parser/safety fixture.
+`arbitrum-sepolia-v1.json`, `arbitrum-sepolia-v2.json`,
+`arbitrum-sepolia-v3.json` and `evidence/v1.3.1` retain their original deployments.
+Historical Terraform overlays, SDK provenance and signed-operation evidence are
+not fallback configurations for current consumers.

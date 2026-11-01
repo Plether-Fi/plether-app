@@ -1,110 +1,121 @@
-# MockUSDG perps integration
+# MockUSDG perps integration — Core v2.0.0
 
-The current application targets a **new perps deployment** using six-decimal
-MockUSDG. Its canonical configuration is `config/perps/mock-usdg-prepared.json`:
-schema 4, order interface 3, phase `prepared`, and null deployment addresses,
-runtime hashes and deployment block. Perps trading, funding, vault interactions
-and deployment guards remain unavailable until reviewed deployment evidence is
-installed. Spot assets keep their existing token configuration. No deployment,
-Terraform apply or database migration is performed by this source change.
+The application selects `config/perps/arbitrum-sepolia-v2.0.0.json`, the October
+28, 2026 deployment on Arbitrum Sepolia (421614). The canonical schema is 4,
+order interface is 3, settlement is six-decimal MockUSDG, and Core's phase is
+`active`. All 30 contract addresses and runtime hashes come from the published
+[release](https://github.com/Plether-Fi/plether-core/releases/tag/v2.0.0).
+The graph includes `cfdEnginePlanningReader`; junior maintenance APR at deployment
+is zero. Pool, Junior fee, engine and router settings now have 72-hour timelocks;
+the vault UI reflects that notice period. This source change performs no deployment, Terraform apply or database
+migration.
 
-Historical manifests and signed-operation evidence retain their original bytes
-and token names. Current consumers do not parse them or fall back to them.
-This is a breaking new-deployment interface: `settlementToken`, `*Assets` and
-`*AssetAtoms` replace token-specific perps identifiers throughout the contract,
-SDK, app, API, worker and database surfaces. Environment/Terraform bindings are
-`PERPS_SETTLEMENT_TOKEN` and `perps_settlement_token`. There are no compatibility
-aliases. Existing deployments require their matching historical consumers.
+## Evidence and reproducibility
 
-## Prepare a candidate after deployment evidence exists
+`config/perps/evidence/v2.0.0/manifest.json` preserves the release asset bytes.
+Its SHA-256 is `584cdacada35f8225d2a88811edfbd9622764fe0e6da4b275ba8f33d6f8c0c74`.
+The release record was published at Core commit
+`f3acb044da3a72200d07acccfa48548f0fbbb6b4`; the deployed source/tag is
+`1209ca8a5b94a4fb6323c7c4585846ed93db3932`.
 
-The following command only writes a new local candidate directory:
+`deployment-block.json` records block 323658447, timestamp 1793185148
+(2026-10-28 10:59:08 UTC). Both indexers begin at that block; certified volume
+begins at 1793185200, the first whole minute after deployment (11:00 UTC).
+`runtime-verification.json` records matching runtime hashes for all 30 contracts
+at one safe block, plus the engine planning-reader binding and token decimals.
+These are historical observations, not ongoing liquidity or oracle readiness checks.
+
+`consumer-bundle.json` inventories SHA-256 hashes of the deployment evidence,
+compiled consumer ABIs and vendored SDK. Its checksum is the app's `bundleSha256`.
+It is an app evidence inventory; the release does not publish a compiler archive.
+The ABI record separately identifies source hashes/compiler version, without
+claiming reproducible deployed bytecode.
+
+Regenerate the app configurations into a new local candidate directory:
 
 ```bash
 node scripts/prepare-perps-release.mjs \
-  /path/to/verified-deployed-core-manifest.json \
-  /path/to/reviewed-integration-profile.json \
-  /tmp/new-perps-app-candidate
+  config/perps/evidence/v2.0.0/manifest.json \
+  config/perps/evidence/v2.0.0/integration-profile.json \
+  /tmp/perps-v2-app-candidate
 ```
 
-Start the profile from `config/perps/mock-usdg-integration-profile.example.json`.
-Fill its null fields with the reviewed bundle SHA-256, a fresh AA manifest
-version, the first whole minute after the deployment timestamp, and reviewed AA
-infrastructure addresses. Keep `orderInterfaceVersion: 3`. The tool rejects
-historical schemas, prepared releases, missing addresses or hashes, unsuccessful
-deployed-phase verification, incompatible MockUSDG metadata and existing output
-directories. It emits:
+The candidate's `arbitrum-sepolia-v2.0.0.json`, `perps-aa-manifest.json`,
+`perps-core.tfvars.json` and `perps-backend.env.json` match the selected release,
+frontend public AA manifest, `infra/terraform/sepolia-core-v2.0.0.tfvars.json`
+and evidence `backend.env.json`, respectively. The tool rejects existing output
+directories and does not activate infrastructure. The profile's fresh AA identity
+is `perps-aa-arbitrum-sepolia-usdg-200-v2`.
 
-- `mock-usdg-prepared.json`: the verified Core release plus app integration and
-  manifest/bundle checksums; the filename remains the current consumer path.
-- `perps-aa-manifest.json`: matching contracts, signed token deposits unavailable,
-  null EIP-712 settings and sponsorship disabled.
-- `perps-core.tfvars.json` and `perps-backend.env.json`: matching perps/vault
-  bindings and fresh indexing boundaries.
-- `activation-review.json`: provenance and deployment-specific follow-up work.
+## Application rollout
 
-Candidate generation checks local consistency. Later activation requires the
-verified chain deployment, matching ABI artifacts, database schema transition,
-reviewed AA sponsor/worker configuration and release-isolated history. Review
-those together. Current frontend/backend deployment workflows reject prepared
-configuration and compare candidate bindings with the canonical release.
-Terraform defaults contain no previous perps addresses. Historical overlays
-must not be used to activate the new interface.
+The frontend registry, backend embedded manifest, workers, Docker, deployment
+workflows and Terraform guards all select the same release. Backend startup
+checks contract relationships and runtime hashes, including the new planning reader.
+Environment overrides cannot select another graph. Terraform defaults remain empty;
+use the v2 overlay with the normal environment configuration when planning rollout.
+Do not apply historical perps overlays.
 
-The authored SQL migration is a separate operator step and has not been run.
-Current backend startup rejects old perps column names before additive schema
-setup; deploying new consumers against an unchanged database is unsupported.
+Before deploying the backend:
 
-## Testnet funding
+1. Review and apply `apps/backend/config/migrations/perps-settlement-assets-v1.sql`
+   against a backed-up database, or provision a fresh database using the current
+   schema. Backend startup rejects legacy perps column names. The migration has
+   not been run by this source change.
+2. Use the new router and deployment block for history and vault indexing. Existing
+   cursors are router-scoped. Do not bind a previous competition to this market;
+   a future competition requires its own release identity and baseline.
+3. Review RPC, signer funding and oracle readiness for the new deployment. Core's
+   published snapshot had only permanent seeds and pending liquidity; confirm
+   current settled liquidity before testing orders. Its authenticated Pyth dry-run
+   record was false at publication.
+4. Configure and verify AA infrastructure separately. The public AA manifest has
+   `paymasterAddress: null` and `sponsorshipEnabled: false`; it intentionally cannot
+   authorize sponsored trading. Core's release does not supply a paymaster.
+   Install a reviewed paymaster address/profile and matching backend policy before
+   enabling preparation, submission, sponsorship or readiness enforcement. Do not
+   reuse a historical paymaster solely because it is on the same chain.
+5. Keep close-assistance issuance disabled until its separate policy rollout.
+   Protection workers default to observe-only. Verify worker policies and signers
+   before enabling execution. The integrated v2 close-preview pin is selected.
 
-After activation, the funding button requests unrestricted `mint(address,uint256)`
-for 100,000 MockUSDG to the confirmed Plether Trading Account. The connected owner
-wallet pays Arbitrum Sepolia ETH and confirms the mint. The token runtime hash is
-checked first. An exact approval plus `depositMargin` then deposits the balance
-from the Trading Account. Funding can be repeated; a failed deposit reuses the
-minted balance when retried. MockUSDG has no EIP-3009, permit or bridge funding.
-Unrestricted mock minting does not establish competition faucet provenance.
+Deploy the backend first, then frontend, following `AGENTS.md`. Complete public
+endpoint and trading/funding/vault smoke checks after the workflows succeed.
+No service or AA flag is enabled by generating these files.
+
+## Funding and interfaces
+
+Current consumers use `settlementToken`, `*Assets` and `*AssetAtoms`; environment
+and Terraform use `PERPS_SETTLEMENT_TOKEN` and `perps_settlement_token`. Historical
+USDC evidence retains its original bytes and is not a compatibility fallback.
+
+After AA rollout, funding mints 100,000 MockUSDG to the confirmed Plether Trading
+Account. The connected wallet pays testnet ETH and confirms the mint. The token
+runtime hash is checked before minting; exact approval plus `depositMargin`
+deposits from the Trading Account. A failed deposit reuses the minted balance.
+There is no EIP-3009, permit, bridge funding, or GDN reward income. Unrestricted
+mock minting does not establish competition faucet provenance.
 
 ## SDK and ABI provenance
 
-The app consumes the breaking `@plether-fi/perps-aa-client@0.4.0` artifact from
-Core commit `e35cf0e0e9b880e07812e36321dee98bd299dcbd`. The package record,
-lockfile and vendored checksum identify the same immutable build. Order interface
-3, configuration V5, digest V6 and lifecycle receipt V5 retain their existing
-version labels; their canonical field names and Solidity selectors come from
-the new source. Old aliases are not exported.
+The vendored `@plether-fi/perps-aa-client@0.4.0` artifact retains its build commit
+`e35cf0e0e9b880e07812e36321dee98bd299dcbd` and original integrity. Its runtime
+sources are identical to v2.0.0. Local order and lifecycle CI use deployed Core
+source `1209ca8a5b94a4fb6323c7c4585846ed93db3932` and check that equivalence.
 
-Regenerate current frontend and worker ABI consumers from compiled Core sources:
+Consumer ABIs were regenerated from compiled v2 sources using Solidity 0.8.35.
+The engine exposes additional treasury errors; the order, public-lens, vault and
+protection wire formats remain compatible with SDK 0.4.0. Interface 3,
+configuration V5, digest V6 and receipt V5 retain their labels. Full terminal
+evidence is joined to the canonical event and receipt hash, including terminal block.
 
 ```bash
 node scripts/generate-perps-consumer-abis.mjs \
-  --artifacts-dir /path/to/plether-core/packages/perps/out \
-  --source-root /path/to/plether-core/packages/perps
+  --artifacts-dir /path/to/pinned-core/packages/perps/out \
+  --source-root /path/to/pinned-core/packages/perps --check
+node --test scripts/prepare-perps-release.test.mjs scripts/perps-v2-release.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-sepolia.test.mjs
 ```
 
-Use `--check` to verify reproducibility. Source-derived ABI provenance does not
-claim a deployed address or runtime hash. Ordinary/protected closes require no
-execution bounty; protection trigger bounty remains separate. Protection intents
-include explicit close financial limits. Full terminal evidence is verified
-against the canonical V5 event and receipt hash, including its terminal block.
-
-## Future rewards
-
-MockUSDG earns no GDN rewards. The manifest records `not_applicable`, identifies
-`marginClearinghouse` and `housePool` as prospective holding contracts, and leaves
-payout address/controller null. No reward income enters margin, solvency or LP
-accounting. For an official USDG deployment, eligibility and payout control need
-provider confirmation. A separately controlled reward recipient and explicit
-allocation/accounting are future work; sending tokens to the clearinghouse does
-not credit an account automatically.
-
-## Local checks
-
-```bash
-node --test scripts/prepare-perps-release.test.mjs scripts/perps-aa-rollout.test.mjs scripts/aa-sepolia.test.mjs
-```
-
-These checks generate synthetic candidates and validate activation guards without
-RPC or deployment. Historical replay tests remain scoped to their archived bytecode.
-
-Core companion: [Plether-Fi/plether-core#131](https://github.com/Plether-Fi/plether-core/pull/131).
+To update ABIs, omit `--check`, review generated changes and refresh the evidence
+inventory/profile checksum together. The original prepared manifest remains an
+inactive safety fixture. Historical replay tests keep their archived bytecode.

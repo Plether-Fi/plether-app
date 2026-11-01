@@ -18,6 +18,7 @@ export function validateAaDeployment(core, aa, reviewedAa = aa) {
   const expected = candidates['perps-aa-manifest.json']
   assert.deepEqual(Object.keys(aa).sort(), Object.keys(expected).sort(), 'Unexpected AA manifest fields')
   assert.equal(typeof aa.sponsorshipEnabled, 'boolean')
+  if (aa.sponsorshipEnabled) assert.ok(aa.paymasterAddress, 'Sponsorship requires a reviewed paymaster')
   assert.deepEqual({ ...aa, sponsorshipEnabled: false }, expected, 'AA manifest does not match the canonical release')
 }
 

@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // These tests exercise a deployed market. Build with synthetic pins in an
-// isolated source tree; never alter the prepared release or publish binaries.
+// isolated source tree; never alter the selected release or publish binaries.
 const root = fileURLToPath(new URL('..', import.meta.url))
 const directory = mkdtempSync(join(tmpdir(), 'plether-backend-integration-'))
 try {
@@ -16,7 +16,7 @@ try {
   mkdirSync(join(directory, 'scripts'), { recursive: true })
   cpSync(join(root, 'scripts/fixtures'), join(directory, 'scripts/fixtures'), { recursive: true })
   copyFileSync(join(root, 'apps/frontend/src/contracts/__tests__/fixtures/perps-canonical-release.json'),
-    join(directory, 'config/perps/mock-usdg-prepared.json'))
+    join(directory, 'config/perps/arbitrum-sepolia-v2.0.0.json'))
   const result = spawnSync('cabal', ['test', 'plether-api-integration-test', '--test-show-details=direct', '-j1', ...process.argv.slice(2)],
     { cwd: backend, env: process.env, stdio: 'inherit' })
   if (result.error) throw result.error

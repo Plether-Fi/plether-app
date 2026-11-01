@@ -194,7 +194,7 @@ export function usePerpsMarket() {
       refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
     },
   })
-  // Engine configuration changes atomically behind a 48-hour timelock. Keep
+  // Engine configuration changes atomically behind a 72-hour timelock. Keep
   // this query identical in usePerpsAccount so wagmi shares one cached read.
   const {
     data: engineConfigurationData,

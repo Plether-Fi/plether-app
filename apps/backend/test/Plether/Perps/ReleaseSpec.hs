@@ -24,9 +24,9 @@ import Plether.Perps.HistoryIndexer
 import Test.Hspec
 
 engine, clearinghouse, housePool :: Text
-engine = "0x55e5d20ebc41234584fe0ba3c6ddcf71b3cbb2cb"
-clearinghouse = "0xe91f82bd0e1a3ebc78ee0d7c9c745029c2d324c7"
-housePool = "0x587c9863bb46fd5282a4ca2ea99589e3e8543962"
+engine = "0xca18a6783d7542f9d2f28f4f259772b74c4d6baa"
+clearinghouse = "0xb5b851f627d6df3cf3f096e23e20a58884d7b89a"
+housePool = "0xeb5604c393843b2f3c347ec24fa9ddad6ab2131e"
 
 validReleaseConfig :: Either Text ()
 validReleaseConfig =
@@ -46,11 +46,11 @@ spec =
       B16.encode (keccak256 $ TE.encodeUtf8 orderV3IntentDomain)
         `shouldBe` "b88aa2b16bc10f54a7acd702c11d43dfe7246057278a7fac91335877d86e2a2d"
 
-    it "rejects perps activation while the canonical release is prepared" $
-      validReleaseConfig `shouldSatisfy` isLeft
+    it "accepts the exact deployed v2.0.0 graph" $
+      validReleaseConfig `shouldBe` Right ()
 
-    it "does not invent a volume history boundary for an undeployed release" $
-      perpsV2VolumeHistoryStartTimestamp `shouldBe` 0
+    it "starts volume at the first whole minute after deployment" $
+      perpsV2VolumeHistoryStartTimestamp `shouldBe` 1793185200
 
     it "rejects a missing LifecycleBook" $
       validatePerpsV2ReleaseConfig
@@ -86,13 +86,13 @@ spec =
             ]
       mismatchCases `shouldSatisfy` all isLeft
 
-    it "rejects an indexer bound to prepared internal pins before startup" $
+    it "accepts an indexer bound to the new deployment boundary" $
       validatePerpsIndexerReleaseConfig
         421614
         defaultPerpsAddresses
         housePool
         perpsV2DeploymentBlock
-        `shouldSatisfy` isLeft
+        `shouldBe` Right ()
 
     it "fails indexer startup when the effective LifecycleBook is absent or wrong" $ do
       let wrong = "0x0000000000000000000000000000000000000001"

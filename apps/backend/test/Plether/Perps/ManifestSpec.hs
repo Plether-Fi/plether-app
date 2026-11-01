@@ -18,9 +18,7 @@ spec = describe "USDG release binding" $ do
   it "embeds a prepared release without fabricating deployed pins" $ do
     releaseIsDeployed root `shouldBe` Right False
     settlementTokenField root "address" `shouldBe` Right Null
-    Manifest.releaseIsDeployed `shouldBe` False
-    Manifest.releaseDeploymentBlock `shouldBe` 0
-    Manifest.releaseVersion `shouldBe` ""
+
   it "does not activate merely by changing the release phase" $
     releaseIsDeployed activated `shouldSatisfy` isLeft
   it "rejects historical schema adapters" $ do
@@ -30,5 +28,9 @@ spec = describe "USDG release binding" $ do
   it "rejects missing contract pins and unsupported metadata" $ do
     releaseIsDeployed (set "contracts" (object []) root) `shouldSatisfy` isLeft
     releaseIsDeployed (set "settlementToken" (object ["symbol" .= ("USDC" :: String)]) root) `shouldSatisfy` isLeft
-  it "stops worker startup before clients or database connections are made" $
-    Manifest.requireDeployedRelease `shouldThrow` anyIOException
+  it "embeds the deployed v2.0.0 identity and permits worker startup" $ do
+    Manifest.releaseIsDeployed `shouldBe` True
+    Manifest.releaseDeploymentBlock `shouldBe` 323658447
+    Manifest.releaseVersion `shouldBe` "v2.0.0"
+    Manifest.settlementTokenAddress `shouldBe` "0x3d051dbbf5ff427a4ae8ad09746902666af8fb9d"
+    Manifest.requireDeployedRelease

@@ -35,7 +35,7 @@ const aaBindings = {
   cfdEngine: 'cfdEngine', orderRouter: 'orderRouter', orderLifecycleBook: 'orderLifecycleBook',
   policyEvaluator: 'cfdOrderPolicyEvaluator', positionProtectionBook: 'positionProtectionBook',
 }
-const otherContracts = ['perpsPublicLens', 'settlementMonitorLensSidecar', 'orderRouterAdmin', 'cfdEngineAdmin', 'cfdEnginePlanner',
+const otherContracts = ['perpsPublicLens', 'settlementMonitorLensSidecar', 'orderRouterAdmin', 'cfdEngineAdmin', 'cfdEnginePlanner', 'cfdEnginePlanningReader',
   'terminalNavBookV2', 'housePoolRedemptionMathSidecar', 'cfdEngineProtocolLens', 'cfdEngineOpenQuoter', 'cfdClosePreview',
   'orderRouterExecutionSidecar', 'orderRecoverySidecar', 'orderRouterLiquidationBatchSidecar', 'emergencyPauseCoordinator']
 
@@ -93,7 +93,10 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
   requireValue(/^[a-f0-9]{64}$/i.test(profile.bundleSha256 ?? ''), 'Set the reviewed release bundle SHA-256')
   const aaProfile = profile.aa
   requireValue(aaProfile && typeof aaProfile === 'object', 'Missing AA integration profile')
-  for (const key of ['entryPoint', 'paymasterAddress', 'smartAccountFactory']) requireAddress(aaProfile[key], `aa.${key}`)
+  for (const key of ['entryPoint', 'smartAccountFactory']) requireAddress(aaProfile[key], `aa.${key}`)
+  // Core does not deploy AA infrastructure. An explicitly disabled profile may
+  // leave the paymaster unset; never borrow one from a previous market.
+  if (aaProfile.paymasterAddress !== null || aaProfile.sponsorshipEnabled !== false) requireAddress(aaProfile.paymasterAddress, 'aa.paymasterAddress')
   requireValue(aaProfile.entryPoint.toLowerCase() === '0x4337084d9e255ff0702461cf8895ce9e3b5ff108' &&
     aaProfile.smartAccountFactory.toLowerCase() === '0x13e9ed32155810fdbd067d4522c492d6f68e5944', 'Unsupported EntryPoint or Trading Account factory')
   requireValue(aaProfile.entryPointVersion === '0.8' && aaProfile.smartAccountMode === 'simple' && aaProfile.smartAccountVersion === 'permissionless-simple-v0.8' && aaProfile.smartAccountIndex === '0', 'Unsupported Trading Account profile')
@@ -127,7 +130,7 @@ export function prepareRelease(manifest, profile, sourceManifestSha256) {
   }
   const backendEnv = Object.fromEntries(Object.entries(terraform).map(([key, value]) => [key.toUpperCase(), value]))
   return {
-    'mock-usdg-prepared.json': appRelease,
+    'arbitrum-sepolia-v2.0.0.json': appRelease,
     'perps-aa-manifest.json': aaManifest,
     'perps-core.tfvars.json': terraform,
     'perps-backend.env.json': backendEnv,

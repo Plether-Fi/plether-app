@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
 const manifestText = read('apps/frontend/public/perps-aa-manifest.json')
 const manifest = JSON.parse(manifestText)
-const coreManifest = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
+const coreManifest = JSON.parse(read('config/perps/arbitrum-sepolia-v2.0.0.json'))
 const runbook = read('docs/runbooks/self-hosted-aa-rollout.md')
 
 test('client provenance matches the dependency, lockfile and installed artifact', () => {
@@ -46,12 +46,15 @@ const deployed = () => {
 }
 
 test('prepared release cannot pass either deployment guard', () => {
-  assert.equal(coreManifest.release.phase, 'prepared')
+  const prepared = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
+  assert.equal(coreManifest.release.version, 'v2.0.0')
   assert.equal(manifest.sponsorshipEnabled, false)
-  assert.equal(manifest.settlementToken, null)
+  assert.equal(manifest.settlementToken, coreManifest.contracts.settlementToken.address)
   assert.equal(manifest.paymasterAddress, null)
-  assert.throws(() => validateAaDeployment(coreManifest, manifest), /Prepared manifests/)
-  assert.throws(() => validateBackendDeployment(coreManifest, {}, {}), /Prepared manifests/)
+  assert.throws(() => validateAaDeployment(prepared, manifest), /Prepared manifests/)
+  assert.throws(() => validateBackendDeployment(prepared, {}, {}), /Prepared manifests/)
+  validateAaDeployment(coreManifest, manifest)
+  assert.throws(() => validateAaDeployment(coreManifest, { ...manifest, sponsorshipEnabled: true }), /paymasterAddress|paymaster/)
 })
 
 test('frontend deployment validates the complete canonical AA identity', () => {

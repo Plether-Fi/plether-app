@@ -15,6 +15,8 @@ module Plether.Perps.Manifest
   , marginClearinghouseCodeHash
   , cfdEngineAddress
   , cfdEngineCodeHash
+  , cfdEnginePlanningReaderAddress
+  , cfdEnginePlanningReaderCodeHash
   , housePoolAddress
   , housePoolCodeHash
   , seniorVaultAddress
@@ -89,6 +91,12 @@ cfdEngineAddress = $(manifestText ["contracts", "cfdEngine", "address"])
 
 cfdEngineCodeHash :: Text
 cfdEngineCodeHash = $(manifestText ["contracts", "cfdEngine", "runtimeCodeHash"])
+
+cfdEnginePlanningReaderAddress :: Text
+cfdEnginePlanningReaderAddress = $(manifestText ["contracts", "cfdEnginePlanningReader", "address"])
+
+cfdEnginePlanningReaderCodeHash :: Text
+cfdEnginePlanningReaderCodeHash = $(manifestText ["contracts", "cfdEnginePlanningReader", "runtimeCodeHash"])
 
 housePoolAddress :: Text
 housePoolAddress = $(manifestText ["contracts", "housePool", "address"])

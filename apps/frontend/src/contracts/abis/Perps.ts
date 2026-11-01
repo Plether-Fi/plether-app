@@ -3973,6 +3973,11 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     "type": "error",
+    "name": "CfdEngine__InvalidTreasuryLockDuration",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CfdEngine__MarkPriceOutOfOrder",
     "inputs": []
   },
@@ -3994,6 +3999,11 @@ export const PERPS_CFD_ENGINE_ABI = [
   {
     "type": "error",
     "name": "CfdEngine__NoTraderClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__NoTreasuryProposal",
     "inputs": []
   },
   {
@@ -4082,6 +4092,21 @@ export const PERPS_CFD_ENGINE_ABI = [
   {
     "type": "error",
     "name": "CfdEngine__TerminalNavBookNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__TreasuryLocked",
+    "inputs": [
+      {
+        "name": "lockedUntil",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CfdEngine__TreasuryNotLocked",
     "inputs": []
   },
   {

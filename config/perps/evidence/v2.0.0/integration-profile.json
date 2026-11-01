@@ -1,0 +1,22 @@
+{
+  "integration": {
+    "orderInterfaceVersion": 3,
+    "aaManifestVersion": "perps-aa-arbitrum-sepolia-usdg-200-v2",
+    "volumeHistoryStartTimestamp": 1793185200
+  },
+  "bundleSha256": "76b506d7e51841cf62abf18ef7fb3dca772c72a6a404529ea7cf50357f75acd8",
+  "aa": {
+    "entryPoint": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+    "entryPointVersion": "0.8",
+    "bundlerRpcUrl": "/api/perps/v1/aa/rpc",
+    "paymasterRpcUrl": "/api/perps/v1/aa/rpc",
+    "paymasterVersion": "plether-verifying-v1",
+    "preparationRpcVersion": 1,
+    "smartAccountMode": "simple",
+    "smartAccountVersion": "permissionless-simple-v0.8",
+    "smartAccountIndex": "0",
+    "smartAccountFactory": "0x13E9ed32155810FDbd067D4522C492D6f68E5944",
+    "paymasterAddress": null,
+    "sponsorshipEnabled": false
+  }
+}

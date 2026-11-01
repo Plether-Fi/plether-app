@@ -25,7 +25,7 @@ test('one canonical token binds frontend AA, backend, indexer and Terraform cand
   assert.equal(candidates['perps-core.tfvars.json'].perps_settlement_token, token.address)
   assert.equal(candidates['perps-backend.env.json'].PERPS_SETTLEMENT_TOKEN, token.address)
   assert.equal(candidates['activation-review.json'].settlementToken.runtimeCodeHash, token.runtimeCodeHash)
-  const app = candidates['mock-usdg-prepared.json']
+  const app = candidates['arbitrum-sepolia-v2.0.0.json']
   assert.deepEqual(app.contracts, manifest.contracts)
   assert.equal(app.release.manifestSha256, sha)
   assert.equal(app.release.bundleSha256, sha)
@@ -106,7 +106,7 @@ test('profile template cannot accidentally inherit old AA infrastructure', () =>
 
 test('candidate writing refuses existing paths and leaves active release bytes untouched', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'perps-usdg-candidate-test-'))
-  const activePath = new URL('../config/perps/mock-usdg-prepared.json', import.meta.url)
+  const activePath = new URL('../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url)
   const before = fs.readFileSync(activePath)
   try {
     const target = path.join(temp, 'candidate')

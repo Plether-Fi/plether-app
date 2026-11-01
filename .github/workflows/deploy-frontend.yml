@@ -163,7 +163,7 @@ jobs:
         run: |
           test -s dist/perps-aa-manifest.json
           node ../../scripts/validate-perps-deployment.mjs aa \
-            ../../config/perps/mock-usdg-prepared.json dist/perps-aa-manifest.json public/perps-aa-manifest.json
+            ../../config/perps/arbitrum-sepolia-v2.0.0.json dist/perps-aa-manifest.json public/perps-aa-manifest.json
 
       - name: Validate testnet backend origin
         id: backend-origin
@@ -203,7 +203,7 @@ jobs:
             "$SEPOLIA_BACKEND_URL/api/aa/status" > aa-status.json
           jq --exit-status \
             --slurpfile manifest dist/perps-aa-manifest.json \
-            --slurpfile core ../../config/perps/mock-usdg-prepared.json \
+            --slurpfile core ../../config/perps/arbitrum-sepolia-v2.0.0.json \
             '
               .manifestVersion == $manifest[0].version and
               .chainId == $manifest[0].chainId and

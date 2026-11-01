@@ -5,17 +5,17 @@ import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 const root = new URL('../', import.meta.url)
 const read = path => readFileSync(new URL(path, root), 'utf8')
-test('prepared canonical release leaves Terraform unbound and activation gated', () => {
-  const release = JSON.parse(read('config/perps/mock-usdg-prepared.json'))
+test('v2 release pins Terraform while defaults remain unbound', () => {
+  const release = JSON.parse(read('config/perps/arbitrum-sepolia-v2.0.0.json'))
   assert.equal(release.schemaVersion, 4)
-  assert.equal(release.release.phase, 'prepared')
-  assert.equal(release.release.deploymentBlock, null)
+  assert.equal(release.release.version, 'v2.0.0')
+  assert.equal(release.release.deploymentBlock, 323658447)
   const guards = read('infra/terraform/deployment_target.tf')
-  assert.ok(guards.includes('config/perps/mock-usdg-prepared.json'))
+  assert.ok(guards.includes('config/perps/arbitrum-sepolia-v2.0.0.json'))
   assert.ok(guards.includes('contains(["active", "seeded", "deployed"], local.sepolia_core.release.phase)'))
   const variables = read('infra/terraform/variables.tf')
   for (const [name, contract] of Object.entries(terraformBindings)) {
-    assert.equal(release.contracts[contract].address, null)
+    assert.match(release.contracts[contract].address, /^0x[0-9a-f]{40}$/)
     assert.ok(guards.includes('lower(var.' + name + ') == try(lower(local.sepolia_core.contracts.' + contract + '.address), "")'))
     assert.match(variables, new RegExp('variable "' + name + '" \\{[^}]*default\\s*= ""', 's'))
   }

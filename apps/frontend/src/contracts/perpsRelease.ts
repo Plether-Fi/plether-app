@@ -49,7 +49,7 @@ export function parsePerpsReleaseConfiguration(value: unknown): PerpsReleaseConf
     return [key, { ...artifact, address: address(pin.address, key), runtimeCodeHash: pin.runtimeCodeHash as Hex }]
   }))
   const expectedContracts = ['settlementToken', 'perpsPublicLens', 'marginClearinghouse', 'orderRouter', 'orderRouterAdmin', 'cfdEngine',
-    'cfdEnginePlanner', 'cfdEngineSettlementSidecar', 'cfdEngineAdmin', 'housePool', 'seniorVault', 'juniorVault',
+    'cfdEnginePlanner', 'cfdEnginePlanningReader', 'cfdEngineSettlementSidecar', 'cfdEngineAdmin', 'housePool', 'seniorVault', 'juniorVault',
     'pletherOracle', 'cfdEngineLens', 'cfdEngineAccountLens', 'orderLifecycleBook', 'cfdOrderPolicyEvaluator', 'positionProtectionBook',
     'terminalNavBookV2', 'housePoolRedemptionMathSidecar', 'cfdEngineProtocolLens', 'cfdEngineOpenQuoter', 'cfdClosePreview',
     'orderRouterExecutionSidecar', 'orderRecoverySidecar', 'orderRouterLiquidationBatchSidecar', 'settlementMonitorLens',

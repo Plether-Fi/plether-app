@@ -10,11 +10,17 @@ import { fileURLToPath } from 'node:url'
 const core = process.argv[2]
 assert.ok(core, 'Usage: node scripts/aa-lifecycle-regression.mjs /path/to/plether-core')
 const packageRelease = JSON.parse(readFileSync(new URL('../config/perps-aa-client-release.json', import.meta.url)))
-const source = packageRelease.sourceCommit
+const source = JSON.parse(readFileSync(new URL('../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url))).release.sourceCommit
 assert.equal(packageRelease.version, '0.4.0')
 assert.match(source, /^[0-9a-f]{40}$/)
 const git = (...args) => execFileSync('git', ['-C', resolve(core), ...args], { maxBuffer: 100 * 1024 * 1024 })
 assert.equal(git('rev-parse', `${source}^{commit}`).toString().trim(), source)
+// The SDK artifact retains its original provenance. Its runtime sources must
+// match the deployed protocol source used by this regression.
+const sdkCompatibility = JSON.parse(readFileSync(new URL('../config/perps/evidence/v2.0.0/sdk-compatibility.json', import.meta.url)))
+assert.equal(sdkCompatibility.artifactSourceCommit, packageRelease.sourceCommit)
+assert.equal(sdkCompatibility.protocolSourceCommit, source)
+assert.equal(git('rev-parse', `${source}:${sdkCompatibility.runtimeSourcePath}`).toString().trim(), sdkCompatibility.runtimeSourceTree)
 const directory = mkdtempSync(join(tmpdir(), 'plether-aa-lifecycle-'))
 execFileSync('tar', ['-x', '-C', directory], { input: git('archive', source) })
 for (const name of ['forge-std', 'openzeppelin-contracts']) {

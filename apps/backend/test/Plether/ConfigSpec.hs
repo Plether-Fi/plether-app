@@ -2,7 +2,6 @@ module Plether.ConfigSpec (spec) where
 
 import Control.Exception (bracket)
 import qualified Data.Text as T
-import Data.Maybe (isNothing)
 import Plether.Config
   ( Config (..)
   , FaucetGuardConfig (..)
@@ -44,8 +43,8 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "prepared release spot configuration" $ do
-    it "ignores retained perps credentials without blocking or activating spot startup" $
+  describe "deployed release configuration" $ do
+    it "rejects retained invalid perps credentials when the deployed release is selected" $
       withEnvironmentVariables
         [ ("RPC_URL", Just "http://127.0.0.1:1")
         , ("CHAIN_ID", Just "11155111")
@@ -65,16 +64,8 @@ spec = do
         ] $ do
           result <- loadConfig
           case result of
-            Left failure -> expectationFailure failure
-            Right cfg -> do
-              cfgAaConfig cfg `shouldSatisfy` isNothing
-              cfgNativeAaConfig cfg `shouldSatisfy` isNothing
-              cfgRegistrationConfig cfg `shouldSatisfy` isNothing
-              cfgFaucetGuardConfig cfg `shouldSatisfy` isNothing
-              cfgFaucetPrivateKey cfg `shouldBe` Nothing
-              cfgKeeperPrivateKey cfg `shouldBe` Nothing
-              cfgLpSettlementMode cfg `shouldBe` LpSettlementOff
-              cfgRpcUrl cfg `shouldBe` "http://127.0.0.1:1"
+            Left failure -> failure `shouldBe` "AA_PROXY_ORIGIN_TOKEN must be a generated 64-character lowercase hex secret"
+            Right _ -> expectationFailure "Deployed consumers must validate retained AA configuration"
   describe "keeper polling configuration" $ do
     it "accepts an idle cadence at least as long as the active cadence" $ do
       validateKeeperPollSeconds "1" "5" `shouldBe` Right (1, 5)

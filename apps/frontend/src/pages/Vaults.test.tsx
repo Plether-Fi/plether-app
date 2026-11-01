@@ -558,7 +558,7 @@ describe('Vaults page', () => {
     expect(within(timelocks).getByText('Pool risk settings')).toBeInTheDocument()
     expect(within(timelocks).getByText('Junior fee settings')).toBeInTheDocument()
     expect(within(timelocks).getByText('Trading and pricing settings')).toBeInTheDocument()
-    expect(within(timelocks).getAllByText('48 hours')).toHaveLength(3)
+    expect(within(timelocks).getAllByText('72 hours')).toHaveLength(3)
     expect(within(timelocks).getAllByRole('columnheader')).toHaveLength(2)
     expect(within(timelocks).queryByText('What it governs')).not.toBeInTheDocument()
 

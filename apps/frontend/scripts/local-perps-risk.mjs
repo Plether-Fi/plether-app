@@ -16,7 +16,7 @@ const wallet = createWalletClient({ chain: arbitrumSepolia, transport: http('htt
 const rpc = (method, params = []) => client.request({ method, params })
 assert.match(await rpc('web3_clientVersion'), /anvil/i)
 assert.equal(await client.getChainId(), 421614)
-const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/mock-usdg-prepared.json', 'utf8'))
+const release = JSON.parse(fs.readFileSync(process.env.PERPS_RELEASE_MANIFEST ?? '../../config/perps/arbitrum-sepolia-v2.0.0.json', 'utf8'))
 const bundle = process.env.LOCAL_PERPS_ABI_BUNDLE
 assert.ok(bundle, 'LOCAL_PERPS_ABI_BUNDLE is required')
 assert.equal(createHash('sha256').update(fs.readFileSync(bundle)).digest('hex'), release.release.bundleSha256)

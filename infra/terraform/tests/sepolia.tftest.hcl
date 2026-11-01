@@ -46,7 +46,7 @@ variables {
   alto_entrypoint_simulation_contract_v8 = "0x9c3c25a084AE8B1df3B2e82bb07Dac4E115C9Ae1"
   alto_pimlico_simulation_contract       = "0x95CC02A7B69dD46c6DD6Bd56132A24a235D58948"
 }
-run "reject_insights_on_prepared_release" {
+run "reject_insights_without_release_bindings" {
   command = plan
   expect_failures = [terraform_data.deployment_target_guard, aws_ecs_task_definition.api]
   variables {
@@ -174,7 +174,7 @@ run "deployment_customer_key_metadata_permissions" {
     error_message = "Customer-key metadata inspection must name only the configured key and SSM default key."
   }
 }
-run "reject_public_sepolia_on_prepared_release" {
+run "reject_public_sepolia_without_release_bindings" {
   command = plan
   expect_failures = [terraform_data.deployment_target_guard]
   variables {

@@ -13,11 +13,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch the SDK's immutable Core source
+      - name: Fetch the deployed Core source
         uses: actions/checkout@v4
         with:
           repository: Plether-Fi/plether-core
-          ref: e35cf0e0e9b880e07812e36321dee98bd299dcbd
+          ref: 1209ca8a5b94a4fb6323c7c4585846ed93db3932
           path: .ci-order-v3-core
           submodules: recursive
           persist-credentials: false

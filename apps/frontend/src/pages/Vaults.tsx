@@ -259,17 +259,17 @@ const JUNIOR_SHARE_VALUE_FACTORS: {
 const VAULT_GOVERNANCE_TIMELOCKS = [
   {
     mechanism: 'Pool risk settings',
-    delay: '48 hours',
+    delay: '72 hours',
     effect: 'Changes to the Senior target rate, deposit limits, temporary pricing fees, and price-data requirements.',
   },
   {
     mechanism: 'Junior fee settings',
-    delay: '48 hours',
+    delay: '72 hours',
     effect: 'Changes to the Junior annual fee or the wallet that receives it.',
   },
   {
     mechanism: 'Trading and pricing settings',
-    delay: '48 hours',
+    delay: '72 hours',
     effect: 'Changes to market pricing inputs and trade processing that can affect hourly vault processing.',
   },
 ] as const
@@ -2832,7 +2832,7 @@ export function OverviewTab({
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-content-secondary">
             Important rules for this vault cannot change immediately. Every change below must be
-            announced 48 hours before it can take effect.
+            announced 72 hours before it can take effect.
           </p>
         </div>
         <div className="overflow-x-auto">
