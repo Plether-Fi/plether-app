@@ -28,7 +28,7 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "v1.2.2 Settlement Monitor ABI decoding" $ do
+  describe "v2.0.0 Settlement Monitor ABI decoding" $ do
     it "decodes the exact 109-word SettlementStatus layout" $ do
       let words' =
             setWords
@@ -84,26 +84,27 @@ spec = do
       let digestWord = BS.replicate 31 0 <> BS.singleton 0xaa
           base =
             setWords
-              194
+              195
               [ (0, supportedObservationSchemaVersion)
               , (2, 302_300_001)
               , (5, 500_001)
               , (12, 1_800_000_100)
               , (87, 3)
               , (100, 1)
-              , (159, 1)
-              , (160, 0)
-              , (161, 0)
-              , (193, 1)
+              , (160, 1)
+              , (161, 4)
+              , (162, 8)
+              , (194, 1)
               ]
-          encoded = replaceWord 191 digestWord base
+          encoded = replaceWord 192 digestWord base
       case decodeSettlementObservation encoded of
         Left err -> expectationFailure $ show err
         Right observation -> do
           soSchemaVersion observation `shouldBe` supportedObservationSchemaVersion
           ssRequiredExecutionPath (soStatus observation) `shouldBe` AtomicOracleRefresh
           soHealthState observation `shouldBe` 1
-          soCriticalFaultMask observation `shouldBe` 0
+          soCriticalFaultMask observation `shouldBe` 4
+          soHealthDependencyFailureMask observation `shouldBe` 8
           soObservationDigest observation
             `shouldBe` "0x00000000000000000000000000000000000000000000000000000000000000aa"
           soObservationComplete observation `shouldBe` True
@@ -112,18 +113,18 @@ spec = do
       let statusLengthError =
             Left (RpcJsonError "getSettlementStatus(uint256) did not return exactly 109 ABI words")
           observationLengthError =
-            Left (RpcJsonError "getSettlementObservation(uint256) did not return exactly 194 ABI words")
+            Left (RpcJsonError "getSettlementObservation(uint256) did not return exactly 195 ABI words")
       decodeSettlementStatus (BS.replicate (108 * 32) 0)
         `shouldBe` statusLengthError
       decodeSettlementStatus (BS.replicate (110 * 32) 0)
         `shouldBe` statusLengthError
       decodeSettlementStatus (BS.replicate (109 * 32 + 1) 0)
         `shouldBe` statusLengthError
-      decodeSettlementObservation (BS.replicate (193 * 32) 0)
+      decodeSettlementObservation (BS.replicate (194 * 32) 0)
         `shouldBe` observationLengthError
-      decodeSettlementObservation (BS.replicate (195 * 32) 0)
+      decodeSettlementObservation (BS.replicate (196 * 32) 0)
         `shouldBe` observationLengthError
-      decodeSettlementObservation (BS.replicate (194 * 32 + 1) 0)
+      decodeSettlementObservation (BS.replicate (195 * 32 + 1) 0)
         `shouldBe` observationLengthError
 
     it "rejects non-canonical booleans in the status tuple" $ do
@@ -136,14 +137,14 @@ spec = do
           (RpcJsonError "getSettlementStatus(uint256).lpEpochSettlementPaused returned a non-canonical ABI boolean")
 
     it "rejects non-canonical booleans in the observation tuple" $ do
-      let encoded = setWords 194 []
+      let encoded = setWords 195 []
       decodeSettlementObservation (replaceIntegerWord 100 2 encoded)
         `shouldBe` Left
           (RpcJsonError "getSettlementStatus(uint256).hasMaturedWork returned a non-canonical ABI boolean")
       decodeSettlementObservation (replaceIntegerWord 109 2 encoded)
         `shouldBe` Left
           (RpcJsonError "getSettlementStatus(uint256).lpEpochSettlementPaused returned a non-canonical ABI boolean")
-      decodeSettlementObservation (replaceIntegerWord 193 2 encoded)
+      decodeSettlementObservation (replaceIntegerWord 194 2 encoded)
         `shouldBe` Left
           (RpcJsonError "getSettlementObservation(uint256).observationComplete returned a non-canonical ABI boolean")
 
@@ -155,13 +156,17 @@ spec = do
         `shouldBe` BS.pack [0x0a, 0xd6, 0xdd, 0x2e]
 
   describe "settlement deployment validation" $ do
+    it "pins the reviewed v2 monitor schema" $ do
+      supportedConfigSchemaVersion `shouldBe` 6
+      supportedObservationSchemaVersion `shouldBe` 6
+
     it "accepts the exact schema and address graph case-insensitively" $ do
       let expected = deployment
           observed = deployment {sdRouter = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
       validateSettlementDeployment expected observed `shouldBe` Right ()
 
     it "fails closed on schema or vault drift" $ do
-      validateSettlementDeployment deployment (deployment {sdConfigSchemaVersion = 3})
+      validateSettlementDeployment deployment (deployment {sdConfigSchemaVersion = 4})
         `shouldSatisfy` isLeft
       validateSettlementDeployment
         deployment

@@ -6,9 +6,10 @@ module Plether.Perps.ClosedPriceGap
 import Control.Monad (unless, when)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (fromGregorian, toGregorian)
 import Data.Time.Calendar.WeekDate (toWeekDate)
-import Data.Time.Clock (utctDay, utctDayTime)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Time.Clock (UTCTime (..), utctDay, utctDayTime)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Plether.Pyth.Basket (basketComponents)
 
 -- | Validate the negative evidence used by the one-shot Sepolia recovery.
@@ -50,7 +51,8 @@ validateClosedPriceGapEvidence coverageEnd checkedThrough recoverBefore latestPu
         <> " component update(s) inside the proposed recovery range"
 
 -- | Conservative weekly oracle-frozen interval documented by the protocol:
--- Friday 22:00 UTC through Sunday 21:00 UTC. This intentionally excludes the
+-- Friday 17:00 New York through Sunday 17:00 New York, matching core
+-- MarketCalendarLib, including weekends where the UTC offsets differ. Excludes the
 -- live-oracle close-only shoulders on both sides.
 withinWeeklyFxClosure :: Integer -> Integer -> Bool
 withinWeeklyFxClosure rangeStart rangeEnd =
@@ -63,8 +65,26 @@ withinWeeklyFxClosure rangeStart rangeEnd =
   secondsToday = floor $ utctDayTime startUtc
   secondsFromMonday = fromIntegral (weekday - 1) * secondsPerDay + secondsToday
   mondayStart = rangeStart - secondsFromMonday
-  closureStart = mondayStart + 4 * secondsPerDay + 22 * 3_600
-  closureEnd = mondayStart + 6 * secondsPerDay + 21 * 3_600
+  friday = mondayStart + 4 * secondsPerDay
+  sunday = mondayStart + 6 * secondsPerDay
+  closureStart = friday + newYorkMarketBoundary friday
+  closureEnd = sunday + newYorkMarketBoundary sunday
 
 secondsPerDay :: Integer
 secondsPerDay = 86_400
+
+-- Evaluate each endpoint independently using the protocol's post-2007 US DST
+-- rules. Noon UTC is after either Sunday transition and before FX reopening.
+newYorkMarketBoundary :: Integer -> Integer
+newYorkMarketBoundary dayStart =
+  if midday >= dstStart && midday < dstEnd then 21 * 3_600 else 22 * 3_600
+ where
+  midday = dayStart + 12 * 3_600
+  (year, _, _) = toGregorian $ utctDay $ posixSecondsToUTCTime $ fromInteger midday
+  firstSunday month =
+    let (_, _, weekday) = toWeekDate $ fromGregorian year month 1
+     in 1 + (7 - weekday) `mod` 7
+  transition month day hour =
+    floor $ utcTimeToPOSIXSeconds $ UTCTime (fromGregorian year month day) (fromIntegral $ hour * 3_600)
+  dstStart = transition 3 (firstSunday 3 + 7) (7 :: Integer)
+  dstEnd = transition 11 (firstSunday 11) (6 :: Integer)
