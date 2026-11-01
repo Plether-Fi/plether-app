@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem'
 import { createOracleWorker, loadOracleFeeds, validatePythPayload } from '../scripts/perps-oracle-worker.mjs'
 
+const release = JSON.parse(readFileSync(new URL('../../../config/perps/arbitrum-sepolia-v2.0.0.json', import.meta.url), 'utf8'))
 const feeds = { pyth: `0x${'11'.repeat(20)}`, feedIds: Array.from({ length: 6 }, (_, i) => `0x${String(i + 1).padStart(64, '0')}`) }
 function fixture() {
   const state = { now: 1_000_000, mark: 990n, stored: 980n, publishes: Array(6).fill(990), writes: 0,
@@ -41,6 +43,7 @@ test('startup discovers the configured Pyth endpoint and six distinct feeds at o
   const f = fixture()
   assert.deepEqual(await loadOracleFeeds(f.publicClient), feeds)
   assert.ok(f.state.reads.every(read => read.blockNumber === 42n))
+  assert.ok(f.state.reads.every(read => read.address === release.contracts.pletherOracle.address))
 })
 test('repairs stored feeds with a payload equal to the engine mark, then stays healthy', async () => {
   const f = fixture()
@@ -310,4 +313,15 @@ test('healthy dry runs retain the normal polling cadence', async () => {
   f.state.now += 25_000
   assert.equal((await iterate()).status, 'dry_run')
   assert.equal(f.state.writes, 0)
+})
+
+test('both deployable mark updater scripts bind the canonical protocol release', () => {
+  for (const file of ['perps-oracle-worker.mjs', 'update-perps-mark-price.mjs']) {
+    const source = readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8')
+    const block = source.match(/const ADDRESSES = \{([\s\S]*?)\n\}/)?.[1]
+    assert.ok(block, file + ' address bindings are missing')
+    for (const name of ['orderRouter', 'pletherOracle', 'perpsPublicLens']) {
+      assert.match(block, new RegExp(name + ": '" + release.contracts[name].address + "'"))
+    }
+  }
 })

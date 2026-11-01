@@ -1701,7 +1701,7 @@ candleRollupSpec databaseUrl =
             mapM (requirePriceCoverage connection) canonicalCandleIntervals
           repeated `shouldBe` invalidated
 
-    it "recovers only an exact price watermark gap backed by the stored signed state" $
+    it "recovers the verified latest signed state among same-second alternatives and rejects older states" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
@@ -1723,6 +1723,21 @@ candleRollupSpec databaseUrl =
                 , boiSourcePriority = 100
                 }
           changed `shouldBe` True
+          -- A lexicographically greater hash must not replace authenticated
+          -- matching evidence from the same second.
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "zz-same-second-alternative" lastObservationTime
+              101 componentPayload "backend_hermes_latest" 100
+          void $ upsertBasketObservation connection $
+            BasketObservationInput testSeries "newer-authenticated-state" (lastObservationTime + 1)
+              102 componentPayload "backend_hermes_latest" 100
+          withTransaction connection
+            (recoverBasketPriceCoverageGap connection testSeries coverageEnd recoveredThrough
+              lastObservationTime 100 componentPayload 120)
+            `shouldThrow` anyException
+          _ <- execute connection
+            "DELETE FROM perps_basket_observations WHERE series_id = ? AND observation_id = ?"
+            (testSeries, "newer-authenticated-state" :: Text)
           forM_ canonicalCandleIntervals $ \interval ->
             putPriceCoverage
               connection
